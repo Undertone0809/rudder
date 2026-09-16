@@ -1,0 +1,142 @@
+name: Qualify native baseline repairs
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-qualify-baseline-repairs.yml
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'codex/r6z-120-project-goal-link-core-luna-fast-20260914'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: '1'
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: corepack enable && corepack prepare pnpm@9.15.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Add the immutable discovery regressions
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const assert = require('assert/strict');
+            const {execFileSync} = require('child_process');
+            const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base = '719b8b681dff1eba096809d7483dc2417ecb7da9';
+            const workflow = '.github/workflows/r6z-qualify-baseline-repairs.yml';
+            assert.equal(git('rev-parse','HEAD'),context.payload.pull_request.head.sha);
+            assert.equal(git('rev-parse','HEAD^'),base);
+            assert.equal(git('diff','--name-only',base,'HEAD'),workflow);
+            const file = 'server/src/__tests__/workspace-native-binary-resolution.test.ts';
+            const sha = 'f4231c483a0708575b47729fb22f0b0cbccbc6a4';
+            const {data} = await github.rest.git.getBlob({...context.repo,file_sha:sha});
+            assert.equal(data.sha,sha);
+            fs.writeFileSync(file,Buffer.from(data.content,'base64'));
+            assert.equal(git('hash-object',file),sha);
+            git('add','--',file);
+      - name: Require the two release-discovery cases to fail before repair
+        shell: bash
+        run: |
+          set +e
+          pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/workspace-native-binary-resolution.test.ts --reporter=json --outputFile="$RUNNER_TEMP/discovery-red.json"
+          status=$?
+          set -e
+          test "$status" -ne 0
+          node --input-type=module - "$RUNNER_TEMP/discovery-red.json" <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const report = JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          assert.equal(report.numTotalTests,6);
+          assert.equal(report.numFailedTests,2);
+          const failed=report.testResults.flatMap(r=>r.assertionResults).filter(r=>r.status==='failed').map(r=>r.title).sort();
+          assert.deepEqual(failed,[
+            'finds the host release built by native:build without a debug build',
+            'finds an explicitly targeted release for the current platform'
+          ].sort());
+          NODE
+      - name: Apply the minimal release-profile candidates
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const assert = require('assert/strict');
+            const {execFileSync} = require('child_process');
+            const file = 'server/src/services/workspace-files-native.ts';
+            assert.equal(execFileSync('git',['hash-object',file],{encoding:'utf8'}).trim(),'10e16752c2f3b503edec4f908f6e405cb0cd2666');
+            const content = fs.readFileSync(file,'utf8');
+            const anchor = '    path.resolve(moduleDir, "../../../../native/target/debug", binaryName),\n';
+            assert.equal(content.split(anchor).length,2);
+            const addition = [
+              '    path.resolve(moduleDir, "../../../native/target/release", binaryName),',
+              '    path.resolve(moduleDir, "../../../../native/target/release", binaryName),',
+              '    path.resolve(moduleDir, "../../../native/target", target, "release", binaryName),',
+              '    path.resolve(moduleDir, "../../../../native/target", target, "release", binaryName),',
+              ''
+            ].join('\n');
+            fs.writeFileSync(file,content.replace(anchor,anchor+addition));
+      - run: pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/workspace-native-binary-resolution.test.ts
+      - name: Repair and check the existing import baseline
+        run: pnpm lint:fix && pnpm lint && pnpm -r typecheck
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the same release artifacts used by the failing baseline
+        run: pnpm native:build
+      - name: Real required-native workspace regression suites
+        run: |
+          pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/organization-workspace-browser.test.ts src/__tests__/workspace-files-native.test.ts src/__tests__/workspace-file-native.test.ts --maxWorkers=1 --testTimeout=15000
+      - name: Prepare separately reviewable source trees
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const assert = require('assert/strict');
+            const {execFileSync} = require('child_process');
+            const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base = '719b8b681dff1eba096809d7483dc2417ecb7da9';
+            const workflow = '.github/workflows/r6z-qualify-baseline-repairs.yml';
+            const functional = [
+              'server/src/services/workspace-files-native.ts',
+              'server/src/__tests__/workspace-native-binary-resolution.test.ts'
+            ];
+            const imports = [
+              'cli/src/commands/start.ts',
+              'packages/shared/src/validators/chat.ts',
+              'packages/shared/src/validators/index.ts',
+              'server/src/routes/issues.mutations.ts'
+            ];
+            git('add','--',...functional,...imports);
+            git('rm','--cached','--',workflow);
+            fs.unlinkSync(workflow);
+            git('diff','--cached','--check');
+            git('diff','--exit-code');
+            const expected = [...functional,...imports].sort();
+            assert.deepEqual(git('diff','--cached','--name-only',base).split('\n').sort(),expected);
+            const elements = new Map();
+            for (const file of expected) {
+              const {data} = await github.rest.git.createBlob({...context.repo,content:fs.readFileSync(file,'utf8'),encoding:'utf-8'});
+              assert.equal(data.sha,git('hash-object',file));
+              elements.set(file,{path:file,mode:'100644',type:'blob',sha:data.sha});
+            }
+            const {data:one} = await github.rest.git.createTree({...context.repo,base_tree:'bbf342432b1b2ebb8d7c94470e6540dd00b1f68f',tree:functional.map(f=>elements.get(f))});
+            const {data:two} = await github.rest.git.createTree({...context.repo,base_tree:one.sha,tree:imports.map(f=>elements.get(f))});
+            assert.equal(two.sha,git('write-tree'));
+            core.info(`DISCOVERY_TREE=${one.sha}`);
+            core.info(`IMPORTS_TREE=${two.sha}`);
+            core.info(git('diff','--cached','--stat',base));
+            core.info(git('diff','--cached',base,'--',...functional,...imports));
+            await core.summary.addHeading('Native baseline repair qualification').addRaw(`Discovery tree: ${one.sha}\n\nImports tree: ${two.sha}\n\nRed/green discovery, full lint/typecheck, real required-mode workspace suites passed. No branch was advanced.\n`).write();
