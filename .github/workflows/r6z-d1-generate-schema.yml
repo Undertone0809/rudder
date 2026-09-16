@@ -1,0 +1,129 @@
+name: R6Z D1 schema generation
+
+on:
+  push:
+    branches:
+      - codex/r6z-120-d1-validation-20260916
+    paths:
+      - .github/workflows/r6z-d1-generate-schema.yml
+      - packages/db/src/schema/organization_mutations.ts
+      - packages/db/src/schema/organization_mutations.invariants.sql
+      - packages/db/src/schema/activity_log.ts
+      - packages/db/src/migrations/organization-mutation-ledger.test.ts
+
+permissions:
+  contents: read
+
+jobs:
+  schema:
+    name: Generate and test only additive D1 schema assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install locked public development dependencies
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Observe the real regression before adding migration SQL
+        id: before
+        continue-on-error: true
+        run: pnpm --filter @rudderhq/db exec vitest run src/migrations/organization-mutation-ledger.test.ts
+      - name: Freeze existing migration assets and compile the schema
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          const folder = 'packages/db/src/migrations';
+          const journal = JSON.parse(fs.readFileSync(`${folder}/meta/_journal.json`, 'utf8'));
+          if (journal.entries.some(e => e.tag.endsWith('_d1_organization_mutations'))) {
+            throw new Error('D1 migration already exists; do not generate a second migration');
+          }
+          const sql = Object.fromEntries(fs.readdirSync(folder).filter(f => f.endsWith('.sql')).map(f => [f, crypto.createHash('sha256').update(fs.readFileSync(`${folder}/${f}`)).digest('hex')]));
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/r6z-d1-before.json`, JSON.stringify({ journal, sql }));
+          NODE
+          pnpm --filter @rudderhq/db exec tsc -p tsconfig.json
+      - name: Run the normal Drizzle generator
+        run: pnpm --filter @rudderhq/db exec drizzle-kit generate --name=d1_organization_mutations
+      - name: Bind the generated migration to its invariants without historical changes
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          const folder = 'packages/db/src/migrations';
+          const before = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/r6z-d1-before.json`, 'utf8'));
+          const journal = JSON.parse(fs.readFileSync(`${folder}/meta/_journal.json`, 'utf8'));
+          assert.equal(journal.entries.length, before.journal.entries.length + 1);
+          assert.deepEqual(journal.entries.slice(0, -1), before.journal.entries);
+          assert.equal(journal.version, before.journal.version);
+          assert.equal(journal.dialect, before.journal.dialect);
+          for (const [name, hash] of Object.entries(before.sql)) {
+            assert.equal(crypto.createHash('sha256').update(fs.readFileSync(`${folder}/${name}`)).digest('hex'), hash, `historical SQL changed: ${name}`);
+          }
+          const entry = journal.entries.at(-1);
+          assert.equal(entry.idx, before.journal.entries.length);
+          assert.ok(entry.when > before.journal.entries.at(-1).when);
+          assert.ok(entry.tag.endsWith('_d1_organization_mutations'));
+          const migration = `${folder}/${entry.tag}.sql`;
+          let sql = fs.readFileSync(migration, 'utf8');
+          assert.ok(!/\b(?:DROP|TRUNCATE)\b/i.test(sql), 'destructive or unrelated generated migration');
+          const tables = [...sql.matchAll(/(?:CREATE|ALTER)\s+TABLE\s+"([^"]+)"/gi)].map(m => m[1]);
+          assert.ok(tables.length >= 2);
+          assert.ok(tables.every(t => ['organization_mutation_authorities', 'organization_mutation_receipts'].includes(t)), `unrelated schema drift: ${tables.join(', ')}`);
+          // The referenced unique index must exist before PostgreSQL adds the FK.
+          const parts = sql.split('--> statement-breakpoint');
+          const indexAt = parts.findIndex(p => /CREATE UNIQUE INDEX "activity_log_org_id_uq"/.test(p));
+          assert.ok(indexAt >= 0, 'missing scoped activity identity index');
+          const [index] = parts.splice(indexAt, 1);
+          sql = [index, ...parts].join('--> statement-breakpoint');
+          const fragment = fs.readFileSync('packages/db/src/schema/organization_mutations.invariants.sql', 'utf8');
+          fs.writeFileSync(migration, `${sql.trim()}\n--> statement-breakpoint\n${fragment}`);
+          const snapshot = `${folder}/meta/${String(entry.idx).padStart(4, '0')}_snapshot.json`;
+          assert.ok(fs.existsSync(snapshot), 'generator must produce a matching schema snapshot');
+          const paths = [migration, `${folder}/meta/_journal.json`, snapshot];
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/r6z-d1-generated-paths.json`, JSON.stringify(paths));
+          console.log('Generated migration for review:\n' + fs.readFileSync(migration, 'utf8'));
+          console.log('Frozen source:', process.env.GITHUB_SHA);
+          console.log('Generated paths:', JSON.stringify(paths));
+          NODE
+          git diff --check
+      - name: Verify generated schema using real PostgreSQL and the actual migration runner
+        run: |
+          pnpm --filter @rudderhq/db exec vitest run src/migrations/organization-mutation-ledger.test.ts
+          pnpm --filter @rudderhq/db typecheck
+      - name: Store only verified generated source blobs for explicit review and commit
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('node:fs');
+            const crypto = require('node:crypto');
+            const cp = require('node:child_process');
+            const paths = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/r6z-d1-generated-paths.json`, 'utf8'));
+            const changed = cp.execFileSync('git', ['diff', '--name-only'], {encoding:'utf8'}).trim().split('\n').filter(Boolean);
+            const added = cp.execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {encoding:'utf8'}).trim().split('\n').filter(Boolean);
+            if ([...changed, ...added].some(p => !paths.includes(p))) throw new Error('Generation changed an unexpected source path');
+            const blobs = [];
+            for (const path of paths) {
+              if (!/^packages\/db\/src\/migrations\/(?:[0-9]{4}_d1_organization_mutations\.sql|meta\/(?:_journal|[0-9]{4}_snapshot)\.json)$/.test(path)) throw new Error('Unexpected generated asset');
+              if (!fs.lstatSync(path).isFile()) throw new Error('Generated asset is not a regular file');
+              const bytes = fs.readFileSync(path);
+              if (bytes.length > 16 * 1024 * 1024) throw new Error('Generated asset exceeds source bound');
+              const {data} = await github.rest.git.createBlob({...context.repo, content:bytes.toString('base64'), encoding:'base64'});
+              blobs.push({path, sha:data.sha, sha256:crypto.createHash('sha256').update(bytes).digest('hex'), bytes:bytes.length});
+            }
+            core.info('R6Z_GENERATED_BLOBS ' + JSON.stringify({source:context.sha, blobs}));
+            await core.summary.addHeading('Generated source only; no ref update').addCodeBlock(JSON.stringify({source:context.sha, blobs}, null, 2)).write();

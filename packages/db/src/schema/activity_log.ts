@@ -30,6 +30,7 @@ export const activityLog = pgTable(
       table.entityId,
       table.createdAt,
     ),
+    orgIdUniqueIdx: uniqueIndex("activity_log_org_id_uq").on(table.orgId, table.id),
     orgIdempotencyKeyUniqueIdx: uniqueIndex("activity_log_org_idempotency_key_uq")
       .on(table.orgId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
