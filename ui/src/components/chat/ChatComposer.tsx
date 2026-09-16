@@ -10,11 +10,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import type { SkillMentionOption } from "@/lib/agent-skill-mentions";
 import { cn } from "@/lib/utils";
 import { ArrowUp, Boxes, Loader2, Paperclip, Plus, Square } from "lucide-react";
 import {
   forwardRef,
+  useCallback,
   type ClipboardEventHandler,
   type CSSProperties,
   type KeyboardEventHandler,
@@ -293,14 +295,24 @@ export function ChatComposerContextMenu({
   position: CSSProperties;
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 }) {
+  const scrollbarActivityRef = useScrollbarActivityRef();
+  const setMenuRef = useCallback((element: HTMLDivElement | null) => {
+    if (typeof menuRef === "function") {
+      menuRef(element);
+    } else if (menuRef) {
+      menuRef.current = element;
+    }
+    scrollbarActivityRef(element);
+  }, [menuRef, scrollbarActivityRef]);
+
   return (
     <div
-      ref={menuRef}
+      ref={setMenuRef}
       data-testid={testId}
       role="menu"
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
-      className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
+      className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay scrollbar-auto-hide fixed z-50 overflow-y-auto rounded-[var(--radius-lg)] border p-1.5 text-foreground"
       style={position}
     >
       {children}

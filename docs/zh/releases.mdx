@@ -18,6 +18,33 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年9月16日" description="v0.7.21" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.21
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.21)
+
+Rudder 0.7.21 让新建 Chat 在加载缓慢和页面切换时仍能保持响应，在发送失败时保留草稿和附件，并提升跨平台本地 Agent 与 App 工作流的可靠性。
+
+### 新功能
+
+- 增加首条 Chat 消息的可恢复草稿。如果首条消息在创建对话前发送失败，Rudder 会保留文本和附件，切换对话或改变窗口大小后仍可重试。
+
+### 改进
+
+- 新建 Chat 现在会直接进入已接收的对话并显示流式进度，不必等待侧栏更新；用户后来选择的对话和新草稿也会保持不变。
+- Codex 本地运行现在会避免重复的提供商检查，并读取更新后的认证信息和提供商配置；凭据更新后可以恢复运行。
+- Windows 本地 App 启动现在可以容忍较慢的启动检查，减少 App 正在就绪时被误判为失败的情况。
+- App 位置操作现在会根据平台显示对应的文件管理器名称：Finder、File Explorer 或 File Manager。
+- Chat 上下文菜单会在需要滚动前隐藏滚动条，Issue 和 Kanban 视图也不再显示多余的列表结束提示。
+
+### 问题修复
+
+- Codex 的认证刷新会与共享 Codex 主目录隔离，同时在下一次运行时读取更新后的凭据。
+- 新建 Project 时不再提供不可用的组织 Library 来源选项，同时保留本地文件和 URL 来源。
+
+</Update>
+
 <Update label="2026年9月9日" description="v0.7.20" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.20

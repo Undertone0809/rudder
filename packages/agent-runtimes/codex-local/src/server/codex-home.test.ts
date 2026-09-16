@@ -226,19 +226,45 @@ describe("managed Codex home config sync", () => {
     expect(refreshedConfig).toContain('model = "gpt-5.5"');
   });
 
-  it("copies shared auth when symlink creation is denied", async () => {
+  it("removes stale provider configuration when the shared config is deleted", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-config-delete-"));
+    tempRoots.push(root);
+
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const sharedConfigPath = path.join(sharedCodexHome, "config.toml");
+    const env = {
+      CODEX_HOME: sharedCodexHome,
+      RUDDER_HOME: path.join(root, "rudder-home"),
+      RUDDER_INSTANCE_ID: "prod-local-test",
+    };
+
+    await mkdir(sharedCodexHome, { recursive: true });
+    await writeFile(sharedConfigPath, [
+      'model_provider = "custom"',
+      "",
+      "[model_providers.custom]",
+      'base_url = "https://stale.example.invalid"',
+      "",
+    ].join("\n"), "utf8");
+
+    const codexHome = await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+    expect(await readFile(path.join(codexHome, "config.toml"), "utf8")).toContain("stale.example.invalid");
+
+    await rm(sharedConfigPath);
+    await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+
+    const rebuiltConfig = await readFile(path.join(codexHome, "config.toml"), "utf8");
+    expect(rebuiltConfig).not.toContain("stale.example.invalid");
+    expect(rebuiltConfig).not.toContain('model_provider = "custom"');
+  });
+
+  it("mirrors shared auth into an isolated regular file without provider-state writeback", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-auth-copy-"));
     tempRoots.push(root);
 
     const sharedCodexHome = path.join(root, "shared-codex-home");
     await mkdir(sharedCodexHome, { recursive: true });
     await writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"shared"}\n', "utf8");
-
-    vi.spyOn(fs, "symlink").mockImplementation(async () => {
-      const err = new Error("operation not permitted") as NodeJS.ErrnoException;
-      err.code = "EPERM";
-      throw err;
-    });
 
     const logs: string[] = [];
     const codexHome = await prepareManagedCodexHome(
@@ -257,6 +283,100 @@ describe("managed Codex home config sync", () => {
     const managedAuthPath = path.join(codexHome, "auth.json");
     expect((await fs.lstat(managedAuthPath)).isFile()).toBe(true);
     expect(await readFile(managedAuthPath, "utf8")).toBe('{"token":"shared"}\n');
-    expect(logs.join("\n")).toContain("because this environment cannot create symlinks");
+    expect(await fs.realpath(managedAuthPath)).not.toBe(await fs.realpath(path.join(sharedCodexHome, "auth.json")));
+
+    await writeFile(managedAuthPath, '{"token":"managed-only"}\n', "utf8");
+    expect(await readFile(path.join(sharedCodexHome, "auth.json"), "utf8")).toBe('{"token":"shared"}\n');
+
+    await writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"refreshed"}\n', "utf8");
+    await prepareManagedCodexHome(
+      {
+        CODEX_HOME: sharedCodexHome,
+        RUDDER_HOME: path.join(root, "rudder-home"),
+        RUDDER_INSTANCE_ID: "prod-local-test",
+      },
+      async () => {},
+      "org-1",
+      "agent-1",
+    );
+    expect(await readFile(managedAuthPath, "utf8")).toBe('{"token":"refreshed"}\n');
+    expect(logs.join("\n")).toContain("without provider-state writeback");
+  });
+
+  it("replaces a pre-existing auth symlink and removes the mirror when the shared source disappears", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-auth-refresh-"));
+    tempRoots.push(root);
+
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const sharedAuthPath = path.join(sharedCodexHome, "auth.json");
+    await mkdir(sharedCodexHome, { recursive: true });
+    await writeFile(sharedAuthPath, '{"token":"first"}\n', "utf8");
+
+    const env = {
+      CODEX_HOME: sharedCodexHome,
+      RUDDER_HOME: path.join(root, "rudder-home"),
+      RUDDER_INSTANCE_ID: "prod-local-test",
+    };
+    const codexHome = await prepareManagedCodexHome(
+      env,
+      async () => {},
+      "org-1",
+      "agent-1",
+    );
+    const managedAuthPath = path.join(codexHome, "auth.json");
+    expect(await readFile(managedAuthPath, "utf8")).toBe('{"token":"first"}\n');
+
+    await fs.unlink(managedAuthPath);
+    await fs.symlink(sharedAuthPath, managedAuthPath);
+    await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+    expect((await fs.lstat(managedAuthPath)).isFile()).toBe(true);
+    expect(await fs.realpath(managedAuthPath)).not.toBe(await fs.realpath(sharedAuthPath));
+
+    await writeFile(sharedAuthPath, '{"token":"second"}\n', "utf8");
+    await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+    expect(await readFile(managedAuthPath, "utf8")).toBe('{"token":"second"}\n');
+
+    await rm(sharedAuthPath);
+    await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+    await expect(readFile(managedAuthPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("uses the captured auth snapshot when a Windows-style rename collision occurs", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-home-auth-collision-"));
+    tempRoots.push(root);
+
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const sharedAuthPath = path.join(sharedCodexHome, "auth.json");
+    await mkdir(sharedCodexHome, { recursive: true });
+    await writeFile(sharedAuthPath, '{"token":"first"}\n', "utf8");
+
+    const realRename = fs.rename.bind(fs);
+    let injectCollision = true;
+    vi.spyOn(fs, "rename").mockImplementation(async (source, target) => {
+      if (injectCollision) {
+        injectCollision = false;
+        await writeFile(sharedAuthPath, '{"token":"second"}\n', "utf8");
+        const err = new Error("target exists") as NodeJS.ErrnoException;
+        err.code = "EEXIST";
+        throw err;
+      }
+      return realRename(source, target);
+    });
+
+    const env = {
+      CODEX_HOME: sharedCodexHome,
+      RUDDER_HOME: path.join(root, "rudder-home"),
+      RUDDER_INSTANCE_ID: "prod-local-test",
+    };
+    const codexHome = await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+    const managedAuthPath = path.join(codexHome, "auth.json");
+    expect(await readFile(managedAuthPath, "utf8")).toBe('{"token":"first"}\n');
+
+    // The managed copy is a one-way mirror. Changes in the managed home never
+    // write back to the shared Codex credential source.
+    await writeFile(managedAuthPath, '{"token":"managed-only"}\n', "utf8");
+    await prepareManagedCodexHome(env, async () => {}, "org-1", "agent-1");
+    expect(await readFile(sharedAuthPath, "utf8")).toBe('{"token":"second"}\n');
+    expect(await readFile(managedAuthPath, "utf8")).toBe('{"token":"second"}\n');
   });
 });

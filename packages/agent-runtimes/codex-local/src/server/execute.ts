@@ -72,15 +72,18 @@ import {
 } from "./parse.js";
 import {
   buildCodexReadinessFingerprint,
+  claimCodexAuthProbe,
   clearMatchingCodexAuthFailure,
-  hasMatchingCodexAuthFailure,
   recordCodexAuthFailure,
+  renewCodexAuthProbe,
+  type CodexAuthProbeLease,
 } from "./readiness-gate.js";
 import { resolveCodexCommand } from "./resolve-command.js";
 import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines, stripCodexBenignStderr } from "./stderr-filter.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const CODEX_AUTH_FAILURE_HARD_DEADLINE_MS = 2_000;
+const CODEX_AUTH_PROBE_RENEW_INTERVAL_MS = 30_000;
 const CODEX_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "CODEX_HOME",
@@ -266,6 +269,19 @@ export async function getProviderReadinessFingerprint(
       ? path.resolve(process.env.CODEX_HOME.trim())
       : path.join(operatorHome, ".codex")
   );
+  const codexTargetEnv = {
+    ...process.env,
+    RUDDER_SHARED_CODEX_HOME: sharedCodexHome,
+  };
+  // Model-fallback preflight must inspect the same managed snapshot that
+  // execute() will run. This also removes deleted provider config before a
+  // fallback compares its readiness scope.
+  const effectiveCodexHome = await prepareManagedCodexHome(
+    codexTargetEnv,
+    ctx.onLog,
+    ctx.agent.orgId,
+    ctx.agent.id,
+  );
 
   return buildCodexReadinessFingerprint({
     env: Object.fromEntries(
@@ -274,6 +290,7 @@ export async function getProviderReadinessFingerprint(
       ),
     ),
     sharedCodexHome,
+    codexHome: effectiveCodexHome,
     model: asString(ctx.config.model, ""),
   });
 }
@@ -520,58 +537,6 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   );
   const billingType = resolveCodexBillingType(effectiveEnv);
-  const readinessFingerprint = agentHome
-    ? await buildCodexReadinessFingerprint({
-        env: effectiveEnv,
-        sharedCodexHome,
-        model,
-      })
-    : null;
-  const persistAuthFailureGate = async () => {
-    if (!readinessFingerprint) return;
-    await recordCodexAuthFailure(effectiveAgentHome, readinessFingerprint).catch(async () => {
-      await onLog(
-        "stderr",
-        "[rudder] Failed to persist the Codex provider readiness failure gate.\n",
-      ).catch(() => undefined);
-    });
-  };
-  const clearAuthFailureGate = async () => {
-    if (!readinessFingerprint) return;
-    await clearMatchingCodexAuthFailure(effectiveAgentHome, readinessFingerprint).catch(async () => {
-      await onLog(
-        "stderr",
-        "[rudder] Failed to clear the Codex provider readiness failure gate.\n",
-      ).catch(() => undefined);
-    });
-  };
-  if (
-    readinessFingerprint
-    && await hasMatchingCodexAuthFailure(effectiveAgentHome, readinessFingerprint)
-  ) {
-    return {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      errorCode: "codex_provider_auth_required",
-      errorMessage: "Codex provider authentication remains unavailable for the current readiness fingerprint.",
-      provider: "openai",
-      biller: resolveCodexBiller(effectiveEnv, billingType),
-      model,
-      billingType,
-      resultJson: {
-        providerFailure: {
-          classification: "authentication",
-          retryable: false,
-          shortCircuited: true,
-          reason: "codex_provider_auth_required",
-          readinessFingerprint,
-          readinessState: "unchanged",
-        },
-      },
-      clearSession: false,
-    };
-  }
   const runtimeEnv = ensurePathInEnv(await ensureRudderCliInPath(__moduleDir, effectiveEnv));
   let rudderMcpCommand: RudderMcpCliCommand | undefined;
   let rudderMcpPreflight: RudderMcpPreflightResult;
@@ -819,34 +784,139 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     && asBoolean(config.chatAppServerEnabled, command === "codex")
     && appServerExtraArgs.unsupportedArgs.length === 0;
 
+  // Claim only after the managed home has its final staged auth/config snapshot
+  // and all prompt/metadata preparation has completed. The lease makes expiry
+  // a single-probe transition across server processes without leaving a probe
+  // behind when preparation fails before execution starts.
+  const readinessFingerprint = agentHome
+    ? await buildCodexReadinessFingerprint({
+        env: effectiveEnv,
+        sharedCodexHome,
+        codexHome: effectiveCodexHome,
+        model,
+      })
+    : null;
+  let authProbeLease: CodexAuthProbeLease | null = null;
+  if (readinessFingerprint) {
+    const probeClaim = await claimCodexAuthProbe(effectiveAgentHome, readinessFingerprint);
+    if (!probeClaim.claimed) {
+      const readinessBusy = probeClaim.readinessState === "busy";
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorCode: readinessBusy ? "codex_provider_readiness_busy" : "codex_provider_auth_required",
+        errorMessage: readinessBusy
+          ? "Codex provider readiness is busy; retry after the active readiness operation completes."
+          : "Codex provider authentication remains unavailable for the current readiness fingerprint.",
+        provider: "openai",
+        biller: resolveCodexBiller(effectiveEnv, billingType),
+        model,
+        billingType,
+        resultJson: {
+          providerFailure: {
+            classification: readinessBusy ? "readiness" : "authentication",
+            retryable: readinessBusy,
+            shortCircuited: true,
+            reason: readinessBusy ? "codex_provider_readiness_busy" : "codex_provider_auth_required",
+            readinessFingerprint,
+            readinessState: probeClaim.readinessState,
+          },
+        },
+        clearSession: false,
+      };
+    }
+    authProbeLease = probeClaim.lease;
+  }
+  const persistAuthFailureGate = async () => {
+    if (!readinessFingerprint || !authProbeLease) return;
+    await recordCodexAuthFailure(effectiveAgentHome, readinessFingerprint, authProbeLease).catch(async () => {
+      await onLog(
+        "stderr",
+        "[rudder] Failed to persist the Codex provider readiness failure gate.\n",
+      ).catch(() => undefined);
+    });
+  };
+  const clearAuthFailureGate = async () => {
+    if (!readinessFingerprint || !authProbeLease) return;
+    await clearMatchingCodexAuthFailure(effectiveAgentHome, readinessFingerprint, authProbeLease).catch(async () => {
+      await onLog(
+        "stderr",
+        "[rudder] Failed to clear the Codex provider readiness failure gate.\n",
+      ).catch(() => undefined);
+    });
+  };
+  let readinessRenewalTimer: ReturnType<typeof setInterval> | null = null;
+  let readinessRenewalInFlight: Promise<void> | null = null;
+  let readinessLeaseLost = false;
+  const readinessLeaseAbortController = new AbortController();
+  const markReadinessLeaseLost = (message: string) => {
+    if (readinessLeaseLost) return;
+    readinessLeaseLost = true;
+    readinessLeaseAbortController.abort(
+      createTerminalFailureAbortReason(CODEX_AUTH_FAILURE_HARD_DEADLINE_MS),
+    );
+    void onLog("stderr", `[rudder] ${message}\n`).catch(() => undefined);
+  };
+  const renewReadinessLease = () => {
+    if (!readinessFingerprint || !authProbeLease || readinessLeaseLost || readinessRenewalInFlight) return;
+    readinessRenewalInFlight = renewCodexAuthProbe(
+      effectiveAgentHome,
+      readinessFingerprint,
+      authProbeLease,
+    ).then(async (renewed) => {
+      if (renewed) return;
+      markReadinessLeaseLost(
+        "Codex provider readiness lease was lost; the current probe was terminated and will not update readiness state.",
+      );
+    }).catch(async () => {
+      markReadinessLeaseLost(
+        "Failed to renew the Codex provider readiness lease; the current probe was terminated.",
+      );
+    }).finally(() => {
+      readinessRenewalInFlight = null;
+    });
+  };
+  const stopReadinessLeaseRenewal = async () => {
+    if (readinessRenewalTimer) {
+      clearInterval(readinessRenewalTimer);
+      readinessRenewalTimer = null;
+    }
+    await readinessRenewalInFlight;
+  };
+  if (readinessFingerprint && authProbeLease) {
+    readinessRenewalTimer = setInterval(renewReadinessLease, CODEX_AUTH_PROBE_RENEW_INTERVAL_MS);
+    readinessRenewalTimer.unref?.();
+  }
+
   if (useAppServerChat) {
     const appServerArgs = ["app-server", "--stdio", "--disable", "plugins"];
-    if (onMeta) {
-      await onMeta({
-        agentRuntimeType: "codex_local",
-        command: executableCommand,
-        cwd,
-        commandNotes: [
-          ...commandNotes,
-          "Using Codex App Server for interactive chat Steer and Stop controls.",
-        ],
-        commandArgs: appServerArgs,
-        env: redactEnvForLogs(env),
-        prompt,
-        agentInstructionStack: prompt,
-        promptMetrics,
-        loadedMcpServers,
-        loadedSkills,
-        realizedSkills: loadedSkills,
-        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
-        browserMcp: rudderBrowserMcpRuntimeMetadata({
-          available: browserEnabled,
-          preflight: browserMcpPreflight,
-        }),
-        context,
-      });
-    }
     try {
+      if (onMeta) {
+        await onMeta({
+          agentRuntimeType: "codex_local",
+          command: executableCommand,
+          cwd,
+          commandNotes: [
+            ...commandNotes,
+            "Using Codex App Server for interactive chat Steer and Stop controls.",
+          ],
+          commandArgs: appServerArgs,
+          env: redactEnvForLogs(env),
+          prompt,
+          agentInstructionStack: prompt,
+          promptMetrics,
+          loadedMcpServers,
+          loadedSkills,
+          realizedSkills: loadedSkills,
+          rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
+          browserMcp: rudderBrowserMcpRuntimeMetadata({
+            available: browserEnabled,
+            preflight: browserMcpPreflight,
+          }),
+          context,
+        });
+      }
       const appStartedAt = new Date();
       const appResult = await executeCodexAppServerChat({
         command: executableCommand,
@@ -867,7 +937,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         timeoutSec,
         onLog,
         onSpawn,
-        abortSignal: ctx.abortSignal,
+        abortSignal: ctx.abortSignal
+          ? AbortSignal.any([ctx.abortSignal, readinessLeaseAbortController.signal])
+          : readinessLeaseAbortController.signal,
         controlAttempt: ctx.controlAttempt,
         onProviderAuthFailure: persistAuthFailureGate,
       });
@@ -879,7 +951,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       );
       if (providerAuthFailure && readinessFingerprint) {
         await persistAuthFailureGate();
-      } else if (!providerAuthFailure && appResult.exitCode === 0 && readinessFingerprint) {
+      } else if (!providerAuthFailure && readinessFingerprint) {
         await clearAuthFailureGate();
       }
       const inlineVisuals = appResult.sessionId
@@ -953,6 +1025,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         clearSession: appResult.clearSession,
       };
     } finally {
+      await stopReadinessLeaseRenewal();
+      await clearAuthFailureGate();
       await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
     }
   }
@@ -1028,8 +1102,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     let providerAuthFailure: string | null = null;
     const attemptAbortController = new AbortController();
     const forwardExternalAbort = () => attemptAbortController.abort(ctx.abortSignal?.reason);
+    const forwardReadinessLeaseAbort = () => attemptAbortController.abort(readinessLeaseAbortController.signal.reason);
     if (ctx.abortSignal?.aborted) forwardExternalAbort();
     else ctx.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
+    if (readinessLeaseAbortController.signal.aborted) forwardReadinessLeaseAbort();
+    else readinessLeaseAbortController.signal.addEventListener("abort", forwardReadinessLeaseAbort, { once: true });
     const isBenignStderrLine = createCodexStderrLineFilter();
     const flushBufferedStderr = async (force: boolean) => {
       if (!stderrBuffer) return;
@@ -1078,6 +1155,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
     }).finally(() => {
       ctx.abortSignal?.removeEventListener("abort", forwardExternalAbort);
+      readinessLeaseAbortController.signal.removeEventListener("abort", forwardReadinessLeaseAbort);
     });
     await flushBufferedStderr(true);
     const cleanedStderr = stripCodexBenignStderr(proc.stderr)
@@ -1109,12 +1187,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   ): Promise<AgentRuntimeExecutionResult> => {
     if (attempt.providerAuthFailure && readinessFingerprint) {
       await persistAuthFailureGate();
-    } else if (
-      attempt.proc.exitCode === 0
-      && attempt.proc.signal === null
-      && !attempt.proc.timedOut
-      && readinessFingerprint
-    ) {
+    } else if (readinessFingerprint) {
       await clearAuthFailureGate();
     }
     if (attempt.proc.timedOut) {
@@ -1307,6 +1380,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     return await toResult(initial);
   } finally {
     await cliControlLease?.release().catch(() => undefined);
+    await stopReadinessLeaseRenewal();
+    await clearAuthFailureGate();
     await pruneProviderManagedMemoryState(effectiveCodexHome, onLog);
   }
 }
