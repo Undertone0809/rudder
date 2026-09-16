@@ -23,7 +23,7 @@
     "architecture:audit:test": "node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs",
     "architecture:audit:check": "node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref origin/main --fail-on-regression",
     "architecture:boundaries": "node scripts/architecture-boundaries.mjs",
-    "build": "pnpm -r build",
+    "build": "pnpm -r --filter \"!@rudderhq/desktop\" build && pnpm --filter @rudderhq/desktop build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest",
     "test:run": "pnpm --filter @rudderhq/identity-core build && node scripts/run-vitest-projects.mjs",
