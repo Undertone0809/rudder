@@ -6,6 +6,7 @@ members = [
   "crates/authority-core",
   "crates/auth-core",
   "crates/cli-mcp-contract-core",
+  "crates/d1-persistence",
   "crates/native-protocol",
   "crates/organization-mutation-core",
   "crates/project-goal-link-core",
