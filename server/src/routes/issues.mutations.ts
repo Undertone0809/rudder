@@ -27,9 +27,9 @@ import {
   requestService,
 } from "../services/index.js";
 import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import { resolveIssueReferenceInputs } from "../services/issue-references.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { buildCommentMentionWakeup } from "../services/issues.comments-attachments.js";
-import { resolveIssueReferenceInputs } from "../services/issue-references.js";
 import { publishLiveEvent } from "../services/live-events.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
