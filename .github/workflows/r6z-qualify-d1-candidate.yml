@@ -1,0 +1,123 @@
+name: Qualify exact D1 adapter candidate
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-qualify-d1-candidate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'codex/r6z-120-project-goal-link-core-luna-fast-20260914'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Install disposable PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
+          test -x "$bin_dir/initdb"
+          echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+      - name: Materialize only the reviewed immutable candidate
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const assert = require('assert/strict');
+            const {execFileSync} = require('child_process');
+            const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base = '770a2eac6776ef55d787b241bec4a4ef45b88be2';
+            const workflow = '.github/workflows/r6z-qualify-d1-candidate.yml';
+            assert.equal(git('rev-parse','HEAD'), context.payload.pull_request.head.sha);
+            assert.equal(git('rev-parse','HEAD^'), base);
+            assert.equal(git('diff','--name-only',base,'HEAD'), workflow);
+            assert.equal(git('rev-parse','HEAD:native/Cargo.lock'), '78af510da1b9e835fff620e7050798bd1d80dca0');
+            const files = {
+              'native/Cargo.toml': '2680fc3c41944ef041b8859cdc7f427dc6142b40',
+              'native/crates/d1-persistence/Cargo.toml': '80a7c2999f1795f61b121bc3edd2989e9afde606',
+              'native/crates/d1-persistence/src/branding.rs': '0db0c16cb2c7bdbde455a2dda27a775aeea2cd0d',
+              'native/crates/d1-persistence/src/lib.rs': 'd0231e238c97cdcd3f6e613792aa8bd6ba42cb92',
+              'native/crates/d1-persistence/src/links.rs': 'ee71599aab9eb5c893e1d1ea81b4bfc3436d0ab2',
+              'native/crates/d1-persistence/src/transaction.rs': '5d2cdd49ac8af9d31d70aced1e5bcef1418b37fe',
+              'native/crates/d1-persistence/tests/postgres.rs': 'e1f7ab346b5d024d8f8ad27d4e18390806a0796d',
+              'native/crates/d1-persistence/tests/support/mod.rs': 'fc80b22ee76dc950ac2b9a70e2245b2247282445'
+            };
+            for (const [file,sha] of Object.entries(files)) {
+              const {data} = await github.rest.git.getBlob({...context.repo,file_sha:sha});
+              assert.equal(data.sha,sha);
+              assert.equal(data.encoding,'base64');
+              fs.mkdirSync(path.dirname(file),{recursive:true});
+              fs.writeFileSync(file,Buffer.from(data.content,'base64'));
+              assert.equal(git('hash-object',file),sha);
+            }
+            const lock = 'native/Cargo.lock';
+            const content = fs.readFileSync(lock,'utf8');
+            const anchor = '[[package]]\nname = "rudder-migration-core"\n';
+            assert.equal(content.split(anchor).length,2);
+            const addition = '[[package]]\nname = "rudder-d1-persistence"\nversion = "0.7.21"\ndependencies = [\n "rudder-organization-mutation-core",\n "rudder-project-goal-link-core",\n "serde",\n "serde_json",\n "sha2",\n "sqlx",\n "tempfile",\n "thiserror 2.0.20",\n "tokio",\n]\n\n';
+            fs.writeFileSync(lock,content.replace(anchor,addition+anchor));
+            assert.equal(git('hash-object',lock),'481a823f772652e681b9e17af5ac89f0d7e8c7da');
+            git('add','--',lock,...Object.keys(files));
+            git('rm','--cached','--',workflow);
+            fs.unlinkSync(workflow);
+            git('diff','--cached','--check');
+            assert.deepEqual(git('diff','--cached','--name-only',base).split('\n').sort(),[lock,...Object.keys(files)].sort());
+            core.exportVariable('R6Z_CANDIDATE_TREE',git('write-tree'));
+      - name: Locked native formatting, lint, and real PostgreSQL tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path native/Cargo.toml --all -- --check
+          cargo clippy --manifest-path native/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path native/Cargo.toml --locked --workspace -- --test-threads=1
+          git diff --exit-code
+          test "$(git write-tree)" = "$R6Z_CANDIDATE_TREE"
+      - name: Publish only the verified Git objects
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const assert = require('assert/strict');
+            const {execFileSync} = require('child_process');
+            const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim();
+            assert.equal(git('write-tree'),process.env.R6Z_CANDIDATE_TREE);
+            const {data:blob} = await github.rest.git.createBlob({...context.repo,content:fs.readFileSync('native/Cargo.lock','utf8'),encoding:'utf-8'});
+            assert.equal(blob.sha,'481a823f772652e681b9e17af5ac89f0d7e8c7da');
+            const {data:tree} = await github.rest.git.createTree({...context.repo,base_tree:'56a0eac3972803c060efcc1163f8f8ca5d2f3047',tree:[{path:'native/Cargo.lock',mode:'100644',type:'blob',sha:blob.sha}]});
+            assert.equal(tree.sha,process.env.R6Z_CANDIDATE_TREE);
+            core.info(`QUALIFIED_TREE=${tree.sha}`);
+            await core.summary.addHeading('D1 native candidate qualification').addRaw(`Tree: ${tree.sha}\n\nLocked native fmt, Clippy, workspace tests passed. No branch was advanced. This is not public writer acceptance.\n`).write();
+
+  baseline-diagnostics:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data} = await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:104826201342});
+            const text = typeof data === 'string' ? data : Buffer.from(data).toString('utf8');
+            const lines = text.replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const selected = new Set();
+            for (let i=0;i<lines.length;i++) {
+              if (/FAIL |Failed Suites|Failed Tests|AssertionError|Test Files|Tests  |Unhandled Error|Error:/.test(lines[i])) {
+                for (let j=Math.max(0,i-2);j<Math.min(lines.length,i+16);j++) selected.add(j);
+              }
+            }
+            for (const index of [...selected].sort((a,b)=>a-b).slice(-220)) core.info(lines[index]);
