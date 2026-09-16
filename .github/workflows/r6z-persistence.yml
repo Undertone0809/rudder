@@ -1,0 +1,106 @@
+name: R6Z persistence verification
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - packages/db/**
+      - scripts/rust-d1-*
+      - .github/workflows/r6z-persistence.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r6z-persistence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  source:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record exact public source for reproducible local validation
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          mkdir -p "$RUNNER_TEMP/r6z-source"
+          git rev-parse HEAD > "$RUNNER_TEMP/r6z-source/source-sha.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/r6z-source/source-tree-sha.txt"
+          git ls-tree -r HEAD > "$RUNNER_TEMP/r6z-source/source-tree.entries"
+          git diff --binary 3e8f300f52bbe41510d24321e9abf736d64f736c HEAD -- \
+            . ':!**/.env*' ':!.env*' ':!**/.npmrc' ':!**/.netrc' \
+            ':!**/auth.json' ':!**/credentials*' ':!**/*.pem' ':!**/*.key' \
+            > "$RUNNER_TEMP/r6z-source/continuation.patch"
+          cd "$RUNNER_TEMP/r6z-source"
+          sha256sum continuation.patch source-*.txt source-tree.entries > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: r6z-exact-source-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/r6z-source/
+          retention-days: 1
+          if-no-files-found: error
+
+  native:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - name: Install disposable PostgreSQL test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
+          test -x "$bin_dir/initdb"
+          echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+      - run: cargo fmt --manifest-path native/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings
+      - run: cargo test --manifest-path native/Cargo.toml --workspace -- --test-threads=1
+
+  node:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        command: ['pnpm lint', 'pnpm -r typecheck', 'pnpm test:run --maxWorkers=2', 'pnpm build']
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: '1'
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: corepack enable && corepack prepare pnpm@9.15.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+        if: contains(matrix.command, 'test:run')
+      - name: Stage native binaries for Node integration tests
+        if: contains(matrix.command, 'test:run')
+        run: pnpm native:build
+      - name: Required baseline command
+        run: ${{ matrix.command }}
