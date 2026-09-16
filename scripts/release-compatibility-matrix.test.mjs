@@ -1,11 +1,30 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   buildMigrationManifest,
   migrationCompatibilityMatrix,
+  readFixtureManifest,
   runCompatibilityPreflight,
   validateCompatibilityMatrix,
 } from "./release-compatibility-matrix.mjs";
+
+
+const repoRoot = fileURLToPath(new URL("../", import.meta.url));
+const preD1SchemaRef = "81cff2958923cb9009b23a457cd1b9bfcc9d4b69";
+let preD1Schema;
+
+// Retained declarations shared this candidate schema, not the moving worktree.
+// Released upgrade fixtures still load their own separately pinned Git sources.
+function preD1CompatibilityPreflight({ candidateVersion, channel }) {
+  preD1Schema ??= readFixtureManifest(repoRoot, { version: "pre-D1", ref: preD1SchemaRef });
+  return validateCompatibilityMatrix({
+    candidateManifest: preD1Schema,
+    candidateVersion,
+    channel,
+    loadFixture: (fixture) => readFixtureManifest(repoRoot, fixture),
+  });
+}
 
 function journal(entries) {
   return JSON.stringify({
@@ -35,8 +54,8 @@ function manifest(tags, sqlByTag, label) {
 }
 
 describe("release migration compatibility matrix", () => {
-  it("accepts the checked-in 0.7.21 candidate against the previous stable fixtures", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.21 candidate against the previous stable fixtures", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.21-canary.0",
       channel: "canary",
     });
@@ -55,8 +74,8 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("accepts the checked-in 0.7.20 candidate against the previous stable fixture", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.20 candidate against the previous stable fixture", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.20-canary.0",
       channel: "canary",
     });
@@ -74,8 +93,8 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("accepts the checked-in 0.7.19 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.19 candidate against immutable release fixtures", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.19",
       channel: "stable",
     });
@@ -92,8 +111,8 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("accepts the checked-in 0.7.18 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.18 candidate against immutable release fixtures", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.18",
       channel: "stable",
     });
@@ -110,8 +129,8 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("accepts the checked-in 0.7.16 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.16 candidate against immutable release fixtures", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.16",
       channel: "stable",
     });
@@ -135,8 +154,8 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("accepts the checked-in 0.7.15 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.15 candidate against immutable release fixtures", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.15",
       channel: "stable",
     });
@@ -156,8 +175,8 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("accepts the checked-in 0.7.14 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.14 candidate against immutable release fixtures", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.14",
       channel: "stable",
     });
@@ -176,8 +195,8 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("accepts the checked-in 0.7.13 candidate against immutable release fixtures", () => {
-    const result = runCompatibilityPreflight({
+  it("accepts the frozen pre-D1 0.7.13 candidate against immutable release fixtures", () => {
+    const result = preD1CompatibilityPreflight({
       candidateVersion: "0.7.13",
       channel: "stable",
     });
@@ -330,4 +349,27 @@ describe("release migration compatibility matrix", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("has no old-version matrix declaration");
   });
+});
+
+describe("current D1 schema release identity", () => {
+  it.each([
+    ["0.7.22", "stable"],
+    ["0.7.22-canary.1", "canary"],
+  ])("accepts %s only with its declared schema and historical fixtures", (candidateVersion, channel) => {
+    const result = runCompatibilityPreflight({ candidateVersion, channel });
+    expect(result.candidateFingerprint).toBe("4315219366d44c9350db4b23977b5d86df80aee341a2253ae0fe7a5239c8cbd8");
+    expect(result.candidateMigrations).toBe(164);
+    expect(result.candidateSqlFiles).toBe(166);
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.21", "0.7.20", "0.7.19", "0.7.18", "0.7.16", "0.7.15",
+    ]);
+  }, 60_000);
+
+  it.each(["0.7.21", "0.7.20", "0.7.19", "0.7.18", "0.7.16", "0.7.15", "0.7.14", "0.7.13"])(
+    "rejects labeling the appended schema as historical %s",
+    (candidateVersion) => {
+      expect(() => runCompatibilityPreflight({ candidateVersion, channel: "stable" }))
+        .toThrow("but " + candidateVersion + " declares 085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db");
+    },
+  );
 });

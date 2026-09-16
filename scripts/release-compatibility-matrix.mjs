@@ -13,7 +13,7 @@ const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
   "0.7.22": {
-    candidateFingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+    candidateFingerprint: "4315219366d44c9350db4b23977b5d86df80aee341a2253ae0fe7a5239c8cbd8",
     fixtures: [
       {
         version: "0.7.21",
