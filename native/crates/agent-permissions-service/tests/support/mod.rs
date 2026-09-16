@@ -46,7 +46,9 @@ impl Database {
                 .arg("-l")
                 .arg(root.path().join("postgres.log"))
                 .arg("-o")
-                .arg(format!("-h 127.0.0.1 -p {port} -F"))
+                .arg(format!(
+                    "-h 127.0.0.1 -p {port} -F -c unix_socket_directories=\"\""
+                ))
                 .args(["-w", "start"]),
         );
         let pool = PgPoolOptions::new()
@@ -178,10 +180,17 @@ fn binary(name: &str) -> PathBuf {
 }
 
 fn checked(command: &mut Command) {
+    let arguments: Vec<_> = command.get_args().collect();
+    let log = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "-l")
+        .map(|pair| PathBuf::from(pair[1]));
     let output = command.output().unwrap();
     assert!(
         output.status.success(),
-        "disposable PostgreSQL failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "disposable PostgreSQL failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        log.and_then(|path| fs::read_to_string(path).ok())
+            .unwrap_or_default()
     );
 }
