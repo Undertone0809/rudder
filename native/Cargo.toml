@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/migration-service",
   "crates/agent-key-service",
   "crates/agent-contract-core",
   "crates/archive-core",

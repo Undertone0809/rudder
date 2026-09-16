@@ -1414,6 +1414,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-migration-service"
+version = "0.7.22"
+dependencies = [
+ "rudder-migration-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "rudder-native"
 version = "0.7.22"
 dependencies = [
