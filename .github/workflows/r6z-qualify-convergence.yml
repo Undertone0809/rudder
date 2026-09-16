@@ -1,0 +1,219 @@
+name: Qualify primary-thread convergence
+on:
+  pull_request:
+    paths:
+      - .github/workflows/r6z-qualify-convergence.yml
+permissions:
+  contents: read
+jobs:
+  qualify:
+    if: github.event.pull_request.number == 172 && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      RUDDER_ALLOW_LEGACY_EMBEDDED_POSTGRES: '1'
+      RUDDER_SKIP_POSTGRES_RUNTIME_AUTO_PREPARE: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - run: corepack enable && corepack prepare pnpm@9.15.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Add the immutable regressions to the actual continuation head
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base='0bdc34f3d0945298c8816d1d31d0f9a9a2f7b6da';
+            assert.equal(git('rev-parse','HEAD'),context.payload.pull_request.head.sha);
+            git('merge-base','--is-ancestor',base,'HEAD');
+            assert.equal(git('diff','--name-only',base,'HEAD'),'.github/workflows/r6z-qualify-convergence.yml');
+            const files=[
+              {file:'server/src/__tests__/plugin-native-binary-resolution.test.ts',sha:'12e076116cc19fef8d35da2610f53023ef6d81da',append:false},
+              {file:'native/crates/migration-service/tests/postgres.rs',sha:'08fbeab639823615e34189c17015a998c4997b27',append:true}
+            ];
+            assert.equal(git('hash-object',files[1].file),'e409bb1833aaffdc6abe86a68fe7501b9be16ecf');
+            for(const {file,sha,append} of files) {
+              const {data}=await github.rest.git.getBlob({...context.repo,file_sha:sha});
+              assert.equal(data.sha,sha);assert.equal(data.encoding,'base64');
+              const bytes=Buffer.from(data.content,'base64');
+              if(append) fs.appendFileSync(file,bytes); else fs.writeFileSync(file,bytes);
+            }
+      - name: Reproduce exactly the two release discovery failures
+        shell: bash
+        run: |
+          set +e
+          pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/plugin-native-binary-resolution.test.ts --reporter=json --outputFile="$RUNNER_TEMP/plugin-red.json"
+          code=$?
+          set -e
+          test "$code" -ne 0
+          node --input-type=module - "$RUNNER_TEMP/plugin-red.json" <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const result=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+          assert.equal(result.numTotalTests,8);
+          assert.equal(result.numFailedTests,2);
+          assert.deepEqual(result.testResults.flatMap(r=>r.assertionResults).filter(r=>r.status==='failed').map(r=>r.title).sort(),[
+            'finds the host release produced by native:build without a debug artifact',
+            'finds an explicitly targeted native release'
+          ].sort());
+          NODE
+      - name: Install the isolated native PostgreSQL runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          bin_dir="$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1 | xargs dirname)"
+          test -x "$bin_dir/initdb" && test -x "$bin_dir/pg_dump"
+          echo "RUDDER_POSTGRES_BIN_DIR=$bin_dir" >> "$GITHUB_ENV"
+      - name: Reproduce public-journal shadowing and unknown-history acceptance
+        shell: bash
+        run: |
+          set +e
+          cargo test --manifest-path native/Cargo.toml --locked -p rudder-migration-service --test postgres history_boundary_ -- --test-threads=1 > "$RUNNER_TEMP/migration-red.log" 2>&1
+          code=$?
+          set -e
+          tail -n 100 "$RUNNER_TEMP/migration-red.log"
+          test "$code" -ne 0
+          grep -F 'test result: FAILED. 1 passed; 5 failed;' "$RUNNER_TEMP/migration-red.log"
+      - name: Apply only the bounded source repairs
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+            function edit(file,before,after) {
+              const text=fs.readFileSync(file,'utf8');assert.equal(text.split(before).length,2,`anchor ${file}`);
+              fs.writeFileSync(file,text.replace(before,after));
+            }
+            const plugin='server/src/services/plugin-archive-native.ts';
+            assert.equal(git('hash-object',plugin),'b9ca607adcf527a0bffb247ecaa819f6d93d10a8');
+            const anchor='    path.resolve(moduleDir, "../../../../native/target/debug", binaryName),\n';
+            edit(plugin,anchor,anchor+[
+              '    path.resolve(moduleDir, "../../../native/target/release", binaryName),',
+              '    path.resolve(moduleDir, "../../../../native/target/release", binaryName),',
+              '    path.resolve(moduleDir, "../../../native/target", target, "release", binaryName),',
+              '    path.resolve(moduleDir, "../../../../native/target", target, "release", binaryName),',
+              ''
+            ].join('\n'));
+            const migration='native/crates/migration-service/src/lib.rs';
+            assert.equal(git('hash-object',migration),'a0892976042e9542f11a74e5ea9eedb7a7de8714');
+            edit(migration,'use rudder_migration_core::{MigrationEntry, MigrationManifest};','mod history;\n\nuse rudder_migration_core::{MigrationEntry, MigrationManifest};');
+            edit(migration,'    let mut pending = Vec::new();\n    for entry in &manifest.entries {','    history::validate_history_identifiers(manifest, &applied)?;\n    let mut pending = Vec::new();\n    for entry in &manifest.entries {');
+            const guard=[
+              '    // Preserve the existing journal location; creating a drizzle table here',
+              '    // would shadow an older public journal and replay completed migrations.',
+              '    let exists: bool = sqlx::query_scalar(',
+              '        "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name=$1 AND table_schema IN (\'drizzle\',\'public\'))",',
+              '    )',
+              '    .bind(HISTORY_TABLE)',
+              '    .fetch_one(&mut *connection)',
+              '    .await?;',
+              '    if exists {',
+              '        return Ok(());',
+              '    }',
+              ''
+            ].join('\n');
+            edit(migration,'async fn ensure_history(connection: &mut PgConnection) -> Result<(), sqlx::Error> {\n','async fn ensure_history(connection: &mut PgConnection) -> Result<(), sqlx::Error> {\n'+guard);
+            const {data}=await github.rest.git.getBlob({...context.repo,file_sha:'5f93b509715000c615155de9e078f06b36dc3f3f'});
+            assert.equal(data.sha,'5f93b509715000c615155de9e078f06b36dc3f3f');
+            fs.writeFileSync('native/crates/migration-service/src/history.rs',Buffer.from(data.content,'base64'));
+            edit('native/crates/migration-service/tests/postgres.rs','canonical_rust_run_is_visible_as_current_to_node_and_survives_restart','canonical_rust_run_is_current_to_rust_and_survives_restart');
+      - name: Verify locked native workspace and transaction regressions
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path native/Cargo.toml --all
+          cargo fmt --manifest-path native/Cargo.toml --all -- --check
+          cargo clippy --manifest-path native/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path native/Cargo.toml --locked -p rudder-migration-service -- --test-threads=1
+          cargo test --manifest-path native/Cargo.toml --locked --workspace -- --test-threads=1
+      - name: Build the same release artifacts used by the full Node baseline
+        run: pnpm native:build
+      - name: Verify actual required-native Plugin lifecycle and archive parity
+        run: |
+          env -u RUDDER_POSTGRES_BIN_DIR pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/plugin-native-binary-resolution.test.ts src/__tests__/rudder-plugins-lifecycle.test.ts src/services/rudder-plugins.test.ts --maxWorkers=1
+          pnpm lint
+          pnpm -r typecheck
+      - name: Prepare separately reviewable functional trees
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('fs'),assert=require('assert/strict');
+            const {execFileSync}=require('child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+            const base='0bdc34f3d0945298c8816d1d31d0f9a9a2f7b6da';
+            const workflow='.github/workflows/r6z-qualify-convergence.yml';
+            const groups=[
+              ['server/src/services/plugin-archive-native.ts','server/src/__tests__/plugin-native-binary-resolution.test.ts'],
+              ['native/crates/migration-service/src/lib.rs','native/crates/migration-service/src/history.rs','native/crates/migration-service/tests/postgres.rs']
+            ];
+            git('add','--',...groups.flat());git('rm','--cached','--',workflow);fs.unlinkSync(workflow);
+            git('diff','--cached','--check',base);git('diff','--exit-code');
+            assert.deepEqual(git('diff','--cached','--name-only',base).split('\n').sort(),groups.flat().sort());
+            let base_tree=git('rev-parse',`${base}^{tree}`);const trees=[];
+            for(const group of groups) {
+              const entries=[];
+              for(const file of group) {
+                const {data}=await github.rest.git.createBlob({...context.repo,content:fs.readFileSync(file,'utf8'),encoding:'utf-8'});
+                assert.equal(data.sha,git('hash-object',file));entries.push({path:file,mode:'100644',type:'blob',sha:data.sha});
+              }
+              const {data:tree}=await github.rest.git.createTree({...context.repo,base_tree,tree:entries});
+              base_tree=tree.sha;trees.push({tree:tree.sha,files:entries});
+            }
+            assert.equal(base_tree,git('write-tree'));
+            core.info('CONVERGENCE_TREES='+JSON.stringify(trees));
+            await core.summary.addHeading('Primary-thread convergence').addCodeBlock(JSON.stringify({base,trees,branchAdvanced:false},null,2)).write();
+      - name: Complete Node baseline without overriding its PostgreSQL provider
+        id: node_baseline
+        shell: bash
+        run: |
+          set +e
+          env -u RUDDER_POSTGRES_BIN_DIR pnpm test:run --maxWorkers=2 > "$RUNNER_TEMP/node-baseline.log" 2>&1
+          code=$?
+          set -e
+          grep -E 'FAIL |Failed Tests|Failed Suites|Error:|ERR_PNPM' "$RUNNER_TEMP/node-baseline.log" | tail -n 60 || true
+          tail -n 65 "$RUNNER_TEMP/node-baseline.log"
+          exit "$code"
+      - name: Complete root and Desktop build
+        if: ${{ !cancelled() && steps.node_baseline.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          set +e
+          env -u RUDDER_POSTGRES_BIN_DIR pnpm build > "$RUNNER_TEMP/build-baseline.log" 2>&1
+          code=$?
+          set -e
+          tail -n 80 "$RUNNER_TEMP/build-baseline.log"
+          exit "$code"
+  diagnostics:
+    needs: qualify
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {data:jobs}=await github.rest.actions.listJobsForWorkflowRun({...context.repo,run_id:context.runId});
+            const job=jobs.jobs.find(j=>j.name==='qualify');
+            const {data}=await github.rest.actions.downloadJobLogsForWorkflowRun({...context.repo,job_id:job.id});
+            const lines=(typeof data==='string'?data:Buffer.from(data).toString('utf8')).replace(/\u001b\[[0-9;]*m/g,'').split('\n');
+            const selected=new Set();
+            for(let i=0;i<lines.length;i++) if(/error\[|[Ee]rror:|AssertionError|FAILED|FAIL |CONVERGENCE_TREES=/.test(lines[i]) && lines[i].length<6000) {
+              for(let j=Math.max(0,i-1);j<Math.min(lines.length,i+16);j++) selected.add(j);
+            }
+            for(const i of [...selected].sort((a,b)=>a-b).slice(-240)) core.info(lines[i].slice(0,6000));
+            core.info('Qualification: '+job.conclusion);
