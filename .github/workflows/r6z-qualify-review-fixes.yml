@@ -39,7 +39,7 @@ jobs:
             const base='47ae2915597afa601b2ffc26d3d36f40e731754a';
             const workflow='.github/workflows/r6z-qualify-review-fixes.yml';
             assert.equal(git('rev-parse','HEAD'),context.payload.pull_request.head.sha);
-            assert.equal(git('rev-parse','HEAD^'),'da4539f9eb61c94ca1335169713ce138788fd8bb');
+            assert.equal(git('rev-parse','HEAD^'),'219e5a419e93940d34c8d5a4874fd43a1682b143');
             assert.deepEqual(git('diff','--name-only',base,'HEAD').split('\n').sort(),[
               '.github/workflows/r6z-baseline-diagnostics.yml',
               '.github/workflows/r6z-qualify-integrated-baseline.yml',workflow
@@ -48,7 +48,13 @@ jobs:
             assert.equal(git('write-tree'),'ccb123895d7d7bc05c21941d350139734ec2d806');
             const file='native/crates/d1-persistence/tests/postgres.rs';
             assert.equal(git('hash-object',file),'0d8433b65e156c91d078ab606296da306af8d3eb');
-            for(const sha of ['b44ea4183b49997a308309751f7c9593b89f3d02','cec278836f765c83c78ecf880623537ae8276ee3']) {
+            const parts=[
+              '785a6a5430d2c7da68cac44ddf185b57993573d6',
+              'e024b4d3aa3a1c997409c0fe679dd7b892738e30',
+              '05cf8f9c5e290d617da7448af5375d73c037afe3',
+              'cec278836f765c83c78ecf880623537ae8276ee3'
+            ];
+            for(const sha of parts) {
               const {data}=await github.rest.git.getBlob({...context.repo,file_sha:sha});
               assert.equal(data.sha,sha);
               assert.equal(data.encoding,'base64');
