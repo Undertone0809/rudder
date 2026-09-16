@@ -208,14 +208,22 @@ pub(crate) async fn lock(
         return Err(StoreError::NotOwned);
     }
     if actor.agent {
-        let role: Option<String> = sqlx::query_scalar(
-            "SELECT role FROM agents WHERE id=$1::uuid AND org_id=$2::uuid FOR UPDATE",
+        let agent = sqlx::query(
+            "SELECT role,status FROM agents WHERE id=$1::uuid AND org_id=$2::uuid FOR UPDATE",
         )
         .bind(&actor.principal_id)
         .bind(&meta.org)
         .fetch_optional(&mut **tx)
-        .await?;
-        if role.as_deref() != Some("ceo") {
+        .await?
+        .ok_or(StoreError::Unauthorized)?;
+        // Match Node authentication even when authorization preceded a status change.
+        // Pausing work does not revoke an otherwise valid Agent identity.
+        if agent.try_get::<String, _>("role")? != "ceo"
+            || matches!(
+                agent.try_get::<String, _>("status")?.as_str(),
+                "terminated" | "pending_approval"
+            )
+        {
             return Err(StoreError::Unauthorized);
         }
     }

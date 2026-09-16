@@ -583,3 +583,115 @@ async fn unsupported_formats_and_inconsistent_original_results_fail_closed() {
     assert_eq!(db.name().await, "Changed");
     assert_eq!(db.counts().await, (1, 3, 3));
 }
+
+fn ceo_branding(key: &str, version: u64) -> OrganizationBrandingCommand {
+    OrganizationBrandingCommand::ceo_agent(ORG, CEO, key, version, 7)
+        .with_name(Some("CEO change".into()))
+}
+
+fn ceo_link(key: &str, version: u64) -> LinkRequest {
+    LinkRequest {
+        command: ProjectGoalLinkCommand::ceo_agent(
+            ORG,
+            CEO,
+            PROJECT,
+            GOAL,
+            Operation::Attach,
+            version,
+            7,
+            key,
+        ),
+        primary_goal_after: Some(GOAL.into()),
+    }
+}
+
+async fn assert_inactive_ceo_is_rejected(status: &str) {
+    let db = Database::start().await;
+    let store = MutationStore::new(db.pool.clone());
+    // Capture the trusted context before revocation to exercise the race window.
+    let auth = AuthorizedActor::agent_after_authorization(ORG, CEO);
+    sqlx::query("UPDATE agents SET status=$2 WHERE id=$1::uuid")
+        .bind(CEO)
+        .bind(status)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .branding(&auth, ceo_branding("inactive-brand", 0))
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    assert!(matches!(
+        store
+            .project_goal(&auth, ceo_link("inactive-link", 0))
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    assert_eq!(db.counts().await, (0, 0, 0));
+    assert_eq!(db.name().await, "Original");
+}
+
+#[tokio::test]
+async fn actor_status_terminated_ceo_cannot_use_previously_authorized_commands() {
+    assert_inactive_ceo_is_rejected("terminated").await;
+}
+
+#[tokio::test]
+async fn actor_status_pending_approval_ceo_cannot_use_previously_authorized_commands() {
+    assert_inactive_ceo_is_rejected("pending_approval").await;
+}
+
+#[tokio::test]
+async fn actor_status_termination_blocks_original_receipt_replay() {
+    let db = Database::start().await;
+    let store = MutationStore::new(db.pool.clone());
+    let auth = AuthorizedActor::agent_after_authorization(ORG, CEO);
+    store
+        .branding(&auth, ceo_branding("before-termination", 0))
+        .await
+        .unwrap();
+    store
+        .project_goal(&auth, ceo_link("before-termination-link", 1))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET status='terminated' WHERE id=$1::uuid")
+        .bind(CEO)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .branding(&auth, ceo_branding("before-termination", 0))
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    assert!(matches!(
+        store
+            .project_goal(&auth, ceo_link("before-termination-link", 1))
+            .await,
+        Err(StoreError::Unauthorized)
+    ));
+    assert_eq!(db.counts().await, (2, 2, 2));
+}
+
+#[tokio::test]
+async fn actor_status_paused_ceo_preserves_existing_authentication_semantics() {
+    let db = Database::start().await;
+    let store = MutationStore::new(db.pool.clone());
+    let auth = AuthorizedActor::agent_after_authorization(ORG, CEO);
+    sqlx::query("UPDATE agents SET status='paused' WHERE id=$1::uuid")
+        .bind(CEO)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    store
+        .branding(&auth, ceo_branding("paused-brand", 0))
+        .await
+        .unwrap();
+    store
+        .project_goal(&auth, ceo_link("paused-link", 1))
+        .await
+        .unwrap();
+    assert_eq!(db.counts().await, (2, 2, 2));
+}
