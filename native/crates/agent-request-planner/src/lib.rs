@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use thiserror::Error;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 pub const CORE_RESPONSE_LIMIT: usize = 1_000_000;
 pub const BROWSER_RESPONSE_LIMIT: usize = 16_000_000;
@@ -98,6 +99,7 @@ pub fn plan_request(
     reject_reserved(&input)?;
     let schema = &capability["mcp"]["inputSchema"];
     validate_schema(id, &Value::Object(input.clone()), schema, "arguments")?;
+    reject_unmaterialized_images(id, &input)?;
     validate_browser_action(id, &input)?;
 
     let context = RequiredContext {
@@ -394,6 +396,12 @@ fn map_request(
                     positive(input.get("limitBytes"), 256000).to_string(),
                 ),
             ]);
+            if input.contains_key("maxChars") {
+                query.push((
+                    "maxChars".into(),
+                    positive(input.get("maxChars"), 12000).to_string(),
+                ));
+            }
             (
                 HttpMethod::Get,
                 format!("/api/run-intelligence/runs/{}/log", encode(&s("run")?)),
@@ -568,6 +576,18 @@ fn reject_reserved(input: &Map<String, Value>) -> Result<(), PlanError> {
     }
 }
 
+fn reject_unmaterialized_images(id: &str, input: &Map<String, Value>) -> Result<(), PlanError> {
+    if matches!(id, "issue.comment" | "issue.done")
+        && input
+            .get("images")
+            .and_then(Value::as_array)
+            .is_some_and(|images| !images.is_empty())
+    {
+        return invalid(id, "images require CLI attachment materialization");
+    }
+    Ok(())
+}
+
 fn validate_schema(id: &str, value: &Value, schema: &Value, at: &str) -> Result<(), PlanError> {
     if let Some(any) = schema.get("anyOf").and_then(Value::as_array)
         && !any
@@ -608,6 +628,15 @@ fn validate_schema(id: &str, value: &Value, schema: &Value, at: &str) -> Result<
         {
             return invalid(id, &format!("{at} has invalid length"));
         }
+        if schema
+            .get("format")
+            .and_then(Value::as_str)
+            .is_some_and(|format| {
+                format == "date-time" && OffsetDateTime::parse(text, &Rfc3339).is_err()
+            })
+        {
+            return invalid(id, &format!("{at} has invalid format"));
+        }
     }
     if let Some(n) = value.as_f64()
         && (!n.is_finite()
@@ -630,6 +659,12 @@ fn validate_schema(id: &str, value: &Value, schema: &Value, at: &str) -> Result<
         }
     }
     if let Some(object) = value.as_object() {
+        if schema["minProperties"]
+            .as_u64()
+            .is_some_and(|minimum| (object.len() as u64) < minimum)
+        {
+            return invalid(id, &format!("{at} has too few properties"));
+        }
         let properties = schema.get("properties").and_then(Value::as_object);
         if let Some(required) = schema.get("required").and_then(Value::as_array) {
             for key in required.iter().filter_map(Value::as_str) {
@@ -714,13 +749,25 @@ fn validate_browser_action(id: &str, input: &Map<String, Value>) -> Result<(), P
 }
 fn require_context(c: &RequiredContext, r: &ManagedRuntimeIdentity) -> Result<(), PlanError> {
     let mut missing = Vec::new();
-    if c.organization && r.organization_id.as_deref().is_none_or(str::is_empty) {
+    if c.organization
+        && r.organization_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
         missing.push("organization")
     };
-    if c.agent && r.agent_id.as_deref().is_none_or(str::is_empty) {
+    if c.agent
+        && r.agent_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
         missing.push("agent")
     };
-    if c.run && r.run_id.as_deref().is_none_or(str::is_empty) {
+    if c.run
+        && r.run_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
         missing.push("run")
     };
     if missing.is_empty() {

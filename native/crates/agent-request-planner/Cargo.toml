@@ -8,4 +8,5 @@ publish.workspace = true
 rudder-agent-contract-core = { path = "../agent-contract-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+time = { version = "0.3", features = ["parsing"] }
 thiserror = "2.0"

@@ -28,6 +28,9 @@ fn sample(schema: &Value) -> Value {
     {
         return value.clone();
     }
+    if schema.get("format").and_then(Value::as_str) == Some("date-time") {
+        return json!("2026-09-18T00:00:00Z");
+    }
     let ty = schema
         .get("type")
         .and_then(Value::as_str)
@@ -52,6 +55,21 @@ fn sample(schema: &Value) -> Value {
             {
                 for key in required.iter().filter_map(Value::as_str) {
                     result.insert(key.into(), sample(&schema["properties"][key]));
+                }
+            }
+            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                let minimum = schema
+                    .get("minProperties")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+                for (key, property) in properties {
+                    if result.len() >= minimum {
+                        break;
+                    }
+                    if result.contains_key(key) {
+                        continue;
+                    }
+                    result.insert(key.clone(), sample(property));
                 }
             }
             Value::Object(result)
@@ -163,6 +181,25 @@ fn exact_defaults_projection_and_unicode_encoding_match_node_planner() {
         checkout.body,
         Some(json!({"agentId":"agent-1","expectedStatuses":["todo","backlog","blocked"]}))
     );
+
+    let PlanOutcome::Direct(log) = plan_request(
+        "runs.log",
+        json!({"run":"run /雪","offset":64,"limitBytes":4096,"maxChars":321}),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(log.method, HttpMethod::Get);
+    assert_eq!(
+        log.path,
+        "/api/run-intelligence/runs/run%20%2F%E9%9B%AA/log"
+    );
+    assert_eq!(
+        query_string(&log.query),
+        "offset=64&limitBytes=4096&maxChars=321"
+    );
+    assert_eq!(log.body, None);
 }
 
 #[test]
@@ -269,6 +306,105 @@ fn rejects_reserved_unknown_type_null_missing_and_invalid_browser_actions() {
             &runtime(true)
         ),
         Err(PlanError::InvalidArgument { .. })
+    ));
+}
+
+#[test]
+fn preserves_issue_request_shapes_and_rejects_unmaterialized_images() {
+    let PlanOutcome::Direct(comment) = plan_request(
+        "issue.comment",
+        json!({"issue":"ISS/1","body":"Progress","reopen":true}),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(comment.method, HttpMethod::Post);
+    assert_eq!(comment.path, "/api/issues/ISS%2F1/comments");
+    assert!(comment.query.is_empty());
+    assert_eq!(comment.body, Some(json!({"body":"Progress","reopen":true})));
+
+    let PlanOutcome::Direct(done) = plan_request(
+        "issue.done",
+        json!({"issue":"ISS/1","comment":"Completed"}),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(done.method, HttpMethod::Patch);
+    assert_eq!(done.path, "/api/issues/ISS%2F1");
+    assert!(done.query.is_empty());
+    assert_eq!(
+        done.body,
+        Some(json!({"status":"done","comment":"Completed"}))
+    );
+
+    for capability in ["issue.comment", "issue.done"] {
+        assert!(matches!(
+            plan_request(
+                capability,
+                json!({"issue":"ISS/1","body":"Completed","images":["/tmp/proof.png"]}),
+                &runtime(false),
+            ),
+            Err(PlanError::InvalidArgument { .. })
+        ));
+    }
+}
+
+#[test]
+fn validates_schema_min_properties_and_formats() {
+    let base = json!({
+        "goal": "goal-1",
+        "contractRevision": 1,
+        "rationale": "The evidence requires a contract update.",
+        "idempotencyKey": "change-1",
+    });
+
+    let mut empty_change = base.clone();
+    empty_change["afterContract"] = json!({});
+    assert!(matches!(
+        plan_request("goal.change.propose", empty_change, &runtime(false)),
+        Err(PlanError::InvalidArgument { .. })
+    ));
+
+    let mut invalid_deadline = base.clone();
+    invalid_deadline["afterContract"] = json!({"actionDeadline":"not-a-date"});
+    assert!(matches!(
+        plan_request("goal.change.propose", invalid_deadline, &runtime(false)),
+        Err(PlanError::InvalidArgument { .. })
+    ));
+
+    let mut valid_deadline = base;
+    valid_deadline["afterContract"] = json!({"actionDeadline":"2026-09-18T00:00:00Z"});
+    assert!(plan_request("goal.change.propose", valid_deadline, &runtime(false)).is_ok());
+}
+
+#[test]
+fn rejects_whitespace_only_runtime_identity() {
+    let mut whitespace_org = runtime(false);
+    whitespace_org.organization_id = Some(" \t\n".into());
+    assert!(matches!(
+        plan_request(
+            "organization.members.list",
+            json!({}),
+            &whitespace_org,
+        ),
+        Err(PlanError::MissingContext(context)) if context == "organization"
+    ));
+
+    let mut whitespace_agent = runtime(false);
+    whitespace_agent.agent_id = Some(" \t\n".into());
+    assert!(matches!(
+        plan_request("goal.context", json!({"goal":"goal-1"}), &whitespace_agent),
+        Err(PlanError::MissingContext(context)) if context == "agent"
+    ));
+
+    let mut whitespace_run = runtime(true);
+    whitespace_run.run_id = Some(" \t\n".into());
+    assert!(matches!(
+        plan_request("browser.tabs", json!({}), &whitespace_run),
+        Err(PlanError::MissingContext(context)) if context == "run"
     ));
 }
 
