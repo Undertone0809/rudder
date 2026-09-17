@@ -391,7 +391,7 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   return relativePath === "/messenger";
 }
 
-export function shouldAutoCollapseAgentContextSidebar({
+export function shouldAutoCollapseContextSidebar({
   isMobile,
   relativePath,
   sidePanelOpen,
@@ -405,7 +405,10 @@ export function shouldAutoCollapseAgentContextSidebar({
   return !isMobile
     && sidePanelOpen
     && sidePanelContextReady
-    && /^\/agents\/[^/]+(?:\/|$)/.test(relativePath);
+    && (
+      /^\/agents\/[^/]+(?:\/|$)/.test(relativePath)
+      || /^\/messenger(?:\/|$)/.test(relativePath)
+    );
 }
 
 function decodeSidePanelRouteSegment(segment: string): string {
@@ -1058,13 +1061,13 @@ export function Layout() {
   );
   const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
-  const autoCollapseAgentContextSidebar = shouldAutoCollapseAgentContextSidebar({
+  const autoCollapseContextSidebar = shouldAutoCollapseContextSidebar({
     isMobile,
     relativePath: relativeBoardPath,
     sidePanelOpen,
     sidePanelContextReady,
   });
-  const contextSidebarVisible = sidebarOpen && !autoCollapseAgentContextSidebar;
+  const contextSidebarVisible = sidebarOpen && !autoCollapseContextSidebar;
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1680,7 +1683,7 @@ export function Layout() {
                       <>
                         <div
                           data-testid="workspace-context-card"
-                          data-auto-collapsed={autoCollapseAgentContextSidebar || undefined}
+                          data-auto-collapsed={autoCollapseContextSidebar || undefined}
                           aria-hidden={!contextSidebarVisible}
                           inert={contextSidebarVisible ? undefined : true}
                           className={cn(
