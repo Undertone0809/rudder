@@ -521,8 +521,8 @@ export function PrimaryRail({
         desktopRailPlatform === "windows"
           ? "ml-1 mr-1 w-[52px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:52px]"
           : isDesktopShell
-            ? "ml-3 mr-1 w-[66px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:66px]"
-            : "ml-2 mr-3 w-[66px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:66px]",
+            ? "ml-3 mr-1 w-[40px]"
+            : "ml-2 mr-3 w-[50px] px-5",
       )}
     >
       <div className="flex w-full flex-col items-center gap-4">

@@ -47,6 +47,7 @@ import {
 } from "../lib/settings-overlay-state";
 import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
 import { cn } from "../lib/utils";
+import { shouldAutoCollapseContextSidebar } from "../lib/workspace-shell-layout";
 import { ChatSidePanel } from "../pages/Chat.side-panel";
 import { NotFoundPage } from "../pages/NotFound";
 import { OrganizationWorkspaceFilesSidebar } from "../pages/organization-workspaces/OrganizationWorkspaceFilesSidebar";
@@ -65,6 +66,8 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./side-panel-resize-lifecycle";
+
+export { shouldAutoCollapseContextSidebar } from "../lib/workspace-shell-layout";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
@@ -389,26 +392,6 @@ export function shouldUseFramelessWorkspaceMain(relativePath: string): boolean {
   if (/^\/messenger\/chat(?:\/|$)/.test(relativePath)) return true;
   if (/^\/messenger\/(?:workbench|saved)(?:\/|$)/.test(relativePath)) return true;
   return relativePath === "/messenger";
-}
-
-export function shouldAutoCollapseContextSidebar({
-  isMobile,
-  relativePath,
-  sidePanelOpen,
-  sidePanelContextReady,
-}: {
-  isMobile: boolean;
-  relativePath: string;
-  sidePanelOpen: boolean;
-  sidePanelContextReady: boolean;
-}): boolean {
-  return !isMobile
-    && sidePanelOpen
-    && sidePanelContextReady
-    && (
-      /^\/agents\/[^/]+(?:\/|$)/.test(relativePath)
-      || /^\/messenger(?:\/|$)/.test(relativePath)
-    );
 }
 
 function decodeSidePanelRouteSegment(segment: string): string {
@@ -958,6 +941,7 @@ export function Layout() {
   const {
     contextKey: sidePanelContextKey,
     displayedContextHold,
+    hidePanel,
     open: sidePanelOpen,
   } = useSidePanel();
   const {
@@ -1068,6 +1052,10 @@ export function Layout() {
     sidePanelContextReady,
   });
   const contextSidebarVisible = sidebarOpen && !autoCollapseContextSidebar;
+  const openWorkspaceSidebar = useCallback(() => {
+    if (autoCollapseContextSidebar) hidePanel();
+    setSidebarOpen(true);
+  }, [autoCollapseContextSidebar, hidePanel, setSidebarOpen]);
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1690,7 +1678,7 @@ export function Layout() {
                             "box-border flex min-h-0 shrink-0 overflow-hidden",
                             "workspace-context-card",
                             !resizingColumn && "transition-[width,opacity,border-color] duration-200 ease-out motion-reduce:transition-none",
-                            sidebarOpen ? "opacity-100" : "pointer-events-none border-0 border-transparent opacity-0",
+                            contextSidebarVisible ? "opacity-100" : "pointer-events-none border-0 border-transparent opacity-0",
                           )}
                           style={{ width: contextSidebarVisible ? contextColumnWidth : 0 }}
                         >
@@ -1723,11 +1711,11 @@ export function Layout() {
                       </>
                     ) : null}
                     {showIntegratedShellSidebar
-                      && !sidebarOpen
+                      && (!sidebarOpen || autoCollapseContextSidebar)
                       && useFramelessWorkspaceMain
                       && !hasActiveChatConversation ? (
                       <CollapsedWorkspaceSidebarReveal
-                        onOpen={() => setSidebarOpen(true)}
+                        onOpen={openWorkspaceSidebar}
                         alwaysVisible={isChatRoute || isMessengerRoute}
                       />
                     ) : null}
