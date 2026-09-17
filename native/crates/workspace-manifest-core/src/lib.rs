@@ -416,8 +416,7 @@ fn normalized_windows_path(path: &Path) -> String {
 
 #[cfg(windows)]
 fn ensure_opened_file_within_root(file: &File, canonical_root: &Path) -> Result<(), ManifestError> {
-    let opened_path =
-        final_path_by_handle(file).map_err(|error| ManifestError::containment_unproven(error))?;
+    let opened_path = final_path_by_handle(file).map_err(ManifestError::containment_unproven)?;
     let root = normalized_windows_path(canonical_root);
     let opened = normalized_windows_path(&opened_path);
     if opened == root || opened.starts_with(&format!("{root}\\")) {
