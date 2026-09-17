@@ -171,7 +171,10 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
     firstStatus.boundingBox(),
     secondStatus.boundingBox(),
   ]);
+  const mobileCommentBox = await commentButton.boundingBox();
   expect(surfaceBox).not.toBeNull();
+  expect(mobileCommentBox).not.toBeNull();
+  expect(surfaceBox!.y + surfaceBox!.height).toBeLessThanOrEqual(mobileCommentBox!.y);
   for (const box of [firstBox, secondBox]) {
     expect(box).not.toBeNull();
     expect(box!.x).toBeGreaterThanOrEqual(surfaceBox!.x);

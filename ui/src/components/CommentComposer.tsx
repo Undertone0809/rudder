@@ -95,6 +95,16 @@ function AgentWakeDetailGroup({
 function AgentWakeStatus({ mentionedAgents, onToggle }: AgentWakeStatusProps) {
   const wakeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocusAgentId = useRef<string | null>(null);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const updateViewport = () => setIsNarrowViewport(mediaQuery.matches);
+    updateViewport();
+    mediaQuery.addEventListener?.("change", updateViewport);
+    return () => mediaQuery.removeEventListener?.("change", updateViewport);
+  }, []);
 
   useLayoutEffect(() => {
     const agentId = pendingFocusAgentId.current;
@@ -172,7 +182,7 @@ function AgentWakeStatus({ mentionedAgents, onToggle }: AgentWakeStatusProps) {
       <PopoverContent
         align="start"
         side="top"
-        sideOffset={8}
+        sideOffset={isNarrowViewport ? 52 : 8}
         collisionPadding={12}
         data-testid="comment-agent-wake-popover"
         className="w-[min(20rem,calc(100vw-2rem))] space-y-3 rounded-[var(--radius-md)] p-2 text-foreground"
