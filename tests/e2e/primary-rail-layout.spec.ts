@@ -70,7 +70,13 @@ test.describe("Primary rail layout", () => {
         expect(navBox).not.toBeNull();
         expect(railBox).not.toBeNull();
         expect(railBox!.width).toBe(platform.expectedRailWidth);
-        expect(navBox!.width).toBe(platform.expectedRailWidth + 10);
+        expect(navBox!.width).toBeGreaterThanOrEqual(platform.expectedRailWidth - 1);
+        expect(navBox!.width).toBeLessThanOrEqual(platform.expectedRailWidth);
+        const railOverflow = await rail.evaluate((element) => ({
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        }));
+        expect(railOverflow.scrollWidth).toBeLessThanOrEqual(railOverflow.clientWidth + 1);
         const contextCard = page.getByTestId("workspace-context-card");
         if (await contextCard.count() > 0) {
           const contextBox = await contextCard.boundingBox();

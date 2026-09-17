@@ -58,9 +58,20 @@ function stubDesktopShell() {
 
 let sidePanelControls: ReturnType<typeof useSidePanel> | null = null;
 
-function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePanelTarget) => void }) {
+function SidePanelProbe({
+  onBeforeOpen,
+  onCloseRequest,
+}: {
+  onBeforeOpen?: () => void;
+  onCloseRequest?: (target: SidePanelTarget) => void;
+}) {
   const sidePanel = useSidePanel();
   sidePanelControls = sidePanel;
+
+  useEffect(() => {
+    if (!onBeforeOpen) return undefined;
+    return sidePanel.registerBeforeOpen(onBeforeOpen);
+  }, [onBeforeOpen, sidePanel.registerBeforeOpen]);
 
   useEffect(() => {
     if (!onCloseRequest) return undefined;
@@ -152,7 +163,10 @@ function SidePanelProbe({ onCloseRequest }: { onCloseRequest?: (target: SidePane
   );
 }
 
-function renderSidePanelProvider(onCloseRequest?: (target: SidePanelTarget) => void) {
+function renderSidePanelProvider(
+  onCloseRequest?: (target: SidePanelTarget) => void,
+  onBeforeOpen?: () => void,
+) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -160,7 +174,7 @@ function renderSidePanelProvider(onCloseRequest?: (target: SidePanelTarget) => v
   act(() => {
     root.render(
       <SidePanelProvider>
-        <SidePanelProbe onCloseRequest={onCloseRequest} />
+        <SidePanelProbe onBeforeOpen={onBeforeOpen} onCloseRequest={onCloseRequest} />
       </SidePanelProvider>,
     );
   });
@@ -216,6 +230,21 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("true");
     expect(text(container, "active-key")).toBe("goal-chat:org-a:goal-1");
     expect(text(container, "tab-count")).toBe("1");
+  });
+
+  it("notifies registered listeners before opening a closed panel", () => {
+    const onBeforeOpen = vi.fn();
+    ({ container, root } = renderSidePanelProvider(undefined, onBeforeOpen));
+
+    act(() => sidePanelControls!.openTarget(issueTarget));
+    expect(onBeforeOpen).toHaveBeenCalledTimes(1);
+
+    act(() => sidePanelControls!.openTarget({ kind: "library_file", filePath: "docs/spec.md", label: "Spec" }));
+    expect(onBeforeOpen).toHaveBeenCalledTimes(1);
+
+    act(() => sidePanelControls!.hidePanel());
+    act(() => sidePanelControls!.openEmpty());
+    expect(onBeforeOpen).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a Run Debug Chat in the mobile Side Panel without changing routes", () => {

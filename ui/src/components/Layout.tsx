@@ -594,6 +594,7 @@ function DesktopSidePanelSlot({
   autoCollapseContextSidebarOnOpen,
   contextReady,
   contextColumnWidth,
+  contextSidebarVisible,
   expanded,
   onExpandedChange,
   selectedOrganizationId,
@@ -603,6 +604,7 @@ function DesktopSidePanelSlot({
   autoCollapseContextSidebarOnOpen: boolean;
   contextReady: boolean;
   contextColumnWidth: number;
+  contextSidebarVisible: boolean;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   selectedOrganizationId: string | null | undefined;
@@ -638,10 +640,9 @@ function DesktopSidePanelSlot({
 
     const contextCardWidth = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']")?.getBoundingClientRect().width ?? 0;
     const contextResizerWidth = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']")?.getBoundingClientRect().width ?? 0;
-    const contextAlreadyCollapsed = sidePanel.open && autoCollapseContextSidebar;
     autoCollapseWorkspaceWidthRef.current = {
       key: autoCollapseContextSidebarKey,
-      width: measuredWorkspaceWidth + (contextAlreadyCollapsed
+      width: measuredWorkspaceWidth + (!contextSidebarVisible
         ? 0
         : Math.max(contextCardWidth, contextColumnWidth) + Math.max(contextResizerWidth, 9)),
     };
@@ -650,6 +651,7 @@ function DesktopSidePanelSlot({
     autoCollapseContextSidebarKey,
     autoCollapseContextSidebarOnOpen,
     contextColumnWidth,
+    contextSidebarVisible,
     sidePanel.open,
   ]);
 
@@ -1870,6 +1872,7 @@ export function Layout() {
                         autoCollapseContextSidebarOnOpen={autoCollapseContextSidebarOnOpen}
                         contextReady={sidePanelContextReady}
                         contextColumnWidth={contextColumnWidth}
+                        contextSidebarVisible={contextSidebarVisible}
                         expanded={desktopSidePanelExpanded}
                         selectedOrganizationId={sidePanelOrganizationId}
                         onExpandedChange={setDesktopSidePanelExpanded}

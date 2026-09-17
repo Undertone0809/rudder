@@ -36,21 +36,41 @@ test("collapses the Messenger List with Side Panel and restores it after close",
   expect(initialContextBox!.width).toBeGreaterThan(120);
   expect(initialMessengerListBox!.width).toBeGreaterThan(120);
 
+  await messengerList.getByRole("button", { name: "Collapse workspace sidebar" }).click();
+  await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
+
   await page.getByTestId("side-panel-hover-edge").hover();
   await page.getByTestId("global-side-panel-trigger").click();
 
   const sidePanel = page.getByTestId("chat-side-panel");
   await expect(sidePanel).toBeVisible();
   await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
-  await expect(page.getByTestId("workspace-sidebar-reopen-button")).toBeVisible();
+  const manualRestoreButton = page.getByTestId("workspace-sidebar-reopen-button");
+  await expect(manualRestoreButton).toBeVisible();
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
   await expect.poll(async () => (await contextCard.boundingBox())?.width ?? 0).toBeLessThanOrEqual(2);
+  await expect.poll(async () => {
+    const box = await sidePanel.boundingBox();
+    return box ? box.x + box.width : 0;
+  }).toBeLessThanOrEqual(1440);
   await expect.poll(async () => page.evaluate(() => {
     const card = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']");
     if (!card) return null;
     const style = getComputedStyle(card);
     return `${style.borderLeftWidth}:${style.borderRightWidth}`;
   })).toBe("0px:0px");
+
+  await manualRestoreButton.click();
+  await expect(sidePanel).toBeHidden();
+  await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
+
+  await page.getByTestId("side-panel-hover-edge").hover();
+  await page.getByTestId("global-side-panel-trigger").click();
+  await expect(sidePanel).toBeVisible();
+  await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 
   await page.screenshot({
     path: testInfo.outputPath("messenger-side-panel-collapsed-list.png"),
@@ -125,6 +145,7 @@ test("restores the Messenger List from the active chat header", async ({ page },
       contextWidth: number;
       sidePanelWidth: number;
       mainWidth: number;
+      stackWidth: number;
     }> = [];
     const sample = () => {
       const context = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']");
