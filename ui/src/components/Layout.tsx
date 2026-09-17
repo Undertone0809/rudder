@@ -639,9 +639,10 @@ function DesktopSidePanelSlot({
     const contextCardWidth = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']")?.getBoundingClientRect().width ?? 0;
     const contextResizerWidth = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']")?.getBoundingClientRect().width ?? 0;
     const contextAlreadyCollapsed = sidePanel.open && autoCollapseContextSidebar;
+    const contextSidebarWasVisible = contextCardWidth > 0 || contextResizerWidth > 0;
     autoCollapseWorkspaceWidthRef.current = {
       key: autoCollapseContextSidebarKey,
-      width: measuredWorkspaceWidth + (contextAlreadyCollapsed
+      width: measuredWorkspaceWidth + (contextAlreadyCollapsed || !contextSidebarWasVisible
         ? 0
         : Math.max(contextCardWidth, contextColumnWidth) + Math.max(contextResizerWidth, 9)),
     };

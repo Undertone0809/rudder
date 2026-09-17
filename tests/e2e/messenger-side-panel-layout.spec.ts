@@ -125,6 +125,7 @@ test("restores the Messenger List from the active chat header", async ({ page },
       contextWidth: number;
       sidePanelWidth: number;
       mainWidth: number;
+      stackWidth: number;
     }> = [];
     const sample = () => {
       const context = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']");
