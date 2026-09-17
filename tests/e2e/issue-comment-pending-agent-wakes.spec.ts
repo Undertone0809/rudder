@@ -22,10 +22,10 @@ async function openWakeDetails(page: Page) {
   const summary = page.getByTestId("comment-agent-wake-summary");
   const popover = page.getByTestId("comment-agent-wake-popover");
   await expect(summary).toBeVisible({ timeout: 15_000 });
-  if (!await popover.isVisible()) {
+  if (await popover.isHidden()) {
     await summary.click();
-    await expect(popover).toBeVisible({ timeout: 15_000 });
   }
+  await expect(popover).toBeVisible({ timeout: 15_000 });
 }
 
 async function closeWakeDetails(page: Page) {

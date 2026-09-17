@@ -91,6 +91,8 @@ describe("CommentComposer pending Agent wakes", () => {
     );
     expect(cancelNoah).not.toBeNull();
     expect(cancelNoah?.hasAttribute("aria-pressed")).toBe(false);
+    cancelNoah?.focus();
+    expect(document.activeElement).toBe(cancelNoah);
     await act(async () => cancelNoah?.click());
 
     const skippedNoah = document.body.querySelector<HTMLButtonElement>(
@@ -99,6 +101,7 @@ describe("CommentComposer pending Agent wakes", () => {
     expect(skippedNoah?.dataset.wakeState).toBe("skipped");
     expect(skippedNoah?.textContent).toContain("reference only");
     expect(summary?.textContent).toContain("1 of 2 agents will start when sent");
+    expect(document.activeElement).toBe(skippedNoah);
     expect(document.body.querySelector("[data-testid='comment-agent-wake-status-agent-sage']")?.getAttribute("data-wake-state"))
       .toBe("pending");
 

@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { extractAgentMentionIds, extractAgentWakeMentionIds, setAgentMentionIntent } from "@rudderhq/shared";
 import { Paperclip, RotateCcw, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
 import { AgentIdentity } from "./AgentAvatar";
 import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./MarkdownEditor";
 
@@ -20,6 +20,8 @@ interface AgentWakeStatusProps {
   mentionedAgents: MentionedAgentWake[];
   onToggle: (agentId: string, waking: boolean, restoreEditorFocus: boolean) => void;
 }
+
+type AgentWakeButtonRef = (agentId: string, element: HTMLButtonElement | null) => void;
 
 function AgentAvatarStack({ agents }: { agents: MentionedAgentWake[] }) {
   return (
@@ -45,10 +47,12 @@ function AgentWakeDetailGroup({
   agents,
   label,
   onToggle,
+  setButtonRef,
 }: {
   agents: MentionedAgentWake[];
   label: string;
   onToggle: AgentWakeStatusProps["onToggle"];
+  setButtonRef: AgentWakeButtonRef;
 }) {
   if (agents.length === 0) return null;
   return (
@@ -62,6 +66,7 @@ function AgentWakeDetailGroup({
         return (
           <button
             key={agentId}
+            ref={(element) => setButtonRef(agentId, element)}
             type="button"
             data-testid={`comment-agent-wake-status-${agentId}`}
             data-wake-state={waking ? "pending" : "skipped"}
@@ -88,6 +93,26 @@ function AgentWakeDetailGroup({
 }
 
 function AgentWakeStatus({ mentionedAgents, onToggle }: AgentWakeStatusProps) {
+  const wakeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const pendingFocusAgentId = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    const agentId = pendingFocusAgentId.current;
+    if (!agentId) return;
+    pendingFocusAgentId.current = null;
+    wakeButtonRefs.current.get(agentId)?.focus();
+  }, [mentionedAgents]);
+
+  const setButtonRef: AgentWakeButtonRef = (agentId, element) => {
+    if (element) wakeButtonRefs.current.set(agentId, element);
+    else wakeButtonRefs.current.delete(agentId);
+  };
+
+  const handleToggle = (agentId: string, waking: boolean, restoreEditorFocus: boolean) => {
+    if (!restoreEditorFocus) pendingFocusAgentId.current = agentId;
+    onToggle(agentId, waking, restoreEditorFocus);
+  };
+
   const [onlyAgent] = mentionedAgents;
   if (mentionedAgents.length === 1) {
     const agentId = onlyAgent.mention.agentId!;
@@ -152,8 +177,8 @@ function AgentWakeStatus({ mentionedAgents, onToggle }: AgentWakeStatusProps) {
         data-testid="comment-agent-wake-popover"
         className="w-[min(20rem,calc(100vw-2rem))] space-y-3 rounded-[var(--radius-md)] p-2 text-foreground"
       >
-        <AgentWakeDetailGroup agents={wakingAgents} label="Will start when sent" onToggle={onToggle} />
-        <AgentWakeDetailGroup agents={referenceAgents} label="Won't start this time" onToggle={onToggle} />
+        <AgentWakeDetailGroup agents={wakingAgents} label="Will start when sent" onToggle={handleToggle} setButtonRef={setButtonRef} />
+        <AgentWakeDetailGroup agents={referenceAgents} label="Won't start this time" onToggle={handleToggle} setButtonRef={setButtonRef} />
       </PopoverContent>
     </Popover>
   );
