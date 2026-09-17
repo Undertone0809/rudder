@@ -521,8 +521,8 @@ export function PrimaryRail({
         desktopRailPlatform === "windows"
           ? "ml-1 mr-1 w-[52px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:52px]"
           : isDesktopShell
-            ? "ml-3 mr-1 w-[40px]"
-            : "ml-2 mr-3 w-[50px] px-5",
+            ? "ml-3 mr-1 w-[40px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:40px]"
+            : "ml-2 mr-3 w-[50px] [--primary-rail-item-shift:0px] [--primary-rail-item-width:50px]",
       )}
     >
       <div className="flex w-full flex-col items-center gap-4">
@@ -584,7 +584,7 @@ export function PrimaryRail({
       </div>
 
       <nav
-        className="motion-rail-nav scrollbar-auto-hide mt-2.5 flex min-h-0 w-[calc(var(--primary-rail-item-width,66px)+var(--primary-rail-item-shift,0.25rem)+var(--primary-rail-item-shift,0.25rem)+0.625rem)] flex-1 flex-col items-center gap-0.5 overflow-y-auto"
+        className="motion-rail-nav scrollbar-auto-hide mt-2.5 flex min-h-0 min-w-[61px] w-[calc(var(--primary-rail-item-width,66px)+var(--primary-rail-item-shift,0.25rem)+var(--primary-rail-item-shift,0.25rem)+0.625rem)] flex-1 flex-col items-center gap-0.5 overflow-y-auto"
         style={activeRailStyle}
         data-active-index={activeRailIndex >= 0 ? activeRailIndex : undefined}
         aria-label="Primary navigation"
