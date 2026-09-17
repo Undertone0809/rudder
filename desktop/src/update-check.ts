@@ -22,6 +22,16 @@ type GitHubReleaseAsset = {
   name?: string;
 };
 
+export function requiredDesktopUpdateAssetNames(version: string, platform: NodeJS.Platform): string[] {
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const portableAsset = platform === "darwin"
+    ? `Rudder-${version}-macos-${arch}-portable.zip`
+    : platform === "win32"
+      ? `Rudder-${version}-windows-x64-portable.zip`
+      : `Rudder-${version}-linux-x64.AppImage`;
+  return ["SHASUMS256.txt", portableAsset];
+}
+
 type ParsedVersion = {
   major: number;
   minor: number;
@@ -261,6 +271,8 @@ export async function checkForRudderDesktopUpdates(
     requiredAssetNamesForVersion,
     fetchImpl = fetch,
   } = options;
+  const resolvedRequiredAssetNamesForVersion = requiredAssetNamesForVersion
+    ?? ((version: string) => requiredDesktopUpdateAssetNames(version, process.platform));
 
   try {
     const latest = await fetchLatestReleaseWithFallback({
@@ -271,7 +283,7 @@ export async function checkForRudderDesktopUpdates(
       repo,
       releasesUrl,
       apiBaseUrl,
-      requiredAssetNamesForVersion,
+      requiredAssetNamesForVersion: resolvedRequiredAssetNamesForVersion,
     });
     if (!latest) {
       throw new Error(`GitHub release lookup returned no ${channel} release`);

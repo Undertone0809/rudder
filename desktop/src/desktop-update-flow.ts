@@ -64,16 +64,6 @@ export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
 export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
 
-function requiredDesktopUpdateAssetNames(version: string, platform: NodeJS.Platform): string[] {
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  const portableAsset = platform === "darwin"
-    ? `Rudder-${version}-macos-${arch}-portable.zip`
-    : platform === "win32"
-      ? `Rudder-${version}-windows-x64-portable.zip`
-      : `Rudder-${version}-linux-x64.AppImage`;
-  return ["SHASUMS256.txt", portableAsset];
-}
-
 export function resolveDesktopUpdateChildLaunch(options: {
   cliArgs: string[];
   childEnv: NodeJS.ProcessEnv;
@@ -924,7 +914,6 @@ export function createDesktopUpdateFlow(context: {
       repo: DESKTOP_GITHUB_REPO,
       releasesUrl: DESKTOP_RELEASES_URL,
       channel,
-      requiredAssetNamesForVersion: (version) => requiredDesktopUpdateAssetNames(version, platform),
       ...(smokeReleaseApiBaseUrl ? { apiBaseUrl: smokeReleaseApiBaseUrl } : {}),
     });
   }

@@ -122,11 +122,16 @@ function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow
   return { flow, sentProgressEvents };
 }
 
-function completeMacReleaseAssets(version: string) {
+function completeReleaseAssets(version: string) {
   const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const platformAsset = process.platform === "darwin"
+    ? `Rudder-${version}-macos-${arch}-portable.zip`
+    : process.platform === "win32"
+      ? `Rudder-${version}-windows-x64-portable.zip`
+      : `Rudder-${version}-linux-x64.AppImage`;
   return [
     { name: "SHASUMS256.txt" },
-    { name: `Rudder-${version}-macos-${arch}-portable.zip` },
+    { name: platformAsset },
   ];
 }
 
@@ -417,7 +422,7 @@ describe("desktop update flow", () => {
       {
         tag_name: "v0.3.3",
         html_url: "https://example.test/releases/v0.3.3",
-        assets: completeMacReleaseAssets("0.3.3"),
+        assets: completeReleaseAssets("0.3.3"),
       },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
@@ -454,7 +459,7 @@ describe("desktop update flow", () => {
       {
         tag_name: "v99.0.0",
         html_url: "https://example.test/releases/v99.0.0",
-        assets: completeMacReleaseAssets("99.0.0"),
+        assets: completeReleaseAssets("99.0.0"),
       },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
@@ -542,7 +547,7 @@ describe("desktop update flow", () => {
       {
         tag_name: "v99.0.0",
         html_url: "https://example.test/releases/v99.0.0",
-        assets: completeMacReleaseAssets("99.0.0"),
+        assets: completeReleaseAssets("99.0.0"),
       },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
@@ -577,7 +582,7 @@ describe("desktop update flow", () => {
       {
         tag_name: "v99.0.0",
         html_url: "https://example.test/releases/v99.0.0",
-        assets: completeMacReleaseAssets("99.0.0"),
+        assets: completeReleaseAssets("99.0.0"),
       },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
