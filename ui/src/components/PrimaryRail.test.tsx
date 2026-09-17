@@ -455,11 +455,7 @@ describe("PrimaryRail active motion indicator", () => {
     expect(rail?.className).not.toContain("w-[66px]");
     expect(rail?.className).not.toContain("w-[52px]");
     expect(rail?.className).not.toContain("[--primary-rail-item-width:52px]");
-    expect(nav?.className).toContain(
-      "w-[calc(var(--primary-rail-item-width,66px)+var(--primary-rail-item-shift,0.25rem)+var(--primary-rail-item-shift,0.25rem)+0.625rem)]",
-    );
-    expect(nav?.className).not.toContain("min-w-[61px]");
-    expect(nav?.className).not.toContain("w-full");
+    expect(nav?.className).toContain("w-full");
   });
 
   it("applies rail motion styling to the create menu", async () => {

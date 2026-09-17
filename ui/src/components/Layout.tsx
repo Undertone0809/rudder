@@ -594,6 +594,7 @@ function DesktopSidePanelSlot({
   autoCollapseContextSidebarOnOpen,
   contextReady,
   contextColumnWidth,
+  contextSidebarVisible,
   expanded,
   onExpandedChange,
   selectedOrganizationId,
@@ -603,6 +604,7 @@ function DesktopSidePanelSlot({
   autoCollapseContextSidebarOnOpen: boolean;
   contextReady: boolean;
   contextColumnWidth: number;
+  contextSidebarVisible: boolean;
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   selectedOrganizationId: string | null | undefined;
@@ -638,11 +640,9 @@ function DesktopSidePanelSlot({
 
     const contextCardWidth = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']")?.getBoundingClientRect().width ?? 0;
     const contextResizerWidth = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']")?.getBoundingClientRect().width ?? 0;
-    const contextAlreadyCollapsed = sidePanel.open && autoCollapseContextSidebar;
-    const contextSidebarWasVisible = contextCardWidth > 0 || contextResizerWidth > 0;
     autoCollapseWorkspaceWidthRef.current = {
       key: autoCollapseContextSidebarKey,
-      width: measuredWorkspaceWidth + (contextAlreadyCollapsed || !contextSidebarWasVisible
+      width: measuredWorkspaceWidth + (!contextSidebarVisible
         ? 0
         : Math.max(contextCardWidth, contextColumnWidth) + Math.max(contextResizerWidth, 9)),
     };
@@ -651,6 +651,7 @@ function DesktopSidePanelSlot({
     autoCollapseContextSidebarKey,
     autoCollapseContextSidebarOnOpen,
     contextColumnWidth,
+    contextSidebarVisible,
     sidePanel.open,
   ]);
 
@@ -705,10 +706,13 @@ function DesktopSidePanelSlot({
         frame = null;
         const workspace = workspaceAnchorRef.current?.parentElement;
         const measuredWorkspaceWidth = workspace?.getBoundingClientRect().width ?? 0;
-        if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
+        const contextCardWidth = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']")?.getBoundingClientRect().width ?? 0;
+        const contextResizerWidth = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']")?.getBoundingClientRect().width ?? 0;
+        const fullWorkspaceWidth = measuredWorkspaceWidth + contextCardWidth + contextResizerWidth;
+        if (!Number.isFinite(fullWorkspaceWidth) || fullWorkspaceWidth <= 0) return;
         autoCollapseWorkspaceWidthRef.current = {
           key: autoCollapseContextSidebarKey,
-          width: measuredWorkspaceWidth,
+          width: fullWorkspaceWidth,
         };
         setWorkspaceWidth(workspace?.offsetWidth ?? measuredWorkspaceWidth);
       });
@@ -1871,6 +1875,7 @@ export function Layout() {
                         autoCollapseContextSidebarOnOpen={autoCollapseContextSidebarOnOpen}
                         contextReady={sidePanelContextReady}
                         contextColumnWidth={contextColumnWidth}
+                        contextSidebarVisible={contextSidebarVisible}
                         expanded={desktopSidePanelExpanded}
                         selectedOrganizationId={sidePanelOrganizationId}
                         onExpandedChange={setDesktopSidePanelExpanded}

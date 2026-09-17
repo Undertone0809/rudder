@@ -69,7 +69,7 @@ export function OrganizationSwitcher({ compact = false }: { compact?: boolean })
   const trigger = compact ? (
     <Button
       variant="ghost"
-      className="h-11 w-11 rounded-full p-0 hover:bg-[color:var(--surface-active)]"
+      className="h-10 w-10 rounded-full p-0 hover:bg-[color:var(--surface-active)]"
       aria-label="Organization menu"
     >
       {selectedOrganization ? (
@@ -77,7 +77,7 @@ export function OrganizationSwitcher({ compact = false }: { compact?: boolean })
           organizationName={selectedOrganization.name}
           logoUrl={selectedOrganization.logoUrl}
           brandColor={selectedOrganization.brandColor}
-          className="h-10 w-10 shrink-0 rounded-full text-sm"
+          className="h-9 w-9 shrink-0 rounded-full text-sm"
         />
       ) : (
         <span className="text-xs font-semibold text-muted-foreground">--</span>
