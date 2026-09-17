@@ -276,7 +276,7 @@ export async function readWorkspaceFileNodeBytes(
   try {
     rootStat = await fs.lstat(resolvedRoot);
   } catch {
-    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, true);
+    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, false);
   }
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     throw new WorkspaceFileNativeError("workspace_not_directory", false, true);
@@ -286,13 +286,13 @@ export async function readWorkspaceFileNodeBytes(
   try {
     canonicalRoot = await fs.realpath(resolvedRoot);
   } catch {
-    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, true);
+    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, false);
   }
   let expectedRootStat: WorkspaceFileStat;
   try {
     expectedRootStat = await fs.stat(canonicalRoot);
   } catch {
-    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, true);
+    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, false);
   }
   const requestedTarget = path.resolve(canonicalRoot, filePath);
   if (!isWithinRoot(canonicalRoot, requestedTarget) || requestedTarget === canonicalRoot) {

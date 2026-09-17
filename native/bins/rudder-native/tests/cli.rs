@@ -138,6 +138,7 @@ fn reports_version_protocol_and_capabilities_metadata() {
             "evidence.read",
             "workspace.watch",
             "workspace.list",
+            "workspace.read",
             "payload.verify",
             "payload.extract",
             "payload.probeVersion",

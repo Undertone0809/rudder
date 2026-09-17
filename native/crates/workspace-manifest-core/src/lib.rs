@@ -16,6 +16,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::mpsc::Sender;
@@ -222,6 +224,75 @@ fn same_file_snapshot(left: &fs::Metadata, right: &fs::Metadata) -> bool {
     }
 }
 
+#[cfg(windows)]
+fn final_path_by_handle(file: &File) -> io::Result<PathBuf> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW,
+    };
+
+    let mut buffer = vec![0_u16; 512];
+    loop {
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle(),
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                FILE_NAME_NORMALIZED,
+            )
+        };
+        if length == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = length as usize;
+        if length < buffer.len() {
+            buffer.truncate(length);
+            return String::from_utf16(&buffer)
+                .map(PathBuf::from)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid final path"));
+        }
+        if length >= 32 * 1024 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "final path exceeds Windows path limit",
+            ));
+        }
+        buffer.resize(length + 1, 0);
+    }
+}
+
+#[cfg(windows)]
+fn normalized_windows_path(path: &Path) -> String {
+    let mut value = path.to_string_lossy().replace('/', "\\");
+    if let Some(stripped) = value.strip_prefix(r"\\?\") {
+        value = stripped.to_owned();
+        if let Some(unc) = value.strip_prefix(r"UNC\") {
+            value = format!(r"\\{unc}");
+        }
+    }
+    value.trim_end_matches('\\').to_lowercase()
+}
+
+#[cfg(windows)]
+fn ensure_opened_file_within_root(file: &File, canonical_root: &Path) -> Result<(), ManifestError> {
+    let opened_path = final_path_by_handle(file)
+        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    let root = normalized_windows_path(canonical_root);
+    let opened = normalized_windows_path(&opened_path);
+    if opened == root || opened.starts_with(&format!("{root}\\")) {
+        Ok(())
+    } else {
+        Err(ManifestError::safe("workspace_path_escape"))
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_opened_file_within_root(
+    _file: &File,
+    _canonical_root: &Path,
+) -> Result<(), ManifestError> {
+    Ok(())
+}
+
 pub fn list_directory(
     root: &Path,
     requested_path: &Path,
@@ -370,8 +441,21 @@ pub fn read_file(
     // Read the canonical target so a final symlink cannot redirect the open.
     // Re-resolve the requested path before and after reading to reject changes
     // in symlink or parent-directory ownership while the handle is active.
-    let file = File::open(&canonical_target)
-        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&canonical_target)
+    };
+    #[cfg(not(windows))]
+    let file = File::open(&canonical_target);
+    let file =
+        file.map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    ensure_opened_file_within_root(&file, &canonical_root)?;
     let opened_metadata = file
         .metadata()
         .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
@@ -1152,6 +1236,26 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(&outside, b"outside").unwrap();
         std::os::unix::fs::symlink(&outside, root.join("escape.txt")).unwrap();
+
+        assert_eq!(
+            read_file(&root, Path::new("escape.txt"), file_limits())
+                .unwrap_err()
+                .code(),
+            "workspace_path_escape"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_file_symlinks_that_escape_the_canonical_root() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let outside = outer.path().join("outside.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&outside, b"outside").unwrap();
+        if std::os::windows::fs::symlink_file(&outside, root.join("escape.txt")).is_err() {
+            return;
+        }
 
         assert_eq!(
             read_file(&root, Path::new("escape.txt"), file_limits())

@@ -29,6 +29,7 @@ const CAPABILITIES: &[&str] = &[
     "evidence.read",
     "workspace.watch",
     "workspace.list",
+    "workspace.read",
     "payload.verify",
     "payload.extract",
     "payload.probeVersion",
