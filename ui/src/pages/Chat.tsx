@@ -322,6 +322,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const organizationRouteMatchesSelection = Boolean(
     viewedOrganizationId && viewedOrganizationId === selectedOrganizationId,
   );
+  const { hidePanel } = useSidePanel();
+  const showChatSidebarOpener = !isMobile && (!sidebarOpen || (isMessengerChatRoute && sidePanelOpen));
+  const openChatWorkspaceSidebar = useCallback(() => { if (isMessengerChatRoute && sidePanelOpen) hidePanel(); setSidebarOpen(true); }, [hidePanel, isMessengerChatRoute, setSidebarOpen, sidePanelOpen]);
   const checkpointDispatcherRef = useRef<ReturnType<typeof createChatClientCheckpointDispatcher> | null>(null);
   if (!checkpointDispatcherRef.current) {
     checkpointDispatcherRef.current = createChatClientCheckpointDispatcher((checkpoint) => {
@@ -3677,9 +3680,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 <ChatConversationHeader
                   agent={conversationHeaderAgent}
                   title={conversationDisplayTitle(selectedConversation)}
-                  onOpenSidebar={!isMobile && !sidebarOpen
-                    ? () => setSidebarOpen(true)
-                    : undefined}
+                  onOpenSidebar={showChatSidebarOpener ? openChatWorkspaceSidebar : undefined}
                 />
               ) : null}
             </div>
@@ -3723,9 +3724,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                   <ChatConversationHeader
                     agent={conversationHeaderAgent}
                     title={conversationDisplayTitle(selectedConversation)}
-                    onOpenSidebar={!isMobile && !sidebarOpen
-                      ? () => setSidebarOpen(true)
-                      : undefined}
+                    onOpenSidebar={showChatSidebarOpener ? openChatWorkspaceSidebar : undefined}
                     className="hidden md:flex"
                   />
                 ) : null}
