@@ -259,7 +259,7 @@ fn lists_bounded_workspace_directories_and_rejects_escape() {
     assert!(!stderr.is_empty());
 }
 
-#[cfg(any(unix, windows))]
+#[cfg(unix)]
 #[test]
 fn rejects_workspace_file_reparse_escape() {
     let outer = tempdir().unwrap();
@@ -267,18 +267,59 @@ fn rejects_workspace_file_reparse_escape() {
     let outside = outer.path().join("outside.txt");
     fs::create_dir(&root).unwrap();
     fs::write(&outside, b"outside").unwrap();
-    #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, root.join("escape.txt")).unwrap();
-    #[cfg(windows)]
-    if std::os::windows::fs::symlink_file(&outside, root.join("escape.txt")).is_err() {
-        return;
-    }
 
     let (code, response, stderr) = run(&[
         "workspace",
         "read",
         root.to_str().unwrap(),
         "escape.txt",
+        "1024",
+        "4096",
+    ]);
+
+    assert_eq!(code, 2);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["capability"], "workspace.read");
+    assert_eq!(response["protocolVersion"], 1);
+    assert_eq!(response["errorCode"], "workspace_path_escape");
+    assert_eq!(response["accepted"], false);
+    assert!(!stderr.is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn rejects_workspace_file_reparse_escape() {
+    let outer = tempdir().unwrap();
+    let root = outer.path().join("workspace");
+    let outside = outer.path().join("outside");
+    let junction = root.join("escape");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("secret.txt"), b"outside").unwrap();
+    let result = Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            junction.to_str().unwrap(),
+            outside.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to invoke cmd /C mklink /J");
+    assert!(
+        result.status.success(),
+        "mklink /J failed: {}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(junction.is_dir(), "junction fixture was not created");
+
+    let (code, response, stderr) = run(&[
+        "workspace",
+        "read",
+        root.to_str().unwrap(),
+        "escape/secret.txt",
         "1024",
         "4096",
     ]);
