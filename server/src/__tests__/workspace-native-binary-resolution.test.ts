@@ -88,10 +88,28 @@ describe("native workspace binary discovery", () => {
     expect(resolveNativeWorkspaceFilesBinary()).toBe(packaged);
   });
 
+  it("preserves the staged native distribution when release candidates also exist", () => {
+    const staged = path.join(repoRoot, "native", target, binary);
+    available.add(release);
+    available.add(targetRelease);
+    available.add(staged);
+    expect(resolveNativeWorkspaceFilesBinary()).toBe(staged);
+  });
+
   it("resolves the staged native distribution", () => {
     const staged = path.join(repoRoot, "native", target, binary);
     available.add(staged);
     expect(resolveNativeWorkspaceFilesBinary()).toBe(staged);
+  });
+
+  it("preserves packaged Desktop resources when release candidates also exist", () => {
+    const resources = path.join(repoRoot, "synthetic-resources");
+    const packaged = path.join(resources, "native", target, binary);
+    vi.stubEnv("RUDDER_DESKTOP_RESOURCES_PATH", resources);
+    available.add(release);
+    available.add(targetRelease);
+    available.add(packaged);
+    expect(resolveNativeWorkspaceFilesBinary()).toBe(packaged);
   });
 
   it("returns a deterministic debug path when no binary is available", () => {

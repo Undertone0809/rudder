@@ -70,12 +70,12 @@ export function resolveNativeWorkspaceFilesBinary() {
   const candidates = [
     path.resolve(moduleDir, "../../../native/target/debug", binaryName),
     path.resolve(moduleDir, "../../../../native/target/debug", binaryName),
+    path.resolve(moduleDir, "../../../native", target, binaryName),
+    resourcesPath ? path.resolve(resourcesPath, "native", target, binaryName) : "",
     path.resolve(moduleDir, "../../../native/target/release", binaryName),
     path.resolve(moduleDir, "../../../../native/target/release", binaryName),
     path.resolve(moduleDir, "../../../native/target", target, "release", binaryName),
     path.resolve(moduleDir, "../../../../native/target", target, "release", binaryName),
-    path.resolve(moduleDir, "../../../native", target, binaryName),
-    resourcesPath ? path.resolve(resourcesPath, "native", target, binaryName) : "",
   ].filter(Boolean);
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
