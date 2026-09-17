@@ -158,18 +158,37 @@ test.describe("UI Lab", () => {
       return { boxShadow: style.boxShadow, transitionProperty: style.transitionProperty };
     });
     expect(semanticSurfaceStyle.boxShadow).not.toBe("none");
-    expect(semanticSurfaceStyle.transitionProperty).toContain("transform");
+    expect(semanticSurfaceStyle.transitionProperty).toContain("border-color");
+    expect(semanticSurfaceStyle.transitionProperty).not.toContain("transform");
     const firstSemanticSurface = semanticCardsLab.locator('[data-rudder-semantic-card-link="true"]').first();
     const restingSurfaceStyle = await firstSemanticSurface.evaluate((element) => {
       const style = window.getComputedStyle(element);
-      return { boxShadow: style.boxShadow, transform: style.transform };
+      return { borderColor: style.borderColor, boxShadow: style.boxShadow, transform: style.transform };
     });
+    const receiptSurface = semanticCardsLab
+      .getByTestId("ui-lab-long-comment-receipt")
+      .locator('[data-rudder-semantic-card-surface="true"]');
     await firstSemanticSurface.hover();
     await expect(firstSemanticSurface).toHaveAttribute("data-rudder-semantic-card-interactive", "true");
     await expect.poll(() => firstSemanticSurface.evaluate((element, resting) => {
       const style = window.getComputedStyle(element);
-      return style.boxShadow !== resting.boxShadow && style.transform !== resting.transform;
+      return style.borderColor !== resting.borderColor;
     }, restingSurfaceStyle)).toBe(true);
+    await page.waitForTimeout(250);
+    const hoveredSurfaceStyles = await firstSemanticSurface.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return { borderColor: style.borderColor, boxShadow: style.boxShadow, transform: style.transform };
+    });
+    await receiptSurface.hover();
+    await page.waitForTimeout(250);
+    const hoveredReceiptStyles = await receiptSurface.evaluate((element) => {
+      const style = window.getComputedStyle(element);
+      return { borderColor: style.borderColor, boxShadow: style.boxShadow, transform: style.transform };
+    });
+    expect(hoveredSurfaceStyles.borderColor).toBe(hoveredReceiptStyles.borderColor);
+    expect(hoveredSurfaceStyles.boxShadow).toBe(restingSurfaceStyle.boxShadow);
+    expect(hoveredSurfaceStyles.transform).toBe(restingSurfaceStyle.transform);
+    expect(hoveredReceiptStyles.transform).toBe("none");
     const longComment = semanticCardsLab
       .getByTestId("ui-lab-long-comment-receipt")
       .locator('[data-rudder-semantic-comment-body="true"]');
