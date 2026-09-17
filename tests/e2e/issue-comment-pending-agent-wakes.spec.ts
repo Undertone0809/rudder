@@ -18,6 +18,22 @@ async function appendComposerText(page: Page, composer: Locator, value: string) 
   await page.keyboard.type(value);
 }
 
+async function openWakeDetails(page: Page) {
+  const summary = page.getByTestId("comment-agent-wake-summary");
+  const popover = page.getByTestId("comment-agent-wake-popover");
+  await expect(summary).toBeVisible({ timeout: 15_000 });
+  if (!await popover.isVisible()) {
+    await summary.click();
+    await expect(popover).toBeVisible({ timeout: 15_000 });
+  }
+}
+
+async function closeWakeDetails(page: Page) {
+  if (await page.getByTestId("comment-agent-wake-popover").isVisible()) {
+    await page.keyboard.press("Escape");
+  }
+}
+
 async function addAgentMention(page: Page, composer: Locator, agent: { id: string; name: string }) {
   await focusComposerEnd(composer);
   await page.keyboard.type(`@${agent.name.split(" ")[1]}`);
@@ -107,7 +123,6 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await page.goto(`/${organization.issuePrefix}/issues/${issueRef}`);
 
   const activity = page.getByRole("region", { name: "Activity" });
-  const surface = activity.locator("[aria-label='Comment composer']").last();
   const composer = activity
     .getByTestId("issue-comment-composer-editor-scroll")
     .locator("[contenteditable='true']")
@@ -116,6 +131,16 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await expect(composer).toBeVisible({ timeout: 15_000 });
 
   await addAgentMention(page, composer, firstAgent);
+  const toolbar = activity.getByTestId("issue-comment-composer-toolbar");
+  const singleWake = toolbar.getByTestId(`comment-agent-wake-status-${firstAgent.id}`);
+  const [attachBox, singleWakeBox] = await Promise.all([
+    toolbar.getByTitle("Attach file").boundingBox(), singleWake.boundingBox(),
+  ]);
+  expect(attachBox).not.toBeNull();
+  expect(singleWakeBox).not.toBeNull();
+  expect(singleWakeBox!.x).toBeGreaterThan(attachBox!.x + attachBox!.width);
+  expect(Math.abs(attachBox!.y + attachBox!.height / 2 - singleWakeBox!.y - singleWakeBox!.height / 2)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath("issue-comment-single-agent-toolbar.png") });
   await appendComposerText(page, composer, " and ");
   await addAgentMention(page, composer, firstAgent);
   await appendComposerText(page, composer, " with ");
@@ -123,9 +148,11 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await appendComposerText(page, composer, " please review this change");
 
   const wakeStatus = activity.getByTestId("comment-agent-wake-status");
-  const firstStatus = activity.getByTestId(`comment-agent-wake-status-${firstAgent.id}`);
-  const secondStatus = activity.getByTestId(`comment-agent-wake-status-${secondAgent.id}`);
-  await expect(wakeStatus.getByRole("button")).toHaveCount(2);
+  const firstStatus = page.getByTestId(`comment-agent-wake-status-${firstAgent.id}`);
+  const secondStatus = page.getByTestId(`comment-agent-wake-status-${secondAgent.id}`);
+  await expect(wakeStatus.getByRole("button")).toHaveCount(1);
+  await expect(wakeStatus).toContainText("2 agents will start when sent");
+  await openWakeDetails(page);
   await expect(firstStatus).toHaveAttribute("data-wake-state", "pending");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
   await expect(composer.locator(`a[href^="agent://${firstAgent.id}"]`)).toHaveCount(2);
@@ -134,12 +161,13 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(500);
+  await openWakeDetails(page);
   await expect(firstStatus).toBeVisible();
   await expect(secondStatus).toBeVisible();
   await expect(firstStatus).toContainText("Noah Platform");
   await expect(secondStatus).toContainText("Noah Product");
   const [surfaceBox, firstBox, secondBox] = await Promise.all([
-    surface.boundingBox(),
+    page.getByTestId("comment-agent-wake-popover").boundingBox(),
     firstStatus.boundingBox(),
     secondStatus.boundingBox(),
   ]);
@@ -172,9 +200,9 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await page.screenshot({ path: testInfo.outputPath("issue-comment-pending-agent-wakes-focused.png") });
   await page.keyboard.press("Enter");
   await expect(firstStatus).toHaveAttribute("data-wake-state", "skipped");
-  await expect(firstStatus).toContainText("won't start this time");
+  await expect(firstStatus).toContainText("reference only");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
-  await expect(composer).toBeFocused();
+  await expect(wakeStatus).toContainText("1 of 2 agents will start when sent");
   await page.screenshot({ path: testInfo.outputPath("issue-comment-pending-agent-wakes-cancelled.png") });
 
   await page.goto(`/${organization.issuePrefix}/issues/${otherIssueRef}`);
@@ -185,8 +213,10 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
     .locator("[contenteditable='true']")
     .last()).toBeEmpty();
   await page.goto(`/${organization.issuePrefix}/issues/${issueRef}`);
+  await openWakeDetails(page);
   await expect(firstStatus).toHaveAttribute("data-wake-state", "skipped");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
+  await closeWakeDetails(page);
 
   await composer.evaluate((editor, agentId) => {
     const anchor = editor.querySelector(`a[href^="agent://${agentId}"]`);
@@ -203,7 +233,9 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
 
   await appendComposerText(page, composer, " and ");
   await addAgentMention(page, composer, secondAgent);
+  await openWakeDetails(page);
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
+  await closeWakeDetails(page);
 
   await page.setViewportSize({ width: 1440, height: 900 });
   const commentResponsePromise = page.waitForResponse((response) => (
@@ -229,17 +261,21 @@ test("issue comment composer previews, cancels, and preserves per-Agent wake int
   await appendComposerText(page, composer, " and ");
   await addAgentMention(page, composer, secondAgent);
   await appendComposerText(page, composer, " keep this draft after a failed request");
+  await openWakeDetails(page);
   await expect(firstStatus).toHaveAttribute("data-wake-state", "pending");
   await firstStatus.click();
   await expect(firstStatus).toHaveAttribute("data-wake-state", "skipped");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
+  await closeWakeDetails(page);
   await page.route(`**/api/issues/${issueRef}/comments`, async (route) => {
     await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "test failure" }) });
   }, { times: 1 });
   await commentButton.click();
+  await openWakeDetails(page);
   await expect(firstStatus).toHaveAttribute("data-wake-state", "skipped");
   await expect(secondStatus).toHaveAttribute("data-wake-state", "pending");
   await expect(composer).toContainText("keep this draft after a failed request");
+  await closeWakeDetails(page);
 
   const retryResponsePromise = page.waitForResponse((response) => (
     response.request().method() === "POST"

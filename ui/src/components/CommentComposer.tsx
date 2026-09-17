@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { extractAgentMentionIds, extractAgentWakeMentionIds, setAgentMentionIntent } from "@rudderhq/shared";
 import { Paperclip, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type MouseEvent, type ReactNode, type RefObject } from "react";
@@ -9,6 +10,154 @@ const DEFAULT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markd
 const MOBILE_EDITOR_MIN_HEIGHT_PX = 30;
 const MOBILE_EDITOR_MAX_HEIGHT_PX = 160;
 const MOBILE_EDITOR_MAX_VIEWPORT_RATIO = 0.24;
+
+interface MentionedAgentWake {
+  mention: MentionOption;
+  waking: boolean;
+}
+
+interface AgentWakeStatusProps {
+  mentionedAgents: MentionedAgentWake[];
+  onToggle: (agentId: string, waking: boolean, restoreEditorFocus: boolean) => void;
+}
+
+function AgentAvatarStack({ agents }: { agents: MentionedAgentWake[] }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex shrink-0 -space-x-1.5 [&_[data-slot=avatar]]:ring-2 [&_[data-slot=avatar]]:ring-[color:var(--surface-active)]"
+    >
+      {agents.slice(0, 3).map(({ mention }) => (
+        <AgentIdentity
+          key={mention.agentId}
+          name={mention.name}
+          icon={mention.agentIcon}
+          role={mention.agentRole}
+          size="xs"
+          className="[&>span:last-child]:hidden"
+        />
+      ))}
+    </span>
+  );
+}
+
+function AgentWakeDetailGroup({
+  agents,
+  label,
+  onToggle,
+}: {
+  agents: MentionedAgentWake[];
+  label: string;
+  onToggle: AgentWakeStatusProps["onToggle"];
+}) {
+  if (agents.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <div className="px-2 pb-1 text-xs font-medium text-muted-foreground">{label}</div>
+      {agents.map(({ mention, waking }) => {
+        const agentId = mention.agentId!;
+        const actionLabel = waking
+          ? `Cancel starting ${mention.name} when this comment is sent`
+          : `Start ${mention.name} when this comment is sent`;
+        return (
+          <button
+            key={agentId}
+            type="button"
+            data-testid={`comment-agent-wake-status-${agentId}`}
+            data-wake-state={waking ? "pending" : "skipped"}
+            aria-label={actionLabel}
+            title={actionLabel}
+            className="control-hover flex min-h-9 w-full min-w-0 items-center gap-2 rounded-[var(--radius-sm)] px-2 text-left text-sm text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+            onClick={() => onToggle(agentId, waking, false)}
+          >
+            <AgentIdentity
+              name={mention.name}
+              icon={mention.agentIcon}
+              role={mention.agentRole}
+              size="sm"
+              className="min-w-0 flex-1"
+            />
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {waking ? "@mention" : "reference only"}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AgentWakeStatus({ mentionedAgents, onToggle }: AgentWakeStatusProps) {
+  const [onlyAgent] = mentionedAgents;
+  if (mentionedAgents.length === 1) {
+    const agentId = onlyAgent.mention.agentId!;
+    const actionLabel = onlyAgent.waking
+      ? `Cancel starting ${onlyAgent.mention.name} when this comment is sent`
+      : `Start ${onlyAgent.mention.name} when this comment is sent`;
+    return (
+      <button
+        type="button"
+        data-testid={`comment-agent-wake-status-${agentId}`}
+        data-wake-state={onlyAgent.waking ? "pending" : "skipped"}
+        aria-label={actionLabel}
+        title={actionLabel}
+        className="control-hover inline-flex min-h-8 max-w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)] px-2 py-1 text-xs text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+        onClick={() => onToggle(agentId, onlyAgent.waking, true)}
+      >
+        <AgentIdentity
+          name={onlyAgent.mention.name}
+          icon={onlyAgent.mention.agentIcon}
+          role={onlyAgent.mention.agentRole}
+          size="sm"
+          className="min-w-0 max-w-[10rem]"
+        />
+        <span className="shrink-0 text-muted-foreground">
+          {onlyAgent.waking ? "will start when sent" : "won't start this time"}
+        </span>
+        {onlyAgent.waking
+          ? <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          : <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+      </button>
+    );
+  }
+
+  const wakingAgents = mentionedAgents.filter((entry) => entry.waking);
+  const referenceAgents = mentionedAgents.filter((entry) => !entry.waking);
+  const wakingCount = wakingAgents.length;
+  const totalCount = mentionedAgents.length;
+  const summary = wakingCount === totalCount
+    ? `${totalCount} agents will start when sent`
+    : wakingCount === 0
+      ? `${totalCount} agents won't start this time`
+      : `${wakingCount} of ${totalCount} agents will start when sent`;
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="comment-agent-wake-summary"
+          aria-label={`${summary}. Review Agent wake details`}
+          className="control-hover inline-flex min-h-8 max-w-full min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)] px-2 py-1 text-xs text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <AgentAvatarStack agents={mentionedAgents} />
+          <span className="truncate" aria-live="polite">{summary}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="top"
+        sideOffset={8}
+        collisionPadding={12}
+        data-testid="comment-agent-wake-popover"
+        className="w-[min(20rem,calc(100vw-2rem))] space-y-3 rounded-[var(--radius-md)] p-2 text-foreground"
+      >
+        <AgentWakeDetailGroup agents={wakingAgents} label="Will start when sent" onToggle={onToggle} />
+        <AgentWakeDetailGroup agents={referenceAgents} label="Won't start this time" onToggle={onToggle} />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export interface CommentComposerProps {
   body: string;
@@ -243,55 +392,13 @@ export function CommentComposer({
           />
         </div>
       </div>
-      {mentionedAgents.length > 0 ? (
-        <div
-          data-testid="comment-agent-wake-status"
-          className="col-span-3 row-start-2 mt-2 flex min-w-0 flex-wrap items-center gap-2"
-        >
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="status" aria-live="polite">
-            {mentionedAgents.map(({ mention, waking }) => {
-              const agentId = mention.agentId!;
-              const actionLabel = waking
-                ? `Cancel starting ${mention.name} when this comment is sent`
-                : `Start ${mention.name} when this comment is sent`;
-              return (
-                <button
-                  key={agentId}
-                  type="button"
-                  data-testid={`comment-agent-wake-status-${agentId}`}
-                  data-wake-state={waking ? "pending" : "skipped"}
-                  aria-label={actionLabel}
-                  title={actionLabel}
-                  className="control-hover inline-flex min-h-8 max-w-full min-w-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[color:var(--border-soft)] bg-[color:color-mix(in_oklab,var(--surface-active)_62%,transparent)] px-2 py-1 text-xs text-foreground transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/40"
-                  onClick={() => {
-                    onBodyChange(setAgentMentionIntent(body, agentId, waking ? "reference" : "wake"));
-                    requestAnimationFrame(() => activeEditorRef.current?.focus());
-                  }}
-                >
-                  <AgentIdentity
-                    name={mention.name}
-                    icon={mention.agentIcon}
-                    role={mention.agentRole}
-                    size="sm"
-                    className="min-w-0 max-w-[10rem]"
-                  />
-                  <span className="shrink-0 text-muted-foreground">
-                    {waking ? "will start when sent" : "won't start this time"}
-                  </span>
-                  {waking
-                    ? <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    : <RotateCcw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
-                </button>
-              );
-            })}
-          </div>
-          {beforeSubmit ? <div className="ml-auto flex shrink-0 items-center">{beforeSubmit}</div> : null}
-        </div>
-      ) : null}
       {attachmentStatus ? <div className="col-span-3 mt-2 md:mt-2">{attachmentStatus}</div> : null}
-      <div className="contents md:mt-3 md:flex md:items-center md:justify-end md:gap-3">
+      <div
+        data-testid="issue-comment-composer-toolbar"
+        className="contents md:mt-3 md:flex md:items-center md:justify-end md:gap-3"
+      >
         {(imageUploadHandler || onAttachFile) ? (
-          <div className="col-start-1 row-start-1 flex items-center self-end md:mr-auto md:gap-3">
+          <div className={`col-start-1 row-start-1 flex items-center self-end md:gap-3 ${mentionedAgents.length === 0 ? "md:mr-auto" : ""}`}>
             <input
               ref={attachInputRef}
               type="file"
@@ -313,7 +420,23 @@ export function CommentComposer({
             </Button>
           </div>
         ) : null}
-        {mentionedAgents.length === 0 && beforeSubmit ? (
+        {mentionedAgents.length > 0 ? (
+          <div
+            data-testid="comment-agent-wake-status"
+            className="col-span-3 row-start-2 mt-2 flex min-w-0 flex-wrap items-center gap-2 md:mt-0 md:flex-1"
+          >
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="status" aria-live="polite">
+              <AgentWakeStatus
+                mentionedAgents={mentionedAgents}
+                onToggle={(agentId, waking, restoreEditorFocus) => {
+                  onBodyChange(setAgentMentionIntent(body, agentId, waking ? "reference" : "wake"));
+                  if (restoreEditorFocus) requestAnimationFrame(() => activeEditorRef.current?.focus());
+                }}
+              />
+            </div>
+            {beforeSubmit ? <div className="ml-auto flex shrink-0 items-center">{beforeSubmit}</div> : null}
+          </div>
+        ) : beforeSubmit ? (
           <div className="col-span-3 row-start-2 mt-2 flex justify-end md:contents">
             {beforeSubmit}
           </div>

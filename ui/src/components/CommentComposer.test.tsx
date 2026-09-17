@@ -76,23 +76,30 @@ describe("CommentComposer pending Agent wakes", () => {
 
     const status = container.querySelector<HTMLElement>("[data-testid='comment-agent-wake-status']");
     expect(status).not.toBeNull();
-    expect(status?.querySelectorAll("button")).toHaveLength(2);
-    expect(status?.textContent).toContain("Noahwill start when sent");
-    expect(status?.textContent).toContain("Sagewill start when sent");
+    const summary = status?.querySelector<HTMLButtonElement>("[data-testid='comment-agent-wake-summary']");
+    expect(summary?.textContent).toContain("2 agents will start when sent");
 
-    const cancelNoah = container.querySelector<HTMLButtonElement>(
+    await act(async () => summary?.click());
+    const popover = document.body.querySelector<HTMLElement>("[data-testid='comment-agent-wake-popover']");
+    expect(popover).not.toBeNull();
+    expect(popover?.textContent).toContain("Will start when sent");
+    expect(popover?.textContent).toContain("Noah");
+    expect(popover?.textContent).toContain("Sage");
+
+    const cancelNoah = document.body.querySelector<HTMLButtonElement>(
       "button[aria-label='Cancel starting Noah when this comment is sent']",
     );
     expect(cancelNoah).not.toBeNull();
     expect(cancelNoah?.hasAttribute("aria-pressed")).toBe(false);
     await act(async () => cancelNoah?.click());
 
-    const skippedNoah = container.querySelector<HTMLButtonElement>(
+    const skippedNoah = document.body.querySelector<HTMLButtonElement>(
       "button[aria-label='Start Noah when this comment is sent']",
     );
     expect(skippedNoah?.dataset.wakeState).toBe("skipped");
-    expect(skippedNoah?.textContent).toContain("won't start this time");
-    expect(container.querySelector("[data-testid='comment-agent-wake-status-agent-sage']")?.getAttribute("data-wake-state"))
+    expect(skippedNoah?.textContent).toContain("reference only");
+    expect(summary?.textContent).toContain("1 of 2 agents will start when sent");
+    expect(document.body.querySelector("[data-testid='comment-agent-wake-status-agent-sage']")?.getAttribute("data-wake-state"))
       .toBe("pending");
 
     const draft = container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Comment draft']")?.value ?? "";
@@ -101,8 +108,9 @@ describe("CommentComposer pending Agent wakes", () => {
     expect(draft).toContain("[Sage](agent://agent-sage?intent=wake)");
 
     await act(async () => skippedNoah?.click());
-    expect(container.querySelector("[data-testid='comment-agent-wake-status-agent-noah']")?.getAttribute("data-wake-state"))
+    expect(document.body.querySelector("[data-testid='comment-agent-wake-status-agent-noah']")?.getAttribute("data-wake-state"))
       .toBe("pending");
+    expect(summary?.textContent).toContain("2 agents will start when sent");
   });
 
   it("shows no wake status for unknown or code-only Agent links", async () => {
@@ -128,7 +136,7 @@ describe("CommentComposer pending Agent wakes", () => {
     expect(container.querySelector("[data-testid='comment-agent-wake-status']")).toBeNull();
   });
 
-  it("keeps the pre-submit control in the shared status row when Agent wakes are present", async () => {
+  it("keeps Agent wakes and the pre-submit control inside the attachment toolbar", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -145,11 +153,15 @@ describe("CommentComposer pending Agent wakes", () => {
         canSubmit
         submitting={false}
         mentions={[{ id: "agent:agent-noah", agentId: "agent-noah", kind: "agent", name: "Noah" }]}
+        onAttachFile={async () => undefined}
         beforeSubmit={<label><input type="checkbox" aria-label="Re-open" /> Re-open</label>}
       />,
     ));
 
     const status = container.querySelector<HTMLElement>("[data-testid='comment-agent-wake-status']");
+    const toolbar = container.querySelector<HTMLElement>("[data-testid='issue-comment-composer-toolbar']");
+    expect(toolbar?.contains(status)).toBe(true);
+    expect(toolbar?.querySelector("button[title='Attach file']")).not.toBeNull();
     expect(status).not.toBeNull();
     expect(status?.querySelector("input[aria-label='Re-open']")).not.toBeNull();
   });
