@@ -30,6 +30,7 @@ const NATIVE_FALLBACK_ERROR_CODES = new Set([
   "workspace_file_read_failed",
   "workspace_metadata_failed",
 ]);
+const NATIVE_FAIL_CLOSED_ERROR_CODES = new Set(["workspace_file_containment_unproven"]);
 
 export type NativeWorkspaceFileRead = {
   filePath: string;
@@ -229,7 +230,7 @@ export async function readWorkspaceFileNative(
         const contentRejected = REJECTED_CONTENT_CODES.has(errorCode);
         throw new WorkspaceFileNativeError(
           errorCode,
-          NATIVE_FALLBACK_ERROR_CODES.has(errorCode),
+          NATIVE_FALLBACK_ERROR_CODES.has(errorCode) && !NATIVE_FAIL_CLOSED_ERROR_CODES.has(errorCode),
           pathRejected,
           limitExceeded,
           contentRejected,

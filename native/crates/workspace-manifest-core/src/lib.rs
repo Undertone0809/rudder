@@ -14,6 +14,8 @@ use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
+#[cfg(windows)]
+use std::mem::size_of;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -206,21 +208,109 @@ fn modified_millis(metadata: &fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-fn same_file_snapshot(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileSnapshot {
+    is_file: bool,
+    len: u64,
+    modified_millis: u64,
     #[cfg(unix)]
-    if left.dev() != right.dev() || left.ino() != right.ino() {
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    ctime: i64,
+    #[cfg(unix)]
+    ctime_nsec: i64,
+    #[cfg(windows)]
+    identity: WindowsFileIdentity,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WindowsFileIdentity {
+    volume_serial_number: u64,
+    file_id: [u8; 16],
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &File) -> io::Result<WindowsFileIdentity> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+
+    let mut info = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(WindowsFileIdentity {
+        volume_serial_number: info.VolumeSerialNumber,
+        file_id: info.FileId.Identifier,
+    })
+}
+
+fn file_snapshot(file: &File) -> io::Result<FileSnapshot> {
+    let metadata = file.metadata()?;
+    Ok(FileSnapshot {
+        is_file: metadata.is_file(),
+        len: metadata.len(),
+        modified_millis: modified_millis(&metadata),
+        #[cfg(unix)]
+        dev: metadata.dev(),
+        #[cfg(unix)]
+        ino: metadata.ino(),
+        #[cfg(unix)]
+        ctime: metadata.ctime(),
+        #[cfg(unix)]
+        ctime_nsec: metadata.ctime_nsec(),
+        #[cfg(windows)]
+        identity: windows_file_identity(file)?,
+    })
+}
+
+fn same_file_snapshot(left: &FileSnapshot, right: &FileSnapshot) -> bool {
+    if left.is_file != right.is_file
+        || left.len != right.len
+        || left.modified_millis != right.modified_millis
+    {
         return false;
     }
-    if left.len() != right.len() || modified_millis(left) != modified_millis(right) {
+    #[cfg(unix)]
+    if left.dev != right.dev
+        || left.ino != right.ino
+        || left.ctime != right.ctime
+        || left.ctime_nsec != right.ctime_nsec
+    {
         return false;
     }
-    #[cfg(unix)]
-    {
-        left.ctime() == right.ctime() && left.ctime_nsec() == right.ctime_nsec()
+    #[cfg(windows)]
+    if left.identity != right.identity {
+        return false;
     }
-    #[cfg(not(unix))]
+    true
+}
+
+fn open_canonical_file(path: &Path) -> io::Result<File> {
+    #[cfg(windows)]
     {
-        true
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path)
     }
 }
 
@@ -274,8 +364,9 @@ fn normalized_windows_path(path: &Path) -> String {
 
 #[cfg(windows)]
 fn ensure_opened_file_within_root(file: &File, canonical_root: &Path) -> Result<(), ManifestError> {
-    let opened_path = final_path_by_handle(file)
-        .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
+    let opened_path = final_path_by_handle(file).map_err(|error| {
+        ManifestError::safe_source("workspace_file_containment_unproven", error)
+    })?;
     let root = normalized_windows_path(canonical_root);
     let opened = normalized_windows_path(&opened_path);
     if opened == root || opened.starts_with(&format!("{root}\\")) {
@@ -441,25 +532,16 @@ pub fn read_file(
     // Read the canonical target so a final symlink cannot redirect the open.
     // Re-resolve the requested path before and after reading to reject changes
     // in symlink or parent-directory ownership while the handle is active.
-    #[cfg(windows)]
-    let file = {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(&canonical_target)
-    };
-    #[cfg(not(windows))]
-    let file = File::open(&canonical_target);
+    let file = open_canonical_file(&canonical_target);
     let file =
         file.map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
     ensure_opened_file_within_root(&file, &canonical_root)?;
-    let opened_metadata = file
-        .metadata()
+    let opened_snapshot = file_snapshot(&file)
         .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
-    if !opened_metadata.is_file() || !same_file_snapshot(&metadata, &opened_metadata) {
+    if !opened_snapshot.is_file
+        || metadata.len() != opened_snapshot.len
+        || modified_millis(&metadata) != opened_snapshot.modified_millis
+    {
         return Err(ManifestError::safe("workspace_file_changed"));
     }
 
@@ -473,14 +555,17 @@ pub fn read_file(
     if !stable_target.starts_with(&canonical_root) {
         return Err(ManifestError::safe("workspace_path_escape"));
     }
-    let stable_path_metadata = fs::metadata(&stable_target).map_err(|error| {
+    let stable_file = open_canonical_file(&stable_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             ManifestError::safe("workspace_file_changed")
         } else {
-            ManifestError::safe_source("workspace_metadata_failed", error)
+            ManifestError::safe_source("workspace_file_read_failed", error)
         }
     })?;
-    if !same_file_snapshot(&stable_path_metadata, &opened_metadata) {
+    ensure_opened_file_within_root(&stable_file, &canonical_root)?;
+    let stable_snapshot = file_snapshot(&stable_file)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    if !same_file_snapshot(&stable_snapshot, &opened_snapshot) {
         return Err(ManifestError::safe("workspace_file_changed"));
     }
 
@@ -493,8 +578,7 @@ pub fn read_file(
         return Err(ManifestError::safe("workspace_file_size_limit"));
     }
 
-    let stable_metadata = file
-        .metadata()
+    let stable_snapshot = file_snapshot(&file)
         .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
     let final_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -506,16 +590,19 @@ pub fn read_file(
     if !final_target.starts_with(&canonical_root) {
         return Err(ManifestError::safe("workspace_path_escape"));
     }
-    let final_path_metadata = fs::metadata(&final_target).map_err(|error| {
+    let final_file = open_canonical_file(&final_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             ManifestError::safe("workspace_file_changed")
         } else {
-            ManifestError::safe_source("workspace_metadata_failed", error)
+            ManifestError::safe_source("workspace_file_read_failed", error)
         }
     })?;
-    if !stable_metadata.is_file()
-        || !same_file_snapshot(&stable_metadata, &opened_metadata)
-        || !same_file_snapshot(&final_path_metadata, &opened_metadata)
+    ensure_opened_file_within_root(&final_file, &canonical_root)?;
+    let final_snapshot = file_snapshot(&final_file)
+        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    if !stable_snapshot.is_file
+        || !same_file_snapshot(&stable_snapshot, &opened_snapshot)
+        || !same_file_snapshot(&final_snapshot, &opened_snapshot)
     {
         return Err(ManifestError::safe("workspace_file_changed"));
     }
@@ -524,8 +611,8 @@ pub fn read_file(
         String::from_utf8(bytes).map_err(|_| ManifestError::safe("non_utf8_workspace_file"))?;
     Ok(FileReadResult {
         file_path,
-        byte_size: opened_metadata.len(),
-        modified_millis: modified_millis(&opened_metadata),
+        byte_size: opened_snapshot.len,
+        modified_millis: opened_snapshot.modified_millis,
         content,
     })
 }
@@ -1225,6 +1312,57 @@ mod tests {
             .code(),
             "manifest_path_limit"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn distinguishes_equal_size_equal_timestamp_files_by_windows_identity() {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::Storage::FileSystem::SetFileTime;
+
+        let root = tempdir().unwrap();
+        let original_path = root.path().join("target.txt");
+        let replacement_path = root.path().join("replacement.txt");
+        fs::write(&original_path, b"original").unwrap();
+        fs::write(&replacement_path, b"replaced").unwrap();
+        let original = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&original_path)
+            .unwrap();
+        let replacement = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&replacement_path)
+            .unwrap();
+        let timestamp = FILETIME {
+            dwLowDateTime: 0x1234_5678,
+            dwHighDateTime: 0x01dc_0000,
+        };
+        for file in [&original, &replacement] {
+            let result = unsafe {
+                SetFileTime(
+                    file.as_raw_handle(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    &timestamp,
+                )
+            };
+            assert_ne!(result, 0);
+        }
+
+        let original_snapshot = file_snapshot(&original).unwrap();
+        let replacement_snapshot = file_snapshot(&replacement).unwrap();
+        assert_eq!(original_snapshot.len, replacement_snapshot.len);
+        assert_eq!(
+            original_snapshot.modified_millis,
+            replacement_snapshot.modified_millis
+        );
+        assert_ne!(original_snapshot.identity, replacement_snapshot.identity);
+        assert!(!same_file_snapshot(
+            &original_snapshot,
+            &replacement_snapshot
+        ));
     }
 
     #[cfg(unix)]

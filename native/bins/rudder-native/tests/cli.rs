@@ -163,6 +163,70 @@ fn reports_version_protocol_and_capabilities_metadata() {
 }
 
 #[test]
+fn reads_workspace_files_with_a_bounded_envelope() {
+    let root = tempdir().unwrap();
+    fs::create_dir(root.path().join("docs")).unwrap();
+    fs::write(root.path().join("docs/readme.md"), "Aé🙂Z").unwrap();
+
+    let (code, response, stderr) = run(&[
+        "workspace",
+        "read",
+        root.path().to_str().unwrap(),
+        "docs/readme.md",
+        "1024",
+        "4096",
+    ]);
+
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.is_empty());
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["capability"], "workspace.read");
+    assert_eq!(response["operation"], "readWorkspaceFile");
+    assert_eq!(response["protocolVersion"], 1);
+    assert_eq!(response["accepted"], false);
+    assert_eq!(response["filePath"], "docs/readme.md");
+    assert_eq!(response["byteSize"], 8);
+    assert!(response["modifiedMillis"].as_u64().is_some());
+    assert_eq!(response["content"], "Aé🙂Z");
+}
+
+#[test]
+fn reads_current_content_after_workspace_file_replacement() {
+    let root = tempdir().unwrap();
+    let target = root.path().join("mutable.txt");
+    let replacement = root.path().join("replacement.txt");
+    fs::write(&target, b"before").unwrap();
+
+    let (code, response, stderr) = run(&[
+        "workspace",
+        "read",
+        root.path().to_str().unwrap(),
+        "mutable.txt",
+        "1024",
+        "4096",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(response["content"], "before");
+    assert_eq!(response["byteSize"], 6);
+
+    fs::write(&replacement, b"after!").unwrap();
+    fs::remove_file(&target).unwrap();
+    fs::rename(&replacement, &target).unwrap();
+
+    let (code, response, stderr) = run(&[
+        "workspace",
+        "read",
+        root.path().to_str().unwrap(),
+        "mutable.txt",
+        "1024",
+        "4096",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(response["content"], "after!");
+    assert_eq!(response["byteSize"], 6);
+}
+
+#[test]
 fn lists_bounded_workspace_directories_and_rejects_escape() {
     let root = tempdir().unwrap();
     fs::create_dir(root.path().join("projects")).unwrap();
@@ -191,6 +255,39 @@ fn lists_bounded_workspace_directories_and_rejects_escape() {
     assert_eq!(code, 2);
     assert_eq!(response["capability"], "workspace.list");
     assert_eq!(response["errorCode"], "unsafe_workspace_path");
+    assert_eq!(response["accepted"], false);
+    assert!(!stderr.is_empty());
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn rejects_workspace_file_reparse_escape() {
+    let outer = tempdir().unwrap();
+    let root = outer.path().join("workspace");
+    let outside = outer.path().join("outside.txt");
+    fs::create_dir(&root).unwrap();
+    fs::write(&outside, b"outside").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, root.join("escape.txt")).unwrap();
+    #[cfg(windows)]
+    if std::os::windows::fs::symlink_file(&outside, root.join("escape.txt")).is_err() {
+        return;
+    }
+
+    let (code, response, stderr) = run(&[
+        "workspace",
+        "read",
+        root.to_str().unwrap(),
+        "escape.txt",
+        "1024",
+        "4096",
+    ]);
+
+    assert_eq!(code, 2);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["capability"], "workspace.read");
+    assert_eq!(response["protocolVersion"], 1);
+    assert_eq!(response["errorCode"], "workspace_path_escape");
     assert_eq!(response["accepted"], false);
     assert!(!stderr.is_empty());
 }
