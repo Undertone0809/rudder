@@ -574,16 +574,6 @@ function DesktopSidePanelSlot({
     }
   }, [sidePanelWidth]);
 
-  useLayoutEffect(() => {
-    const workspace = workspaceAnchorRef.current?.parentElement;
-    if (!workspace) return;
-    const updateWorkspaceWidth = () => setWorkspaceWidth(workspace.offsetWidth);
-    updateWorkspaceWidth();
-    const observer = new ResizeObserver(updateWorkspaceWidth);
-    observer.observe(workspace);
-    return () => observer.disconnect();
-  }, []);
-
   const layoutWorkspaceWidth = useAutoCollapseWorkspaceWidth({
     autoCollapseContextSidebar,
     autoCollapseContextSidebarKey,
