@@ -11,7 +11,7 @@ import {
   resolveSidePanelContextKey,
   resolveSidePanelDragWidth,
   resolveSidePanelRouteContextKey,
-  shouldAutoCollapseAgentContextSidebar,
+  shouldAutoCollapseContextSidebar,
   shouldAutoExpandSidePanel,
   shouldUseFramelessWorkspaceMain,
 } from "./Layout";
@@ -104,28 +104,40 @@ describe("workspace context column sizing", () => {
 });
 
 describe("side panel route context", () => {
-  it("temporarily collapses the Agent context column only for a ready desktop detail panel", () => {
-    expect(shouldAutoCollapseAgentContextSidebar({
+  it("temporarily collapses the Agent or Messenger context column for a ready desktop panel", () => {
+    expect(shouldAutoCollapseContextSidebar({
       isMobile: false,
       relativePath: "/agents/agent-1/runs/run-1",
       sidePanelOpen: true,
       sidePanelContextReady: true,
     })).toBe(true);
-    expect(shouldAutoCollapseAgentContextSidebar({
+    expect(shouldAutoCollapseContextSidebar({
+      isMobile: false,
+      relativePath: "/messenger/chat/chat-1",
+      sidePanelOpen: true,
+      sidePanelContextReady: true,
+    })).toBe(true);
+    expect(shouldAutoCollapseContextSidebar({
       isMobile: false,
       relativePath: "/agents",
       sidePanelOpen: true,
       sidePanelContextReady: true,
     })).toBe(false);
-    expect(shouldAutoCollapseAgentContextSidebar({
+    expect(shouldAutoCollapseContextSidebar({
+      isMobile: false,
+      relativePath: "/messenger",
+      sidePanelOpen: true,
+      sidePanelContextReady: false,
+    })).toBe(false);
+    expect(shouldAutoCollapseContextSidebar({
       isMobile: false,
       relativePath: "/agents/agent-1/runs/run-1",
       sidePanelOpen: false,
       sidePanelContextReady: true,
     })).toBe(false);
-    expect(shouldAutoCollapseAgentContextSidebar({
+    expect(shouldAutoCollapseContextSidebar({
       isMobile: true,
-      relativePath: "/agents/agent-1/runs/run-1",
+      relativePath: "/messenger/chat/chat-1",
       sidePanelOpen: true,
       sidePanelContextReady: true,
     })).toBe(false);
