@@ -581,9 +581,6 @@ function SemanticEntityCard({
 }) {
   const agent = model.agentSnapshot ?? resolveAgent(model.agentRef, agents);
   const target = organizationAwareTarget(model.target);
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const interactive = Boolean(target) && (hovered || focused);
   const content = (
     <>
       <span className="row-span-3 inline-flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/60 bg-muted/35 text-muted-foreground">
@@ -620,20 +617,15 @@ function SemanticEntityCard({
   const className = cn(
     "grid shrink-0 snap-start grid-cols-[1.75rem_minmax(0,1fr)] content-start gap-x-2.5 gap-y-1.5 overflow-hidden rounded-md border border-border/70 bg-card/95 p-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05),0_8px_20px_-16px_rgba(15,23,42,0.34)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.28),0_10px_22px_-16px_rgba(0,0,0,0.72)]",
     compact ? "w-full" : "min-h-36 w-[22rem]",
-    target && "cursor-pointer transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/70 hover:shadow-[0_4px_8px_rgba(15,23,42,0.06),0_18px_36px_-16px_rgba(15,23,42,0.38)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.34),0_22px_40px_-16px_rgba(0,0,0,0.78)] focus-visible:border-primary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 active:translate-y-0 active:scale-[0.99]",
-    interactive && "-translate-y-0.5 border-primary/70 bg-card shadow-[0_5px_10px_rgba(15,23,42,0.08),0_20px_40px_-16px_rgba(15,23,42,0.42)] ring-2 ring-ring/35 dark:shadow-[0_5px_12px_rgba(0,0,0,0.38),0_24px_44px_-18px_rgba(0,0,0,0.82)]",
+    target && "cursor-pointer transition-[border-color] duration-200 ease-out hover:border-primary/70 focus-visible:border-primary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35",
   );
   return target ? (
     <a
       href={target}
       className={className}
-      onPointerEnter={() => setHovered(true)}
-      onPointerLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
       data-rudder-semantic-card-link="true"
       data-rudder-semantic-card-surface="true"
-      data-rudder-semantic-card-interactive={interactive ? "true" : "false"}
+      data-rudder-semantic-card-interactive="true"
     >
       {content}
     </a>
