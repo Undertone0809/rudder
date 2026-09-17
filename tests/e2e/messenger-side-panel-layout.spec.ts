@@ -57,7 +57,7 @@ test("collapses the Messenger List with Side Panel and restores it after close",
     fullPage: true,
   });
 
-  await page.getByTestId("workspace-sidebar-reopen-button").click();
+  await page.getByTestId("chat-side-panel-collapse").click();
   await expect(sidePanel).toBeHidden();
   await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
@@ -117,6 +117,7 @@ test("restores the Messenger List from the active chat header", async ({ page },
     contextWidth: number;
     sidePanelWidth: number;
     mainWidth: number;
+    stackWidth: number;
   }>>((resolve) => {
     const startedAt = performance.now();
     const samples: Array<{
@@ -131,11 +132,13 @@ test("restores the Messenger List from the active chat header", async ({ page },
       const sidePanelWidth = sidePanel?.getBoundingClientRect().width ?? 0;
       if (sidePanel && sidePanelWidth > 0) {
         const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']");
+        const stack = document.querySelector<HTMLElement>("[data-testid='workspace-main-panel-stack']");
         samples.push({
           elapsed: performance.now() - startedAt,
           contextWidth: context?.getBoundingClientRect().width ?? 0,
           sidePanelWidth,
           mainWidth: main?.getBoundingClientRect().width ?? 0,
+          stackWidth: stack?.getBoundingClientRect().width ?? 0,
         });
       }
       if (performance.now() - startedAt >= 360) {
@@ -160,12 +163,21 @@ test("restores the Messenger List from the active chat header", async ({ page },
   const finalSidePanelBox = await sidePanel.boundingBox();
   expect(finalSidePanelBox).not.toBeNull();
   const sidePanelWidths = animationSamples.map((sample) => sample.sidePanelWidth);
+  const contextWidths = animationSamples.map((sample) => sample.contextWidth);
+  const stackWidths = animationSamples.map((sample) => sample.stackWidth);
+  expect(animationSamples.length).toBeGreaterThan(4);
+  expect(Math.max(...contextWidths)).toBeGreaterThan(20);
+  expect(contextWidths[contextWidths.length - 1]!).toBeLessThanOrEqual(2);
+  for (let index = 1; index < contextWidths.length; index += 1) {
+    expect(contextWidths[index]!).toBeLessThanOrEqual(contextWidths[index - 1]! + 8);
+  }
   const midpoint = animationSamples.find((sample) => sample.elapsed >= 100);
   expect(midpoint).toBeDefined();
   expect(midpoint!.sidePanelWidth).toBeGreaterThan(finalSidePanelBox!.width * 0.3);
   for (let index = 1; index < sidePanelWidths.length; index += 1) {
     expect(sidePanelWidths[index]!).toBeGreaterThanOrEqual(sidePanelWidths[index - 1]! - 8);
   }
+  expect(Math.max(...stackWidths) - Math.min(...stackWidths)).toBeGreaterThan(20);
 
   await expect.poll(async () => {
     const reopenBox = await reopenButton.boundingBox();
@@ -183,6 +195,21 @@ test("restores the Messenger List from the active chat header", async ({ page },
     path: testInfo.outputPath("messenger-active-chat-sidebar-reopen.png"),
     fullPage: true,
   });
+
+  await page.getByTestId("chat-side-panel-collapse").click();
+  await expect(sidePanel).toBeHidden();
+  await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
+
+  await page.getByTestId("chat-side-panel-trigger").click();
+  await expect(sidePanel).toBeVisible();
+  await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeGreaterThan(300);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeGreaterThan(300);
 
   await reopenButton.click();
   await expect(sidePanel).toBeHidden();
