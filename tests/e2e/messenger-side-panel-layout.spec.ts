@@ -32,7 +32,7 @@ test("collapses the Messenger List with Side Panel and restores it after close",
   expect(initialPrimaryRailBox).not.toBeNull();
   expect(initialContextBox).not.toBeNull();
   expect(initialMessengerListBox).not.toBeNull();
-  expect(initialPrimaryRailBox!.width).toBeLessThan(60);
+  expect(initialPrimaryRailBox!.width).toBe(50);
   expect(initialContextBox!.width).toBeGreaterThan(120);
   expect(initialMessengerListBox!.width).toBeGreaterThan(120);
 
@@ -110,8 +110,42 @@ test("restores the Messenger List from the active chat header", async ({ page },
   await expect(contextCard).toBeVisible();
   await expect(messengerList).toBeVisible();
 
-  await page.getByTestId("side-panel-hover-edge").hover();
-  await page.getByTestId("global-side-panel-trigger").click();
+  await page.getByTestId("chat-side-panel-trigger").click();
+
+  const animationSamples = await page.evaluate(() => new Promise<Array<{
+    elapsed: number;
+    contextWidth: number;
+    sidePanelWidth: number;
+    mainWidth: number;
+  }>>((resolve) => {
+    const startedAt = performance.now();
+    const samples: Array<{
+      elapsed: number;
+      contextWidth: number;
+      sidePanelWidth: number;
+      mainWidth: number;
+    }> = [];
+    const sample = () => {
+      const context = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']");
+      const sidePanel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+      const sidePanelWidth = sidePanel?.getBoundingClientRect().width ?? 0;
+      if (sidePanel && sidePanelWidth > 0) {
+        const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']");
+        samples.push({
+          elapsed: performance.now() - startedAt,
+          contextWidth: context?.getBoundingClientRect().width ?? 0,
+          sidePanelWidth,
+          mainWidth: main?.getBoundingClientRect().width ?? 0,
+        });
+      }
+      if (performance.now() - startedAt >= 360) {
+        resolve(samples);
+        return;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }));
 
   const sidePanel = page.getByTestId("chat-side-panel");
   const header = page.getByTestId("chat-conversation-header");
@@ -122,6 +156,16 @@ test("restores the Messenger List from the active chat header", async ({ page },
   await expect(reopenButton).toBeVisible();
   await expect(page.getByTestId("workspace-sidebar-reopen-zone")).toHaveCount(0);
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
+
+  const finalSidePanelBox = await sidePanel.boundingBox();
+  expect(finalSidePanelBox).not.toBeNull();
+  const sidePanelWidths = animationSamples.map((sample) => sample.sidePanelWidth);
+  const midpoint = animationSamples.find((sample) => sample.elapsed >= 100);
+  expect(midpoint).toBeDefined();
+  expect(midpoint!.sidePanelWidth).toBeGreaterThan(finalSidePanelBox!.width * 0.3);
+  for (let index = 1; index < sidePanelWidths.length; index += 1) {
+    expect(sidePanelWidths[index]!).toBeGreaterThanOrEqual(sidePanelWidths[index - 1]! - 8);
+  }
 
   await expect.poll(async () => {
     const reopenBox = await reopenButton.boundingBox();

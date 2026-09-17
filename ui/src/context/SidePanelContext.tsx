@@ -78,6 +78,7 @@ type SidePanelContextValue = {
   closeTarget: (key: string) => void;
   registerCloseRequestHandler: (handler: (target: SidePanelTarget) => void | Promise<void>) => () => void;
   registerBrowserResetHandler: (handler: SidePanelBrowserResetHandler) => () => void;
+  registerBeforeOpen: (handler: () => void) => () => void;
   replaceTarget: (key: string, target: SidePanelTarget) => void;
   replaceTargetForContext: (contextKey: string | null, key: string, target: SidePanelTarget) => boolean;
   reorderTarget: (key: string, targetKey: string, position: "before" | "after") => void;
@@ -305,6 +306,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const closeRequestHandlerRef = useRef<((target: SidePanelTarget) => void | Promise<void>) | null>(null);
   const browserResetHandlerRef = useRef<SidePanelBrowserResetHandler | null>(null);
+  const beforeOpenHandlersRef = useRef(new Set<() => void>());
 
   const writeContextState = useCallback((key: string, updater: (state: SidePanelContextState) => SidePanelContextState) => {
     const current = contextStatesRef.current[key] ?? emptyContextState();
@@ -340,21 +342,35 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     return next;
   }, []);
 
+  const notifyBeforeOpen = useCallback(() => {
+    if (open) return;
+    for (const handler of beforeOpenHandlersRef.current) handler();
+  }, [open]);
+
+  const registerBeforeOpen = useCallback((handler: () => void) => {
+    beforeOpenHandlersRef.current.add(handler);
+    return () => {
+      beforeOpenHandlersRef.current.delete(handler);
+    };
+  }, []);
+
   const setContextKey = useCallback((nextContextKey: string | null) => {
     const normalizedKey = normalizeContextKey(nextContextKey);
     if (currentContextKeyRef.current === normalizedKey) return;
     const nextState = contextStatesRef.current[normalizedKey] ?? emptyContextState();
+    if (!open && contextHasPanelState(nextState) && nextState.open) notifyBeforeOpen();
     currentContextKeyRef.current = normalizedKey;
     setCurrentContextState(nextState);
     setOpen(contextHasPanelState(nextState) && nextState.open);
     setCurrentContextKey((previousKey) => (previousKey === normalizedKey ? previousKey : normalizedKey));
-  }, []);
+  }, [notifyBeforeOpen, open]);
 
   const openTarget = useCallback((
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
     if (openSidePanelTargetOnMobile(target)) return { admitted: true };
+    notifyBeforeOpen();
     let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const sideBrowserInstances = sidePanelBrowserInstances(
@@ -382,13 +398,14 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     });
     setOpen(true);
     return openResult;
-  }, [contextKey, writeContextState]);
+  }, [contextKey, notifyBeforeOpen, writeContextState]);
 
   const openTargetInNewTab = useCallback((
     target: SidePanelTarget,
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
     if (openSidePanelTargetOnMobile(target)) return { admitted: true };
+    notifyBeforeOpen();
     let openResult: SidePanelOpenResult = { admitted: true };
     writeContextState(contextKey, (current) => {
       const sideBrowserInstances = sidePanelBrowserInstances(
@@ -415,7 +432,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     });
     setOpen(true);
     return openResult;
-  }, [contextKey, writeContextState]);
+  }, [contextKey, notifyBeforeOpen, writeContextState]);
 
   const openTargetForContext = useCallback((
     nextContextKey: string | null,
@@ -423,6 +440,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     options?: SidePanelOpenOptions,
   ): SidePanelOpenResult => {
     if (openSidePanelTargetOnMobile(target)) return { admitted: true };
+    notifyBeforeOpen();
     const normalizedKey = normalizeContextKey(nextContextKey);
     let openResult: SidePanelOpenResult = { admitted: true };
     const nextState = writeContextState(normalizedKey, (current) => {
@@ -454,14 +472,16 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
       setOpen(true);
     }
     return openResult;
-  }, [writeContextState]);
+  }, [notifyBeforeOpen, writeContextState]);
 
   const showPanel = useCallback(() => {
+    notifyBeforeOpen();
     writeContextState(contextKey, (current) => ({ ...current, hasPanelState: true, open: true }));
     setOpen(true);
-  }, [contextKey, writeContextState]);
+  }, [contextKey, notifyBeforeOpen, writeContextState]);
 
   const showPanelForContext = useCallback((nextContextKey: string | null) => {
+    notifyBeforeOpen();
     const normalizedKey = normalizeContextKey(nextContextKey);
     const current = contextStatesRef.current[normalizedKey] ?? emptyContextState();
     const nextState = { ...current, hasPanelState: true, open: true };
@@ -473,12 +493,13 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     setCurrentContextKey(normalizedKey);
     setCurrentContextState(nextState);
     setOpen(true);
-  }, []);
+  }, [notifyBeforeOpen]);
 
   const openEmpty = useCallback(() => {
+    notifyBeforeOpen();
     setOpen(true);
     writeContextState(contextKey, (current) => ({ ...current, activeKey: null, hasPanelState: true, open: true }));
-  }, [contextKey, writeContextState]);
+  }, [contextKey, notifyBeforeOpen, writeContextState]);
 
   const hidePanel = useCallback(() => {
     setDisplayedContextHold(null);
@@ -738,8 +759,9 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
   }, [contextKey, writeContextState]);
 
   const setActiveKey = useCallback((key: string | null) => {
+    notifyBeforeOpen();
     writeContextState(contextKey, (current) => ({ ...current, activeKey: key, hasPanelState: true, open: true }));
-  }, [contextKey, writeContextState]);
+  }, [contextKey, notifyBeforeOpen, writeContextState]);
 
   const value = useMemo<SidePanelContextValue>(() => ({
     activeKey: currentContextState.activeKey,
@@ -760,6 +782,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     openTargetForContext,
     registerCloseRequestHandler,
     registerBrowserResetHandler,
+    registerBeforeOpen,
     replaceTarget,
     replaceTargetForContext,
     reorderTarget,
@@ -768,7 +791,7 @@ export function SidePanelProvider({ children }: { children: ReactNode }) {
     showPanel,
     showPanelForContext,
     tabs: currentContextState.tabs,
-  }), [clearCurrentContext, clearDisplayedContextHold, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, detachTargetForContext, displayedContextHold, getTargetRevisionForContext, hidePanel, holdDisplayedContext, open, openEmpty, openTarget, openTargetForContext, openTargetInNewTab, registerBrowserResetHandler, registerCloseRequestHandler, reorderTarget, replaceTarget, replaceTargetForContext, setActiveKey, setContextKey, showPanel, showPanelForContext]);
+  }), [clearCurrentContext, clearDisplayedContextHold, closePanel, closeTarget, contextKey, currentContextState.activeKey, currentContextState.tabs, detachTargetForContext, displayedContextHold, getTargetRevisionForContext, hidePanel, holdDisplayedContext, open, openEmpty, openTarget, openTargetForContext, openTargetInNewTab, registerBeforeOpen, registerBrowserResetHandler, registerCloseRequestHandler, reorderTarget, replaceTarget, replaceTargetForContext, setActiveKey, setContextKey, showPanel, showPanelForContext]);
 
   return <SidePanelContext.Provider value={value}>{children}</SidePanelContext.Provider>;
 }
