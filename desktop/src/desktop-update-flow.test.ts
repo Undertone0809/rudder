@@ -122,6 +122,14 @@ function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow
   return { flow, sentProgressEvents };
 }
 
+function completeMacReleaseAssets(version: string) {
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  return [
+    { name: "SHASUMS256.txt" },
+    { name: `Rudder-${version}-macos-${arch}-portable.zip` },
+  ];
+}
+
 describe("desktop update flow", () => {
   beforeEach(() => {
     spawnMock.mockReset();
@@ -406,7 +414,11 @@ describe("desktop update flow", () => {
       return true;
     });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
-      { tag_name: "v0.3.3", html_url: "https://example.test/releases/v0.3.3" },
+      {
+        tag_name: "v0.3.3",
+        html_url: "https://example.test/releases/v0.3.3",
+        assets: completeMacReleaseAssets("0.3.3"),
+      },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
       const { flow } = createFlow({
@@ -439,7 +451,11 @@ describe("desktop update flow", () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
-      { tag_name: "v99.0.0", html_url: "https://example.test/releases/v99.0.0" },
+      {
+        tag_name: "v99.0.0",
+        html_url: "https://example.test/releases/v99.0.0",
+        assets: completeMacReleaseAssets("99.0.0"),
+      },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
       const { flow, sentProgressEvents } = createFlow({
@@ -523,7 +539,11 @@ describe("desktop update flow", () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
-      { tag_name: "v99.0.0", html_url: "https://example.test/releases/v99.0.0" },
+      {
+        tag_name: "v99.0.0",
+        html_url: "https://example.test/releases/v99.0.0",
+        assets: completeMacReleaseAssets("99.0.0"),
+      },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
       const { flow } = createFlow({
@@ -554,7 +574,11 @@ describe("desktop update flow", () => {
       nextCheckAt: new Date(Date.now() - 1).toISOString(),
     });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
-      { tag_name: "v99.0.0", html_url: "https://example.test/releases/v99.0.0" },
+      {
+        tag_name: "v99.0.0",
+        html_url: "https://example.test/releases/v99.0.0",
+        assets: completeMacReleaseAssets("99.0.0"),
+      },
     ]), { status: 200, headers: { "content-type": "application/json" } }));
     try {
       const { flow } = createFlow({
