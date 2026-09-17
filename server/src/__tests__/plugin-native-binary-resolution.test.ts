@@ -49,6 +49,13 @@ describe("Plugin archive native binary discovery", () => {
     expect(resolveNativePluginArchiveBinary()).toBe(debug);
   });
 
+  it("preserves the staged binary preference when release candidates also exist", () => {
+    const staged = path.join(root, "native", target, binary);
+    available.add(release);
+    available.add(staged);
+    expect(resolveNativePluginArchiveBinary()).toBe(staged);
+  });
+
   it("preserves explicit Plugin path precedence without replacing a missing binary", () => {
     const plugin = path.join(root, "missing-plugin-native");
     vi.stubEnv("RUDDER_NATIVE_PLUGIN_ARCHIVE_PATH", plugin);
@@ -69,6 +76,15 @@ describe("Plugin archive native binary discovery", () => {
     const resources = path.join(root, "synthetic-resources");
     const packaged = path.join(resources, "native", target, binary);
     vi.stubEnv("RUDDER_DESKTOP_RESOURCES_PATH", resources);
+    available.add(packaged);
+    expect(resolveNativePluginArchiveBinary()).toBe(packaged);
+  });
+
+  it("preserves packaged Desktop resources when release candidates also exist", () => {
+    const resources = path.join(root, "synthetic-resources");
+    const packaged = path.join(resources, "native", target, binary);
+    vi.stubEnv("RUDDER_DESKTOP_RESOURCES_PATH", resources);
+    available.add(release);
     available.add(packaged);
     expect(resolveNativePluginArchiveBinary()).toBe(packaged);
   });
