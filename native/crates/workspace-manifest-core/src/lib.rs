@@ -24,6 +24,8 @@ use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::mpsc::Sender;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const MANIFEST_PROTOCOL_VERSION: u32 = 1;
@@ -112,6 +114,7 @@ pub struct FileReadResult {
 pub struct ManifestError {
     code: &'static str,
     accepted: bool,
+    fallback_allowed: bool,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -120,6 +123,7 @@ impl ManifestError {
         Self {
             code,
             accepted: false,
+            fallback_allowed: true,
             source: None,
         }
     }
@@ -131,8 +135,40 @@ impl ManifestError {
         Self {
             code,
             accepted: false,
+            fallback_allowed: true,
             source: Some(Box::new(source)),
         }
+    }
+
+    fn fail_closed(code: &'static str) -> Self {
+        Self {
+            code,
+            accepted: false,
+            fallback_allowed: false,
+            source: None,
+        }
+    }
+
+    fn fail_closed_source(
+        code: &'static str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            code,
+            accepted: false,
+            fallback_allowed: false,
+            source: Some(Box::new(source)),
+        }
+    }
+
+    #[cfg(any(windows, test))]
+    fn containment_unproven(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::fail_closed_source("workspace_file_containment_unproven", source)
+    }
+
+    #[cfg(any(windows, test))]
+    fn file_identity_unavailable(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::fail_closed_source("workspace_file_identity_unavailable", source)
     }
 
     fn accepted_source(
@@ -142,6 +178,7 @@ impl ManifestError {
         Self {
             code,
             accepted: true,
+            fallback_allowed: false,
             source: Some(Box::new(source)),
         }
     }
@@ -154,8 +191,12 @@ impl ManifestError {
         self.accepted
     }
 
+    pub fn fallback_allowed(&self) -> bool {
+        self.fallback_allowed
+    }
+
     pub fn fallback_safe(&self) -> bool {
-        !self.accepted
+        self.fallback_allowed
     }
 }
 
@@ -233,7 +274,7 @@ struct WindowsFileIdentity {
 }
 
 #[cfg(windows)]
-fn windows_file_identity(file: &File) -> io::Result<WindowsFileIdentity> {
+fn windows_file_identity(file: &File) -> Result<WindowsFileIdentity, ManifestError> {
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
     };
@@ -248,7 +289,9 @@ fn windows_file_identity(file: &File) -> io::Result<WindowsFileIdentity> {
         )
     };
     if result == 0 {
-        return Err(io::Error::last_os_error());
+        return Err(ManifestError::file_identity_unavailable(
+            io::Error::last_os_error(),
+        ));
     }
     Ok(WindowsFileIdentity {
         volume_serial_number: info.VolumeSerialNumber,
@@ -256,8 +299,17 @@ fn windows_file_identity(file: &File) -> io::Result<WindowsFileIdentity> {
     })
 }
 
-fn file_snapshot(file: &File) -> io::Result<FileSnapshot> {
-    let metadata = file.metadata()?;
+fn file_snapshot(file: &File) -> Result<FileSnapshot, ManifestError> {
+    let metadata = file.metadata().map_err(|error| {
+        #[cfg(windows)]
+        {
+            ManifestError::file_identity_unavailable(error)
+        }
+        #[cfg(not(windows))]
+        {
+            ManifestError::safe_source("workspace_metadata_failed", error)
+        }
+    })?;
     Ok(FileSnapshot {
         is_file: metadata.is_file(),
         len: metadata.len(),
@@ -364,9 +416,8 @@ fn normalized_windows_path(path: &Path) -> String {
 
 #[cfg(windows)]
 fn ensure_opened_file_within_root(file: &File, canonical_root: &Path) -> Result<(), ManifestError> {
-    let opened_path = final_path_by_handle(file).map_err(|error| {
-        ManifestError::safe_source("workspace_file_containment_unproven", error)
-    })?;
+    let opened_path =
+        final_path_by_handle(file).map_err(|error| ManifestError::containment_unproven(error))?;
     let root = normalized_windows_path(canonical_root);
     let opened = normalized_windows_path(&opened_path);
     if opened == root || opened.starts_with(&format!("{root}\\")) {
@@ -401,7 +452,7 @@ pub fn list_directory(
     let root_metadata = fs::symlink_metadata(root)
         .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(ManifestError::safe("workspace_not_directory"));
+        return Err(ManifestError::fail_closed("workspace_not_directory"));
     }
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
@@ -478,22 +529,22 @@ pub fn read_file(
     limits: FileReadLimits,
 ) -> Result<FileReadResult, ManifestError> {
     if limits.max_bytes == 0 || limits.max_path_bytes == 0 {
-        return Err(ManifestError::safe("invalid_limit"));
+        return Err(ManifestError::fail_closed("invalid_limit"));
     }
     if requested_path.is_absolute()
         || requested_path
             .components()
             .any(|component| !matches!(component, Component::Normal(_)))
     {
-        return Err(ManifestError::safe("unsafe_workspace_path"));
+        return Err(ManifestError::fail_closed("unsafe_workspace_path"));
     }
 
     let file_path = portable_path(requested_path)?;
     if file_path.is_empty() {
-        return Err(ManifestError::safe("unsafe_workspace_path"));
+        return Err(ManifestError::fail_closed("unsafe_workspace_path"));
     }
     if file_path.len() as u64 > limits.max_path_bytes {
-        return Err(ManifestError::safe("manifest_path_limit"));
+        return Err(ManifestError::fail_closed("manifest_path_limit"));
     }
 
     let root_metadata = fs::symlink_metadata(root)
@@ -506,27 +557,27 @@ pub fn read_file(
     let requested_target = root.join(requested_path);
     let canonical_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::safe_source("workspace_file_not_found", error)
+            ManifestError::fail_closed_source("workspace_file_not_found", error)
         } else {
             ManifestError::safe_source("workspace_file_read_failed", error)
         }
     })?;
     if !canonical_target.starts_with(&canonical_root) {
-        return Err(ManifestError::safe("workspace_path_escape"));
+        return Err(ManifestError::fail_closed("workspace_path_escape"));
     }
 
     let metadata = fs::metadata(&canonical_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::safe_source("workspace_file_not_found", error)
+            ManifestError::fail_closed_source("workspace_file_not_found", error)
         } else {
             ManifestError::safe_source("workspace_metadata_failed", error)
         }
     })?;
     if !metadata.is_file() {
-        return Err(ManifestError::safe("workspace_not_file"));
+        return Err(ManifestError::fail_closed("workspace_not_file"));
     }
     if metadata.len() > limits.max_bytes {
-        return Err(ManifestError::safe("workspace_file_size_limit"));
+        return Err(ManifestError::fail_closed("workspace_file_size_limit"));
     }
 
     // Read the canonical target so a final symlink cannot redirect the open.
@@ -536,38 +587,39 @@ pub fn read_file(
     let file =
         file.map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
     ensure_opened_file_within_root(&file, &canonical_root)?;
-    let opened_snapshot = file_snapshot(&file)
-        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let opened_snapshot = file_snapshot(&file)?;
     if !opened_snapshot.is_file
         || metadata.len() != opened_snapshot.len
         || modified_millis(&metadata) != opened_snapshot.modified_millis
     {
-        return Err(ManifestError::safe("workspace_file_changed"));
+        return Err(ManifestError::fail_closed("workspace_file_changed"));
     }
 
     let stable_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::safe("workspace_file_changed")
+            ManifestError::fail_closed("workspace_file_changed")
         } else {
             ManifestError::safe_source("workspace_file_read_failed", error)
         }
     })?;
     if !stable_target.starts_with(&canonical_root) {
-        return Err(ManifestError::safe("workspace_path_escape"));
+        return Err(ManifestError::fail_closed("workspace_path_escape"));
     }
     let stable_file = open_canonical_file(&stable_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::safe("workspace_file_changed")
+            ManifestError::fail_closed("workspace_file_changed")
         } else {
             ManifestError::safe_source("workspace_file_read_failed", error)
         }
     })?;
     ensure_opened_file_within_root(&stable_file, &canonical_root)?;
-    let stable_snapshot = file_snapshot(&stable_file)
-        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let stable_snapshot = file_snapshot(&stable_file)?;
     if !same_file_snapshot(&stable_snapshot, &opened_snapshot) {
-        return Err(ManifestError::safe("workspace_file_changed"));
+        return Err(ManifestError::fail_closed("workspace_file_changed"));
     }
+
+    #[cfg(test)]
+    run_read_file_before_read_hook(&requested_target);
 
     let mut bytes = Vec::new();
     (&file)
@@ -575,46 +627,104 @@ pub fn read_file(
         .read_to_end(&mut bytes)
         .map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
     if bytes.len() as u64 > limits.max_bytes {
-        return Err(ManifestError::safe("workspace_file_size_limit"));
+        return Err(ManifestError::fail_closed("workspace_file_size_limit"));
     }
 
-    let stable_snapshot = file_snapshot(&file)
-        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let stable_snapshot = file_snapshot(&file)?;
     let final_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::safe("workspace_file_changed")
+            ManifestError::fail_closed("workspace_file_changed")
         } else {
             ManifestError::safe_source("workspace_file_read_failed", error)
         }
     })?;
     if !final_target.starts_with(&canonical_root) {
-        return Err(ManifestError::safe("workspace_path_escape"));
+        return Err(ManifestError::fail_closed("workspace_path_escape"));
     }
     let final_file = open_canonical_file(&final_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::safe("workspace_file_changed")
+            ManifestError::fail_closed("workspace_file_changed")
         } else {
             ManifestError::safe_source("workspace_file_read_failed", error)
         }
     })?;
     ensure_opened_file_within_root(&final_file, &canonical_root)?;
-    let final_snapshot = file_snapshot(&final_file)
-        .map_err(|error| ManifestError::safe_source("workspace_metadata_failed", error))?;
+    let final_snapshot = file_snapshot(&final_file)?;
     if !stable_snapshot.is_file
         || !same_file_snapshot(&stable_snapshot, &opened_snapshot)
         || !same_file_snapshot(&final_snapshot, &opened_snapshot)
     {
-        return Err(ManifestError::safe("workspace_file_changed"));
+        return Err(ManifestError::fail_closed("workspace_file_changed"));
     }
 
-    let content =
-        String::from_utf8(bytes).map_err(|_| ManifestError::safe("non_utf8_workspace_file"))?;
+    let content = String::from_utf8(bytes)
+        .map_err(|_| ManifestError::fail_closed("non_utf8_workspace_file"))?;
     Ok(FileReadResult {
         file_path,
         byte_size: opened_snapshot.len,
         modified_millis: opened_snapshot.modified_millis,
         content,
     })
+}
+
+#[cfg(test)]
+struct ReadFileBeforeReadHook {
+    target: PathBuf,
+    action: Box<dyn FnOnce(&Path) + Send + 'static>,
+}
+
+#[cfg(test)]
+static READ_FILE_BEFORE_READ_HOOK: OnceLock<Mutex<Option<ReadFileBeforeReadHook>>> =
+    OnceLock::new();
+
+#[cfg(test)]
+fn read_file_before_read_hook_slot() -> &'static Mutex<Option<ReadFileBeforeReadHook>> {
+    READ_FILE_BEFORE_READ_HOOK.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+struct ReadFileBeforeReadHookGuard;
+
+#[cfg(test)]
+fn install_read_file_before_read_hook(
+    target: PathBuf,
+    action: impl FnOnce(&Path) + Send + 'static,
+) -> ReadFileBeforeReadHookGuard {
+    let mut hook = read_file_before_read_hook_slot().lock().unwrap();
+    assert!(
+        hook.replace(ReadFileBeforeReadHook {
+            target,
+            action: Box::new(action),
+        })
+        .is_none(),
+        "read_file test hook already installed"
+    );
+    ReadFileBeforeReadHookGuard
+}
+
+#[cfg(test)]
+impl Drop for ReadFileBeforeReadHookGuard {
+    fn drop(&mut self) {
+        let _ = read_file_before_read_hook_slot().lock().unwrap().take();
+    }
+}
+
+#[cfg(test)]
+fn run_read_file_before_read_hook(requested_target: &Path) {
+    let action = {
+        let mut hook = read_file_before_read_hook_slot().lock().unwrap();
+        let matches = hook
+            .as_ref()
+            .is_some_and(|hook| hook.target == requested_target);
+        if matches {
+            hook.take().map(|hook| hook.action)
+        } else {
+            None
+        }
+    };
+    if let Some(action) = action {
+        action(requested_target);
+    }
 }
 
 fn collect_entries(
@@ -1013,6 +1123,7 @@ where
     *summary = build_manifest(root, output, limits).map_err(|error| ManifestError {
         code: error.code,
         accepted: true,
+        fallback_allowed: false,
         source: error.source,
     })?;
     emit(ManifestState::Ready, Some(summary));
@@ -1099,6 +1210,7 @@ where
             summary = build_manifest(root, output, limits).map_err(|error| ManifestError {
                 code: error.code,
                 accepted: true,
+                fallback_allowed: false,
                 source: error.source,
             })?;
         }
@@ -1168,6 +1280,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::thread;
     use tempfile::tempdir;
@@ -1184,6 +1298,34 @@ mod tests {
             max_bytes: 1024,
             max_path_bytes: 1024 * 1024,
         }
+    }
+
+    #[test]
+    fn keeps_fallback_policy_independent_from_operation_acceptance() {
+        let recoverable = ManifestError::safe_source(
+            "workspace_file_read_failed",
+            io::Error::other("recoverable I/O"),
+        );
+        assert!(!recoverable.accepted_operation());
+        assert!(recoverable.fallback_allowed());
+        assert!(recoverable.fallback_safe());
+
+        for error in [
+            ManifestError::containment_unproven(io::Error::other("containment unavailable")),
+            ManifestError::file_identity_unavailable(io::Error::other("identity unavailable")),
+        ] {
+            assert!(!error.accepted_operation());
+            assert!(!error.fallback_allowed());
+            assert!(!error.fallback_safe());
+        }
+
+        let accepted = ManifestError::accepted_source(
+            "manifest_publish_failed",
+            io::Error::other("publish failed"),
+        );
+        assert!(accepted.accepted_operation());
+        assert!(!accepted.fallback_allowed());
+        assert!(!accepted.fallback_safe());
     }
 
     #[test]
@@ -1315,6 +1457,70 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn copy_windows_last_write_time(source: &Path, destination: &Path) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::Storage::FileSystem::{GetFileTime, SetFileTime};
+
+        let source = OpenOptions::new().read(true).open(source).unwrap();
+        let destination = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(destination)
+            .unwrap();
+        let mut last_write = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let result = unsafe {
+            GetFileTime(
+                source.as_raw_handle(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut last_write,
+            )
+        };
+        assert_ne!(result, 0, "GetFileTime failed");
+        let result = unsafe {
+            SetFileTime(
+                destination.as_raw_handle(),
+                std::ptr::null(),
+                std::ptr::null(),
+                &last_write,
+            )
+        };
+        assert_ne!(result, 0, "SetFileTime failed");
+    }
+
+    #[test]
+    fn rejects_same_size_replacement_after_open_and_snapshot() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let target = root.join("mutable.txt");
+        let replacement = root.join("replacement.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&target, b"before").unwrap();
+        assert_eq!(b"before".len(), b"after!".len());
+
+        let original_path = target.clone();
+        let replacement_path = replacement.clone();
+        let _hook = install_read_file_before_read_hook(target.clone(), move |_| {
+            fs::write(&replacement_path, b"after!").unwrap();
+            #[cfg(windows)]
+            copy_windows_last_write_time(&original_path, &replacement_path);
+            #[cfg(windows)]
+            fs::remove_file(&original_path).unwrap();
+            fs::rename(&replacement_path, &original_path).unwrap();
+        });
+
+        let error = read_file(&root, Path::new("mutable.txt"), file_limits()).unwrap_err();
+
+        assert_eq!(error.code(), "workspace_file_changed");
+        assert!(!error.fallback_safe());
+        assert_eq!(fs::read(&target).unwrap(), b"after!");
+    }
+
+    #[cfg(windows)]
     #[test]
     fn distinguishes_equal_size_equal_timestamp_files_by_windows_identity() {
         use windows_sys::Win32::Foundation::FILETIME;
@@ -1385,22 +1591,36 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn rejects_windows_file_symlinks_that_escape_the_canonical_root() {
+    fn rejects_windows_junctions_that_escape_the_canonical_root() {
         let outer = tempdir().unwrap();
         let root = outer.path().join("workspace");
-        let outside = outer.path().join("outside.txt");
+        let outside = outer.path().join("outside");
+        let junction = root.join("escape");
         fs::create_dir(&root).unwrap();
-        fs::write(&outside, b"outside").unwrap();
-        if std::os::windows::fs::symlink_file(&outside, root.join("escape.txt")).is_err() {
-            return;
-        }
-
-        assert_eq!(
-            read_file(&root, Path::new("escape.txt"), file_limits())
-                .unwrap_err()
-                .code(),
-            "workspace_path_escape"
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"outside").unwrap();
+        let result = Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                junction.to_str().unwrap(),
+                outside.to_str().unwrap(),
+            ])
+            .output()
+            .expect("failed to invoke cmd /C mklink /J");
+        assert!(
+            result.status.success(),
+            "mklink /J failed: {}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
         );
+        assert!(junction.is_dir(), "junction fixture was not created");
+
+        let error = read_file(&root, Path::new("escape/secret.txt"), file_limits()).unwrap_err();
+
+        assert_eq!(error.code(), "workspace_path_escape");
+        assert!(!error.fallback_safe());
     }
 
     #[test]

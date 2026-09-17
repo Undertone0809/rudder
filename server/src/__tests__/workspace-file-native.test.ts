@@ -253,6 +253,52 @@ describe("native workspace file reads", () => {
     });
   });
 
+  it.runIf(process.platform !== "win32")("fails closed when native file identity cannot be proven", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+    cleanupDirs.add(root);
+    const fakeBinary = path.join(root, "fake-native");
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(JSON.stringify({ ok: false, capability: 'workspace.read', protocolVersion: 1, accepted: false, errorCode: 'workspace_file_identity_unavailable' }) + '\\n');",
+        "process.exitCode = 2;",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
+
+    await expect(readWorkspaceFileNative(root, "docs/readme.md")).rejects.toMatchObject({
+      code: "workspace_file_identity_unavailable",
+      fallbackAllowed: false,
+      pathRejected: false,
+    });
+  });
+
+  it.runIf(process.platform !== "win32")("keeps ordinary native I/O failures eligible for fallback", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+    cleanupDirs.add(root);
+    const fakeBinary = path.join(root, "fake-native");
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(JSON.stringify({ ok: false, capability: 'workspace.read', protocolVersion: 1, accepted: false, errorCode: 'workspace_file_read_failed' }) + '\\n');",
+        "process.exitCode = 2;",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
+
+    await expect(readWorkspaceFileNative(root, "docs/readme.md")).rejects.toMatchObject({
+      code: "workspace_file_read_failed",
+      fallbackAllowed: true,
+      pathRejected: false,
+    });
+  });
+
   it("exports a typed native error for callers to classify", () => {
     expect(new WorkspaceFileNativeError("workspace_file_protocol_invalid", false, false))
       .toBeInstanceOf(WorkspaceFileNativeError);
