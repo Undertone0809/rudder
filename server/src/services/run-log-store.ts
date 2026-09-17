@@ -142,6 +142,10 @@ export function resolveNativeEvidenceIndexBinary() {
     path.resolve(moduleDir, "../../../../native/target/debug", binaryName),
     path.resolve(moduleDir, "../../../native", target ?? "unsupported", binaryName),
     resourcesPath && target ? path.resolve(resourcesPath, "native", target, binaryName) : "",
+    path.resolve(moduleDir, "../../../native/target/release", binaryName),
+    path.resolve(moduleDir, "../../../../native/target/release", binaryName),
+    path.resolve(moduleDir, "../../../native/target", target ?? "unsupported", "release", binaryName),
+    path.resolve(moduleDir, "../../../../native/target", target ?? "unsupported", "release", binaryName),
   ].filter(Boolean);
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
