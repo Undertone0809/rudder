@@ -4,6 +4,7 @@ import {
   chooseLatestRelease,
   compareRudderVersions,
   normalizeReleaseVersion,
+  requiredDesktopUpdateAssetNames,
   resolveUpdateChannel,
 } from "./update-check.js";
 
@@ -68,6 +69,7 @@ describe("desktop update checks", () => {
       appName: "Rudder",
       repo: "example/rudder",
       releasesUrl: "https://example.test/releases",
+      requiredAssetNamesForVersion: () => [],
       fetchImpl: async () => new Response(JSON.stringify([
         { tag_name: "v0.1.1-canary.1", prerelease: true, html_url: "canary" },
         { tag_name: "v0.1.0", prerelease: false, html_url: "stable" },
@@ -87,6 +89,7 @@ describe("desktop update checks", () => {
       repo: "example/rudder",
       releasesUrl: "https://example.test/releases",
       channel: "canary",
+      requiredAssetNamesForVersion: () => [],
       fetchImpl: async () => new Response(JSON.stringify([
         { tag_name: "canary/v0.2.0-canary.41", prerelease: true, html_url: "canary" },
         { tag_name: "v0.2.1", prerelease: false, html_url: "stable" },
@@ -108,6 +111,7 @@ describe("desktop update checks", () => {
         repo: "example/rudder",
         releasesUrl: "https://github.com/example/rudder/releases",
         channel: "canary",
+        requiredAssetNamesForVersion: () => [],
         fetchImpl: async (url) => {
           if (String(url).includes("api.github.com")) {
             return new Response("rate limited", { status: 403 });
@@ -129,16 +133,12 @@ describe("desktop update checks", () => {
   });
 
   it("skips a newer release whose platform assets are still uploading", async () => {
-    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const portableAsset = (version: string) => requiredDesktopUpdateAssetNames(version, process.platform)[1];
     const result = await checkForRudderDesktopUpdates({
       currentVersion: "0.1.0",
       appName: "Rudder",
       repo: "example/rudder",
       releasesUrl: "https://example.test/releases",
-      requiredAssetNamesForVersion: (version) => [
-        "SHASUMS256.txt",
-        `Rudder-${version}-macos-${arch}-portable.zip`,
-      ],
       fetchImpl: async () => new Response(JSON.stringify([
         {
           tag_name: "v0.2.0",
@@ -152,7 +152,7 @@ describe("desktop update checks", () => {
           html_url: "complete",
           assets: [
             { name: "SHASUMS256.txt" },
-            { name: `Rudder-0.1.1-macos-${arch}-portable.zip` },
+            { name: portableAsset("0.1.1") },
           ],
         },
       ])),
