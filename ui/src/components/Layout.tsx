@@ -590,6 +590,7 @@ function readRememberedSidePanelWidth(): number {
 
 function DesktopSidePanelSlot({
   autoCollapseContextSidebar,
+  autoCollapseContextSidebarKey,
   autoCollapseContextSidebarOnOpen,
   contextReady,
   contextColumnWidth,
@@ -598,6 +599,7 @@ function DesktopSidePanelSlot({
   selectedOrganizationId,
 }: {
   autoCollapseContextSidebar: boolean;
+  autoCollapseContextSidebarKey: string | null;
   autoCollapseContextSidebarOnOpen: boolean;
   contextReady: boolean;
   contextColumnWidth: number;
@@ -618,7 +620,7 @@ function DesktopSidePanelSlot({
   const [resizingSidePanel, setResizingSidePanel] = useState(false);
   const sidePanelResizeShieldRef = useRef<HTMLDivElement | null>(null);
   const previousSidePanelOpenRef = useRef(sidePanel.open);
-  const autoCollapseWorkspaceWidthRef = useRef<number | null>(null);
+  const autoCollapseWorkspaceWidthRef = useRef<{ key: string; width: number } | null>(null);
   const sidePanelFocusWithinRef = useRef(false);
   const sidePanelResizeActiveRef = useRef(false);
   const sidePanelResizeCleanupRef = useRef<(() => void) | null>(null);
@@ -629,14 +631,27 @@ function DesktopSidePanelSlot({
     if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
 
     setWorkspaceWidth(measuredWorkspaceWidth);
-    if (!autoCollapseContextSidebarOnOpen) return;
+    if (!autoCollapseContextSidebarOnOpen || !autoCollapseContextSidebarKey) {
+      autoCollapseWorkspaceWidthRef.current = null;
+      return;
+    }
 
     const contextCardWidth = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']")?.getBoundingClientRect().width ?? 0;
     const contextResizerWidth = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']")?.getBoundingClientRect().width ?? 0;
-    autoCollapseWorkspaceWidthRef.current = measuredWorkspaceWidth
-      + Math.max(contextCardWidth, contextColumnWidth)
-      + Math.max(contextResizerWidth, 9);
-  }, [autoCollapseContextSidebarOnOpen, contextColumnWidth]);
+    const contextAlreadyCollapsed = sidePanel.open && autoCollapseContextSidebar;
+    autoCollapseWorkspaceWidthRef.current = {
+      key: autoCollapseContextSidebarKey,
+      width: measuredWorkspaceWidth + (contextAlreadyCollapsed
+        ? 0
+        : Math.max(contextCardWidth, contextColumnWidth) + Math.max(contextResizerWidth, 9)),
+    };
+  }, [
+    autoCollapseContextSidebar,
+    autoCollapseContextSidebarKey,
+    autoCollapseContextSidebarOnOpen,
+    contextColumnWidth,
+    sidePanel.open,
+  ]);
 
   useEffect(
     () => sidePanel.registerBeforeOpen(captureWorkspaceWidthForPanelOpen),
@@ -663,23 +678,54 @@ function DesktopSidePanelSlot({
   }, []);
 
   useLayoutEffect(() => {
-    if (!sidePanel.open) {
+    if (!sidePanel.open || !autoCollapseContextSidebar || !autoCollapseContextSidebarKey) {
       autoCollapseWorkspaceWidthRef.current = null;
       return;
     }
-    if (!autoCollapseContextSidebar || autoCollapseWorkspaceWidthRef.current !== null) return;
+    if (autoCollapseWorkspaceWidthRef.current?.key === autoCollapseContextSidebarKey) return;
 
     const workspace = workspaceAnchorRef.current?.parentElement;
     const measuredWorkspaceWidth = workspace?.getBoundingClientRect().width ?? workspaceWidth ?? 0;
     if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
 
-    autoCollapseWorkspaceWidthRef.current = measuredWorkspaceWidth + contextColumnWidth + 9;
-  }, [autoCollapseContextSidebar, contextColumnWidth, sidePanel.open, workspaceWidth]);
+    autoCollapseWorkspaceWidthRef.current = {
+      key: autoCollapseContextSidebarKey,
+      width: measuredWorkspaceWidth,
+    };
+  }, [autoCollapseContextSidebar, autoCollapseContextSidebarKey, sidePanel.open, workspaceWidth]);
 
+  useEffect(() => {
+    if (!sidePanel.open || !autoCollapseContextSidebar || !autoCollapseContextSidebarKey) return undefined;
+
+    let frame: number | null = null;
+    const handleResize = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        const workspace = workspaceAnchorRef.current?.parentElement;
+        const measuredWorkspaceWidth = workspace?.getBoundingClientRect().width ?? 0;
+        if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
+        autoCollapseWorkspaceWidthRef.current = {
+          key: autoCollapseContextSidebarKey,
+          width: measuredWorkspaceWidth,
+        };
+        setWorkspaceWidth(workspace?.offsetWidth ?? measuredWorkspaceWidth);
+      });
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [autoCollapseContextSidebar, autoCollapseContextSidebarKey, sidePanel.open]);
+
+  const capturedAutoCollapseWorkspaceWidth = autoCollapseContextSidebarKey
+    && autoCollapseWorkspaceWidthRef.current?.key === autoCollapseContextSidebarKey
+    ? autoCollapseWorkspaceWidthRef.current.width
+    : null;
   const layoutWorkspaceWidth = autoCollapseContextSidebar
-    ? autoCollapseWorkspaceWidthRef.current ?? (
-      workspaceWidth === null ? null : workspaceWidth + contextColumnWidth + 9
-    )
+    ? capturedAutoCollapseWorkspaceWidth ?? workspaceWidth
     : workspaceWidth;
 
   useEffect(() => {
@@ -1104,6 +1150,9 @@ export function Layout() {
     sidePanelOpen: true,
     sidePanelContextReady,
   });
+  const autoCollapseContextSidebarKey = autoCollapseContextSidebarOnOpen
+    ? `${relativeBoardPath}:${displayedSidePanelContext.contextKey}`
+    : null;
   const contextSidebarVisible = sidebarOpen && !autoCollapseContextSidebar;
   const openWorkspaceSidebar = useCallback(() => {
     if (autoCollapseContextSidebar) hidePanel();
@@ -1817,6 +1866,7 @@ export function Layout() {
                       </div>
                       <DesktopSidePanelSlot
                         autoCollapseContextSidebar={autoCollapseContextSidebar}
+                        autoCollapseContextSidebarKey={autoCollapseContextSidebarKey}
                         autoCollapseContextSidebarOnOpen={autoCollapseContextSidebarOnOpen}
                         contextReady={sidePanelContextReady}
                         contextColumnWidth={contextColumnWidth}

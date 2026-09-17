@@ -458,7 +458,7 @@ describe("PrimaryRail active motion indicator", () => {
     expect(nav?.className).toContain(
       "w-[calc(var(--primary-rail-item-width,66px)+var(--primary-rail-item-shift,0.25rem)+var(--primary-rail-item-shift,0.25rem)+0.625rem)]",
     );
-    expect(nav?.className).toContain("min-w-[61px]");
+    expect(nav?.className).not.toContain("min-w-[61px]");
     expect(nav?.className).not.toContain("w-full");
   });
 
