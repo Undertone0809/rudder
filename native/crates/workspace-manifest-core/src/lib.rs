@@ -471,14 +471,14 @@ fn open_root_directory(path: &Path) -> io::Result<File> {
     {
         use std::os::windows::fs::OpenOptionsExt;
         use windows_sys::Win32::Storage::FileSystem::{
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
         };
 
         OpenOptions::new()
             .read(true)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .share_mode(FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
             .open(path)
     }
     #[cfg(unix)]
@@ -1849,7 +1849,7 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"after!");
     }
 
-    #[cfg(any(unix, windows))]
+    #[cfg(unix)]
     #[test]
     fn rejects_workspace_root_replacement_with_a_reparse_point() {
         let outer = tempdir().unwrap();
@@ -1890,6 +1890,32 @@ mod tests {
 
         assert_eq!(error.code(), "workspace_file_changed");
         assert!(!error.fallback_safe());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn keeps_workspace_root_pinned_while_reading() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let moved_root = outer.path().join("moved-workspace");
+        let target = root.join("mutable.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&target, b"before").unwrap();
+
+        let original_root = root.clone();
+        let replacement_root = moved_root.clone();
+        let _hook = install_read_file_before_read_hook(target.clone(), move |_| {
+            assert!(
+                fs::rename(&original_root, &replacement_root).is_err(),
+                "the open root handle must prevent replacement"
+            );
+        });
+
+        let result = read_file(&root, Path::new("mutable.txt"), file_limits()).unwrap();
+
+        assert_eq!(result.content, "before");
+        assert!(root.is_dir());
+        assert!(!moved_root.exists());
     }
 
     #[cfg(unix)]
