@@ -61,7 +61,8 @@ import {
   resolveSidePanelDragWidth,
   shouldAutoCollapseContextSidebar,
   shouldAutoExpandSidePanel,
-  useSidePanelWorkspaceLayout,
+  useAutoCollapseWorkspaceWidth,
+  useViewportResizeTransition,
   widthRatio,
 } from "../lib/workspace-shell-layout";
 import { ChatSidePanel } from "../pages/Chat.side-panel";
@@ -82,8 +83,10 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./side-panel-resize-lifecycle";
+
 export {
   preserveRememberedSidePanelWidth,
+  readRememberedSidePanelWidth,
   resolveDefaultSidePanelWidth,
   resolveProportionalSidePanelWidth,
   resolveSidePanelCollapseWidth,
@@ -95,7 +98,7 @@ export {
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
 const WORKSPACE_COLUMN_WIDTH_KEY_PREFIX = "rudder.workspace.contextWidth";
-
+// Reset widths remembered by the previous default, which could open the panel at 2:1.
 type WorkspaceColumnFamily = "apps" | "chat" | "messenger" | "issues" | "calendar" | "projects" | "agents" | "org" | "backups";
 
 const WORKSPACE_COLUMN_WIDTH_DEFAULTS: Record<WorkspaceColumnFamily, number> = {
@@ -527,6 +530,7 @@ function DesktopSidePanelSlot({
   expanded,
   onExpandedChange,
   selectedOrganizationId,
+  viewportWidth,
 }: {
   autoCollapseContextSidebar: boolean;
   autoCollapseContextSidebarKey: string | null;
@@ -537,6 +541,7 @@ function DesktopSidePanelSlot({
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   selectedOrganizationId: string | null | undefined;
+  viewportWidth: number | null;
 }) {
   const sidePanel = useSidePanel();
   const workspaceAnchorRef = useRef<HTMLSpanElement>(null);
@@ -554,6 +559,7 @@ function DesktopSidePanelSlot({
   const sidePanelFocusWithinRef = useRef(false);
   const sidePanelResizeActiveRef = useRef(false);
   const sidePanelResizeCleanupRef = useRef<(() => void) | null>(null);
+  const viewportResizing = useViewportResizeTransition();
 
   useEffect(() => {
     if (typeof window === "undefined" || !widthInitializedRef.current) return;
@@ -564,26 +570,15 @@ function DesktopSidePanelSlot({
     }
   }, [sidePanelWidth]);
 
-  useLayoutEffect(() => {
-    const workspace = workspaceAnchorRef.current?.parentElement;
-    if (!workspace) return;
-    const updateWorkspaceWidth = () => setWorkspaceWidth(workspace.offsetWidth);
-    updateWorkspaceWidth();
-    const observer = new ResizeObserver(updateWorkspaceWidth);
-    observer.observe(workspace);
-    return () => observer.disconnect();
-  }, []);
-
-  const layoutWorkspaceWidth = useSidePanelWorkspaceLayout({
+  const layoutWorkspaceWidth = useAutoCollapseWorkspaceWidth({
     autoCollapseContextSidebar,
     autoCollapseContextSidebarKey,
     autoCollapseContextSidebarOnOpen,
     contextColumnWidth,
     contextSidebarVisible,
-    registerBeforeOpen: sidePanel.registerBeforeOpen,
-    sidePanelOpen: sidePanel.open,
     setWorkspaceWidth,
     workspaceAnchorRef,
+    viewportWidth,
     workspaceWidth,
   });
 
@@ -779,7 +774,7 @@ function DesktopSidePanelSlot({
         className={cn(
           "motion-resize relative flex min-h-0 shrink-0 overflow-hidden",
           expandedVisible && "z-30",
-          resizingSidePanel && "transition-none",
+          (resizingSidePanel || viewportResizing) && "transition-none",
         )}
         data-testid={expandedVisible ? "side-panel-expanded-overlay" : "side-panel-stable-host"}
         data-side-panel-state={expandedVisible ? "expanded" : panelVisible ? "docked" : "closed"}
@@ -1732,6 +1727,7 @@ export function Layout() {
                         contextSidebarVisible={contextSidebarVisible}
                         expanded={desktopSidePanelExpanded}
                         selectedOrganizationId={sidePanelOrganizationId}
+                        viewportWidth={viewportWidth}
                         onExpandedChange={setDesktopSidePanelExpanded}
                       />
                     </div>

@@ -227,16 +227,135 @@ test("restores the Messenger List from the active chat header", async ({ page },
   await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeGreaterThan(300);
+  for (const viewportWidth of [1280, 1024, 900, 1120, 1024, 1440]) {
+    await page.setViewportSize({ width: viewportWidth, height: 900 });
+    const immediateGeometry = await page.evaluate(() => {
+      const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']")?.getBoundingClientRect();
+      const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']")?.getBoundingClientRect();
+      const shell = document.querySelector<HTMLElement>("[data-testid='workspace-shell']")?.getBoundingClientRect();
+      if (!main || !panel || !shell) return null;
+      return {
+        mainWidth: main.width,
+        panelWidth: panel.width,
+        rightEdge: panel.right,
+        shellRight: shell.right,
+      };
+    });
+    expect(immediateGeometry).not.toBeNull();
+    expect(immediateGeometry!.mainWidth).toBeGreaterThan(200);
+    expect(immediateGeometry!.panelWidth).toBeGreaterThan(300);
+    expect(immediateGeometry!.rightEdge).toBeLessThanOrEqual(immediateGeometry!.shellRight + 1);
+    await expect.poll(async () => page.evaluate(() => {
+      const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']");
+      const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+      if (!main || !panel) return false;
+      const mainWidth = main.getBoundingClientRect().width;
+      const panelWidth = panel.getBoundingClientRect().width;
+      return mainWidth > 200 && panelWidth > 300 && Math.abs(mainWidth - panelWidth) <= 2;
+    })).toBe(true);
+  }
+
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeGreaterThan(300);
+  await expect.poll(async () => page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']");
+    const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']");
+    if (!main || !panel) return null;
+    return Math.abs(main.getBoundingClientRect().width - panel.getBoundingClientRect().width);
+  })).toBeLessThanOrEqual(2);
 
   await reopenButton.click();
   await expect(sidePanel).toBeHidden();
   await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
   await expect(reopenButton).toHaveCount(0);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test("keeps Side Panel geometry when entering Messenger from an open panel", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  const organizationResponse = await page.request.post("/api/orgs", {
+    data: { name: `Messenger-Open-Panel-Route-Continuity-${Date.now()}` },
+  });
+  expect(organizationResponse.ok()).toBe(true);
+  const organization = await organizationResponse.json() as { id: string; urlKey: string };
+
+  await page.goto("/");
+  await page.evaluate((organizationId) => {
+    window.localStorage.setItem("rudder.selectedOrganizationId", organizationId);
+  }, organization.id);
+  await page.goto(`/${organization.urlKey}/issues`);
+
+  const contextCard = page.getByTestId("workspace-context-card");
+  const messengerList = page.getByTestId("workspace-sidebar");
+  const sidePanel = page.getByTestId("chat-side-panel");
+  await expect(contextCard).toBeVisible({ timeout: 20_000 });
+
+  await page.getByTestId("side-panel-hover-edge").hover();
+  await page.getByTestId("global-side-panel-trigger").click();
+  await expect(sidePanel).toBeVisible();
+  await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
+  await expect.poll(async () => (await contextCard.boundingBox())?.width ?? 0).toBeGreaterThan(120);
+
+  await page.getByRole("link", { name: "Messenger", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/messenger(?:/chat)?$`));
+  await expect(messengerList).toBeVisible({ timeout: 20_000 });
+  await expect(sidePanel).toBeVisible();
+  await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
+
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
+  await expect.poll(async () => (await contextCard.boundingBox())?.width ?? 0).toBeLessThanOrEqual(2);
+  await expect.poll(async () => page.evaluate(() => {
+    const resizer = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']");
+    if (!resizer) return null;
+    return {
+      width: resizer.getBoundingClientRect().width,
+      border: getComputedStyle(document.querySelector<HTMLElement>("[data-testid='workspace-context-card']")!).borderRightWidth,
+    };
+  })).toEqual({ width: 0, border: "0px" });
+  await expect.poll(async () => {
+    const main = await page.getByTestId("workspace-main-card").boundingBox();
+    const panel = await sidePanel.boundingBox();
+    if (!main || !panel) return null;
+    return {
+      mainWidth: main.width,
+      panelWidth: panel.width,
+      rightEdge: panel.x + panel.width,
+    };
+  }).toMatchObject({ rightEdge: expect.any(Number) });
+  const geometry = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']")?.getBoundingClientRect();
+    const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']")?.getBoundingClientRect();
+    const shell = document.querySelector<HTMLElement>("[data-testid='workspace-shell']")?.getBoundingClientRect();
+    if (!main || !panel || !shell) return null;
+    return {
+      mainWidth: main.width,
+      panelWidth: panel.width,
+      rightEdge: panel.right,
+      shellRight: shell.right,
+    };
+  });
+  expect(geometry).not.toBeNull();
+  expect(geometry!.mainWidth).toBeGreaterThan(240);
+  expect(geometry!.panelWidth).toBeGreaterThan(300);
+  expect(geometry!.rightEdge).toBeLessThanOrEqual(geometry!.shellRight + 1);
+
+  await page.getByTestId("chat-side-panel-collapse").click();
+  await expect(sidePanel).toBeHidden();
+  await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
+  await expect.poll(async () => (await contextCard.boundingBox())?.width ?? 0).toBeGreaterThan(120);
+
+  await page.screenshot({
+    path: testInfo.outputPath("messenger-from-open-panel-route-continuity.png"),
+    fullPage: true,
+  });
 
   expect(pageErrors).toEqual([]);
 });
