@@ -10,6 +10,19 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
+/// Maximum UTF-8 byte length of an organization, actor, project, or goal id.
+pub const MAX_IDENTIFIER_BYTES: usize = 256;
+/// Maximum UTF-8 byte length of an idempotency key.
+pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+/// Maximum number of idempotency receipts retained by one link state.
+pub const MAX_APPLIED_RECEIPTS: usize = 1024;
+/// Number of hexadecimal characters in a SHA-256 digest.
+pub const SHA256_HEX_LENGTH: usize = 64;
+/// Domain separator for deterministic Project-Goal link identifiers.
+pub const LINK_IDENTIFIER_SCHEMA: &str = "rudder.project-goal-link.v1";
+/// Domain separator for deterministic mutation fingerprints.
+pub const FINGERPRINT_SCHEMA: &str = "rudder.project-goal-link-mutation.v1";
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {
@@ -68,6 +81,7 @@ impl Actor {
 pub enum Operation {
     Attach,
     Detach,
+    Cancel,
 }
 
 impl Operation {
@@ -75,6 +89,7 @@ impl Operation {
         match self {
             Self::Attach => "attach",
             Self::Detach => "detach",
+            Self::Cancel => "cancel",
         }
     }
 }
@@ -175,24 +190,25 @@ impl ProjectGoalLinkCommand {
     }
 
     fn validate(&self, state: &ProjectGoalLinkState) -> Result<(), LinkMutationError> {
-        if self.organization_id.is_empty()
-            || self.project_id.is_empty()
-            || self.goal_id.is_empty()
-            || self.idempotency_key.is_empty()
-            || self.actor.principal_id().is_empty()
-            || self.actor.organization_id().is_empty()
-            || state.organization_id.is_empty()
-            || state.project_org_id.is_empty()
-            || state.goal_org_id.is_empty()
-        {
-            return Err(LinkMutationError::InvalidField);
+        state.validate()?;
+        validate_identifier(&self.organization_id)?;
+        validate_identifier(&self.project_id)?;
+        validate_identifier(&self.goal_id)?;
+        validate_identifier(self.actor.principal_id())?;
+        validate_identifier(self.actor.organization_id())?;
+        validate_idempotency_key(&self.idempotency_key)?;
+
+        if self.actor.organization_id() != self.organization_id {
+            return Err(LinkMutationError::CrossOrganization);
         }
-        if self.actor.organization_id() != self.organization_id
-            || state.organization_id != self.organization_id
+        if state.organization_id != self.organization_id
             || state.project_org_id != self.organization_id
             || state.goal_org_id != self.organization_id
         {
             return Err(LinkMutationError::CrossOrganization);
+        }
+        if state.project_id != self.project_id || state.goal_id != self.goal_id {
+            return Err(LinkMutationError::TargetMismatch);
         }
         if !self.actor.can_mutate() {
             return Err(LinkMutationError::Unauthorized);
@@ -200,37 +216,24 @@ impl ProjectGoalLinkCommand {
         Ok(())
     }
 
+    pub fn link_identifier(&self) -> Result<String, LinkMutationError> {
+        deterministic_link_identifier(&self.organization_id, &self.project_id, &self.goal_id)
+    }
+
     fn fingerprint(&self) -> Result<String, LinkMutationError> {
-        #[derive(Serialize)]
-        struct Fingerprint<'a> {
-            organization_id: &'a str,
-            actor_kind: &'static str,
-            actor_id: &'a str,
-            project_id: &'a str,
-            goal_id: &'a str,
-            operation: &'static str,
-            expected_version: u64,
-            fence_epoch: u64,
-        }
-        let value = Fingerprint {
-            organization_id: &self.organization_id,
-            actor_kind: self.actor.kind(),
-            actor_id: self.actor.principal_id(),
-            project_id: &self.project_id,
-            goal_id: &self.goal_id,
-            operation: self.operation.as_str(),
-            expected_version: self.expected_version,
-            fence_epoch: self.fence_epoch,
-        };
-        let bytes = serde_json::to_vec(&value).map_err(|_| LinkMutationError::FingerprintFailed)?;
+        let bytes = canonical_fingerprint_bytes(self);
         Ok(hex_digest(Sha256::digest(bytes)))
     }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AppliedReceipt {
     version: u64,
+    fence_epoch: u64,
     linked: bool,
+    cancelled: bool,
+    link_id: String,
     fingerprint: String,
 }
 
@@ -240,17 +243,23 @@ pub struct ProjectGoalLinkState {
     pub organization_id: String,
     pub project_org_id: String,
     pub goal_org_id: String,
+    pub project_id: String,
+    pub goal_id: String,
     pub version: u64,
     pub fence_epoch: u64,
     pub linked: bool,
+    pub cancelled: bool,
     applied_idempotency: BTreeMap<String, AppliedReceipt>,
 }
 
 impl ProjectGoalLinkState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         organization_id: impl Into<String>,
         project_org_id: impl Into<String>,
         goal_org_id: impl Into<String>,
+        project_id: impl Into<String>,
+        goal_id: impl Into<String>,
         version: u64,
         fence_epoch: u64,
         linked: bool,
@@ -259,11 +268,61 @@ impl ProjectGoalLinkState {
             organization_id: organization_id.into(),
             project_org_id: project_org_id.into(),
             goal_org_id: goal_org_id.into(),
+            project_id: project_id.into(),
+            goal_id: goal_id.into(),
             version,
             fence_epoch,
             linked,
+            cancelled: false,
             applied_idempotency: BTreeMap::new(),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_target(
+        organization_id: impl Into<String>,
+        project_id: impl Into<String>,
+        goal_id: impl Into<String>,
+        project_org_id: impl Into<String>,
+        goal_org_id: impl Into<String>,
+        version: u64,
+        fence_epoch: u64,
+        linked: bool,
+    ) -> Self {
+        Self::new(
+            organization_id,
+            project_org_id,
+            goal_org_id,
+            project_id,
+            goal_id,
+            version,
+            fence_epoch,
+            linked,
+        )
+    }
+
+    pub fn link_identifier(&self) -> Result<String, LinkMutationError> {
+        deterministic_link_identifier(&self.organization_id, &self.project_id, &self.goal_id)
+    }
+
+    fn validate(&self) -> Result<(), LinkMutationError> {
+        validate_identifier(&self.organization_id)?;
+        validate_identifier(&self.project_org_id)?;
+        validate_identifier(&self.goal_org_id)?;
+        validate_identifier(&self.project_id)?;
+        validate_identifier(&self.goal_id)?;
+        if self.applied_idempotency.len() > MAX_APPLIED_RECEIPTS {
+            return Err(LinkMutationError::ReceiptCapacityExceeded);
+        }
+        for (key, receipt) in &self.applied_idempotency {
+            validate_idempotency_key(key)?;
+            validate_receipt(receipt)?;
+        }
+        Ok(())
+    }
+
+    pub fn applied_receipt_count(&self) -> usize {
+        self.applied_idempotency.len()
     }
 
     pub fn apply(
@@ -272,21 +331,64 @@ impl ProjectGoalLinkState {
     ) -> Result<LinkMutationOutcome, LinkMutationError> {
         command.validate(self)?;
         let fingerprint = command.fingerprint()?;
+        let link_id = command.link_identifier()?;
         if let Some(previous) = self.applied_idempotency.get(&command.idempotency_key) {
-            if previous.fingerprint == fingerprint {
+            if previous.fingerprint == fingerprint && previous.link_id == link_id {
                 return Ok(LinkMutationOutcome::AlreadyApplied {
                     version: previous.version,
+                    fence_epoch: previous.fence_epoch,
                     linked: previous.linked,
+                    cancelled: previous.cancelled,
+                    link_id,
                     fingerprint,
                 });
             }
             return Err(LinkMutationError::IdempotencyConflict);
         }
+        if command.fence_epoch != self.fence_epoch {
+            return Err(LinkMutationError::StaleFence);
+        }
         if command.expected_version != self.version {
             return Err(LinkMutationError::StaleVersion);
         }
-        if command.fence_epoch != self.fence_epoch {
-            return Err(LinkMutationError::StaleFence);
+        if self.cancelled {
+            return Err(LinkMutationError::Cancelled);
+        }
+        if self.applied_idempotency.len() >= MAX_APPLIED_RECEIPTS {
+            return Err(LinkMutationError::ReceiptCapacityExceeded);
+        }
+
+        if matches!(command.operation, Operation::Cancel) {
+            let next_version = self
+                .version
+                .checked_add(1)
+                .ok_or(LinkMutationError::VersionOverflow)?;
+            let next_fence_epoch = self
+                .fence_epoch
+                .checked_add(1)
+                .ok_or(LinkMutationError::FenceOverflow)?;
+            self.version = next_version;
+            self.fence_epoch = next_fence_epoch;
+            self.cancelled = true;
+            self.applied_idempotency.insert(
+                command.idempotency_key,
+                AppliedReceipt {
+                    version: self.version,
+                    fence_epoch: self.fence_epoch,
+                    linked: self.linked,
+                    cancelled: self.cancelled,
+                    link_id: link_id.clone(),
+                    fingerprint: fingerprint.clone(),
+                },
+            );
+            return Ok(LinkMutationOutcome::Applied {
+                version: self.version,
+                fence_epoch: self.fence_epoch,
+                linked: self.linked,
+                cancelled: self.cancelled,
+                link_id,
+                fingerprint,
+            });
         }
 
         let requested_linked = matches!(command.operation, Operation::Attach);
@@ -295,13 +397,19 @@ impl ProjectGoalLinkState {
                 command.idempotency_key,
                 AppliedReceipt {
                     version: self.version,
+                    fence_epoch: self.fence_epoch,
                     linked: self.linked,
+                    cancelled: self.cancelled,
+                    link_id: link_id.clone(),
                     fingerprint: fingerprint.clone(),
                 },
             );
             return Ok(LinkMutationOutcome::Noop {
                 version: self.version,
+                fence_epoch: self.fence_epoch,
                 linked: self.linked,
+                cancelled: self.cancelled,
+                link_id,
                 fingerprint,
             });
         }
@@ -316,13 +424,19 @@ impl ProjectGoalLinkState {
             command.idempotency_key,
             AppliedReceipt {
                 version: self.version,
+                fence_epoch: self.fence_epoch,
                 linked: self.linked,
+                cancelled: self.cancelled,
+                link_id: link_id.clone(),
                 fingerprint: fingerprint.clone(),
             },
         );
         Ok(LinkMutationOutcome::Applied {
             version: self.version,
+            fence_epoch: self.fence_epoch,
             linked: self.linked,
+            cancelled: self.cancelled,
+            link_id,
             fingerprint,
         })
     }
@@ -333,29 +447,42 @@ impl ProjectGoalLinkState {
 pub enum LinkMutationOutcome {
     Applied {
         version: u64,
+        fence_epoch: u64,
         linked: bool,
+        cancelled: bool,
+        link_id: String,
         fingerprint: String,
     },
     Noop {
         version: u64,
+        fence_epoch: u64,
         linked: bool,
+        cancelled: bool,
+        link_id: String,
         fingerprint: String,
     },
     AlreadyApplied {
         version: u64,
+        fence_epoch: u64,
         linked: bool,
+        cancelled: bool,
+        link_id: String,
         fingerprint: String,
     },
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum LinkMutationError {
-    #[error("mutation contains an empty field")]
+    #[error("mutation contains an empty, malformed, or oversized field")]
     InvalidField,
     #[error("project and goal must belong to the mutation organization")]
     CrossOrganization,
+    #[error("mutation target does not match the bound project-goal pair")]
+    TargetMismatch,
     #[error("actor is not authorized for project-goal mutations")]
     Unauthorized,
+    #[error("project-goal link is cancelled")]
+    Cancelled,
     #[error("project-goal idempotency key was reused with a different command")]
     IdempotencyConflict,
     #[error("project-goal version is stale")]
@@ -364,8 +491,111 @@ pub enum LinkMutationError {
     StaleFence,
     #[error("project-goal version overflowed")]
     VersionOverflow,
+    #[error("project-goal fence epoch overflowed")]
+    FenceOverflow,
+    #[error("project-goal idempotency receipt capacity was exceeded")]
+    ReceiptCapacityExceeded,
+    #[error("project-goal idempotency receipt is malformed")]
+    InvalidReceipt,
     #[error("project-goal fingerprint could not be encoded")]
     FingerprintFailed,
+}
+
+/// Hash the canonical scoped target `(organization_id, project_id, goal_id)`.
+/// The project/goal pair is intentionally typed and ordered; IDs are never
+/// lexicographically swapped because the two sides have different meanings.
+pub fn deterministic_link_identifier(
+    organization_id: &str,
+    project_id: &str,
+    goal_id: &str,
+) -> Result<String, LinkMutationError> {
+    let bytes = canonical_target_bytes(organization_id, project_id, goal_id)?;
+    Ok(hex_digest(Sha256::digest(bytes)))
+}
+
+fn canonical_target_bytes(
+    organization_id: &str,
+    project_id: &str,
+    goal_id: &str,
+) -> Result<Vec<u8>, LinkMutationError> {
+    validate_identifier(organization_id)?;
+    validate_identifier(project_id)?;
+    validate_identifier(goal_id)?;
+
+    let fields = [organization_id, project_id, goal_id];
+    let mut output = Vec::with_capacity(
+        LINK_IDENTIFIER_SCHEMA.len() + fields.iter().map(|field| field.len() + 8).sum::<usize>(),
+    );
+    append_domain_separator(&mut output, LINK_IDENTIFIER_SCHEMA);
+    for field in fields {
+        append_length_prefixed(&mut output, field);
+    }
+    Ok(output)
+}
+
+fn canonical_fingerprint_bytes(command: &ProjectGoalLinkCommand) -> Vec<u8> {
+    let fields = [
+        command.organization_id.as_str(),
+        command.actor.kind(),
+        command.actor.principal_id(),
+        command.project_id.as_str(),
+        command.goal_id.as_str(),
+        command.operation.as_str(),
+    ];
+    let mut output = Vec::with_capacity(
+        FINGERPRINT_SCHEMA.len() + fields.iter().map(|field| field.len() + 8).sum::<usize>() + 16,
+    );
+    append_domain_separator(&mut output, FINGERPRINT_SCHEMA);
+    for field in fields {
+        append_length_prefixed(&mut output, field);
+    }
+    output.extend_from_slice(&command.expected_version.to_be_bytes());
+    output.extend_from_slice(&command.fence_epoch.to_be_bytes());
+    output
+}
+
+fn append_domain_separator(output: &mut Vec<u8>, schema: &str) {
+    output.extend_from_slice(schema.as_bytes());
+    output.push(0);
+}
+
+fn append_length_prefixed(output: &mut Vec<u8>, field: &str) {
+    output.extend_from_slice(&(field.len() as u64).to_be_bytes());
+    output.extend_from_slice(field.as_bytes());
+}
+
+fn validate_identifier(value: &str) -> Result<(), LinkMutationError> {
+    if value.is_empty()
+        || value.trim() != value
+        || value.len() > MAX_IDENTIFIER_BYTES
+        || value
+            .bytes()
+            .any(|byte| byte == 0 || byte.is_ascii_control())
+    {
+        return Err(LinkMutationError::InvalidField);
+    }
+    Ok(())
+}
+
+fn validate_idempotency_key(value: &str) -> Result<(), LinkMutationError> {
+    if value.len() > MAX_IDEMPOTENCY_KEY_BYTES {
+        return Err(LinkMutationError::InvalidField);
+    }
+    validate_identifier(value)
+}
+
+fn validate_receipt(receipt: &AppliedReceipt) -> Result<(), LinkMutationError> {
+    if !is_sha256_hex(&receipt.link_id) || !is_sha256_hex(&receipt.fingerprint) {
+        return Err(LinkMutationError::InvalidReceipt);
+    }
+    Ok(())
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == SHA256_HEX_LENGTH
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn hex_digest(digest: impl IntoIterator<Item = u8>) -> String {
@@ -380,7 +610,16 @@ mod tests {
     use super::*;
 
     fn state() -> ProjectGoalLinkState {
-        ProjectGoalLinkState::new("org-a", "org-a", "org-a", 2, 4, false)
+        ProjectGoalLinkState::new(
+            "org-a",
+            "org-a",
+            "org-a",
+            "project-a",
+            "goal-a",
+            2,
+            4,
+            false,
+        )
     }
 
     fn board(operation: Operation, key: &str) -> ProjectGoalLinkCommand {
@@ -414,7 +653,8 @@ mod tests {
 
     #[test]
     fn detach_advances_version_and_clears_linked() {
-        let mut state = ProjectGoalLinkState::new("org-a", "org-a", "org-a", 2, 4, true);
+        let mut state =
+            ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, true);
         let outcome = state.apply(board(Operation::Detach, "detach-1")).unwrap();
         assert!(matches!(
             outcome,
@@ -428,12 +668,30 @@ mod tests {
 
     #[test]
     fn cross_organization_project_or_goal_fails_closed() {
-        let mut project_foreign = ProjectGoalLinkState::new("org-a", "org-b", "org-a", 2, 4, false);
+        let mut project_foreign = ProjectGoalLinkState::new(
+            "org-a",
+            "org-b",
+            "org-a",
+            "project-a",
+            "goal-a",
+            2,
+            4,
+            false,
+        );
         assert_eq!(
             project_foreign.apply(board(Operation::Attach, "cross-project")),
             Err(LinkMutationError::CrossOrganization)
         );
-        let mut goal_foreign = ProjectGoalLinkState::new("org-a", "org-a", "org-b", 2, 4, false);
+        let mut goal_foreign = ProjectGoalLinkState::new(
+            "org-a",
+            "org-a",
+            "org-b",
+            "project-a",
+            "goal-a",
+            2,
+            4,
+            false,
+        );
         assert_eq!(
             goal_foreign.apply(board(Operation::Attach, "cross-goal")),
             Err(LinkMutationError::CrossOrganization)
@@ -511,6 +769,7 @@ mod tests {
                 version: 3,
                 linked: true,
                 fingerprint,
+                ..
             } => fingerprint,
             outcome => panic!("unexpected original outcome: {outcome:?}"),
         };
@@ -526,21 +785,23 @@ mod tests {
             }
         ));
 
-        assert_eq!(
+        assert!(matches!(
             state.apply(original).unwrap(),
             LinkMutationOutcome::AlreadyApplied {
                 version: 3,
                 linked: true,
-                fingerprint: original_fingerprint,
-            }
-        );
+                fingerprint,
+                ..
+            } if fingerprint == original_fingerprint
+        ));
         assert_eq!(state.version, 4);
         assert!(!state.linked);
     }
 
     #[test]
     fn repeated_attach_and_detach_are_noops() {
-        let mut attached = ProjectGoalLinkState::new("org-a", "org-a", "org-a", 2, 4, true);
+        let mut attached =
+            ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, true);
         assert!(matches!(
             attached
                 .apply(board(Operation::Attach, "already-attached"))
@@ -566,7 +827,16 @@ mod tests {
 
     #[test]
     fn version_overflow_leaves_state_unchanged_on_retry() {
-        let mut state = ProjectGoalLinkState::new("org-a", "org-a", "org-a", u64::MAX, 4, false);
+        let mut state = ProjectGoalLinkState::new(
+            "org-a",
+            "org-a",
+            "org-a",
+            "project-a",
+            "goal-a",
+            u64::MAX,
+            4,
+            false,
+        );
         let mut command = board(Operation::Attach, "overflow");
         command.expected_version = u64::MAX;
         let expected_state = state.clone();
@@ -585,5 +855,155 @@ mod tests {
             Err(LinkMutationError::VersionOverflow)
         );
         assert_eq!(state, expected_state);
+    }
+
+    #[test]
+    fn target_identity_rejects_same_organization_pair_replays() {
+        let mut state = state();
+        let original = board(Operation::Attach, "pair-key");
+        state.apply(original).unwrap();
+        let expected_state = state.clone();
+
+        let mut wrong_project = board(Operation::Attach, "pair-key");
+        wrong_project.project_id = "project-b".to_owned();
+        wrong_project.expected_version = state.version;
+        assert_eq!(
+            state.apply(wrong_project),
+            Err(LinkMutationError::TargetMismatch)
+        );
+
+        let mut wrong_goal = board(Operation::Attach, "pair-key");
+        wrong_goal.goal_id = "goal-b".to_owned();
+        wrong_goal.expected_version = state.version;
+        assert_eq!(
+            state.apply(wrong_goal),
+            Err(LinkMutationError::TargetMismatch)
+        );
+        assert_eq!(state, expected_state);
+    }
+
+    #[test]
+    fn canonical_pair_order_has_a_deterministic_link_identifier() {
+        let first = deterministic_link_identifier("org-a", "project-a", "goal-a").unwrap();
+        let second = deterministic_link_identifier("org-a", "project-a", "goal-a").unwrap();
+        let swapped = deterministic_link_identifier("org-a", "goal-a", "project-a").unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), SHA256_HEX_LENGTH);
+        assert_ne!(first, swapped);
+
+        let mut attach_state = state();
+        let attach = attach_state
+            .apply(board(Operation::Attach, "canonical"))
+            .unwrap();
+        let detach_state = ProjectGoalLinkState::for_target(
+            "org-a",
+            "project-a",
+            "goal-a",
+            "org-a",
+            "org-a",
+            attach_state.version,
+            attach_state.fence_epoch,
+            true,
+        );
+        assert_eq!(attach_state.link_identifier().unwrap(), first);
+        assert_eq!(detach_state.link_identifier().unwrap(), first);
+        assert!(matches!(attach, LinkMutationOutcome::Applied { link_id, .. } if link_id == first));
+    }
+
+    #[test]
+    fn identifiers_keys_and_receipts_are_bounded() {
+        let mut oversized_id = board(Operation::Attach, "bounded-id");
+        oversized_id.project_id = "x".repeat(MAX_IDENTIFIER_BYTES + 1);
+        assert_eq!(
+            state().apply(oversized_id),
+            Err(LinkMutationError::InvalidField)
+        );
+
+        let mut oversized_key = board(Operation::Attach, "x");
+        oversized_key.idempotency_key = "k".repeat(MAX_IDEMPOTENCY_KEY_BYTES + 1);
+        assert_eq!(
+            state().apply(oversized_key),
+            Err(LinkMutationError::InvalidField)
+        );
+
+        let mut full = state();
+        for index in 0..MAX_APPLIED_RECEIPTS {
+            full.applied_idempotency.insert(
+                format!("receipt-{index}"),
+                AppliedReceipt {
+                    version: 2,
+                    fence_epoch: 4,
+                    linked: false,
+                    cancelled: false,
+                    link_id: "0".repeat(SHA256_HEX_LENGTH),
+                    fingerprint: "1".repeat(SHA256_HEX_LENGTH),
+                },
+            );
+        }
+        let expected_state = full.clone();
+        assert_eq!(
+            full.apply(board(Operation::Attach, "receipt-overflow")),
+            Err(LinkMutationError::ReceiptCapacityExceeded)
+        );
+        assert_eq!(full, expected_state);
+    }
+
+    #[test]
+    fn fingerprint_and_receipt_are_deterministic_across_equal_states() {
+        let mut first_state = state();
+        let mut second_state = state();
+        let first = first_state
+            .apply(board(Operation::Attach, "deterministic"))
+            .unwrap();
+        let second = second_state
+            .apply(board(Operation::Attach, "deterministic"))
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            serde_json::to_vec(&first_state).unwrap(),
+            serde_json::to_vec(&second_state).unwrap()
+        );
+    }
+
+    #[test]
+    fn cancellation_is_terminal_and_fences_old_commands() {
+        let mut state = state();
+        let old_command = board(Operation::Attach, "old-command");
+        let cancel = board(Operation::Cancel, "cancel-command");
+        let outcome = state.apply(cancel.clone()).unwrap();
+        assert!(matches!(
+            outcome,
+            LinkMutationOutcome::Applied {
+                version: 3,
+                fence_epoch: 5,
+                linked: false,
+                cancelled: true,
+                ..
+            }
+        ));
+        assert_eq!(state.version, 3);
+        assert_eq!(state.fence_epoch, 5);
+        assert!(state.cancelled);
+
+        assert_eq!(state.apply(old_command), Err(LinkMutationError::StaleFence));
+        let mut current_command = board(Operation::Attach, "current-command");
+        current_command.expected_version = 3;
+        current_command.fence_epoch = 5;
+        assert_eq!(
+            state.apply(current_command),
+            Err(LinkMutationError::Cancelled)
+        );
+
+        assert!(matches!(
+            state.apply(cancel).unwrap(),
+            LinkMutationOutcome::AlreadyApplied {
+                version: 3,
+                fence_epoch: 5,
+                cancelled: true,
+                ..
+            }
+        ));
     }
 }
