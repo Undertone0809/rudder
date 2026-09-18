@@ -6,7 +6,7 @@
 //! receipt. This crate intentionally performs no I/O, SQL, HTTP, filesystem, or
 //! secret handling and is not a public writer by itself.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -29,7 +29,7 @@ pub enum Actor {
 }
 
 impl Actor {
-    fn organization_id(&self) -> &str {
+    pub fn organization_id(&self) -> &str {
         match self {
             Self::Board {
                 organization_id, ..
@@ -43,7 +43,7 @@ impl Actor {
         }
     }
 
-    fn principal_id(&self) -> &str {
+    pub fn principal_id(&self) -> &str {
         match self {
             Self::Board { principal_id, .. }
             | Self::CeoAgent { principal_id, .. }
@@ -51,7 +51,7 @@ impl Actor {
         }
     }
 
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::Board { .. } => "board",
             Self::CeoAgent { .. } => "ceo_agent",
@@ -64,6 +64,34 @@ impl Actor {
     }
 }
 
+fn deserialize_nullable_patch<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Serialize)]
+struct NullablePatchFingerprint<'a> {
+    present: bool,
+    value: Option<&'a str>,
+}
+
+impl<'a> From<&'a Option<Option<String>>> for NullablePatchFingerprint<'a> {
+    fn from(value: &'a Option<Option<String>>) -> Self {
+        match value {
+            None => Self {
+                present: false,
+                value: None,
+            },
+            Some(value) => Self {
+                present: true,
+                value: value.as_deref(),
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OrganizationBrandingCommand {
     pub organization_id: String,
@@ -72,8 +100,11 @@ pub struct OrganizationBrandingCommand {
     pub expected_version: u64,
     pub fence_epoch: u64,
     pub name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     pub description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     pub brand_color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     pub logo_asset_id: Option<Option<String>>,
 }
 
@@ -172,7 +203,7 @@ impl OrganizationBrandingCommand {
         self
     }
 
-    fn validate(&self) -> Result<(), MutationError> {
+    pub fn validate(&self) -> Result<(), MutationError> {
         if self.organization_id.is_empty() || self.idempotency_key.is_empty() {
             return Err(MutationError::InvalidIdempotencyKey);
         }
@@ -211,16 +242,16 @@ impl OrganizationBrandingCommand {
         Ok(())
     }
 
-    fn fingerprint(&self) -> Result<String, MutationError> {
+    pub fn fingerprint(&self) -> Result<String, MutationError> {
         #[derive(Serialize)]
         struct Fingerprint<'a> {
             organization_id: &'a str,
             actor_kind: &'static str,
             actor_id: &'a str,
             name: &'a Option<String>,
-            description: &'a Option<Option<String>>,
-            brand_color: &'a Option<Option<String>>,
-            logo_asset_id: &'a Option<Option<String>>,
+            description: NullablePatchFingerprint<'a>,
+            brand_color: NullablePatchFingerprint<'a>,
+            logo_asset_id: NullablePatchFingerprint<'a>,
             expected_version: u64,
             fence_epoch: u64,
         }
@@ -229,9 +260,9 @@ impl OrganizationBrandingCommand {
             actor_kind: self.actor.kind(),
             actor_id: self.actor.principal_id(),
             name: &self.name,
-            description: &self.description,
-            brand_color: &self.brand_color,
-            logo_asset_id: &self.logo_asset_id,
+            description: NullablePatchFingerprint::from(&self.description),
+            brand_color: NullablePatchFingerprint::from(&self.brand_color),
+            logo_asset_id: NullablePatchFingerprint::from(&self.logo_asset_id),
             expected_version: self.expected_version,
             fence_epoch: self.fence_epoch,
         };
@@ -443,6 +474,82 @@ mod tests {
     fn board_command(key: &str) -> OrganizationBrandingCommand {
         OrganizationBrandingCommand::board("org-a", "user-a", key, 3, 7)
             .with_brand_color(Some("#12aBcD".to_owned()))
+    }
+
+    fn state_with_description(value: &str) -> OrganizationSettingsState {
+        let mut state = state();
+        state.description = Some(value.to_owned());
+        state
+    }
+
+    fn json_command(key: &str) -> serde_json::Value {
+        serde_json::json!({
+            "organization_id": "org-a",
+            "actor": {
+                "board": {
+                    "organization_id": "org-a",
+                    "principal_id": "user-a"
+                }
+            },
+            "idempotency_key": key,
+            "expected_version": 3,
+            "fence_epoch": 7,
+            "name": null
+        })
+    }
+
+    #[test]
+    fn nullable_patch_deserializer_distinguishes_absent_from_json_null() {
+        let mut absent = json_command("absent");
+        absent.as_object_mut().unwrap().remove("description");
+        let absent: OrganizationBrandingCommand = serde_json::from_value(absent).unwrap();
+        assert_eq!(absent.description, None);
+
+        let mut clear = json_command("clear");
+        clear["description"] = serde_json::Value::Null;
+        let clear: OrganizationBrandingCommand = serde_json::from_value(clear).unwrap();
+        assert_eq!(clear.description, Some(None));
+
+        assert_ne!(absent.fingerprint().unwrap(), clear.fingerprint().unwrap());
+    }
+
+    #[test]
+    fn json_null_enters_the_explicit_clear_branch() {
+        let mut state = state_with_description("Original");
+        let mut raw = json_command("clear");
+        raw["description"] = serde_json::Value::Null;
+        let command: OrganizationBrandingCommand = serde_json::from_value(raw).unwrap();
+
+        let outcome = state.apply(command).unwrap();
+        assert_eq!(outcome.state().description, None);
+        assert_eq!(outcome.version(), 4);
+    }
+
+    #[test]
+    fn same_key_conflicts_after_an_absent_patch_and_replays_its_original_snapshot() {
+        let mut state = state_with_description("Original");
+        let absent = board_command("branding-1").with_name(Some("Rudder 2".to_owned()));
+        let first = state.apply(absent.clone()).unwrap();
+
+        let later = OrganizationBrandingCommand::board("org-a", "user-a", "branding-2", 4, 7)
+            .with_description(Some("Later".to_owned()));
+        let later = state.apply(later).unwrap();
+        assert_eq!(later.state().description.as_deref(), Some("Later"));
+
+        let replay = state.apply(absent.clone()).unwrap();
+        assert!(matches!(
+            replay,
+            MutationOutcome::AlreadyApplied { version: 4, .. }
+        ));
+        assert_eq!(replay.state(), first.state());
+        assert_eq!(state.description.as_deref(), Some("Later"));
+        assert_eq!(state.version, 5);
+
+        let explicit_clear = absent.with_description(None);
+        assert_eq!(
+            state.apply(explicit_clear),
+            Err(MutationError::IdempotencyConflict)
+        );
     }
 
     #[test]
