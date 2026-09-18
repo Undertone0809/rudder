@@ -1,4 +1,13 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+const changelogVersionCount = (sourceUrl: URL) =>
+  (readFileSync(sourceUrl, "utf8").match(/^<Update /gmu) ?? []).length;
+
+const changelogCounts = {
+  "/releases": changelogVersionCount(new URL("../../docs/releases.mdx", import.meta.url)),
+  "/zh/releases": changelogVersionCount(new URL("../../docs/zh/releases.mdx", import.meta.url)),
+};
 
 test("finds an English docs page and opens it from the keyboard", async ({ page }) => {
   await page.goto("/?search=gdpval");
@@ -148,7 +157,7 @@ test("renders and filters the localized changelog timeline", async ({ page }) =>
         "xpath=ancestor::div[contains(@class, 'update-container')]",
       );
     await expect(page.locator(`h2#${item.latestVersion.replaceAll(".", "-")}`)).toBeVisible();
-    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(51);
+    await expect(page.locator('h2[id^="v0-"]')).toHaveCount(changelogCounts[item.route]);
     const latestUpdate = page.locator(`h2#${item.latestVersion.replaceAll(".", "-")}`).locator(
       "xpath=ancestor::div[contains(@class, 'update-container')]",
     );
