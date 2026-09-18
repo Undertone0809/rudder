@@ -321,17 +321,6 @@ functional, adversarial, product-taste, and evidence-integrity review. Use
 `.agents/skills/maintainer/product-acceptance-verifier-maintainer` for read-only
 black-box acceptance in the real local or otherwise named terminal environment.
 
-- Mechanical edits: self-review and relevant checks are sufficient.
-- Bounded docs, skills, tooling, and localized low-risk fixes: use one independent
-  review when it adds confidence. Verify the actual artifact; a product runtime,
-  organization identity, or delivery packet is not required for unrelated claims.
-- User-visible workflows, security/organization boundaries, persistence/migrations,
-  agent execution, Desktop startup/packaging, releases, and shared-state integration:
-  use distinct reviewer and verifier agents with the gate order below.
-- Use subagents within the current task. Do not create user-visible tasks without
-  an explicit request. Keep delegation bounded; routine tasks may use `luna_worker`
-  with `gpt-5.6-luna` / `max`, while complex judgment may use the selected model.
-
 For the high-risk path, the gate order is:
 
 1. Before acceptance testing, the reviewer returns a stage verdict on intent,
