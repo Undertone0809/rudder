@@ -80,15 +80,6 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./side-panel-resize-lifecycle";
-export {
-  preserveRememberedSidePanelWidth,
-  resolveDefaultSidePanelWidth,
-  resolveProportionalSidePanelWidth,
-  resolveSidePanelCollapseWidth,
-  resolveSidePanelDragWidth,
-  shouldAutoCollapseContextSidebar,
-  shouldAutoExpandSidePanel
-} from "../lib/workspace-shell-layout";
 
 export {
   preserveRememberedSidePanelWidth,
@@ -475,6 +466,11 @@ export function resolveDisplayedSidePanelContext(
   return { contextKey: routeContextKey, preserveHold: false };
 }
 
+function getCurrentViewportWidth(): number | null {
+  if (typeof window === "undefined") return null;
+  return window.innerWidth;
+}
+
 function useViewportWidth(): number | null {
   const [viewportWidth, setViewportWidth] = useState(getCurrentViewportWidth);
 
@@ -610,19 +606,6 @@ function DesktopSidePanelSlot({
       if (resetTimer !== null) window.clearTimeout(resetTimer);
     };
   }, []);
-
-  const layoutWorkspaceWidth = useSidePanelWorkspaceLayout({
-    autoCollapseContextSidebar,
-    autoCollapseContextSidebarKey,
-    autoCollapseContextSidebarOnOpen,
-    contextColumnWidth,
-    contextSidebarVisible,
-    registerBeforeOpen: sidePanel.registerBeforeOpen,
-    sidePanelOpen: sidePanel.open,
-    setWorkspaceWidth,
-    workspaceAnchorRef,
-    workspaceWidth,
-  });
 
   useEffect(() => {
     if (hasRememberedWidthRef.current || workspaceWidth === null) return;
