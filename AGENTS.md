@@ -57,11 +57,7 @@ Then choose the route that matches the work:
   - `doc/README.md`
   - `doc/product/PRODUCT.md`
   - `doc/engineering/DESIGN.md`
-- Release/publishing work:
-  - `doc/README.md`
-  - `doc/engineering/RELEASING.md`
-  - `doc/engineering/PUBLISHING.md`
-  - `doc/engineering/RELEASE-AUTOMATION-SETUP.md`
+- Release/publishing work: use `.agents/skills/maintainer/release-maintainer/SKILL.md`.
 - Plugin work:
   - `doc/README.md`
   - `doc/engineering/PLUGIN_AUTHORING_GUIDE.md`
@@ -180,52 +176,6 @@ If an edge case cannot reasonably be automated end-to-end, document the concrete
 limitation and add the closest meaningful regression test. This does not replace
 the primary workflow E2E or any required real-environment acceptance.
 
-## 5.1 Release And Deployment Authorization
-
-Implementation authority is not release authority. Treat local implementation,
-branch push/PR, shared staging, stable publication, and production deployment as
-separate transitions.
-
-- `start`, `continue`, `proceed`, `implement`, `finish`, or approval of a plan
-  authorizes implementation, verification, and the section 10 Git handoff. The default stopping point
-  is Review Ready: validated changes committed and pushed on a working branch,
-  a PR targeting `main`, review evidence, and a release-risk summary.
-- An explicit imperative to release a Rudder version, such as `release vX.Y.Z`,
-  `ship this version`, or `发版`, authorizes the complete standard release
-  lifecycle when the conversation identifies that version release as the target.
-  Publishing only named docs, a package, or another surface stays limited to
-  that surface. A bare `publish` is interpreted from context, not as automatic
-  authority for every release target. The version lifecycle includes committing
-  reviewed source on a working branch and merging its PR after protected-branch
-  checks pass, running exact-source CI and release validation, publishing npm/GitHub/Desktop/
-  production-docs surfaces, verifying them, cleaning obsolete canary
-  Releases/tags, and completing the next-version handoff through a PR. These PRs
-  are part of the authorized lifecycle; do not ask for routine second approval.
-- `main` is protected for everyone, including administrators and automation.
-  All changes, including features, fixes, docs, release preparation, and version
-  bumps, enter through a PR with required checks. Never push commits directly to
-  `main`, bypass its rules, or disable protection to finish a task or release.
-- If the release request omits a version, infer the single consistent target
-  from the current release context and repository release scripts, lock its
-  source SHA, and state both in a progress update. Ask only when the channel,
-  version, source, or target is genuinely ambiguous.
-- Automatic branch previews are review surfaces only. Do not promote them or
-  assign shared aliases unless they are part of an explicit release/publish
-  request.
-- Machine validation remains mandatory: the exact `main` source must pass CI,
-  stable preflight, immutable-version checks, and public-surface verification.
-  Diagnose and repair failed gates within scope. Missing platform access,
-  credentials, permissions, or a material target decision can block publication;
-  preserve a partial receipt and complete independent work before handoff.
-- Destructive or nonstandard operations still require separate authority:
-  unpublishing npm versions, force-pushing or retargeting published tags,
-  deleting the active canary line, or expanding beyond the requested
-  product/environment.
-- Before the real publish, report the exact commit/tag and target, completed
-  checks, unresolved failures, migration or data impact, and rollback point as
-  a status update—not as another approval request. Release only that locked,
-  reviewed source and verify every public surface.
-
 ## 6. Database Change Workflow
 
 When changing data model:
@@ -258,7 +208,7 @@ Choose checks by the changed surface and explain material omissions:
   browser ceremony is needed for a claim confined to those artifacts.
 - Localized code changes: run focused tests, affected-package typechecks, and
   lint/build checks that can expose the changed behavior.
-- Shared contracts, runtime, dependencies, cross-package changes, and releases:
+- Shared contracts, runtime, dependencies, and cross-package changes:
   run the full repository baseline below, plus applicable task-specific checks.
 
 Full repository baseline:
