@@ -18,6 +18,27 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年9月18日" description="v0.7.22" tags={["改进","问题修复"]}>
+
+## v0.7.22
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.22)
+
+Rudder 0.7.22 为 Messenger 的 Side Panel 释放更多工作空间，让 Issue 评论中的多 Agent 唤醒控制更清晰，并提升发布构建中 Library 浏览和 Plugin 压缩包导入检查的可靠性。
+
+### 改进
+
+- 改进桌面端 Messenger Side Panel 布局：打开 Side Panel 时会临时收起 Messenger 列表，为当前工作台让出更多空间；可以从工作区或当前对话恢复列表，Side Panel 在窗口大小变化时也能保持合适宽度。
+- Issue 评论提及多个 Agent 时，现在会用一个紧凑控件汇总评论发送后将启动的 Agent；打开详情后可以逐个切换为“仅引用”，窄屏下也能正常操作。
+- 链接到目标的语义 MCP 结果卡片在悬停时保持稳定布局，不再上下抬升或造成内容移动。
+
+### 问题修复
+
+- 修复桌面和浏览器布局中的主导航栏尺寸问题，导航文字和当前项指示器不再溢出栏位。
+- 修复发布构建找不到 Library 浏览和 Plugin 压缩包导入检查所需原生程序的问题。
+
+</Update>
+
 <Update label="2026年9月16日" description="v0.7.21" tags={["新功能","改进","问题修复"]}>
 
 ## v0.7.21
