@@ -1408,6 +1408,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-organization-mutation-core"
+version = "0.7.22"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "rudder-plugin-archive-core"
 version = "0.7.23"
 dependencies = [

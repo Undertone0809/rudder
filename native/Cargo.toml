@@ -7,6 +7,7 @@ members = [
   "crates/auth-core",
   "crates/cli-mcp-contract-core",
   "crates/native-protocol",
+  "crates/organization-mutation-core",
   "crates/plugin-archive-core",
   "crates/update-helper-core",
   "crates/run-evidence-core",
