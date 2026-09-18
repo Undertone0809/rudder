@@ -925,6 +925,74 @@ describe("MarkdownBody", () => {
     expect(container.querySelector("img.rudder-local-image-media")).toBeNull();
   });
 
+  it("keeps a local image link when the Desktop shell cannot read the file", async () => {
+    const previewLocalFile = vi.fn().mockRejectedValue(new Error("File is unavailable"));
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { previewLocalFile },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Inspect [after-wide-light.png](/tmp/after-wide-light.png)."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(previewLocalFile).toHaveBeenCalledWith("/tmp/after-wide-light.png");
+    expect(container.querySelector<HTMLAnchorElement>("a.rudder-local-file-link")?.getAttribute("href"))
+      .toBe("/tmp/after-wide-light.png");
+    expect(container.querySelector("img.rudder-local-image-media")).toBeNull();
+  });
+
+  it.each(["Enter", " "])("opens a local image preview from keyboard activation (%j)", async (key) => {
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        previewLocalFile: vi.fn().mockResolvedValue({
+          canonicalPath: "/tmp/keyboard-local-image.png",
+          fileName: "keyboard-local-image.png",
+          parentPath: "/tmp",
+          contentType: "image/png",
+          previewKind: "image",
+          content: null,
+          base64: "iVBORw0KGgo=",
+          sizeBytes: 8,
+          modifiedAt: "2026-09-18T00:00:00.000Z",
+          truncated: false,
+        }),
+      },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Inspect [keyboard-local-image.png](/tmp/keyboard-local-image.png)."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const imageButton = container.querySelector<HTMLButtonElement>(".rudder-local-image-trigger");
+    expect(imageButton).not.toBeNull();
+
+    act(() => {
+      imageButton?.dispatchEvent(new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    expect(document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"] img'))
+      .not.toBeNull();
+  });
+
   it("keeps a markdown image skeleton visible until the image loads", async () => {
     const container = render(
       <ThemeProvider>

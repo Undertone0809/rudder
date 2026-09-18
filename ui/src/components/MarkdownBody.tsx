@@ -6,10 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
 import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
-import { isPreviewableImage } from "../lib/image-actions";
-import { localFileIconDescriptor } from "../lib/local-file-icons";
-import { resolveLocalFileDisplayTarget, resolveLocalFileTarget } from "../lib/local-file-targets";
-import { readDesktopShell, type DesktopLocalFilePreview } from "../lib/desktop-shell";
+import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
 import {
   createMarkdownSourceBoundaryMap,
   normalizeRenderedMarkdownSource,
@@ -28,6 +25,7 @@ import {
   getWebsiteMetadata,
 } from "../lib/website-metadata-cache";
 import { InspectableImage } from "./InspectableImage";
+import { MarkdownLocalFileLink, renderMarkdownLocalImage } from "./MarkdownLocalImage";
 import type { MentionOption } from "./MarkdownEditor";
 import { RudderEntityPreview } from "./RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
@@ -374,85 +372,6 @@ function useSelectionStableMarkdownSource(source: string) {
   }, [flushLatestSource]);
 
   return { renderedSource, rootRef };
-}
-
-function LocalFileLinkIcon({ filePath }: { filePath: string }) {
-  const { Icon, kind } = localFileIconDescriptor(filePath);
-  return <Icon className="mr-1 inline-block size-[0.95em] align-[-0.12em]" data-local-file-icon={kind} aria-hidden="true" />;
-}
-
-function localImagePreviewDataUrl(preview: DesktopLocalFilePreview) {
-  const contentType = preview.contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (preview.previewKind !== "image" || !contentType.startsWith("image/") || !preview.base64) return null;
-  return `data:${contentType};base64,${preview.base64}`;
-}
-
-function MarkdownLocalImageLink({
-  children,
-  href,
-  imageName,
-  onClick,
-  sourceAttributes,
-  targetPath,
-}: {
-  children: ReactNode;
-  href: string;
-  imageName: string;
-  onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
-  sourceAttributes: ReturnType<typeof markdownSourceAttributes>;
-  targetPath: string;
-}) {
-  const [previewSrc, setPreviewSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setPreviewSrc(null);
-    const desktopShell = readDesktopShell();
-    if (!desktopShell) return undefined;
-
-    void desktopShell.previewLocalFile(targetPath)
-      .then((preview) => {
-        if (cancelled) return;
-        const dataUrl = localImagePreviewDataUrl(preview);
-        if (dataUrl) setPreviewSrc(dataUrl);
-      })
-      .catch(() => {
-        // Keep the original local-file link when the file is unavailable.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [targetPath]);
-
-  if (!previewSrc) {
-    return (
-      <a
-        href={href}
-        className="rudder-local-file-link"
-        title={imageName || undefined}
-        {...sourceAttributes}
-        onClick={onClick}
-      >
-        <LocalFileLinkIcon filePath={targetPath} />
-        <span className="rudder-inline-token-label">{children}</span>
-      </a>
-    );
-  }
-
-  return (
-    <InspectableImage
-      {...sourceAttributes}
-      src={previewSrc}
-      alt={imageName}
-      name={imageName}
-      className="rudder-local-image-media"
-      wrapperClassName="rudder-local-image"
-      triggerClassName="rudder-local-image-trigger"
-      previewTestId="markdown-body-image-preview-dialog"
-      previewTitleFallback="Image preview"
-    />
-  );
 }
 
 const APP_ROUTE_FIRST_SEGMENTS = new Set([
@@ -1481,37 +1400,19 @@ export function MarkdownBody({
         );
       }
       if (localFilePath) {
-        const localImage = isPreviewableImage(null, localFilePath);
-        if (localImage) {
-          return (
-            <MarkdownLocalImageLink
-              href={href ?? localFilePath}
-              imageName={linkLabel.trim() || localFilePath.split(/[\\/]/u).at(-1) || "Local image"}
-              targetPath={localFilePath}
-              sourceAttributes={sourceAttributesForNode(node)}
-              onClick={(event) => {
-                if (!href) return;
-                handleMarkdownLinkClick(event, href, linkLabel);
-              }}
-            >
-              {linkChildren}
-            </MarkdownLocalImageLink>
-          );
-        }
         return (
-          <a
-            href={href}
-            className="rudder-local-file-link"
-            title={linkLabel || undefined}
-            {...sourceAttributesForNode(node)}
+          <MarkdownLocalFileLink
+            href={href ?? localFilePath}
+            filePath={localFilePath}
+            label={linkLabel}
+            sourceAttributes={sourceAttributesForNode(node)}
             onClick={(event) => {
               if (!href) return;
               handleMarkdownLinkClick(event, href, linkLabel);
             }}
           >
-            <LocalFileLinkIcon filePath={localFilePath} />
-            <span className="rudder-inline-token-label">{linkChildren}</span>
-          </a>
+            {linkChildren}
+          </MarkdownLocalFileLink>
         );
       }
       return (
@@ -1534,29 +1435,17 @@ export function MarkdownBody({
       const { enableImagePreview, resolveImageSrc } = renderStateRef.current;
       const resolved = src && resolveImageSrc ? resolveImageSrc(src) : null;
       const imageSrc = resolved ?? src ?? "";
-      const localImagePath = src ? resolveLocalFileTarget(src, alt ?? "") : null;
-      const localImageDisplayPath = src ? resolveLocalFileDisplayTarget(src, alt ?? "") : null;
-      if (
-        localImagePath
-        && localImageDisplayPath
-        && isPreviewableImage(null, localImageDisplayPath)
-      ) {
-        const imageName = alt?.trim() || localImageDisplayPath.split(/[\\/]/u).at(-1) || "Local image";
-        return (
-          <MarkdownLocalImageLink
-            href={src ?? localImagePath}
-            imageName={imageName}
-            targetPath={localImagePath}
-            sourceAttributes={renderStateRef.current.sourceAttributesForNode(node)}
-            onClick={(event) => {
-              if (!src) return;
+      const localImage = src
+        ? renderMarkdownLocalImage({
+            alt,
+            sourceAttributes: renderStateRef.current.sourceAttributesForNode(node),
+            src,
+            onClick: (event, imageName) => {
               renderStateRef.current.handleMarkdownLinkClick(event, src, imageName);
-            }}
-          >
-            {imageName}
-          </MarkdownLocalImageLink>
-        );
-      }
+            },
+          })
+        : null;
+      if (localImage) return localImage;
       if (enableImagePreview && imageSrc) {
         return (
           <InspectableImage
