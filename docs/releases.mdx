@@ -18,6 +18,27 @@ Rudder publishes stable releases for the default install path:
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="September 18, 2026" description="v0.7.22" tags={["Improved","Fixed"]}>
+
+## v0.7.22
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.22)
+
+Rudder 0.7.22 gives Messenger's Side Panel more room, makes multi-Agent issue comments easier to control, and improves release-build support for Library browsing and Plugin archive imports.
+
+### Improved
+
+- Improved the desktop Messenger Side Panel layout: opening it collapses the Messenger list to give the active workbench more room, the list can be restored from the workspace or active chat, and the panel keeps a usable width as the window changes.
+- Issue comment mentions now summarize multiple Agent wake decisions in one compact control. Open the details to choose which mentioned Agents will start when the comment is sent; the controls remain usable on narrow screens.
+- Linked semantic MCP result cards now keep a stable layout on hover instead of lifting or shifting.
+
+### Fixed
+
+- Fixed primary navigation rail sizing so labels and active navigation stay inside the rail across desktop and browser layouts.
+- Fixed release builds failing to locate the native helper used for Library browsing and Plugin archive inspection.
+
+</Update>
+
 <Update label="September 16, 2026" description="v0.7.21" tags={["New","Improved","Fixed"]}>
 
 ## v0.7.21
