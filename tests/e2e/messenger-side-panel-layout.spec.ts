@@ -227,8 +227,24 @@ test("restores the Messenger List from the active chat header", async ({ page },
   await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 
-  for (const viewportWidth of [1280, 1024]) {
+  for (const viewportWidth of [1280, 1024, 900, 1120, 1024, 1440]) {
     await page.setViewportSize({ width: viewportWidth, height: 900 });
+    const immediateGeometry = await page.evaluate(() => {
+      const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']")?.getBoundingClientRect();
+      const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']")?.getBoundingClientRect();
+      const shell = document.querySelector<HTMLElement>("[data-testid='workspace-shell']")?.getBoundingClientRect();
+      if (!main || !panel || !shell) return null;
+      return {
+        mainWidth: main.width,
+        panelWidth: panel.width,
+        rightEdge: panel.right,
+        shellRight: shell.right,
+      };
+    });
+    expect(immediateGeometry).not.toBeNull();
+    expect(immediateGeometry!.mainWidth).toBeGreaterThan(200);
+    expect(immediateGeometry!.panelWidth).toBeGreaterThan(300);
+    expect(immediateGeometry!.rightEdge).toBeLessThanOrEqual(immediateGeometry!.shellRight + 1);
     await expect.poll(async () => page.evaluate(() => {
       const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']");
       const panel = document.querySelector<HTMLElement>("[data-testid='chat-side-panel']");

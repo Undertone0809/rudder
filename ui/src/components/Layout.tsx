@@ -537,6 +537,7 @@ function DesktopSidePanelSlot({
   expanded,
   onExpandedChange,
   selectedOrganizationId,
+  viewportWidth,
 }: {
   autoCollapseContextSidebar: boolean;
   autoCollapseContextSidebarKey: string | null;
@@ -547,6 +548,7 @@ function DesktopSidePanelSlot({
   expanded: boolean;
   onExpandedChange: (expanded: boolean) => void;
   selectedOrganizationId: string | null | undefined;
+  viewportWidth: number | null;
 }) {
   const sidePanel = useSidePanel();
   const workspaceAnchorRef = useRef<HTMLSpanElement>(null);
@@ -564,6 +566,7 @@ function DesktopSidePanelSlot({
   const sidePanelFocusWithinRef = useRef(false);
   const sidePanelResizeActiveRef = useRef(false);
   const sidePanelResizeCleanupRef = useRef<(() => void) | null>(null);
+  const [viewportResizing, setViewportResizing] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined" || !widthInitializedRef.current) return;
@@ -582,8 +585,27 @@ function DesktopSidePanelSlot({
     contextSidebarVisible,
     setWorkspaceWidth,
     workspaceAnchorRef,
+    viewportWidth,
     workspaceWidth,
   });
+
+  useEffect(() => {
+    let resetTimer: number | null = null;
+    const handleViewportResize = () => {
+      setViewportResizing(true);
+      if (resetTimer !== null) window.clearTimeout(resetTimer);
+      resetTimer = window.setTimeout(() => {
+        resetTimer = null;
+        setViewportResizing(false);
+      }, 180);
+    };
+
+    window.addEventListener("resize", handleViewportResize);
+    return () => {
+      window.removeEventListener("resize", handleViewportResize);
+      if (resetTimer !== null) window.clearTimeout(resetTimer);
+    };
+  }, []);
 
   useEffect(() => {
     if (hasRememberedWidthRef.current || workspaceWidth === null) return;
@@ -777,7 +799,7 @@ function DesktopSidePanelSlot({
         className={cn(
           "motion-resize relative flex min-h-0 shrink-0 overflow-hidden",
           expandedVisible && "z-30",
-          resizingSidePanel && "transition-none",
+          (resizingSidePanel || viewportResizing) && "transition-none",
         )}
         data-testid={expandedVisible ? "side-panel-expanded-overlay" : "side-panel-stable-host"}
         data-side-panel-state={expandedVisible ? "expanded" : panelVisible ? "docked" : "closed"}
@@ -1730,6 +1752,7 @@ export function Layout() {
                         contextSidebarVisible={contextSidebarVisible}
                         expanded={desktopSidePanelExpanded}
                         selectedOrganizationId={sidePanelOrganizationId}
+                        viewportWidth={viewportWidth}
                         onExpandedChange={setDesktopSidePanelExpanded}
                       />
                     </div>

@@ -104,6 +104,7 @@ export function useAutoCollapseWorkspaceWidth({
   contextSidebarVisible,
   setWorkspaceWidth,
   workspaceAnchorRef,
+  viewportWidth,
   workspaceWidth,
 }: {
   autoCollapseContextSidebar: boolean;
@@ -113,6 +114,7 @@ export function useAutoCollapseWorkspaceWidth({
   contextSidebarVisible: boolean;
   setWorkspaceWidth: (width: number) => void;
   workspaceAnchorRef: RefObject<HTMLSpanElement | null>;
+  viewportWidth: number | null;
   workspaceWidth: number | null;
 }): number | null {
   const sidePanel = useSidePanel();
@@ -168,33 +170,46 @@ export function useAutoCollapseWorkspaceWidth({
     [captureWorkspaceWidthForPanelOpen, sidePanel.registerBeforeOpen],
   );
 
+  const applyWorkspaceMeasurements = useCallback(() => {
+    const {
+      workspace,
+      measuredWorkspaceWidth,
+      contextCardWidth,
+      contextResizerWidth,
+    } = readWorkspaceMeasurements();
+    if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
+
+    setWorkspaceWidth(workspace?.offsetWidth ?? measuredWorkspaceWidth);
+    if (!sidePanel.open || !autoCollapseContextSidebar || !autoCollapseContextSidebarKey) {
+      autoCollapseWorkspaceWidthRef.current = null;
+      return;
+    }
+
+    autoCollapseWorkspaceWidthRef.current = {
+      key: autoCollapseContextSidebarKey,
+      width: measuredWorkspaceWidth + contextCardWidth + contextResizerWidth,
+    };
+  }, [
+    autoCollapseContextSidebar,
+    autoCollapseContextSidebarKey,
+    readWorkspaceMeasurements,
+    setWorkspaceWidth,
+    sidePanel.open,
+  ]);
+
   useLayoutEffect(() => {
     let frame: number | null = null;
     const updateWorkspaceMeasurements = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         frame = null;
-        const {
-          workspace,
-          measuredWorkspaceWidth,
-          contextCardWidth,
-          contextResizerWidth,
-        } = readWorkspaceMeasurements();
-        if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
-
-        setWorkspaceWidth(workspace?.offsetWidth ?? measuredWorkspaceWidth);
-        if (!sidePanel.open || !autoCollapseContextSidebar || !autoCollapseContextSidebarKey) {
-          autoCollapseWorkspaceWidthRef.current = null;
-          return;
-        }
-
-        autoCollapseWorkspaceWidthRef.current = {
-          key: autoCollapseContextSidebarKey,
-          width: measuredWorkspaceWidth + contextCardWidth + contextResizerWidth,
-        };
+        applyWorkspaceMeasurements();
       });
     };
 
+    // Viewport resize events can arrive before ResizeObserver delivers the new layout.
+    // Apply the current geometry before paint so a stale panel width cannot squeeze the main card.
+    applyWorkspaceMeasurements();
     updateWorkspaceMeasurements();
     const workspace = workspaceAnchorRef.current?.parentElement;
     if (typeof ResizeObserver === "undefined" || !workspace) {
@@ -215,11 +230,8 @@ export function useAutoCollapseWorkspaceWidth({
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [
-    autoCollapseContextSidebar,
-    autoCollapseContextSidebarKey,
-    readWorkspaceMeasurements,
-    setWorkspaceWidth,
-    sidePanel.open,
+    applyWorkspaceMeasurements,
+    viewportWidth,
     workspaceAnchorRef,
   ]);
 
