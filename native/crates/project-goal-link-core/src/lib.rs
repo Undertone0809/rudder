@@ -228,6 +228,13 @@ impl ProjectGoalLinkCommand {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct AppliedReceipt {
+    version: u64,
+    linked: bool,
+    fingerprint: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectGoalLinkState {
     pub organization_id: String,
@@ -236,7 +243,7 @@ pub struct ProjectGoalLinkState {
     pub version: u64,
     pub fence_epoch: u64,
     pub linked: bool,
-    applied_idempotency: BTreeMap<String, String>,
+    applied_idempotency: BTreeMap<String, AppliedReceipt>,
 }
 
 impl ProjectGoalLinkState {
@@ -266,10 +273,10 @@ impl ProjectGoalLinkState {
         command.validate(self)?;
         let fingerprint = command.fingerprint()?;
         if let Some(previous) = self.applied_idempotency.get(&command.idempotency_key) {
-            if previous == &fingerprint {
+            if previous.fingerprint == fingerprint {
                 return Ok(LinkMutationOutcome::AlreadyApplied {
-                    version: self.version,
-                    linked: self.linked,
+                    version: previous.version,
+                    linked: previous.linked,
                     fingerprint,
                 });
             }
@@ -284,8 +291,14 @@ impl ProjectGoalLinkState {
 
         let requested_linked = matches!(command.operation, Operation::Attach);
         if requested_linked == self.linked {
-            self.applied_idempotency
-                .insert(command.idempotency_key, fingerprint.clone());
+            self.applied_idempotency.insert(
+                command.idempotency_key,
+                AppliedReceipt {
+                    version: self.version,
+                    linked: self.linked,
+                    fingerprint: fingerprint.clone(),
+                },
+            );
             return Ok(LinkMutationOutcome::Noop {
                 version: self.version,
                 linked: self.linked,
@@ -299,8 +312,14 @@ impl ProjectGoalLinkState {
             .ok_or(LinkMutationError::VersionOverflow)?;
         self.linked = requested_linked;
         self.version = next_version;
-        self.applied_idempotency
-            .insert(command.idempotency_key, fingerprint.clone());
+        self.applied_idempotency.insert(
+            command.idempotency_key,
+            AppliedReceipt {
+                version: self.version,
+                linked: self.linked,
+                fingerprint: fingerprint.clone(),
+            },
+        );
         Ok(LinkMutationOutcome::Applied {
             version: self.version,
             linked: self.linked,
@@ -481,6 +500,42 @@ mod tests {
             state.apply(conflict),
             Err(LinkMutationError::IdempotencyConflict)
         );
+    }
+
+    #[test]
+    fn replay_returns_original_result_after_a_later_mutation() {
+        let mut state = state();
+        let original = board(Operation::Attach, "original");
+        let original_fingerprint = match state.apply(original.clone()).unwrap() {
+            LinkMutationOutcome::Applied {
+                version: 3,
+                linked: true,
+                fingerprint,
+            } => fingerprint,
+            outcome => panic!("unexpected original outcome: {outcome:?}"),
+        };
+
+        let mut later = board(Operation::Detach, "later");
+        later.expected_version = 3;
+        assert!(matches!(
+            state.apply(later).unwrap(),
+            LinkMutationOutcome::Applied {
+                version: 4,
+                linked: false,
+                ..
+            }
+        ));
+
+        assert_eq!(
+            state.apply(original).unwrap(),
+            LinkMutationOutcome::AlreadyApplied {
+                version: 3,
+                linked: true,
+                fingerprint: original_fingerprint,
+            }
+        );
+        assert_eq!(state.version, 4);
+        assert!(!state.linked);
     }
 
     #[test]
