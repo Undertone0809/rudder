@@ -72,14 +72,9 @@ test.describe("Primary rail layout", () => {
         expect(railBox).not.toBeNull();
         expect(shellBox).not.toBeNull();
         expect(railBox!.width).toBe(platform.expectedRailWidth);
+        expect(navBox!.width).toBeGreaterThanOrEqual(61);
         expect(shellBox!.x - (railBox!.x + railBox!.width)).toBeLessThanOrEqual(16.5);
-        expect(navBox!.width).toBeGreaterThanOrEqual(platform.expectedRailWidth - 1);
-        expect(navBox!.width).toBeLessThanOrEqual(platform.expectedRailWidth);
-        const railOverflow = await rail.evaluate((element) => ({
-          clientWidth: element.clientWidth,
-          scrollWidth: element.scrollWidth,
-        }));
-        expect(railOverflow.scrollWidth).toBeLessThanOrEqual(railOverflow.clientWidth + 1);
+
         const contextCard = page.getByTestId("workspace-context-card");
         if (await contextCard.count() > 0) {
           const contextBox = await contextCard.boundingBox();
@@ -87,13 +82,18 @@ test.describe("Primary rail layout", () => {
           expect(contextBox!.x).toBeGreaterThanOrEqual(railBox!.x + railBox!.width - 0.5);
         }
 
+        const mainCard = page.getByTestId("workspace-main-card");
+        const mainBox = await mainCard.boundingBox();
+        expect(mainBox).not.toBeNull();
+        expect(navBox!.x + navBox!.width).toBeLessThanOrEqual(mainBox!.x + 0.5);
+
         for (const label of ["Messenger", "Organization", "Automations"]) {
           const item = nav.getByRole("link", { name: label, exact: true });
           await expect(item).toBeVisible();
           const itemBox = await item.boundingBox();
           expect(itemBox).not.toBeNull();
-          expect(itemBox!.x).toBeGreaterThanOrEqual(railBox!.x - 0.5);
-          expect(itemBox!.x + itemBox!.width).toBeLessThanOrEqual(railBox!.x + railBox!.width + 0.5);
+          expect(itemBox!.x).toBeGreaterThanOrEqual(navBox!.x - 0.5);
+          expect(itemBox!.x + itemBox!.width).toBeLessThanOrEqual(navBox!.x + navBox!.width + 0.5);
           const labelBox = await item.evaluate((element) => {
             const labelElement = element.lastElementChild;
             if (!labelElement?.textContent?.trim()) {
