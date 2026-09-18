@@ -449,16 +449,13 @@ describe("PrimaryRail active motion indicator", () => {
     const nav = document.querySelector(".motion-rail-nav");
 
     expect(rail?.getAttribute("data-desktop-platform")).toBe("macos");
-    expect(rail?.className).toContain("w-[66px]");
-    expect(rail?.className).toContain("[--primary-rail-item-width:66px]");
+    expect(rail?.className).toContain("w-[40px]");
+    expect(rail?.className).toContain("[--primary-rail-item-width:40px]");
     expect(rail?.className).toContain("[--primary-rail-item-shift:0px]");
-    expect(rail?.className).not.toContain("w-[40px]");
+    expect(rail?.className).not.toContain("w-[66px]");
     expect(rail?.className).not.toContain("w-[52px]");
     expect(rail?.className).not.toContain("[--primary-rail-item-width:52px]");
-    expect(nav?.className).toContain(
-      "w-[calc(var(--primary-rail-item-width,66px)+var(--primary-rail-item-shift,0.25rem)+var(--primary-rail-item-shift,0.25rem)+0.625rem)]",
-    );
-    expect(nav?.className).not.toContain("w-full");
+    expect(nav?.className).toContain("w-full");
   });
 
   it("applies rail motion styling to the create menu", async () => {
