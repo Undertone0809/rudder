@@ -53,6 +53,7 @@ import {
   SIDE_PANEL_RESIZER_WIDTH,
   SIDE_PANEL_WIDTH_KEY,
   clampSidePanelWidth,
+  getCurrentViewportWidth,
   readRememberedSidePanelWidth,
   resolveDefaultSidePanelWidth,
   resolveProportionalSidePanelWidth,
@@ -61,6 +62,8 @@ import {
   shouldAutoCollapseContextSidebar,
   shouldAutoExpandSidePanel,
   useAutoCollapseWorkspaceWidth,
+  useViewportResizeTransition,
+  widthRatio,
 } from "../lib/workspace-shell-layout";
 import { ChatSidePanel } from "../pages/Chat.side-panel";
 import { NotFoundPage } from "../pages/NotFound";
@@ -466,11 +469,6 @@ export function resolveDisplayedSidePanelContext(
   return { contextKey: routeContextKey, preserveHold: false };
 }
 
-function getCurrentViewportWidth(): number | null {
-  if (typeof window === "undefined") return null;
-  return window.innerWidth;
-}
-
 function useViewportWidth(): number | null {
   const [viewportWidth, setViewportWidth] = useState(getCurrentViewportWidth);
 
@@ -522,11 +520,6 @@ export function resolveProportionalWorkspaceColumnWidth(
   return clampWorkspaceColumnWidth(family, widthRatioValue * viewportWidth, viewportWidth);
 }
 
-function widthRatio(value: number, widthBase: number | null = getCurrentViewportWidth()): number | null {
-  if (widthBase === null || !Number.isFinite(widthBase) || widthBase <= 0) return null;
-  return value / widthBase;
-}
-
 function DesktopSidePanelSlot({
   autoCollapseContextSidebar,
   autoCollapseContextSidebarKey,
@@ -566,7 +559,7 @@ function DesktopSidePanelSlot({
   const sidePanelFocusWithinRef = useRef(false);
   const sidePanelResizeActiveRef = useRef(false);
   const sidePanelResizeCleanupRef = useRef<(() => void) | null>(null);
-  const [viewportResizing, setViewportResizing] = useState(false);
+  const viewportResizing = useViewportResizeTransition();
 
   useEffect(() => {
     if (typeof window === "undefined" || !widthInitializedRef.current) return;
@@ -588,24 +581,6 @@ function DesktopSidePanelSlot({
     viewportWidth,
     workspaceWidth,
   });
-
-  useEffect(() => {
-    let resetTimer: number | null = null;
-    const handleViewportResize = () => {
-      setViewportResizing(true);
-      if (resetTimer !== null) window.clearTimeout(resetTimer);
-      resetTimer = window.setTimeout(() => {
-        resetTimer = null;
-        setViewportResizing(false);
-      }, 180);
-    };
-
-    window.addEventListener("resize", handleViewportResize);
-    return () => {
-      window.removeEventListener("resize", handleViewportResize);
-      if (resetTimer !== null) window.clearTimeout(resetTimer);
-    };
-  }, []);
 
   useEffect(() => {
     if (hasRememberedWidthRef.current || workspaceWidth === null) return;

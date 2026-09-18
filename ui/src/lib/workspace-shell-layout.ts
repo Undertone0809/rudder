@@ -1,5 +1,5 @@
 import { useSidePanel } from "@/context/SidePanelContext";
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 export const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth.v3";
 export const SIDE_PANEL_DEFAULT_WIDTH = 420;
@@ -8,6 +8,16 @@ const SIDE_PANEL_COLLAPSE_WIDTH = 292;
 const SIDE_PANEL_COLLAPSE_GAP = SIDE_PANEL_MIN_WIDTH - SIDE_PANEL_COLLAPSE_WIDTH;
 export const SIDE_PANEL_RESIZER_WIDTH = 4;
 export const SIDE_PANEL_RESIZER_HIT_WIDTH = 10;
+
+export function getCurrentViewportWidth(): number | null {
+  if (typeof window === "undefined") return null;
+  return window.innerWidth;
+}
+
+export function widthRatio(value: number, widthBase: number | null = getCurrentViewportWidth()): number | null {
+  if (widthBase === null || !Number.isFinite(widthBase) || widthBase <= 0) return null;
+  return value / widthBase;
+}
 
 export function shouldAutoCollapseContextSidebar({
   isMobile,
@@ -94,6 +104,31 @@ export function readRememberedSidePanelWidth(): number {
   } catch {
     return SIDE_PANEL_DEFAULT_WIDTH;
   }
+}
+
+export function useViewportResizeTransition(): boolean {
+  const [viewportResizing, setViewportResizing] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let resetTimer: number | null = null;
+    const handleViewportResize = () => {
+      setViewportResizing(true);
+      if (resetTimer !== null) window.clearTimeout(resetTimer);
+      resetTimer = window.setTimeout(() => {
+        resetTimer = null;
+        setViewportResizing(false);
+      }, 180);
+    };
+
+    window.addEventListener("resize", handleViewportResize);
+    return () => {
+      window.removeEventListener("resize", handleViewportResize);
+      if (resetTimer !== null) window.clearTimeout(resetTimer);
+    };
+  }, []);
+
+  return viewportResizing;
 }
 
 export function useAutoCollapseWorkspaceWidth({
