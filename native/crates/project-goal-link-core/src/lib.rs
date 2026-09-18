@@ -293,11 +293,12 @@ impl ProjectGoalLinkState {
             });
         }
 
-        self.linked = requested_linked;
-        self.version = self
+        let next_version = self
             .version
             .checked_add(1)
             .ok_or(LinkMutationError::VersionOverflow)?;
+        self.linked = requested_linked;
+        self.version = next_version;
         self.applied_idempotency
             .insert(command.idempotency_key, fingerprint.clone());
         Ok(LinkMutationOutcome::Applied {
@@ -506,5 +507,28 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn version_overflow_leaves_state_unchanged_on_retry() {
+        let mut state = ProjectGoalLinkState::new("org-a", "org-a", "org-a", u64::MAX, 4, false);
+        let mut command = board(Operation::Attach, "overflow");
+        command.expected_version = u64::MAX;
+        let expected_state = state.clone();
+
+        assert_eq!(
+            state.apply(command.clone()),
+            Err(LinkMutationError::VersionOverflow)
+        );
+        assert_eq!(state, expected_state);
+        assert_eq!(state.version, u64::MAX);
+        assert!(!state.linked);
+        assert!(state.applied_idempotency.is_empty());
+
+        assert_eq!(
+            state.apply(command),
+            Err(LinkMutationError::VersionOverflow)
+        );
+        assert_eq!(state, expected_state);
     }
 }
