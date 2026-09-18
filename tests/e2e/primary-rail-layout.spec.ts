@@ -5,18 +5,21 @@ test.describe("Primary rail layout", () => {
     {
       name: "macOS desktop",
       expectedPlatform: "macos",
+      expectedRailWidth: 40,
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/537.36 Chrome/131 Safari/537.36",
       desktopShell: true,
     },
     {
       name: "Windows desktop",
       expectedPlatform: "windows",
+      expectedRailWidth: 52,
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
       desktopShell: true,
     },
     {
       name: "browser",
       expectedPlatform: null,
+      expectedRailWidth: 50,
       userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
       desktopShell: false,
     },
@@ -64,9 +67,19 @@ test.describe("Primary rail layout", () => {
 
         const navBox = await nav.boundingBox();
         const railBox = await rail.boundingBox();
+        const shellBox = await page.getByTestId("workspace-shell").boundingBox();
         expect(navBox).not.toBeNull();
         expect(railBox).not.toBeNull();
-        expect(navBox!.width).toBeGreaterThanOrEqual(61);
+        expect(shellBox).not.toBeNull();
+        expect(railBox!.width).toBe(platform.expectedRailWidth);
+        expect(shellBox!.x - (railBox!.x + railBox!.width)).toBeLessThanOrEqual(16.5);
+        expect(navBox!.width).toBeGreaterThanOrEqual(platform.expectedRailWidth - 1);
+        expect(navBox!.width).toBeLessThanOrEqual(platform.expectedRailWidth);
+        const railOverflow = await rail.evaluate((element) => ({
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+        }));
+        expect(railOverflow.scrollWidth).toBeLessThanOrEqual(railOverflow.clientWidth + 1);
         const contextCard = page.getByTestId("workspace-context-card");
         if (await contextCard.count() > 0) {
           const contextBox = await contextCard.boundingBox();
