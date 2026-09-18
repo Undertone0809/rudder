@@ -220,7 +220,18 @@ impl ProjectGoalLinkCommand {
         deterministic_link_identifier(&self.organization_id, &self.project_id, &self.goal_id)
     }
 
-    fn fingerprint(&self) -> Result<String, LinkMutationError> {
+    /// Return the validated mutation fingerprint that a durable adapter must
+    /// bind to its transaction and idempotency receipt.
+    pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
+        validate_identifier(&self.organization_id)?;
+        validate_identifier(self.actor.organization_id())?;
+        validate_identifier(self.actor.principal_id())?;
+        validate_identifier(&self.project_id)?;
+        validate_identifier(&self.goal_id)?;
+        validate_idempotency_key(&self.idempotency_key)?;
+        if self.actor.organization_id() != self.organization_id {
+            return Err(LinkMutationError::CrossOrganization);
+        }
         let bytes = canonical_fingerprint_bytes(self);
         Ok(hex_digest(Sha256::digest(bytes)))
     }
@@ -334,6 +345,7 @@ impl ProjectGoalLinkState {
         let link_id = command.link_identifier()?;
         if let Some(previous) = self.applied_idempotency.get(&command.idempotency_key) {
             if previous.fingerprint == fingerprint && previous.link_id == link_id {
+                validate_replay_receipt(self, &command, previous, &fingerprint, &link_id)?;
                 return Ok(LinkMutationOutcome::AlreadyApplied {
                     version: previous.version,
                     fence_epoch: previous.fence_epoch,
@@ -586,6 +598,54 @@ fn validate_idempotency_key(value: &str) -> Result<(), LinkMutationError> {
 
 fn validate_receipt(receipt: &AppliedReceipt) -> Result<(), LinkMutationError> {
     if !is_sha256_hex(&receipt.link_id) || !is_sha256_hex(&receipt.fingerprint) {
+        return Err(LinkMutationError::InvalidReceipt);
+    }
+    Ok(())
+}
+
+fn validate_replay_receipt(
+    state: &ProjectGoalLinkState,
+    command: &ProjectGoalLinkCommand,
+    receipt: &AppliedReceipt,
+    fingerprint: &str,
+    link_id: &str,
+) -> Result<(), LinkMutationError> {
+    if receipt.fingerprint != fingerprint || receipt.link_id != link_id {
+        return Err(LinkMutationError::InvalidReceipt);
+    }
+
+    let is_cancel = matches!(command.operation, Operation::Cancel);
+    let expected_fence = if is_cancel {
+        command
+            .fence_epoch
+            .checked_add(1)
+            .ok_or(LinkMutationError::InvalidReceipt)?
+    } else {
+        command.fence_epoch
+    };
+    let valid_version = if is_cancel {
+        command
+            .expected_version
+            .checked_add(1)
+            .is_some_and(|version| receipt.version == version)
+    } else {
+        receipt.version == command.expected_version
+            || command
+                .expected_version
+                .checked_add(1)
+                .is_some_and(|version| receipt.version == version)
+    };
+    let valid_link = match command.operation {
+        Operation::Attach => receipt.linked,
+        Operation::Detach => !receipt.linked,
+        Operation::Cancel => receipt.linked == state.linked,
+    };
+
+    if !valid_version
+        || receipt.fence_epoch != expected_fence
+        || receipt.cancelled != is_cancel
+        || !valid_link
+    {
         return Err(LinkMutationError::InvalidReceipt);
     }
     Ok(())
@@ -947,6 +1007,48 @@ mod tests {
             Err(LinkMutationError::ReceiptCapacityExceeded)
         );
         assert_eq!(full, expected_state);
+    }
+
+    #[test]
+    fn fence_overflow_leaves_state_unchanged_on_retry() {
+        let mut state = ProjectGoalLinkState::new(
+            "org-a",
+            "org-a",
+            "org-a",
+            "project-a",
+            "goal-a",
+            2,
+            u64::MAX,
+            false,
+        );
+        let mut command = board(Operation::Cancel, "fence-overflow");
+        command.fence_epoch = u64::MAX;
+        let expected_state = state.clone();
+
+        assert_eq!(
+            state.apply(command.clone()),
+            Err(LinkMutationError::FenceOverflow)
+        );
+        assert_eq!(state, expected_state);
+        assert_eq!(state.apply(command), Err(LinkMutationError::FenceOverflow));
+        assert_eq!(state, expected_state);
+    }
+
+    #[test]
+    fn tampered_replay_receipt_fails_closed_after_json_round_trip() {
+        let mut state = state();
+        state
+            .apply(board(Operation::Attach, "tampered-receipt"))
+            .unwrap();
+
+        let mut encoded = serde_json::to_value(&state).unwrap();
+        encoded["appliedIdempotency"]["tampered-receipt"]["version"] = serde_json::json!(99);
+        let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(
+            restored.apply(board(Operation::Attach, "tampered-receipt")),
+            Err(LinkMutationError::InvalidReceipt)
+        );
     }
 
     #[test]
