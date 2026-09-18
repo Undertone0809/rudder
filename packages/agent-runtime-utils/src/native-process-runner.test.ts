@@ -117,7 +117,7 @@ describe("Rust Agent Run process host", () => {
     let deliveredBytes = 0;
     const result = await runNativeChildProcess("slow-consumer-flood", process.execPath, [
       "-e",
-      "const chunk='x'.repeat(16384);let i=0;const write=()=>{while(i<64){i+=1;if(!process.stdout.write(chunk)){process.stdout.once('drain',write);return}}};write()",
+      "const chunk='x'.repeat(16384);let i=0;const write=()=>{while(i<320){i+=1;if(!process.stdout.write(chunk)){process.stdout.once('drain',write);return}}};write()",
     ], {
       cwd: root,
       env: { PATH: process.env.PATH ?? "" },
@@ -136,25 +136,29 @@ describe("Rust Agent Run process host", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toHaveLength(64 * 16_384);
-    expect(deliveredBytes).toBe(64 * 16_384);
+    expect(result.stdout).toHaveLength(4 * 1024 * 1024);
+    expect(deliveredBytes).toBe(320 * 16_384);
     expect(maxActiveConsumers).toBe(1);
     await expect(access(path.join(root, "receipts"))).resolves.toBeUndefined();
   });
 
-  it("fails closed when the log consumer cannot drain the bounded output spool", { timeout: 15_000 }, async () => {
+  it("backpressures a slow log consumer instead of stopping the accepted process", { timeout: 15_000 }, async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "rudder-native-agent-spool-overflow-"));
     const commandInput = new PassThrough();
     const lifecycle = new PassThrough();
     const rawStdout = new PassThrough();
     const rawStderr = new PassThrough();
+    let hostKilled = false;
     const fakeHost = Object.assign(new EventEmitter(), {
       stdin: commandInput,
       stdio: [null, null, null, lifecycle, rawStdout, rawStderr],
       stderr: rawStderr,
       exitCode: null,
       signalCode: null,
-      kill: () => true,
+      kill: () => {
+        hostKilled = true;
+        return true;
+      },
     }) as unknown as ChildProcess;
     const capabilities = ["process_spawn", "process_group_cleanup", "parent_eof_cleanup", "owner_receipt", "stdout_relay", "stderr_relay"];
     let started = false;
@@ -166,8 +170,7 @@ describe("Rust Agent Run process host", () => {
       lifecycle.write(`${JSON.stringify({ type: "accepted", protocolVersion: { major: 1, minor: 0 }, requestId })}\n`);
       lifecycle.write(`${JSON.stringify({ type: "spawned", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, pid: 12345 })}\n`);
       const data = "x".repeat(16_384);
-      // Exceed the 4 MiB queue bound without making the fake lifecycle frame
-      // unnecessarily expensive for slower platform runners.
+      // Exceed the 4 MiB queue bound while keeping the fake host deterministic.
       lifecycle.write(Array.from({ length: 320 }, () => `${JSON.stringify({ type: "output", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, stream: "stdout", data })}\n`).join(""));
       lifecycle.write(`${JSON.stringify({ type: "app-exit", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, code: 0 })}\n`);
       lifecycle.write(`${JSON.stringify({ type: "terminal", protocolVersion: { major: 1, minor: 0 }, requestId, ownerToken: requestId, cleanupProven: true, receiptWritten: true })}\n`);
@@ -177,7 +180,7 @@ describe("Rust Agent Run process host", () => {
     setImmediate(() => {
       lifecycle.write(`${JSON.stringify({ type: "handshake", protocolVersion: { major: 1, minor: 0 }, capabilities, target: "test", binaryVersion: "test" })}\n`);
     });
-    await expect(runNativeChildProcess("spool-overflow", process.execPath, [], {
+    const result = await runNativeChildProcess("spool-overflow", process.execPath, [], {
       cwd: root,
       env: { PATH: process.env.PATH ?? "" },
       timeoutSec: 10,
@@ -189,10 +192,11 @@ describe("Rust Agent Run process host", () => {
       binaryPath: "fake-process-host",
       runtimeRoot: path.join(root, "receipts"),
       spawnHost: () => fakeHost,
-    })).rejects.toMatchObject({
-      fallbackCode: "output_spool_overflow",
-      accepted: true,
     });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toHaveLength(4 * 1024 * 1024);
+    expect(hostKilled).toBe(false);
   });
 
   it("buffers raw output before acceptance and drains it after terminal", async () => {

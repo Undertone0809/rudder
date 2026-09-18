@@ -25,6 +25,11 @@ const MAX_OUTPUT_QUEUE_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_QUEUE_ITEMS = 1_024;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 
+type PausableReadable = NodeJS.ReadableStream & {
+  pause(): PausableReadable;
+  resume(): PausableReadable;
+};
+
 type NativeHostSpawn = (
   executable: string,
   args: readonly string[],
@@ -275,9 +280,9 @@ export async function runNativeChildProcess(
     }
     const stdio = host.stdio as Array<NodeJS.ReadableStream | NodeJS.WritableStream | null | undefined>;
     const commandInput = host.stdin;
-    const lifecycle = stdio[3] as NodeJS.ReadableStream | null;
-    const rawStdout = stdio[4] as NodeJS.ReadableStream | null;
-    const rawStderr = stdio[5] as NodeJS.ReadableStream | null;
+    const lifecycle = stdio[3] as PausableReadable | null;
+    const rawStdout = stdio[4] as PausableReadable | null;
+    const rawStderr = stdio[5] as PausableReadable | null;
     if (!commandInput || !lifecycle || !rawStdout || !rawStderr) {
       host.kill("SIGKILL");
       reject(new NativeProcessUnavailableError(
@@ -286,8 +291,9 @@ export async function runNativeChildProcess(
       ));
       return;
     }
-    rawStdout.resume();
-    rawStderr.resume();
+    lifecycle.pause();
+    rawStdout.pause();
+    rawStderr.pause();
 
     const requestId = ownerToken(runId);
     const startedAt = new Date().toISOString();
@@ -317,12 +323,21 @@ export async function runNativeChildProcess(
     let logDeliveryWaiters: Array<() => void> = [];
     let frameParts: Buffer[] = [];
     let frameBytes = 0;
+    let lifecycleInput = Buffer.alloc(0);
+    let lifecycleParserActive = false;
     const pendingOutput: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
     const pendingRawOutput: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
     let pendingRawOutputBytes = 0;
     const outputQueue: Array<{ stream: "stdout" | "stderr"; data: string }> = [];
     let queuedOutputBytes = 0;
     let fatalError: Error | null = null;
+    let hostClosed = false;
+    let hostCloseHandled = false;
+    let hostCloseCode: number | null = null;
+    let hostCloseSignal: NodeJS.Signals | null = null;
+    let hostCloseCheckScheduled = false;
+    let processLifecycleInput = () => {};
+    let maybeHandleHostClose = () => {};
 
     const rejectImmediately = (error: Error) => {
       if (settled) return;
@@ -358,6 +373,21 @@ export async function runNativeChildProcess(
         for (const resolveDelivery of rawOutputWaiters.splice(0)) resolveDelivery();
       }
     };
+    const pauseRawOutput = () => {
+      rawStdout.pause();
+      rawStderr.pause();
+    };
+    const pauseOutputSources = () => {
+      lifecycle.pause();
+      pauseRawOutput();
+    };
+    const resumeOutputSources = () => {
+      rawStdout.resume();
+      rawStderr.resume();
+      lifecycle.resume();
+      processLifecycleInput();
+      maybeHandleHostClose();
+    };
     const finish = () => {
       if (settled || !terminalSeen) return;
       settled = true;
@@ -388,44 +418,40 @@ export async function runNativeChildProcess(
     const drainOutput = async () => {
       if (logDeliveryActive) return;
       logDeliveryActive = true;
-      while (outputQueue.length > 0) {
-        const output = outputQueue.shift()!;
-        queuedOutputBytes -= Buffer.byteLength(output.data);
-        if (!operatorInterrupted) {
-          try {
-            await opts.onLog(output.stream, output.data);
-          } catch (error) {
-            opts.onLogError(error, runId, `failed to append native ${output.stream} log chunk`);
+      pauseOutputSources();
+      try {
+        while (outputQueue.length > 0) {
+          const output = outputQueue.shift()!;
+          queuedOutputBytes -= Buffer.byteLength(output.data);
+          if (!operatorInterrupted) {
+            try {
+              await opts.onLog(output.stream, output.data);
+            } catch (error) {
+              opts.onLogError(error, runId, `failed to append native ${output.stream} log chunk`);
+            }
           }
         }
+      } finally {
+        logDeliveryActive = false;
+        resumeOutputSources();
+        for (const resolveDelivery of logDeliveryWaiters.splice(0)) resolveDelivery();
       }
-      logDeliveryActive = false;
-      for (const resolveDelivery of logDeliveryWaiters.splice(0)) resolveDelivery();
     };
-    const queueOutput = (output: { stream: "stdout" | "stderr"; data: string }) => {
+    const queueOutput = (output: { stream: "stdout" | "stderr"; data: string }, startDrain = true) => {
       const outputBytes = Buffer.byteLength(output.data);
-      const queuedItems = pendingOutput.length + outputQueue.length;
-      if (queuedItems >= MAX_OUTPUT_QUEUE_ITEMS || queuedOutputBytes + outputBytes > MAX_OUTPUT_QUEUE_BYTES) {
-        settleReject(new NativeProcessUnavailableError(
-          "Rust process host output spool exceeded its bounded capacity",
-          "output_spool_overflow",
-          accepted,
-        ));
-        return;
-      }
       queuedOutputBytes += outputBytes;
       if (accepted) {
         outputQueue.push(output);
-        void drainOutput();
+        if (startDrain) void drainOutput();
       } else {
         pendingOutput.push(output);
       }
     };
-    const appendOutput = (stream: "stdout" | "stderr", data: string) => {
+    const appendOutput = (stream: "stdout" | "stderr", data: string, startDrain = true) => {
       if (stream === "stdout") stdout = appendWithCap(stdout, data);
       else stderr = appendWithCap(stderr, data);
       if (operatorInterrupted) return;
-      queueOutput({ stream, data });
+      queueOutput({ stream, data }, startDrain);
     };
     // Agent Run output is byte-relayed on the host's dedicated fd 4/5
     // channels. Keep accepting lifecycle output frames for older hosts, but
@@ -438,17 +464,12 @@ export async function runNativeChildProcess(
       }
       if (rawOutputTransport === false) return;
       const outputBytes = Buffer.byteLength(data);
-      if (pendingRawOutput.length >= MAX_OUTPUT_QUEUE_ITEMS
-        || pendingRawOutputBytes + outputBytes > MAX_OUTPUT_QUEUE_BYTES) {
-        settleReject(new NativeProcessUnavailableError(
-          "Rust process host pre-negotiation output spool exceeded its bounded capacity",
-          "output_spool_overflow",
-          accepted,
-        ));
-        return;
-      }
       pendingRawOutput.push({ stream, data });
       pendingRawOutputBytes += outputBytes;
+      if (pendingRawOutput.length >= MAX_OUTPUT_QUEUE_ITEMS
+        || pendingRawOutputBytes >= MAX_OUTPUT_QUEUE_BYTES) {
+        pauseRawOutput();
+      }
     };
     rawStdout.on("data", (chunk: Buffer | string) => handleRawOutput("stdout", chunk));
     rawStderr.on("data", (chunk: Buffer | string) => handleRawOutput("stderr", chunk));
@@ -560,7 +581,9 @@ export async function runNativeChildProcess(
         accepted = true;
         rawOutputTransport = frame.outputTransport === "raw";
         if (rawOutputTransport) {
-          for (const output of pendingRawOutput.splice(0)) appendOutput(output.stream, output.data);
+          for (const output of pendingRawOutput.splice(0)) appendOutput(output.stream, output.data, false);
+        } else {
+          pendingRawOutput.length = 0;
         }
         pendingRawOutputBytes = 0;
         outputQueue.push(...pendingOutput.splice(0));
@@ -616,37 +639,73 @@ export async function runNativeChildProcess(
       ));
     };
 
+    processLifecycleInput = () => {
+      if (lifecycleParserActive) return;
+      lifecycleParserActive = true;
+      try {
+        while (!logDeliveryActive) {
+          const newlineIndex = lifecycleInput.indexOf(0x0a);
+          if (newlineIndex < 0) {
+            if (lifecycleInput.length > 0) {
+              if (frameBytes + lifecycleInput.length > MAX_LIFECYCLE_FRAME_BYTES) {
+                settleReject(new NativeProcessUnavailableError(
+                  "Rust process host lifecycle frame exceeded its bound",
+                  "frame_too_large",
+                  accepted,
+                ));
+                lifecycleInput = Buffer.alloc(0);
+                return;
+              }
+              frameParts.push(lifecycleInput);
+              frameBytes += lifecycleInput.length;
+              lifecycleInput = Buffer.alloc(0);
+            }
+            return;
+          }
+
+          const segment = lifecycleInput.subarray(0, newlineIndex);
+          lifecycleInput = lifecycleInput.subarray(newlineIndex + 1);
+          if (frameBytes + segment.length > MAX_LIFECYCLE_FRAME_BYTES) {
+            settleReject(new NativeProcessUnavailableError(
+              "Rust process host lifecycle frame exceeded its bound",
+              "frame_too_large",
+              accepted,
+            ));
+            return;
+          }
+          frameParts.push(Buffer.from(segment));
+          frameBytes += segment.length;
+          const frame = Buffer.concat(frameParts, frameBytes).toString("utf8").replace(/\r$/u, "");
+          frameParts = [];
+          frameBytes = 0;
+          if (!frame.trim()) continue;
+          try {
+            const parsed = asFrame(JSON.parse(frame));
+            if (!parsed) throw new Error("not an object");
+            handleFrame(parsed);
+          } catch (error) {
+            settleReject(new NativeProcessUnavailableError(
+              "Rust process host emitted invalid lifecycle JSON",
+              "invalid_json",
+              accepted,
+              { cause: error },
+            ));
+          }
+        }
+      } finally {
+        lifecycleParserActive = false;
+      }
+    };
     lifecycle.on("data", (chunk: Buffer | string) => {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      let start = 0;
-      for (let index = 0; index < bytes.length; index += 1) {
-        if (bytes[index] !== 0x0a) continue;
-        const segment = bytes.subarray(start, index);
-        start = index + 1;
-        if (frameBytes + segment.length > MAX_LIFECYCLE_FRAME_BYTES) {
-          settleReject(new NativeProcessUnavailableError("Rust process host lifecycle frame exceeded its bound", "frame_too_large", accepted));
-          return;
-        }
-        frameParts.push(Buffer.from(segment));
-        frameBytes += segment.length;
-        const frame = Buffer.concat(frameParts, frameBytes).toString("utf8").replace(/\r$/u, "");
-        frameParts = [];
-        frameBytes = 0;
-        if (!frame.trim()) continue;
-        try {
-          const parsed = asFrame(JSON.parse(frame));
-          if (!parsed) throw new Error("not an object");
-          handleFrame(parsed);
-        } catch (error) {
-          settleReject(new NativeProcessUnavailableError("Rust process host emitted invalid lifecycle JSON", "invalid_json", accepted, { cause: error }));
-        }
-      }
-      const remainder = bytes.subarray(start);
-      if (remainder.length > 0) {
-        frameParts.push(Buffer.from(remainder));
-        frameBytes += remainder.length;
-      }
+      lifecycleInput = lifecycleInput.length === 0
+        ? Buffer.from(bytes)
+        : Buffer.concat([lifecycleInput, bytes]);
+      processLifecycleInput();
     });
+    lifecycle.resume();
+    rawStdout.resume();
+    rawStderr.resume();
     host.stderr?.on("data", (chunk) => {
       stderr = appendWithCap(stderr, String(chunk));
     });
@@ -658,14 +717,16 @@ export async function runNativeChildProcess(
         { cause: error },
       ));
     });
-    host.once("close", (code, signal) => {
+    maybeHandleHostClose = () => {
+      if (!hostClosed || hostCloseHandled || hostCloseCheckScheduled || logDeliveryActive) return;
+      hostCloseHandled = true;
       runningProcesses.delete(runId);
       if (terminalSeen && cleanupReceiptTrusted) {
         finish();
         return;
       }
       const controlError = fatalError ?? new NativeProcessUnavailableError(
-        `Rust process host exited before a terminal receipt (${signal ?? code ?? "unknown"})`,
+        `Rust process host exited before a terminal receipt (${hostCloseSignal ?? hostCloseCode ?? "unknown"})`,
         accepted ? "control_lost" : "host_exit_before_accept",
         accepted,
       );
@@ -695,6 +756,18 @@ export async function runNativeChildProcess(
           { cause: cleanupError },
         )),
       );
+    };
+    host.once("close", (code, signal) => {
+      hostClosed = true;
+      hostCloseCode = code;
+      hostCloseSignal = signal;
+      if (hostCloseCheckScheduled) return;
+      hostCloseCheckScheduled = true;
+      setImmediate(() => {
+        hostCloseCheckScheduled = false;
+        processLifecycleInput();
+        maybeHandleHostClose();
+      });
     });
 
     if (opts.timeoutSec > 0) {
