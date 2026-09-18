@@ -12,11 +12,23 @@ import {
 import { resolveNativeWorkspaceFilesBinary } from "../services/workspace-files-native.js";
 
 const originalNativePath = process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
+const originalTestStartedPath = process.env.RUDDER_NATIVE_TEST_STARTED;
+const originalTestStoppedPath = process.env.RUDDER_NATIVE_TEST_STOPPED;
 const cleanupDirs = new Set<string>();
+
+async function waitForPath(filePath: string) {
+  await vi.waitFor(async () => {
+    await fs.access(filePath);
+  }, { timeout: 5_000, interval: 20 });
+}
 
 afterEach(async () => {
   if (originalNativePath === undefined) delete process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH;
   else process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = originalNativePath;
+  if (originalTestStartedPath === undefined) delete process.env.RUDDER_NATIVE_TEST_STARTED;
+  else process.env.RUDDER_NATIVE_TEST_STARTED = originalTestStartedPath;
+  if (originalTestStoppedPath === undefined) delete process.env.RUDDER_NATIVE_TEST_STOPPED;
+  else process.env.RUDDER_NATIVE_TEST_STOPPED = originalTestStoppedPath;
   await Promise.all([...cleanupDirs].map((directory) => fs.rm(directory, { recursive: true, force: true })));
   cleanupDirs.clear();
 });
@@ -156,7 +168,13 @@ describe("native workspace file reads", () => {
         resolveRead({ bytesRead: 0 });
       }),
     } as unknown as FileHandle;
-    const openSpy = vi.spyOn(fs, "open").mockResolvedValue(handle);
+    const rootHandle = {
+      stat: vi.fn(async () => await fs.stat(root)),
+      close: vi.fn(async () => undefined),
+    } as unknown as FileHandle;
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (requestedPath) => (
+      String(requestedPath) === root ? rootHandle : handle
+    ));
     const controller = new AbortController();
     try {
       const pending = readWorkspaceFileNode(root, "pending.md", controller.signal);
@@ -168,6 +186,7 @@ describe("native workspace file reads", () => {
         fallbackAllowed: false,
       });
       expect(handle.close).toHaveBeenCalledTimes(1);
+      expect(rootHandle.close).toHaveBeenCalledTimes(1);
     } finally {
       openSpy.mockRestore();
     }
@@ -182,23 +201,74 @@ describe("native workspace file reads", () => {
     await fs.mkdir(root);
     await fs.writeFile(filePath, "before", "utf8");
     const openedStat = await fs.stat(filePath);
+    const rootStat = await fs.stat(root);
+    const rootHandle = {
+      stat: vi.fn(async () => rootStat),
+      close: vi.fn(async () => undefined),
+    } as unknown as FileHandle;
     const handle = {
       stat: vi.fn(async () => openedStat),
       read: vi.fn(async () => {
         await fs.rename(root, movedRoot);
-        await fs.symlink(movedRoot, root);
+        await fs.mkdir(root);
+        await fs.writeFile(path.join(root, "mutable.md"), "replacement", "utf8");
         return { bytesRead: 0 };
       }),
       close: vi.fn(async () => undefined),
     } as unknown as FileHandle;
-    const openSpy = vi.spyOn(fs, "open").mockResolvedValue(handle);
+    const openSpy = vi.spyOn(fs, "open").mockImplementation(async (requestedPath) => (
+      String(requestedPath) === root ? rootHandle : handle
+    ));
     try {
       await expect(readWorkspaceFileNodeBytes(root, "mutable.md")).rejects.toMatchObject({
         code: "workspace_file_changed",
         fallbackAllowed: false,
       });
+      expect(rootHandle.close).toHaveBeenCalledTimes(1);
     } finally {
       openSpy.mockRestore();
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("cancels an in-flight native child and waits for it to exit", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+    cleanupDirs.add(root);
+    const startedPath = path.join(root, "native-started");
+    const stoppedPath = path.join(root, "native-stopped");
+    const fakeBinary = path.join(root, "fake-native");
+    await fs.writeFile(
+      fakeBinary,
+      [
+        "#!/usr/bin/env node",
+        "const fs = require('node:fs');",
+        "fs.writeFileSync(process.env.RUDDER_NATIVE_TEST_STARTED, String(process.pid));",
+        "process.on('SIGTERM', () => { fs.writeFileSync(process.env.RUDDER_NATIVE_TEST_STOPPED, 'stopped'); process.exit(143); });",
+        "setInterval(() => {}, 1000);",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    process.env.RUDDER_NATIVE_WORKSPACE_FILE_PATH = fakeBinary;
+    process.env.RUDDER_NATIVE_TEST_STARTED = startedPath;
+    process.env.RUDDER_NATIVE_TEST_STOPPED = stoppedPath;
+    const controller = new AbortController();
+    const pending = readWorkspaceFileNative(root, "pending.md", controller.signal);
+
+    try {
+      await waitForPath(startedPath);
+      const pid = Number(await fs.readFile(startedPath, "utf8"));
+      controller.abort();
+
+      await expect(pending).rejects.toMatchObject({
+        code: "workspace_file_cancelled",
+        fallbackAllowed: false,
+      });
+      await waitForPath(stoppedPath);
+      await vi.waitFor(() => {
+        expect(() => process.kill(pid, 0)).toThrow();
+      }, { timeout: 5_000, interval: 20 });
+    } finally {
+      controller.abort();
     }
   });
 

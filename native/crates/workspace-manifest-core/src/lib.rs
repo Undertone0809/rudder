@@ -12,14 +12,18 @@ use notify::{Config, PollWatcher};
 #[cfg(any(not(target_os = "linux"), test))]
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 #[cfg(windows)]
 use std::mem::size_of;
 #[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, FromRawFd};
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 use std::path::{Component, Path, PathBuf};
@@ -27,7 +31,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 #[cfg(test)]
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const MANIFEST_PROTOCOL_VERSION: u32 = 1;
@@ -168,7 +172,7 @@ impl ManifestError {
         Self::fail_closed_source("workspace_file_containment_unproven", source)
     }
 
-    #[cfg(any(windows, test))]
+    #[cfg(any(unix, windows, test))]
     fn file_identity_unavailable(source: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::fail_closed_source("workspace_file_identity_unavailable", source)
     }
@@ -351,21 +355,67 @@ fn same_file_snapshot(left: &FileSnapshot, right: &FileSnapshot) -> bool {
     true
 }
 
-fn open_canonical_file(path: &Path) -> io::Result<File> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+#[cfg(windows)]
+fn open_target_file(_root_handle: &File, _canonical_root: &Path, path: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
 
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(unix)]
+fn open_target_file(
+    root_handle: &File,
+    canonical_root: &Path,
+    canonical_target: &Path,
+) -> io::Result<File> {
+    let relative = canonical_target.strip_prefix(canonical_root).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "workspace target is outside the canonical root",
+        )
+    })?;
+    let mut components = relative.components().peekable();
+    let mut directory_handle: Option<File> = None;
+    let mut directory_fd = root_handle.as_raw_fd();
+
+    while let Some(component) = components.next() {
+        let Component::Normal(name) = component else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "workspace target is not a normal relative path",
+            ));
+        };
+        let name = CString::new(name.as_bytes()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "workspace target contains a NUL byte",
+            )
+        })?;
+        let mut flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+        if components.peek().is_some() {
+            flags |= libc::O_DIRECTORY;
+        }
+        let fd = unsafe { libc::openat(directory_fd, name.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let handle = unsafe { File::from_raw_fd(fd) };
+        if components.peek().is_none() {
+            return Ok(handle);
+        }
+        directory_fd = handle.as_raw_fd();
+        directory_handle = Some(handle);
     }
-    #[cfg(not(windows))]
-    {
-        File::open(path)
-    }
+
+    let _ = directory_handle;
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "workspace target is empty",
+    ))
 }
 
 #[cfg(windows)]
@@ -416,6 +466,32 @@ fn normalized_windows_path(path: &Path) -> String {
     value.trim_end_matches('\\').to_lowercase()
 }
 
+fn open_root_directory(path: &Path) -> io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .share_mode(FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(path)
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(path)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RootIdentity {
     is_directory: bool,
@@ -429,13 +505,14 @@ struct RootIdentity {
     #[cfg(unix)]
     ctime_nsec: i64,
     #[cfg(windows)]
-    volume_serial_number: u32,
-    #[cfg(windows)]
-    file_index: u64,
+    identity: WindowsFileIdentity,
 }
 
 #[cfg(unix)]
-fn root_identity(metadata: &fs::Metadata) -> Result<RootIdentity, ManifestError> {
+fn root_identity_from_handle(handle: &File) -> Result<RootIdentity, ManifestError> {
+    let metadata = handle
+        .metadata()
+        .map_err(ManifestError::file_identity_unavailable)?;
     Ok(RootIdentity {
         is_directory: metadata.is_dir(),
         is_symlink: metadata.file_type().is_symlink(),
@@ -447,37 +524,101 @@ fn root_identity(metadata: &fs::Metadata) -> Result<RootIdentity, ManifestError>
 }
 
 #[cfg(windows)]
-fn root_identity(metadata: &fs::Metadata) -> Result<RootIdentity, ManifestError> {
+fn root_identity_from_handle(handle: &File) -> Result<RootIdentity, ManifestError> {
+    let metadata = handle
+        .metadata()
+        .map_err(ManifestError::file_identity_unavailable)?;
     Ok(RootIdentity {
         is_directory: metadata.is_dir(),
         is_symlink: metadata.file_type().is_symlink(),
-        volume_serial_number: metadata.volume_serial_number().ok_or_else(|| {
-            ManifestError::file_identity_unavailable(io::Error::other(
-                "workspace root volume identity unavailable",
-            ))
-        })?,
-        file_index: metadata.file_index().ok_or_else(|| {
-            ManifestError::file_identity_unavailable(io::Error::other(
-                "workspace root file identity unavailable",
-            ))
-        })?,
+        identity: windows_file_identity(handle)?,
     })
 }
 
-#[cfg(not(any(unix, windows)))]
-fn root_identity(_metadata: &fs::Metadata) -> Result<RootIdentity, ManifestError> {
-    Err(ManifestError::fail_closed(
-        "workspace_file_identity_unavailable",
-    ))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RootPathIdentity {
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    ctime: i64,
+    #[cfg(unix)]
+    ctime_nsec: i64,
+    #[cfg(windows)]
+    is_directory: bool,
+    #[cfg(windows)]
+    is_symlink: bool,
 }
 
-fn ensure_root_identity(root: &Path, expected: &RootIdentity) -> Result<(), ManifestError> {
-    let metadata = fs::symlink_metadata(root)
+#[cfg(unix)]
+fn root_path_identity(metadata: &fs::Metadata) -> Result<RootPathIdentity, ManifestError> {
+    Ok(RootPathIdentity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        ctime: metadata.ctime(),
+        ctime_nsec: metadata.ctime_nsec(),
+    })
+}
+
+#[cfg(windows)]
+fn root_path_identity(metadata: &fs::Metadata) -> Result<RootPathIdentity, ManifestError> {
+    Ok(RootPathIdentity {
+        is_directory: metadata.is_dir(),
+        is_symlink: metadata.file_type().is_symlink(),
+    })
+}
+
+fn ensure_root_identity(
+    root: &Path,
+    expected_path: &RootPathIdentity,
+    _expected_handle: &RootIdentity,
+) -> Result<(), ManifestError> {
+    #[cfg(unix)]
+    {
+        let metadata = fs::symlink_metadata(root)
+            .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(ManifestError::fail_closed("workspace_file_changed"));
+        }
+        let actual = root_path_identity(&metadata)
+            .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
+        if actual != *expected_path {
+            return Err(ManifestError::fail_closed("workspace_file_changed"));
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = expected_path;
+        let metadata = fs::symlink_metadata(root)
+            .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(ManifestError::fail_closed("workspace_file_changed"));
+        }
+        let handle = open_root_directory(root)
+            .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
+        let actual = root_identity_from_handle(&handle)
+            .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
+        if actual != *_expected_handle {
+            return Err(ManifestError::fail_closed("workspace_file_changed"));
+        }
+        Ok(())
+    }
+}
+
+fn ensure_root_handle_identity(
+    root_handle: &File,
+    expected: &RootIdentity,
+) -> Result<(), ManifestError> {
+    let metadata = root_handle
+        .metadata()
         .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(ManifestError::fail_closed("workspace_file_changed"));
     }
-    let actual = root_identity(&metadata)
+    let actual = root_identity_from_handle(root_handle)
         .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
     if actual != *expected {
         return Err(ManifestError::fail_closed("workspace_file_changed"));
@@ -485,23 +626,46 @@ fn ensure_root_identity(root: &Path, expected: &RootIdentity) -> Result<(), Mani
     Ok(())
 }
 
+fn ensure_root_state(
+    root: &Path,
+    root_handle: &File,
+    expected_path: &RootPathIdentity,
+    expected_handle: &RootIdentity,
+) -> Result<(), ManifestError> {
+    ensure_root_identity(root, expected_path, expected_handle)?;
+    ensure_root_handle_identity(root_handle, expected_handle)
+}
+
 #[cfg(windows)]
-fn ensure_opened_file_within_root(file: &File, canonical_root: &Path) -> Result<(), ManifestError> {
-    let opened_path = final_path_by_handle(file).map_err(ManifestError::containment_unproven)?;
-    let root = normalized_windows_path(canonical_root);
+fn ensure_handle_path_within_root(
+    opened_path: &Path,
+    root_path: &Path,
+) -> Result<(), ManifestError> {
+    let root = normalized_windows_path(root_path);
     let opened = normalized_windows_path(&opened_path);
     if opened == root || opened.starts_with(&format!("{root}\\")) {
         Ok(())
     } else {
-        Err(ManifestError::containment_unproven(io::Error::other(
-            "opened workspace file is outside the canonical root",
-        )))
+        Err(ManifestError::fail_closed("workspace_path_escape"))
     }
+}
+
+#[cfg(windows)]
+fn ensure_opened_file_within_root(
+    file: &File,
+    root_handle: &File,
+    _canonical_root: &Path,
+) -> Result<(), ManifestError> {
+    let opened_path = final_path_by_handle(file).map_err(ManifestError::containment_unproven)?;
+    let root_path =
+        final_path_by_handle(root_handle).map_err(ManifestError::containment_unproven)?;
+    ensure_handle_path_within_root(&opened_path, &root_path)
 }
 
 #[cfg(not(windows))]
 fn ensure_opened_file_within_root(
     _file: &File,
+    _root_handle: &File,
     _canonical_root: &Path,
 ) -> Result<(), ManifestError> {
     Ok(())
@@ -624,10 +788,24 @@ pub fn read_file(
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
         return Err(ManifestError::fail_closed("workspace_not_directory"));
     }
-    let expected_root_identity = root_identity(&root_metadata)?;
+    let expected_root_path_identity = root_path_identity(&root_metadata)?;
+    let root_handle = open_root_directory(root).map_err(|error| {
+        if error.kind() == io::ErrorKind::TooManyLinks {
+            ManifestError::fail_closed("workspace_file_changed")
+        } else {
+            ManifestError::safe_source("workspace_root_unavailable", error)
+        }
+    })?;
+    let expected_root_identity = root_identity_from_handle(&root_handle)?;
+    ensure_root_handle_identity(&root_handle, &expected_root_identity)?;
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
-    ensure_root_identity(root, &expected_root_identity)?;
+    ensure_root_state(
+        root,
+        &root_handle,
+        &expected_root_path_identity,
+        &expected_root_identity,
+    )?;
     let requested_target = root.join(requested_path);
     let canonical_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -654,13 +832,34 @@ pub fn read_file(
         return Err(ManifestError::fail_closed("workspace_file_size_limit"));
     }
 
+    ensure_root_state(
+        root,
+        &root_handle,
+        &expected_root_path_identity,
+        &expected_root_identity,
+    )?;
+
     // Read the canonical target so a final symlink cannot redirect the open.
     // Re-resolve the requested path before and after reading to reject changes
     // in symlink or parent-directory ownership while the handle is active.
-    let file = open_canonical_file(&canonical_target);
-    let file =
-        file.map_err(|error| ManifestError::safe_source("workspace_file_read_failed", error))?;
-    ensure_opened_file_within_root(&file, &canonical_root)?;
+    let file = open_target_file(&root_handle, &canonical_root, &canonical_target);
+    let file = file.map_err(|error| {
+        if matches!(
+            error.kind(),
+            io::ErrorKind::InvalidInput | io::ErrorKind::TooManyLinks
+        ) {
+            ManifestError::fail_closed("workspace_path_escape")
+        } else {
+            ManifestError::safe_source("workspace_file_read_failed", error)
+        }
+    })?;
+    ensure_root_state(
+        root,
+        &root_handle,
+        &expected_root_path_identity,
+        &expected_root_identity,
+    )?;
+    ensure_opened_file_within_root(&file, &root_handle, &canonical_root)?;
     let opened_snapshot = file_snapshot(&file)?;
     if !opened_snapshot.is_file
         || metadata.len() != opened_snapshot.len
@@ -679,14 +878,26 @@ pub fn read_file(
     if !stable_target.starts_with(&canonical_root) {
         return Err(ManifestError::fail_closed("workspace_path_escape"));
     }
-    let stable_file = open_canonical_file(&stable_target).map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::fail_closed("workspace_file_changed")
-        } else {
-            ManifestError::safe_source("workspace_file_read_failed", error)
-        }
-    })?;
-    ensure_opened_file_within_root(&stable_file, &canonical_root)?;
+    let stable_file =
+        open_target_file(&root_handle, &canonical_root, &stable_target).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                ManifestError::fail_closed("workspace_file_changed")
+            } else if matches!(
+                error.kind(),
+                io::ErrorKind::InvalidInput | io::ErrorKind::TooManyLinks
+            ) {
+                ManifestError::fail_closed("workspace_path_escape")
+            } else {
+                ManifestError::safe_source("workspace_file_read_failed", error)
+            }
+        })?;
+    ensure_root_state(
+        root,
+        &root_handle,
+        &expected_root_path_identity,
+        &expected_root_identity,
+    )?;
+    ensure_opened_file_within_root(&stable_file, &root_handle, &canonical_root)?;
     let stable_snapshot = file_snapshot(&stable_file)?;
     if !same_file_snapshot(&stable_snapshot, &opened_snapshot) {
         return Err(ManifestError::fail_closed("workspace_file_changed"));
@@ -704,7 +915,12 @@ pub fn read_file(
         return Err(ManifestError::fail_closed("workspace_file_size_limit"));
     }
 
-    ensure_root_identity(root, &expected_root_identity)?;
+    ensure_root_state(
+        root,
+        &root_handle,
+        &expected_root_path_identity,
+        &expected_root_identity,
+    )?;
     let stable_snapshot = file_snapshot(&file)?;
     let final_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -716,14 +932,26 @@ pub fn read_file(
     if !final_target.starts_with(&canonical_root) {
         return Err(ManifestError::fail_closed("workspace_path_escape"));
     }
-    let final_file = open_canonical_file(&final_target).map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            ManifestError::fail_closed("workspace_file_changed")
-        } else {
-            ManifestError::safe_source("workspace_file_read_failed", error)
-        }
-    })?;
-    ensure_opened_file_within_root(&final_file, &canonical_root)?;
+    let final_file =
+        open_target_file(&root_handle, &canonical_root, &final_target).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                ManifestError::fail_closed("workspace_file_changed")
+            } else if matches!(
+                error.kind(),
+                io::ErrorKind::InvalidInput | io::ErrorKind::TooManyLinks
+            ) {
+                ManifestError::fail_closed("workspace_path_escape")
+            } else {
+                ManifestError::safe_source("workspace_file_read_failed", error)
+            }
+        })?;
+    ensure_root_state(
+        root,
+        &root_handle,
+        &expected_root_path_identity,
+        &expected_root_identity,
+    )?;
+    ensure_opened_file_within_root(&final_file, &root_handle, &canonical_root)?;
     let final_snapshot = file_snapshot(&final_file)?;
     if !stable_snapshot.is_file
         || !same_file_snapshot(&stable_snapshot, &opened_snapshot)
@@ -731,7 +959,12 @@ pub fn read_file(
     {
         return Err(ManifestError::fail_closed("workspace_file_changed"));
     }
-    ensure_root_identity(root, &expected_root_identity)?;
+    ensure_root_state(
+        root,
+        &root_handle,
+        &expected_root_path_identity,
+        &expected_root_identity,
+    )?;
 
     let content = String::from_utf8(bytes)
         .map_err(|_| ManifestError::fail_closed("non_utf8_workspace_file"))?;
@@ -754,19 +987,34 @@ static READ_FILE_BEFORE_READ_HOOK: OnceLock<Mutex<Option<ReadFileBeforeReadHook>
     OnceLock::new();
 
 #[cfg(test)]
+static READ_FILE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+fn read_file_test_lock() -> &'static Mutex<()> {
+    READ_FILE_TEST_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
 fn read_file_before_read_hook_slot() -> &'static Mutex<Option<ReadFileBeforeReadHook>> {
     READ_FILE_BEFORE_READ_HOOK.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(test)]
-struct ReadFileBeforeReadHookGuard;
+struct ReadFileBeforeReadHookGuard {
+    _lock: MutexGuard<'static, ()>,
+}
 
 #[cfg(test)]
 fn install_read_file_before_read_hook(
     target: PathBuf,
     action: impl FnOnce(&Path) + Send + 'static,
 ) -> ReadFileBeforeReadHookGuard {
-    let mut hook = read_file_before_read_hook_slot().lock().unwrap();
+    let lock = read_file_test_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut hook = read_file_before_read_hook_slot()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert!(
         hook.replace(ReadFileBeforeReadHook {
             target,
@@ -775,20 +1023,25 @@ fn install_read_file_before_read_hook(
         .is_none(),
         "read_file test hook already installed"
     );
-    ReadFileBeforeReadHookGuard
+    ReadFileBeforeReadHookGuard { _lock: lock }
 }
 
 #[cfg(test)]
 impl Drop for ReadFileBeforeReadHookGuard {
     fn drop(&mut self) {
-        let _ = read_file_before_read_hook_slot().lock().unwrap().take();
+        let _ = read_file_before_read_hook_slot()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
     }
 }
 
 #[cfg(test)]
 fn run_read_file_before_read_hook(requested_target: &Path) {
     let action = {
-        let mut hook = read_file_before_read_hook_slot().lock().unwrap();
+        let mut hook = read_file_before_read_hook_slot()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let matches = hook
             .as_ref()
             .is_some_and(|hook| hook.target == requested_target);
@@ -1639,6 +1892,77 @@ mod tests {
         assert!(!error.fallback_safe());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_workspace_root_replacement_with_a_new_directory() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let moved_root = outer.path().join("moved-workspace");
+        let target = root.join("mutable.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&target, b"before").unwrap();
+
+        let original_root = root.clone();
+        let replacement_root = moved_root.clone();
+        let _hook = install_read_file_before_read_hook(target.clone(), move |_| {
+            fs::rename(&original_root, &replacement_root).unwrap();
+            fs::create_dir(&original_root).unwrap();
+            fs::write(original_root.join("mutable.txt"), b"replacement").unwrap();
+        });
+
+        let error = read_file(&root, Path::new("mutable.txt"), file_limits()).unwrap_err();
+
+        assert_eq!(error.code(), "workspace_file_changed");
+        assert!(!error.fallback_safe());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opens_workspace_target_from_the_root_handle_after_path_replacement() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let moved_root = outer.path().join("moved-workspace");
+        let target = root.join("mutable.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&target, b"before").unwrap();
+
+        let canonical_root = fs::canonicalize(&root).unwrap();
+        let canonical_target = fs::canonicalize(&target).unwrap();
+        let root_handle = open_root_directory(&root).unwrap();
+
+        fs::rename(&root, &moved_root).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("mutable.txt"), b"replacement").unwrap();
+
+        let mut file = open_target_file(&root_handle, &canonical_root, &canonical_target).unwrap();
+        let mut content = String::new();
+        file.read_to_string(&mut content).unwrap();
+
+        assert_eq!(content, "before");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn classifies_windows_handle_containment_mismatch_as_fail_closed() {
+        assert!(
+            ensure_handle_path_within_root(
+                Path::new(r"C:\workspace\docs\readme.md"),
+                Path::new(r"C:\workspace"),
+            )
+            .is_ok()
+        );
+
+        let error = ensure_handle_path_within_root(
+            Path::new(r"C:\outside\secret.md"),
+            Path::new(r"C:\workspace"),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "workspace_path_escape");
+        assert!(!error.fallback_allowed());
+        assert!(!error.fallback_safe());
+    }
+
     #[cfg(windows)]
     #[test]
     fn distinguishes_equal_size_equal_timestamp_files_by_windows_identity() {
@@ -1738,7 +2062,7 @@ mod tests {
 
         let error = read_file(&root, Path::new("escape/secret.txt"), file_limits()).unwrap_err();
 
-        assert_eq!(error.code(), "workspace_file_containment_unproven");
+        assert_eq!(error.code(), "workspace_path_escape");
         assert!(!error.fallback_safe());
     }
 

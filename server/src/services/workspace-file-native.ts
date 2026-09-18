@@ -129,13 +129,26 @@ function sameRootIdentity(left: WorkspaceFileStat, right: WorkspaceFileStat) {
     && right.dev !== 0
     && right.ino !== 0
     && left.dev === right.dev
-    && left.ino === right.ino;
+    && left.ino === right.ino
+    && left.ctimeMs === right.ctimeMs;
 }
 
 async function ensureRootIdentity(rootPath: string, expected: WorkspaceFileStat) {
   let actual: WorkspaceFileStat;
   try {
     actual = await fs.lstat(rootPath);
+  } catch {
+    throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+  }
+  if (!sameRootIdentity(expected, actual)) {
+    throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+  }
+}
+
+async function ensureRootHandleIdentity(rootHandle: FileHandle, expected: WorkspaceFileStat) {
+  let actual: WorkspaceFileStat;
+  try {
+    actual = await rootHandle.stat();
   } catch {
     throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
   }
@@ -304,6 +317,9 @@ export async function readWorkspaceFileNodeBytes(
     throw new WorkspaceFileNativeError("workspace_file_path_invalid", false, false);
   }
   throwIfCancelled(signal);
+  if (process.platform === "win32") {
+    throw new WorkspaceFileNativeError("workspace_file_node_fallback_unsupported", false, false);
+  }
 
   const resolvedRoot = path.resolve(rootPath);
   let rootStat: Awaited<ReturnType<typeof fs.lstat>>;
@@ -364,16 +380,35 @@ export async function readWorkspaceFileNodeBytes(
     throw new WorkspaceFileNativeError("workspace_file_size_limit", false, false, true);
   }
 
+  let rootHandle: FileHandle;
+  try {
+    rootHandle = await fs.open(
+      resolvedRoot,
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+    }
+    throw new WorkspaceFileNativeError("workspace_root_unavailable", false, false);
+  }
+  let rootClosed = false;
+  const closeRoot = async () => {
+    if (rootClosed) return;
+    rootClosed = true;
+    await rootHandle.close().catch(() => undefined);
+  };
+
   let handle: FileHandle;
   try {
-    if (process.platform === "win32") {
-      throw new WorkspaceFileNativeError("workspace_file_node_fallback_unsupported", false, false);
-    }
+    await ensureRootHandleIdentity(rootHandle, expectedRootStat);
+    await ensureRootIdentity(resolvedRoot, rootStat);
     handle = await fs.open(
       canonicalTarget,
       fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
     );
   } catch (error) {
+    await closeRoot();
     if (signal?.aborted) throw cancelledError();
     if (error instanceof WorkspaceFileNativeError) throw error;
     if ((error as NodeJS.ErrnoException).code === "ELOOP") {
@@ -393,6 +428,8 @@ export async function readWorkspaceFileNodeBytes(
   };
 
   try {
+    await ensureRootHandleIdentity(rootHandle, expectedRootStat);
+    await ensureRootIdentity(resolvedRoot, rootStat);
     const openedStat = await handle.stat();
     if (!openedStat.isFile() || !sameFileSnapshot(expectedStat, openedStat)) {
       throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
@@ -432,6 +469,7 @@ export async function readWorkspaceFileNodeBytes(
     if (offset > WORKSPACE_FILE_READ_MAX_BYTES) {
       throw new WorkspaceFileNativeError("workspace_file_size_limit", false, false, true);
     }
+    await ensureRootHandleIdentity(rootHandle, expectedRootStat);
     await ensureRootIdentity(resolvedRoot, rootStat);
     const stableMetadata = await handle.stat();
     const stableRootStat = await fs.stat(canonicalRoot).catch(() => null);
@@ -465,6 +503,7 @@ export async function readWorkspaceFileNodeBytes(
     if (!sameFileSnapshot(finalPathStat, openedStat)) {
       throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
     }
+    await ensureRootHandleIdentity(rootHandle, expectedRootStat);
     await ensureRootIdentity(resolvedRoot, rootStat);
     throwIfCancelled(signal);
     const content = bytes.subarray(0, offset);
@@ -480,6 +519,7 @@ export async function readWorkspaceFileNodeBytes(
     throw new WorkspaceFileNativeError("workspace_file_read_failed", false, false);
   } finally {
     await close();
+    await closeRoot();
   }
 }
 

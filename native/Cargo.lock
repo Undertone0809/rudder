@@ -1535,6 +1535,7 @@ dependencies = [
 name = "rudder-workspace-manifest-core"
 version = "0.7.23"
 dependencies = [
+ "libc",
  "notify",
  "serde",
  "serde_json",
