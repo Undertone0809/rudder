@@ -100,11 +100,23 @@ pub struct OrganizationBrandingCommand {
     pub expected_version: u64,
     pub fence_epoch: u64,
     pub name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_patch",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub description: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_patch",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub brand_color: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_patch",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub logo_asset_id: Option<Option<String>>,
 }
 
