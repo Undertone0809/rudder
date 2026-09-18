@@ -1,7 +1,5 @@
 import { InspectableImage } from "@/components/InspectableImage";
-import {
-  isImageContentType,
-} from "@/lib/image-actions";
+import { isPreviewableImage } from "@/lib/image-actions";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import {
   type ChatMessage
@@ -18,23 +16,26 @@ export function ChatImageAttachmentTile({
   name,
   onRemove,
   testId,
+  displayMode = "thumbnail",
 }: {
   src: string;
   name: string;
   onRemove?: () => void;
   testId?: string;
+  displayMode?: "thumbnail" | "inline";
 }) {
+  const isInline = displayMode === "inline";
   return (
     <div
       data-testid={testId}
-      className="relative inline-flex max-w-full"
+      className={`relative inline-flex max-w-full${isInline ? " chat-inline-image-attachment" : ""}`}
     >
       <InspectableImage
         src={src}
         alt={name}
         name={name}
-        className="h-full w-full shrink-0 object-cover"
-        triggerClassName="chat-image-attachment-trigger"
+        className={isInline ? "chat-image-attachment-media" : "h-full w-full shrink-0 object-cover"}
+        triggerClassName={`chat-image-attachment-trigger${isInline ? " chat-image-attachment-trigger--inline" : ""}`}
         previewTestId="chat-image-preview-dialog"
         previewTitleFallback="Attachment preview"
         showInspectOverlay={false}
@@ -122,8 +123,8 @@ export function PendingAttachmentPreview({
   onRemove?: () => void;
 }) {
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
-  const isImage = isImageContentType(file.type);
   const name = attachmentDisplayName(file);
+  const isImage = isPreviewableImage(file.type, name);
 
   useEffect(() => {
     if (!isImage) {
@@ -162,13 +163,14 @@ export function ChatAttachmentList({
     <div className="mt-4 flex flex-wrap gap-2">
       {attachments.map((attachment) => {
         const name = attachmentDisplayName(attachment);
-        if (isImageContentType(attachment.contentType)) {
+        if (isPreviewableImage(attachment.contentType, name)) {
           return (
             <ChatImageAttachmentTile
               key={attachment.id}
               src={attachment.contentPath}
               name={name}
               testId="chat-image-attachment"
+              displayMode="inline"
             />
           );
         }

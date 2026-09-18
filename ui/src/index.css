@@ -5501,6 +5501,57 @@ a.rudder-skill-token[href] {
   border-color: var(--border-strong);
 }
 
+.rudder-inspectable-image-trigger.chat-image-attachment-trigger--inline {
+  width: fit-content;
+  height: fit-content;
+  max-width: min(100%, 42rem);
+  max-height: min(70vh, 32rem);
+  overflow: hidden;
+}
+
+.rudder-inspectable-image-trigger.chat-image-attachment-trigger--inline .rudder-inspectable-image-frame {
+  width: fit-content;
+  height: fit-content;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: auto;
+}
+
+.rudder-inspectable-image-trigger.chat-image-attachment-trigger--inline .chat-image-attachment-media {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(70vh, 32rem);
+  object-fit: contain;
+}
+
+.rudder-inspectable-image.rudder-local-image {
+  display: block;
+  max-width: 100%;
+}
+
+.rudder-local-image-trigger {
+  max-width: 100%;
+  max-height: min(70vh, 32rem);
+  overflow: hidden;
+}
+
+.rudder-local-image-trigger .rudder-inspectable-image-frame {
+  max-width: 100%;
+  max-height: min(70vh, 32rem);
+  aspect-ratio: auto;
+}
+
+.rudder-local-image-media {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(100%, 42rem);
+  max-height: min(70vh, 32rem);
+  object-fit: contain;
+}
+
 .rudder-image-preview-action {
   display: inline-flex;
   height: 2rem;
