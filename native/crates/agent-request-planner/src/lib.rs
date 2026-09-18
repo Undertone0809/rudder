@@ -596,12 +596,17 @@ fn validate_schema(id: &str, value: &Value, schema: &Value, at: &str) -> Result<
     {
         return invalid(id, &format!("{at} does not match any allowed shape"));
     }
-    if let Some(one) = schema.get("oneOf").and_then(Value::as_array)
-        && !one
+    if let Some(one) = schema.get("oneOf").and_then(Value::as_array) {
+        let matching_branches = one
             .iter()
-            .any(|candidate| validate_schema(id, value, candidate, at).is_ok())
-    {
-        return invalid(id, &format!("{at} does not match any allowed shape"));
+            .filter(|candidate| validate_schema(id, value, candidate, at).is_ok())
+            .count();
+        if matching_branches != 1 {
+            return invalid(
+                id,
+                &format!("{at} does not match exactly one allowed shape"),
+            );
+        }
     }
     if let Some(types) = schema.get("type") {
         let valid = match types {
@@ -668,17 +673,8 @@ fn validate_schema(id: &str, value: &Value, schema: &Value, at: &str) -> Result<
         let properties = schema.get("properties").and_then(Value::as_object);
         if let Some(required) = schema.get("required").and_then(Value::as_array) {
             for key in required.iter().filter_map(Value::as_str) {
-                match object.get(key) {
-                    None | Some(Value::Null) => {
-                        return invalid(id, &format!("{at}.{key} is required"));
-                    }
-                    Some(Value::String(s)) if s.trim().is_empty() => {
-                        return invalid(id, &format!("{at}.{key} is required"));
-                    }
-                    Some(Value::Array(a)) if a.is_empty() => {
-                        return invalid(id, &format!("{at}.{key} is required"));
-                    }
-                    _ => {}
+                if !object.contains_key(key) {
+                    return invalid(id, &format!("{at}.{key} is required"));
                 }
             }
         }
@@ -892,4 +888,53 @@ pub fn query_string(query: &[(String, String)]) -> String {
         .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
         .collect::<Vec<_>>()
         .join("&")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_of_requires_exactly_one_matching_branch() {
+        let schema = json!({
+            "oneOf": [
+                {"type": "string", "minLength": 1},
+                {"type": "string", "maxLength": 5}
+            ]
+        });
+
+        assert!(validate_schema("test", &json!("hello"), &schema, "value").is_err());
+        assert!(validate_schema("test", &json!("longer"), &schema, "value").is_ok());
+        assert!(validate_schema("test", &json!(""), &schema, "value").is_ok());
+        assert!(validate_schema("test", &json!(42), &schema, "value").is_err());
+    }
+
+    #[test]
+    fn required_empty_values_follow_declared_length_constraints() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "items": {"type": "array"},
+                "boundedText": {"type": "string", "minLength": 1},
+                "boundedItems": {"type": "array", "minItems": 1}
+            },
+            "required": ["text", "items", "boundedText", "boundedItems"]
+        });
+
+        let mut valid = json!({
+            "text": "",
+            "items": [],
+            "boundedText": "ok",
+            "boundedItems": [1]
+        });
+        assert!(validate_schema("test", &valid, &schema, "arguments").is_ok());
+
+        valid["boundedText"] = json!("");
+        assert!(validate_schema("test", &valid, &schema, "arguments").is_err());
+
+        valid["boundedText"] = json!("ok");
+        valid["boundedItems"] = json!([]);
+        assert!(validate_schema("test", &valid, &schema, "arguments").is_err());
+    }
 }

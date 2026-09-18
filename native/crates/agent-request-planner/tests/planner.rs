@@ -78,6 +78,67 @@ fn sample(schema: &Value) -> Value {
     }
 }
 
+fn encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn expected_path(
+    capability: &Value,
+    arguments: &Value,
+    runtime: &ManagedRuntimeIdentity,
+) -> String {
+    let mut path = capability["api"]["pathTemplate"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (placeholder, value) in [
+        (
+            "orgId",
+            runtime.organization_id.as_deref().unwrap_or_default(),
+        ),
+        ("goal", arguments["goal"].as_str().unwrap_or_default()),
+        ("issue", arguments["issue"].as_str().unwrap_or_default()),
+        ("comment", arguments["comment"].as_str().unwrap_or_default()),
+        ("run", arguments["run"].as_str().unwrap_or_default()),
+    ] {
+        path = path.replace(&format!("{{{placeholder}}}"), &encode_path_segment(value));
+    }
+    path
+}
+
+fn assert_direct_shape(
+    id: &str,
+    arguments: Value,
+    runtime: &ManagedRuntimeIdentity,
+    method: HttpMethod,
+    path: &str,
+    query: &[(&str, &str)],
+    body: Option<Value>,
+) {
+    let PlanOutcome::Direct(plan) = plan_request(id, arguments, runtime).unwrap() else {
+        panic!("{id} was not direct")
+    };
+    assert_eq!(plan.method, method, "{id} method");
+    assert_eq!(plan.path, path, "{id} path");
+    assert_eq!(
+        plan.query,
+        query
+            .iter()
+            .map(|(key, value)| ((*key).into(), (*value).into()))
+            .collect::<Vec<_>>(),
+        "{id} query"
+    );
+    assert_eq!(plan.body, body, "{id} body");
+}
+
 #[test]
 fn every_contract_direct_descriptor_has_a_complete_representative_plan() {
     let contract = rudder_agent_contract_core::contract();
@@ -92,6 +153,7 @@ fn every_contract_direct_descriptor_has_a_complete_representative_plan() {
         49,
         "new direct descriptors require parity coverage"
     );
+    let managed_runtime = runtime(true);
     for capability in direct {
         let id = capability["id"].as_str().unwrap();
         let mut args = sample(&capability["mcp"]["inputSchema"]);
@@ -102,12 +164,16 @@ fn every_contract_direct_descriptor_has_a_complete_representative_plan() {
         if id == "browser.download" {
             object.insert("mode".into(), json!("media"));
         }
-        let PlanOutcome::Direct(plan) = plan_request(id, args, &runtime(true)).unwrap() else {
+        let PlanOutcome::Direct(plan) = plan_request(id, args.clone(), &managed_runtime).unwrap()
+        else {
             panic!("{id} was not direct")
         };
         assert_eq!(plan.capability_id, id);
-        assert!(!plan.path.is_empty(), "{id}");
-        assert!(plan.path.starts_with("/api/"), "{id}: {}", plan.path);
+        assert_eq!(
+            plan.path,
+            expected_path(capability, &args, &managed_runtime),
+            "{id}"
+        );
         assert_eq!(
             plan.method,
             match capability["api"]["method"].as_str().unwrap() {
@@ -200,6 +266,697 @@ fn exact_defaults_projection_and_unicode_encoding_match_node_planner() {
         "offset=64&limitBytes=4096&maxChars=321"
     );
     assert_eq!(log.body, None);
+}
+
+#[test]
+fn representative_core_routes_queries_and_bodies_match_contract() {
+    let managed = runtime(false);
+
+    assert_direct_shape(
+        "agent.me",
+        json!({}),
+        &managed,
+        HttpMethod::Get,
+        "/api/agents/me",
+        &[],
+        None,
+    );
+    assert_direct_shape(
+        "agent.inbox",
+        json!({}),
+        &managed,
+        HttpMethod::Get,
+        "/api/agents/me/inbox-lite",
+        &[],
+        None,
+    );
+    assert_direct_shape(
+        "organization.members.list",
+        json!({
+            "query": "Ada Lovelace",
+            "type": "agent",
+            "limit": 10,
+            "cursor": "next / 1"
+        }),
+        &managed,
+        HttpMethod::Get,
+        "/api/orgs/org%20%2F%E9%9B%AA/members/directory",
+        &[
+            ("query", "Ada Lovelace"),
+            ("type", "agent"),
+            ("limit", "10"),
+            ("cursor", "next / 1"),
+        ],
+        None,
+    );
+    assert_direct_shape(
+        "goal.list",
+        json!({
+            "lifecycle": "closed",
+            "limit": 7,
+            "focus": true,
+            "facet": "needs_attention"
+        }),
+        &managed,
+        HttpMethod::Get,
+        "/api/orgs/org%20%2F%E9%9B%AA/goals/assigned",
+        &[
+            ("lifecycle", "closed"),
+            ("limit", "7"),
+            ("focus", "true"),
+            ("facet", "needs_attention"),
+        ],
+        None,
+    );
+    assert_direct_shape(
+        "goal.context",
+        json!({"goal": "goal /1"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/goals/goal%20%2F1/agent-context",
+        &[],
+        None,
+    );
+    assert_direct_shape(
+        "goal.progress",
+        json!({
+            "goal": "goal /1",
+            "summary": "Evidence is complete",
+            "evidenceRefs": ["artifact://one"],
+            "idempotencyKey": "progress-1",
+            "activityKind": "evidence"
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/goals/goal%20%2F1/activities",
+        &[],
+        Some(json!({
+            "summary": "Evidence is complete",
+            "activityKind": "evidence",
+            "evidenceRefs": ["artifact://one"],
+            "idempotencyKey": "progress-1"
+        })),
+    );
+    assert_direct_shape(
+        "goal.checkpoint",
+        json!({
+            "goal": "goal /1",
+            "summary": "Checkpoint saved",
+            "evidenceRefs": [],
+            "expectedPlanRevision": 3,
+            "plan": {"summary": "Continue verification"},
+            "continuation": {
+                "kind": "wait",
+                "summary": "Await external input",
+                "wakeCondition": null
+            },
+            "idempotencyKey": "checkpoint-1"
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/goals/goal%20%2F1/checkpoint",
+        &[],
+        Some(json!({
+            "summary": "Checkpoint saved",
+            "evidenceRefs": [],
+            "expectedPlanRevision": 3,
+            "plan": {"summary": "Continue verification"},
+            "continuation": {
+                "kind": "wait",
+                "summary": "Await external input",
+                "wakeCondition": null
+            },
+            "idempotencyKey": "checkpoint-1"
+        })),
+    );
+    assert_direct_shape(
+        "goal.change.propose",
+        json!({
+            "goal": "goal /1",
+            "contractRevision": 2,
+            "afterContract": {"objectiveMode": "target"},
+            "rationale": "The measured outcome changed",
+            "evidenceRefs": ["artifact://one"],
+            "idempotencyKey": "change-1"
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/goals/goal%20%2F1/change-proposals",
+        &[],
+        Some(json!({
+            "afterContract": {"objectiveMode": "target"},
+            "rationale": "The measured outcome changed",
+            "evidenceRefs": ["artifact://one"],
+            "idempotencyKey": "change-1",
+            "expectedContractRevision": 2
+        })),
+    );
+    assert_direct_shape(
+        "goal.result.propose",
+        json!({
+            "goal": "goal /1",
+            "contractRevision": 2,
+            "criteria": [{"id": "criterion-1", "status": "met"}],
+            "evidenceRefs": ["artifact://one"],
+            "riskSummary": "No known gaps",
+            "idempotencyKey": "result-1",
+            "resultValue": 42,
+            "decision": "ship",
+            "resultPayload": {"score": 42}
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/goals/goal%20%2F1/result-proposals",
+        &[],
+        Some(json!({
+            "contractRevision": 2,
+            "criteria": [{"id": "criterion-1", "status": "met"}],
+            "evidenceRefs": ["artifact://one"],
+            "resultValue": 42,
+            "decision": "ship",
+            "resultPayload": {"score": 42},
+            "riskSummary": "No known gaps",
+            "idempotencyKey": "result-1"
+        })),
+    );
+    assert_direct_shape(
+        "issue.get",
+        json!({"issue": "ISS/1"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/issues/ISS%2F1",
+        &[],
+        None,
+    );
+    assert_direct_shape(
+        "issue.context",
+        json!({"issue": "ISS/1", "wakeCommentId": "comment-1"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/issues/ISS%2F1/heartbeat-context",
+        &[("wakeCommentId", "comment-1")],
+        None,
+    );
+    assert_direct_shape(
+        "issue.checkout",
+        json!({"issue": "ISS/1", "expectedStatuses": "todo,blocked"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/issues/ISS%2F1/checkout",
+        &[],
+        Some(json!({
+            "agentId": "agent-1",
+            "expectedStatuses": ["todo", "blocked"]
+        })),
+    );
+    assert_direct_shape(
+        "issue.comment",
+        json!({"issue": "ISS/1", "body": "Progress", "reopen": true}),
+        &managed,
+        HttpMethod::Post,
+        "/api/issues/ISS%2F1/comments",
+        &[],
+        Some(json!({"body": "Progress", "reopen": true})),
+    );
+    assert_direct_shape(
+        "issue.comments.list",
+        json!({"issue": "ISS/1", "after": "comment-1", "order": "asc"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/issues/ISS%2F1/comments",
+        &[("after", "comment-1"), ("order", "asc")],
+        None,
+    );
+    assert_direct_shape(
+        "issue.comments.get",
+        json!({"issue": "ISS/1", "comment": "comment-1"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/issues/ISS%2F1/comments/comment-1",
+        &[],
+        None,
+    );
+    assert_direct_shape(
+        "issue.done",
+        json!({"issue": "ISS/1", "comment": "Completed"}),
+        &managed,
+        HttpMethod::Patch,
+        "/api/issues/ISS%2F1",
+        &[],
+        Some(json!({"status": "done", "comment": "Completed"})),
+    );
+    assert_direct_shape(
+        "issue.create",
+        json!({
+            "title": "Investigate failure",
+            "description": "Collect the failure evidence",
+            "status": "todo",
+            "priority": "high",
+            "assigneeAgentId": "agent-2",
+            "projectId": "project-1",
+            "goalId": "goal-1",
+            "parentId": "issue-0",
+            "requestDepth": 2,
+            "billingCode": "engineering",
+            "labelIds": ["bug", "native"]
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/orgs/org%20%2F%E9%9B%AA/issues",
+        &[],
+        Some(json!({
+            "title": "Investigate failure",
+            "description": "Collect the failure evidence",
+            "status": "todo",
+            "priority": "high",
+            "assigneeAgentId": "agent-2",
+            "projectId": "project-1",
+            "goalId": "goal-1",
+            "parentId": "issue-0",
+            "requestDepth": 2,
+            "billingCode": "engineering",
+            "labelIds": ["bug", "native"]
+        })),
+    );
+    assert_direct_shape(
+        "runs.list",
+        json!({
+            "updatedAfter": "2026-09-18T00:00:00Z",
+            "runIdPrefix": "run-",
+            "relatedAgentId": "agent-2",
+            "status": "running",
+            "runtime": "native",
+            "issueId": "ISS/1",
+            "usedSkill": "review",
+            "loadedSkill": "planner",
+            "createdBefore": "2026-09-19T00:00:00Z",
+            "cursor": "cursor /1",
+            "limit": 9
+        }),
+        &managed,
+        HttpMethod::Get,
+        "/api/run-intelligence/orgs/org%20%2F%E9%9B%AA/runs",
+        &[
+            ("projection", "summary"),
+            ("updatedAfter", "2026-09-18T00:00:00Z"),
+            ("runIdPrefix", "run-"),
+            ("agentId", "agent-2"),
+            ("status", "running"),
+            ("runtime", "native"),
+            ("issueId", "ISS/1"),
+            ("usedSkill", "review"),
+            ("loadedSkill", "planner"),
+            ("createdBefore", "2026-09-19T00:00:00Z"),
+            ("cursor", "cursor /1"),
+            ("limit", "9"),
+        ],
+        None,
+    );
+    assert_direct_shape(
+        "runs.get",
+        json!({"run": "run /1"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/run-intelligence/runs/run%20%2F1",
+        &[("projection", "summary")],
+        None,
+    );
+    assert_direct_shape(
+        "runs.events",
+        json!({"run": "run /1", "afterSeq": 5, "limit": 3, "maxChars": 321, "cursor": "cursor /1"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/run-intelligence/runs/run%20%2F1/events",
+        &[
+            ("afterSeq", "5"),
+            ("limit", "3"),
+            ("maxChars", "321"),
+            ("projection", "compact"),
+            ("cursor", "cursor /1"),
+        ],
+        None,
+    );
+    assert_direct_shape(
+        "runs.log",
+        json!({"run": "run /1", "offset": 64, "limitBytes": 4096, "maxChars": 321}),
+        &managed,
+        HttpMethod::Get,
+        "/api/run-intelligence/runs/run%20%2F1/log",
+        &[
+            ("offset", "64"),
+            ("limitBytes", "4096"),
+            ("maxChars", "321"),
+        ],
+        None,
+    );
+    assert_direct_shape(
+        "runs.transcript",
+        json!({
+            "run": "run /1",
+            "contextTurns": 3,
+            "chronological": true,
+            "includeOutput": true,
+            "errorsOnly": true,
+            "maxChars": 321,
+            "aroundError": "step /1",
+            "cursor": "cursor /1",
+            "turnLimit": 4
+        }),
+        &managed,
+        HttpMethod::Get,
+        "/api/run-intelligence/runs/run%20%2F1/transcript",
+        &[
+            ("contextTurns", "3"),
+            ("order", "oldest"),
+            ("output", "compact"),
+            ("includeOutputs", "true"),
+            ("maxChars", "321"),
+            ("errorsOnly", "true"),
+            ("aroundError", "step /1"),
+            ("cursor", "cursor /1"),
+            ("turnLimit", "4"),
+        ],
+        None,
+    );
+    assert_direct_shape(
+        "runs.errors",
+        json!({"run": "run /1", "maxChars": 321, "cursor": "cursor /1"}),
+        &managed,
+        HttpMethod::Get,
+        "/api/run-intelligence/runs/run%20%2F1/errors",
+        &[("maxChars", "321"), ("cursor", "cursor /1")],
+        None,
+    );
+    assert_direct_shape(
+        "runs.create",
+        json!({
+            "task": "Review the native planner",
+            "idempotencyKey": "run-1",
+            "targetAgentId": "agent-2"
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/agent-runs/delegation",
+        &[],
+        Some(json!({
+            "task": "Review the native planner",
+            "idempotencyKey": "run-1",
+            "targetAgentId": "agent-2"
+        })),
+    );
+}
+
+#[test]
+fn representative_browser_routes_and_bodies_match_contract() {
+    let managed = runtime(true);
+
+    assert_direct_shape(
+        "browser.tabs",
+        json!({}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/tabs",
+        &[],
+        Some(json!({})),
+    );
+    assert_direct_shape(
+        "browser.user-tabs",
+        json!({}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/user_tabs",
+        &[],
+        Some(json!({})),
+    );
+    assert_direct_shape(
+        "browser.open",
+        json!({"url": "https://example.com/a?b=1"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/open",
+        &[],
+        Some(json!({"url": "https://example.com/a?b=1"})),
+    );
+    assert_direct_shape(
+        "browser.navigate",
+        json!({"tabId": "tab-1", "url": "https://example.com/next"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/navigate",
+        &[],
+        Some(json!({"tabId": "tab-1", "url": "https://example.com/next"})),
+    );
+    for id in ["browser.back", "browser.forward", "browser.reload"] {
+        let path = format!("/api/browser/{}", id.strip_prefix("browser.").unwrap());
+        assert_direct_shape(
+            id,
+            json!({"tabId": "tab-1"}),
+            &managed,
+            HttpMethod::Post,
+            &path,
+            &[],
+            Some(json!({"tabId": "tab-1"})),
+        );
+    }
+    assert_direct_shape(
+        "browser.viewport",
+        json!({"action": "set", "width": 1280, "height": 720}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/viewport",
+        &[],
+        Some(json!({"action": "set", "width": 1280, "height": 720})),
+    );
+    assert_direct_shape(
+        "browser.visibility",
+        json!({"visible": false}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/visibility",
+        &[],
+        Some(json!({"visible": false})),
+    );
+    assert_direct_shape(
+        "browser.snapshot",
+        json!({"tabId": "tab-1", "boxes": true, "depth": 5, "maxNodes": 100}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/snapshot",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "boxes": true,
+            "depth": 5,
+            "maxNodes": 100
+        })),
+    );
+    assert_direct_shape(
+        "browser.locator",
+        json!({
+            "tabId": "tab-1",
+            "action": "count",
+            "locator": {"strategy": "css", "value": "button"}
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/locator",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "action": "count",
+            "locator": {"strategy": "css", "value": "button"}
+        })),
+    );
+    assert_direct_shape(
+        "browser.cua",
+        json!({"tabId": "tab-1", "action": "click", "x": 12, "y": 34, "button": "left"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/cua",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "action": "click",
+            "x": 12,
+            "y": 34,
+            "button": "left"
+        })),
+    );
+    assert_direct_shape(
+        "browser.dom-cua",
+        json!({"tabId": "tab-1", "action": "get", "depth": 5, "maxNodes": 100}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/dom_cua",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "action": "get",
+            "depth": 5,
+            "maxNodes": 100
+        })),
+    );
+    assert_direct_shape(
+        "browser.dialog",
+        json!({"tabId": "tab-1", "action": "accept", "promptText": "yes"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/dialog",
+        &[],
+        Some(json!({"tabId": "tab-1", "action": "accept", "promptText": "yes"})),
+    );
+    assert_direct_shape(
+        "browser.clipboard",
+        json!({"action": "writeText", "text": "copied"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/clipboard",
+        &[],
+        Some(json!({"action": "writeText", "text": "copied"})),
+    );
+    assert_direct_shape(
+        "browser.logs",
+        json!({
+            "tabId": "tab-1",
+            "levels": ["error"],
+            "limit": 5,
+            "clear": true
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/logs",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "levels": ["error"],
+            "limit": 5,
+            "clear": true
+        })),
+    );
+    assert_direct_shape(
+        "browser.download",
+        json!({
+            "tabId": "tab-1",
+            "mode": "media",
+            "locator": {"strategy": "text", "value": "Download"}
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/download",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "mode": "media",
+            "locator": {"strategy": "text", "value": "Download"}
+        })),
+    );
+    assert_direct_shape(
+        "browser.assets",
+        json!({"tabId": "tab-1", "action": "bundle", "assetIds": ["asset-1"]}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/assets",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "action": "bundle",
+            "assetIds": ["asset-1"]
+        })),
+    );
+    assert_direct_shape(
+        "browser.content",
+        json!({"tabId": "tab-1", "format": "pdf"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/content",
+        &[],
+        Some(json!({"tabId": "tab-1", "format": "pdf"})),
+    );
+    assert_direct_shape(
+        "browser.wait",
+        json!({
+            "tabId": "tab-1",
+            "timeMs": 100,
+            "timeoutMs": 500,
+            "text": "Ready",
+            "textGone": "Loading",
+            "url": "/done"
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/wait",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "timeMs": 100,
+            "timeoutMs": 500,
+            "text": "Ready",
+            "textGone": "Loading",
+            "url": "/done"
+        })),
+    );
+    assert_direct_shape(
+        "browser.read",
+        json!({"tabId": "tab-1"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/read",
+        &[],
+        Some(json!({"tabId": "tab-1"})),
+    );
+    assert_direct_shape(
+        "browser.click",
+        json!({"tabId": "tab-1", "ref": "ref-1"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/click",
+        &[],
+        Some(json!({"tabId": "tab-1", "ref": "ref-1"})),
+    );
+    assert_direct_shape(
+        "browser.type",
+        json!({"tabId": "tab-1", "ref": "ref-1", "text": "hello", "submit": true}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/type",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "ref": "ref-1",
+            "text": "hello",
+            "submit": true
+        })),
+    );
+    assert_direct_shape(
+        "browser.screenshot",
+        json!({
+            "tabId": "tab-1",
+            "format": "jpeg",
+            "fullPage": true,
+            "quality": 80,
+            "clip": {"x": 1, "y": 2, "width": 300, "height": 200}
+        }),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/screenshot",
+        &[],
+        Some(json!({
+            "tabId": "tab-1",
+            "format": "jpeg",
+            "fullPage": true,
+            "quality": 80,
+            "clip": {"x": 1, "y": 2, "width": 300, "height": 200}
+        })),
+    );
+    assert_direct_shape(
+        "browser.close",
+        json!({"tabId": "tab-1"}),
+        &managed,
+        HttpMethod::Post,
+        "/api/browser/close",
+        &[],
+        Some(json!({"tabId": "tab-1"})),
+    );
 }
 
 #[test]
