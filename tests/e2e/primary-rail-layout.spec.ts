@@ -67,9 +67,12 @@ test.describe("Primary rail layout", () => {
 
         const navBox = await nav.boundingBox();
         const railBox = await rail.boundingBox();
+        const shellBox = await page.getByTestId("workspace-shell").boundingBox();
         expect(navBox).not.toBeNull();
         expect(railBox).not.toBeNull();
+        expect(shellBox).not.toBeNull();
         expect(railBox!.width).toBe(platform.expectedRailWidth);
+        expect(shellBox!.x - (railBox!.x + railBox!.width)).toBeLessThanOrEqual(16.5);
         expect(navBox!.width).toBeGreaterThanOrEqual(platform.expectedRailWidth - 1);
         expect(navBox!.width).toBeLessThanOrEqual(platform.expectedRailWidth);
         const railOverflow = await rail.evaluate((element) => ({

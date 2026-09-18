@@ -1,3 +1,4 @@
+import { useSidePanel } from "@/context/SidePanelContext";
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 export const SIDE_PANEL_WIDTH_KEY = "rudder.workspace.sidePanelWidth.v3";
@@ -8,14 +9,21 @@ const SIDE_PANEL_COLLAPSE_GAP = SIDE_PANEL_MIN_WIDTH - SIDE_PANEL_COLLAPSE_WIDTH
 export const SIDE_PANEL_RESIZER_WIDTH = 4;
 export const SIDE_PANEL_RESIZER_HIT_WIDTH = 10;
 
-export function getCurrentViewportWidth(): number | null {
-  if (typeof window === "undefined") return null;
-  return window.innerWidth;
-}
-
-export function widthRatio(value: number, widthBase: number | null = getCurrentViewportWidth()): number | null {
-  if (widthBase === null || !Number.isFinite(widthBase) || widthBase <= 0) return null;
-  return value / widthBase;
+export function shouldAutoCollapseContextSidebar({
+  isMobile,
+  relativePath,
+  sidePanelOpen,
+  sidePanelContextReady,
+}: {
+  isMobile: boolean;
+  relativePath: string;
+  sidePanelOpen: boolean;
+  sidePanelContextReady: boolean;
+}): boolean {
+  return !isMobile
+    && sidePanelOpen
+    && sidePanelContextReady
+    && (/^\/agents\/[^/]+(?:\/|$)/.test(relativePath) || /^\/messenger(?:\/|$)/.test(relativePath));
 }
 
 function getSidePanelGeometry(workspaceWidth: number) {
@@ -37,10 +45,7 @@ export function clampSidePanelWidth(value: number, workspaceWidth: number | null
   return Math.min(geometry.dockedMaxWidth, Math.max(geometry.dockedMinWidth, roundedWidth));
 }
 
-export function resolveProportionalSidePanelWidth(
-  widthRatioValue: number,
-  workspaceWidth: number,
-): number {
+export function resolveProportionalSidePanelWidth(widthRatioValue: number, workspaceWidth: number): number {
   return clampSidePanelWidth(widthRatioValue * workspaceWidth, workspaceWidth);
 }
 
@@ -91,35 +96,15 @@ export function readRememberedSidePanelWidth(): number {
   }
 }
 
-export function shouldAutoCollapseContextSidebar({
-  isMobile,
-  relativePath,
-  sidePanelOpen,
-  sidePanelContextReady,
-}: {
-  isMobile: boolean;
-  relativePath: string;
-  sidePanelOpen: boolean;
-  sidePanelContextReady: boolean;
-}): boolean {
-  return !isMobile
-    && sidePanelOpen
-    && sidePanelContextReady
-    && (/^\/agents\/[^/]+(?:\/|$)/.test(relativePath) || /^\/messenger(?:\/|$)/.test(relativePath));
-}
-
-type WorkspaceWidthSetter = (width: number | null) => void;
-
-export function useSidePanelWorkspaceLayout({
+export function useAutoCollapseWorkspaceWidth({
   autoCollapseContextSidebar,
   autoCollapseContextSidebarKey,
   autoCollapseContextSidebarOnOpen,
   contextColumnWidth,
   contextSidebarVisible,
-  registerBeforeOpen,
-  sidePanelOpen,
   setWorkspaceWidth,
   workspaceAnchorRef,
+  viewportWidth,
   workspaceWidth,
 }: {
   autoCollapseContextSidebar: boolean;
@@ -127,91 +112,128 @@ export function useSidePanelWorkspaceLayout({
   autoCollapseContextSidebarOnOpen: boolean;
   contextColumnWidth: number;
   contextSidebarVisible: boolean;
-  registerBeforeOpen: (handler: () => void) => () => void;
-  sidePanelOpen: boolean;
-  setWorkspaceWidth: WorkspaceWidthSetter;
-  workspaceAnchorRef: RefObject<HTMLElement | null>;
+  setWorkspaceWidth: (width: number) => void;
+  workspaceAnchorRef: RefObject<HTMLSpanElement | null>;
+  viewportWidth: number | null;
   workspaceWidth: number | null;
 }): number | null {
+  const sidePanel = useSidePanel();
   const autoCollapseWorkspaceWidthRef = useRef<{ key: string; width: number } | null>(null);
 
-  const captureWorkspaceWidthForPanelOpen = useCallback(() => {
+  const readWorkspaceMeasurements = useCallback(() => {
     const workspace = workspaceAnchorRef.current?.parentElement;
     const measuredWorkspaceWidth = workspace?.getBoundingClientRect().width ?? 0;
+    const contextCard = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']");
+    const contextResizer = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']");
+    const contextCardWidth = contextCard?.getBoundingClientRect().width ?? 0;
+    const contextResizerWidth = contextResizer?.getBoundingClientRect().width ?? 0;
+    return {
+      workspace,
+      measuredWorkspaceWidth,
+      contextCardWidth,
+      contextResizerWidth,
+    };
+  }, [workspaceAnchorRef]);
+
+  const captureWorkspaceWidthForPanelOpen = useCallback(() => {
+    const {
+      workspace,
+      measuredWorkspaceWidth,
+      contextCardWidth,
+      contextResizerWidth,
+    } = readWorkspaceMeasurements();
     if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
 
-    setWorkspaceWidth(measuredWorkspaceWidth);
+    setWorkspaceWidth(workspace?.offsetWidth ?? measuredWorkspaceWidth);
     if (!autoCollapseContextSidebarOnOpen || !autoCollapseContextSidebarKey) {
       autoCollapseWorkspaceWidthRef.current = null;
       return;
     }
 
-    const contextCardWidth = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']")?.getBoundingClientRect().width ?? 0;
-    const contextResizerWidth = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']")?.getBoundingClientRect().width ?? 0;
     autoCollapseWorkspaceWidthRef.current = {
       key: autoCollapseContextSidebarKey,
       width: measuredWorkspaceWidth + (!contextSidebarVisible
-        ? 0
+        ? contextCardWidth + contextResizerWidth
         : Math.max(contextCardWidth, contextColumnWidth) + Math.max(contextResizerWidth, 9)),
     };
   }, [
-    autoCollapseContextSidebar,
     autoCollapseContextSidebarKey,
     autoCollapseContextSidebarOnOpen,
     contextColumnWidth,
     contextSidebarVisible,
-    sidePanelOpen,
+    readWorkspaceMeasurements,
     setWorkspaceWidth,
-    workspaceAnchorRef,
   ]);
 
   useEffect(
-    () => registerBeforeOpen(captureWorkspaceWidthForPanelOpen),
-    [captureWorkspaceWidthForPanelOpen, registerBeforeOpen],
+    () => sidePanel.registerBeforeOpen(captureWorkspaceWidthForPanelOpen),
+    [captureWorkspaceWidthForPanelOpen, sidePanel.registerBeforeOpen],
   );
 
-  useLayoutEffect(() => {
-    if (!sidePanelOpen || !autoCollapseContextSidebar || !autoCollapseContextSidebarKey) {
+  const applyWorkspaceMeasurements = useCallback(() => {
+    const {
+      workspace,
+      measuredWorkspaceWidth,
+      contextCardWidth,
+      contextResizerWidth,
+    } = readWorkspaceMeasurements();
+    if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
+
+    setWorkspaceWidth(workspace?.offsetWidth ?? measuredWorkspaceWidth);
+    if (!sidePanel.open || !autoCollapseContextSidebar || !autoCollapseContextSidebarKey) {
       autoCollapseWorkspaceWidthRef.current = null;
       return;
     }
-    if (autoCollapseWorkspaceWidthRef.current?.key === autoCollapseContextSidebarKey) return;
-
-    const workspace = workspaceAnchorRef.current?.parentElement;
-    const measuredWorkspaceWidth = workspace?.getBoundingClientRect().width ?? workspaceWidth ?? 0;
-    if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
 
     autoCollapseWorkspaceWidthRef.current = {
       key: autoCollapseContextSidebarKey,
-      width: measuredWorkspaceWidth,
+      width: measuredWorkspaceWidth + contextCardWidth + contextResizerWidth,
     };
-  }, [autoCollapseContextSidebar, autoCollapseContextSidebarKey, sidePanelOpen, workspaceWidth, workspaceAnchorRef]);
+  }, [
+    autoCollapseContextSidebar,
+    autoCollapseContextSidebarKey,
+    readWorkspaceMeasurements,
+    setWorkspaceWidth,
+    sidePanel.open,
+  ]);
 
-  useEffect(() => {
-    if (!sidePanelOpen || !autoCollapseContextSidebar || !autoCollapseContextSidebarKey) return undefined;
-
+  useLayoutEffect(() => {
     let frame: number | null = null;
-    const handleResize = () => {
+    const updateWorkspaceMeasurements = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         frame = null;
-        const workspace = workspaceAnchorRef.current?.parentElement;
-        const measuredWorkspaceWidth = workspace?.getBoundingClientRect().width ?? 0;
-        if (!Number.isFinite(measuredWorkspaceWidth) || measuredWorkspaceWidth <= 0) return;
-        autoCollapseWorkspaceWidthRef.current = {
-          key: autoCollapseContextSidebarKey,
-          width: measuredWorkspaceWidth,
-        };
-        setWorkspaceWidth(workspace?.offsetWidth ?? measuredWorkspaceWidth);
+        applyWorkspaceMeasurements();
       });
     };
 
-    window.addEventListener("resize", handleResize);
+    // Viewport resize events can arrive before ResizeObserver delivers the new layout.
+    // Apply the current geometry before paint so a stale panel width cannot squeeze the main card.
+    applyWorkspaceMeasurements();
+    updateWorkspaceMeasurements();
+    const workspace = workspaceAnchorRef.current?.parentElement;
+    if (typeof ResizeObserver === "undefined" || !workspace) {
+      return () => {
+        if (frame !== null) window.cancelAnimationFrame(frame);
+      };
+    }
+
+    const observer = new ResizeObserver(updateWorkspaceMeasurements);
+    observer.observe(workspace);
+    const contextCard = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']");
+    const contextResizer = document.querySelector<HTMLElement>("[data-testid='workspace-column-resizer']");
+    if (contextCard) observer.observe(contextCard);
+    if (contextResizer) observer.observe(contextResizer);
+
     return () => {
-      window.removeEventListener("resize", handleResize);
+      observer.disconnect();
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [autoCollapseContextSidebar, autoCollapseContextSidebarKey, sidePanelOpen, setWorkspaceWidth, workspaceAnchorRef]);
+  }, [
+    applyWorkspaceMeasurements,
+    viewportWidth,
+    workspaceAnchorRef,
+  ]);
 
   const capturedAutoCollapseWorkspaceWidth = autoCollapseContextSidebarKey
     && autoCollapseWorkspaceWidthRef.current?.key === autoCollapseContextSidebarKey
