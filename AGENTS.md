@@ -319,6 +319,8 @@ A change is done when all are true:
   If the checkout is on `main`, create a `codex/` branch before committing. This standing
   authority does not authorize merging another branch, release, or deployment.
   Honor a user request for local-only work or no commit/push.
+- All changes enter protected `main` through a PR with required checks; never push
+  directly to `main` or bypass branch protection.
 - Continue using the repository's Conventional Commit format for commit messages (for example `feat:`, `fix:`, `test:`, `chore:`, `pref:`).
 - Preserve unrelated worktree and staged changes. Inspect the index immediately
   before committing and include only this task's changes; use an isolated index
