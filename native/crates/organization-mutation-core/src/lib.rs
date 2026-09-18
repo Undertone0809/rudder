@@ -179,7 +179,7 @@ impl OrganizationBrandingCommand {
         if self.actor.organization_id() != self.organization_id {
             return Err(MutationError::CrossOrganization);
         }
-        if !self.actor.can_update_branding() {
+        if self.actor.principal_id().is_empty() || !self.actor.can_update_branding() {
             return Err(MutationError::Unauthorized);
         }
         if self.name.is_none()
@@ -242,6 +242,23 @@ impl OrganizationBrandingCommand {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OrganizationSettingsSnapshot {
+    pub organization_id: String,
+    pub version: u64,
+    pub fence_epoch: u64,
+    pub name: String,
+    pub description: Option<String>,
+    pub brand_color: Option<String>,
+    pub logo_asset_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct AppliedReceipt {
+    fingerprint: String,
+    state: OrganizationSettingsSnapshot,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OrganizationSettingsState {
     pub organization_id: String,
     pub version: u64,
@@ -250,7 +267,7 @@ pub struct OrganizationSettingsState {
     pub description: Option<String>,
     pub brand_color: Option<String>,
     pub logo_asset_id: Option<String>,
-    applied_idempotency: BTreeMap<String, String>,
+    applied_idempotency: BTreeMap<String, AppliedReceipt>,
 }
 
 impl OrganizationSettingsState {
@@ -272,6 +289,18 @@ impl OrganizationSettingsState {
         }
     }
 
+    fn snapshot(&self) -> OrganizationSettingsSnapshot {
+        OrganizationSettingsSnapshot {
+            organization_id: self.organization_id.clone(),
+            version: self.version,
+            fence_epoch: self.fence_epoch,
+            name: self.name.clone(),
+            description: self.description.clone(),
+            brand_color: self.brand_color.clone(),
+            logo_asset_id: self.logo_asset_id.clone(),
+        }
+    }
+
     pub fn apply(
         &mut self,
         command: OrganizationBrandingCommand,
@@ -282,11 +311,11 @@ impl OrganizationSettingsState {
         }
         let fingerprint = command.fingerprint()?;
         if let Some(previous) = self.applied_idempotency.get(&command.idempotency_key) {
-            if previous == &fingerprint {
+            if previous.fingerprint == fingerprint {
                 return Ok(MutationOutcome::AlreadyApplied {
-                    version: self.version,
+                    version: previous.state.version,
                     fingerprint,
-                    state: self.clone(),
+                    state: previous.state.clone(),
                 });
             }
             return Err(MutationError::IdempotencyConflict);
@@ -316,12 +345,18 @@ impl OrganizationSettingsState {
             self.logo_asset_id = value;
         }
         self.version = next_version;
-        self.applied_idempotency
-            .insert(command.idempotency_key, fingerprint.clone());
+        let state = self.snapshot();
+        self.applied_idempotency.insert(
+            command.idempotency_key,
+            AppliedReceipt {
+                fingerprint: fingerprint.clone(),
+                state: state.clone(),
+            },
+        );
         Ok(MutationOutcome::Applied {
             version: self.version,
             fingerprint,
-            state: self.clone(),
+            state,
         })
     }
 }
@@ -331,12 +366,12 @@ pub enum MutationOutcome {
     Applied {
         version: u64,
         fingerprint: String,
-        state: OrganizationSettingsState,
+        state: OrganizationSettingsSnapshot,
     },
     AlreadyApplied {
         version: u64,
         fingerprint: String,
-        state: OrganizationSettingsState,
+        state: OrganizationSettingsSnapshot,
     },
 }
 
@@ -347,7 +382,7 @@ impl MutationOutcome {
         }
     }
 
-    pub fn state(&self) -> &OrganizationSettingsState {
+    pub fn state(&self) -> &OrganizationSettingsSnapshot {
         match self {
             Self::Applied { state, .. } | Self::AlreadyApplied { state, .. } => state,
         }
@@ -436,6 +471,32 @@ mod tests {
     }
 
     #[test]
+    fn replay_returns_original_state_after_a_later_mutation() {
+        let mut state = state();
+        let attached = board_command("asset-attach")
+            .with_logo_asset_id(Some("123e4567-e89b-12d3-a456-426614174000".to_owned()));
+        let first = state.apply(attached.clone()).unwrap();
+
+        let detached = OrganizationBrandingCommand::board("org-a", "user-a", "asset-detach", 4, 7)
+            .with_logo_asset_id(None);
+        let later = state.apply(detached).unwrap();
+        assert_eq!(later.state().logo_asset_id, None);
+        assert_eq!(state.version, 5);
+
+        let replay = state.apply(attached).unwrap();
+        assert!(matches!(
+            &replay,
+            MutationOutcome::AlreadyApplied { version: 4, .. }
+        ));
+        assert_eq!(replay.state(), first.state());
+        assert_eq!(
+            replay.state().logo_asset_id.as_deref(),
+            first.state().logo_asset_id.as_deref()
+        );
+        assert_eq!(state.version, 5);
+    }
+
+    #[test]
     fn conflicting_idempotency_key_is_rejected() {
         let mut state = state();
         state.apply(board_command("branding-1")).unwrap();
@@ -483,6 +544,15 @@ mod tests {
     #[test]
     fn non_ceo_agent_is_rejected_without_mutating_state() {
         let command = OrganizationBrandingCommand::agent("org-a", "agent-a", "branding-1", 3, 7)
+            .with_name(Some("Nope".to_owned()));
+        let mut state = state();
+        assert_eq!(state.apply(command), Err(MutationError::Unauthorized));
+        assert_eq!(state.version, 3);
+    }
+
+    #[test]
+    fn empty_principal_id_is_rejected_without_mutating_state() {
+        let command = OrganizationBrandingCommand::board("org-a", "", "branding-1", 3, 7)
             .with_name(Some("Nope".to_owned()));
         let mut state = state();
         assert_eq!(state.apply(command), Err(MutationError::Unauthorized));
