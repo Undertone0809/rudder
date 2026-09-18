@@ -396,12 +396,6 @@ fn map_request(
                     positive(input.get("limitBytes"), 256000).to_string(),
                 ),
             ]);
-            if input.contains_key("maxChars") {
-                query.push((
-                    "maxChars".into(),
-                    positive(input.get("maxChars"), 12000).to_string(),
-                ));
-            }
             (
                 HttpMethod::Get,
                 format!("/api/run-intelligence/runs/{}/log", encode(&s("run")?)),

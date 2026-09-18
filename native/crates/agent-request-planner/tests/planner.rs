@@ -261,10 +261,7 @@ fn exact_defaults_projection_and_unicode_encoding_match_node_planner() {
         log.path,
         "/api/run-intelligence/runs/run%20%2F%E9%9B%AA/log"
     );
-    assert_eq!(
-        query_string(&log.query),
-        "offset=64&limitBytes=4096&maxChars=321"
-    );
+    assert_eq!(query_string(&log.query), "offset=64&limitBytes=4096");
     assert_eq!(log.body, None);
 }
 
@@ -602,11 +599,7 @@ fn representative_core_routes_queries_and_bodies_match_contract() {
         &managed,
         HttpMethod::Get,
         "/api/run-intelligence/runs/run%20%2F1/log",
-        &[
-            ("offset", "64"),
-            ("limitBytes", "4096"),
-            ("maxChars", "321"),
-        ],
+        &[("offset", "64"), ("limitBytes", "4096")],
         None,
     );
     assert_direct_shape(
