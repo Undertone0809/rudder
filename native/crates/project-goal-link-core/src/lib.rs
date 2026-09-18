@@ -322,12 +322,16 @@ impl ProjectGoalLinkState {
         validate_identifier(&self.goal_org_id)?;
         validate_identifier(&self.project_id)?;
         validate_identifier(&self.goal_id)?;
+        let link_id = self.link_identifier()?;
         if self.applied_idempotency.len() > MAX_APPLIED_RECEIPTS {
             return Err(LinkMutationError::ReceiptCapacityExceeded);
         }
         for (key, receipt) in &self.applied_idempotency {
             validate_idempotency_key(key)?;
             validate_receipt(receipt)?;
+            if receipt.link_id != link_id {
+                return Err(LinkMutationError::InvalidReceipt);
+            }
         }
         Ok(())
     }
@@ -615,6 +619,12 @@ fn validate_replay_receipt(
     }
 
     let is_cancel = matches!(command.operation, Operation::Cancel);
+    if (is_cancel && !state.cancelled)
+        || receipt.version > state.version
+        || receipt.fence_epoch > state.fence_epoch
+    {
+        return Err(LinkMutationError::InvalidReceipt);
+    }
     let expected_fence = if is_cancel {
         command
             .fence_epoch
@@ -988,6 +998,7 @@ mod tests {
         );
 
         let mut full = state();
+        let link_id = full.link_identifier().unwrap();
         for index in 0..MAX_APPLIED_RECEIPTS {
             full.applied_idempotency.insert(
                 format!("receipt-{index}"),
@@ -996,7 +1007,7 @@ mod tests {
                     fence_epoch: 4,
                     linked: false,
                     cancelled: false,
-                    link_id: "0".repeat(SHA256_HEX_LENGTH),
+                    link_id: link_id.clone(),
                     fingerprint: "1".repeat(SHA256_HEX_LENGTH),
                 },
             );
