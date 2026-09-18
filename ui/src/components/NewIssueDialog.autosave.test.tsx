@@ -336,14 +336,35 @@ describe("NewIssueDialog autosave", () => {
     await renderDialog();
     const titleInput = document.querySelector("textarea[placeholder='Issue title']") as HTMLTextAreaElement | null;
     expect(titleInput?.value).toBe("Saved draft issue");
-    expect(document.body.textContent).toContain("Saved to Draft Issues");
-    expect(document.body.textContent).not.toContain("Save Draft");
+    expect(document.body.textContent).toContain("Save Draft");
+    expect(document.body.textContent).not.toContain("Saved to Draft Issues");
 
     await fillTextarea(titleInput!, "Edited saved draft issue");
 
     await advanceAutosaveDebounce();
 
     expect(window.localStorage.getItem(ISSUE_AUTOSAVE_STORAGE_KEY)).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]")).toMatchObject([
+      {
+        id: savedDraft.id,
+        createdAt: savedDraft.createdAt,
+        title: "Edited saved draft issue",
+      },
+    ]);
+
+    const saveDraftButton = [...document.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Save Draft");
+    expect(saveDraftButton).not.toBeUndefined();
+    await act(async () => {
+      saveDraftButton?.click();
+    });
+
+    expect(mockState.closeNewIssue).toHaveBeenCalledTimes(1);
+    expect(mockState.pushToast).toHaveBeenCalledWith({
+      title: "Saved to Draft Issues",
+      body: "Open Draft Issues from the Issues sidebar to continue it.",
+      tone: "success",
+    });
     expect(JSON.parse(window.localStorage.getItem(ISSUE_DRAFTS_STORAGE_KEY) ?? "[]")).toMatchObject([
       {
         id: savedDraft.id,

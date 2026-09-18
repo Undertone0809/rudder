@@ -627,8 +627,8 @@ test.describe("New issue project context", () => {
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByPlaceholder("Issue title")).toHaveValue("Recovered draft issue");
-    await expect(dialog.getByRole("button", { name: "Save Draft" })).toHaveCount(0);
-    await expect(dialog.getByText("Saved to Draft Issues")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Save Draft" })).toBeVisible();
+    await expect(dialog.getByText("Saved to Draft Issues")).toHaveCount(0);
     await dialog.getByPlaceholder("Issue title").fill("Recovered draft issue edited");
     await page.waitForTimeout(900);
     await expect.poll(async () => page.evaluate(() => window.localStorage.getItem("rudder:issue-autosave"))).toBeNull();
@@ -640,8 +640,29 @@ test.describe("New issue project context", () => {
       return drafts.find((draft) => draft.id === "draft-recovery-e2e")?.title;
     })).toBe("Recovered draft issue edited");
 
-    await page.keyboard.press("Escape");
+    await dialog.getByRole("button", { name: "Save Draft" }).click();
     await expect(dialog).toHaveCount(0);
+    await expect(page.getByText("Saved to Draft Issues", { exact: true })).toBeVisible();
+    await expect.poll(async () => page.evaluate((orgId) => {
+      const drafts = JSON.parse(window.localStorage.getItem("rudder:issue-drafts") ?? "[]") as Array<{
+        id: string;
+        orgId: string;
+        title: string;
+      }>;
+      return drafts
+        .filter((draft) => draft.orgId === orgId)
+        .map(({ id, title }) => ({ id, title }));
+    }, organization.id)).toEqual([{ id: "draft-recovery-e2e", title: "Recovered draft issue edited" }]);
+
+    await expect(page.getByTestId("issue-draft-card")).toHaveCount(1);
+    await page.getByTestId("issue-draft-card").click();
+    const reopenedDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
+    await expect(reopenedDialog).toBeVisible();
+    await expect(reopenedDialog.getByPlaceholder("Issue title")).toHaveValue("Recovered draft issue edited");
+    await expect(reopenedDialog.getByRole("button", { name: "Save Draft" })).toBeVisible();
+    await expect(reopenedDialog.getByText("Saved to Draft Issues")).toHaveCount(0);
+    await reopenedDialog.getByRole("button", { name: "Close new issue dialog" }).click();
+
     await page.getByTestId("workspace-main-header").getByRole("button", { name: "Create Issue" }).click();
 
     const newIssueDialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
