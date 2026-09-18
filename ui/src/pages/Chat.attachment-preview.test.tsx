@@ -7461,6 +7461,25 @@ describe("Chat attachment previews", () => {
     expect(preview?.querySelector("img")?.getAttribute("alt")).toBe("proposal-screenshot.png");
   });
 
+  it("renders an extension-identified sent image inline when the MIME is generic", () => {
+    const genericMimeImageMessage = imageMessage();
+    genericMimeImageMessage.attachments = genericMimeImageMessage.attachments?.map((attachment) => ({
+      ...attachment,
+      contentType: "application/octet-stream",
+    }));
+    mockState.messagesByChatId = {
+      "chat-1": [genericMimeImageMessage],
+    };
+
+    const { container } = renderChat();
+    const attachment = container.querySelector<HTMLElement>("[data-testid='chat-image-attachment']");
+    const image = attachment?.querySelector<HTMLImageElement>("img");
+
+    expect(image?.getAttribute("src")).toBe(PREVIEW_IMAGE_SRC);
+    expect(attachment?.querySelector(".chat-image-attachment-trigger--inline")).not.toBeNull();
+    expect(attachment?.querySelector(".chat-chip")).toBeNull();
+  });
+
   it("opens pending composer image previews on double-click", () => {
     const attachment = new File(["draft image"], "draft-screenshot.png", { type: "image/png" });
     updateChatPendingAttachmentsForScope(
