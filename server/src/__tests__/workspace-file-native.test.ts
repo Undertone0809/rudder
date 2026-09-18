@@ -173,6 +173,35 @@ describe("native workspace file reads", () => {
     }
   });
 
+  it.runIf(process.platform !== "win32")("fails closed when the workspace root is replaced during a read", async () => {
+    const outer = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
+    cleanupDirs.add(outer);
+    const root = path.join(outer, "workspace");
+    const movedRoot = path.join(outer, "moved-workspace");
+    const filePath = path.join(root, "mutable.md");
+    await fs.mkdir(root);
+    await fs.writeFile(filePath, "before", "utf8");
+    const openedStat = await fs.stat(filePath);
+    const handle = {
+      stat: vi.fn(async () => openedStat),
+      read: vi.fn(async () => {
+        await fs.rename(root, movedRoot);
+        await fs.symlink(movedRoot, root);
+        return { bytesRead: 0 };
+      }),
+      close: vi.fn(async () => undefined),
+    } as unknown as FileHandle;
+    const openSpy = vi.spyOn(fs, "open").mockResolvedValue(handle);
+    try {
+      await expect(readWorkspaceFileNodeBytes(root, "mutable.md")).rejects.toMatchObject({
+        code: "workspace_file_changed",
+        fallbackAllowed: false,
+      });
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
   it.runIf(process.platform === "win32")("fails closed instead of using an unsafe Node fallback", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-workspace-read-"));
     cleanupDirs.add(root);

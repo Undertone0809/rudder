@@ -19,6 +19,8 @@ use std::mem::size_of;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
+#[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 use std::path::{Component, Path, PathBuf};
 #[cfg(target_os = "linux")]
@@ -414,6 +416,75 @@ fn normalized_windows_path(path: &Path) -> String {
     value.trim_end_matches('\\').to_lowercase()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RootIdentity {
+    is_directory: bool,
+    is_symlink: bool,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(unix)]
+    ctime: i64,
+    #[cfg(unix)]
+    ctime_nsec: i64,
+    #[cfg(windows)]
+    volume_serial_number: u32,
+    #[cfg(windows)]
+    file_index: u64,
+}
+
+#[cfg(unix)]
+fn root_identity(metadata: &fs::Metadata) -> Result<RootIdentity, ManifestError> {
+    Ok(RootIdentity {
+        is_directory: metadata.is_dir(),
+        is_symlink: metadata.file_type().is_symlink(),
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        ctime: metadata.ctime(),
+        ctime_nsec: metadata.ctime_nsec(),
+    })
+}
+
+#[cfg(windows)]
+fn root_identity(metadata: &fs::Metadata) -> Result<RootIdentity, ManifestError> {
+    Ok(RootIdentity {
+        is_directory: metadata.is_dir(),
+        is_symlink: metadata.file_type().is_symlink(),
+        volume_serial_number: metadata.volume_serial_number().ok_or_else(|| {
+            ManifestError::file_identity_unavailable(io::Error::other(
+                "workspace root volume identity unavailable",
+            ))
+        })?,
+        file_index: metadata.file_index().ok_or_else(|| {
+            ManifestError::file_identity_unavailable(io::Error::other(
+                "workspace root file identity unavailable",
+            ))
+        })?,
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn root_identity(_metadata: &fs::Metadata) -> Result<RootIdentity, ManifestError> {
+    Err(ManifestError::fail_closed(
+        "workspace_file_identity_unavailable",
+    ))
+}
+
+fn ensure_root_identity(root: &Path, expected: &RootIdentity) -> Result<(), ManifestError> {
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(ManifestError::fail_closed("workspace_file_changed"));
+    }
+    let actual = root_identity(&metadata)
+        .map_err(|_| ManifestError::fail_closed("workspace_file_changed"))?;
+    if actual != *expected {
+        return Err(ManifestError::fail_closed("workspace_file_changed"));
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn ensure_opened_file_within_root(file: &File, canonical_root: &Path) -> Result<(), ManifestError> {
     let opened_path = final_path_by_handle(file).map_err(ManifestError::containment_unproven)?;
@@ -422,7 +493,9 @@ fn ensure_opened_file_within_root(file: &File, canonical_root: &Path) -> Result<
     if opened == root || opened.starts_with(&format!("{root}\\")) {
         Ok(())
     } else {
-        Err(ManifestError::safe("workspace_path_escape"))
+        Err(ManifestError::containment_unproven(io::Error::other(
+            "opened workspace file is outside the canonical root",
+        )))
     }
 }
 
@@ -549,10 +622,12 @@ pub fn read_file(
     let root_metadata = fs::symlink_metadata(root)
         .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(ManifestError::safe("workspace_not_directory"));
+        return Err(ManifestError::fail_closed("workspace_not_directory"));
     }
+    let expected_root_identity = root_identity(&root_metadata)?;
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| ManifestError::safe_source("workspace_root_unavailable", error))?;
+    ensure_root_identity(root, &expected_root_identity)?;
     let requested_target = root.join(requested_path);
     let canonical_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -629,6 +704,7 @@ pub fn read_file(
         return Err(ManifestError::fail_closed("workspace_file_size_limit"));
     }
 
+    ensure_root_identity(root, &expected_root_identity)?;
     let stable_snapshot = file_snapshot(&file)?;
     let final_target = fs::canonicalize(&requested_target).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -655,6 +731,7 @@ pub fn read_file(
     {
         return Err(ManifestError::fail_closed("workspace_file_changed"));
     }
+    ensure_root_identity(root, &expected_root_identity)?;
 
     let content = String::from_utf8(bytes)
         .map_err(|_| ManifestError::fail_closed("non_utf8_workspace_file"))?;
@@ -1519,6 +1596,49 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"after!");
     }
 
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn rejects_workspace_root_replacement_with_a_reparse_point() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("workspace");
+        let moved_root = outer.path().join("moved-workspace");
+        let target = root.join("mutable.txt");
+        fs::create_dir(&root).unwrap();
+        fs::write(&target, b"before").unwrap();
+
+        let original_root = root.clone();
+        let replacement_root = moved_root.clone();
+        let _hook = install_read_file_before_read_hook(target.clone(), move |_| {
+            fs::rename(&original_root, &replacement_root).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&replacement_root, &original_root).unwrap();
+            #[cfg(windows)]
+            {
+                let result = Command::new("cmd")
+                    .args([
+                        "/C",
+                        "mklink",
+                        "/J",
+                        original_root.to_str().unwrap(),
+                        replacement_root.to_str().unwrap(),
+                    ])
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "mklink /J failed: {}{}",
+                    String::from_utf8_lossy(&result.stdout),
+                    String::from_utf8_lossy(&result.stderr)
+                );
+            }
+        });
+
+        let error = read_file(&root, Path::new("mutable.txt"), file_limits()).unwrap_err();
+
+        assert_eq!(error.code(), "workspace_file_changed");
+        assert!(!error.fallback_safe());
+    }
+
     #[cfg(windows)]
     #[test]
     fn distinguishes_equal_size_equal_timestamp_files_by_windows_identity() {
@@ -1618,7 +1738,7 @@ mod tests {
 
         let error = read_file(&root, Path::new("escape/secret.txt"), file_limits()).unwrap_err();
 
-        assert_eq!(error.code(), "workspace_path_escape");
+        assert_eq!(error.code(), "workspace_file_containment_unproven");
         assert!(!error.fallback_safe());
     }
 

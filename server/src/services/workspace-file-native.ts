@@ -119,6 +119,31 @@ function sameFileSnapshot(left: WorkspaceFileStat, right: WorkspaceFileStat) {
     && left.ctimeMs === right.ctimeMs;
 }
 
+function sameRootIdentity(left: WorkspaceFileStat, right: WorkspaceFileStat) {
+  return left.isDirectory()
+    && right.isDirectory()
+    && !left.isSymbolicLink()
+    && !right.isSymbolicLink()
+    && left.dev !== 0
+    && left.ino !== 0
+    && right.dev !== 0
+    && right.ino !== 0
+    && left.dev === right.dev
+    && left.ino === right.ino;
+}
+
+async function ensureRootIdentity(rootPath: string, expected: WorkspaceFileStat) {
+  let actual: WorkspaceFileStat;
+  try {
+    actual = await fs.lstat(rootPath);
+  } catch {
+    throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+  }
+  if (!sameRootIdentity(expected, actual)) {
+    throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
+  }
+}
+
 function isWithinRoot(rootPath: string, targetPath: string) {
   const relative = path.relative(rootPath, targetPath);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
@@ -290,6 +315,7 @@ export async function readWorkspaceFileNodeBytes(
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     throw new WorkspaceFileNativeError("workspace_not_directory", false, true);
   }
+  await ensureRootIdentity(resolvedRoot, rootStat);
 
   let canonicalRoot: string;
   try {
@@ -406,6 +432,7 @@ export async function readWorkspaceFileNodeBytes(
     if (offset > WORKSPACE_FILE_READ_MAX_BYTES) {
       throw new WorkspaceFileNativeError("workspace_file_size_limit", false, false, true);
     }
+    await ensureRootIdentity(resolvedRoot, rootStat);
     const stableMetadata = await handle.stat();
     const stableRootStat = await fs.stat(canonicalRoot).catch(() => null);
     if (!stableMetadata.isFile()
@@ -438,6 +465,7 @@ export async function readWorkspaceFileNodeBytes(
     if (!sameFileSnapshot(finalPathStat, openedStat)) {
       throw new WorkspaceFileNativeError("workspace_file_changed", false, false);
     }
+    await ensureRootIdentity(resolvedRoot, rootStat);
     throwIfCancelled(signal);
     const content = bytes.subarray(0, offset);
     return {

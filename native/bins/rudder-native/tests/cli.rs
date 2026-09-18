@@ -328,7 +328,7 @@ fn rejects_workspace_file_reparse_escape() {
     assert_eq!(response["ok"], false);
     assert_eq!(response["capability"], "workspace.read");
     assert_eq!(response["protocolVersion"], 1);
-    assert_eq!(response["errorCode"], "workspace_path_escape");
+    assert_eq!(response["errorCode"], "workspace_file_containment_unproven");
     assert_eq!(response["accepted"], false);
     assert!(!stderr.is_empty());
 }
