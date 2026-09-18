@@ -209,7 +209,8 @@ test.describe("New issue Agent creation", () => {
     await page.getByTestId("issue-draft-sidebar-entry").click();
     await page.getByTestId("issue-draft-card").filter({ hasText: restoredTitle }).click();
     const dialog = page.locator('[data-slot="dialog-content"]').filter({ has: page.getByText("New issue") }).first();
-    await expect(dialog.getByText("Saved to Draft Issues")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Save Draft" })).toBeVisible();
+    await expect(dialog.getByText("Saved to Draft Issues")).toHaveCount(0);
     await dialog.getByRole("tab", { name: "Agent", exact: true }).click();
     await dialog.getByRole("button", { name: "Select an Agent" }).click();
     await page.locator("[data-inline-entity-option]").filter({ hasText: "Undo Issue Builder" }).click();

@@ -1072,7 +1072,7 @@ export function NewIssueDialog() {
   }
 
   function saveDraftIssue() {
-    const savedDraft = createIssueDraft({
+    const draft: IssueDraft = {
       orgId: effectiveCompanyId,
       title,
       description,
@@ -1087,10 +1087,15 @@ export function NewIssueDialog() {
       assigneeModelOverride,
       assigneeThinkingEffort,
       assigneeChrome,
-    });
+    };
+    const savedDraft = activeSavedIssueDraftId
+      ? updateIssueDraft(activeSavedIssueDraftId, draft) ?? createIssueDraft(draft)
+      : createIssueDraft(draft);
     if (!savedDraft) return;
     clearPendingDraftSave();
-    deleteIssueDraft(activeSavedIssueDraftId);
+    if (activeSavedIssueDraftId && savedDraft.id !== activeSavedIssueDraftId) {
+      deleteIssueDraft(activeSavedIssueDraftId);
+    }
     clearIssueAutosave();
     pushToast({
       title: "Saved to Draft Issues",
@@ -2151,11 +2156,6 @@ export function NewIssueDialog() {
             <span className="min-h-8 inline-flex items-center text-xs text-muted-foreground">
               Agent request
             </span>
-          ) : activeSavedIssueDraftId ? (
-            <div className="inline-flex min-h-8 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Saved to Draft Issues
-            </div>
           ) : (
             <Button
               variant="ghost"
