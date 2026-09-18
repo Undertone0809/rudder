@@ -2,7 +2,7 @@
 
 import { savedViewKeepInputFromSidePanelTarget } from "@/lib/messenger-saved-views";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
-import { act, useEffect } from "react";
+import { act, useEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SidePanelProvider, useSidePanel } from "./SidePanelContext";
@@ -182,6 +182,43 @@ function renderSidePanelProvider(
   return { container, root };
 }
 
+function SidePanelOpenTargetEffectProbe() {
+  const sidePanel = useSidePanel();
+  const effectInitializedRef = useRef(false);
+  sidePanelControls = sidePanel;
+
+  useEffect(() => {
+    if (!effectInitializedRef.current) {
+      effectInitializedRef.current = true;
+      return;
+    }
+    if (!sidePanel.open) sidePanel.openTarget(issueTarget);
+  }, [sidePanel.openTarget]);
+
+  return (
+    <>
+      <span data-testid="open">{String(sidePanel.open)}</span>
+      <span data-testid="tab-count">{String(sidePanel.tabs.length)}</span>
+    </>
+  );
+}
+
+function renderSidePanelOpenTargetEffectProbe() {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  act(() => {
+    root.render(
+      <SidePanelProvider>
+        <SidePanelOpenTargetEffectProbe />
+      </SidePanelProvider>,
+    );
+  });
+
+  return { container, root };
+}
+
 function click(container: Element, label: string) {
   act(() => {
     const button = Array.from(container.querySelectorAll("button"))
@@ -309,6 +346,17 @@ describe("SidePanelProvider context visibility", () => {
     click(container, "Chat A");
     expect(text(container, "context-key")).toBe("chat:a");
     expect(text(container, "active-key")).toBe("issue:issue-1:");
+    expect(text(container, "open")).toBe("false");
+    expect(text(container, "tab-count")).toBe("1");
+  });
+
+  it("keeps a closed panel closed when a consumer watches openTarget", () => {
+    ({ container, root } = renderSidePanelOpenTargetEffectProbe());
+
+    act(() => sidePanelControls!.openTarget(issueTarget));
+    expect(text(container, "open")).toBe("true");
+
+    act(() => sidePanelControls!.hidePanel());
     expect(text(container, "open")).toBe("false");
     expect(text(container, "tab-count")).toBe("1");
   });
