@@ -533,6 +533,44 @@ describe("agent-v1 MCP server", () => {
     expect(plan.env.RUDDER_TOOL_TRANSPORT_SURFACE).toBe("mcp");
   });
 
+  it("canonicalizes surrounding whitespace in CLI arguments like direct MCP dispatch", () => {
+    const env = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "  runtime-org  ",
+      RUDDER_AGENT_ID: "  runtime-agent  ",
+      RUDDER_RUN_ID: "  runtime-run  ",
+    };
+
+    expect(buildAgentV1ToolCallPlan("rudder_issue_get", { issue: "  ZST-123  " }, env).args)
+      .toEqual(["issue", "get", "ZST-123", "--json"]);
+    expect(buildAgentV1ToolCallPlan("rudder_agent_skills_enable", {
+      selectionRefs: ["  rudder/rudder-docs  "],
+    }, env).args).toEqual([
+      "agent",
+      "skills",
+      "enable",
+      "runtime-agent",
+      "rudder/rudder-docs",
+      "--json",
+    ]);
+    expect(buildAgentV1ToolCallPlan("rudder_runs_create", {
+      task: "  Preserve  internal spaces  ",
+      idempotencyKey: "  delegation-1  ",
+      targetAgentId: "  target-agent  ",
+    }, env).args).toEqual([
+      "runs",
+      "create",
+      "--task",
+      "Preserve  internal spaces",
+      "--idempotency-key",
+      "delegation-1",
+      "--target-agent-id",
+      "target-agent",
+      "--json",
+    ]);
+  });
+
   it("requires and forwards the first message when creating a chat", () => {
     const env = {
       RUDDER_API_URL: "http://127.0.0.1:3100",

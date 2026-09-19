@@ -36,14 +36,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  throwInvalidMcpArgument,
+  validateMcpToolArguments,
+} from "./agent-v1-mcp-validation.js";
+import {
   buildAgentV1McpToolsManifest,
   getAgentCliCapabilityById,
   type AgentV1McpToolManifestEntry
 } from "./agent-v1-registry.js";
-import {
-  throwInvalidMcpArgument,
-  validateMcpToolArguments,
-} from "./agent-v1-mcp-validation.js";
 import { ApiRequestError, RudderApiClient } from "./client/http.js";
 import { toCliShortIdOutput } from "./commands/client/common.js";
 import { resolveCliVersion } from "./version.js";

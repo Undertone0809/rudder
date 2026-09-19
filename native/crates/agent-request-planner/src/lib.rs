@@ -127,12 +127,8 @@ fn map_request(
     runtime: &ManagedRuntimeIdentity,
     context: RequiredContext,
 ) -> Result<DirectRequest, PlanError> {
-    let org = || {
-        runtime
-            .organization_id
-            .as_deref()
-            .expect("validated organization")
-    };
+    let org =
+        || runtime_string(runtime.organization_id.as_deref()).expect("validated organization");
     let s = |key: &str| required_string(id, &input, key);
     let mut query = Vec::new();
     let (method, path, body) = match id {
@@ -171,19 +167,21 @@ fn map_request(
             format!("/api/goals/{}/agent-context", encode(&s("goal")?)),
             None,
         ),
-        "goal.progress" => (
-            HttpMethod::Post,
-            format!("/api/goals/{}/activities", encode(&s("goal")?)),
-            Some(project(
+        "goal.progress" => {
+            let mut body = project(
                 &input,
                 &["summary", "activityKind", "evidenceRefs", "idempotencyKey"],
                 &[("activityKind", json!("progress"))],
-            )),
-        ),
-        "goal.checkpoint" => (
-            HttpMethod::Post,
-            format!("/api/goals/{}/checkpoint", encode(&s("goal")?)),
-            Some(project(
+            );
+            trim_project_strings(&mut body, &["summary", "activityKind", "idempotencyKey"]);
+            (
+                HttpMethod::Post,
+                format!("/api/goals/{}/activities", encode(&s("goal")?)),
+                Some(body),
+            )
+        }
+        "goal.checkpoint" => {
+            let mut body = project(
                 &input,
                 &[
                     "summary",
@@ -194,8 +192,14 @@ fn map_request(
                     "idempotencyKey",
                 ],
                 &[],
-            )),
-        ),
+            );
+            trim_project_strings(&mut body, &["summary", "idempotencyKey"]);
+            (
+                HttpMethod::Post,
+                format!("/api/goals/{}/checkpoint", encode(&s("goal")?)),
+                Some(body),
+            )
+        }
         "goal.change.propose" => {
             let mut body = project(
                 &input,
@@ -213,16 +217,15 @@ fn map_request(
                 "contractRevision",
                 "expectedContractRevision",
             );
+            trim_project_strings(&mut body, &["rationale", "idempotencyKey"]);
             (
                 HttpMethod::Post,
                 format!("/api/goals/{}/change-proposals", encode(&s("goal")?)),
                 Some(body),
             )
         }
-        "goal.result.propose" => (
-            HttpMethod::Post,
-            format!("/api/goals/{}/result-proposals", encode(&s("goal")?)),
-            Some(project(
+        "goal.result.propose" => {
+            let mut body = project(
                 &input,
                 &[
                     "contractRevision",
@@ -235,12 +238,16 @@ fn map_request(
                     "idempotencyKey",
                 ],
                 &[],
-            )),
-        ),
-        "issue.create" => (
-            HttpMethod::Post,
-            format!("/api/orgs/{}/issues", encode(org())),
-            Some(project(
+            );
+            trim_project_strings(&mut body, &["decision", "riskSummary", "idempotencyKey"]);
+            (
+                HttpMethod::Post,
+                format!("/api/goals/{}/result-proposals", encode(&s("goal")?)),
+                Some(body),
+            )
+        }
+        "issue.create" => {
+            let mut body = project(
                 &input,
                 &[
                     "title",
@@ -256,8 +263,14 @@ fn map_request(
                     "labelIds",
                 ],
                 &[],
-            )),
-        ),
+            );
+            trim_project_strings(&mut body, &["title"]);
+            (
+                HttpMethod::Post,
+                format!("/api/orgs/{}/issues", encode(org())),
+                Some(body),
+            )
+        }
         "issue.get" => (
             HttpMethod::Get,
             format!("/api/issues/{}", encode(&s("issue")?)),
@@ -298,7 +311,9 @@ fn map_request(
             (
                 HttpMethod::Post,
                 format!("/api/issues/{}/checkout", encode(&s("issue")?)),
-                Some(json!({"agentId":runtime.agent_id,"expectedStatuses":statuses})),
+                Some(
+                    json!({"agentId":runtime_string(runtime.agent_id.as_deref()),"expectedStatuses":statuses}),
+                ),
             )
         }
         "issue.comment" => {
@@ -324,7 +339,9 @@ fn map_request(
         ),
         "runs.create" => {
             let mut body = json!({"task":s("task")?,"idempotencyKey":s("idempotencyKey")?});
-            rename(&input, &mut body, "targetAgentId", "targetAgentId");
+            if let Some(target_agent_id) = optional_string(&input, "targetAgentId") {
+                body["targetAgentId"] = json!(target_agent_id);
+            }
             (
                 HttpMethod::Post,
                 "/api/agent-runs/delegation".into(),
@@ -496,11 +513,24 @@ fn map_browser(
         }
         "browser.back" | "browser.forward" | "browser.reload" | "browser.read"
         | "browser.close" => json!({"tabId":required_string(id,input,"tabId")?}),
-        "browser.viewport" => project(input, &["action", "width", "height"], &[]),
+        "browser.viewport" => {
+            let mut body = project(input, &["action", "width", "height"], &[]);
+            trim_project_strings(&mut body, &["action"]);
+            body
+        }
         "browser.visibility" => project(input, &["visible"], &[]),
-        "browser.click" => project(input, &["tabId", "ref"], &[]),
+        "browser.click" => {
+            json!({
+                "tabId": required_string(id, input, "tabId")?,
+                "ref": required_string(id, input, "ref")?,
+            })
+        }
         "browser.type" => {
-            let mut v = project(input, &["tabId", "ref", "text"], &[]);
+            let mut v = json!({
+                "tabId": required_string(id, input, "tabId")?,
+                "ref": required_string(id, input, "ref")?,
+                "text": required_string(id, input, "text")?,
+            });
             if true_value(input, "submit") {
                 v["submit"] = json!(true)
             }
@@ -739,25 +769,13 @@ fn validate_browser_action(id: &str, input: &Map<String, Value>) -> Result<(), P
 }
 fn require_context(c: &RequiredContext, r: &ManagedRuntimeIdentity) -> Result<(), PlanError> {
     let mut missing = Vec::new();
-    if c.organization
-        && r.organization_id
-            .as_deref()
-            .is_none_or(|value| value.trim().is_empty())
-    {
+    if c.organization && runtime_string(r.organization_id.as_deref()).is_none() {
         missing.push("organization")
     };
-    if c.agent
-        && r.agent_id
-            .as_deref()
-            .is_none_or(|value| value.trim().is_empty())
-    {
+    if c.agent && runtime_string(r.agent_id.as_deref()).is_none() {
         missing.push("agent")
     };
-    if c.run
-        && r.run_id
-            .as_deref()
-            .is_none_or(|value| value.trim().is_empty())
-    {
+    if c.run && runtime_string(r.run_id.as_deref()).is_none() {
         missing.push("run")
     };
     if missing.is_empty() {
@@ -772,10 +790,14 @@ fn invalid<T>(id: &str, detail: &str) -> Result<T, PlanError> {
         detail: detail.into(),
     })
 }
+fn runtime_string(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
 fn required_string(id: &str, m: &Map<String, Value>, key: &str) -> Result<String, PlanError> {
     m.get(key)
         .and_then(Value::as_str)
-        .filter(|v| !v.trim().is_empty())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
         .map(str::to_owned)
         .ok_or_else(|| PlanError::InvalidArgument {
             capability: id.into(),
@@ -791,7 +813,8 @@ fn required_string_any(
         .find_map(|key| {
             m.get(*key)
                 .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
                 .map(str::to_owned)
         })
         .ok_or_else(|| PlanError::InvalidArgument {
@@ -812,6 +835,23 @@ fn project(m: &Map<String, Value>, keys: &[&str], defaults: &[(&str, Value)]) ->
         }
     }
     Value::Object(out)
+}
+fn trim_project_strings(value: &mut Value, keys: &[&str]) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    for key in keys {
+        if let Some(Value::String(string)) = object.get_mut(*key) {
+            *string = string.trim().to_owned();
+        }
+    }
+}
+fn optional_string(m: &Map<String, Value>, key: &str) -> Option<String> {
+    m.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 fn rename(input: &Map<String, Value>, body: &mut Value, from: &str, to: &str) {
     if let Some(v) = input.get(from)
@@ -840,7 +880,8 @@ fn nonnegative(v: Option<&Value>, fallback: u64) -> u64 {
 fn string_or(m: &Map<String, Value>, key: &str, fallback: &str) -> String {
     m.get(key)
         .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or(fallback)
         .into()
 }

@@ -282,6 +282,87 @@ fn exact_defaults_projection_and_unicode_encoding_match_node_planner() {
     );
     assert_eq!(query_string(&log.query), "offset=64&limitBytes=4096");
     assert_eq!(log.body, None);
+
+    let mut padded = runtime(true);
+    padded.organization_id = Some("  org /雪  ".into());
+    padded.agent_id = Some("  agent-1  ".into());
+    padded.run_id = Some("  run-1  ".into());
+
+    let PlanOutcome::Direct(members) = plan_request(
+        "organization.members.list",
+        json!({
+            "query": "  Ada  Lovelace  ",
+            "cursor": "  next / 1  "
+        }),
+        &padded,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        members.path,
+        "/api/orgs/org%20%2F%E9%9B%AA/members/directory"
+    );
+    assert_eq!(
+        query_string(&members.query),
+        "query=Ada%20%20Lovelace&type=all&limit=50&cursor=next%20%2F%201"
+    );
+
+    let PlanOutcome::Direct(progress) = plan_request(
+        "goal.progress",
+        json!({
+            "goal": "  goal-1  ",
+            "summary": "  Evidence  is complete  ",
+            "evidenceRefs": ["artifact://one"],
+            "idempotencyKey": "  progress-1  "
+        }),
+        &padded,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(progress.path, "/api/goals/goal-1/activities");
+    assert_eq!(
+        progress.body,
+        Some(json!({
+            "summary": "Evidence  is complete",
+            "activityKind": "progress",
+            "evidenceRefs": ["artifact://one"],
+            "idempotencyKey": "progress-1"
+        }))
+    );
+
+    let PlanOutcome::Direct(checkout) =
+        plan_request("issue.checkout", json!({"issue": "  ISS/1  "}), &padded).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(checkout.path, "/api/issues/ISS%2F1/checkout");
+    assert_eq!(
+        checkout.body,
+        Some(json!({
+            "agentId": "agent-1",
+            "expectedStatuses": ["todo", "backlog", "blocked"]
+        }))
+    );
+
+    let PlanOutcome::Direct(browser) = plan_request(
+        "browser.type",
+        json!({"tabId": " tab-1 ", "ref": " ref-1 ", "text": " hello  world "}),
+        &padded,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        browser.body,
+        Some(json!({"tabId": "tab-1", "ref": "ref-1", "text": "hello  world"}))
+    );
+
+    assert!(matches!(
+        plan_request("browser.tabs", json!({}), &padded),
+        Ok(PlanOutcome::Direct(_))
+    ));
 }
 
 #[test]
