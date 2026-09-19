@@ -36,11 +36,13 @@ function getViewportSize() {
 }
 
 export function ImagePreviewDialog({
+  onCloseAutoFocus,
   preview,
   onOpenChange,
   testId,
   titleFallback,
 }: {
+  onCloseAutoFocus?: () => void;
   preview: ImagePreviewState | null;
   onOpenChange: (open: boolean) => void;
   testId: string;
@@ -129,14 +131,17 @@ export function ImagePreviewDialog({
     }
   };
 
-  if (!preview) return null;
-
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent
         ref={dialogContentRef}
         aria-describedby={undefined}
+        role={preview ? "dialog" : undefined}
         showCloseButton={false}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onCloseAutoFocus?.();
+        }}
         className="rudder-markdown-editor-image-preview-panel top-[50%] w-fit translate-y-[-50%] border-0 bg-transparent p-0 shadow-none"
         style={{
           maxWidth: `${viewportBounds.maxWidth}px`,

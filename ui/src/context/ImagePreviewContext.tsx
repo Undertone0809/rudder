@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -30,8 +31,25 @@ const ImagePreviewContext = createContext<ImagePreviewContextValue>(unavailableI
 export function ImagePreviewProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [request, setRequest] = useState<ImagePreviewRequest | null>(null);
-  const closeImagePreview = useCallback(() => setRequest(null), []);
-  const openImagePreview = useCallback((preview: ImagePreviewRequest) => setRequest(preview), []);
+  const requestRef = useRef<ImagePreviewRequest | null>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const closeImagePreview = useCallback(() => {
+    requestRef.current = null;
+    setRequest(null);
+  }, []);
+  const openImagePreview = useCallback((preview: ImagePreviewRequest) => {
+    if (!requestRef.current && typeof document !== "undefined") {
+      const activeElement = document.activeElement;
+      restoreFocusRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+    }
+    requestRef.current = preview;
+    setRequest(preview);
+  }, []);
+  const restoreImagePreviewFocus = useCallback(() => {
+    const element = restoreFocusRef.current;
+    restoreFocusRef.current = null;
+    if (element?.isConnected) element.focus();
+  }, []);
   const value = useMemo(
     () => ({ closeImagePreview, openImagePreview }),
     [closeImagePreview, openImagePreview],
@@ -45,6 +63,7 @@ export function ImagePreviewProvider({ children }: { children: ReactNode }) {
     <ImagePreviewContext.Provider value={value}>
       {children}
       <ImagePreviewDialog
+        onCloseAutoFocus={restoreImagePreviewFocus}
         preview={request}
         onOpenChange={(open) => {
           if (!open) closeImagePreview();
