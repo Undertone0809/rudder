@@ -1172,6 +1172,24 @@ describe("ProposalCard", () => {
     expect(reviewBlockHtml).not.toContain(assistantBody);
   });
 
+  it("keeps proposal description images non-interactive", () => {
+    const html = renderProposalCard(message({
+      role: "assistant",
+      kind: "issue_proposal",
+      body: "Review the proposal.",
+      structuredPayload: {
+        title: "Keep approval images static",
+        description: "![Approval evidence](https://example.test/approval-evidence.png)",
+      },
+    }));
+
+    const reviewBlockIndex = html.indexOf('data-testid="proposal-review-block"');
+    expect(reviewBlockIndex).toBeGreaterThan(0);
+    const reviewBlockHtml = html.slice(reviewBlockIndex);
+    expect(reviewBlockHtml).toContain('alt="Approval evidence"');
+    expect(reviewBlockHtml).not.toContain("rudder-inspectable-image-trigger");
+  });
+
   it("renders proposed reviewer metadata in issue proposal cards", () => {
     const html = renderProposalCard(message({
       role: "assistant",
