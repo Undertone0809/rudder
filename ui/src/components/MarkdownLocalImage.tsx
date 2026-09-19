@@ -101,6 +101,7 @@ function MarkdownLocalImageLink({
 
 export function MarkdownLocalFileLink({
   children,
+  enablePreview,
   filePath,
   href,
   label,
@@ -108,6 +109,7 @@ export function MarkdownLocalFileLink({
   sourceAttributes,
 }: {
   children: ReactNode;
+  enablePreview: boolean;
   filePath: string;
   href: string;
   label: string;
@@ -119,7 +121,7 @@ export function MarkdownLocalFileLink({
     return (
       <MarkdownLocalImageLink
         href={href}
-        enablePreview={true}
+        enablePreview={enablePreview}
         imageName={imageName}
         targetPath={filePath}
         sourceAttributes={sourceAttributes}
@@ -165,6 +167,7 @@ export function renderMarkdownLocalImage({
   if (!isPreviewableImage(null, displayPath)) {
     return (
       <MarkdownLocalFileLink
+        enablePreview={enablePreview}
         href={src}
         filePath={displayPath}
         label={imageName}

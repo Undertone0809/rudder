@@ -852,6 +852,44 @@ describe("MarkdownBody", () => {
     expect(container.querySelector("a.rudder-local-file-link")).toBeNull();
   });
 
+  it("keeps a markdown image link static when image preview is disabled", async () => {
+    const previewLocalFile = vi.fn().mockResolvedValue({
+      canonicalPath: "/tmp/static-linked-image.png",
+      fileName: "static-linked-image.png",
+      parentPath: "/tmp",
+      contentType: "image/png",
+      previewKind: "image",
+      content: null,
+      base64: "iVBORw0KGgo=",
+      sizeBytes: 8,
+      modifiedAt: "2026-09-18T00:00:00.000Z",
+      truncated: false,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { previewLocalFile },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableImagePreview={false}>
+          {"Inspect [static-linked-image.png](/tmp/static-linked-image.png)."}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(previewLocalFile).toHaveBeenCalledWith("/tmp/static-linked-image.png");
+    expect(container.querySelector<HTMLImageElement>("img.rudder-local-image-media")?.src).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(container.querySelector(".rudder-local-image-trigger")).toBeNull();
+  });
+
   it("keeps a bridged local image static when image preview is disabled", async () => {
     const previewLocalFile = vi.fn().mockResolvedValue({
       canonicalPath: "/tmp/static-local-image.png",
