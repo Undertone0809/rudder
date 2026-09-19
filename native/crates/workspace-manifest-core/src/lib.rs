@@ -642,7 +642,7 @@ fn ensure_handle_path_within_root(
     root_path: &Path,
 ) -> Result<(), ManifestError> {
     let root = normalized_windows_path(root_path);
-    let opened = normalized_windows_path(&opened_path);
+    let opened = normalized_windows_path(opened_path);
     if opened == root || opened.starts_with(&format!("{root}\\")) {
         Ok(())
     } else {
