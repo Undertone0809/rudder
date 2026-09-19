@@ -17,6 +17,7 @@ members = [
   "crates/runtime-core",
   "crates/migration-core",
   "crates/migration-history-core",
+  "crates/migration-history-postgres",
   "crates/runtime-attempt-core",
   "crates/server-foundation",
   "crates/workspace-manifest-core",

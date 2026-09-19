@@ -56,11 +56,24 @@ pub fn migration_history_rows_select(
         }
     }
     Ok(format!(
-        "SELECT {} FROM {}.{} ORDER BY {}",
+        "SELECT {} FROM {}.{} ORDER BY {} LIMIT $1",
         selected.join(", "),
         quoted_schema,
         quote_identifier(MIGRATION_HISTORY_TABLE_NAME)?,
         quote_identifier("id")?,
+    ))
+}
+
+pub fn migration_history_text_bound_select(
+    schema: &str,
+    column: &str,
+) -> Result<String, QueryContractError> {
+    let quoted_schema = quote_identifier(schema)?;
+    let quoted_column = quote_identifier(column)?;
+    Ok(format!(
+        "SELECT 1 FROM {}.{} WHERE octet_length(CAST({quoted_column} AS text)) > $1 LIMIT 1",
+        quoted_schema,
+        quote_identifier(MIGRATION_HISTORY_TABLE_NAME)?,
     ))
 }
 

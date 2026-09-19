@@ -25,6 +25,8 @@ const KNOWN_LEGACY_MIGRATION_HISTORY_IDENTIFIERS = new Set([
   "f48a179c17c3ae9b2b419a3f8d4ee8d78de6e4acec3a077fe0d4bcb9a73d57c6",
   "a531d1d8383becb9090492d1b763aeb11a4c2ade4f325a29500511900b29888d",
   "cbf2988159818d54929cda6119f3ca3b6cd6d265c08fb73c6221198ff99d070e",
+  // Historical 0159_heartbeat_timer_cursor from the archived 2026-08-25 main snapshot.
+  "0ba359cdf4244b5509bd9c8d7f9dee91e8d8e3967d56771770ecfc6114e0c958",
   "legacy-0100-hash",
   "legacy-conflicting-0100-hash",
 ]);

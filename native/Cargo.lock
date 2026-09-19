@@ -1408,6 +1408,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-migration-history-postgres"
+version = "0.7.23"
+dependencies = [
+ "rudder-migration-core",
+ "rudder-migration-history-core",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "rudder-native"
 version = "0.7.23"
 dependencies = [
