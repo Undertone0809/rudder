@@ -1387,11 +1387,13 @@ dependencies = [
 name = "rudder-migration-core"
 version = "0.7.23"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.20",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
