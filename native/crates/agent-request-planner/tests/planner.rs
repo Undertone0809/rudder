@@ -1,5 +1,6 @@
 use rudder_agent_request_planner::*;
 use serde_json::{Map, Value, json};
+use time::{PlainDateTime, UtcOffset, format_description};
 
 fn runtime(browser_enabled: bool) -> ManagedRuntimeIdentity {
     ManagedRuntimeIdentity {
@@ -1292,6 +1293,44 @@ fn matches_ts_defaults_and_date_only_coercion_boundary() {
         }))
     );
 
+    let PlanOutcome::Direct(local_change) = plan_request(
+        "goal.change.propose",
+        json!({
+            "goal": "goal-1",
+            "contractRevision": 1,
+            "afterContract": {"actionDeadline": "2026-08-20T12:00:00"},
+            "rationale": "The evidence requires a contract update.",
+            "idempotencyKey": "change-local-time"
+        }),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    let expected_local = PlainDateTime::parse(
+        "2026-08-20T12:00:00",
+        &format_description::parse_borrowed::<1>("[year]-[month]-[day]T[hour]:[minute]:[second]")
+            .unwrap(),
+    )
+    .unwrap();
+    let expected_offset = UtcOffset::local_offset_at(expected_local.assume_utc()).unwrap();
+    let expected = expected_local
+        .assume_offset(expected_offset)
+        .to_offset(UtcOffset::UTC);
+    assert_eq!(
+        local_change.body.as_ref().unwrap()["afterContract"]["actionDeadline"],
+        json!(format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            expected.year(),
+            u8::from(expected.month()),
+            expected.day(),
+            expected.hour(),
+            expected.minute(),
+            expected.second(),
+            expected.millisecond(),
+        ))
+    );
+
     let PlanOutcome::Direct(result) = plan_request(
         "goal.result.propose",
         json!({
@@ -1336,6 +1375,50 @@ fn matches_ts_defaults_and_date_only_coercion_boundary() {
             "requestDepth": 0
         }))
     );
+}
+
+#[test]
+fn matches_node_generated_goal_change_proposal_fixture() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/node-goal-change-proposal.json")).unwrap();
+    assert_eq!(
+        fixture["schema"],
+        "rudder.agent-request-planner.differential/v1"
+    );
+    assert_eq!(fixture["timezone"], "Asia/Shanghai");
+
+    for test_case in fixture["cases"].as_array().unwrap() {
+        let id = test_case["id"].as_str().unwrap();
+        let PlanOutcome::Direct(plan) = plan_request(
+            "goal.change.propose",
+            test_case["arguments"].clone(),
+            &runtime(false),
+        )
+        .unwrap_or_else(|error| panic!("{id}: {error}")) else {
+            panic!("{id} was not direct")
+        };
+        let mut expected = test_case["nodePayload"].clone();
+        if id == "date-only-and-local-wall-clock" {
+            let local_format = format_description::parse_borrowed::<1>(
+                "[year]-[month]-[day]T[hour]:[minute]:[second]",
+            )
+            .unwrap();
+            let local = PlainDateTime::parse("2026-08-20T12:00:00", &local_format).unwrap();
+            let offset = UtcOffset::local_offset_at(local.assume_utc()).unwrap();
+            let value = local.assume_offset(offset).to_offset(UtcOffset::UTC);
+            expected["afterContract"]["evaluationDeadline"] = json!(format!(
+                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+                value.year(),
+                u8::from(value.month()),
+                value.day(),
+                value.hour(),
+                value.minute(),
+                value.second(),
+                value.millisecond(),
+            ));
+        }
+        assert_eq!(plan.body, Some(expected), "{id}");
+    }
 }
 
 #[test]

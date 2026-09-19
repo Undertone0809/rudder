@@ -4,7 +4,7 @@ import {
   RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_CONTRACT_VERSION,
 } from "@rudderhq/agent-runtime-utils";
-import { COMPUTER_USE_MCP_TOOLS } from "@rudderhq/shared";
+import { COMPUTER_USE_MCP_TOOLS, createGoalChangeProposalSchema } from "@rudderhq/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -549,6 +549,39 @@ describe("agent-v1 MCP server", () => {
     expect(fallbackChange.args).not.toContain("--evidence-refs");
     expect(fallbackResult.args).not.toContain("--result-payload");
     expect(fallbackIssue.args).toEqual(["issue", "create", "--title", "Issue with defaults", "--json"]);
+  });
+
+  it("keeps the Node-generated planner fixture stable for the Rust comparator", async () => {
+    const fixture = JSON.parse(await fs.readFile(
+      new URL("../../../native/crates/agent-request-planner/tests/fixtures/node-goal-change-proposal.json", import.meta.url),
+      "utf8",
+    )) as {
+      cases: Array<{
+        id: string;
+        arguments: Record<string, unknown>;
+        nodePayload: Record<string, unknown>;
+      }>;
+    };
+
+    for (const testCase of fixture.cases) {
+      const input = testCase.arguments;
+      const parsed = createGoalChangeProposalSchema.parse({
+        expectedContractRevision: input.contractRevision,
+        afterContract: input.afterContract,
+        rationale: input.rationale,
+        evidenceRefs: input.evidenceRefs,
+        idempotencyKey: input.idempotencyKey,
+      });
+      const expected = structuredClone(testCase.nodePayload);
+      const localDeadline = input.afterContract && typeof input.afterContract === "object"
+        ? (input.afterContract as Record<string, unknown>).evaluationDeadline
+        : undefined;
+      if (typeof localDeadline === "string" && !/[zZ]|[+-][0-9]{2}:?[0-9]{2}$/.test(localDeadline)) {
+        const afterContract = expected.afterContract as Record<string, unknown>;
+        afterContract.evaluationDeadline = new Date(localDeadline).toISOString();
+      }
+      expect(JSON.parse(JSON.stringify(parsed)), testCase.id).toEqual(expected);
+    }
   });
 
   it("uses Node path and form-query encoding for direct MCP URLs", async () => {

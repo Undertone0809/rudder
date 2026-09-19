@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use thiserror::Error;
 use time::{
-    Date, OffsetDateTime, Time, UtcOffset,
+    Date, OffsetDateTime, PlainDateTime, Time, UtcOffset,
     format_description::{self, well_known::Rfc3339},
 };
 
@@ -905,12 +905,42 @@ fn accepts_ts_coerce_date(text: &str) -> bool {
 
 fn parse_ts_coerce_date(text: &str) -> Option<OffsetDateTime> {
     let text = text.trim();
-    OffsetDateTime::parse(text, &Rfc3339).ok().or_else(|| {
-        format_description::parse_borrowed::<1>("[year]-[month]-[day]")
-            .ok()
-            .and_then(|format| Date::parse(text, &format).ok())
-            .map(|date| OffsetDateTime::new_utc(date, Time::MIDNIGHT))
-    })
+    OffsetDateTime::parse(text, &Rfc3339)
+        .ok()
+        .or_else(|| parse_local_plain_datetime(text))
+        .or_else(|| {
+            format_description::parse_borrowed::<1>("[year]-[month]-[day]")
+                .ok()
+                .and_then(|format| Date::parse(text, &format).ok())
+                .map(|date| OffsetDateTime::new_utc(date, Time::MIDNIGHT))
+        })
+}
+
+fn parse_local_plain_datetime(text: &str) -> Option<OffsetDateTime> {
+    let format = if text.contains('.') {
+        format_description::parse_borrowed::<1>(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]",
+        )
+        .ok()?
+    } else {
+        format_description::parse_borrowed::<1>("[year]-[month]-[day]T[hour]:[minute]:[second]")
+            .ok()?
+    };
+    let local = PlainDateTime::parse(text, &format).ok()?;
+
+    // JavaScript treats an ISO datetime without an offset as local wall-clock
+    // time. Re-resolve the offset after applying the first estimate so DST
+    // transitions use the offset for the represented instant, not for now.
+    let mut offset = UtcOffset::local_offset_at(local.assume_utc()).ok()?;
+    for _ in 0..2 {
+        let candidate = local.assume_offset(offset);
+        let resolved = UtcOffset::local_offset_at(candidate).ok()?;
+        if resolved == offset {
+            return Some(candidate);
+        }
+        offset = resolved;
+    }
+    Some(local.assume_offset(offset))
 }
 
 fn canonical_ts_coerce_date(text: &str) -> Option<String> {
