@@ -1284,8 +1284,16 @@ mod tests {
             (Operation::Attach, true, "noop-attach"),
             (Operation::Detach, false, "noop-detach"),
         ] {
-            let mut state =
-                ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, linked);
+            let mut state = ProjectGoalLinkState::new(
+                "org-a",
+                "org-a",
+                "org-a",
+                "project-a",
+                "goal-a",
+                2,
+                4,
+                linked,
+            );
             state.apply(board(operation, key)).unwrap();
 
             let mut encoded = serde_json::to_value(&state).unwrap();
