@@ -917,20 +917,22 @@ fn parse_ts_coerce_date(text: &str) -> Option<OffsetDateTime> {
 }
 
 fn parse_local_plain_datetime(text: &str) -> Option<OffsetDateTime> {
-    let format = if text.contains('.') {
-        format_description::parse_borrowed::<1>(
-            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]",
-        )
-        .ok()?
-    } else {
-        format_description::parse_borrowed::<1>("[year]-[month]-[day]T[hour]:[minute]:[second]")
-            .ok()?
-    };
-    let local = PlainDateTime::parse(text, &format).ok()?;
+    let local = [
+        "[year]-[month]-[day]T[hour]:[minute]",
+        "[year]-[month]-[day]T[hour]:[minute]:[second]",
+        "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]",
+    ]
+    .into_iter()
+    .find_map(|description| {
+        let format = format_description::parse_borrowed::<1>(description).ok()?;
+        PlainDateTime::parse(text, &format).ok()
+    })?;
 
     // JavaScript treats an ISO datetime without an offset as local wall-clock
-    // time. Re-resolve the offset after applying the first estimate so DST
-    // transitions use the offset for the represented instant, not for now.
+    // time. Re-resolve the offset after applying the first estimate so ordinary
+    // local dates use the offset for the represented instant, not for now. The
+    // instant-based local-offset API cannot identify a DST gap or overlap, so
+    // those cases are not a stable Node-compatibility guarantee here.
     let mut offset = UtcOffset::local_offset_at(local.assume_utc()).ok()?;
     for _ in 0..2 {
         let candidate = local.assume_offset(offset);

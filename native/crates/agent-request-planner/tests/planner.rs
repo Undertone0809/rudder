@@ -1378,6 +1378,78 @@ fn matches_ts_defaults_and_date_only_coercion_boundary() {
 }
 
 #[test]
+fn normalizes_node_timezone_less_iso_precision_variants() {
+    let normalize = |deadline: &str| {
+        let PlanOutcome::Direct(plan) = plan_request(
+            "goal.change.propose",
+            json!({
+                "goal": "goal-1",
+                "contractRevision": 1,
+                "afterContract": {"actionDeadline": deadline},
+                "rationale": "The evidence requires a contract update.",
+                "idempotencyKey": "change-local-precision"
+            }),
+            &runtime(false),
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let body = plan.body.expect("goal change body");
+        body["afterContract"]["actionDeadline"]
+            .as_str()
+            .expect("normalized deadline")
+            .to_owned()
+    };
+
+    // Keep this date away from a DST transition. `local_offset_at` resolves an
+    // instant rather than a wall-clock time, so it cannot provide a portable
+    // oracle for Node's gap/overlap policy without a zone-aware resolver.
+    let minute = normalize("2026-08-20T12:00");
+    let second = normalize("2026-08-20T12:00:00");
+    let fractional = normalize("2026-08-20T12:00:00.123456");
+
+    assert_eq!(minute, second, "minute precision must mean zero seconds");
+    assert!(second.ends_with(".000Z"));
+    assert_eq!(fractional, second.replace(".000Z", ".123Z"));
+}
+
+#[test]
+fn matches_node_new_york_dst_resolution_when_requested() {
+    if std::env::var("TZ").as_deref() != Ok("America/New_York") {
+        eprintln!("skipping America/New_York DST oracle; rerun with TZ=America/New_York");
+        return;
+    }
+
+    let normalize = |deadline: &str| {
+        let PlanOutcome::Direct(plan) = plan_request(
+            "goal.change.propose",
+            json!({
+                "goal": "goal-1",
+                "contractRevision": 1,
+                "afterContract": {"actionDeadline": deadline},
+                "rationale": "The evidence requires a contract update.",
+                "idempotencyKey": "change-new-york-dst"
+            }),
+            &runtime(false),
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let body = plan.body.expect("goal change body");
+        body["afterContract"]["actionDeadline"]
+            .as_str()
+            .expect("normalized deadline")
+            .to_owned()
+    };
+
+    // These are the fixed Node Date oracle values for America/New_York. The
+    // spring gap moves forward to 03:30 EDT; the fall overlap chooses the
+    // earlier 01:30 occurrence in EDT.
+    assert_eq!(normalize("2024-03-10T02:30"), "2024-03-10T07:30:00.000Z");
+    assert_eq!(normalize("2024-11-03T01:30"), "2024-11-03T05:30:00.000Z");
+}
+
+#[test]
 fn matches_node_generated_goal_change_proposal_fixture() {
     let fixture: Value =
         serde_json::from_str(include_str!("fixtures/node-goal-change-proposal.json")).unwrap();
