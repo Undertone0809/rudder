@@ -9,7 +9,10 @@ import { resolveE2EOrganizationWorkspaceRoot } from "./support/organization-stor
 import { expectRightAnchoredSidePanelMotion, sampleSidePanelMotion } from "./support/side-panel-motion";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
-const LOCAL_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const LOCAL_IMAGE_BASE64 = await fs.readFile(
+  new URL("../../ui/public/android-chrome-192x192.png", import.meta.url),
+  "base64",
+);
 const LIBRARY_IMAGE_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X5p1sAAAAASUVORK5CYII=",
   "base64",
@@ -317,6 +320,8 @@ test.describe("Chat Side Panel", () => {
       "src",
       `data:image/png;base64,${LOCAL_IMAGE_BASE64}`,
     );
+    await expect(localImage).toHaveJSProperty("naturalWidth", 192);
+    await expect(localImage).toHaveJSProperty("naturalHeight", 192);
     await expect(assistantMessage.getByRole("link", { name: "side-chat.png" })).toHaveCount(0);
 
     const imageButton = assistantMessage.getByRole("button", { name: "Open image preview: side-chat.png" });
@@ -329,6 +334,7 @@ test.describe("Chat Side Panel", () => {
       "src",
       `data:image/png;base64,${LOCAL_IMAGE_BASE64}`,
     );
+    await expect(preview.getByRole("img", { name: "side-chat.png" })).toHaveJSProperty("naturalWidth", 192);
     await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
     const previewCalls = await page.evaluate(() => (
       (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
