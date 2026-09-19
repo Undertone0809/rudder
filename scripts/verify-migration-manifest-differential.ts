@@ -14,7 +14,13 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rustManifest = path.join(repoRoot, "native/Cargo.toml");
-const rustBinary = path.join(repoRoot, "native/target/debug/migration-manifest-differential");
+const rustBinary = path.join(
+  repoRoot,
+  "native/target/debug",
+  process.platform === "win32"
+    ? "migration-manifest-differential.exe"
+    : "migration-manifest-differential",
+);
 const schema = "rudder.migration-manifest.differential/v1";
 const protocolVersion = 1;
 const legacyFileNames = [
