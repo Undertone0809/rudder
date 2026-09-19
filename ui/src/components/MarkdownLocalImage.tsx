@@ -20,6 +20,7 @@ export function LocalFileLinkIcon({ filePath }: { filePath: string }) {
 
 function MarkdownLocalImageLink({
   children,
+  enablePreview,
   href,
   imageName,
   onClick,
@@ -27,6 +28,7 @@ function MarkdownLocalImageLink({
   targetPath,
 }: {
   children: ReactNode;
+  enablePreview: boolean;
   href: string;
   imageName: string;
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void;
@@ -71,6 +73,17 @@ function MarkdownLocalImageLink({
     );
   }
 
+  if (!enablePreview) {
+    return (
+      <img
+        {...sourceAttributes}
+        src={previewSrc}
+        alt={imageName}
+        className="rudder-local-image-media"
+      />
+    );
+  }
+
   return (
     <InspectableImage
       {...sourceAttributes}
@@ -106,6 +119,7 @@ export function MarkdownLocalFileLink({
     return (
       <MarkdownLocalImageLink
         href={href}
+        enablePreview={true}
         imageName={imageName}
         targetPath={filePath}
         sourceAttributes={sourceAttributes}
@@ -132,11 +146,13 @@ export function MarkdownLocalFileLink({
 
 export function renderMarkdownLocalImage({
   alt,
+  enablePreview,
   onClick,
   sourceAttributes,
   src,
 }: {
   alt?: string | null;
+  enablePreview: boolean;
   onClick: (event: MouseEvent<HTMLAnchorElement>, imageName: string) => void;
   sourceAttributes: MarkdownSourceAttributes;
   src: string;
@@ -149,6 +165,7 @@ export function renderMarkdownLocalImage({
   return (
     <MarkdownLocalImageLink
       href={src}
+      enablePreview={enablePreview}
       imageName={imageName}
       targetPath={targetPath}
       sourceAttributes={sourceAttributes}
