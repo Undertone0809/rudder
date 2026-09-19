@@ -265,7 +265,7 @@ async function installEnabledBrowserSettingsStub(page: Page) {
 }
 
 test.describe("Chat Side Panel", () => {
-  test("opens local image links in the global image preview instead of the Side Panel", async ({ page }) => {
+  test("renders local Markdown images inline and opens them in the global image preview", async ({ page }) => {
     const localImagePath = "/tmp/side-chat.png";
     await installDesktopShellLocalImagePreviewStub(page, localImagePath);
 
@@ -297,7 +297,7 @@ test.describe("Chat Side Panel", () => {
       role: "assistant",
       kind: "message",
       status: "completed",
-      body: `Inspect [side-chat.png](${localImagePath}).`,
+      body: `Inspect ![side-chat.png](${localImagePath}).`,
       structuredPayload: null,
       replyingAgentId: null,
       chatTurnId: randomUUID(),
@@ -311,23 +311,38 @@ test.describe("Chat Side Panel", () => {
     await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
 
     const assistantMessage = page.getByTestId("chat-assistant-message").last();
-    const localImageLink = assistantMessage.getByRole("link", { name: "side-chat.png" });
-    await expect(localImageLink).toBeVisible({ timeout: 15_000 });
-    await expect(localImageLink.locator('[data-local-file-icon="image"]')).toBeVisible();
-    await localImageLink.click();
+    const localImage = assistantMessage.getByRole("img", { name: "side-chat.png" });
+    await expect(localImage).toBeVisible({ timeout: 15_000 });
+    await expect(localImage).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${LOCAL_IMAGE_BASE64}`,
+    );
+    await expect(assistantMessage.getByRole("link", { name: "side-chat.png" })).toHaveCount(0);
 
-    const preview = page.getByTestId("chat-local-image-preview-dialog");
+    const imageButton = assistantMessage.getByRole("button", { name: "Open image preview: side-chat.png" });
+    await expect(imageButton).toBeVisible();
+    await imageButton.click();
+
+    const preview = page.getByTestId("markdown-body-image-preview-dialog");
     await expect(preview).toBeVisible({ timeout: 15_000 });
     await expect(preview.getByRole("img", { name: "side-chat.png" })).toHaveAttribute(
       "src",
       `data:image/png;base64,${LOCAL_IMAGE_BASE64}`,
     );
     await expect(page.getByTestId("chat-side-panel")).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => (
+    const previewCalls = await page.evaluate(() => (
       (window as typeof window & { __rudderLocalFilePreviewCalls?: string[] }).__rudderLocalFilePreviewCalls ?? []
-    ))).toEqual([localImagePath]);
+    ));
+    expect(previewCalls.length).toBeGreaterThanOrEqual(1);
+    expect(previewCalls.every((filePath) => filePath === localImagePath)).toBe(true);
 
     await page.screenshot({ path: "/tmp/rudder-chat-local-image-preview.png", fullPage: true });
+    await page.keyboard.press("Escape");
+    await expect(preview).toHaveCount(0);
+
+    await imageButton.focus();
+    await page.keyboard.press("Enter");
+    await expect(preview).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(preview).toHaveCount(0);
   });
