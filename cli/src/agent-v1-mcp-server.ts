@@ -1949,22 +1949,17 @@ function validateMcpToolArguments(toolName: string, input: Record<string, unknow
   };
   const required = Array.isArray(schema.required) ? schema.required : [];
   for (const key of required) {
-    const value = input[key];
-    const missing = value === undefined
-      || value === null
-      || (typeof value === "string" && value.trim().length === 0)
-      || (Array.isArray(value) && value.length === 0);
-    if (missing) throwInvalidMcpArgument(toolName, key, "is required");
+    const property = String(key);
+    if (!Object.prototype.hasOwnProperty.call(input, property) || input[property] === undefined) {
+      throwInvalidMcpArgument(toolName, property, "is required");
+    }
   }
   if (Array.isArray(schema.anyOf)) {
     const matches = schema.anyOf.some((candidate) => {
       if (!isRecord(candidate) || !Array.isArray(candidate.required)) return false;
       return candidate.required.every((key) => {
-        const value = input[String(key)];
-        return value !== undefined
-          && value !== null
-          && !(typeof value === "string" && value.trim().length === 0)
-          && !(Array.isArray(value) && value.length === 0);
+        const property = String(key);
+        return Object.prototype.hasOwnProperty.call(input, property) && input[property] !== undefined;
       });
     });
     if (!matches) {
@@ -1984,11 +1979,17 @@ function validateMcpToolArguments(toolName: string, input: Record<string, unknow
 }
 
 function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): string | null {
-  if (Array.isArray(schema.oneOf)) {
-    const matches = schema.oneOf.some((candidate) =>
+  if (Array.isArray(schema.anyOf)) {
+    const matches = schema.anyOf.some((candidate) =>
       isRecord(candidate) && jsonSchemaViolation(value, candidate) === null
     );
     if (!matches) return "does not match any allowed shape";
+  }
+  if (Array.isArray(schema.oneOf)) {
+    const matchingBranches = schema.oneOf.filter((candidate) =>
+      isRecord(candidate) && jsonSchemaViolation(value, candidate) === null
+    ).length;
+    if (matchingBranches !== 1) return "does not match exactly one allowed shape";
   }
 
   const types = Array.isArray(schema.type) ? schema.type : schema.type === undefined ? [] : [schema.type];
@@ -1996,10 +1997,12 @@ function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): s
     const validType = types.some((type) => (
       type === "string" ? typeof value === "string"
         : type === "number" ? typeof value === "number" && Number.isFinite(value)
-          : type === "boolean" ? typeof value === "boolean"
-            : type === "array" ? Array.isArray(value)
-              : type === "object" ? isRecord(value)
-                : false
+          : type === "integer" ? typeof value === "number" && Number.isInteger(value)
+            : type === "boolean" ? typeof value === "boolean"
+              : type === "array" ? Array.isArray(value)
+                : type === "object" ? isRecord(value)
+                  : type === "null" ? value === null
+                    : false
     ));
     if (!validType) return `must be ${types.join(" or ")}`;
   }
@@ -2038,11 +2041,14 @@ function jsonSchemaViolation(value: unknown, schema: Record<string, unknown>): s
       }
     }
   }
-  if (isRecord(value) && schema.type === "object") {
+  if (isRecord(value)) {
     const properties = isRecord(schema.properties) ? schema.properties : {};
+    if (typeof schema.minProperties === "number" && Object.keys(value).length < schema.minProperties) {
+      return `must contain at least ${schema.minProperties} propert${schema.minProperties === 1 ? "y" : "ies"}`;
+    }
     const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
     for (const key of required) {
-      if (!(key in value)) return `field ${key} is required`;
+      if (!Object.prototype.hasOwnProperty.call(value, key)) return `field ${key} is required`;
     }
     if (schema.additionalProperties === false) {
       const unsupported = Object.keys(value).filter((key) => !(key in properties));

@@ -911,16 +911,24 @@ mod tests {
                 "text": {"type": "string"},
                 "items": {"type": "array"},
                 "boundedText": {"type": "string", "minLength": 1},
-                "boundedItems": {"type": "array", "minItems": 1}
+                "boundedItems": {"type": "array", "minItems": 1},
+                "nullable": {
+                    "oneOf": [
+                        {"type": "string", "minLength": 1},
+                        {"type": "null"}
+                    ]
+                },
+                "optionalText": {"type": "string", "minLength": 1}
             },
-            "required": ["text", "items", "boundedText", "boundedItems"]
+            "required": ["text", "items", "boundedText", "boundedItems", "nullable"]
         });
 
         let mut valid = json!({
             "text": "",
             "items": [],
             "boundedText": "ok",
-            "boundedItems": [1]
+            "boundedItems": [1],
+            "nullable": null
         });
         assert!(validate_schema("test", &valid, &schema, "arguments").is_ok());
 
@@ -930,5 +938,12 @@ mod tests {
         valid["boundedText"] = json!("ok");
         valid["boundedItems"] = json!([]);
         assert!(validate_schema("test", &valid, &schema, "arguments").is_err());
+
+        valid["boundedItems"] = json!([1]);
+        valid["optionalText"] = json!("");
+        assert!(validate_schema("test", &valid, &schema, "arguments").is_err());
+
+        valid.as_object_mut().unwrap().remove("optionalText");
+        assert!(validate_schema("test", &valid, &schema, "arguments").is_ok());
     }
 }

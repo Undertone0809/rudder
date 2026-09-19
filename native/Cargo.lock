@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "rudder-agent-request-planner"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "rudder-agent-contract-core",
  "serde",

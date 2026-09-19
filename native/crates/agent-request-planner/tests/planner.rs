@@ -36,10 +36,29 @@ fn sample(schema: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("object");
     match ty {
-        "string" => Value::String("sample 雪".into()),
+        "string" => {
+            let minimum = schema.get("minLength").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let default_length = "sample 雪".chars().count();
+            let length = schema
+                .get("maxLength")
+                .and_then(Value::as_u64)
+                .map_or(minimum.max(default_length), |maximum| {
+                    minimum.max(default_length).min(maximum as usize)
+                });
+            let seed = "sample 雪";
+            Value::String(seed.chars().cycle().take(length).collect())
+        }
         "number" | "integer" => json!(1),
         "boolean" => json!(true),
-        "array" => json!([sample(&schema["items"])]),
+        "array" => {
+            let minimum = schema.get("minItems").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let count = schema
+                .get("maxItems")
+                .and_then(Value::as_u64)
+                .map_or(minimum, |maximum| minimum.min(maximum as usize));
+            let item = schema.get("items").map(sample).unwrap_or(Value::Null);
+            Value::Array((0..count).map(|_| item.clone()).collect())
+        }
         "object" => {
             let mut result = Map::new();
             if let Some(required) = schema.get("required").and_then(Value::as_array) {
@@ -967,13 +986,20 @@ fn aliases_are_normalized_before_unknown_and_schema_checks() {
     )
     .unwrap();
     assert_eq!(canonical, legacy);
-    let transcript = plan_request(
+    let transcript_canonical = plan_request(
+        "runs.transcript",
+        json!({"run":"r","maxChars":321}),
+        &runtime(false),
+    )
+    .unwrap();
+    let transcript_legacy = plan_request(
         "runs.transcript",
         json!({"run":"r","maxOutputChars":321}),
         &runtime(false),
     )
     .unwrap();
-    let PlanOutcome::Direct(transcript) = transcript else {
+    assert_eq!(transcript_canonical, transcript_legacy);
+    let PlanOutcome::Direct(transcript) = transcript_legacy else {
         panic!()
     };
     assert!(

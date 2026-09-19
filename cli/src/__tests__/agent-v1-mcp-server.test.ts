@@ -963,6 +963,64 @@ describe("agent-v1 MCP server", () => {
       .toThrow(/arguments must be object.*tools\/list/i);
   });
 
+  it("uses property presence for required values and declared constraints for emptiness", () => {
+    const env = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+    };
+
+    const checkpoint = buildAgentV1ToolCallPlan("rudder_goal_checkpoint", {
+      goal: "goal-1",
+      summary: "Checkpoint",
+      evidenceRefs: [],
+      expectedPlanRevision: 1,
+      continuation: { kind: "wait", summary: "Await input", wakeCondition: null },
+      idempotencyKey: "checkpoint-1",
+    }, env);
+    expect(checkpoint.args).toContain(JSON.stringify([]));
+
+    expect(() => buildAgentV1ToolCallPlan("rudder_goal_result_propose", {
+      goal: "goal-1",
+      contractRevision: 1,
+      criteria: [],
+      evidenceRefs: ["artifact://result"],
+      riskSummary: "No known gap.",
+      idempotencyKey: "result-1",
+    }, env)).toThrow(/criteria must contain at least 1 item/i);
+
+    expect(() => buildAgentV1ToolCallPlan("rudder_agent_update", { title: "" }, env))
+      .toThrow(/title must contain at least 1 character/i);
+    expect(buildAgentV1ToolCallPlan("rudder_agent_update", {}, env).args)
+      .toEqual(["agent", "update", "runtime-agent", "--json"]);
+
+    const nullableDeadline = buildAgentV1ToolCallPlan("rudder_goal_change_propose", {
+      goal: "goal-1",
+      contractRevision: 1,
+      afterContract: { actionDeadline: null },
+      rationale: "Clear the action deadline.",
+      idempotencyKey: "change-1",
+    }, env);
+    expect(nullableDeadline.args).toContain(JSON.stringify({ actionDeadline: null }));
+
+    expect(() => buildAgentV1ToolCallPlan("rudder_goal_change_propose", {
+      goal: "goal-1",
+      contractRevision: 1,
+      afterContract: {},
+      rationale: "The proposed contract is empty.",
+      idempotencyKey: "change-empty",
+    }, env)).toThrow(/afterContract.*at least 1 property/i);
+
+    expect(() => buildAgentV1ToolCallPlan("rudder_goal_change_propose", {
+      goal: "goal-1",
+      contractRevision: 1,
+      afterContract: { criteria: [] },
+      rationale: "The criteria need revision.",
+      idempotencyKey: "change-2",
+    }, env)).toThrow(/afterContract.*criteria.*at least 1 item/i);
+  });
+
   it("routes no-query issue discovery through the explicit list capability", () => {
     const plan = buildAgentV1ToolCallPlan("rudder_issue_list", {
       status: "todo,in_progress",
@@ -1850,7 +1908,7 @@ describe("agent-v1 MCP server", () => {
       },
       {
         name: "rudder_runs_log",
-        arguments: { run: "run-1", offset: 64, limitBytes: 4096 },
+        arguments: { run: "run-1", maxChars: 2000, offset: 64, limitBytes: 4096 },
         path: "/api/run-intelligence/runs/run-1/log",
         query: { offset: "64", limitBytes: "4096" },
       },
