@@ -129,6 +129,8 @@ export function ImagePreviewDialog({
     }
   };
 
+  if (!preview) return null;
+
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent
