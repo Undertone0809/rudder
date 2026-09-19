@@ -14,13 +14,15 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rustManifest = path.join(repoRoot, "native/Cargo.toml");
+const rustTargetDir = path.join(repoRoot, "native", "target", "migration-differential");
 const rustBinary = path.join(
-  repoRoot,
-  "native/target/debug",
+  rustTargetDir,
+  "debug",
   process.platform === "win32"
     ? "migration-manifest-differential.exe"
     : "migration-manifest-differential",
 );
+const packageManager = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const schema = "rudder.migration-manifest.differential/v1";
 const protocolVersion = 1;
 const legacyFileNames = [
@@ -157,6 +159,26 @@ function nodeOptions(fixture: Fixture) {
   };
 }
 
+type FixtureJournal = {
+  version: string;
+  dialect: string;
+  entries: JournalEntry[];
+};
+
+function updateJournal(fixture: Fixture, update: (journal: FixtureJournal) => void): void {
+  const journal = JSON.parse(readFileSync(fixture.journalFile, "utf8")) as FixtureJournal;
+  update(journal);
+  writeFileSync(fixture.journalFile, JSON.stringify(journal));
+}
+
+async function assertNodeRejects(
+  fixture: Fixture,
+  label: string,
+  expected: RegExp | { code?: string },
+): Promise<void> {
+  await assert.rejects(createMigrationManifest(nodeOptions(fixture)), expected, label);
+}
+
 function spawnProcess(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<RustRun> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -189,14 +211,28 @@ async function buildRustBinary(): Promise<void> {
       "rudder-migration-core",
       "--bin",
       "migration-manifest-differential",
+      "--target-dir",
+      rustTargetDir,
     ],
-    { ...process.env, DATABASE_URL: noDatabaseUrl },
+    { ...process.env, CARGO_TARGET_DIR: rustTargetDir, DATABASE_URL: noDatabaseUrl },
   );
   if (build.exitCode !== 0) {
     throw new Error(`Rust differential binary build failed:\n${build.stderr || build.stdout}`);
   }
   assert.equal(build.signal, null);
   assert.equal(existsSync(rustBinary), true, "cargo build did not produce the differential binary");
+}
+
+async function buildDbPackage(): Promise<void> {
+  const build = await spawnProcess(
+    packageManager,
+    ["--filter", "@rudderhq/db", "build"],
+    { ...process.env, DATABASE_URL: noDatabaseUrl },
+  );
+  if (build.exitCode !== 0) {
+    throw new Error(`DB package build failed:\n${build.stderr || build.stdout}`);
+  }
+  assert.equal(build.signal, null);
 }
 
 async function runRustWithInput(input: string, expectedExitCode = 0): Promise<DifferentialResponse> {
@@ -252,6 +288,39 @@ async function nodeProjection(fixture: Fixture, manifest: MigrationManifest): Pr
   };
 }
 
+async function assertCompatibilityParity(
+  label: string,
+  baselineFixture: Fixture,
+  candidateFixture: Fixture,
+): Promise<void> {
+  const [baselineNode, candidateNode] = await Promise.all([
+    createMigrationManifest(nodeOptions(baselineFixture)),
+    createMigrationManifest(nodeOptions(candidateFixture)),
+  ]);
+  const response = await runRustWithInput(
+    requestFor(sourceSpec(baselineFixture), sourceSpec(candidateFixture)),
+  );
+  assert.equal(response.status, "ok", label);
+  const baselineExpected = await nodeProjection(baselineFixture, baselineNode);
+  const candidateExpected = await nodeProjection(candidateFixture, candidateNode);
+  assertSourceMatches(response.baseline, baselineExpected, `${label} baseline`);
+  assertSourceMatches(response.candidate, candidateExpected, `${label} candidate`);
+
+  const nodeCompatibility = validateMigrationManifestCompatibility(baselineNode, candidateNode);
+  assert.ok(response.compatibility, `${label} compatibility is missing`);
+  assert.equal(response.compatibility.valid, nodeCompatibility.valid, label);
+  assert.equal(response.compatibility.compatible, nodeCompatibility.valid, label);
+  assert.equal(response.compatibility.errors.length, nodeCompatibility.errors.length, label);
+  assert.deepEqual(
+    response.compatibility.addedEntries,
+    candidateExpected.entries.slice(
+      baselineNode.canonical.entries.length,
+      candidateNode.canonical.entries.length,
+    ),
+    label,
+  );
+}
+
 function assertSourceMatches(
   source: SourceResponse | undefined,
   expected: ManifestProjection,
@@ -272,17 +341,18 @@ function requestFor(baseline: SourceSpec, candidate: SourceSpec) {
 }
 
 async function assertRegularFixtureParity(): Promise<void> {
+  const rawBytes = new Uint8Array([0x53, 0x45, 0x4c, 0x45, 0x43, 0x54, 0x20, 0xc3, 0xa9, 0x0d, 0x0a]);
   const baselineFixture = createFixture(
     [
       { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
-      { tag: "0001_second", sql: "SELECT 1;\n" },
+      { tag: "0001_second", sql: rawBytes },
     ],
     [{ tag: legacyFileNames[0].slice(0, -4), sql: "SELECT legacy;\n" }],
   );
   const candidateFixture = createFixture(
     [
       { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
-      { tag: "0001_second", sql: "SELECT 1;\n" },
+      { tag: "0001_second", sql: rawBytes },
       { tag: "0002_third", sql: "SELECT 2;\n" },
     ],
     [{ tag: legacyFileNames[0].slice(0, -4), sql: "SELECT legacy;\n" }],
@@ -327,22 +397,94 @@ async function assertRegularFixtureParity(): Promise<void> {
   const editedNodeCompatibility = validateMigrationManifestCompatibility(baselineNode, editedNode);
   assert.equal(editedNodeCompatibility.valid, false);
   assert.equal(editedResponse.compatibility?.errors.length, editedNodeCompatibility.errors.length);
+
+  const byteDistinctFixture = createFixture([
+    { tag: "0000_raw", sql: new Uint8Array([0x43, 0x52, 0x4c, 0x46, 0x0d, 0x0a, 0x00, 0xff]) },
+  ]);
+  const byteDistinctNode = await createMigrationManifest(nodeOptions(byteDistinctFixture));
+  const byteDistinctResponse = await runRustWithInput(
+    requestFor(sourceSpec(byteDistinctFixture), sourceSpec(byteDistinctFixture)),
+  );
+  const byteDistinctExpected = await nodeProjection(byteDistinctFixture, byteDistinctNode);
+  assertSourceMatches(byteDistinctResponse.baseline, byteDistinctExpected, "raw-byte baseline");
+  assertSourceMatches(byteDistinctResponse.candidate, byteDistinctExpected, "raw-byte candidate");
+  assert.equal(byteDistinctResponse.compatibility?.classification, "compatible_noop");
+}
+
+async function assertLegacyTailCompatibility(): Promise<void> {
+  const baselineFixture = createFixture(
+    [{ tag: "0000_first", sql: "SELECT 1;\n" }],
+    [{ tag: legacyFileNames[0].slice(0, -4), sql: "SELECT legacy;\n" }],
+  );
+  const appendedFixture = createFixture(
+    [
+      { tag: "0000_first", sql: "SELECT 1;\n" },
+      { tag: "0001_second", sql: "SELECT 2;\n" },
+    ],
+    [{ tag: legacyFileNames[0].slice(0, -4), sql: "SELECT legacy;\n" }],
+  );
+  const removedFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  const editedFixture = createFixture(
+    [{ tag: "0000_first", sql: "SELECT 1;\n" }],
+    [{ tag: legacyFileNames[0].slice(0, -4), sql: "SELECT edited-legacy;\n" }],
+  );
+  const addedLegacyFixture = createFixture(
+    [{ tag: "0000_first", sql: "SELECT 1;\n" }],
+    [
+      { tag: legacyFileNames[0].slice(0, -4), sql: "SELECT legacy;\n" },
+      { tag: legacyFileNames[1].slice(0, -4), sql: "SELECT second-legacy;\n" },
+    ],
+  );
+
+  await assertCompatibilityParity("canonical append with legacy tail", baselineFixture, appendedFixture);
+  await assertCompatibilityParity("legacy tail removal", baselineFixture, removedFixture);
+  await assertCompatibilityParity("legacy tail edit", baselineFixture, editedFixture);
+  await assertCompatibilityParity("legacy tail addition", baselineFixture, addedLegacyFixture);
 }
 
 async function assertRealMigrationTreeParity(): Promise<void> {
-  const migrationsFolder = path.join(repoRoot, "packages/db/src/migrations");
-  const journalFile = path.join(migrationsFolder, "meta/_journal.json");
-  const nodeManifest = await createMigrationManifest({ migrationsFolder, journalFile });
-  const response = await runRustWithInput(requestFor(
-    { migrationsDir: migrationsFolder, journalFile },
-    { migrationsDir: migrationsFolder, journalFile },
+  const sourceMigrationsFolder = path.join(repoRoot, "packages/db/src/migrations");
+  const sourceJournalFile = path.join(sourceMigrationsFolder, "meta/_journal.json");
+  const distMigrationsFolder = path.join(repoRoot, "packages/db/dist/migrations");
+  const distJournalFile = path.join(distMigrationsFolder, "meta/_journal.json");
+  assert.equal(existsSync(distJournalFile), true, "DB package build did not produce dist journal");
+  const sourceNodeManifest = await createMigrationManifest({
+    migrationsFolder: sourceMigrationsFolder,
+    journalFile: sourceJournalFile,
+  });
+  const distNodeManifest = await createMigrationManifest({
+    migrationsFolder: distMigrationsFolder,
+    journalFile: distJournalFile,
+  });
+  assert.deepEqual(distNodeManifest, sourceNodeManifest, "source and dist manifests diverged");
+
+  const sourceResponse = await runRustWithInput(requestFor(
+    { migrationsDir: sourceMigrationsFolder, journalFile: sourceJournalFile },
+    { migrationsDir: sourceMigrationsFolder, journalFile: sourceJournalFile },
   ));
-  assert.equal(response.status, "ok");
-  const expected = await nodeProjection({ root: repoRoot, migrationsFolder, journalFile }, nodeManifest);
-  assertSourceMatches(response.baseline, expected, "real migration baseline");
-  assertSourceMatches(response.candidate, expected, "real migration candidate");
-  assert.equal(response.compatibility?.classification, "compatible_noop");
-  assert.deepEqual(response.compatibility?.errors, []);
+  assert.equal(sourceResponse.status, "ok");
+  const sourceExpected = await nodeProjection(
+    { root: repoRoot, migrationsFolder: sourceMigrationsFolder, journalFile: sourceJournalFile },
+    sourceNodeManifest,
+  );
+  assertSourceMatches(sourceResponse.baseline, sourceExpected, "real source baseline");
+  assertSourceMatches(sourceResponse.candidate, sourceExpected, "real source candidate");
+  assert.equal(sourceResponse.compatibility?.classification, "compatible_noop");
+  assert.deepEqual(sourceResponse.compatibility?.errors, []);
+
+  const distResponse = await runRustWithInput(requestFor(
+    { migrationsDir: distMigrationsFolder, journalFile: distJournalFile },
+    { migrationsDir: distMigrationsFolder, journalFile: distJournalFile },
+  ));
+  assert.equal(distResponse.status, "ok");
+  const distExpected = await nodeProjection(
+    { root: repoRoot, migrationsFolder: distMigrationsFolder, journalFile: distJournalFile },
+    distNodeManifest,
+  );
+  assertSourceMatches(distResponse.baseline, distExpected, "real dist baseline");
+  assertSourceMatches(distResponse.candidate, distExpected, "real dist candidate");
+  assert.equal(distResponse.compatibility?.classification, "compatible_noop");
+  assert.deepEqual(distResponse.compatibility?.errors, []);
 }
 
 async function assertMalformedInputFailsClosed(): Promise<void> {
@@ -370,7 +512,102 @@ async function assertSourceFailure(
   assert.equal(response.candidate?.error?.code, code, label);
 }
 
+async function assertRustSourceFailureAgainstFixture(
+  label: string,
+  baselineFixture: Fixture,
+  candidateFixture: Fixture,
+  classification: string,
+  code: string,
+): Promise<void> {
+  const response = await runRustWithInput(
+    requestFor(sourceSpec(baselineFixture), sourceSpec(candidateFixture)),
+    1,
+  );
+  assert.equal(response.status, "error", label);
+  assert.equal(response.baseline?.status, "ok", label);
+  assert.equal(response.candidate?.status, "error", label);
+  assert.equal(response.candidate?.error?.classification, classification, label);
+  assert.equal(response.candidate?.error?.code, code, label);
+}
+
 async function assertFailClosedSourceCases(): Promise<void> {
+  const validBaseline = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+
+  const unsupportedVersionFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  updateJournal(unsupportedVersionFixture, (journal) => { journal.version = "6"; });
+  await assertNodeRejects(unsupportedVersionFixture, "unsupported version fixture", /version 7/);
+  await assertRustSourceFailureAgainstFixture(
+    "unsupported version fixture",
+    validBaseline,
+    unsupportedVersionFixture,
+    "source",
+    "migration_journal_invalid",
+  );
+
+  const unsupportedDialectFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  updateJournal(unsupportedDialectFixture, (journal) => { journal.dialect = "sqlite"; });
+  await assertNodeRejects(unsupportedDialectFixture, "unsupported dialect fixture", /postgresql dialect/);
+  await assertRustSourceFailureAgainstFixture(
+    "unsupported dialect fixture",
+    validBaseline,
+    unsupportedDialectFixture,
+    "source",
+    "migration_journal_invalid",
+  );
+
+  const malformedJournalFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  writeFileSync(
+    malformedJournalFixture.journalFile,
+    JSON.stringify({ version: "7", dialect: "postgresql", entries: null }),
+  );
+  await assertNodeRejects(malformedJournalFixture, "malformed journal fixture", /no entries array/);
+  await assertRustSourceFailureAgainstFixture(
+    "malformed journal fixture",
+    validBaseline,
+    malformedJournalFixture,
+    "source",
+    "migration_journal_invalid",
+  );
+
+  const reorderedFixture = createFixture([
+    { tag: "0000_first", sql: "SELECT 1;\n" },
+    { tag: "0001_second", sql: "SELECT 2;\n" },
+  ]);
+  updateJournal(reorderedFixture, (journal) => { journal.entries[1].idx = 0; });
+  await assertNodeRejects(reorderedFixture, "reordered journal fixture", /not contiguous/);
+  await assertRustSourceFailureAgainstFixture(
+    "reordered journal fixture",
+    validBaseline,
+    reorderedFixture,
+    "source",
+    "migration_journal_reordered",
+  );
+
+  const duplicateFixture = createFixture([
+    { tag: "0000_first", sql: "SELECT 1;\n" },
+    { tag: "0001_second", sql: "SELECT 2;\n" },
+  ]);
+  updateJournal(duplicateFixture, (journal) => { journal.entries[1].tag = journal.entries[0].tag; });
+  await assertNodeRejects(duplicateFixture, "duplicate journal fixture", /repeats/);
+  await assertRustSourceFailureAgainstFixture(
+    "duplicate journal fixture",
+    validBaseline,
+    duplicateFixture,
+    "source",
+    "migration_journal_duplicate",
+  );
+
+  const unsafeJournalFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  updateJournal(unsafeJournalFixture, (journal) => { journal.entries[0].tag = "../escape"; });
+  await assertNodeRejects(unsafeJournalFixture, "unsafe journal fixture", /invalid tag/);
+  await assertRustSourceFailureAgainstFixture(
+    "unsafe journal fixture",
+    validBaseline,
+    unsafeJournalFixture,
+    "source",
+    "migration_journal_path_invalid",
+  );
+
   const symlinkFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
   if (process.platform !== "win32") {
     const target = path.join(symlinkFixture.root, "outside.sql");
@@ -395,6 +632,7 @@ async function assertFailClosedSourceCases(): Promise<void> {
 
   const unknownFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
   writeFileSync(path.join(unknownFixture.migrationsFolder, "0001_unknown.sql"), "SELECT unknown;\n");
+  await assertNodeRejects(unknownFixture, "unknown SQL fixture", /missing from the journal/);
   await assertSourceFailure(
     "unknown fixture",
     sourceSpec(unknownFixture),
@@ -410,9 +648,55 @@ async function assertFailClosedSourceCases(): Promise<void> {
     "migration_sql_size_limit",
   );
 
+  const journalSizeFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  await assertSourceFailure(
+    "journal size fixture",
+    sourceSpec(journalSizeFixture, { limits: { maxJournalBytes: 1 } }),
+    "size_limit",
+    "migration_journal_size_limit",
+  );
+
+  const totalSizeFixture = createFixture([{ tag: "0000_first", sql: "SELECT 123456789;\n" }]);
+  await assertSourceFailure(
+    "total SQL size fixture",
+    sourceSpec(totalSizeFixture, { limits: { maxTotalSqlBytes: 8 } }),
+    "size_limit",
+    "migration_sql_total_size_limit",
+  );
+
+  const directoryEntriesFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  await assertSourceFailure(
+    "directory entries fixture",
+    sourceSpec(directoryEntriesFixture, { limits: { maxDirectoryEntries: 1 } }),
+    "source",
+    "migration_directory_entries_limit",
+  );
+
+  const sqlFilesLimitFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  await assertSourceFailure(
+    "SQL files limit fixture",
+    sourceSpec(sqlFilesLimitFixture, { limits: { maxSqlFiles: 0 } }),
+    "source",
+    "migration_sql_files_limit",
+  );
+
+  const unsafeFileFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  writeFileSync(path.join(unsafeFileFixture.migrationsFolder, "bad name.sql"), "SELECT unsafe;\n");
+  await assertNodeRejects(unsafeFileFixture, "unsafe SQL filename fixture", /missing from the journal/);
+  await assertSourceFailure(
+    "unsafe SQL filename fixture",
+    sourceSpec(unsafeFileFixture),
+    "source",
+    "migration_sql_path_invalid",
+  );
+
   const outsideRootFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
   const outsideJournal = path.join(outsideRootFixture.root, "outside-journal.json");
   writeFileSync(outsideJournal, readFileSync(outsideRootFixture.journalFile));
+  await createMigrationManifest({
+    migrationsFolder: outsideRootFixture.migrationsFolder,
+    journalFile: outsideJournal,
+  });
   await assertSourceFailure(
     "outside-root fixture",
     {
@@ -426,8 +710,10 @@ async function assertFailClosedSourceCases(): Promise<void> {
 
 async function main(): Promise<void> {
   await buildRustBinary();
+  await buildDbPackage();
   await assertMalformedInputFailsClosed();
   await assertRegularFixtureParity();
+  await assertLegacyTailCompatibility();
   await assertRealMigrationTreeParity();
   await assertFailClosedSourceCases();
   console.log("PASS Node -> Rust migration manifest differential");
