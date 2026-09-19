@@ -4,6 +4,7 @@ import {
   chooseLatestRelease,
   compareRudderVersions,
   normalizeReleaseVersion,
+  requiredDesktopUpdateAssetNames,
   resolveUpdateChannel,
 } from "./update-check.js";
 
@@ -68,6 +69,7 @@ describe("desktop update checks", () => {
       appName: "Rudder",
       repo: "example/rudder",
       releasesUrl: "https://example.test/releases",
+      requiredAssetNamesForVersion: () => [],
       fetchImpl: async () => new Response(JSON.stringify([
         { tag_name: "v0.1.1-canary.1", prerelease: true, html_url: "canary" },
         { tag_name: "v0.1.0", prerelease: false, html_url: "stable" },
@@ -87,6 +89,7 @@ describe("desktop update checks", () => {
       repo: "example/rudder",
       releasesUrl: "https://example.test/releases",
       channel: "canary",
+      requiredAssetNamesForVersion: () => [],
       fetchImpl: async () => new Response(JSON.stringify([
         { tag_name: "canary/v0.2.0-canary.41", prerelease: true, html_url: "canary" },
         { tag_name: "v0.2.1", prerelease: false, html_url: "stable" },
@@ -108,6 +111,7 @@ describe("desktop update checks", () => {
         repo: "example/rudder",
         releasesUrl: "https://github.com/example/rudder/releases",
         channel: "canary",
+        requiredAssetNamesForVersion: () => [],
         fetchImpl: async (url) => {
           if (String(url).includes("api.github.com")) {
             return new Response("rate limited", { status: 403 });
@@ -123,6 +127,69 @@ describe("desktop update checks", () => {
       expect(result.status).toBe("update-available");
       expect(result.latestVersion).toBe("0.1.1");
       expect(result.releaseUrl).toBe("https://github.com/example/rudder/releases/tag/v0.1.1");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("skips a newer release whose platform assets are still uploading", async () => {
+    const portableAsset = (version: string) => requiredDesktopUpdateAssetNames(version, process.platform)[1];
+    const result = await checkForRudderDesktopUpdates({
+      currentVersion: "0.1.0",
+      appName: "Rudder",
+      repo: "example/rudder",
+      releasesUrl: "https://example.test/releases",
+      fetchImpl: async () => new Response(JSON.stringify([
+        {
+          tag_name: "v0.2.0",
+          prerelease: false,
+          html_url: "incomplete",
+          assets: [{ name: "Rudder-0.2.0-linux-x64.AppImage" }],
+        },
+        {
+          tag_name: "v0.1.1",
+          prerelease: false,
+          html_url: "complete",
+          assets: [
+            { name: "SHASUMS256.txt" },
+            { name: portableAsset("0.1.1") },
+          ],
+        },
+      ])),
+    });
+
+    expect(result.status).toBe("update-available");
+    expect(result.latestVersion).toBe("0.1.1");
+    expect(result.releaseUrl).toBe("complete");
+  });
+
+  it("does not advertise a release when the API and HTML fallback have no complete assets", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = await checkForRudderDesktopUpdates({
+        currentVersion: "0.1.0-canary.1",
+        appName: "Rudder",
+        repo: "example/rudder",
+        releasesUrl: "https://github.com/example/rudder/releases",
+        channel: "canary",
+        requiredAssetNamesForVersion: () => ["SHASUMS256.txt", "Rudder-update.zip"],
+        fetchImpl: async (url) => {
+          if (String(url).includes("api.github.com")) {
+            return new Response(JSON.stringify([
+              {
+                tag_name: "canary/v0.2.0-canary.0",
+                prerelease: true,
+                html_url: "incomplete",
+                assets: [{ name: "Rudder-0.2.0-canary.0-linux-x64.AppImage" }],
+              },
+            ]));
+          }
+          return new Response('<a href="/example/rudder/releases/tag/canary%2Fv0.2.0-canary.0">canary</a>');
+        },
+      });
+
+      expect(result.status).toBe("unavailable");
+      expect(result.latestVersion).toBeUndefined();
     } finally {
       warn.mockRestore();
     }

@@ -15,7 +15,22 @@ type GitHubRelease = {
   html_url?: string;
   draft?: boolean;
   prerelease?: boolean;
+  assets?: GitHubReleaseAsset[];
 };
+
+type GitHubReleaseAsset = {
+  name?: string;
+};
+
+export function requiredDesktopUpdateAssetNames(version: string, platform: NodeJS.Platform): string[] {
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const portableAsset = platform === "darwin"
+    ? `Rudder-${version}-macos-${arch}-portable.zip`
+    : platform === "win32"
+      ? `Rudder-${version}-windows-x64-portable.zip`
+      : `Rudder-${version}-linux-x64.AppImage`;
+  return ["SHASUMS256.txt", portableAsset];
+}
 
 type ParsedVersion = {
   major: number;
@@ -32,6 +47,8 @@ type CheckForRudderDesktopUpdatesOptions = {
   channel?: DesktopUpdateChannel;
   /** Test-only GitHub-compatible API origin used by packaged smoke. */
   apiBaseUrl?: string;
+  /** Required release assets for this install's platform. */
+  requiredAssetNamesForVersion?: (version: string) => readonly string[];
   fetchImpl?: typeof fetch;
 };
 
@@ -118,6 +135,9 @@ function normalizeReleaseDisplayVersion(tagName: string, channel: DesktopUpdateC
 export function chooseLatestRelease(
   releases: GitHubRelease[],
   channel: DesktopUpdateChannel = "stable",
+  options: {
+    requiredAssetNamesForVersion?: (version: string) => readonly string[];
+  } = {},
 ): { version: string; releaseUrl?: string } | null {
   let latest: { version: string; releaseUrl?: string } | null = null;
 
@@ -127,6 +147,22 @@ export function chooseLatestRelease(
 
     const version = normalizeReleaseDisplayVersion(release.tag_name, channel);
     if (!version) continue;
+
+    if (options.requiredAssetNamesForVersion) {
+      const requiredAssets = options.requiredAssetNamesForVersion(version);
+      const availableAssets = new Set(
+        Array.isArray(release.assets)
+          ? release.assets
+            .map((asset) => asset.name?.trim().toLowerCase())
+            .filter((name): name is string => Boolean(name))
+          : [],
+      );
+      // GitHub creates the release record before uploading Desktop artifacts.
+      // Do not advertise a release until the platform package and checksum
+      // marker are both visible in the same API response. HTML fallback data
+      // has no asset inventory, so it remains deliberately ineligible here.
+      if (requiredAssets.some((name) => !availableAssets.has(name.toLowerCase()))) continue;
+    }
 
     if (!latest || compareRudderVersions(version, latest.version) > 0) {
       latest = {
@@ -174,8 +210,18 @@ async function fetchLatestReleaseWithFallback(options: {
   repo: string;
   releasesUrl: string;
   apiBaseUrl?: string;
+  requiredAssetNamesForVersion?: (version: string) => readonly string[];
 }): Promise<{ version: string; releaseUrl?: string } | null> {
-  const { appName, channel, currentVersion, fetchImpl, repo, releasesUrl, apiBaseUrl } = options;
+  const {
+    appName,
+    channel,
+    currentVersion,
+    fetchImpl,
+    repo,
+    releasesUrl,
+    apiBaseUrl,
+    requiredAssetNamesForVersion,
+  } = options;
   const apiOrigin = (apiBaseUrl?.trim() || "https://api.github.com").replace(/\/+$/u, "");
   const headers = {
     Accept: "application/vnd.github+json",
@@ -189,7 +235,9 @@ async function fetchLatestReleaseWithFallback(options: {
     }
 
     const payload = await response.json() as GitHubRelease[];
-    const latest = chooseLatestRelease(Array.isArray(payload) ? payload : [], channel);
+    const latest = chooseLatestRelease(Array.isArray(payload) ? payload : [], channel, {
+      requiredAssetNamesForVersion,
+    });
     if (latest) return latest;
   } catch (error) {
     console.warn("[rudder-desktop] GitHub releases API update check failed", error);
@@ -205,13 +253,26 @@ async function fetchLatestReleaseWithFallback(options: {
     throw new Error(`GitHub releases page lookup failed (${response.status})`);
   }
 
-  return chooseLatestRelease(releasesPageToReleaseList(await response.text(), repo), channel);
+  return chooseLatestRelease(releasesPageToReleaseList(await response.text(), repo), channel, {
+    requiredAssetNamesForVersion,
+  });
 }
 
 export async function checkForRudderDesktopUpdates(
   options: CheckForRudderDesktopUpdatesOptions,
 ): Promise<DesktopUpdateCheckResult> {
-  const { currentVersion, appName, repo, releasesUrl, channel = "stable", apiBaseUrl, fetchImpl = fetch } = options;
+  const {
+    currentVersion,
+    appName,
+    repo,
+    releasesUrl,
+    channel = "stable",
+    apiBaseUrl,
+    requiredAssetNamesForVersion,
+    fetchImpl = fetch,
+  } = options;
+  const resolvedRequiredAssetNamesForVersion = requiredAssetNamesForVersion
+    ?? ((version: string) => requiredDesktopUpdateAssetNames(version, process.platform));
 
   try {
     const latest = await fetchLatestReleaseWithFallback({
@@ -222,6 +283,7 @@ export async function checkForRudderDesktopUpdates(
       repo,
       releasesUrl,
       apiBaseUrl,
+      requiredAssetNamesForVersion: resolvedRequiredAssetNamesForVersion,
     });
     if (!latest) {
       throw new Error(`GitHub release lookup returned no ${channel} release`);
