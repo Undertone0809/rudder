@@ -456,6 +456,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify migration manifest differential parity
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          set -euo pipefail
+          echo "Running migration manifest differential verifier with DATABASE_URL unset"
+          env -u DATABASE_URL pnpm verify:migration-manifest-differential
+
       - name: Cache PostgreSQL runtime payload
         uses: actions/cache@v5
         with:
