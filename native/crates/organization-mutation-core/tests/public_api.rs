@@ -1,26 +1,70 @@
-use rudder_organization_mutation_core::{Actor, OrganizationBrandingCommand};
+use rudder_organization_mutation_core::{Actor, OrganizationBrandingPatch};
 
-fn board_command() -> OrganizationBrandingCommand {
-    OrganizationBrandingCommand::board("org-a", "user-a", "branding-1", 3, 7)
-        .with_name(Some("Rudder".to_owned()))
+fn patch(raw: serde_json::Value) -> OrganizationBrandingPatch {
+    serde_json::from_value(raw).unwrap()
 }
 
 fn assert_nullable_patch_round_trip(
     field: &str,
     value: &str,
-    absent: OrganizationBrandingCommand,
-    cleared: OrganizationBrandingCommand,
-    valued: OrganizationBrandingCommand,
+    absent: serde_json::Value,
+    cleared: serde_json::Value,
+    valued: serde_json::Value,
 ) {
-    let absent_fingerprint = absent.fingerprint().unwrap();
-    let cleared_fingerprint = cleared.fingerprint().unwrap();
-    let valued_fingerprint = valued.fingerprint().unwrap();
+    let absent = patch(absent);
+    let cleared = patch(cleared);
+    let valued = patch(valued);
+    let absent_fingerprint = absent
+        .clone()
+        .into_command(
+            "org-a",
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "user-a".to_owned(),
+            },
+            "absent",
+            3,
+            7,
+        )
+        .unwrap()
+        .fingerprint()
+        .unwrap();
+    let cleared_fingerprint = cleared
+        .clone()
+        .into_command(
+            "org-a",
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "user-a".to_owned(),
+            },
+            "cleared",
+            3,
+            7,
+        )
+        .unwrap()
+        .fingerprint()
+        .unwrap();
+    let valued_fingerprint = valued
+        .clone()
+        .into_command(
+            "org-a",
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "user-a".to_owned(),
+            },
+            "valued",
+            3,
+            7,
+        )
+        .unwrap()
+        .fingerprint()
+        .unwrap();
     assert_ne!(absent_fingerprint, cleared_fingerprint);
     assert_ne!(cleared_fingerprint, valued_fingerprint);
     assert_ne!(absent_fingerprint, valued_fingerprint);
 
-    for (label, command) in [("absent", absent), ("cleared", cleared), ("valued", valued)] {
-        let encoded = serde_json::to_value(&command).unwrap();
+    for (label, patch) in [("absent", absent), ("cleared", cleared), ("valued", valued)] {
+        let encoded = serde_json::to_value(&patch).unwrap();
         let field_value = encoded.get(field);
         match label {
             "absent" => assert!(field_value.is_none()),
@@ -29,12 +73,8 @@ fn assert_nullable_patch_round_trip(
             _ => unreachable!(),
         }
 
-        let decoded: OrganizationBrandingCommand = serde_json::from_value(encoded).unwrap();
-        assert_eq!(decoded, command);
-        assert_eq!(
-            decoded.fingerprint().unwrap(),
-            command.fingerprint().unwrap()
-        );
+        let decoded: OrganizationBrandingPatch = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, patch);
     }
 }
 
@@ -48,8 +88,9 @@ fn downstream_adapter_can_consume_public_contract_helpers() {
     assert_eq!(actor.principal_id(), "agent-a");
     assert_eq!(actor.kind(), "ceo_agent");
 
-    let command = OrganizationBrandingCommand::ceo_agent("org-a", "agent-a", "branding-1", 3, 7)
-        .with_name(Some("Rudder".to_owned()));
+    let command = patch(serde_json::json!({"name": "Rudder"}))
+        .into_command("org-a", actor, "branding-1", 3, 7)
+        .unwrap();
     assert!(command.validate().is_ok());
     assert_eq!(command.fingerprint().unwrap().len(), 64);
 }
@@ -59,22 +100,51 @@ fn nullable_patch_fields_preserve_absent_null_and_value_public_api_round_trips()
     assert_nullable_patch_round_trip(
         "description",
         "A description",
-        board_command(),
-        board_command().with_description(None),
-        board_command().with_description(Some("A description".to_owned())),
+        serde_json::json!({"name": "Rudder"}),
+        serde_json::json!({"name": "Rudder", "description": null}),
+        serde_json::json!({"name": "Rudder", "description": "A description"}),
     );
     assert_nullable_patch_round_trip(
-        "brand_color",
+        "brandColor",
         "#12aBcD",
-        board_command(),
-        board_command().with_brand_color(None),
-        board_command().with_brand_color(Some("#12aBcD".to_owned())),
+        serde_json::json!({"name": "Rudder"}),
+        serde_json::json!({"name": "Rudder", "brandColor": null}),
+        serde_json::json!({"name": "Rudder", "brandColor": "#12aBcD"}),
     );
     assert_nullable_patch_round_trip(
-        "logo_asset_id",
+        "logoAssetId",
         "123e4567-e89b-12d3-a456-426614174000",
-        board_command(),
-        board_command().with_logo_asset_id(None),
-        board_command().with_logo_asset_id(Some("123e4567-e89b-12d3-a456-426614174000".to_owned())),
+        serde_json::json!({"name": "Rudder"}),
+        serde_json::json!({"name": "Rudder", "logoAssetId": null}),
+        serde_json::json!({"name": "Rudder", "logoAssetId": "123e4567-e89b-12d3-a456-426614174000"}),
+    );
+}
+
+#[test]
+fn request_body_cannot_supply_the_actor_or_use_snake_case_fields() {
+    for raw in [
+        serde_json::json!({"name": null}),
+        serde_json::json!({"name": "Rudder", "actor": {"board": {}}}),
+        serde_json::json!({"name": "Rudder", "brand_color": "#123456"}),
+    ] {
+        assert!(serde_json::from_value::<OrganizationBrandingPatch>(raw).is_err());
+    }
+}
+
+#[test]
+fn patch_binding_rejects_a_target_organization_different_from_the_actor() {
+    let result = patch(serde_json::json!({"name": "Rudder"})).into_command(
+        "org-b",
+        Actor::Board {
+            organization_id: "org-a".to_owned(),
+            principal_id: "user-a".to_owned(),
+        },
+        "branding-1",
+        3,
+        7,
+    );
+    assert_eq!(
+        result,
+        Err(rudder_organization_mutation_core::MutationError::CrossOrganization)
     );
 }

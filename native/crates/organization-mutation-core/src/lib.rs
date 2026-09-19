@@ -6,12 +6,12 @@
 //! receipt. This crate intentionally performs no I/O, SQL, HTTP, filesystem, or
 //! secret handling and is not a public writer by itself.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {
     Board {
@@ -71,6 +71,13 @@ where
     Option::<String>::deserialize(deserializer).map(Some)
 }
 
+fn deserialize_non_nullable_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
+}
+
 #[derive(Serialize)]
 struct NullablePatchFingerprint<'a> {
     present: bool,
@@ -92,13 +99,20 @@ impl<'a> From<&'a Option<Option<String>>> for NullablePatchFingerprint<'a> {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct OrganizationBrandingCommand {
-    pub organization_id: String,
-    pub actor: Actor,
-    pub idempotency_key: String,
-    pub expected_version: u64,
-    pub fence_epoch: u64,
+/// The authenticated branding fields accepted by the Node organization route.
+///
+/// This is the only request-body-shaped type in this crate. It deliberately
+/// contains no actor, organization, idempotency, version, or fence fields;
+/// those values must be supplied by a trusted adapter through
+/// [`OrganizationBrandingPatch::into_command`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct OrganizationBrandingPatch {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_non_nullable_string",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub name: Option<String>,
     #[serde(
         default,
@@ -117,6 +131,94 @@ pub struct OrganizationBrandingCommand {
         deserialize_with = "deserialize_nullable_patch",
         skip_serializing_if = "Option::is_none"
     )]
+    pub logo_asset_id: Option<Option<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct OrganizationBrandingPatchWire {
+    #[serde(default, deserialize_with = "deserialize_non_nullable_string")]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    brand_color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    logo_asset_id: Option<Option<String>>,
+}
+
+impl<'de> Deserialize<'de> for OrganizationBrandingPatch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = OrganizationBrandingPatchWire::deserialize(deserializer)?;
+        let patch = Self {
+            name: wire.name,
+            description: wire.description,
+            brand_color: wire.brand_color,
+            logo_asset_id: wire.logo_asset_id,
+        };
+        patch
+            .validate()
+            .map_err(|error| D::Error::custom(error.to_string()))?;
+        Ok(patch)
+    }
+}
+
+impl OrganizationBrandingPatch {
+    pub fn validate(&self) -> Result<(), MutationError> {
+        validate_patch_fields(
+            &self.name,
+            &self.description,
+            &self.brand_color,
+            &self.logo_asset_id,
+        )
+    }
+
+    /// Bind this untrusted body to authenticated request context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn into_command(
+        self,
+        organization_id: impl Into<String>,
+        actor: Actor,
+        idempotency_key: impl Into<String>,
+        expected_version: u64,
+        fence_epoch: u64,
+    ) -> Result<OrganizationBrandingCommand, MutationError> {
+        let command = OrganizationBrandingCommand {
+            organization_id: organization_id.into(),
+            actor,
+            idempotency_key: idempotency_key.into(),
+            expected_version,
+            fence_epoch,
+            name: self.name,
+            description: self.description,
+            brand_color: self.brand_color,
+            logo_asset_id: self.logo_asset_id,
+        };
+        command.validate()?;
+        Ok(command)
+    }
+}
+
+/// A trusted mutation command after an adapter has bound authentication and
+/// concurrency context. HTTP/Node request bodies must not deserialize into
+/// this type directly.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OrganizationBrandingCommand {
+    pub organization_id: String,
+    pub actor: Actor,
+    pub idempotency_key: String,
+    pub expected_version: u64,
+    pub fence_epoch: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand_color: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub logo_asset_id: Option<Option<String>>,
 }
 
@@ -225,33 +327,12 @@ impl OrganizationBrandingCommand {
         if self.actor.principal_id().is_empty() || !self.actor.can_update_branding() {
             return Err(MutationError::Unauthorized);
         }
-        if self.name.is_none()
-            && self.description.is_none()
-            && self.brand_color.is_none()
-            && self.logo_asset_id.is_none()
-        {
-            return Err(MutationError::NoFields);
-        }
-        if self.name.as_deref().is_some_and(str::is_empty) {
-            return Err(MutationError::InvalidName);
-        }
-        if self
-            .brand_color
-            .as_ref()
-            .and_then(Option::as_ref)
-            .is_some_and(|value| !valid_brand_color(value))
-        {
-            return Err(MutationError::InvalidBrandColor);
-        }
-        if self
-            .logo_asset_id
-            .as_ref()
-            .and_then(Option::as_ref)
-            .is_some_and(|value| !valid_uuid_shape(value))
-        {
-            return Err(MutationError::InvalidLogoAssetId);
-        }
-        Ok(())
+        validate_patch_fields(
+            &self.name,
+            &self.description,
+            &self.brand_color,
+            &self.logo_asset_id,
+        )
     }
 
     pub fn fingerprint(&self) -> Result<String, MutationError> {
@@ -282,6 +363,35 @@ impl OrganizationBrandingCommand {
         let digest = Sha256::digest(encoded);
         Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
     }
+}
+
+fn validate_patch_fields(
+    name: &Option<String>,
+    description: &Option<Option<String>>,
+    brand_color: &Option<Option<String>>,
+    logo_asset_id: &Option<Option<String>>,
+) -> Result<(), MutationError> {
+    if name.is_none() && description.is_none() && brand_color.is_none() && logo_asset_id.is_none() {
+        return Err(MutationError::NoFields);
+    }
+    if name.as_deref().is_some_and(str::is_empty) {
+        return Err(MutationError::InvalidName);
+    }
+    if brand_color
+        .as_ref()
+        .and_then(Option::as_ref)
+        .is_some_and(|value| !valid_brand_color(value))
+    {
+        return Err(MutationError::InvalidBrandColor);
+    }
+    if logo_asset_id
+        .as_ref()
+        .and_then(Option::as_ref)
+        .is_some_and(|value| !valid_uuid_shape(value))
+    {
+        return Err(MutationError::InvalidLogoAssetId);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -494,32 +604,31 @@ mod tests {
         state
     }
 
-    fn json_command(key: &str) -> serde_json::Value {
-        serde_json::json!({
-            "organization_id": "org-a",
-            "actor": {
-                "board": {
-                    "organization_id": "org-a",
-                    "principal_id": "user-a"
-                }
-            },
-            "idempotency_key": key,
-            "expected_version": 3,
-            "fence_epoch": 7,
-            "name": null
-        })
+    fn command_from_patch(key: &str, raw: serde_json::Value) -> OrganizationBrandingCommand {
+        let patch: OrganizationBrandingPatch = serde_json::from_value(raw).unwrap();
+        patch
+            .into_command(
+                "org-a",
+                Actor::Board {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "user-a".to_owned(),
+                },
+                key,
+                3,
+                7,
+            )
+            .unwrap()
     }
 
     #[test]
     fn nullable_patch_deserializer_distinguishes_absent_from_json_null() {
-        let mut absent = json_command("absent");
-        absent.as_object_mut().unwrap().remove("description");
-        let absent: OrganizationBrandingCommand = serde_json::from_value(absent).unwrap();
+        let absent = command_from_patch("absent", serde_json::json!({"name": "Rudder"}));
         assert_eq!(absent.description, None);
 
-        let mut clear = json_command("clear");
-        clear["description"] = serde_json::Value::Null;
-        let clear: OrganizationBrandingCommand = serde_json::from_value(clear).unwrap();
+        let clear = command_from_patch(
+            "clear",
+            serde_json::json!({"name": "Rudder", "description": null}),
+        );
         assert_eq!(clear.description, Some(None));
 
         assert_ne!(absent.fingerprint().unwrap(), clear.fingerprint().unwrap());
@@ -528,13 +637,79 @@ mod tests {
     #[test]
     fn json_null_enters_the_explicit_clear_branch() {
         let mut state = state_with_description("Original");
-        let mut raw = json_command("clear");
-        raw["description"] = serde_json::Value::Null;
-        let command: OrganizationBrandingCommand = serde_json::from_value(raw).unwrap();
+        let command = command_from_patch("clear", serde_json::json!({"description": null}));
 
         let outcome = state.apply(command).unwrap();
         assert_eq!(outcome.state().description, None);
         assert_eq!(outcome.version(), 4);
+    }
+
+    #[test]
+    fn node_patch_contract_rejects_null_name_unknown_fields_and_snake_case() {
+        for raw in [
+            serde_json::json!({"name": null}),
+            serde_json::json!({"name": "Rudder", "actor": {"board": {}}}),
+            serde_json::json!({"name": "Rudder", "organizationId": "org-a"}),
+            serde_json::json!({"name": "Rudder", "brand_color": "#123456"}),
+        ] {
+            assert!(serde_json::from_value::<OrganizationBrandingPatch>(raw).is_err());
+        }
+    }
+
+    #[test]
+    fn node_patch_contract_uses_camel_case_and_validates_fields() {
+        let raw = serde_json::json!({
+            "name": "Rudder",
+            "description": null,
+            "brandColor": "#12aBcD",
+            "logoAssetId": "123e4567-e89b-12d3-a456-426614174000"
+        });
+        let patch: OrganizationBrandingPatch = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&patch).unwrap(), raw);
+
+        for raw in [
+            serde_json::json!({}),
+            serde_json::json!({"name": ""}),
+            serde_json::json!({"brandColor": "red"}),
+            serde_json::json!({"logoAssetId": "not-a-uuid"}),
+        ] {
+            assert!(serde_json::from_value::<OrganizationBrandingPatch>(raw).is_err());
+        }
+    }
+
+    #[test]
+    fn patch_binding_requires_adapter_supplied_actor_and_target_scope() {
+        let raw = serde_json::json!({"name": "Rudder"});
+        let patch: OrganizationBrandingPatch = serde_json::from_value(raw.clone()).unwrap();
+        let command = patch
+            .into_command(
+                "org-a",
+                Actor::CeoAgent {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "agent-a".to_owned(),
+                },
+                "branding-1",
+                3,
+                7,
+            )
+            .unwrap();
+        assert_eq!(command.organization_id, "org-a");
+        assert_eq!(command.actor.kind(), "ceo_agent");
+
+        let patch: OrganizationBrandingPatch = serde_json::from_value(raw).unwrap();
+        assert_eq!(
+            patch.into_command(
+                "org-b",
+                Actor::CeoAgent {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "agent-a".to_owned(),
+                },
+                "branding-1",
+                3,
+                7,
+            ),
+            Err(MutationError::CrossOrganization)
+        );
     }
 
     #[test]
