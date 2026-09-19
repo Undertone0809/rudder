@@ -346,6 +346,7 @@ test.describe("Chat Side Panel", () => {
     await page.keyboard.press("Escape");
     await expect(preview).toHaveCount(0);
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(imageButton).toBeFocused();
 
     await imageButton.focus();
     await page.keyboard.press("Enter");
@@ -353,6 +354,7 @@ test.describe("Chat Side Panel", () => {
     await page.keyboard.press("Escape");
     await expect(preview).toHaveCount(0);
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(imageButton).toBeFocused();
   });
 
   test("opens Library image links in the global image preview instead of the Side Panel", async ({ page }) => {
@@ -427,6 +429,8 @@ test.describe("Chat Side Panel", () => {
     await page.screenshot({ path: "/tmp/rudder-chat-library-image-preview.png", fullPage: true });
     await page.keyboard.press("Escape");
     await expect(preview).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(libraryImageLink).toBeFocused();
   });
 
   test("opens titled source-located local file links in the Side Panel with a file icon", async ({ page }, testInfo) => {
