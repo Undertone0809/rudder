@@ -1,0 +1,10 @@
+[package]
+name = "rudder-migration-history-postgres"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rudder-migration-history-core = { path = "../migration-history-core" }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+thiserror = "2.0"
