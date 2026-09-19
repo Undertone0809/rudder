@@ -1438,6 +1438,7 @@ export function MarkdownBody({
       const localImage = src
         ? renderMarkdownLocalImage({
             alt,
+            enablePreview: enableImagePreview,
             sourceAttributes: renderStateRef.current.sourceAttributesForNode(node),
             src,
             onClick: (event, imageName) => {

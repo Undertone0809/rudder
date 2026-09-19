@@ -833,6 +833,43 @@ describe("MarkdownBody", () => {
     expect(container.querySelector("a.rudder-local-file-link")).toBeNull();
   });
 
+  it("keeps a bridged local image static when image preview is disabled", async () => {
+    const previewLocalFile = vi.fn().mockResolvedValue({
+      canonicalPath: "/tmp/static-local-image.png",
+      fileName: "static-local-image.png",
+      parentPath: "/tmp",
+      contentType: "image/png",
+      previewKind: "image",
+      content: null,
+      base64: "iVBORw0KGgo=",
+      sizeBytes: 8,
+      modifiedAt: "2026-09-18T00:00:00.000Z",
+      truncated: false,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { previewLocalFile },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableImagePreview={false}>
+          {"![Static local image](/tmp/static-local-image.png)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector<HTMLImageElement>("img.rudder-local-image-media")?.src).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(container.querySelector(".rudder-local-image-trigger")).toBeNull();
+  });
+
   it("bridges an absolute-path markdown image through the Desktop shell", async () => {
     const previewLocalFile = vi.fn().mockResolvedValue({
       canonicalPath: "/tmp/absolute-image.png",
