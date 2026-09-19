@@ -442,6 +442,21 @@ async function assertLegacyTailCompatibility(): Promise<void> {
   await assertCompatibilityParity("legacy tail addition", baselineFixture, addedLegacyFixture);
 }
 
+async function assertJournalMetadataCompatibility(): Promise<void> {
+  const baselineFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  const metadataChangedFixture = createFixture([{ tag: "0000_first", sql: "SELECT 1;\n" }]);
+  updateJournal(metadataChangedFixture, (journal) => {
+    journal.entries[0].when += 1;
+    journal.entries[0].breakpoints = !journal.entries[0].breakpoints;
+    journal.entries[0].version = "8";
+  });
+  await assertCompatibilityParity(
+    "published journal metadata edit",
+    baselineFixture,
+    metadataChangedFixture,
+  );
+}
+
 async function assertRealMigrationTreeParity(): Promise<void> {
   const sourceMigrationsFolder = path.join(repoRoot, "packages/db/src/migrations");
   const sourceJournalFile = path.join(sourceMigrationsFolder, "meta/_journal.json");
@@ -714,6 +729,7 @@ async function main(): Promise<void> {
   await assertMalformedInputFailsClosed();
   await assertRegularFixtureParity();
   await assertLegacyTailCompatibility();
+  await assertJournalMetadataCompatibility();
   await assertRealMigrationTreeParity();
   await assertFailClosedSourceCases();
   console.log("PASS Node -> Rust migration manifest differential");
