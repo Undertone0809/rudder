@@ -1,0 +1,17 @@
+[package]
+name = "rudder-migration-service"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rudder-migration-core = { path = "../migration-core" }
+rudder-migration-history-core = { path = "../migration-history-core" }
+rudder-migration-history-postgres = { path = "../migration-history-postgres" }
+serde = { version = "1.0", features = ["derive"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.23"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }

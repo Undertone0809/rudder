@@ -17,7 +17,8 @@ use thiserror::Error;
 
 pub const MAX_MIGRATION_HISTORY_ROWS: usize = 4_096;
 const MAX_MIGRATION_HISTORY_TEXT_BYTES: usize = 256 * 1024;
-const READ_ONLY_TRANSACTION: &str = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY";
+pub const READ_ONLY_TRANSACTION: &str =
+    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY";
 
 /// Errors returned while reading or mapping migration history.
 #[derive(Debug, Error)]
@@ -82,7 +83,7 @@ impl MigrationHistoryPostgres {
 pub async fn read_snapshot_from_pool(
     pool: &PgPool,
 ) -> Result<MigrationHistorySnapshot, MigrationHistoryPostgresError> {
-    let mut transaction = pool.begin().await?;
+    let mut transaction = begin_read_only_transaction(pool).await?;
     let result = read_snapshot_in_transaction(&mut transaction).await;
     match result {
         Ok(snapshot) => {
@@ -96,13 +97,28 @@ pub async fn read_snapshot_from_pool(
     }
 }
 
-async fn read_snapshot_in_transaction(
+/// Starts the transaction contract shared by migration-history preflight readers.
+pub async fn begin_read_only_transaction(
+    pool: &PgPool,
+) -> Result<Transaction<'_, Postgres>, MigrationHistoryPostgresError> {
+    let mut transaction = pool.begin().await?;
+    if let Err(error) = sqlx::query(READ_ONLY_TRANSACTION)
+        .execute(&mut *transaction)
+        .await
+    {
+        let _ = transaction.rollback().await;
+        return Err(MigrationHistoryPostgresError::Database(error));
+    }
+    Ok(transaction)
+}
+
+/// Reads a migration-history snapshot inside an already configured transaction.
+///
+/// The caller must start the transaction with [`begin_read_only_transaction`]
+/// so all sibling preflight queries observe the same repeatable-read snapshot.
+pub async fn read_snapshot_in_transaction(
     transaction: &mut Transaction<'_, Postgres>,
 ) -> Result<MigrationHistorySnapshot, MigrationHistoryPostgresError> {
-    sqlx::query(READ_ONLY_TRANSACTION)
-        .execute(&mut **transaction)
-        .await?;
-
     let connection: &mut PgConnection = transaction;
     let schema = discover_schema(connection).await?;
     let Some(schema) = schema else {
