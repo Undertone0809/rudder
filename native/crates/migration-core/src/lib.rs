@@ -346,7 +346,8 @@ impl MigrationManifest {
                 &entry.journal_entry,
             ) {
                 (Some(expected_journal), Some(actual_journal))
-                    if actual_journal == expected_journal => {}
+                    if actual_journal == expected_journal
+                        && entry.file_name == format!("{}.sql", expected_journal.tag) => {}
                 (Some(_), None) => {
                     errors.push(format!(
                         "journaled migration {} is classified as legacy",

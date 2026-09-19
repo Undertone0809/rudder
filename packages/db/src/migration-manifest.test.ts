@@ -255,4 +255,15 @@ describe("migration manifest", () => {
     expect(() => validateMigrationManifestIntegrity(nullVersion)).not.toThrow();
     expect(validateMigrationManifestIntegrity(nullVersion).valid).toBe(false);
   });
+
+  it("returns invalid for malformed compatibility inputs instead of throwing", async () => {
+    const fixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+    ]);
+    const manifest = await createMigrationManifest(fixture);
+    const malformed = { ...manifest, canonical: undefined } as unknown as MigrationManifest;
+
+    expect(() => validateMigrationManifestCompatibility(manifest, malformed)).not.toThrow();
+    expect(validateMigrationManifestCompatibility(manifest, malformed).valid).toBe(false);
+  });
 });

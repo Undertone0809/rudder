@@ -324,6 +324,23 @@ fn rejects_flattened_entries_with_unknown_journal_identity() {
 }
 
 #[test]
+fn rejects_flattened_entries_with_mismatched_journal_file_name() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let mut malformed = load_migration_manifest(&journal, &migrations, limits()).unwrap();
+    malformed.entries[0].file_name = "0001_wrong.sql".to_owned();
+    malformed.sql_files[0] = "0001_wrong.sql".to_owned();
+
+    let integrity = malformed.validate_integrity();
+    assert!(!integrity.valid);
+    assert!(
+        integrity
+            .errors
+            .iter()
+            .any(|error| error.contains("journal identity mismatch"))
+    );
+}
+
+#[test]
 fn journal_metadata_changes_are_not_append_compatible() {
     let (_base_root, base_journal, base_migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
     let baseline = load_migration_manifest(&base_journal, &base_migrations, limits()).unwrap();

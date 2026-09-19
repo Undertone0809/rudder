@@ -417,6 +417,13 @@ export function validateMigrationManifestCompatibility(
     ...baselineIntegrity.errors.map((error) => `Baseline: ${error}`),
     ...candidateIntegrity.errors.map((error) => `Candidate: ${error}`),
   ];
+  if (!baselineIntegrity.valid || !candidateIntegrity.valid) {
+    return Object.freeze({
+      valid: false,
+      errors: Object.freeze(errors),
+      addedEntries: Object.freeze([]),
+    });
+  }
 
   const baselineJournalLength = baseline.canonical.entries.length;
   const candidateJournalLength = candidate.canonical.entries.length;
