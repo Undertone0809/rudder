@@ -1,6 +1,8 @@
 use rudder_migration_core::{MigrationLimits, MigrationManifest, load_migration_manifest};
 use rudder_migration_history_core::{MigrationHistoryReason, MigrationHistoryStatus};
-use rudder_migration_history_postgres::MigrationHistoryPostgres;
+use rudder_migration_history_postgres::{
+    MAX_MIGRATION_HISTORY_ROWS, MigrationHistoryPostgres, MigrationHistoryPostgresError,
+};
 use sqlx::postgres::PgPoolOptions;
 use std::{
     env, fs,
@@ -94,6 +96,32 @@ async fn reads_history_in_one_read_only_transaction_and_reconciles_it()
     assert_eq!(preflight.applied_migrations.len(), 2);
     let repeated = reader.read_snapshot().await?;
     assert_eq!(repeated.rows, snapshot.rows);
+
+    sqlx::query(&format!(
+        r#"UPDATE {table} SET "hash" = repeat('x', $1) WHERE "id" = 1"#
+    ))
+    .bind(256 * 1024 + 1_i32)
+    .execute(&pool)
+    .await?;
+    assert!(matches!(
+        reader.read_snapshot().await,
+        Err(MigrationHistoryPostgresError::Conversion { column: "hash", .. })
+    ));
+
+    sqlx::query(&format!(r#"DELETE FROM {table}"#))
+        .execute(&pool)
+        .await?;
+    sqlx::query(&format!(
+        r#"INSERT INTO {table} ("id", "hash", "created_at") SELECT generate_series(1, $1), 'hash', generate_series(1, $1)"#
+    ))
+    .bind((MAX_MIGRATION_HISTORY_ROWS + 1) as i32)
+    .execute(&pool)
+    .await?;
+    assert!(matches!(
+        reader.read_snapshot().await,
+        Err(MigrationHistoryPostgresError::RowLimitExceeded { limit })
+            if limit == MAX_MIGRATION_HISTORY_ROWS
+    ));
 
     sqlx::query(&format!(r#"DROP SCHEMA "{schema}" CASCADE"#))
         .execute(&pool)

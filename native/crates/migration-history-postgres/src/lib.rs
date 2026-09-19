@@ -61,10 +61,6 @@ impl MigrationHistoryPostgres {
         Self::new(pool)
     }
 
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
-    }
-
     /// Reads one migration-history snapshot using only the core SELECT contract.
     pub async fn read_snapshot(
         &self,
@@ -124,6 +120,27 @@ async fn read_snapshot_in_transaction(
             columns,
             rows: Vec::new(),
         });
+    }
+
+    for (present, column) in [(columns.name, "name"), (columns.hash, "hash")] {
+        if !present {
+            continue;
+        }
+        let statement = query::migration_history_text_bound_select(&schema, column)?;
+        if sqlx::query(&statement)
+            .bind(MAX_MIGRATION_HISTORY_TEXT_BYTES as i64)
+            .fetch_optional(&mut *connection)
+            .await?
+            .is_some()
+        {
+            return Err(MigrationHistoryPostgresError::Conversion {
+                column,
+                reason: format!(
+                    "text value exceeds {} bytes",
+                    MAX_MIGRATION_HISTORY_TEXT_BYTES
+                ),
+            });
+        }
     }
 
     let statement = query::migration_history_rows_select(&schema, columns)?;
