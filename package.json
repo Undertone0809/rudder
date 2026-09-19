@@ -20,6 +20,7 @@
     "mcp-contract:generate": "node cli/node_modules/tsx/dist/cli.mjs scripts/generate-rudder-mcp-tool-descriptors.ts",
     "mcp-contract:check": "node cli/node_modules/tsx/dist/cli.mjs scripts/generate-rudder-mcp-tool-descriptors.ts --check",
     "verify:agent-request-planner-differential": "node cli/node_modules/tsx/dist/cli.mjs scripts/verify-agent-request-planner-differential.ts",
+    "verify:migration-manifest-differential": "node cli/node_modules/tsx/dist/cli.mjs scripts/verify-migration-manifest-differential.ts",
     "architecture:audit": "node scripts/architecture-audit.mjs",
     "architecture:audit:test": "node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs",
     "architecture:audit:check": "node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref origin/main --fail-on-regression",
