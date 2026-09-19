@@ -1,7 +1,8 @@
 use rudder_migration_core::{MigrationLimits, MigrationManifest, load_migration_manifest};
 use rudder_migration_history_core::{
-    MigrationHistoryColumns, MigrationHistoryReason, MigrationHistoryRow, MigrationHistorySnapshot,
-    MigrationHistoryStatus, reconcile_migration_history,
+    MigrationHistoryColumns, MigrationHistoryPreflight, MigrationHistoryReason,
+    MigrationHistoryRow, MigrationHistorySnapshot, MigrationHistoryStatus,
+    reconcile_migration_history,
 };
 use std::fs::{create_dir_all, write};
 use tempfile::TempDir;
@@ -154,6 +155,160 @@ fn name_history_preserves_node_name_precedence() {
     assert_eq!(result.reason, MigrationHistoryReason::PendingMigrations);
     assert_eq!(result.applied_migrations.len(), 2);
     assert_eq!(result.pending_migrations[0].file_name, "0002_third.sql");
+}
+
+fn assert_manifest_gap(result: &MigrationHistoryPreflight) {
+    assert_eq!(result.status, MigrationHistoryStatus::NeedsMigrations);
+    assert_eq!(result.reason, MigrationHistoryReason::ManifestMismatch);
+    assert_eq!(
+        result
+            .applied_migrations
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["0000_first.sql", "0002_third.sql"]
+    );
+    assert_eq!(
+        result
+            .pending_migrations
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["0001_second.sql"]
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("contiguous manifest prefix"))
+    );
+}
+
+#[test]
+fn name_history_gap_is_manifest_mismatch() {
+    let (_root, manifest) = manifest(&["0000_first.sql", "0001_second.sql", "0002_third.sql"]);
+    let result = reconcile_migration_history(
+        &manifest,
+        &snapshot(
+            MigrationHistoryColumns {
+                id: true,
+                name: true,
+                ..Default::default()
+            },
+            vec![
+                MigrationHistoryRow {
+                    id: 1,
+                    name: Some("0000_first.sql".to_owned()),
+                    hash: None,
+                    created_at: None,
+                },
+                MigrationHistoryRow {
+                    id: 3,
+                    name: Some("0002_third.sql".to_owned()),
+                    hash: None,
+                    created_at: None,
+                },
+            ],
+        ),
+    )
+    .unwrap();
+
+    assert_manifest_gap(&result);
+}
+
+#[test]
+fn hash_history_gap_is_manifest_mismatch() {
+    let (_root, manifest) = manifest(&["0000_first.sql", "0001_second.sql", "0002_third.sql"]);
+    let result = reconcile_migration_history(
+        &manifest,
+        &snapshot(
+            MigrationHistoryColumns {
+                id: true,
+                hash: true,
+                ..Default::default()
+            },
+            vec![
+                MigrationHistoryRow {
+                    id: 1,
+                    name: None,
+                    hash: Some(hash_for("0000_first.sql")),
+                    created_at: None,
+                },
+                MigrationHistoryRow {
+                    id: 3,
+                    name: None,
+                    hash: Some(hash_for("0002_third.sql")),
+                    created_at: None,
+                },
+            ],
+        ),
+    )
+    .unwrap();
+
+    assert_manifest_gap(&result);
+}
+
+#[test]
+fn id_history_gap_is_manifest_mismatch() {
+    let (_root, manifest) = manifest(&["0000_first.sql", "0001_second.sql", "0002_third.sql"]);
+    let result = reconcile_migration_history(
+        &manifest,
+        &snapshot(
+            MigrationHistoryColumns {
+                id: true,
+                ..Default::default()
+            },
+            vec![
+                MigrationHistoryRow {
+                    id: 1,
+                    name: None,
+                    hash: None,
+                    created_at: None,
+                },
+                MigrationHistoryRow {
+                    id: 3,
+                    name: None,
+                    hash: None,
+                    created_at: None,
+                },
+            ],
+        ),
+    )
+    .unwrap();
+
+    assert_manifest_gap(&result);
+}
+
+#[test]
+fn out_of_range_id_is_unmatched_without_positional_fallback() {
+    let (_root, manifest) = manifest(&["0000_first.sql"]);
+    let result = reconcile_migration_history(
+        &manifest,
+        &snapshot(
+            MigrationHistoryColumns {
+                id: true,
+                ..Default::default()
+            },
+            vec![MigrationHistoryRow {
+                id: u64::MAX,
+                name: None,
+                hash: None,
+                created_at: None,
+            }],
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(result.status, MigrationHistoryStatus::NeedsMigrations);
+    assert_eq!(result.reason, MigrationHistoryReason::ManifestMismatch);
+    assert!(result.applied_migrations.is_empty());
+    assert_eq!(result.pending_migrations.len(), 1);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("cannot be safely mapped"))
+    );
 }
 
 #[test]

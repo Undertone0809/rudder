@@ -205,8 +205,22 @@ fn journal_entry_index_map(manifest: &MigrationManifest) -> HashMap<usize, usize
 fn resolve_by_id(manifest: &MigrationManifest, snapshot: &MigrationHistorySnapshot) -> Resolution {
     let by_journal_index = journal_entry_index_map(manifest);
     let mut resolution = Resolution::default();
+    let mut positional_fallback_safe = true;
     for row in &snapshot.rows {
-        if let Some(entry_index) = by_journal_index.get(&(row.id as usize - 1)).copied() {
+        let journal_index = row
+            .id
+            .checked_sub(1)
+            .and_then(|value| usize::try_from(value).ok());
+        if journal_index.is_none_or(|index| index >= manifest.entries.len()) {
+            positional_fallback_safe = false;
+            resolution.diagnostics.push(format!(
+                "migration history id {} cannot be safely mapped to the manifest",
+                row.id
+            ));
+        }
+        if let Some(entry_index) =
+            journal_index.and_then(|index| by_journal_index.get(&index).copied())
+        {
             resolution.matches.push(Match {
                 row: row.clone(),
                 entry_index,
@@ -215,7 +229,7 @@ fn resolve_by_id(manifest: &MigrationManifest, snapshot: &MigrationHistorySnapsh
             resolution.unmatched_rows += 1;
         }
     }
-    if resolution.matches.is_empty() && !snapshot.rows.is_empty() {
+    if resolution.matches.is_empty() && !snapshot.rows.is_empty() && positional_fallback_safe {
         resolution.mismatch = true;
         resolution.diagnostics.push(
             "migration history ids did not match the journal; used positional fallback".to_owned(),
@@ -333,6 +347,12 @@ fn classify(
             diagnostics.push("migration history order does not match manifest order".to_owned());
             break;
         }
+    }
+    if (0..matched_orders.len()).any(|index| !matched_orders.contains(&index)) {
+        mismatch = true;
+        diagnostics.push(
+            "migration history applied migrations are not a contiguous manifest prefix".to_owned(),
+        );
     }
     if resolution.unmatched_rows > 0 {
         mismatch = true;
