@@ -1284,7 +1284,7 @@ fn matches_ts_defaults_and_date_only_coercion_boundary() {
     assert_eq!(
         change.body,
         Some(json!({
-            "afterContract": {"actionDeadline": "2026-08-20"},
+            "afterContract": {"actionDeadline": "2026-08-20T00:00:00.000Z"},
             "rationale": "The evidence requires a contract update.",
             "evidenceRefs": [],
             "idempotencyKey": "change-1",

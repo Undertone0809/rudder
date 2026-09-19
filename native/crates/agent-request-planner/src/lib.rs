@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use thiserror::Error;
 use time::{
-    Date, OffsetDateTime,
+    Date, OffsetDateTime, Time, UtcOffset,
     format_description::{self, well_known::Rfc3339},
 };
 
@@ -224,6 +224,7 @@ fn map_request(
                 "expectedContractRevision",
             );
             trim_project_strings(&mut body, &["rationale", "idempotencyKey"]);
+            normalize_goal_contract_dates(id, &mut body)?;
             (
                 HttpMethod::Post,
                 format!(
@@ -899,11 +900,52 @@ fn optional_query(q: &mut Vec<(String, String)>, key: &str, v: Option<&Value>) {
 }
 
 fn accepts_ts_coerce_date(text: &str) -> bool {
+    parse_ts_coerce_date(text).is_some()
+}
+
+fn parse_ts_coerce_date(text: &str) -> Option<OffsetDateTime> {
     let text = text.trim();
-    OffsetDateTime::parse(text, &Rfc3339).is_ok()
-        || format_description::parse_borrowed::<1>("[year]-[month]-[day]")
+    OffsetDateTime::parse(text, &Rfc3339).ok().or_else(|| {
+        format_description::parse_borrowed::<1>("[year]-[month]-[day]")
             .ok()
-            .is_some_and(|format| Date::parse(text, &format).is_ok())
+            .and_then(|format| Date::parse(text, &format).ok())
+            .map(|date| OffsetDateTime::new_utc(date, Time::MIDNIGHT))
+    })
+}
+
+fn canonical_ts_coerce_date(text: &str) -> Option<String> {
+    let value = parse_ts_coerce_date(text)?.to_offset(UtcOffset::UTC);
+    Some(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        value.year(),
+        u8::from(value.month()),
+        value.day(),
+        value.hour(),
+        value.minute(),
+        value.second(),
+        value.millisecond(),
+    ))
+}
+
+fn normalize_goal_contract_dates(id: &str, body: &mut Value) -> Result<(), PlanError> {
+    let Some(after_contract) = body.get_mut("afterContract").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    for key in ["actionDeadline", "evaluationDeadline"] {
+        let raw = after_contract
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(raw) = raw {
+            let normalized =
+                canonical_ts_coerce_date(&raw).ok_or_else(|| PlanError::InvalidArgument {
+                    capability: id.into(),
+                    detail: format!("afterContract.{key} has invalid format"),
+                })?;
+            after_contract.insert(key.into(), Value::String(normalized));
+        }
+    }
+    Ok(())
 }
 
 fn positive(v: Option<&Value>, fallback: u64) -> u64 {
