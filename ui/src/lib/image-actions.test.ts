@@ -9,6 +9,13 @@ describe("image action routing", () => {
 
   it("falls back to a known image extension when content type is absent", () => {
     expect(isPreviewableImage(null, "Screenshot.WEBP")).toBe(true);
+    expect(isPreviewableImage(null, "diagram.svg")).toBe(false);
+    expect(isPreviewableImage(null, "diagram.bmp")).toBe(true);
     expect(isPreviewableImage(undefined, "report.pdf")).toBe(false);
+  });
+
+  it("falls back to the filename for generic binary content types", () => {
+    expect(isPreviewableImage("application/octet-stream", "after-wide-light.png")).toBe(true);
+    expect(isPreviewableImage("binary/octet-stream", "report.pdf")).toBe(false);
   });
 });

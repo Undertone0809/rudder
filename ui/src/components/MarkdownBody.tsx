@@ -6,7 +6,6 @@ import remarkGfm from "remark-gfm";
 import { useMarkdownMentions } from "../context/MarkdownMentionsContext";
 import { useTheme } from "../context/ThemeContext";
 import { useResolvedIssueMention } from "../hooks/useResolvedIssueMention";
-import { localFileIconDescriptor } from "../lib/local-file-icons";
 import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
 import {
   createMarkdownSourceBoundaryMap,
@@ -26,6 +25,7 @@ import {
   getWebsiteMetadata,
 } from "../lib/website-metadata-cache";
 import { InspectableImage } from "./InspectableImage";
+import { MarkdownLocalFileLink, renderMarkdownLocalImage } from "./MarkdownLocalImage";
 import type { MentionOption } from "./MarkdownEditor";
 import { RudderEntityPreview } from "./RudderEntityPreview";
 import { SkillReferenceToken, type MarkdownSkillReferencePreview } from "./SkillReferenceToken";
@@ -372,11 +372,6 @@ function useSelectionStableMarkdownSource(source: string) {
   }, [flushLatestSource]);
 
   return { renderedSource, rootRef };
-}
-
-function LocalFileLinkIcon({ filePath }: { filePath: string }) {
-  const { Icon, kind } = localFileIconDescriptor(filePath);
-  return <Icon className="mr-1 inline-block size-[0.95em] align-[-0.12em]" data-local-file-icon={kind} aria-hidden="true" />;
 }
 
 const APP_ROUTE_FIRST_SEGMENTS = new Set([
@@ -1406,19 +1401,18 @@ export function MarkdownBody({
       }
       if (localFilePath) {
         return (
-          <a
-            href={href}
-            className="rudder-local-file-link"
-            title={linkLabel || undefined}
-            {...sourceAttributesForNode(node)}
+          <MarkdownLocalFileLink
+            href={href ?? localFilePath}
+            filePath={localFilePath}
+            label={linkLabel}
+            sourceAttributes={sourceAttributesForNode(node)}
             onClick={(event) => {
               if (!href) return;
               handleMarkdownLinkClick(event, href, linkLabel);
             }}
           >
-            <LocalFileLinkIcon filePath={localFilePath} />
-            <span className="rudder-inline-token-label">{linkChildren}</span>
-          </a>
+            {linkChildren}
+          </MarkdownLocalFileLink>
         );
       }
       return (
@@ -1437,10 +1431,22 @@ export function MarkdownBody({
         </a>
       );
     },
-    img: ({ node: _node, src, alt, ...imgProps }) => {
+    img: ({ node, src, alt, ...imgProps }) => {
       const { enableImagePreview, resolveImageSrc } = renderStateRef.current;
       const resolved = src && resolveImageSrc ? resolveImageSrc(src) : null;
       const imageSrc = resolved ?? src ?? "";
+      const localImage = src
+        ? renderMarkdownLocalImage({
+            alt,
+            enablePreview: enableImagePreview,
+            sourceAttributes: renderStateRef.current.sourceAttributesForNode(node),
+            src,
+            onClick: (event, imageName) => {
+              renderStateRef.current.handleMarkdownLinkClick(event, src, imageName);
+            },
+          })
+        : null;
+      if (localImage) return localImage;
       if (enableImagePreview && imageSrc) {
         return (
           <InspectableImage

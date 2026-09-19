@@ -197,6 +197,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   localStorageMock.values.clear();
+  delete (window as typeof window & { desktopShell?: unknown }).desktopShell;
   document.body.innerHTML = "";
   window.history.pushState({}, "", "/");
   queryClient.clear();
@@ -793,6 +794,240 @@ describe("MarkdownBody", () => {
     );
 
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
+  });
+
+  it("renders a local image link inline when the Desktop shell can preview it", async () => {
+    const previewLocalFile = vi.fn().mockResolvedValue({
+      canonicalPath: "/Users/zeeland/projects/rudder-oss/after-wide-light.png",
+      fileName: "after-wide-light.png",
+      parentPath: "/Users/zeeland/projects/rudder-oss",
+      contentType: "image/png",
+      previewKind: "image",
+      content: null,
+      base64: "iVBORw0KGgo=",
+      sizeBytes: 8,
+      modifiedAt: "2026-09-18T00:00:00.000Z",
+      truncated: false,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { previewLocalFile },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Inspect [after-wide-light.png](/Users/zeeland/projects/rudder-oss/after-wide-light.png)."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const image = container.querySelector<HTMLImageElement>("img.rudder-local-image-media");
+    expect(previewLocalFile).toHaveBeenCalledWith(
+      "/Users/zeeland/projects/rudder-oss/after-wide-light.png",
+    );
+    expect(image?.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(container.querySelector("a.rudder-local-file-link")).toBeNull();
+  });
+
+  it("keeps a bridged local image static when image preview is disabled", async () => {
+    const previewLocalFile = vi.fn().mockResolvedValue({
+      canonicalPath: "/tmp/static-local-image.png",
+      fileName: "static-local-image.png",
+      parentPath: "/tmp",
+      contentType: "image/png",
+      previewKind: "image",
+      content: null,
+      base64: "iVBORw0KGgo=",
+      sizeBytes: 8,
+      modifiedAt: "2026-09-18T00:00:00.000Z",
+      truncated: false,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { previewLocalFile },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody enableImagePreview={false}>
+          {"![Static local image](/tmp/static-local-image.png)"}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector<HTMLImageElement>("img.rudder-local-image-media")?.src).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(container.querySelector(".rudder-local-image-trigger")).toBeNull();
+  });
+
+  it("bridges an absolute-path markdown image through the Desktop shell", async () => {
+    const previewLocalFile = vi.fn().mockResolvedValue({
+      canonicalPath: "/tmp/absolute-image.png",
+      fileName: "absolute-image.png",
+      parentPath: "/tmp",
+      contentType: "image/png",
+      previewKind: "image",
+      content: null,
+      base64: "iVBORw0KGgo=",
+      sizeBytes: 8,
+      modifiedAt: "2026-09-18T00:00:00.000Z",
+      truncated: false,
+    });
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { previewLocalFile },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"![absolute-image.png](/tmp/absolute-image.png)"}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(previewLocalFile).toHaveBeenCalledWith("/tmp/absolute-image.png");
+    expect(container.querySelector<HTMLImageElement>("img.rudder-local-image-media")?.src).toBe(
+      "data:image/png;base64,iVBORw0KGgo=",
+    );
+    expect(container.querySelector("a.rudder-local-file-link")).toBeNull();
+  });
+
+  it("opens the inline local image in the existing preview dialog", async () => {
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        previewLocalFile: vi.fn().mockResolvedValue({
+          canonicalPath: "/tmp/after-wide-light.png",
+          fileName: "after-wide-light.png",
+          parentPath: "/tmp",
+          contentType: "image/png",
+          previewKind: "image",
+          content: null,
+          base64: "iVBORw0KGgo=",
+          sizeBytes: 8,
+          modifiedAt: "2026-09-18T00:00:00.000Z",
+          truncated: false,
+        }),
+      },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Inspect [after-wide-light.png](/tmp/after-wide-light.png)."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const image = container.querySelector<HTMLImageElement>("img.rudder-local-image-media");
+    expect(image).not.toBeNull();
+    await act(async () => {
+      image?.dispatchEvent(new Event("load"));
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>(".rudder-local-image-trigger")?.click();
+    });
+
+    expect(document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"] img')).not.toBeNull();
+  });
+
+  it("keeps a local image link when the Desktop shell is unavailable", async () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Inspect [after-wide-light.png](/tmp/after-wide-light.png)."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("a.rudder-local-file-link")).not.toBeNull();
+    expect(container.querySelector("img.rudder-local-image-media")).toBeNull();
+  });
+
+  it("keeps a local image link when the Desktop shell cannot read the file", async () => {
+    const previewLocalFile = vi.fn().mockRejectedValue(new Error("File is unavailable"));
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: { previewLocalFile },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Inspect [after-wide-light.png](/tmp/after-wide-light.png)."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(previewLocalFile).toHaveBeenCalledWith("/tmp/after-wide-light.png");
+    expect(container.querySelector<HTMLAnchorElement>("a.rudder-local-file-link")?.getAttribute("href"))
+      .toBe("/tmp/after-wide-light.png");
+    expect(container.querySelector("img.rudder-local-image-media")).toBeNull();
+  });
+
+  it.each(["Enter", " "])("opens a local image preview from keyboard activation (%j)", async (key) => {
+    Object.defineProperty(window, "desktopShell", {
+      configurable: true,
+      value: {
+        previewLocalFile: vi.fn().mockResolvedValue({
+          canonicalPath: "/tmp/keyboard-local-image.png",
+          fileName: "keyboard-local-image.png",
+          parentPath: "/tmp",
+          contentType: "image/png",
+          previewKind: "image",
+          content: null,
+          base64: "iVBORw0KGgo=",
+          sizeBytes: 8,
+          modifiedAt: "2026-09-18T00:00:00.000Z",
+          truncated: false,
+        }),
+      },
+    });
+
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>{"Inspect [keyboard-local-image.png](/tmp/keyboard-local-image.png)."}</MarkdownBody>
+      </ThemeProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const imageButton = container.querySelector<HTMLButtonElement>(".rudder-local-image-trigger");
+    expect(imageButton).not.toBeNull();
+
+    act(() => {
+      imageButton?.dispatchEvent(new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    expect(document.body.querySelector('[data-testid="markdown-body-image-preview-dialog"] img'))
+      .not.toBeNull();
   });
 
   it("keeps a markdown image skeleton visible until the image loads", async () => {

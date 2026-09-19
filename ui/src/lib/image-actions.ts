@@ -4,11 +4,20 @@ export function isImageContentType(contentType: string | null | undefined) {
   return Boolean(contentType?.toLowerCase().startsWith("image/"));
 }
 
-const PREVIEWABLE_IMAGE_EXTENSION = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
+// Keep filename-only routing aligned with the Desktop local-file preview bridge.
+const PREVIEWABLE_IMAGE_EXTENSION = /\.(?:bmp|gif|jpe?g|png|webp)$/i;
+const GENERIC_BINARY_CONTENT_TYPES = new Set([
+  "application/octet-stream",
+  "application/x-binary",
+  "binary/octet-stream",
+]);
 
 export function isPreviewableImage(contentType: string | null | undefined, name: string) {
-  const normalizedContentType = contentType?.trim();
-  if (normalizedContentType) return isImageContentType(normalizedContentType);
+  const normalizedContentType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (normalizedContentType) {
+    if (isImageContentType(normalizedContentType)) return true;
+    if (!GENERIC_BINARY_CONTENT_TYPES.has(normalizedContentType)) return false;
+  }
   const path = name.split(/[?#]/u, 1)[0] ?? name;
   return PREVIEWABLE_IMAGE_EXTENSION.test(path);
 }
