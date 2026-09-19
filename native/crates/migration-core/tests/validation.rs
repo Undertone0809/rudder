@@ -1,7 +1,7 @@
 use rudder_migration_core::{
-    AdvisoryLockRequirement, MIGRATION_ADVISORY_LOCK_NAME, MigrationLimits,
-    MigrationManifestOptions, PRE_MUTATION_REQUIREMENTS_VERSION, PreMutationRequirements,
-    RecoveryPointRequirement, validate_migration_manifest_compatibility,
+    AdvisoryLockRequirement, JournalEntry, MIGRATION_ADVISORY_LOCK_NAME, MigrationEntry,
+    MigrationLimits, MigrationManifestOptions, PRE_MUTATION_REQUIREMENTS_VERSION,
+    PreMutationRequirements, RecoveryPointRequirement, validate_migration_manifest_compatibility,
     validate_pre_mutation_requirements,
 };
 use rudder_migration_core::{load_migration_manifest, load_migration_manifest_with_options};
@@ -86,6 +86,10 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
         first.journal.entries[0].tag
     );
     assert_eq!(first.fingerprint.len(), 64);
+    assert_eq!(
+        first.fingerprint,
+        "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db"
+    );
 }
 
 #[test]
@@ -139,6 +143,29 @@ fn rejects_unbounded_reads_and_unknown_sql_files() {
     )
     .unwrap_err();
     assert_eq!(error.code(), "migration_sql_unknown");
+}
+
+#[test]
+fn rejects_non_regular_sql_entries() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    fs::create_dir(migrations.join("0001_directory.sql")).unwrap();
+    let error = load_migration_manifest(&journal, &migrations, limits()).unwrap_err();
+    assert_eq!(error.code(), "migration_sql_not_regular");
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_symlinked_sql_entries() {
+    use std::os::unix::fs::symlink;
+
+    let (root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let target = root.path().join("outside.sql");
+    fs::write(&target, "SELECT outside;").unwrap();
+    fs::remove_file(migrations.join("0000_first.sql")).unwrap();
+    symlink(&target, migrations.join("0000_first.sql")).unwrap();
+
+    let error = load_migration_manifest(&journal, &migrations, limits()).unwrap_err();
+    assert_eq!(error.code(), "migration_symlink_rejected");
 }
 
 #[test]
@@ -201,6 +228,134 @@ fn rejects_edited_published_prefix_but_allows_append_only_candidate() {
     let compatibility = validate_migration_manifest_compatibility(&baseline, &edited);
     assert!(!compatibility.valid);
     assert!(!compatibility.compatible);
+    assert!(
+        compatibility
+            .errors
+            .iter()
+            .any(|error| error.contains("0000_first.sql"))
+    );
+}
+
+#[test]
+fn appending_a_journal_migration_does_not_rewrite_legacy_tail() {
+    let (_base_root, base_journal, base_migrations) = fixture(
+        &[("0000_first", "SELECT 1;"), ("0001_second", "SELECT 2;")],
+        &[("0055_illegal_sheva_callister", "SELECT legacy;")],
+    );
+    let baseline = load_migration_manifest(&base_journal, &base_migrations, limits()).unwrap();
+
+    let (_candidate_root, candidate_journal, candidate_migrations) = fixture(
+        &[
+            ("0000_first", "SELECT 1;"),
+            ("0001_second", "SELECT 2;"),
+            ("0002_third", "SELECT 3;"),
+        ],
+        &[("0055_illegal_sheva_callister", "SELECT legacy;")],
+    );
+    let candidate =
+        load_migration_manifest(&candidate_journal, &candidate_migrations, limits()).unwrap();
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &candidate);
+
+    assert!(compatibility.valid);
+    assert_eq!(compatibility.added_entries, ["0002_third.sql"]);
+}
+
+#[test]
+fn rejects_new_legacy_tail_entries() {
+    let (_base_root, base_journal, base_migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let baseline = load_migration_manifest(&base_journal, &base_migrations, limits()).unwrap();
+
+    let (_candidate_root, candidate_journal, candidate_migrations) = fixture(
+        &[("0000_first", "SELECT 1;")],
+        &[("0055_illegal_sheva_callister", "SELECT legacy;")],
+    );
+    let candidate =
+        load_migration_manifest(&candidate_journal, &candidate_migrations, limits()).unwrap();
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &candidate);
+
+    assert!(!compatibility.valid);
+    assert!(
+        compatibility
+            .errors
+            .iter()
+            .any(|error| error.contains("adds unpublished legacy migrations"))
+    );
+}
+
+#[test]
+fn malformed_manifest_compatibility_does_not_panic() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let baseline = load_migration_manifest(&journal, &migrations, limits()).unwrap();
+    let mut malformed = baseline.clone();
+    let first = malformed.journal.entries[0].clone();
+    malformed.journal.entries.push(first);
+
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &malformed);
+    assert!(!compatibility.valid);
+}
+
+#[test]
+fn rejects_flattened_entries_with_unknown_journal_identity() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let mut malformed = load_migration_manifest(&journal, &migrations, limits()).unwrap();
+    malformed.entries.push(MigrationEntry {
+        order: 1,
+        file_name: "0001_extra.sql".to_owned(),
+        sha256: "0".repeat(64),
+        byte_size: 0,
+        journal_entry: Some(JournalEntry {
+            idx: 1,
+            version: "7".to_owned(),
+            when: 1_001,
+            tag: "0001_extra".to_owned(),
+            breakpoints: true,
+        }),
+    });
+    malformed.sql_files.push("0001_extra.sql".to_owned());
+
+    let integrity = malformed.validate_integrity();
+    assert!(!integrity.valid);
+    assert!(
+        integrity
+            .errors
+            .iter()
+            .any(|error| error.contains("carries journal identity"))
+    );
+}
+
+#[test]
+fn rejects_flattened_entries_with_mismatched_journal_file_name() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let mut malformed = load_migration_manifest(&journal, &migrations, limits()).unwrap();
+    malformed.entries[0].file_name = "0001_wrong.sql".to_owned();
+    malformed.sql_files[0] = "0001_wrong.sql".to_owned();
+
+    let integrity = malformed.validate_integrity();
+    assert!(!integrity.valid);
+    assert!(
+        integrity
+            .errors
+            .iter()
+            .any(|error| error.contains("journal identity mismatch"))
+    );
+}
+
+#[test]
+fn journal_metadata_changes_are_not_append_compatible() {
+    let (_base_root, base_journal, base_migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let baseline = load_migration_manifest(&base_journal, &base_migrations, limits()).unwrap();
+
+    let (_candidate_root, candidate_journal, candidate_migrations) =
+        fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let mut journal: serde_json::Value =
+        serde_json::from_slice(&fs::read(&candidate_journal).unwrap()).unwrap();
+    journal["entries"][0]["breakpoints"] = json!(false);
+    fs::write(&candidate_journal, serde_json::to_vec(&journal).unwrap()).unwrap();
+    let candidate =
+        load_migration_manifest(&candidate_journal, &candidate_migrations, limits()).unwrap();
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &candidate);
+
+    assert!(!compatibility.valid);
     assert!(
         compatibility
             .errors
