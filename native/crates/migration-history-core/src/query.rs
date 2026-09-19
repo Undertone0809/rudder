@@ -56,7 +56,7 @@ pub fn migration_history_rows_select(
         }
     }
     Ok(format!(
-        "SELECT {} FROM {}.{} ORDER BY {}",
+        "SELECT {} FROM {}.{} ORDER BY {} LIMIT $1",
         selected.join(", "),
         quoted_schema,
         quote_identifier(MIGRATION_HISTORY_TABLE_NAME)?,

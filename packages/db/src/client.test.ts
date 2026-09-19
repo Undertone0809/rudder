@@ -345,7 +345,8 @@ describe("applyPendingMigrations", () => {
             ('e5c12f75cba0ee38da04e5175c762a4b3b5e9e9c523ea97f9956448b44e11570', 2),
             ('f48a179c17c3ae9b2b419a3f8d4ee8d78de6e4acec3a077fe0d4bcb9a73d57c6', 3),
             ('a531d1d8383becb9090492d1b763aeb11a4c2ade4f325a29500511900b29888d', 4),
-            ('cbf2988159818d54929cda6119f3ca3b6cd6d265c08fb73c6221198ff99d070e', 5)
+            ('cbf2988159818d54929cda6119f3ca3b6cd6d265c08fb73c6221198ff99d070e', 5),
+            ('0ba359cdf4244b5509bd9c8d7f9dee91e8d8e3967d56771770ecfc6114e0c958', 6)
           ) AS legacy("hash", "offset")
           CROSS JOIN (
             SELECT COALESCE(MAX("created_at"), 0) AS "created_at"

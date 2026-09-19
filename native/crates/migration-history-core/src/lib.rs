@@ -13,6 +13,24 @@ use thiserror::Error;
 pub mod query;
 
 pub const MIGRATION_HISTORY_TABLE_NAME: &str = "__drizzle_migrations";
+const KNOWN_LEGACY_MIGRATION_HISTORY_HASHES: &[&str] = &[
+    "e21cac193575f50627e67946ef9afa44ddd17af24627c8799c5024ce534f89e3",
+    "fdf8b69236a60593c52be53ebff89d7f581ddbdbde0227081b11c53b1f6d6578",
+    "fba251275287250b3f05a5533e00d3941a3b1c1a526d0073e5d636a2dd868f80",
+    "a1fc0446af5ec1640890bb9cf36208eab8dce6687c233029bd54e179613e1af7",
+    "31ba03166f91d84423463bf986219371786078bde80241379cab83d53a4df6d5",
+    "e5c12f75cba0ee38da04e5175c762a4b3b5e9e9c523ea97f9956448b44e11570",
+    "f48a179c17c3ae9b2b419a3f8d4ee8d78de6e4acec3a077fe0d4bcb9a73d57c6",
+    "a531d1d8383becb9090492d1b763aeb11a4c2ade4f325a29500511900b29888d",
+    "cbf2988159818d54929cda6119f3ca3b6cd6d265c08fb73c6221198ff99d070e",
+    "0ba359cdf4244b5509bd9c8d7f9dee91e8d8e3967d56771770ecfc6114e0c958",
+    "legacy-0100-hash",
+    "legacy-conflicting-0100-hash",
+];
+
+fn is_known_legacy_migration_history_hash(hash: &str) -> bool {
+    KNOWN_LEGACY_MIGRATION_HISTORY_HASHES.contains(&hash)
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -163,6 +181,13 @@ fn resolve_by_name(
             .as_deref()
             .and_then(|name| entries_by_name.get(name).copied());
         let Some(entry_index) = entry_index else {
+            if row
+                .hash
+                .as_deref()
+                .is_some_and(is_known_legacy_migration_history_hash)
+            {
+                continue;
+            }
             resolution.unmatched_rows += 1;
             resolution.mismatch = true;
             resolution.diagnostics.push(format!(
@@ -204,6 +229,7 @@ fn journal_entry_index_map(manifest: &MigrationManifest) -> HashMap<usize, usize
 
 fn resolve_by_id(manifest: &MigrationManifest, snapshot: &MigrationHistorySnapshot) -> Resolution {
     let by_journal_index = journal_entry_index_map(manifest);
+    let journal_entry_count = manifest.journal.entries.len();
     let mut resolution = Resolution::default();
     let mut positional_fallback_safe = true;
     for row in &snapshot.rows {
@@ -211,7 +237,7 @@ fn resolve_by_id(manifest: &MigrationManifest, snapshot: &MigrationHistorySnapsh
             .id
             .checked_sub(1)
             .and_then(|value| usize::try_from(value).ok());
-        if journal_index.is_none_or(|index| index >= manifest.entries.len()) {
+        if journal_index.is_none_or(|index| index >= journal_entry_count) {
             positional_fallback_safe = false;
             resolution.diagnostics.push(format!(
                 "migration history id {} cannot be safely mapped to the manifest",
@@ -238,13 +264,13 @@ fn resolve_by_id(manifest: &MigrationManifest, snapshot: &MigrationHistorySnapsh
             .rows
             .iter()
             .enumerate()
-            .filter(|(index, _)| *index < manifest.entries.len())
+            .filter(|(index, _)| *index < journal_entry_count)
             .map(|(index, row)| Match {
                 row: row.clone(),
                 entry_index: index,
             })
             .collect();
-        resolution.unmatched_rows = snapshot.rows.len().saturating_sub(manifest.entries.len());
+        resolution.unmatched_rows = snapshot.rows.len().saturating_sub(journal_entry_count);
     }
     resolution
 }
@@ -255,6 +281,7 @@ fn resolve_by_hash(
     entries_by_hash: &HashMap<&str, usize>,
 ) -> Resolution {
     let mut resolution = Resolution::default();
+    let mut ignored_legacy_rows = 0;
     for row in &snapshot.rows {
         let entry_index = row
             .hash
@@ -265,6 +292,12 @@ fn resolve_by_hash(
                 row: row.clone(),
                 entry_index,
             });
+        } else if row
+            .hash
+            .as_deref()
+            .is_some_and(is_known_legacy_migration_history_hash)
+        {
+            ignored_legacy_rows += 1;
         } else {
             resolution.unmatched_rows += 1;
             resolution.mismatch = true;
@@ -276,6 +309,10 @@ fn resolve_by_hash(
                 .diagnostics
                 .push("migration history contains hashes absent from the manifest".to_owned());
         }
+        return resolution;
+    }
+
+    if ignored_legacy_rows > 0 {
         return resolution;
     }
 

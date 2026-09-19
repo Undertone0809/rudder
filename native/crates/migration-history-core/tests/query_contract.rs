@@ -22,6 +22,10 @@ fn query_contract_is_select_only() {
         },
     )
     .unwrap();
+    assert_eq!(
+        statement,
+        "SELECT \"id\", \"name\", \"hash\", \"created_at\" FROM \"drizzle\".\"__drizzle_migrations\" ORDER BY \"id\" LIMIT $1"
+    );
     assert!(statement.starts_with("SELECT"));
     assert!(statement.contains("\"drizzle\".\"__drizzle_migrations\""));
     assert!(!statement.contains("INSERT"));

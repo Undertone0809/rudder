@@ -5,13 +5,19 @@
 //! journal, reads its available columns, and maps rows into the core snapshot
 //! without acquiring a lock or changing database state.
 
+use rudder_migration_core::MigrationManifest;
 use rudder_migration_history_core::{
-    MIGRATION_HISTORY_TABLE_NAME, MigrationHistoryColumns, MigrationHistoryRow,
-    MigrationHistorySnapshot,
+    MIGRATION_HISTORY_TABLE_NAME, MigrationHistoryColumns, MigrationHistoryPreflight,
+    MigrationHistoryRow, MigrationHistorySnapshot,
     query::{self, QueryContractError},
+    reconcile_migration_history,
 };
-use sqlx::{PgPool, Row, TypeInfo, ValueRef, postgres::PgRow};
+use sqlx::{PgConnection, PgPool, Postgres, Row, Transaction, TypeInfo, ValueRef, postgres::PgRow};
 use thiserror::Error;
+
+pub const MAX_MIGRATION_HISTORY_ROWS: usize = 4_096;
+const MAX_MIGRATION_HISTORY_TEXT_BYTES: usize = 256 * 1024;
+const READ_ONLY_TRANSACTION: &str = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY";
 
 /// Errors returned while reading or mapping migration history.
 #[derive(Debug, Error)]
@@ -26,11 +32,15 @@ pub enum MigrationHistoryPostgresError {
         #[source]
         source: sqlx::Error,
     },
+    #[error("migration history has more than {limit} rows")]
+    RowLimitExceeded { limit: usize },
     #[error("migration history row conversion failed for {column}: {reason}")]
     Conversion {
         column: &'static str,
         reason: String,
     },
+    #[error(transparent)]
+    Reconciliation(#[from] rudder_migration_history_core::MigrationHistoryError),
 }
 
 /// Pool-backed read-only migration history access.
@@ -61,13 +71,44 @@ impl MigrationHistoryPostgres {
     ) -> Result<MigrationHistorySnapshot, MigrationHistoryPostgresError> {
         read_snapshot_from_pool(&self.pool).await
     }
+
+    /// Reads and reconciles migration history without repairing or executing it.
+    pub async fn preflight(
+        &self,
+        manifest: &MigrationManifest,
+    ) -> Result<MigrationHistoryPreflight, MigrationHistoryPostgresError> {
+        let snapshot = self.read_snapshot().await?;
+        Ok(reconcile_migration_history(manifest, &snapshot)?)
+    }
 }
 
 /// Reads one migration-history snapshot using a PostgreSQL pool.
 pub async fn read_snapshot_from_pool(
     pool: &PgPool,
 ) -> Result<MigrationHistorySnapshot, MigrationHistoryPostgresError> {
-    let schema = discover_schema(pool).await?;
+    let mut transaction = pool.begin().await?;
+    let result = read_snapshot_in_transaction(&mut transaction).await;
+    match result {
+        Ok(snapshot) => {
+            transaction.commit().await?;
+            Ok(snapshot)
+        }
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
+    }
+}
+
+async fn read_snapshot_in_transaction(
+    transaction: &mut Transaction<'_, Postgres>,
+) -> Result<MigrationHistorySnapshot, MigrationHistoryPostgresError> {
+    sqlx::query(READ_ONLY_TRANSACTION)
+        .execute(&mut **transaction)
+        .await?;
+
+    let connection: &mut PgConnection = transaction;
+    let schema = discover_schema(connection).await?;
     let Some(schema) = schema else {
         return Ok(MigrationHistorySnapshot {
             table_schema: None,
@@ -76,7 +117,7 @@ pub async fn read_snapshot_from_pool(
         });
     };
 
-    let columns = discover_columns(pool, &schema).await?;
+    let columns = discover_columns(connection, &schema).await?;
     if !columns.id {
         return Ok(MigrationHistorySnapshot {
             table_schema: Some(schema),
@@ -86,7 +127,15 @@ pub async fn read_snapshot_from_pool(
     }
 
     let statement = query::migration_history_rows_select(&schema, columns)?;
-    let rows = sqlx::query(&statement).fetch_all(pool).await?;
+    let rows = sqlx::query(&statement)
+        .bind((MAX_MIGRATION_HISTORY_ROWS + 1) as i64)
+        .fetch_all(&mut *connection)
+        .await?;
+    if rows.len() > MAX_MIGRATION_HISTORY_ROWS {
+        return Err(MigrationHistoryPostgresError::RowLimitExceeded {
+            limit: MAX_MIGRATION_HISTORY_ROWS,
+        });
+    }
     let rows = rows
         .iter()
         .map(|row| map_row(row, columns))
@@ -99,10 +148,12 @@ pub async fn read_snapshot_from_pool(
     })
 }
 
-async fn discover_schema(pool: &PgPool) -> Result<Option<String>, MigrationHistoryPostgresError> {
+async fn discover_schema(
+    connection: &mut PgConnection,
+) -> Result<Option<String>, MigrationHistoryPostgresError> {
     let row = sqlx::query(query::DISCOVER_SCHEMA_SELECT)
         .bind(MIGRATION_HISTORY_TABLE_NAME)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *connection)
         .await?;
     row.map(|row| {
         row.try_get::<String, _>("schema_name").map_err(|source| {
@@ -116,13 +167,13 @@ async fn discover_schema(pool: &PgPool) -> Result<Option<String>, MigrationHisto
 }
 
 async fn discover_columns(
-    pool: &PgPool,
+    connection: &mut PgConnection,
     schema: &str,
 ) -> Result<MigrationHistoryColumns, MigrationHistoryPostgresError> {
     let rows = sqlx::query(query::DISCOVER_COLUMNS_SELECT)
         .bind(schema)
         .bind(MIGRATION_HISTORY_TABLE_NAME)
-        .fetch_all(pool)
+        .fetch_all(&mut *connection)
         .await?;
     let names = rows
         .iter()
@@ -278,9 +329,19 @@ fn decode_optional_text(
     if is_null {
         return Ok(None);
     }
-    row.try_get::<String, _>(column)
-        .map(Some)
-        .map_err(|source| row_decode(column, source))
+    let value = row
+        .try_get::<String, _>(column)
+        .map_err(|source| row_decode(column, source))?;
+    if value.len() > MAX_MIGRATION_HISTORY_TEXT_BYTES {
+        return Err(MigrationHistoryPostgresError::Conversion {
+            column,
+            reason: format!(
+                "text value exceeds {} bytes",
+                MAX_MIGRATION_HISTORY_TEXT_BYTES
+            ),
+        });
+    }
+    Ok(Some(value))
 }
 
 fn column_type(
@@ -368,7 +429,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             statement,
-            "SELECT \"id\", \"name\", \"hash\", \"created_at\" FROM \"drizzle\".\"__drizzle_migrations\" ORDER BY \"id\""
+            "SELECT \"id\", \"name\", \"hash\", \"created_at\" FROM \"drizzle\".\"__drizzle_migrations\" ORDER BY \"id\" LIMIT $1"
         );
         let normalized = statement.to_ascii_uppercase();
         assert!(normalized.starts_with("SELECT"));
