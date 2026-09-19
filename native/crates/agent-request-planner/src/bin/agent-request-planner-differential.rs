@@ -58,6 +58,9 @@ fn run() -> Result<bool, Box<dyn Error>> {
     if envelope.capability != "goal.change.propose" {
         return Err(format!("unsupported capability: {}", envelope.capability).into());
     }
+    if envelope.cases.is_empty() {
+        return Err("differential harness requires at least one case".into());
+    }
     let process_timezone = std::env::var("TZ").unwrap_or_default();
     if process_timezone != envelope.timezone {
         return Err(format!(
