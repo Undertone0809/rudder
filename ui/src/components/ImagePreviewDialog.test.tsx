@@ -15,6 +15,7 @@ vi.mock("@/components/ui/dialog", () => ({
     ...props
   }: {
     children: ReactNode;
+    onCloseAutoFocus?: unknown;
     showCloseButton?: boolean;
     style?: CSSProperties;
   }) => <div {...props}>{children}</div>,
