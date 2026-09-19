@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use thiserror::Error;
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use time::{
+    Date, OffsetDateTime,
+    format_description::{self, well_known::Rfc3339},
+};
 
 pub const CORE_RESPONSE_LIMIT: usize = 1_000_000;
 pub const BROWSER_RESPONSE_LIMIT: usize = 16_000_000;
@@ -145,7 +148,7 @@ fn map_request(
             optional_query(&mut query, "cursor", input.get("cursor"));
             (
                 HttpMethod::Get,
-                format!("/api/orgs/{}/members/directory", encode(org())),
+                format!("/api/orgs/{}/members/directory", encode_path_segment(org())),
                 None,
             )
         }
@@ -158,13 +161,16 @@ fn map_request(
             optional_query(&mut query, "facet", input.get("facet"));
             (
                 HttpMethod::Get,
-                format!("/api/orgs/{}/goals/assigned", encode(org())),
+                format!("/api/orgs/{}/goals/assigned", encode_path_segment(org())),
                 None,
             )
         }
         "goal.context" => (
             HttpMethod::Get,
-            format!("/api/goals/{}/agent-context", encode(&s("goal")?)),
+            format!(
+                "/api/goals/{}/agent-context",
+                encode_path_segment(&s("goal")?)
+            ),
             None,
         ),
         "goal.progress" => {
@@ -176,7 +182,7 @@ fn map_request(
             trim_project_strings(&mut body, &["summary", "activityKind", "idempotencyKey"]);
             (
                 HttpMethod::Post,
-                format!("/api/goals/{}/activities", encode(&s("goal")?)),
+                format!("/api/goals/{}/activities", encode_path_segment(&s("goal")?)),
                 Some(body),
             )
         }
@@ -196,7 +202,7 @@ fn map_request(
             trim_project_strings(&mut body, &["summary", "idempotencyKey"]);
             (
                 HttpMethod::Post,
-                format!("/api/goals/{}/checkpoint", encode(&s("goal")?)),
+                format!("/api/goals/{}/checkpoint", encode_path_segment(&s("goal")?)),
                 Some(body),
             )
         }
@@ -209,7 +215,7 @@ fn map_request(
                     "evidenceRefs",
                     "idempotencyKey",
                 ],
-                &[],
+                &[("evidenceRefs", json!([]))],
             );
             rename(
                 &input,
@@ -220,7 +226,10 @@ fn map_request(
             trim_project_strings(&mut body, &["rationale", "idempotencyKey"]);
             (
                 HttpMethod::Post,
-                format!("/api/goals/{}/change-proposals", encode(&s("goal")?)),
+                format!(
+                    "/api/goals/{}/change-proposals",
+                    encode_path_segment(&s("goal")?)
+                ),
                 Some(body),
             )
         }
@@ -237,12 +246,15 @@ fn map_request(
                     "riskSummary",
                     "idempotencyKey",
                 ],
-                &[],
+                &[("resultPayload", json!({}))],
             );
             trim_project_strings(&mut body, &["decision", "riskSummary", "idempotencyKey"]);
             (
                 HttpMethod::Post,
-                format!("/api/goals/{}/result-proposals", encode(&s("goal")?)),
+                format!(
+                    "/api/goals/{}/result-proposals",
+                    encode_path_segment(&s("goal")?)
+                ),
                 Some(body),
             )
         }
@@ -262,25 +274,32 @@ fn map_request(
                     "billingCode",
                     "labelIds",
                 ],
-                &[],
+                &[
+                    ("status", json!("backlog")),
+                    ("priority", json!("medium")),
+                    ("requestDepth", json!(0)),
+                ],
             );
             trim_project_strings(&mut body, &["title"]);
             (
                 HttpMethod::Post,
-                format!("/api/orgs/{}/issues", encode(org())),
+                format!("/api/orgs/{}/issues", encode_path_segment(org())),
                 Some(body),
             )
         }
         "issue.get" => (
             HttpMethod::Get,
-            format!("/api/issues/{}", encode(&s("issue")?)),
+            format!("/api/issues/{}", encode_path_segment(&s("issue")?)),
             None,
         ),
         "issue.context" => {
             optional_query(&mut query, "wakeCommentId", input.get("wakeCommentId"));
             (
                 HttpMethod::Get,
-                format!("/api/issues/{}/heartbeat-context", encode(&s("issue")?)),
+                format!(
+                    "/api/issues/{}/heartbeat-context",
+                    encode_path_segment(&s("issue")?)
+                ),
                 None,
             )
         }
@@ -293,7 +312,7 @@ fn map_request(
             );
             (
                 HttpMethod::Get,
-                format!("/api/issues/{}/comments", encode(&s("issue")?)),
+                format!("/api/issues/{}/comments", encode_path_segment(&s("issue")?)),
                 None,
             )
         }
@@ -301,8 +320,8 @@ fn map_request(
             HttpMethod::Get,
             format!(
                 "/api/issues/{}/comments/{}",
-                encode(&s("issue")?),
-                encode(&s("comment")?)
+                encode_path_segment(&s("issue")?),
+                encode_path_segment(&s("comment")?)
             ),
             None,
         ),
@@ -310,7 +329,7 @@ fn map_request(
             let statuses = csv(input.get("expectedStatuses"), "todo,backlog,blocked");
             (
                 HttpMethod::Post,
-                format!("/api/issues/{}/checkout", encode(&s("issue")?)),
+                format!("/api/issues/{}/checkout", encode_path_segment(&s("issue")?)),
                 Some(
                     json!({"agentId":runtime_string(runtime.agent_id.as_deref()),"expectedStatuses":statuses}),
                 ),
@@ -325,13 +344,13 @@ fn map_request(
             }
             (
                 HttpMethod::Post,
-                format!("/api/issues/{}/comments", encode(&s("issue")?)),
+                format!("/api/issues/{}/comments", encode_path_segment(&s("issue")?)),
                 Some(body),
             )
         }
         "issue.done" => (
             HttpMethod::Patch,
-            format!("/api/issues/{}", encode(&s("issue")?)),
+            format!("/api/issues/{}", encode_path_segment(&s("issue")?)),
             Some(json!({
                 "status": "done",
                 "comment": required_string_any(id, &input, &["comment", "body"])?
@@ -367,7 +386,10 @@ fn map_request(
             query.push(("limit".into(), positive(input.get("limit"), 50).to_string()));
             (
                 HttpMethod::Get,
-                format!("/api/run-intelligence/orgs/{}/runs", encode(org())),
+                format!(
+                    "/api/run-intelligence/orgs/{}/runs",
+                    encode_path_segment(org())
+                ),
                 None,
             )
         }
@@ -375,7 +397,10 @@ fn map_request(
             query.push(("projection".into(), "summary".into()));
             (
                 HttpMethod::Get,
-                format!("/api/run-intelligence/runs/{}", encode(&s("run")?)),
+                format!(
+                    "/api/run-intelligence/runs/{}",
+                    encode_path_segment(&s("run")?)
+                ),
                 None,
             )
         }
@@ -398,7 +423,10 @@ fn map_request(
             optional_query(&mut query, "cursor", input.get("cursor"));
             (
                 HttpMethod::Get,
-                format!("/api/run-intelligence/runs/{}/events", encode(&s("run")?)),
+                format!(
+                    "/api/run-intelligence/runs/{}/events",
+                    encode_path_segment(&s("run")?)
+                ),
                 None,
             )
         }
@@ -415,7 +443,10 @@ fn map_request(
             ]);
             (
                 HttpMethod::Get,
-                format!("/api/run-intelligence/runs/{}/log", encode(&s("run")?)),
+                format!(
+                    "/api/run-intelligence/runs/{}/log",
+                    encode_path_segment(&s("run")?)
+                ),
                 None,
             )
         }
@@ -461,7 +492,7 @@ fn map_request(
                 HttpMethod::Get,
                 format!(
                     "/api/run-intelligence/runs/{}/transcript",
-                    encode(&s("run")?)
+                    encode_path_segment(&s("run")?)
                 ),
                 None,
             )
@@ -474,7 +505,10 @@ fn map_request(
             optional_query(&mut query, "cursor", input.get("cursor"));
             (
                 HttpMethod::Get,
-                format!("/api/run-intelligence/runs/{}/errors", encode(&s("run")?)),
+                format!(
+                    "/api/run-intelligence/runs/{}/errors",
+                    encode_path_segment(&s("run")?)
+                ),
                 None,
             )
         }
@@ -660,9 +694,7 @@ fn validate_schema(id: &str, value: &Value, schema: &Value, at: &str) -> Result<
         if schema
             .get("format")
             .and_then(Value::as_str)
-            .is_some_and(|format| {
-                format == "date-time" && OffsetDateTime::parse(text, &Rfc3339).is_err()
-            })
+            .is_some_and(|format| format == "date-time" && !accepts_ts_coerce_date(text))
         {
             return invalid(id, &format!("{at} has invalid format"));
         }
@@ -865,6 +897,15 @@ fn optional_query(q: &mut Vec<(String, String)>, key: &str, v: Option<&Value>) {
         q.push((key.into(), s.trim().into()));
     }
 }
+
+fn accepts_ts_coerce_date(text: &str) -> bool {
+    let text = text.trim();
+    OffsetDateTime::parse(text, &Rfc3339).is_ok()
+        || format_description::parse_borrowed::<1>("[year]-[month]-[day]")
+            .ok()
+            .is_some_and(|format| Date::parse(text, &format).is_ok())
+}
+
 fn positive(v: Option<&Value>, fallback: u64) -> u64 {
     v.and_then(Value::as_f64)
         .filter(|n| n.is_finite() && *n > 0.0)
@@ -905,11 +946,30 @@ fn csv(v: Option<&Value>, fallback: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
-fn encode(value: &str) -> String {
+fn encode_path_segment(value: &str) -> String {
     let mut out = String::new();
     for b in value.as_bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+        if b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
             out.push(*b as char)
+        } else {
+            out.push_str(&format!("%{b:02X}"))
+        }
+    }
+    out
+}
+
+fn encode_query_component(value: &str) -> String {
+    let mut out = String::new();
+    for b in value.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'*') {
+            out.push(*b as char)
+        } else if *b == b' ' {
+            out.push('+')
         } else {
             out.push_str(&format!("%{b:02X}"))
         }
@@ -920,7 +980,13 @@ fn encode(value: &str) -> String {
 pub fn query_string(query: &[(String, String)]) -> String {
     query
         .iter()
-        .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
+        .map(|(k, v)| {
+            format!(
+                "{}={}",
+                encode_query_component(k),
+                encode_query_component(v)
+            )
+        })
         .collect::<Vec<_>>()
         .join("&")
 }

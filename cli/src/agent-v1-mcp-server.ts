@@ -1310,7 +1310,7 @@ function cliArgsForCapability(
     }
     case "issue.comment": {
       const args = ["issue", "comment", requiredAnyString(input, ["issue", "issueId"])];
-      pushBodyFile(args, "--body-file", input.body ?? input.comment, tempFiles);
+      pushBodyFile(args, "--body-file", firstNonBlankString(input, ["body", "comment"]), tempFiles);
       pushImages(args, input.images);
       if (input.reopen === true) args.push("--reopen");
       return args;
@@ -1336,15 +1336,16 @@ function cliArgsForCapability(
       pushOptional(args, "--request-depth", input.requestDepth);
       pushOptional(args, "--billing-code", input.billingCode);
       pushOptional(args, "--hidden-at", input.hiddenAt);
-      if (typeof (input.comment ?? input.body) === "string") {
-        pushBodyFile(args, "--comment-file", input.comment ?? input.body, tempFiles);
+      const comment = firstNonBlankString(input, ["comment", "body"]);
+      if (comment) {
+        pushBodyFile(args, "--comment-file", comment, tempFiles);
       }
       pushImages(args, input.images);
       return args;
     }
     case "issue.review": {
       const args = ["issue", "review", requiredAnyString(input, ["issue", "issueId"]), "--decision", requiredString(input, "decision")];
-      pushBodyFile(args, "--comment-file", input.comment ?? input.body, tempFiles);
+      pushBodyFile(args, "--comment-file", firstNonBlankString(input, ["comment", "body"]), tempFiles);
       return args;
     }
     case "issue.commit": {
@@ -1357,13 +1358,13 @@ function cliArgsForCapability(
     }
     case "issue.done": {
       const args = ["issue", "done", requiredAnyString(input, ["issue", "issueId"])];
-      pushBodyFile(args, "--comment-file", input.comment ?? input.body, tempFiles);
+      pushBodyFile(args, "--comment-file", firstNonBlankString(input, ["comment", "body"]), tempFiles);
       pushImages(args, input.images);
       return args;
     }
     case "issue.block": {
       const args = ["issue", "block", requiredAnyString(input, ["issue", "issueId"])];
-      pushBodyFile(args, "--comment-file", input.comment ?? input.body, tempFiles);
+      pushBodyFile(args, "--comment-file", firstNonBlankString(input, ["comment", "body"]), tempFiles);
       pushImages(args, input.images);
       return args;
     }
@@ -1427,7 +1428,7 @@ function cliArgsForCapability(
       return ["approval", "issues", requiredAnyString(input, ["approval", "approvalId"])];
     case "approval.comment": {
       const args = ["approval", "comment", requiredAnyString(input, ["approval", "approvalId"])];
-      pushBodyFile(args, "--body-file", input.body ?? input.comment, tempFiles);
+      pushBodyFile(args, "--body-file", firstNonBlankString(input, ["body", "comment"]), tempFiles);
       return args;
     }
     case "skill.list":
@@ -1827,11 +1828,17 @@ function requiredString(input: Record<string, unknown>, key: string): string {
 }
 
 function requiredAnyString(input: Record<string, unknown>, keys: string[]): string {
+  const value = firstNonBlankString(input, keys);
+  if (value) return value;
+  throw new Error(`Missing required argument: ${keys[0]}`);
+}
+
+function firstNonBlankString(input: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = optionalString(input[key]);
     if (value) return value;
   }
-  throw new Error(`Missing required argument: ${keys[0]}`);
+  return null;
 }
 
 function optionalString(value: unknown): string | null {

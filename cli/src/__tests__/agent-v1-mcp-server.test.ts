@@ -437,6 +437,150 @@ describe("agent-v1 MCP server", () => {
     });
   });
 
+  it("keeps direct defaults aligned with CLI fallback omission", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = JSON.parse(String(init?.body));
+      if (url.endsWith("/api/goals/goal-1/change-proposals")) {
+        expect(body).toEqual({
+          expectedContractRevision: 1,
+          afterContract: { objectiveMode: "target" },
+          rationale: "The contract needs an evidence-backed update.",
+          evidenceRefs: [],
+          idempotencyKey: "change-defaults",
+        });
+      } else if (url.endsWith("/api/goals/goal-1/result-proposals")) {
+        expect(body).toEqual({
+          contractRevision: 1,
+          criteria: [{ id: "criterion-1", status: "met" }],
+          evidenceRefs: ["artifact://result"],
+          resultPayload: {},
+          riskSummary: "No known gap.",
+          idempotencyKey: "result-defaults",
+        });
+      } else if (url.endsWith("/api/orgs/runtime-org/issues")) {
+        expect(body).toEqual({
+          title: "Issue with defaults",
+          status: "backlog",
+          priority: "medium",
+          requestDepth: 0,
+        });
+      } else {
+        throw new Error(`Unexpected default request ${url}`);
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const change = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "change-defaults",
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_change_propose",
+        arguments: {
+          goal: "goal-1",
+          contractRevision: 1,
+          afterContract: { objectiveMode: "target" },
+          rationale: "The contract needs an evidence-backed update.",
+          idempotencyKey: "change-defaults",
+        },
+      },
+    }, env);
+    const result = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "result-defaults",
+      method: "tools/call",
+      params: {
+        name: "rudder_goal_result_propose",
+        arguments: {
+          goal: "goal-1",
+          contractRevision: 1,
+          criteria: [{ id: "criterion-1", status: "met" }],
+          evidenceRefs: ["artifact://result"],
+          riskSummary: "No known gap.",
+          idempotencyKey: "result-defaults",
+        },
+      },
+    }, env);
+    const issue = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "issue-defaults",
+      method: "tools/call",
+      params: {
+        name: "rudder_issue_create",
+        arguments: { title: "Issue with defaults" },
+      },
+    }, env);
+
+    expect(change?.result).toMatchObject({ isError: false });
+    expect(result?.result).toMatchObject({ isError: false });
+    expect(issue?.result).toMatchObject({ isError: false });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const fallbackChange = buildAgentV1ToolCallPlan("rudder_goal_change_propose", {
+      goal: "goal-1",
+      contractRevision: 1,
+      afterContract: { objectiveMode: "target" },
+      rationale: "The contract needs an evidence-backed update.",
+      idempotencyKey: "change-defaults",
+    }, env);
+    const fallbackResult = buildAgentV1ToolCallPlan("rudder_goal_result_propose", {
+      goal: "goal-1",
+      contractRevision: 1,
+      criteria: [{ id: "criterion-1", status: "met" }],
+      evidenceRefs: ["artifact://result"],
+      riskSummary: "No known gap.",
+      idempotencyKey: "result-defaults",
+    }, env);
+    const fallbackIssue = buildAgentV1ToolCallPlan("rudder_issue_create", {
+      title: "Issue with defaults",
+    }, env);
+    expect(fallbackChange.args).not.toContain("--evidence-refs");
+    expect(fallbackResult.args).not.toContain("--result-payload");
+    expect(fallbackIssue.args).toEqual(["issue", "create", "--title", "Issue with defaults", "--json"]);
+  });
+
+  it("uses Node path and form-query encoding for direct MCP URLs", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      expect(String(input)).toBe(
+        "http://127.0.0.1:3100/api/orgs/org%20!'()*~%2B/members/directory?query=%21%27%28%29*%7E%2B+x&type=all&limit=50&cursor=%2F%3F",
+      );
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "url-encoding",
+      method: "tools/call",
+      params: {
+        name: "rudder_organization_members_list",
+        arguments: { query: " !'()*~+ x ", cursor: " /? " },
+      },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: " org !'()*~+ ",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({ isError: false, structuredContent: { items: [] } });
+  });
+
   it("rejects model-provided runtime identity fields", async () => {
     const response = await runAgentV1McpJsonRpcMessage(
       {
@@ -811,7 +955,7 @@ describe("agent-v1 MCP server", () => {
   it("accepts comment as an alias for issue comment body", () => {
     const plan = buildAgentV1ToolCallPlan(
       "rudder_issue_comment",
-      { issue: "ZST-123", comment: "Progress update" },
+      { issue: "ZST-123", body: " \t ", comment: "  Progress update  ", images: ["/tmp/proof.png"] },
       {
         RUDDER_API_URL: "http://127.0.0.1:3100",
         RUDDER_API_KEY: "runtime-key",
@@ -828,18 +972,59 @@ describe("agent-v1 MCP server", () => {
       RUDDER_ORG_ID: "runtime-org",
     };
     const cases = [
-      ["rudder_issue_review", { issue: "RUD-1", decision: "approve", body: "Approved" }, "--comment-file"],
-      ["rudder_issue_done", { issue: "RUD-1", body: "Done" }, "--comment-file"],
-      ["rudder_issue_block", { issue: "RUD-1", body: "Blocked" }, "--comment-file"],
-      ["rudder_library_file_put", { path: "projects/a.md", content: "# A" }, "--body-file"],
-      ["rudder_approval_comment", { approval: "apr_123", comment: "Question" }, "--body-file"],
+      ["rudder_issue_update", { issue: "RUD-1", comment: " \t ", body: " Updated " }, "--comment-file", "Updated"],
+      ["rudder_issue_review", { issue: "RUD-1", decision: "approve", comment: "\n", body: " Approved " }, "--comment-file", "Approved"],
+      ["rudder_issue_done", { issue: "RUD-1", comment: " ", body: " Done " }, "--comment-file", "Done"],
+      ["rudder_issue_block", { issue: "RUD-1", comment: "\t", body: " Blocked " }, "--comment-file", "Blocked"],
+      ["rudder_library_file_put", { path: "projects/a.md", content: "# A" }, "--body-file", "# A"],
+      ["rudder_approval_comment", { approval: "apr_123", body: " ", comment: " Question " }, "--body-file", "Question"],
     ] as const;
 
-    for (const [toolName, input, bodyFlag] of cases) {
+    for (const [toolName, input, bodyFlag, contents] of cases) {
       const plan = buildAgentV1ToolCallPlan(toolName, input, env);
       expect(plan.args, toolName).toContain(bodyFlag);
       expect(plan.tempFiles, toolName).toHaveLength(1);
+      expect(plan.tempFiles[0]?.contents, toolName).toBe(contents);
     }
+  });
+
+  it("uses the same canonical body alias for direct and image-bearing issue comments", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+    });
+    const fallbackPlan = buildAgentV1ToolCallPlan("rudder_issue_comment", {
+      issue: "ISSUE-1",
+      body: " \t ",
+      comment: "  Progress  ",
+      images: ["/tmp/proof.png"],
+    }, env);
+    expect(fallbackPlan.tempFiles).toEqual([{ flag: "--body-file", contents: "Progress" }]);
+
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ body: "Progress" });
+      return new Response(JSON.stringify({ id: "comment-1" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "comment-alias",
+      method: "tools/call",
+      params: {
+        name: "rudder_issue_comment",
+        arguments: { issue: "ISSUE-1", body: " \t ", comment: "  Progress  " },
+      },
+    }, env);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({ isError: false, structuredContent: { id: "comment-1" } });
   });
 
   it("builds a CLI invocation plan for every agent-v1 MCP tool", () => {
@@ -1826,7 +2011,7 @@ describe("agent-v1 MCP server", () => {
         arguments: {
           goal: "goal-1",
           contractRevision: 3,
-          afterContract: { actionDeadline: "2026-08-20T00:00:00.000Z" },
+          afterContract: { actionDeadline: "2026-08-20" },
           rationale: "External approval moved the feasible delivery date.",
           evidenceRefs: ["artifact://goal/schedule-evidence"],
           idempotencyKey: "goal-change-1",

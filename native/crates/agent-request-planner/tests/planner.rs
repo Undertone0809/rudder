@@ -100,7 +100,12 @@ fn sample(schema: &Value) -> Value {
 fn encode_path_segment(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
             encoded.push(*byte as char);
         } else {
             encoded.push_str(&format!("%{byte:02X}"));
@@ -305,7 +310,7 @@ fn exact_defaults_projection_and_unicode_encoding_match_node_planner() {
     );
     assert_eq!(
         query_string(&members.query),
-        "query=Ada%20%20Lovelace&type=all&limit=50&cursor=next%20%2F%201"
+        "query=Ada++Lovelace&type=all&limit=50&cursor=next+%2F+1"
     );
 
     let PlanOutcome::Direct(progress) = plan_request(
@@ -1197,6 +1202,29 @@ fn preserves_issue_request_shapes_and_rejects_unmaterialized_images() {
         Some(json!({"status":"done","comment":"Completed"}))
     );
 
+    let PlanOutcome::Direct(alias_comment) = plan_request(
+        "issue.comment",
+        json!({"issue":" ISS/1 ","body":" \t ","comment":" Progress  "}),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(alias_comment.body, Some(json!({"body":"Progress"})));
+
+    let PlanOutcome::Direct(alias_done) = plan_request(
+        "issue.done",
+        json!({"issue":" ISS/1 ","comment":" \n ","body":" Completed  "}),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        alias_done.body,
+        Some(json!({"status":"done","comment":"Completed"}))
+    );
+
     for capability in ["issue.comment", "issue.done"] {
         assert!(matches!(
             plan_request(
@@ -1235,6 +1263,109 @@ fn validates_schema_min_properties_and_formats() {
     let mut valid_deadline = base;
     valid_deadline["afterContract"] = json!({"actionDeadline":"2026-09-18T00:00:00Z"});
     assert!(plan_request("goal.change.propose", valid_deadline, &runtime(false)).is_ok());
+}
+
+#[test]
+fn matches_ts_defaults_and_date_only_coercion_boundary() {
+    let PlanOutcome::Direct(change) = plan_request(
+        "goal.change.propose",
+        json!({
+            "goal": "goal-1",
+            "contractRevision": 1,
+            "afterContract": {"actionDeadline": "2026-08-20"},
+            "rationale": "The evidence requires a contract update.",
+            "idempotencyKey": "change-1"
+        }),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        change.body,
+        Some(json!({
+            "afterContract": {"actionDeadline": "2026-08-20"},
+            "rationale": "The evidence requires a contract update.",
+            "evidenceRefs": [],
+            "idempotencyKey": "change-1",
+            "expectedContractRevision": 1
+        }))
+    );
+
+    let PlanOutcome::Direct(result) = plan_request(
+        "goal.result.propose",
+        json!({
+            "goal": "goal-1",
+            "contractRevision": 1,
+            "criteria": [{"id":"criterion-1","status":"met"}],
+            "evidenceRefs": ["artifact://result"],
+            "riskSummary": "No known gap.",
+            "idempotencyKey": "result-1"
+        }),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        result.body,
+        Some(json!({
+            "contractRevision": 1,
+            "criteria": [{"id":"criterion-1","status":"met"}],
+            "evidenceRefs": ["artifact://result"],
+            "resultPayload": {},
+            "riskSummary": "No known gap.",
+            "idempotencyKey": "result-1"
+        }))
+    );
+
+    let PlanOutcome::Direct(issue) = plan_request(
+        "issue.create",
+        json!({"title":"Create with TS defaults"}),
+        &runtime(false),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        issue.body,
+        Some(json!({
+            "title": "Create with TS defaults",
+            "status": "backlog",
+            "priority": "medium",
+            "requestDepth": 0
+        }))
+    );
+}
+
+#[test]
+fn matches_node_path_and_form_query_encoding_for_special_characters() {
+    let mut special_runtime = runtime(false);
+    special_runtime.organization_id = Some(" org !'()*~+ ".into());
+
+    let PlanOutcome::Direct(members) = plan_request(
+        "organization.members.list",
+        json!({"query":" !'()*~+ x ","cursor":" /? "}),
+        &special_runtime,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(members.path, "/api/orgs/org%20!'()*~%2B/members/directory");
+    assert_eq!(
+        query_string(&members.query),
+        "query=%21%27%28%29*%7E%2B+x&type=all&limit=50&cursor=%2F%3F"
+    );
+
+    let PlanOutcome::Direct(issue) = plan_request(
+        "issue.get",
+        json!({"issue":" id !'()*~+ "}),
+        &special_runtime,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(issue.path, "/api/issues/id%20!'()*~%2B");
 }
 
 #[test]
