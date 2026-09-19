@@ -1,7 +1,7 @@
 use rudder_migration_core::{
-    inspect_migration_source, load_migration_manifest, validate_migration_manifest_compatibility,
     JournalEntry, MigrationCompatibility, MigrationInspectionOptions, MigrationLimits,
-    MigrationManifest, MigrationManifestOptions, MigrationSource,
+    MigrationManifest, MigrationManifestOptions, MigrationSource, inspect_migration_source,
+    load_migration_manifest, validate_migration_manifest_compatibility,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
@@ -476,7 +476,7 @@ fn emit_protocol_error(error: RequestError) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_request, SCHEMA};
+    use super::{SCHEMA, parse_request};
 
     #[test]
     fn malformed_json_is_classified_as_protocol_input() {
