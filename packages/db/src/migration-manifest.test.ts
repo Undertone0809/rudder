@@ -95,7 +95,7 @@ describe("migration manifest", () => {
     });
     expect(validateMigrationManifestCompatibility(baseline, edited)).toMatchObject({
       valid: false,
-      errors: ["Candidate changed published migration 0000_first.sql"],
+      errors: ["Candidate changed published journal migration 0000_first.sql"],
     });
   });
 
@@ -112,5 +112,47 @@ describe("migration manifest", () => {
     await expect(createMigrationManifest(fixture)).rejects.toThrow(
       "Migration SQL files are missing from the journal: 0001_unjournaled.sql",
     );
+  });
+
+  it("uses a locale-independent canonical file order", async () => {
+    const fixture = createFixture([
+      { tag: "a_foo", sql: "SELECT underscore;" },
+      { tag: "a-foo", sql: "SELECT hyphen;" },
+    ]);
+
+    const manifest = await createMigrationManifest(fixture);
+
+    expect(manifest.canonical.sqlFiles.map((entry) => entry.fileName)).toEqual([
+      "a-foo.sql",
+      "a_foo.sql",
+    ]);
+  });
+
+  it("keeps legacy SQL outside the journal prefix for append compatibility", async () => {
+    const baselineFixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+      { tag: "0001_second", sql: "CREATE TABLE second_table (id integer);" },
+    ]);
+    const appendedFixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+      { tag: "0001_second", sql: "CREATE TABLE second_table (id integer);" },
+      { tag: "0002_third", sql: "CREATE TABLE third_table (id integer);" },
+    ]);
+    for (const fixture of [baselineFixture, appendedFixture]) {
+      writeFileSync(
+        path.join(fixture.migrationsFolder, "0055_illegal_sheva_callister.sql"),
+        "SELECT legacy;",
+        "utf8",
+      );
+    }
+
+    const baseline = await createMigrationManifest(baselineFixture);
+    const appended = await createMigrationManifest(appendedFixture);
+
+    expect(validateMigrationManifestCompatibility(baseline, appended)).toMatchObject({
+      valid: true,
+      errors: [],
+      addedEntries: [{ order: 2, fileName: "0002_third.sql" }],
+    });
   });
 });

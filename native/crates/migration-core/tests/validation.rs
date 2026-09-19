@@ -86,6 +86,10 @@ fn loads_actual_journal_with_ordered_identity_and_allowlisted_legacy_files() {
         first.journal.entries[0].tag
     );
     assert_eq!(first.fingerprint.len(), 64);
+    assert_eq!(
+        first.fingerprint,
+        "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db"
+    );
 }
 
 #[test]
@@ -201,6 +205,54 @@ fn rejects_edited_published_prefix_but_allows_append_only_candidate() {
     let compatibility = validate_migration_manifest_compatibility(&baseline, &edited);
     assert!(!compatibility.valid);
     assert!(!compatibility.compatible);
+    assert!(
+        compatibility
+            .errors
+            .iter()
+            .any(|error| error.contains("0000_first.sql"))
+    );
+}
+
+#[test]
+fn appending_a_journal_migration_does_not_rewrite_legacy_tail() {
+    let (_base_root, base_journal, base_migrations) = fixture(
+        &[("0000_first", "SELECT 1;"), ("0001_second", "SELECT 2;")],
+        &[("0055_illegal_sheva_callister", "SELECT legacy;")],
+    );
+    let baseline = load_migration_manifest(&base_journal, &base_migrations, limits()).unwrap();
+
+    let (_candidate_root, candidate_journal, candidate_migrations) = fixture(
+        &[
+            ("0000_first", "SELECT 1;"),
+            ("0001_second", "SELECT 2;"),
+            ("0002_third", "SELECT 3;"),
+        ],
+        &[("0055_illegal_sheva_callister", "SELECT legacy;")],
+    );
+    let candidate =
+        load_migration_manifest(&candidate_journal, &candidate_migrations, limits()).unwrap();
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &candidate);
+
+    assert!(compatibility.valid);
+    assert_eq!(compatibility.added_entries, ["0002_third.sql"]);
+}
+
+#[test]
+fn journal_metadata_changes_are_not_append_compatible() {
+    let (_base_root, base_journal, base_migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let baseline = load_migration_manifest(&base_journal, &base_migrations, limits()).unwrap();
+
+    let (_candidate_root, candidate_journal, candidate_migrations) =
+        fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let mut journal: serde_json::Value =
+        serde_json::from_slice(&fs::read(&candidate_journal).unwrap()).unwrap();
+    journal["entries"][0]["breakpoints"] = json!(false);
+    fs::write(&candidate_journal, serde_json::to_vec(&journal).unwrap()).unwrap();
+    let candidate =
+        load_migration_manifest(&candidate_journal, &candidate_migrations, limits()).unwrap();
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &candidate);
+
+    assert!(!compatibility.valid);
     assert!(
         compatibility
             .errors
