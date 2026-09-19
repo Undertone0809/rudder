@@ -21,7 +21,9 @@ pub const SHA256_HEX_LENGTH: usize = 64;
 /// Domain separator for deterministic Project-Goal link identifiers.
 pub const LINK_IDENTIFIER_SCHEMA: &str = "rudder.project-goal-link.v1";
 /// Domain separator for deterministic mutation fingerprints.
-pub const FINGERPRINT_SCHEMA: &str = "rudder.project-goal-link-mutation.v1";
+pub const FINGERPRINT_SCHEMA: &str = "rudder.project-goal-link-mutation.v2";
+/// Domain separator for serialized link-state integrity bindings.
+const STATE_INTEGRITY_SCHEMA: &str = "rudder.project-goal-link-state.v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -229,6 +231,9 @@ impl ProjectGoalLinkCommand {
         validate_identifier(&self.project_id)?;
         validate_identifier(&self.goal_id)?;
         validate_idempotency_key(&self.idempotency_key)?;
+        if !self.actor.can_mutate() {
+            return Err(LinkMutationError::Unauthorized);
+        }
         if self.actor.organization_id() != self.organization_id {
             return Err(LinkMutationError::CrossOrganization);
         }
@@ -237,9 +242,40 @@ impl ProjectGoalLinkCommand {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AppliedReceiptOutcome {
+    Applied,
+    Noop,
+}
+
+impl AppliedReceiptOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Noop => "noop",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LinkStateSnapshot {
+    version: u64,
+    fence_epoch: u64,
+    linked: bool,
+    cancelled: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppliedReceipt {
+    idempotency_key: String,
+    operation: Operation,
+    outcome: AppliedReceiptOutcome,
+    previous_version: u64,
+    previous_fence_epoch: u64,
+    previous_linked: bool,
+    previous_cancelled: bool,
     version: u64,
     fence_epoch: u64,
     linked: bool,
@@ -261,6 +297,7 @@ pub struct ProjectGoalLinkState {
     pub linked: bool,
     pub cancelled: bool,
     applied_idempotency: BTreeMap<String, AppliedReceipt>,
+    integrity: String,
 }
 
 impl ProjectGoalLinkState {
@@ -275,7 +312,7 @@ impl ProjectGoalLinkState {
         fence_epoch: u64,
         linked: bool,
     ) -> Self {
-        Self {
+        let mut state = Self {
             organization_id: organization_id.into(),
             project_org_id: project_org_id.into(),
             goal_org_id: goal_org_id.into(),
@@ -286,7 +323,10 @@ impl ProjectGoalLinkState {
             linked,
             cancelled: false,
             applied_idempotency: BTreeMap::new(),
-        }
+            integrity: String::new(),
+        };
+        state.refresh_integrity();
+        state
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -323,17 +363,87 @@ impl ProjectGoalLinkState {
         validate_identifier(&self.project_id)?;
         validate_identifier(&self.goal_id)?;
         let link_id = self.link_identifier()?;
+        if !is_sha256_hex(&self.integrity) || self.integrity != self.computed_integrity() {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
         if self.applied_idempotency.len() > MAX_APPLIED_RECEIPTS {
             return Err(LinkMutationError::ReceiptCapacityExceeded);
         }
+        let mut cancellation_receipt = None;
         for (key, receipt) in &self.applied_idempotency {
             validate_idempotency_key(key)?;
-            validate_receipt(receipt)?;
-            if receipt.link_id != link_id {
+            validate_receipt(key, receipt, &link_id)?;
+            if receipt.version > self.version || receipt.fence_epoch > self.fence_epoch {
+                return Err(LinkMutationError::InvalidReceipt);
+            }
+            if matches!(receipt.operation, Operation::Cancel)
+                && cancellation_receipt.replace(receipt).is_some()
+            {
                 return Err(LinkMutationError::InvalidReceipt);
             }
         }
+        if self.cancelled {
+            let Some(receipt) = cancellation_receipt else {
+                return Err(LinkMutationError::InvalidReceipt);
+            };
+            if receipt.version != self.version
+                || receipt.fence_epoch != self.fence_epoch
+                || receipt.linked != self.linked
+                || !receipt.cancelled
+            {
+                return Err(LinkMutationError::InvalidReceipt);
+            }
+        } else if cancellation_receipt.is_some() {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
         Ok(())
+    }
+
+    fn computed_integrity(&self) -> String {
+        hex_digest(Sha256::digest(canonical_state_integrity_bytes(self)))
+    }
+
+    fn refresh_integrity(&mut self) {
+        self.integrity = self.computed_integrity();
+    }
+
+    fn snapshot(&self) -> LinkStateSnapshot {
+        LinkStateSnapshot {
+            version: self.version,
+            fence_epoch: self.fence_epoch,
+            linked: self.linked,
+            cancelled: self.cancelled,
+        }
+    }
+
+    fn record_receipt(
+        &mut self,
+        command: &ProjectGoalLinkCommand,
+        outcome: AppliedReceiptOutcome,
+        previous: LinkStateSnapshot,
+        fingerprint: &str,
+        link_id: &str,
+    ) {
+        let key = command.idempotency_key.clone();
+        self.applied_idempotency.insert(
+            key.clone(),
+            AppliedReceipt {
+                idempotency_key: key,
+                operation: command.operation,
+                outcome,
+                previous_version: previous.version,
+                previous_fence_epoch: previous.fence_epoch,
+                previous_linked: previous.linked,
+                previous_cancelled: previous.cancelled,
+                version: self.version,
+                fence_epoch: self.fence_epoch,
+                linked: self.linked,
+                cancelled: self.cancelled,
+                link_id: link_id.to_owned(),
+                fingerprint: fingerprint.to_owned(),
+            },
+        );
+        self.refresh_integrity();
     }
 
     pub fn applied_receipt_count(&self) -> usize {
@@ -374,6 +484,8 @@ impl ProjectGoalLinkState {
             return Err(LinkMutationError::ReceiptCapacityExceeded);
         }
 
+        let previous = self.snapshot();
+
         if matches!(command.operation, Operation::Cancel) {
             let next_version = self
                 .version
@@ -386,16 +498,12 @@ impl ProjectGoalLinkState {
             self.version = next_version;
             self.fence_epoch = next_fence_epoch;
             self.cancelled = true;
-            self.applied_idempotency.insert(
-                command.idempotency_key,
-                AppliedReceipt {
-                    version: self.version,
-                    fence_epoch: self.fence_epoch,
-                    linked: self.linked,
-                    cancelled: self.cancelled,
-                    link_id: link_id.clone(),
-                    fingerprint: fingerprint.clone(),
-                },
+            self.record_receipt(
+                &command,
+                AppliedReceiptOutcome::Applied,
+                previous,
+                &fingerprint,
+                &link_id,
             );
             return Ok(LinkMutationOutcome::Applied {
                 version: self.version,
@@ -409,16 +517,12 @@ impl ProjectGoalLinkState {
 
         let requested_linked = matches!(command.operation, Operation::Attach);
         if requested_linked == self.linked {
-            self.applied_idempotency.insert(
-                command.idempotency_key,
-                AppliedReceipt {
-                    version: self.version,
-                    fence_epoch: self.fence_epoch,
-                    linked: self.linked,
-                    cancelled: self.cancelled,
-                    link_id: link_id.clone(),
-                    fingerprint: fingerprint.clone(),
-                },
+            self.record_receipt(
+                &command,
+                AppliedReceiptOutcome::Noop,
+                previous,
+                &fingerprint,
+                &link_id,
             );
             return Ok(LinkMutationOutcome::Noop {
                 version: self.version,
@@ -436,16 +540,12 @@ impl ProjectGoalLinkState {
             .ok_or(LinkMutationError::VersionOverflow)?;
         self.linked = requested_linked;
         self.version = next_version;
-        self.applied_idempotency.insert(
-            command.idempotency_key,
-            AppliedReceipt {
-                version: self.version,
-                fence_epoch: self.fence_epoch,
-                linked: self.linked,
-                cancelled: self.cancelled,
-                link_id: link_id.clone(),
-                fingerprint: fingerprint.clone(),
-            },
+        self.record_receipt(
+            &command,
+            AppliedReceiptOutcome::Applied,
+            previous,
+            &fingerprint,
+            &link_id,
         );
         Ok(LinkMutationOutcome::Applied {
             version: self.version,
@@ -557,6 +657,7 @@ fn canonical_fingerprint_bytes(command: &ProjectGoalLinkCommand) -> Vec<u8> {
         command.project_id.as_str(),
         command.goal_id.as_str(),
         command.operation.as_str(),
+        command.idempotency_key.as_str(),
     ];
     let mut output = Vec::with_capacity(
         FINGERPRINT_SCHEMA.len() + fields.iter().map(|field| field.len() + 8).sum::<usize>() + 16,
@@ -570,6 +671,41 @@ fn canonical_fingerprint_bytes(command: &ProjectGoalLinkCommand) -> Vec<u8> {
     output
 }
 
+fn canonical_state_integrity_bytes(state: &ProjectGoalLinkState) -> Vec<u8> {
+    let mut output = Vec::new();
+    append_domain_separator(&mut output, STATE_INTEGRITY_SCHEMA);
+    for field in [
+        state.organization_id.as_str(),
+        state.project_org_id.as_str(),
+        state.goal_org_id.as_str(),
+        state.project_id.as_str(),
+        state.goal_id.as_str(),
+    ] {
+        append_length_prefixed(&mut output, field);
+    }
+    output.extend_from_slice(&state.version.to_be_bytes());
+    output.extend_from_slice(&state.fence_epoch.to_be_bytes());
+    append_bool(&mut output, state.linked);
+    append_bool(&mut output, state.cancelled);
+    for (key, receipt) in &state.applied_idempotency {
+        append_length_prefixed(&mut output, key);
+        append_length_prefixed(&mut output, &receipt.idempotency_key);
+        append_length_prefixed(&mut output, receipt.operation.as_str());
+        append_length_prefixed(&mut output, receipt.outcome.as_str());
+        output.extend_from_slice(&receipt.previous_version.to_be_bytes());
+        output.extend_from_slice(&receipt.previous_fence_epoch.to_be_bytes());
+        append_bool(&mut output, receipt.previous_linked);
+        append_bool(&mut output, receipt.previous_cancelled);
+        output.extend_from_slice(&receipt.version.to_be_bytes());
+        output.extend_from_slice(&receipt.fence_epoch.to_be_bytes());
+        append_bool(&mut output, receipt.linked);
+        append_bool(&mut output, receipt.cancelled);
+        append_length_prefixed(&mut output, &receipt.link_id);
+        append_length_prefixed(&mut output, &receipt.fingerprint);
+    }
+    output
+}
+
 fn append_domain_separator(output: &mut Vec<u8>, schema: &str) {
     output.extend_from_slice(schema.as_bytes());
     output.push(0);
@@ -578,6 +714,10 @@ fn append_domain_separator(output: &mut Vec<u8>, schema: &str) {
 fn append_length_prefixed(output: &mut Vec<u8>, field: &str) {
     output.extend_from_slice(&(field.len() as u64).to_be_bytes());
     output.extend_from_slice(field.as_bytes());
+}
+
+fn append_bool(output: &mut Vec<u8>, value: bool) {
+    output.push(u8::from(value));
 }
 
 fn validate_identifier(value: &str) -> Result<(), LinkMutationError> {
@@ -600,8 +740,53 @@ fn validate_idempotency_key(value: &str) -> Result<(), LinkMutationError> {
     validate_identifier(value)
 }
 
-fn validate_receipt(receipt: &AppliedReceipt) -> Result<(), LinkMutationError> {
-    if !is_sha256_hex(&receipt.link_id) || !is_sha256_hex(&receipt.fingerprint) {
+fn validate_receipt(
+    key: &str,
+    receipt: &AppliedReceipt,
+    link_id: &str,
+) -> Result<(), LinkMutationError> {
+    if receipt.idempotency_key != key
+        || receipt.link_id != link_id
+        || !is_sha256_hex(&receipt.link_id)
+        || !is_sha256_hex(&receipt.fingerprint)
+    {
+        return Err(LinkMutationError::InvalidReceipt);
+    }
+
+    let valid = match (receipt.operation, receipt.outcome) {
+        (Operation::Attach | Operation::Detach, AppliedReceiptOutcome::Noop) => {
+            receipt.previous_version == receipt.version
+                && receipt.previous_fence_epoch == receipt.fence_epoch
+                && receipt.previous_linked == receipt.linked
+                && receipt.previous_cancelled == receipt.cancelled
+                && !receipt.cancelled
+        }
+        (Operation::Attach | Operation::Detach, AppliedReceiptOutcome::Applied) => {
+            receipt
+                .previous_version
+                .checked_add(1)
+                .is_some_and(|version| version == receipt.version)
+                && receipt.previous_fence_epoch == receipt.fence_epoch
+                && receipt.previous_linked != receipt.linked
+                && receipt.previous_cancelled == receipt.cancelled
+                && !receipt.cancelled
+        }
+        (Operation::Cancel, AppliedReceiptOutcome::Applied) => {
+            receipt
+                .previous_version
+                .checked_add(1)
+                .is_some_and(|version| version == receipt.version)
+                && receipt
+                    .previous_fence_epoch
+                    .checked_add(1)
+                    .is_some_and(|fence_epoch| fence_epoch == receipt.fence_epoch)
+                && receipt.previous_linked == receipt.linked
+                && !receipt.previous_cancelled
+                && receipt.cancelled
+        }
+        (Operation::Cancel, AppliedReceiptOutcome::Noop) => false,
+    };
+    if !valid {
         return Err(LinkMutationError::InvalidReceipt);
     }
     Ok(())
@@ -614,48 +799,42 @@ fn validate_replay_receipt(
     fingerprint: &str,
     link_id: &str,
 ) -> Result<(), LinkMutationError> {
-    if receipt.fingerprint != fingerprint || receipt.link_id != link_id {
-        return Err(LinkMutationError::InvalidReceipt);
-    }
-
-    let is_cancel = matches!(command.operation, Operation::Cancel);
-    if (is_cancel && !state.cancelled)
-        || receipt.version > state.version
-        || receipt.fence_epoch > state.fence_epoch
+    if receipt.idempotency_key != command.idempotency_key
+        || receipt.operation != command.operation
+        || receipt.fingerprint != fingerprint
+        || receipt.link_id != link_id
+        || receipt.previous_version != command.expected_version
+        || receipt.previous_fence_epoch != command.fence_epoch
     {
         return Err(LinkMutationError::InvalidReceipt);
     }
-    let expected_fence = if is_cancel {
-        command
-            .fence_epoch
-            .checked_add(1)
-            .ok_or(LinkMutationError::InvalidReceipt)?
-    } else {
-        command.fence_epoch
-    };
-    let valid_version = if is_cancel {
-        command
-            .expected_version
-            .checked_add(1)
-            .is_some_and(|version| receipt.version == version)
-    } else {
-        receipt.version == command.expected_version
-            || command
-                .expected_version
-                .checked_add(1)
-                .is_some_and(|version| receipt.version == version)
-    };
-    let valid_link = match command.operation {
-        Operation::Attach => receipt.linked,
-        Operation::Detach => !receipt.linked,
-        Operation::Cancel => receipt.linked == state.linked,
-    };
 
-    if !valid_version
-        || receipt.fence_epoch != expected_fence
-        || receipt.cancelled != is_cancel
-        || !valid_link
-    {
+    if receipt.version > state.version || receipt.fence_epoch > state.fence_epoch {
+        return Err(LinkMutationError::InvalidReceipt);
+    }
+    if matches!(command.operation, Operation::Cancel) && !state.cancelled {
+        return Err(LinkMutationError::InvalidReceipt);
+    }
+
+    let exact_outcome = match (command.operation, receipt.outcome) {
+        (Operation::Attach, AppliedReceiptOutcome::Applied) => {
+            !receipt.previous_linked && receipt.linked && !receipt.cancelled
+        }
+        (Operation::Attach, AppliedReceiptOutcome::Noop) => {
+            receipt.previous_linked && receipt.linked && !receipt.cancelled
+        }
+        (Operation::Detach, AppliedReceiptOutcome::Applied) => {
+            receipt.previous_linked && !receipt.linked && !receipt.cancelled
+        }
+        (Operation::Detach, AppliedReceiptOutcome::Noop) => {
+            !receipt.previous_linked && !receipt.linked && !receipt.cancelled
+        }
+        (Operation::Cancel, AppliedReceiptOutcome::Applied) => {
+            receipt.previous_linked == receipt.linked && receipt.cancelled
+        }
+        (Operation::Cancel, AppliedReceiptOutcome::Noop) => false,
+    };
+    if !exact_outcome {
         return Err(LinkMutationError::InvalidReceipt);
     }
     Ok(())
@@ -1003,6 +1182,13 @@ mod tests {
             full.applied_idempotency.insert(
                 format!("receipt-{index}"),
                 AppliedReceipt {
+                    idempotency_key: format!("receipt-{index}"),
+                    operation: Operation::Attach,
+                    outcome: AppliedReceiptOutcome::Noop,
+                    previous_version: 2,
+                    previous_fence_epoch: 4,
+                    previous_linked: false,
+                    previous_cancelled: false,
                     version: 2,
                     fence_epoch: 4,
                     linked: false,
@@ -1012,6 +1198,7 @@ mod tests {
                 },
             );
         }
+        full.refresh_integrity();
         let expected_state = full.clone();
         assert_eq!(
             full.apply(board(Operation::Attach, "receipt-overflow")),
@@ -1055,11 +1242,102 @@ mod tests {
         let mut encoded = serde_json::to_value(&state).unwrap();
         encoded["appliedIdempotency"]["tampered-receipt"]["version"] = serde_json::json!(99);
         let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
+        restored.refresh_integrity();
 
         assert_eq!(
             restored.apply(board(Operation::Attach, "tampered-receipt")),
             Err(LinkMutationError::InvalidReceipt)
         );
+    }
+
+    #[test]
+    fn idempotency_key_is_bound_to_fingerprint_and_receipt_map_key() {
+        let used = board(Operation::Attach, "used-key");
+        let unused = board(Operation::Attach, "unused-key");
+        assert_ne!(used.fingerprint(), unused.fingerprint());
+
+        let mut state = state();
+        state.apply(used).unwrap();
+
+        let mut encoded = serde_json::to_value(&state).unwrap();
+        let receipt = encoded["appliedIdempotency"]
+            .as_object_mut()
+            .unwrap()
+            .remove("used-key")
+            .unwrap();
+        encoded["appliedIdempotency"]
+            .as_object_mut()
+            .unwrap()
+            .insert("unused-key".to_owned(), receipt);
+        let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
+        restored.refresh_integrity();
+
+        assert_eq!(
+            restored.apply(board(Operation::Attach, "unused-key")),
+            Err(LinkMutationError::InvalidReceipt)
+        );
+    }
+
+    #[test]
+    fn tampered_attach_and_detach_noop_receipts_cannot_replay_as_applied() {
+        for (operation, linked, key) in [
+            (Operation::Attach, true, "noop-attach"),
+            (Operation::Detach, false, "noop-detach"),
+        ] {
+            let mut state =
+                ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, linked);
+            state.apply(board(operation, key)).unwrap();
+
+            let mut encoded = serde_json::to_value(&state).unwrap();
+            encoded["appliedIdempotency"][key]["outcome"] = serde_json::json!("applied");
+            let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
+            restored.refresh_integrity();
+            assert_eq!(
+                restored.apply(board(operation, key)),
+                Err(LinkMutationError::InvalidReceipt)
+            );
+        }
+    }
+
+    #[test]
+    fn tampered_attach_noop_version_cannot_replay_as_version_increment() {
+        let mut state =
+            ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, true);
+        state
+            .apply(board(Operation::Attach, "noop-version"))
+            .unwrap();
+
+        let mut encoded = serde_json::to_value(&state).unwrap();
+        encoded["appliedIdempotency"]["noop-version"]["version"] = serde_json::json!(3);
+        let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
+        restored.refresh_integrity();
+        assert_eq!(
+            restored.apply(board(Operation::Attach, "noop-version")),
+            Err(LinkMutationError::InvalidReceipt)
+        );
+    }
+
+    #[test]
+    fn tampered_cancelled_state_cannot_reopen_terminal_link() {
+        let mut state = state();
+        state
+            .apply(board(Operation::Cancel, "cancel-state"))
+            .unwrap();
+
+        let mut encoded = serde_json::to_value(&state).unwrap();
+        encoded["cancelled"] = serde_json::json!(false);
+        let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
+        restored.refresh_integrity();
+        let mut reopen = board(Operation::Attach, "reopen-terminal");
+        reopen.expected_version = 3;
+        reopen.fence_epoch = 5;
+
+        assert_eq!(
+            restored.apply(reopen),
+            Err(LinkMutationError::InvalidReceipt)
+        );
+        assert_eq!(restored.version, 3);
+        assert!(!restored.linked);
     }
 
     #[test]
