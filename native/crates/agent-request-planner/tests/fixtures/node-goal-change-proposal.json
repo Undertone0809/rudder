@@ -1,0 +1,58 @@
+{
+  "schema": "rudder.agent-request-planner.differential/v1",
+  "source": "packages/shared/src/validators/goal.ts#createGoalChangeProposalSchema",
+  "timezone": "Asia/Shanghai",
+  "cases": [
+    {
+      "id": "date-only-and-explicit-offset",
+      "arguments": {
+        "goal": "goal-1",
+        "contractRevision": 7,
+        "afterContract": {
+          "actionDeadline": "2026-08-20",
+          "evaluationDeadline": "2026-08-20T12:00:00+08:00"
+        },
+        "rationale": "The evidence requires a contract update.",
+        "idempotencyKey": "change-explicit-offset"
+      },
+      "nodePayload": {
+        "expectedContractRevision": 7,
+        "afterContract": {
+          "actionDeadline": "2026-08-20T00:00:00.000Z",
+          "evaluationDeadline": "2026-08-20T04:00:00.000Z"
+        },
+        "rationale": "The evidence requires a contract update.",
+        "evidenceRefs": [],
+        "idempotencyKey": "change-explicit-offset"
+      }
+    },
+    {
+      "id": "offset-and-fractional-seconds",
+      "arguments": {
+        "goal": "goal-1",
+        "contractRevision": 8,
+        "afterContract": {
+          "actionDeadline": "2026-08-20T12:00:00.123+08:00",
+          "evaluationDeadline": "2026-08-21T04:00:00.987Z"
+        },
+        "evidenceRefs": [
+          "artifact://goal/schedule"
+        ],
+        "rationale": "The evidence requires a contract update.",
+        "idempotencyKey": "change-offset-time"
+      },
+      "nodePayload": {
+        "expectedContractRevision": 8,
+        "afterContract": {
+          "actionDeadline": "2026-08-20T04:00:00.123Z",
+          "evaluationDeadline": "2026-08-21T04:00:00.987Z"
+        },
+        "rationale": "The evidence requires a contract update.",
+        "evidenceRefs": [
+          "artifact://goal/schedule"
+        ],
+        "idempotencyKey": "change-offset-time"
+      }
+    }
+  ]
+}

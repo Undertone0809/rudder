@@ -488,6 +488,14 @@ jobs:
       - name: Rust tests serially
         run: cargo test --manifest-path native/Cargo.toml --all-targets -- --test-threads=1
 
+      - name: Verify New York DST planner parity
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: >-
+          TZ=America/New_York cargo test --manifest-path native/Cargo.toml
+          -p rudder-agent-request-planner --test planner
+          matches_node_new_york_dst_resolution_when_requested
+          -- --exact --test-threads=1
+
       - name: Stage native binaries
         env:
           RUDDER_DESKTOP_TARGET_ARCH: ${{ matrix.arch }}

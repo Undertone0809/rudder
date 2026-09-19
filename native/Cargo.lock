@@ -1326,6 +1326,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-agent-request-planner"
+version = "0.7.23"
+dependencies = [
+ "rudder-agent-contract-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+]
+
+[[package]]
 name = "rudder-archive-core"
 version = "0.7.23"
 dependencies = [
