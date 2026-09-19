@@ -953,12 +953,7 @@ export function ProposalCard({
                   && "chat-review-details-body--can-expand",
               )}
             >
-              <MarkdownBody
-                skillReferences={skillReferences}
-                onLinkClick={onMarkdownLinkClick}
-                enableCodeBlockCopy
-                enableImagePreview={false}
-              >
+              <MarkdownBody skillReferences={skillReferences} onLinkClick={onMarkdownLinkClick} enableCodeBlockCopy enableImagePreview={false}>
                 {proposalDescription}
               </MarkdownBody>
             </div>

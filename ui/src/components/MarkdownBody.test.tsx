@@ -796,6 +796,25 @@ describe("MarkdownBody", () => {
     expect(html).toContain('<img src="/api/attachments/test/content" alt=""/>');
   });
 
+  it("keeps non-image local Markdown paths as file links", () => {
+    const container = render(
+      <ThemeProvider>
+        <MarkdownBody>
+          {["![Report](/tmp/report.pdf)", "![Evidence](/tmp/evidence.custom)"].join(" ")}
+        </MarkdownBody>
+      </ThemeProvider>,
+    );
+
+    const links = Array.from(container.querySelectorAll<HTMLAnchorElement>("a.rudder-local-file-link"));
+    expect(links).toHaveLength(2);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/tmp/report.pdf",
+      "/tmp/evidence.custom",
+    ]);
+    expect(links.map((link) => link.textContent?.trim())).toEqual(["Report", "Evidence"]);
+    expect(container.querySelectorAll("img")).toHaveLength(0);
+  });
+
   it("renders a local image link inline when the Desktop shell can preview it", async () => {
     const previewLocalFile = vi.fn().mockResolvedValue({
       canonicalPath: "/Users/zeeland/projects/rudder-oss/after-wide-light.png",

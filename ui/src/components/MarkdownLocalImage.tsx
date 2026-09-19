@@ -159,9 +159,23 @@ export function renderMarkdownLocalImage({
 }): ReactElement | null {
   const targetPath = resolveLocalFileTarget(src, alt ?? "");
   const displayPath = resolveLocalFileDisplayTarget(src, alt ?? "");
-  if (!targetPath || !displayPath || !isPreviewableImage(null, displayPath)) return null;
+  if (!targetPath || !displayPath) return null;
 
   const imageName = alt?.trim() || displayPath.split(/[\\/]/u).at(-1) || "Local image";
+  if (!isPreviewableImage(null, displayPath)) {
+    return (
+      <MarkdownLocalFileLink
+        href={src}
+        filePath={displayPath}
+        label={imageName}
+        sourceAttributes={sourceAttributes}
+        onClick={(event) => onClick(event, imageName)}
+      >
+        {imageName}
+      </MarkdownLocalFileLink>
+    );
+  }
+
   return (
     <MarkdownLocalImageLink
       href={src}
