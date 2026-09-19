@@ -345,12 +345,14 @@ test.describe("Chat Side Panel", () => {
     await page.screenshot({ path: "/tmp/rudder-chat-local-image-preview.png", fullPage: true });
     await page.keyboard.press("Escape");
     await expect(preview).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
 
     await imageButton.focus();
     await page.keyboard.press("Enter");
     await expect(preview).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(preview).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
   test("opens Library image links in the global image preview instead of the Side Panel", async ({ page }) => {
