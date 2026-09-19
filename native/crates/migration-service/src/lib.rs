@@ -151,9 +151,7 @@ pub fn classify_preflight(
     database: MigrationPreflightDatabaseState,
 ) -> MigrationPreflightReport {
     let journal_present = snapshot.table_schema.is_some();
-    let status = if !database.core_schema_present {
-        MigrationPreflightStatus::MissingCoreSchema
-    } else if !journal_present {
+    let status = if !journal_present {
         if database.table_count == 0 {
             MigrationPreflightStatus::Bootstrap
         } else {
@@ -162,7 +160,7 @@ pub fn classify_preflight(
     } else {
         match history.reason {
             MigrationHistoryReason::ManifestMatch => {
-                if database.organizations_table_present {
+                if database.core_schema_present && database.organizations_table_present {
                     MigrationPreflightStatus::Current
                 } else {
                     MigrationPreflightStatus::MissingCoreSchema
@@ -302,6 +300,34 @@ mod tests {
         );
         assert_eq!(report.status, MigrationPreflightStatus::Current);
         assert!(report.core_schema_present);
+    }
+
+    #[test]
+    fn missing_core_schema_does_not_override_bootstrap() {
+        let report = classify_preflight(
+            &snapshot(None),
+            history(MigrationHistoryReason::MigrationJournalMissing),
+            MigrationPreflightDatabaseState {
+                table_count: 0,
+                core_schema_present: false,
+                organizations_table_present: false,
+            },
+        );
+        assert_eq!(report.status, MigrationPreflightStatus::Bootstrap);
+    }
+
+    #[test]
+    fn missing_core_schema_does_not_override_pending_history() {
+        let report = classify_preflight(
+            &snapshot(Some("drizzle")),
+            history(MigrationHistoryReason::PendingMigrations),
+            MigrationPreflightDatabaseState {
+                table_count: 2,
+                core_schema_present: false,
+                organizations_table_present: false,
+            },
+        );
+        assert_eq!(report.status, MigrationPreflightStatus::Pending);
     }
 
     #[test]

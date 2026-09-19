@@ -84,6 +84,26 @@ fn state_matrix_preserves_read_only_boundaries() {
             },
             MigrationPreflightStatus::Current,
         ),
+        (
+            snapshot(None),
+            history(MigrationHistoryReason::MigrationJournalMissing),
+            MigrationPreflightDatabaseState {
+                table_count: 0,
+                core_schema_present: false,
+                organizations_table_present: false,
+            },
+            MigrationPreflightStatus::Bootstrap,
+        ),
+        (
+            snapshot(Some("drizzle")),
+            history(MigrationHistoryReason::PendingMigrations),
+            MigrationPreflightDatabaseState {
+                table_count: 2,
+                core_schema_present: false,
+                organizations_table_present: false,
+            },
+            MigrationPreflightStatus::Pending,
+        ),
     ];
 
     for (snapshot, history, database, expected) in cases {
