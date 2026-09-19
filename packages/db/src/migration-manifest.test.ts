@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -66,6 +67,17 @@ describe("migration manifest", () => {
     expect(validateMigrationManifestIntegrity(firstManifest)).toMatchObject({ valid: true, errors: [] });
     expect(Object.isFrozen(firstManifest)).toBe(true);
     expect(Object.isFrozen(firstManifest.entries)).toBe(true);
+  });
+
+  it("rejects journals from an unsupported version", async () => {
+    const fixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+    ]);
+    const journal = JSON.parse(readFileSync(fixture.journalFile, "utf8")) as Record<string, unknown>;
+    journal.version = "6";
+    writeFileSync(fixture.journalFile, JSON.stringify(journal), "utf8");
+
+    await expect(createMigrationManifest(fixture)).rejects.toThrow("version 7");
   });
 
   it("allows appended migrations and rejects edits to a published prefix", async () => {
@@ -154,5 +166,51 @@ describe("migration manifest", () => {
       errors: [],
       addedEntries: [{ order: 2, fileName: "0002_third.sql" }],
     });
+  });
+
+  it("rejects a newly introduced allowlisted legacy migration", async () => {
+    const baselineFixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+    ]);
+    const candidateFixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+    ]);
+    writeFileSync(
+      path.join(candidateFixture.migrationsFolder, "0055_illegal_sheva_callister.sql"),
+      "SELECT legacy;",
+      "utf8",
+    );
+
+    const baseline = await createMigrationManifest(baselineFixture);
+    const candidate = await createMigrationManifest(candidateFixture);
+    const validation = validateMigrationManifestCompatibility(baseline, candidate);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.errors).toContain("Candidate added 1 unpublished legacy migration(s)");
+  });
+
+  it("binds canonical entries and SQL files to the flattened manifest", async () => {
+    const fixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+    ]);
+    const manifest = await createMigrationManifest(fixture);
+    const canonical = {
+      ...manifest.canonical,
+      sqlFiles: manifest.canonical.sqlFiles.map((entry, index) =>
+        index === 0 ? { ...entry, fingerprint: "0".repeat(64) } : entry,
+      ),
+    };
+    const forged = {
+      ...manifest,
+      canonical,
+      fingerprint: createHash("sha256").update(JSON.stringify(canonical)).digest("hex"),
+    } as typeof manifest;
+
+    const validation = validateMigrationManifestIntegrity(forged);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.errors).toContain(
+      "Migration manifest canonical SQL file 0 is not bound to entries",
+    );
   });
 });

@@ -46,8 +46,9 @@ This slice does not connect to PostgreSQL, inspect migration history, execute
 SQL, acquire an advisory lock, create a recovery point, register a route,
 change startup behavior, retire Node migration ownership, or mint migration
 authority. It also does not provide an atomic descriptor-anchored snapshot
-against a hostile concurrent writer; the loader rejects symlinks and enforces
-read limits on the observed source tree, while that stronger filesystem
-hardening remains a separately reviewed follow-up. Database mutation,
-migration authority, and startup integration remain with the current
-TypeScript migration runtime and any separately reviewed future adapter.
+against a hostile concurrent writer across the entire directory hierarchy;
+individual files are opened no-follow and read through bounded handles, while
+atomic directory enumeration and root-descriptor binding remain a separately
+reviewed follow-up. Database mutation, migration authority, and startup
+integration remain with the current TypeScript migration runtime and any
+separately reviewed future adapter.

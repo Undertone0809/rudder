@@ -9,6 +9,10 @@ const LEGACY_UNJOURNALED_MIGRATIONS = new Set([
   "0055_illegal_sheva_callister.sql",
   "0128_modern_jetstream.sql",
 ]);
+const MIGRATION_JOURNAL_VERSION = "7";
+const MIGRATION_DIALECT = "postgresql";
+const SAFE_MIGRATION_TAG = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 export const MIGRATION_MANIFEST_VERSION = 1 as const;
 
@@ -68,6 +72,14 @@ function compareMigrationFileNames(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function isSafeMigrationTag(value: string): boolean {
+  return SAFE_MIGRATION_TAG.test(value);
+}
+
+function isSafeMigrationFileName(value: string): boolean {
+  return value.endsWith(".sql") && isSafeMigrationTag(value.slice(0, -4));
+}
+
 function buildCanonicalPayload(
   journal: { version: string; dialect: string },
   journalEntries: readonly { idx: number; version: string; when: number; tag: string; breakpoints: boolean; sqlFingerprint: string }[],
@@ -112,7 +124,10 @@ export async function createMigrationManifest(
   if (!Array.isArray(parsed.entries)) {
     throw new Error(`Migration journal has no entries array: ${journalFile}`);
   }
-  if (parsed.dialect !== "postgresql") {
+  if (String(parsed.version) !== MIGRATION_JOURNAL_VERSION) {
+    throw new Error(`Migration journal must use version ${MIGRATION_JOURNAL_VERSION}: ${journalFile}`);
+  }
+  if (parsed.dialect !== MIGRATION_DIALECT) {
     throw new Error(`Migration journal must use the postgresql dialect: ${journalFile}`);
   }
   const journalMetadata = {
@@ -138,7 +153,7 @@ export async function createMigrationManifest(
     if (!Number.isInteger(order) || (order ?? -1) < 0) {
       throw new Error(`Migration journal entry ${journalPosition} has an invalid idx`);
     }
-    if (typeof tag !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(tag)) {
+    if (typeof tag !== "string" || !isSafeMigrationTag(tag)) {
       throw new Error(`Migration journal entry ${journalPosition} has an invalid tag`);
     }
     if (typeof journalEntry.version !== "string" || journalEntry.version.length === 0) {
@@ -219,14 +234,71 @@ export function validateMigrationManifestIntegrity(
     if (entry.order !== position) {
       errors.push(`Migration manifest entry ${position} has order ${entry.order}`);
     }
-    if (!entry.fileName.endsWith(".sql") || seenFiles.has(entry.fileName)) {
+    if (!isSafeMigrationFileName(entry.fileName) || seenFiles.has(entry.fileName)) {
       errors.push(`Migration manifest has an invalid or duplicate file: ${entry.fileName}`);
     }
-    if (!/^[0-9a-f]{64}$/.test(entry.sha256)) {
+    if (!SHA256_HEX.test(entry.sha256)) {
       errors.push(`Migration manifest has an invalid SHA256 for ${entry.fileName}`);
     }
     seenFiles.add(entry.fileName);
   });
+
+  if (manifest.canonical.version !== MIGRATION_JOURNAL_VERSION) {
+    errors.push(`Migration manifest has an unsupported journal version: ${manifest.canonical.version}`);
+  }
+  if (manifest.canonical.dialect !== MIGRATION_DIALECT) {
+    errors.push(`Migration manifest has an unsupported journal dialect: ${manifest.canonical.dialect}`);
+  }
+
+  manifest.canonical.entries.forEach((entry, position) => {
+    const expected = manifest.entries[position];
+    if (entry.idx !== position) {
+      errors.push(`Migration manifest journal entry ${position} has idx ${entry.idx}`);
+    }
+    if (!isSafeMigrationTag(entry.tag)) {
+      errors.push(`Migration manifest journal entry ${position} has an invalid tag: ${entry.tag}`);
+    }
+    if (entry.version.length === 0 || !Number.isSafeInteger(entry.when) || entry.when <= 0) {
+      errors.push(`Migration manifest journal entry ${position} has invalid metadata`);
+    }
+    if (typeof entry.breakpoints !== "boolean" || !SHA256_HEX.test(entry.sqlFingerprint)) {
+      errors.push(`Migration manifest journal entry ${position} has invalid identity data`);
+    }
+    if (
+      !expected
+      || expected.order !== entry.idx
+      || expected.fileName !== `${entry.tag}.sql`
+      || expected.sha256 !== entry.sqlFingerprint
+    ) {
+      errors.push(`Migration manifest journal entry ${position} is not bound to its SQL entry`);
+    }
+  });
+  if (manifest.canonical.entries.length > manifest.entries.length) {
+    errors.push("Migration manifest has more journal entries than SQL entries");
+  }
+
+  const expectedSqlFiles = [...manifest.entries]
+    .sort((left, right) => compareMigrationFileNames(left.fileName, right.fileName))
+    .map((entry) => ({ fileName: entry.fileName, fingerprint: entry.sha256 }));
+  if (manifest.canonical.sqlFiles.length !== expectedSqlFiles.length) {
+    errors.push("Migration manifest canonical SQL file list does not match entries");
+  }
+  const sharedSqlFileLength = Math.min(
+    manifest.canonical.sqlFiles.length,
+    expectedSqlFiles.length,
+  );
+  for (let index = 0; index < sharedSqlFileLength; index += 1) {
+    const actual = manifest.canonical.sqlFiles[index];
+    const expected = expectedSqlFiles[index];
+    if (
+      !actual
+      || !expected
+      || actual.fileName !== expected.fileName
+      || actual.fingerprint !== expected.fingerprint
+    ) {
+      errors.push(`Migration manifest canonical SQL file ${index} is not bound to entries`);
+    }
+  }
 
   const expectedFingerprint = manifestFingerprint(manifest.canonical);
   if (manifest.fingerprint !== expectedFingerprint) {
@@ -284,10 +356,16 @@ export function validateMigrationManifestCompatibility(
 
   const baselineLegacy = baseline.entries.slice(baselineJournalLength);
   const candidateLegacy = candidate.entries.slice(candidateJournalLength);
-  if (candidateLegacy.length < baselineLegacy.length) {
-    errors.push(
-      `Candidate removed ${baselineLegacy.length - candidateLegacy.length} published legacy migration(s)`,
-    );
+  if (candidateLegacy.length !== baselineLegacy.length) {
+    if (candidateLegacy.length < baselineLegacy.length) {
+      errors.push(
+        `Candidate removed ${baselineLegacy.length - candidateLegacy.length} published legacy migration(s)`,
+      );
+    } else {
+      errors.push(
+        `Candidate added ${candidateLegacy.length - baselineLegacy.length} unpublished legacy migration(s)`,
+      );
+    }
   }
   for (let index = 0; index < baselineLegacy.length; index += 1) {
     const expected = baselineLegacy[index];

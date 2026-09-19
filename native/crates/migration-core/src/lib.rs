@@ -9,7 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
@@ -511,9 +516,6 @@ pub fn load_migration_manifest_with_options(
             )
             .with_path(item.path()));
         }
-        if !file_type.is_file() {
-            continue;
-        }
         let name = item
             .file_name()
             .to_str()
@@ -525,6 +527,16 @@ pub fn load_migration_manifest_with_options(
                 )
                 .with_path(item.path())
             })?;
+        if !file_type.is_file() {
+            if name.ends_with(".sql") {
+                return Err(MigrationError::new(
+                    "migration_sql_not_regular",
+                    format!("SQL entry {name} is not a regular file"),
+                )
+                .with_path(item.path()));
+            }
+            continue;
+        }
         if name.ends_with(".sql") {
             if !is_safe_sql_file_name(&name) {
                 return Err(MigrationError::new(
@@ -707,8 +719,12 @@ pub fn validate_migration_manifest_compatibility(
         .iter()
         .filter(|entry| entry.journal_entry.is_none())
         .collect::<Vec<_>>();
-    if candidate_legacy.len() < baseline_legacy.len() {
-        errors.push("candidate removes published legacy migrations".to_owned());
+    if candidate_legacy.len() != baseline_legacy.len() {
+        if candidate_legacy.len() < baseline_legacy.len() {
+            errors.push("candidate removes published legacy migrations".to_owned());
+        } else {
+            errors.push("candidate adds unpublished legacy migrations".to_owned());
+        }
     }
     for (index, expected) in baseline_legacy.iter().enumerate() {
         let Some(actual) = candidate_legacy.get(index) else {
@@ -721,7 +737,9 @@ pub fn validate_migration_manifest_compatibility(
 
     let baseline_journal_len = baseline.journal.entries.len();
     let candidate_journal_len = candidate.journal.entries.len();
-    let added_entries = if candidate_journal_len > baseline_journal_len {
+    let added_entries = if candidate_journal_len > baseline_journal_len
+        && candidate.entries.len() >= candidate_journal_len
+    {
         candidate.entries[baseline_journal_len..candidate_journal_len]
             .iter()
             .map(|entry| entry.file_name.clone())
@@ -961,8 +979,20 @@ fn read_bounded_file(
     max_bytes: u64,
     limit_code: &'static str,
 ) -> Result<Vec<u8>, MigrationError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| MigrationError::io("migration_file_missing", path, error))?;
+    let file = open_bounded_file(path).map_err(|error| {
+        #[cfg(unix)]
+        if error.raw_os_error() == Some(libc::ELOOP) {
+            return MigrationError::new(
+                "migration_symlink_rejected",
+                "migration source file must not be a symlink",
+            )
+            .with_path(path);
+        }
+        MigrationError::io("migration_file_missing", path, error)
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| MigrationError::io("migration_file_metadata_failed", path, error))?;
     if metadata.file_type().is_symlink() {
         return Err(MigrationError::new(
             "migration_symlink_rejected",
@@ -979,7 +1009,9 @@ fn read_bounded_file(
     if metadata.len() > max_bytes {
         return Err(MigrationError::new(limit_code, path.display().to_string()));
     }
-    let bytes = fs::read(path)
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
         .map_err(|error| MigrationError::io("migration_file_unreadable", path, error))?;
     if bytes.len() as u64 > max_bytes {
         return Err(
@@ -988,6 +1020,27 @@ fn read_bounded_file(
         );
     }
     Ok(bytes)
+}
+
+#[cfg(unix)]
+fn open_bounded_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_bounded_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_bounded_file(path: &Path) -> std::io::Result<File> {
+    File::open(path)
 }
 
 fn validate_file_name(name: String) -> Result<String, MigrationError> {

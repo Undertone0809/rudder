@@ -146,6 +146,29 @@ fn rejects_unbounded_reads_and_unknown_sql_files() {
 }
 
 #[test]
+fn rejects_non_regular_sql_entries() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    fs::create_dir(migrations.join("0001_directory.sql")).unwrap();
+    let error = load_migration_manifest(&journal, &migrations, limits()).unwrap_err();
+    assert_eq!(error.code(), "migration_sql_not_regular");
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_symlinked_sql_entries() {
+    use std::os::unix::fs::symlink;
+
+    let (root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let target = root.path().join("outside.sql");
+    fs::write(&target, "SELECT outside;").unwrap();
+    fs::remove_file(migrations.join("0000_first.sql")).unwrap();
+    symlink(&target, migrations.join("0000_first.sql")).unwrap();
+
+    let error = load_migration_manifest(&journal, &migrations, limits()).unwrap_err();
+    assert_eq!(error.code(), "migration_symlink_rejected");
+}
+
+#[test]
 fn rejects_missing_reordered_and_duplicate_journal_entries() {
     let (_root, journal, migrations) = fixture(&[("0000_missing", "SELECT 1;")], &[]);
     fs::remove_file(migrations.join("0000_missing.sql")).unwrap();
@@ -235,6 +258,40 @@ fn appending_a_journal_migration_does_not_rewrite_legacy_tail() {
 
     assert!(compatibility.valid);
     assert_eq!(compatibility.added_entries, ["0002_third.sql"]);
+}
+
+#[test]
+fn rejects_new_legacy_tail_entries() {
+    let (_base_root, base_journal, base_migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let baseline = load_migration_manifest(&base_journal, &base_migrations, limits()).unwrap();
+
+    let (_candidate_root, candidate_journal, candidate_migrations) = fixture(
+        &[("0000_first", "SELECT 1;")],
+        &[("0055_illegal_sheva_callister", "SELECT legacy;")],
+    );
+    let candidate =
+        load_migration_manifest(&candidate_journal, &candidate_migrations, limits()).unwrap();
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &candidate);
+
+    assert!(!compatibility.valid);
+    assert!(
+        compatibility
+            .errors
+            .iter()
+            .any(|error| error.contains("adds unpublished legacy migrations"))
+    );
+}
+
+#[test]
+fn malformed_manifest_compatibility_does_not_panic() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let baseline = load_migration_manifest(&journal, &migrations, limits()).unwrap();
+    let mut malformed = baseline.clone();
+    let first = malformed.journal.entries[0].clone();
+    malformed.journal.entries.push(first);
+
+    let compatibility = validate_migration_manifest_compatibility(&baseline, &malformed);
+    assert!(!compatibility.valid);
 }
 
 #[test]
