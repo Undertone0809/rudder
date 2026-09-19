@@ -89,15 +89,16 @@ impl Actor {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorBinding {
-    pub actor: Actor,
-    pub proof: String,
+    actor: Actor,
+    proof: String,
 }
 
-/// HMAC authority used by an adapter to issue and verify actor bindings.
+/// HMAC authority used by the trusted adapter boundary to verify actor bindings.
 ///
-/// The secret belongs to the authenticated adapter. Possessing only a public
-/// `Actor` variant or a serde payload cannot produce a binding accepted by a
-/// separate authority with a different secret.
+/// Authority construction and proof minting are crate-private. A future
+/// trusted adapter/server must be co-located with this boundary or receive an
+/// explicitly authorized integration hook; an external consumer cannot create
+/// an authority from arbitrary bytes and mint a privileged actor binding.
 #[derive(Debug)]
 pub struct ActorAuthority {
     secret: Vec<u8>,
@@ -110,7 +111,8 @@ pub struct ValidatedActor {
 }
 
 impl ActorAuthority {
-    pub fn new(secret: impl AsRef<[u8]>) -> Result<Self, LinkMutationError> {
+    #[allow(dead_code)]
+    pub(crate) fn new(secret: impl AsRef<[u8]>) -> Result<Self, LinkMutationError> {
         let secret = secret.as_ref();
         if secret.is_empty() {
             return Err(LinkMutationError::InvalidActorBinding);
@@ -122,7 +124,8 @@ impl ActorAuthority {
 
     /// Issue a binding after the surrounding adapter has authenticated the
     /// actor. Verification is still required before a command can use it.
-    pub fn issue(&self, actor: Actor) -> Result<ActorBinding, LinkMutationError> {
+    #[allow(dead_code)]
+    pub(crate) fn issue(&self, actor: Actor) -> Result<ActorBinding, LinkMutationError> {
         validate_actor_shape(&actor)?;
         let proof = self.proof(&actor)?;
         Ok(ActorBinding { actor, proof })
@@ -142,6 +145,7 @@ impl ActorAuthority {
         })
     }
 
+    #[allow(dead_code)]
     fn proof(&self, actor: &Actor) -> Result<String, LinkMutationError> {
         let mut mac = self.mac()?;
         mac.update(&canonical_actor_binding_bytes(actor));
@@ -890,7 +894,9 @@ fn decode_hex_digest(value: &str) -> Option<[u8; 32]> {
         return None;
     }
     let mut bytes = [0_u8; 32];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    let (pairs, remainder) = value.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    for (index, pair) in pairs.iter().enumerate() {
         bytes[index] = (hex_value(pair[0])? << 4) | hex_value(pair[1])?;
     }
     Some(bytes)
@@ -1179,6 +1185,49 @@ mod tests {
         assert_eq!(
             goal_foreign.apply(board(Operation::Attach, "cross-goal")),
             Err(LinkMutationError::CrossOrganization)
+        );
+    }
+
+    #[test]
+    fn verified_ceo_agent_can_create_a_mutation_command() {
+        let mut state = state();
+        let command = make_command(
+            &state,
+            Actor::CeoAgent {
+                organization_id: "org-a".to_owned(),
+                principal_id: "ceo-a".to_owned(),
+            },
+            Operation::Attach,
+            2,
+            4,
+            "ceo-attach",
+        );
+
+        assert!(matches!(
+            state.apply(command),
+            Ok(LinkMutationOutcome::Applied {
+                version: 3,
+                linked: true,
+                cancelled: false,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn forged_actor_binding_is_rejected_before_context_creation() {
+        let authority = authority();
+        let forged = ActorBinding {
+            actor: Actor::CeoAgent {
+                organization_id: "org-a".to_owned(),
+                principal_id: "ceo-a".to_owned(),
+            },
+            proof: "0".repeat(SHA256_HEX_LENGTH),
+        };
+
+        assert_eq!(
+            state().validated_context(&forged, &authority, &ExistingTarget),
+            Err(LinkMutationError::InvalidActorBinding)
         );
     }
 
@@ -1617,6 +1666,52 @@ mod tests {
             restored.apply(board(Operation::Attach, "tampered-receipt")),
             Err(LinkMutationError::InvalidReceipt)
         );
+    }
+
+    #[test]
+    fn valid_json_round_trip_preserves_replay_and_cancel_receipts() {
+        let mut state = state();
+        let attach = board(Operation::Attach, "json-attach");
+        state.apply(attach.clone()).unwrap();
+
+        let encoded = serde_json::to_string(&state).unwrap();
+        let mut restored: ProjectGoalLinkState = serde_json::from_str(&encoded).unwrap();
+        assert!(matches!(
+            restored.apply(attach),
+            Ok(LinkMutationOutcome::AlreadyApplied {
+                version: 3,
+                fence_epoch: 4,
+                linked: true,
+                cancelled: false,
+                ..
+            })
+        ));
+
+        let cancel = make_command(
+            &restored,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Cancel,
+            3,
+            4,
+            "json-cancel",
+        );
+        restored.apply(cancel.clone()).unwrap();
+
+        let cancel_json = serde_json::to_string(&restored).unwrap();
+        let mut restored_again: ProjectGoalLinkState = serde_json::from_str(&cancel_json).unwrap();
+        assert!(matches!(
+            restored_again.apply(cancel),
+            Ok(LinkMutationOutcome::AlreadyApplied {
+                version: 4,
+                fence_epoch: 5,
+                linked: true,
+                cancelled: true,
+                ..
+            })
+        ));
     }
 
     #[test]
