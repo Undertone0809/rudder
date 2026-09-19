@@ -321,6 +321,10 @@ impl MigrationManifest {
             }
         }
 
+        let journal_len = self.journal.entries.len();
+        if self.entries.len() < journal_len {
+            errors.push("manifest has fewer entries than the journal".to_owned());
+        }
         for (expected_order, entry) in self.entries.iter().enumerate() {
             if entry.order != expected_order {
                 errors.push(format!("entry order mismatch for {}", entry.file_name));
@@ -337,21 +341,28 @@ impl MigrationManifest {
                 errors.push(format!("invalid SHA-256 for {}", entry.file_name));
             }
 
-            match &entry.journal_entry {
-                Some(journal_entry) => {
-                    if journal_entry.idx != expected_order
-                        || format!("{}.sql", journal_entry.tag) != entry.file_name
-                    {
-                        errors.push(format!("journal identity mismatch for {}", entry.file_name));
-                    }
-                }
-                None if journal_names.contains(&entry.file_name) => {
+            match (
+                self.journal.entries.get(expected_order),
+                &entry.journal_entry,
+            ) {
+                (Some(expected_journal), Some(actual_journal))
+                    if actual_journal == expected_journal => {}
+                (Some(_), None) => {
                     errors.push(format!(
                         "journaled migration {} is classified as legacy",
                         entry.file_name
                     ));
                 }
-                None => {}
+                (Some(_), Some(_)) => {
+                    errors.push(format!("journal identity mismatch for {}", entry.file_name));
+                }
+                (None, Some(_)) => {
+                    errors.push(format!(
+                        "legacy migration {} carries journal identity",
+                        entry.file_name
+                    ));
+                }
+                (None, None) => {}
             }
         }
         if self.sql_files
@@ -362,26 +373,6 @@ impl MigrationManifest {
                 .collect::<Vec<_>>()
         {
             errors.push("sql file list does not match ordered entries".to_owned());
-        }
-
-        for journal_entry in &self.journal.entries {
-            let file_name = format!("{}.sql", journal_entry.tag);
-            let Some(entry) = self.entries.iter().find(|entry| {
-                entry.file_name == file_name
-                    && entry
-                        .journal_entry
-                        .as_ref()
-                        .is_some_and(|value| value == journal_entry)
-            }) else {
-                errors.push(format!(
-                    "journal entry {} has no matching manifest entry",
-                    file_name
-                ));
-                continue;
-            };
-            if entry.order != journal_entry.idx {
-                errors.push(format!("journal order mismatch for {}", file_name));
-            }
         }
 
         if let Some(canonical) = canonical_manifest(self) {
@@ -1073,11 +1064,21 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn canonical_manifest(manifest: &MigrationManifest) -> Option<CanonicalManifest> {
     let mut journal_entries = Vec::with_capacity(manifest.journal.entries.len());
-    for journal_entry in &manifest.journal.entries {
+    if manifest.entries.len() < manifest.journal.entries.len()
+        || manifest
+            .entries
+            .iter()
+            .skip(manifest.journal.entries.len())
+            .any(|entry| entry.journal_entry.is_some())
+    {
+        return None;
+    }
+    for (position, journal_entry) in manifest.journal.entries.iter().enumerate() {
         let file_name = format!("{}.sql", journal_entry.tag);
-        let entry = manifest.entries.iter().find(|entry| {
-            entry.file_name == file_name && entry.journal_entry.as_ref() == Some(journal_entry)
-        })?;
+        let entry = manifest.entries.get(position)?;
+        if entry.file_name != file_name || entry.journal_entry.as_ref() != Some(journal_entry) {
+            return None;
+        }
         journal_entries.push(CanonicalJournalEntry {
             idx: journal_entry.idx,
             version: journal_entry.version.clone(),

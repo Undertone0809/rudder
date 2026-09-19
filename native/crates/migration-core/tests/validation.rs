@@ -1,7 +1,7 @@
 use rudder_migration_core::{
-    AdvisoryLockRequirement, MIGRATION_ADVISORY_LOCK_NAME, MigrationLimits,
-    MigrationManifestOptions, PRE_MUTATION_REQUIREMENTS_VERSION, PreMutationRequirements,
-    RecoveryPointRequirement, validate_migration_manifest_compatibility,
+    AdvisoryLockRequirement, JournalEntry, MIGRATION_ADVISORY_LOCK_NAME, MigrationEntry,
+    MigrationLimits, MigrationManifestOptions, PRE_MUTATION_REQUIREMENTS_VERSION,
+    PreMutationRequirements, RecoveryPointRequirement, validate_migration_manifest_compatibility,
     validate_pre_mutation_requirements,
 };
 use rudder_migration_core::{load_migration_manifest, load_migration_manifest_with_options};
@@ -292,6 +292,35 @@ fn malformed_manifest_compatibility_does_not_panic() {
 
     let compatibility = validate_migration_manifest_compatibility(&baseline, &malformed);
     assert!(!compatibility.valid);
+}
+
+#[test]
+fn rejects_flattened_entries_with_unknown_journal_identity() {
+    let (_root, journal, migrations) = fixture(&[("0000_first", "SELECT 1;")], &[]);
+    let mut malformed = load_migration_manifest(&journal, &migrations, limits()).unwrap();
+    malformed.entries.push(MigrationEntry {
+        order: 1,
+        file_name: "0001_extra.sql".to_owned(),
+        sha256: "0".repeat(64),
+        byte_size: 0,
+        journal_entry: Some(JournalEntry {
+            idx: 1,
+            version: "7".to_owned(),
+            when: 1_001,
+            tag: "0001_extra".to_owned(),
+            breakpoints: true,
+        }),
+    });
+    malformed.sql_files.push("0001_extra.sql".to_owned());
+
+    let integrity = malformed.validate_integrity();
+    assert!(!integrity.valid);
+    assert!(
+        integrity
+            .errors
+            .iter()
+            .any(|error| error.contains("carries journal identity"))
+    );
 }
 
 #[test]

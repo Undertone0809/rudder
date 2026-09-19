@@ -80,6 +80,10 @@ function isSafeMigrationFileName(value: string): boolean {
   return value.endsWith(".sql") && isSafeMigrationTag(value.slice(0, -4));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function buildCanonicalPayload(
   journal: { version: string; dialect: string },
   journalEntries: readonly { idx: number; version: string; when: number; tag: string; breakpoints: boolean; sqlFingerprint: string }[],
@@ -227,71 +231,156 @@ export function validateMigrationManifestIntegrity(
   const errors: string[] = [];
   const seenFiles = new Set<string>();
 
+  if (!isRecord(manifest)) {
+    return Object.freeze({
+      valid: false,
+      errors: Object.freeze(["Migration manifest must be an object"]),
+      addedEntries: Object.freeze([]),
+    });
+  }
+  const manifestEntries = manifest.entries;
+  const canonical = manifest.canonical;
+  if (!Array.isArray(manifestEntries)) {
+    errors.push("Migration manifest entries must be an array");
+  }
+  if (!isRecord(canonical)) {
+    errors.push("Migration manifest canonical payload must be an object");
+  }
+  if (!Array.isArray(manifestEntries) || !isRecord(canonical)) {
+    return Object.freeze({
+      valid: false,
+      errors: Object.freeze(errors),
+      addedEntries: Object.freeze([]),
+    });
+  }
+  const canonicalEntries = canonical.entries;
+  const canonicalSqlFiles = canonical.sqlFiles;
+  if (!Array.isArray(canonicalEntries)) {
+    errors.push("Migration manifest canonical entries must be an array");
+  }
+  if (!Array.isArray(canonicalSqlFiles)) {
+    errors.push("Migration manifest canonical SQL files must be an array");
+  }
+  if (!Array.isArray(canonicalEntries) || !Array.isArray(canonicalSqlFiles)) {
+    return Object.freeze({
+      valid: false,
+      errors: Object.freeze(errors),
+      addedEntries: Object.freeze([]),
+    });
+  }
+
   if (manifest.version !== MIGRATION_MANIFEST_VERSION) {
     errors.push(`Unsupported migration manifest version: ${String(manifest.version)}`);
   }
-  manifest.entries.forEach((entry, position) => {
-    if (entry.order !== position) {
-      errors.push(`Migration manifest entry ${position} has order ${entry.order}`);
+  manifestEntries.forEach((entry, position) => {
+    if (!isRecord(entry)) {
+      errors.push(`Migration manifest entry ${position} must be an object`);
+      return;
     }
-    if (!isSafeMigrationFileName(entry.fileName) || seenFiles.has(entry.fileName)) {
-      errors.push(`Migration manifest has an invalid or duplicate file: ${entry.fileName}`);
-    }
-    if (!SHA256_HEX.test(entry.sha256)) {
-      errors.push(`Migration manifest has an invalid SHA256 for ${entry.fileName}`);
-    }
-    seenFiles.add(entry.fileName);
-  });
-
-  if (manifest.canonical.version !== MIGRATION_JOURNAL_VERSION) {
-    errors.push(`Migration manifest has an unsupported journal version: ${manifest.canonical.version}`);
-  }
-  if (manifest.canonical.dialect !== MIGRATION_DIALECT) {
-    errors.push(`Migration manifest has an unsupported journal dialect: ${manifest.canonical.dialect}`);
-  }
-
-  manifest.canonical.entries.forEach((entry, position) => {
-    const expected = manifest.entries[position];
-    if (entry.idx !== position) {
-      errors.push(`Migration manifest journal entry ${position} has idx ${entry.idx}`);
-    }
-    if (!isSafeMigrationTag(entry.tag)) {
-      errors.push(`Migration manifest journal entry ${position} has an invalid tag: ${entry.tag}`);
-    }
-    if (entry.version.length === 0 || !Number.isSafeInteger(entry.when) || entry.when <= 0) {
-      errors.push(`Migration manifest journal entry ${position} has invalid metadata`);
-    }
-    if (typeof entry.breakpoints !== "boolean" || !SHA256_HEX.test(entry.sqlFingerprint)) {
-      errors.push(`Migration manifest journal entry ${position} has invalid identity data`);
+    const order = entry.order;
+    const fileName = entry.fileName;
+    const fingerprint = entry.sha256;
+    if (order !== position) {
+      errors.push(`Migration manifest entry ${position} has order ${String(order)}`);
     }
     if (
+      typeof fileName !== "string"
+      || !isSafeMigrationFileName(fileName)
+      || seenFiles.has(fileName)
+    ) {
+      errors.push(`Migration manifest has an invalid or duplicate file: ${String(fileName)}`);
+    }
+    if (typeof fingerprint !== "string" || !SHA256_HEX.test(fingerprint)) {
+      errors.push(`Migration manifest has an invalid SHA256 for ${String(fileName)}`);
+    }
+    if (typeof fileName === "string") {
+      seenFiles.add(fileName);
+    }
+  });
+
+  if (canonical.version !== MIGRATION_JOURNAL_VERSION) {
+    errors.push(`Migration manifest has an unsupported journal version: ${String(canonical.version)}`);
+  }
+  if (canonical.dialect !== MIGRATION_DIALECT) {
+    errors.push(`Migration manifest has an unsupported journal dialect: ${String(canonical.dialect)}`);
+  }
+
+  canonicalEntries.forEach((entry, position) => {
+    if (!isRecord(entry)) {
+      errors.push(`Migration manifest journal entry ${position} must be an object`);
+      return;
+    }
+    const idx = entry.idx;
+    const version = entry.version;
+    const when = entry.when;
+    const tag = entry.tag;
+    const breakpoints = entry.breakpoints;
+    const sqlFingerprint = entry.sqlFingerprint;
+    const expected = manifestEntries[position];
+    if (idx !== position) {
+      errors.push(`Migration manifest journal entry ${position} has idx ${String(idx)}`);
+    }
+    if (typeof tag !== "string" || !isSafeMigrationTag(tag)) {
+      errors.push(`Migration manifest journal entry ${position} has an invalid tag: ${String(tag)}`);
+    }
+    if (
+      typeof version !== "string"
+      || version.length === 0
+      || typeof when !== "number"
+      || !Number.isSafeInteger(when)
+      || when <= 0
+    ) {
+      errors.push(`Migration manifest journal entry ${position} has invalid metadata`);
+    }
+    if (typeof breakpoints !== "boolean" || typeof sqlFingerprint !== "string" || !SHA256_HEX.test(sqlFingerprint)) {
+      errors.push(`Migration manifest journal entry ${position} has invalid identity data`);
+    }
+    const expectedFileName = isRecord(expected) && typeof expected.fileName === "string"
+      ? expected.fileName
+      : undefined;
+    const expectedFingerprint = isRecord(expected) && typeof expected.sha256 === "string"
+      ? expected.sha256
+      : undefined;
+    if (
       !expected
-      || expected.order !== entry.idx
-      || expected.fileName !== `${entry.tag}.sql`
-      || expected.sha256 !== entry.sqlFingerprint
+      || expectedFileName !== `${String(tag)}.sql`
+      || expectedFingerprint !== sqlFingerprint
+      || (isRecord(expected) && expected.order !== idx)
     ) {
       errors.push(`Migration manifest journal entry ${position} is not bound to its SQL entry`);
     }
   });
-  if (manifest.canonical.entries.length > manifest.entries.length) {
+  const expectedJournalEntryCount = manifestEntries.filter((entry) => {
+    if (!isRecord(entry) || typeof entry.fileName !== "string") return false;
+    return !LEGACY_UNJOURNALED_MIGRATIONS.has(entry.fileName);
+  }).length;
+  if (canonicalEntries.length !== expectedJournalEntryCount) {
+    errors.push("Migration manifest canonical journal entry list does not match entries");
+  }
+  if (canonicalEntries.length > manifestEntries.length) {
     errors.push("Migration manifest has more journal entries than SQL entries");
   }
 
-  const expectedSqlFiles = [...manifest.entries]
+  const expectedSqlFiles = manifestEntries
+    .filter((entry): entry is MigrationManifestEntry =>
+      isRecord(entry)
+      && typeof entry.fileName === "string"
+      && typeof entry.sha256 === "string",
+    )
     .sort((left, right) => compareMigrationFileNames(left.fileName, right.fileName))
     .map((entry) => ({ fileName: entry.fileName, fingerprint: entry.sha256 }));
-  if (manifest.canonical.sqlFiles.length !== expectedSqlFiles.length) {
+  if (canonicalSqlFiles.length !== expectedSqlFiles.length) {
     errors.push("Migration manifest canonical SQL file list does not match entries");
   }
   const sharedSqlFileLength = Math.min(
-    manifest.canonical.sqlFiles.length,
+    canonicalSqlFiles.length,
     expectedSqlFiles.length,
   );
   for (let index = 0; index < sharedSqlFileLength; index += 1) {
-    const actual = manifest.canonical.sqlFiles[index];
+    const actual = canonicalSqlFiles[index];
     const expected = expectedSqlFiles[index];
     if (
-      !actual
+      !isRecord(actual)
       || !expected
       || actual.fileName !== expected.fileName
       || actual.fingerprint !== expected.fingerprint
@@ -300,11 +389,15 @@ export function validateMigrationManifestIntegrity(
     }
   }
 
-  const expectedFingerprint = manifestFingerprint(manifest.canonical);
-  if (manifest.fingerprint !== expectedFingerprint) {
-    errors.push(
-      `Migration manifest fingerprint mismatch: expected ${expectedFingerprint}, received ${manifest.fingerprint}`,
-    );
+  try {
+    const expectedFingerprint = manifestFingerprint(canonical as MigrationManifest["canonical"]);
+    if (manifest.fingerprint !== expectedFingerprint) {
+      errors.push(
+        `Migration manifest fingerprint mismatch: expected ${expectedFingerprint}, received ${String(manifest.fingerprint)}`,
+      );
+    }
+  } catch {
+    errors.push("Migration manifest canonical payload cannot be fingerprinted");
   }
 
   return Object.freeze({

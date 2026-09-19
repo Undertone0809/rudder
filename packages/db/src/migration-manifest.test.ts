@@ -7,6 +7,7 @@ import {
   createMigrationManifest,
   validateMigrationManifestCompatibility,
   validateMigrationManifestIntegrity,
+  type MigrationManifest,
 } from "./migration-manifest.js";
 
 const tempRoots: string[] = [];
@@ -212,5 +213,46 @@ describe("migration manifest", () => {
     expect(validation.errors).toContain(
       "Migration manifest canonical SQL file 0 is not bound to entries",
     );
+  });
+
+  it("rejects a canonical journal prefix that does not cover flattened entries", async () => {
+    const fixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+      { tag: "0001_second", sql: "CREATE TABLE second_table (id integer);" },
+    ]);
+    const manifest = await createMigrationManifest(fixture);
+    const canonical = {
+      ...manifest.canonical,
+      entries: manifest.canonical.entries.slice(0, -1),
+    };
+    const forged = {
+      ...manifest,
+      canonical,
+      fingerprint: createHash("sha256").update(JSON.stringify(canonical)).digest("hex"),
+    } as MigrationManifest;
+
+    const validation = validateMigrationManifestIntegrity(forged);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.errors).toContain(
+      "Migration manifest canonical journal entry list does not match entries",
+    );
+  });
+
+  it("returns invalid for malformed manifest shapes instead of throwing", async () => {
+    const fixture = createFixture([
+      { tag: "0000_first", sql: "CREATE TABLE first_table (id integer);" },
+    ]);
+    const manifest = await createMigrationManifest(fixture);
+    const missingCanonical = { ...manifest, canonical: undefined } as unknown as MigrationManifest;
+    const nullVersion = {
+      ...manifest,
+      canonical: { ...manifest.canonical, version: null },
+    } as unknown as MigrationManifest;
+
+    expect(() => validateMigrationManifestIntegrity(missingCanonical)).not.toThrow();
+    expect(validateMigrationManifestIntegrity(missingCanonical).valid).toBe(false);
+    expect(() => validateMigrationManifestIntegrity(nullVersion)).not.toThrow();
+    expect(validateMigrationManifestIntegrity(nullVersion).valid).toBe(false);
   });
 });
