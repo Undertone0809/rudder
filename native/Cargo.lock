@@ -1452,6 +1452,7 @@ dependencies = [
 name = "rudder-project-goal-link-core"
 version = "0.7.23"
 dependencies = [
+ "hmac",
  "serde",
  "serde_json",
  "sha2",

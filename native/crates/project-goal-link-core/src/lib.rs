@@ -5,6 +5,7 @@
 //! version and fence epoch in one transaction. It performs no I/O and is not a
 //! public writer.
 
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -21,7 +22,9 @@ pub const SHA256_HEX_LENGTH: usize = 64;
 /// Domain separator for deterministic Project-Goal link identifiers.
 pub const LINK_IDENTIFIER_SCHEMA: &str = "rudder.project-goal-link.v1";
 /// Domain separator for deterministic mutation fingerprints.
-pub const FINGERPRINT_SCHEMA: &str = "rudder.project-goal-link-mutation.v2";
+pub const FINGERPRINT_SCHEMA: &str = "rudder.project-goal-link-mutation.v3";
+/// Domain separator for actor authorization bindings.
+const ACTOR_BINDING_SCHEMA: &str = "rudder.project-goal-link-actor-binding.v1";
 /// Domain separator for serialized link-state integrity bindings.
 const STATE_INTEGRITY_SCHEMA: &str = "rudder.project-goal-link-state.v1";
 
@@ -78,6 +81,94 @@ impl Actor {
     }
 }
 
+/// Untrusted actor identity plus an authority-issued proof.
+///
+/// The identity is intentionally still serde-compatible for transport. It is
+/// not accepted by a mutation command until [`ActorAuthority::verify`] has
+/// produced an opaque [`ValidatedActor`].
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorBinding {
+    pub actor: Actor,
+    pub proof: String,
+}
+
+/// HMAC authority used by an adapter to issue and verify actor bindings.
+///
+/// The secret belongs to the authenticated adapter. Possessing only a public
+/// `Actor` variant or a serde payload cannot produce a binding accepted by a
+/// separate authority with a different secret.
+#[derive(Debug)]
+pub struct ActorAuthority {
+    secret: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedActor {
+    actor: Actor,
+    proof: String,
+}
+
+impl ActorAuthority {
+    pub fn new(secret: impl AsRef<[u8]>) -> Result<Self, LinkMutationError> {
+        let secret = secret.as_ref();
+        if secret.is_empty() {
+            return Err(LinkMutationError::InvalidActorBinding);
+        }
+        Ok(Self {
+            secret: secret.to_vec(),
+        })
+    }
+
+    /// Issue a binding after the surrounding adapter has authenticated the
+    /// actor. Verification is still required before a command can use it.
+    pub fn issue(&self, actor: Actor) -> Result<ActorBinding, LinkMutationError> {
+        validate_actor_shape(&actor)?;
+        let proof = self.proof(&actor)?;
+        Ok(ActorBinding { actor, proof })
+    }
+
+    pub fn verify(&self, binding: &ActorBinding) -> Result<ValidatedActor, LinkMutationError> {
+        validate_actor_shape(&binding.actor)?;
+        let proof =
+            decode_hex_digest(&binding.proof).ok_or(LinkMutationError::InvalidActorBinding)?;
+        let mut mac = self.mac()?;
+        mac.update(&canonical_actor_binding_bytes(&binding.actor));
+        mac.verify_slice(&proof)
+            .map_err(|_| LinkMutationError::InvalidActorBinding)?;
+        Ok(ValidatedActor {
+            actor: binding.actor.clone(),
+            proof: binding.proof.clone(),
+        })
+    }
+
+    fn proof(&self, actor: &Actor) -> Result<String, LinkMutationError> {
+        let mut mac = self.mac()?;
+        mac.update(&canonical_actor_binding_bytes(actor));
+        Ok(hex_digest(mac.finalize().into_bytes()))
+    }
+
+    fn mac(&self) -> Result<ActorBindingMac, LinkMutationError> {
+        let mac = ActorBindingMac::new_from_slice(&self.secret)
+            .map_err(|_| LinkMutationError::InvalidActorBinding)?;
+        Ok(mac)
+    }
+}
+
+type ActorBindingMac = Hmac<Sha256>;
+
+/// Adapter-owned target existence and organization-boundary check.
+pub trait TargetVerifier {
+    fn target_exists_in_organization(
+        &self,
+        organization_id: &str,
+        project_org_id: &str,
+        goal_org_id: &str,
+        project_id: &str,
+        goal_id: &str,
+    ) -> bool;
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
@@ -96,94 +187,67 @@ impl Operation {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedLinkContext {
+    actor: ValidatedActor,
+    organization_id: String,
+    project_org_id: String,
+    goal_org_id: String,
+    project_id: String,
+    goal_id: String,
+    version: u64,
+    fence_epoch: u64,
+    linked: bool,
+    cancelled: bool,
+    state_integrity: String,
+}
+
+impl ValidatedLinkContext {
+    fn validate(&self) -> Result<(), LinkMutationError> {
+        validate_actor_shape(&self.actor.actor)?;
+        validate_identifier(&self.organization_id)?;
+        validate_identifier(&self.project_org_id)?;
+        validate_identifier(&self.goal_org_id)?;
+        validate_identifier(&self.project_id)?;
+        validate_identifier(&self.goal_id)?;
+        if !is_sha256_hex(&self.actor.proof) || !is_sha256_hex(&self.state_integrity) {
+            return Err(LinkMutationError::InvalidTargetContext);
+        }
+        if self.actor.actor.organization_id() != self.organization_id {
+            return Err(LinkMutationError::CrossOrganization);
+        }
+        if self.project_org_id != self.organization_id || self.goal_org_id != self.organization_id {
+            return Err(LinkMutationError::CrossOrganization);
+        }
+        if !self.actor.actor.can_mutate() {
+            return Err(LinkMutationError::Unauthorized);
+        }
+        Ok(())
+    }
+}
+
+/// A mutation command can only be created from an actor- and target-validated
+/// context. It deliberately has no serde implementation: untrusted JSON must
+/// enter through [`ActorBinding`] and an adapter-owned [`TargetVerifier`].
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectGoalLinkCommand {
-    pub organization_id: String,
-    pub actor: Actor,
-    pub project_id: String,
-    pub goal_id: String,
-    pub operation: Operation,
-    pub expected_version: u64,
-    pub fence_epoch: u64,
-    pub idempotency_key: String,
+    context: ValidatedLinkContext,
+    operation: Operation,
+    expected_version: u64,
+    fence_epoch: u64,
+    idempotency_key: String,
 }
 
 impl ProjectGoalLinkCommand {
-    #[allow(clippy::too_many_arguments)]
-    pub fn board(
-        organization_id: impl Into<String>,
-        principal_id: impl Into<String>,
-        project_id: impl Into<String>,
-        goal_id: impl Into<String>,
+    pub fn from_validated_context(
+        context: ValidatedLinkContext,
         operation: Operation,
         expected_version: u64,
         fence_epoch: u64,
         idempotency_key: impl Into<String>,
     ) -> Self {
-        let organization_id = organization_id.into();
         Self {
-            actor: Actor::Board {
-                organization_id: organization_id.clone(),
-                principal_id: principal_id.into(),
-            },
-            organization_id,
-            project_id: project_id.into(),
-            goal_id: goal_id.into(),
-            operation,
-            expected_version,
-            fence_epoch,
-            idempotency_key: idempotency_key.into(),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn ceo_agent(
-        organization_id: impl Into<String>,
-        principal_id: impl Into<String>,
-        project_id: impl Into<String>,
-        goal_id: impl Into<String>,
-        operation: Operation,
-        expected_version: u64,
-        fence_epoch: u64,
-        idempotency_key: impl Into<String>,
-    ) -> Self {
-        let organization_id = organization_id.into();
-        Self {
-            actor: Actor::CeoAgent {
-                organization_id: organization_id.clone(),
-                principal_id: principal_id.into(),
-            },
-            organization_id,
-            project_id: project_id.into(),
-            goal_id: goal_id.into(),
-            operation,
-            expected_version,
-            fence_epoch,
-            idempotency_key: idempotency_key.into(),
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn agent(
-        organization_id: impl Into<String>,
-        principal_id: impl Into<String>,
-        project_id: impl Into<String>,
-        goal_id: impl Into<String>,
-        operation: Operation,
-        expected_version: u64,
-        fence_epoch: u64,
-        idempotency_key: impl Into<String>,
-    ) -> Self {
-        let organization_id = organization_id.into();
-        Self {
-            actor: Actor::Agent {
-                organization_id: organization_id.clone(),
-                principal_id: principal_id.into(),
-            },
-            organization_id,
-            project_id: project_id.into(),
-            goal_id: goal_id.into(),
+            context,
             operation,
             expected_version,
             fence_epoch,
@@ -193,50 +257,35 @@ impl ProjectGoalLinkCommand {
 
     fn validate(&self, state: &ProjectGoalLinkState) -> Result<(), LinkMutationError> {
         state.validate()?;
-        validate_identifier(&self.organization_id)?;
-        validate_identifier(&self.project_id)?;
-        validate_identifier(&self.goal_id)?;
-        validate_identifier(self.actor.principal_id())?;
-        validate_identifier(self.actor.organization_id())?;
+        self.context.validate()?;
         validate_idempotency_key(&self.idempotency_key)?;
 
-        if self.actor.organization_id() != self.organization_id {
-            return Err(LinkMutationError::CrossOrganization);
-        }
-        if state.organization_id != self.organization_id
-            || state.project_org_id != self.organization_id
-            || state.goal_org_id != self.organization_id
+        if state.organization_id != self.context.organization_id
+            || state.project_org_id != self.context.organization_id
+            || state.goal_org_id != self.context.organization_id
         {
             return Err(LinkMutationError::CrossOrganization);
         }
-        if state.project_id != self.project_id || state.goal_id != self.goal_id {
+        if state.project_id != self.context.project_id || state.goal_id != self.context.goal_id {
             return Err(LinkMutationError::TargetMismatch);
-        }
-        if !self.actor.can_mutate() {
-            return Err(LinkMutationError::Unauthorized);
         }
         Ok(())
     }
 
     pub fn link_identifier(&self) -> Result<String, LinkMutationError> {
-        deterministic_link_identifier(&self.organization_id, &self.project_id, &self.goal_id)
+        deterministic_link_identifier(
+            &self.context.organization_id,
+            &self.context.project_id,
+            &self.context.goal_id,
+        )
     }
 
-    /// Return the validated mutation fingerprint that a durable adapter must
-    /// bind to its transaction and idempotency receipt.
+    /// Return the fingerprint for this already validated actor and target
+    /// snapshot. The context carries the verified organization, target,
+    /// state-version, fence, and state-integrity binding.
     pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
-        validate_identifier(&self.organization_id)?;
-        validate_identifier(self.actor.organization_id())?;
-        validate_identifier(self.actor.principal_id())?;
-        validate_identifier(&self.project_id)?;
-        validate_identifier(&self.goal_id)?;
+        self.context.validate()?;
         validate_idempotency_key(&self.idempotency_key)?;
-        if !self.actor.can_mutate() {
-            return Err(LinkMutationError::Unauthorized);
-        }
-        if self.actor.organization_id() != self.organization_id {
-            return Err(LinkMutationError::CrossOrganization);
-        }
         let bytes = canonical_fingerprint_bytes(self);
         Ok(hex_digest(Sha256::digest(bytes)))
     }
@@ -272,6 +321,9 @@ struct AppliedReceipt {
     idempotency_key: String,
     operation: Operation,
     outcome: AppliedReceiptOutcome,
+    target_version: u64,
+    target_fence_epoch: u64,
+    target_integrity: String,
     previous_version: u64,
     previous_fence_epoch: u64,
     previous_linked: bool,
@@ -356,6 +408,51 @@ impl ProjectGoalLinkState {
         deterministic_link_identifier(&self.organization_id, &self.project_id, &self.goal_id)
     }
 
+    /// Validate the authenticated actor and the adapter's current target
+    /// snapshot before constructing a mutation command.
+    pub fn validated_context(
+        &self,
+        binding: &ActorBinding,
+        authority: &ActorAuthority,
+        target_verifier: &impl TargetVerifier,
+    ) -> Result<ValidatedLinkContext, LinkMutationError> {
+        self.validate()?;
+        let actor = authority.verify(binding)?;
+
+        if actor.actor.organization_id() != self.organization_id
+            || self.project_org_id != self.organization_id
+            || self.goal_org_id != self.organization_id
+        {
+            return Err(LinkMutationError::CrossOrganization);
+        }
+        if !target_verifier.target_exists_in_organization(
+            &self.organization_id,
+            &self.project_org_id,
+            &self.goal_org_id,
+            &self.project_id,
+            &self.goal_id,
+        ) {
+            return Err(LinkMutationError::TargetNotFound);
+        }
+        if !actor.actor.can_mutate() {
+            return Err(LinkMutationError::Unauthorized);
+        }
+
+        Ok(ValidatedLinkContext {
+            actor,
+            organization_id: self.organization_id.clone(),
+            project_org_id: self.project_org_id.clone(),
+            goal_org_id: self.goal_org_id.clone(),
+            project_id: self.project_id.clone(),
+            goal_id: self.goal_id.clone(),
+            version: self.version,
+            fence_epoch: self.fence_epoch,
+            linked: self.linked,
+            cancelled: self.cancelled,
+            state_integrity: self.integrity.clone(),
+        })
+    }
+
     fn validate(&self) -> Result<(), LinkMutationError> {
         validate_identifier(&self.organization_id)?;
         validate_identifier(&self.project_org_id)?;
@@ -431,6 +528,9 @@ impl ProjectGoalLinkState {
                 idempotency_key: key,
                 operation: command.operation,
                 outcome,
+                target_version: command.context.version,
+                target_fence_epoch: command.context.fence_epoch,
+                target_integrity: command.context.state_integrity.clone(),
                 previous_version: previous.version,
                 previous_fence_epoch: previous.fence_epoch,
                 previous_linked: previous.linked,
@@ -476,6 +576,14 @@ impl ProjectGoalLinkState {
         }
         if command.expected_version != self.version {
             return Err(LinkMutationError::StaleVersion);
+        }
+        if command.context.version != self.version
+            || command.context.fence_epoch != self.fence_epoch
+            || command.context.linked != self.linked
+            || command.context.cancelled != self.cancelled
+            || command.context.state_integrity != self.integrity
+        {
+            return Err(LinkMutationError::TargetStateMismatch);
         }
         if self.cancelled {
             return Err(LinkMutationError::Cancelled);
@@ -591,10 +699,18 @@ pub enum LinkMutationOutcome {
 pub enum LinkMutationError {
     #[error("mutation contains an empty, malformed, or oversized field")]
     InvalidField,
+    #[error("actor binding proof is invalid")]
+    InvalidActorBinding,
     #[error("project and goal must belong to the mutation organization")]
     CrossOrganization,
+    #[error("mutation target does not exist in the organization")]
+    TargetNotFound,
     #[error("mutation target does not match the bound project-goal pair")]
     TargetMismatch,
+    #[error("validated mutation target context is malformed or stale")]
+    InvalidTargetContext,
+    #[error("validated mutation target state no longer matches the command context")]
+    TargetStateMismatch,
     #[error("actor is not authorized for project-goal mutations")]
     Unauthorized,
     #[error("project-goal link is cancelled")]
@@ -649,18 +765,35 @@ fn canonical_target_bytes(
     Ok(output)
 }
 
+fn canonical_actor_binding_bytes(actor: &Actor) -> Vec<u8> {
+    let fields = [actor.kind(), actor.organization_id(), actor.principal_id()];
+    let mut output = Vec::with_capacity(
+        ACTOR_BINDING_SCHEMA.len() + fields.iter().map(|field| field.len() + 8).sum::<usize>(),
+    );
+    append_domain_separator(&mut output, ACTOR_BINDING_SCHEMA);
+    for field in fields {
+        append_length_prefixed(&mut output, field);
+    }
+    output
+}
+
 fn canonical_fingerprint_bytes(command: &ProjectGoalLinkCommand) -> Vec<u8> {
+    let context = &command.context;
     let fields = [
-        command.organization_id.as_str(),
-        command.actor.kind(),
-        command.actor.principal_id(),
-        command.project_id.as_str(),
-        command.goal_id.as_str(),
+        context.organization_id.as_str(),
+        context.project_org_id.as_str(),
+        context.goal_org_id.as_str(),
+        context.project_id.as_str(),
+        context.goal_id.as_str(),
+        context.actor.actor.kind(),
+        context.actor.actor.principal_id(),
+        context.actor.proof.as_str(),
         command.operation.as_str(),
         command.idempotency_key.as_str(),
+        context.state_integrity.as_str(),
     ];
     let mut output = Vec::with_capacity(
-        FINGERPRINT_SCHEMA.len() + fields.iter().map(|field| field.len() + 8).sum::<usize>() + 16,
+        FINGERPRINT_SCHEMA.len() + fields.iter().map(|field| field.len() + 8).sum::<usize>() + 48,
     );
     append_domain_separator(&mut output, FINGERPRINT_SCHEMA);
     for field in fields {
@@ -668,6 +801,10 @@ fn canonical_fingerprint_bytes(command: &ProjectGoalLinkCommand) -> Vec<u8> {
     }
     output.extend_from_slice(&command.expected_version.to_be_bytes());
     output.extend_from_slice(&command.fence_epoch.to_be_bytes());
+    output.extend_from_slice(&context.version.to_be_bytes());
+    output.extend_from_slice(&context.fence_epoch.to_be_bytes());
+    append_bool(&mut output, context.linked);
+    append_bool(&mut output, context.cancelled);
     output
 }
 
@@ -692,6 +829,9 @@ fn canonical_state_integrity_bytes(state: &ProjectGoalLinkState) -> Vec<u8> {
         append_length_prefixed(&mut output, &receipt.idempotency_key);
         append_length_prefixed(&mut output, receipt.operation.as_str());
         append_length_prefixed(&mut output, receipt.outcome.as_str());
+        output.extend_from_slice(&receipt.target_version.to_be_bytes());
+        output.extend_from_slice(&receipt.target_fence_epoch.to_be_bytes());
+        append_length_prefixed(&mut output, &receipt.target_integrity);
         output.extend_from_slice(&receipt.previous_version.to_be_bytes());
         output.extend_from_slice(&receipt.previous_fence_epoch.to_be_bytes());
         append_bool(&mut output, receipt.previous_linked);
@@ -740,6 +880,30 @@ fn validate_idempotency_key(value: &str) -> Result<(), LinkMutationError> {
     validate_identifier(value)
 }
 
+fn validate_actor_shape(actor: &Actor) -> Result<(), LinkMutationError> {
+    validate_identifier(actor.organization_id())?;
+    validate_identifier(actor.principal_id())
+}
+
+fn decode_hex_digest(value: &str) -> Option<[u8; 32]> {
+    if !is_sha256_hex(value) {
+        return None;
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        bytes[index] = (hex_value(pair[0])? << 4) | hex_value(pair[1])?;
+    }
+    Some(bytes)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
+}
+
 fn validate_receipt(
     key: &str,
     receipt: &AppliedReceipt,
@@ -749,6 +913,9 @@ fn validate_receipt(
         || receipt.link_id != link_id
         || !is_sha256_hex(&receipt.link_id)
         || !is_sha256_hex(&receipt.fingerprint)
+        || !is_sha256_hex(&receipt.target_integrity)
+        || receipt.target_version != receipt.previous_version
+        || receipt.target_fence_epoch != receipt.previous_fence_epoch
     {
         return Err(LinkMutationError::InvalidReceipt);
     }
@@ -803,6 +970,9 @@ fn validate_replay_receipt(
         || receipt.operation != command.operation
         || receipt.fingerprint != fingerprint
         || receipt.link_id != link_id
+        || receipt.target_version != command.context.version
+        || receipt.target_fence_epoch != command.context.fence_epoch
+        || receipt.target_integrity != command.context.state_integrity
         || receipt.previous_version != command.expected_version
         || receipt.previous_fence_epoch != command.fence_epoch
     {
@@ -858,6 +1028,41 @@ fn hex_digest(digest: impl IntoIterator<Item = u8>) -> String {
 mod tests {
     use super::*;
 
+    struct ExistingTarget;
+
+    impl TargetVerifier for ExistingTarget {
+        fn target_exists_in_organization(
+            &self,
+            organization_id: &str,
+            project_org_id: &str,
+            goal_org_id: &str,
+            project_id: &str,
+            goal_id: &str,
+        ) -> bool {
+            organization_id == "org-a"
+                && project_org_id == "org-a"
+                && goal_org_id == "org-a"
+                && project_id == "project-a"
+                && goal_id == "goal-a"
+        }
+    }
+
+    fn authority() -> ActorAuthority {
+        ActorAuthority::new("unit-test-authority").unwrap()
+    }
+
+    fn binding(actor: Actor) -> ActorBinding {
+        authority().issue(actor).unwrap()
+    }
+
+    fn context(state: &ProjectGoalLinkState, actor: Actor) -> ValidatedLinkContext {
+        let authority = authority();
+        let binding = authority.issue(actor).unwrap();
+        state
+            .validated_context(&binding, &authority, &ExistingTarget)
+            .unwrap()
+    }
+
     fn state() -> ProjectGoalLinkState {
         ProjectGoalLinkState::new(
             "org-a",
@@ -871,12 +1076,31 @@ mod tests {
         )
     }
 
+    fn make_command(
+        state: &ProjectGoalLinkState,
+        actor: Actor,
+        operation: Operation,
+        expected_version: u64,
+        fence_epoch: u64,
+        key: &str,
+    ) -> ProjectGoalLinkCommand {
+        ProjectGoalLinkCommand::from_validated_context(
+            context(state, actor),
+            operation,
+            expected_version,
+            fence_epoch,
+            key,
+        )
+    }
+
     fn board(operation: Operation, key: &str) -> ProjectGoalLinkCommand {
-        ProjectGoalLinkCommand::board(
-            "org-a",
-            "board-a",
-            "project-a",
-            "goal-a",
+        let state = state();
+        make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
             operation,
             2,
             4,
@@ -904,7 +1128,18 @@ mod tests {
     fn detach_advances_version_and_clears_linked() {
         let mut state =
             ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, true);
-        let outcome = state.apply(board(Operation::Detach, "detach-1")).unwrap();
+        let command = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Detach,
+            2,
+            4,
+            "detach-1",
+        );
+        let outcome = state.apply(command).unwrap();
         assert!(matches!(
             outcome,
             LinkMutationOutcome::Applied {
@@ -949,18 +1184,18 @@ mod tests {
 
     #[test]
     fn non_ceo_agent_fails_without_mutating_state() {
-        let mut state = state();
-        let command = ProjectGoalLinkCommand::agent(
-            "org-a",
-            "agent-a",
-            "project-a",
-            "goal-a",
-            Operation::Attach,
-            2,
-            4,
-            "agent-1",
+        let state = state();
+        let authority = authority();
+        let agent = authority
+            .issue(Actor::Agent {
+                organization_id: "org-a".to_owned(),
+                principal_id: "agent-a".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(
+            state.validated_context(&agent, &authority, &ExistingTarget),
+            Err(LinkMutationError::Unauthorized)
         );
-        assert_eq!(state.apply(command), Err(LinkMutationError::Unauthorized));
         assert_eq!(state.version, 2);
         assert!(!state.linked);
     }
@@ -968,16 +1203,34 @@ mod tests {
     #[test]
     fn stale_version_and_fence_are_rejected() {
         let mut stale_version = state();
-        let mut command = board(Operation::Attach, "stale-version");
-        command.expected_version = 1;
+        let command = make_command(
+            &stale_version,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Attach,
+            1,
+            4,
+            "stale-version",
+        );
         assert_eq!(
             stale_version.apply(command),
             Err(LinkMutationError::StaleVersion)
         );
 
         let mut stale_fence = state();
-        let mut command = board(Operation::Attach, "stale-fence");
-        command.fence_epoch = 3;
+        let command = make_command(
+            &stale_fence,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Attach,
+            2,
+            3,
+            "stale-fence",
+        );
         assert_eq!(
             stale_fence.apply(command),
             Err(LinkMutationError::StaleFence)
@@ -1001,8 +1254,17 @@ mod tests {
                 ..
             }
         ));
-        let mut conflict = board(Operation::Detach, "same-key");
-        conflict.expected_version = 3;
+        let conflict = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Detach,
+            3,
+            4,
+            "same-key",
+        );
         assert_eq!(
             state.apply(conflict),
             Err(LinkMutationError::IdempotencyConflict)
@@ -1023,8 +1285,17 @@ mod tests {
             outcome => panic!("unexpected original outcome: {outcome:?}"),
         };
 
-        let mut later = board(Operation::Detach, "later");
-        later.expected_version = 3;
+        let later = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Detach,
+            3,
+            4,
+            "later",
+        );
         assert!(matches!(
             state.apply(later).unwrap(),
             LinkMutationOutcome::Applied {
@@ -1053,7 +1324,17 @@ mod tests {
             ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, true);
         assert!(matches!(
             attached
-                .apply(board(Operation::Attach, "already-attached"))
+                .apply(make_command(
+                    &attached,
+                    Actor::Board {
+                        organization_id: "org-a".to_owned(),
+                        principal_id: "board-a".to_owned(),
+                    },
+                    Operation::Attach,
+                    2,
+                    4,
+                    "already-attached",
+                ))
                 .unwrap(),
             LinkMutationOutcome::Noop {
                 version: 2,
@@ -1086,8 +1367,17 @@ mod tests {
             4,
             false,
         );
-        let mut command = board(Operation::Attach, "overflow");
-        command.expected_version = u64::MAX;
+        let command = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Attach,
+            u64::MAX,
+            4,
+            "overflow",
+        );
         let expected_state = state.clone();
 
         assert_eq!(
@@ -1113,19 +1403,53 @@ mod tests {
         state.apply(original).unwrap();
         let expected_state = state.clone();
 
-        let mut wrong_project = board(Operation::Attach, "pair-key");
-        wrong_project.project_id = "project-b".to_owned();
-        wrong_project.expected_version = state.version;
+        let mut wrong_project = ProjectGoalLinkState::new(
+            "org-a",
+            "org-a",
+            "org-a",
+            "project-b",
+            "goal-a",
+            state.version,
+            state.fence_epoch,
+            true,
+        );
         assert_eq!(
-            state.apply(wrong_project),
+            wrong_project.apply(make_command(
+                &state,
+                Actor::Board {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "board-a".to_owned(),
+                },
+                Operation::Attach,
+                state.version,
+                state.fence_epoch,
+                "pair-key",
+            )),
             Err(LinkMutationError::TargetMismatch)
         );
 
-        let mut wrong_goal = board(Operation::Attach, "pair-key");
-        wrong_goal.goal_id = "goal-b".to_owned();
-        wrong_goal.expected_version = state.version;
+        let mut wrong_goal = ProjectGoalLinkState::new(
+            "org-a",
+            "org-a",
+            "org-a",
+            "project-a",
+            "goal-b",
+            state.version,
+            state.fence_epoch,
+            true,
+        );
         assert_eq!(
-            state.apply(wrong_goal),
+            wrong_goal.apply(make_command(
+                &state,
+                Actor::Board {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "board-a".to_owned(),
+                },
+                Operation::Attach,
+                state.version,
+                state.fence_epoch,
+                "pair-key",
+            )),
             Err(LinkMutationError::TargetMismatch)
         );
         assert_eq!(state, expected_state);
@@ -1162,17 +1486,40 @@ mod tests {
 
     #[test]
     fn identifiers_keys_and_receipts_are_bounded() {
-        let mut oversized_id = board(Operation::Attach, "bounded-id");
-        oversized_id.project_id = "x".repeat(MAX_IDENTIFIER_BYTES + 1);
         assert_eq!(
-            state().apply(oversized_id),
+            ProjectGoalLinkState::new(
+                "org-a",
+                "org-a",
+                "org-a",
+                "x".repeat(MAX_IDENTIFIER_BYTES + 1),
+                "goal-a",
+                2,
+                4,
+                false,
+            )
+            .validated_context(
+                &binding(Actor::Board {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "board-a".to_owned(),
+                }),
+                &authority(),
+                &ExistingTarget,
+            ),
             Err(LinkMutationError::InvalidField)
         );
 
-        let mut oversized_key = board(Operation::Attach, "x");
-        oversized_key.idempotency_key = "k".repeat(MAX_IDEMPOTENCY_KEY_BYTES + 1);
         assert_eq!(
-            state().apply(oversized_key),
+            state().apply(make_command(
+                &state(),
+                Actor::Board {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "board-a".to_owned(),
+                },
+                Operation::Attach,
+                2,
+                4,
+                &"k".repeat(MAX_IDEMPOTENCY_KEY_BYTES + 1),
+            )),
             Err(LinkMutationError::InvalidField)
         );
 
@@ -1185,6 +1532,9 @@ mod tests {
                     idempotency_key: format!("receipt-{index}"),
                     operation: Operation::Attach,
                     outcome: AppliedReceiptOutcome::Noop,
+                    target_version: 2,
+                    target_fence_epoch: 4,
+                    target_integrity: full.integrity.clone(),
                     previous_version: 2,
                     previous_fence_epoch: 4,
                     previous_linked: false,
@@ -1201,7 +1551,17 @@ mod tests {
         full.refresh_integrity();
         let expected_state = full.clone();
         assert_eq!(
-            full.apply(board(Operation::Attach, "receipt-overflow")),
+            full.apply(make_command(
+                &full,
+                Actor::Board {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "board-a".to_owned(),
+                },
+                Operation::Attach,
+                2,
+                4,
+                "receipt-overflow",
+            )),
             Err(LinkMutationError::ReceiptCapacityExceeded)
         );
         assert_eq!(full, expected_state);
@@ -1219,8 +1579,17 @@ mod tests {
             u64::MAX,
             false,
         );
-        let mut command = board(Operation::Cancel, "fence-overflow");
-        command.fence_epoch = u64::MAX;
+        let command = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Cancel,
+            2,
+            u64::MAX,
+            "fence-overflow",
+        );
         let expected_state = state.clone();
 
         assert_eq!(
@@ -1294,14 +1663,25 @@ mod tests {
                 4,
                 linked,
             );
-            state.apply(board(operation, key)).unwrap();
+            let original_command = make_command(
+                &state,
+                Actor::Board {
+                    organization_id: "org-a".to_owned(),
+                    principal_id: "board-a".to_owned(),
+                },
+                operation,
+                2,
+                4,
+                key,
+            );
+            state.apply(original_command.clone()).unwrap();
 
             let mut encoded = serde_json::to_value(&state).unwrap();
             encoded["appliedIdempotency"][key]["outcome"] = serde_json::json!("applied");
             let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
             restored.refresh_integrity();
             assert_eq!(
-                restored.apply(board(operation, key)),
+                restored.apply(original_command),
                 Err(LinkMutationError::InvalidReceipt)
             );
         }
@@ -1311,16 +1691,25 @@ mod tests {
     fn tampered_attach_noop_version_cannot_replay_as_version_increment() {
         let mut state =
             ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, true);
-        state
-            .apply(board(Operation::Attach, "noop-version"))
-            .unwrap();
+        let original_command = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Attach,
+            2,
+            4,
+            "noop-version",
+        );
+        state.apply(original_command.clone()).unwrap();
 
         let mut encoded = serde_json::to_value(&state).unwrap();
         encoded["appliedIdempotency"]["noop-version"]["version"] = serde_json::json!(3);
         let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
         restored.refresh_integrity();
         assert_eq!(
-            restored.apply(board(Operation::Attach, "noop-version")),
+            restored.apply(original_command),
             Err(LinkMutationError::InvalidReceipt)
         );
     }
@@ -1331,15 +1720,22 @@ mod tests {
         state
             .apply(board(Operation::Cancel, "cancel-state"))
             .unwrap();
+        let reopen = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Attach,
+            3,
+            5,
+            "reopen-terminal",
+        );
 
         let mut encoded = serde_json::to_value(&state).unwrap();
         encoded["cancelled"] = serde_json::json!(false);
         let mut restored: ProjectGoalLinkState = serde_json::from_value(encoded).unwrap();
         restored.refresh_integrity();
-        let mut reopen = board(Operation::Attach, "reopen-terminal");
-        reopen.expected_version = 3;
-        reopen.fence_epoch = 5;
-
         assert_eq!(
             restored.apply(reopen),
             Err(LinkMutationError::InvalidReceipt)
@@ -1387,9 +1783,17 @@ mod tests {
         assert!(state.cancelled);
 
         assert_eq!(state.apply(old_command), Err(LinkMutationError::StaleFence));
-        let mut current_command = board(Operation::Attach, "current-command");
-        current_command.expected_version = 3;
-        current_command.fence_epoch = 5;
+        let current_command = make_command(
+            &state,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Attach,
+            3,
+            5,
+            "current-command",
+        );
         assert_eq!(
             state.apply(current_command),
             Err(LinkMutationError::Cancelled)
