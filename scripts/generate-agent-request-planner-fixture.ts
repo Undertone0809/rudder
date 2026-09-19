@@ -16,16 +16,16 @@ if (process.env.TZ !== "Asia/Shanghai") {
 
 const cases = [
   {
-    id: "date-only-and-local-wall-clock",
+    id: "date-only-and-explicit-offset",
     arguments: {
       goal: "goal-1",
       contractRevision: 7,
       afterContract: {
         actionDeadline: "2026-08-20",
-        evaluationDeadline: "2026-08-20T12:00:00",
+        evaluationDeadline: "2026-08-20T12:00:00+08:00",
       },
       rationale: "The evidence requires a contract update.",
-      idempotencyKey: "change-local-time",
+      idempotencyKey: "change-explicit-offset",
     },
   },
   {

@@ -1469,27 +1469,7 @@ fn matches_node_generated_goal_change_proposal_fixture() {
         .unwrap_or_else(|error| panic!("{id}: {error}")) else {
             panic!("{id} was not direct")
         };
-        let mut expected = test_case["nodePayload"].clone();
-        if id == "date-only-and-local-wall-clock" {
-            let local_format = format_description::parse_borrowed::<1>(
-                "[year]-[month]-[day]T[hour]:[minute]:[second]",
-            )
-            .unwrap();
-            let local = PlainDateTime::parse("2026-08-20T12:00:00", &local_format).unwrap();
-            let offset = UtcOffset::local_offset_at(local.assume_utc()).unwrap();
-            let value = local.assume_offset(offset).to_offset(UtcOffset::UTC);
-            expected["afterContract"]["evaluationDeadline"] = json!(format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-                value.year(),
-                u8::from(value.month()),
-                value.day(),
-                value.hour(),
-                value.minute(),
-                value.second(),
-                value.millisecond(),
-            ));
-        }
-        assert_eq!(plan.body, Some(expected), "{id}");
+        assert_eq!(plan.body, Some(test_case["nodePayload"].clone()), "{id}");
     }
 }
 

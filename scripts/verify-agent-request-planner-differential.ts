@@ -1,12 +1,15 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createGoalChangeProposalSchema } from "../packages/shared/src/validators/goal.js";
 import {
   buildAgentV1ToolCallPlan,
   buildMcpServerEnv,
+  runAgentV1McpJsonRpcMessage,
 } from "../cli/src/agent-v1-mcp-server.js";
+import { createGoalChangeProposalSchema } from "../packages/shared/src/validators/goal.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const rustManifest = path.join(repoRoot, "native/Cargo.toml");
@@ -20,14 +23,12 @@ const runtime = {
   browserEnabled: false,
 };
 
-type ExpectedResult = "equal" | "unsupported-by-rust";
 type TimeZone = "Asia/Shanghai" | "America/New_York";
 
 type CaseDefinition = {
   id: string;
   timezone: TimeZone;
   deadline: string;
-  expected: ExpectedResult;
   note?: string;
 };
 
@@ -36,39 +37,35 @@ const caseDefinitions: readonly CaseDefinition[] = [
     id: "asia-shanghai-date-only",
     timezone: "Asia/Shanghai",
     deadline: "2026-08-20",
-    expected: "equal",
   },
   {
     id: "asia-shanghai-local-no-seconds",
     timezone: "Asia/Shanghai",
     deadline: "2026-08-20T12:00",
-    expected: "unsupported-by-rust",
-    note: "Node z.coerce.date accepts local ISO without seconds; the candidate Rust parser requires seconds.",
+    note: "Node z.coerce.date accepts local ISO without seconds and canonicalizes it to UTC.",
   },
   {
     id: "asia-shanghai-local-with-seconds",
     timezone: "Asia/Shanghai",
     deadline: "2026-08-20T12:00:00",
-    expected: "equal",
   },
   {
     id: "new-york-local-no-seconds",
     timezone: "America/New_York",
     deadline: "2026-01-15T12:00",
-    expected: "unsupported-by-rust",
-    note: "Node z.coerce.date accepts local ISO without seconds; the candidate Rust parser requires seconds.",
+    note: "Node z.coerce.date accepts local ISO without seconds and canonicalizes it to UTC.",
   },
   {
     id: "new-york-dst-gap",
     timezone: "America/New_York",
     deadline: "2026-03-08T02:30:00",
-    expected: "equal",
+    note: "Node Date advances the nonexistent spring-forward wall time using the post-gap clock value.",
   },
   {
     id: "new-york-dst-overlap",
     timezone: "America/New_York",
     deadline: "2026-11-01T01:30:00",
-    expected: "equal",
+    note: "Node Date selects the earlier occurrence during the fall-back overlap.",
   },
 ];
 
@@ -77,7 +74,6 @@ type DifferentialCase = {
   arguments: Record<string, unknown>;
   nodePayload: Record<string, unknown>;
   cliArgs: string[];
-  expected: ExpectedResult;
   note?: string;
 };
 
@@ -96,9 +92,9 @@ type RustRun = {
   stderr: string;
 };
 
-function nodeEnvironment() {
+function nodeEnvironment(apiUrl: string) {
   return buildMcpServerEnv({
-    RUDDER_API_URL: "http://127.0.0.1:3100",
+    RUDDER_API_URL: apiUrl,
     RUDDER_API_KEY: "differential-harness-key",
     RUDDER_ORG_ID: undefined,
     RUDDER_AGENT_ID: runtime.agentId,
@@ -107,46 +103,126 @@ function nodeEnvironment() {
   });
 }
 
-function buildNodeCases(timezone: TimeZone): DifferentialCase[] {
+type CapturedRequest = {
+  method: string;
+  path: string;
+  headers: Record<string, string | string[] | undefined>;
+  body: Record<string, unknown>;
+};
+
+async function captureNodeMcpPayload(
+  timezone: TimeZone,
+  input: Record<string, unknown>,
+): Promise<CapturedRequest> {
+  let resolveRequest!: (request: CapturedRequest) => void;
+  let rejectRequest!: (error: Error) => void;
+  const request = new Promise<CapturedRequest>((resolve, reject) => {
+    resolveRequest = resolve;
+    rejectRequest = reject;
+  });
+  const server = createServer((incoming, response) => {
+    const chunks: Buffer[] = [];
+    incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+    incoming.on("error", (error) => rejectRequest(error));
+    incoming.on("end", () => {
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+        resolveRequest({
+          method: incoming.method ?? "",
+          path: incoming.url ?? "",
+          headers: incoming.headers,
+          body,
+        });
+      } catch (error) {
+        rejectRequest(error instanceof Error ? error : new Error(String(error)));
+      }
+      response.statusCode = 200;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ id: "proposal-1", status: "pending" }));
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("differential harness could not determine loopback port");
+  }
+
+  try {
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: `differential-${timezone}`,
+      method: "tools/call",
+      params: { name: toolName, arguments: input },
+    }, nodeEnvironment(`http://127.0.0.1:${address.port}`));
+    const result = response?.result as { isError?: boolean; structuredContent?: unknown } | undefined;
+    if (result?.isError) {
+      throw new Error(`${timezone}: MCP call failed: ${JSON.stringify(result.structuredContent)}`);
+    }
+    const captured = await request;
+    if (captured.method !== "POST" || !captured.path.endsWith("/change-proposals")) {
+      throw new Error(`${timezone}: unexpected captured request ${captured.method} ${captured.path}`);
+    }
+    if (
+      captured.headers.authorization !== "Bearer differential-harness-key"
+      || captured.headers["x-rudder-agent-id"] !== runtime.agentId
+      || captured.headers["x-rudder-run-id"] !== runtime.runId
+    ) {
+      throw new Error(`${timezone}: captured request lost managed runtime identity headers`);
+    }
+    return captured;
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+}
+
+async function buildNodeCases(timezone: TimeZone): Promise<DifferentialCase[]> {
   const previousTimezone = process.env.TZ;
   process.env.TZ = timezone;
 
   try {
-    return caseDefinitions
-      .filter((definition) => definition.timezone === timezone)
-      .map((definition) => {
-        const input = {
-          goal: "11111111-1111-4111-8111-111111111111",
-          contractRevision: 7,
-          afterContract: { actionDeadline: definition.deadline },
-          rationale: "The runtime differential harness exercises date normalization.",
-          idempotencyKey: `differential-${definition.id}`,
-        };
+    const cases: DifferentialCase[] = [];
+    for (const definition of caseDefinitions.filter((candidate) => candidate.timezone === timezone)) {
+      const input = {
+        goal: "11111111-1111-4111-8111-111111111111",
+        contractRevision: 7,
+        afterContract: { actionDeadline: definition.deadline },
+        rationale: "The runtime differential harness exercises date normalization.",
+        idempotencyKey: `differential-${definition.id}`,
+      };
+      const cliPlan = buildAgentV1ToolCallPlan(toolName, input, nodeEnvironment("http://127.0.0.1:1"));
+      const afterContractFlag = cliPlan.args.indexOf("--after-contract");
+      if (afterContractFlag < 0 || cliPlan.args[afterContractFlag + 1] === undefined) {
+        throw new Error(`${definition.id}: CLI planning boundary omitted --after-contract`);
+      }
 
-        const cliPlan = buildAgentV1ToolCallPlan(toolName, input, nodeEnvironment());
-        const afterContractFlag = cliPlan.args.indexOf("--after-contract");
-        if (afterContractFlag < 0 || cliPlan.args[afterContractFlag + 1] === undefined) {
-          throw new Error(`${definition.id}: CLI planning boundary omitted --after-contract`);
-        }
-
-        const parsed = createGoalChangeProposalSchema.parse({
-          expectedContractRevision: input.contractRevision,
-          afterContract: input.afterContract,
-          rationale: input.rationale,
-          evidenceRefs: input.evidenceRefs,
-          idempotencyKey: input.idempotencyKey,
-        });
-        const nodePayload = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
-
-        return {
-          id: definition.id,
-          arguments: input,
-          nodePayload,
-          cliArgs: cliPlan.args,
-          expected: definition.expected,
-          ...(definition.note ? { note: definition.note } : {}),
-        };
+      const parsed = createGoalChangeProposalSchema.parse({
+        expectedContractRevision: input.contractRevision,
+        afterContract: input.afterContract,
+        rationale: input.rationale,
+        evidenceRefs: input.evidenceRefs,
+        idempotencyKey: input.idempotencyKey,
       });
+      const schemaPayload = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+      const captured = await captureNodeMcpPayload(timezone, input);
+      if (JSON.stringify(captured.body) !== JSON.stringify(schemaPayload)) {
+        throw new Error(`${definition.id}: live Node MCP body diverged from shared schema output`);
+      }
+
+      cases.push({
+        id: definition.id,
+        arguments: input,
+        nodePayload: captured.body,
+        cliArgs: cliPlan.args,
+        ...(definition.note ? { note: definition.note } : {}),
+      });
+    }
+    return cases;
   } finally {
     if (previousTimezone === undefined) {
       delete process.env.TZ;
@@ -163,6 +239,7 @@ function runRust(envelope: DifferentialEnvelope): Promise<RustRun> {
       [
         "run",
         "--quiet",
+        "--locked",
         "--manifest-path",
         rustManifest,
         "--package",
@@ -193,7 +270,7 @@ async function main(): Promise<void> {
   let failed = false;
 
   for (const timezone of ["Asia/Shanghai", "America/New_York"] as const) {
-    const cases = buildNodeCases(timezone);
+    const cases = await buildNodeCases(timezone);
     const envelope: DifferentialEnvelope = {
       schema,
       capability,

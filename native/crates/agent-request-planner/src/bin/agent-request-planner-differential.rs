@@ -34,15 +34,7 @@ struct DifferentialCase {
     arguments: Value,
     node_payload: Value,
     cli_args: Vec<String>,
-    expected: ExpectedResult,
     note: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum ExpectedResult {
-    Equal,
-    UnsupportedByRust,
 }
 
 fn main() {
@@ -91,7 +83,6 @@ fn run() -> Result<bool, Box<dyn Error>> {
                 let status = if equal { "equal" } else { "mismatch" };
                 json!({
                     "id": case.id,
-                    "expected": expected_name(&case.expected),
                     "status": status,
                     "pass": equal,
                     "node": {
@@ -105,7 +96,6 @@ fn run() -> Result<bool, Box<dyn Error>> {
             }
             Ok(PlanOutcome::NotDirectCapability) => json!({
                 "id": case.id,
-                "expected": expected_name(&case.expected),
                 "status": "mismatch",
                 "pass": false,
                 "node": {
@@ -117,12 +107,10 @@ fn run() -> Result<bool, Box<dyn Error>> {
                 "note": case.note,
             }),
             Err(error) => {
-                let acknowledged = matches!(case.expected, ExpectedResult::UnsupportedByRust);
                 json!({
                     "id": case.id,
-                    "expected": expected_name(&case.expected),
-                    "status": if acknowledged { "unsupported-by-rust" } else { "mismatch" },
-                    "pass": acknowledged,
+                    "status": "error",
+                    "pass": false,
                     "node": {
                         "arguments": case.arguments,
                         "cliArgs": case.cli_args,
@@ -148,13 +136,6 @@ fn run() -> Result<bool, Box<dyn Error>> {
         }))?
     );
     Ok(passed)
-}
-
-fn expected_name(expected: &ExpectedResult) -> &'static str {
-    match expected {
-        ExpectedResult::Equal => "equal",
-        ExpectedResult::UnsupportedByRust => "unsupported-by-rust",
-    }
 }
 
 fn direct_request_json(request: &DirectRequest) -> Value {

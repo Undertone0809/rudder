@@ -572,15 +572,7 @@ describe("agent-v1 MCP server", () => {
         evidenceRefs: input.evidenceRefs,
         idempotencyKey: input.idempotencyKey,
       });
-      const expected = structuredClone(testCase.nodePayload);
-      const localDeadline = input.afterContract && typeof input.afterContract === "object"
-        ? (input.afterContract as Record<string, unknown>).evaluationDeadline
-        : undefined;
-      if (typeof localDeadline === "string" && !/[zZ]|[+-][0-9]{2}:?[0-9]{2}$/.test(localDeadline)) {
-        const afterContract = expected.afterContract as Record<string, unknown>;
-        afterContract.evaluationDeadline = new Date(localDeadline).toISOString();
-      }
-      expect(JSON.parse(JSON.stringify(parsed)), testCase.id).toEqual(expected);
+      expect(JSON.parse(JSON.stringify(parsed)), testCase.id).toEqual(testCase.nodePayload);
     }
   });
 

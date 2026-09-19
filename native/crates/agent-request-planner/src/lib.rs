@@ -931,8 +931,8 @@ fn parse_local_plain_datetime(text: &str) -> Option<OffsetDateTime> {
     // JavaScript treats an ISO datetime without an offset as local wall-clock
     // time. Re-resolve the offset after applying the first estimate so ordinary
     // local dates use the offset for the represented instant, not for now. The
-    // instant-based local-offset API cannot identify a DST gap or overlap, so
-    // those cases are not a stable Node-compatibility guarantee here.
+    // iterative resolution also follows Node's tested gap/overlap choices, but
+    // remains dependent on the host timezone database and local-offset API.
     let mut offset = UtcOffset::local_offset_at(local.assume_utc()).ok()?;
     for _ in 0..2 {
         let candidate = local.assume_offset(offset);
