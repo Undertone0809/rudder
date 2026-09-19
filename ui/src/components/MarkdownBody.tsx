@@ -1400,8 +1400,10 @@ export function MarkdownBody({
         );
       }
       if (localFilePath) {
+        const { enableImagePreview } = renderStateRef.current;
         return (
           <MarkdownLocalFileLink
+            enablePreview={enableImagePreview}
             href={href ?? localFilePath}
             filePath={localFilePath}
             label={linkLabel}
