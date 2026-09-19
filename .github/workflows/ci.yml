@@ -528,6 +528,7 @@ jobs:
             cli/src/runtime/native-payload.test.ts \
             desktop/src/local-app-native-host.test.ts \
             server/src/__tests__/log-store-offsets.test.ts \
+            server/src/__tests__/workspace-file-native.test.ts \
             server/src/__tests__/workspace-manifest-native.test.ts \
             server/src/__tests__/workspace-backups.test.ts
           RUDDER_NATIVE_MODE=node pnpm exec vitest run desktop/src/local-apps-runtime.test.ts
