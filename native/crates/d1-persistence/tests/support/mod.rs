@@ -42,6 +42,7 @@ impl Database {
                 ]),
         );
         let pg_ctl = binary("pg_ctl");
+        let dynamic_shared_memory_type = if cfg!(windows) { "windows" } else { "mmap" };
         let output = Command::new(&pg_ctl)
             .env("LC_ALL", "C")
             .arg("-D")
@@ -51,7 +52,7 @@ impl Database {
             .arg("-o")
             .arg(format!(
                 "-h 127.0.0.1 -p {port} -k {} -c shared_buffers=16MB -c max_connections=16 \
-                 -c dynamic_shared_memory_type=mmap",
+                 -c dynamic_shared_memory_type={dynamic_shared_memory_type}",
                 root.path().display()
             ))
             .args(["-w", "start"])
