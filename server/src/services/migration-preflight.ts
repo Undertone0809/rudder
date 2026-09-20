@@ -1,4 +1,11 @@
+import {
+  createMigrationManifest,
+  getMigrationSourcePaths,
+  type MigrationSourcePaths,
+  type MigrationState,
+} from "@rudderhq/db";
 import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
+import { resolveRudderNativeCapability } from "@rudderhq/shared";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -108,6 +115,115 @@ export class MigrationPreflightAdapterError extends Error {
     super(`Migration preflight failed: ${code}`);
     this.name = "MigrationPreflightAdapterError";
   }
+}
+
+type MigrationPreflightLogger = {
+  info(fields: Record<string, unknown>, message: string): void;
+  warn(fields: Record<string, unknown>, message: string): void;
+};
+
+export type MigrationPreflightStartupResult = Readonly<{
+  report: MigrationPreflightReport | null;
+  required: boolean;
+}>;
+
+function expectedMigrationPreflightStatus(state: MigrationState): MigrationPreflightStatus {
+  if (state.status === "upToDate") return "current";
+  switch (state.reason) {
+    case "no-migration-journal-empty-db":
+      return "bootstrap";
+    case "no-migration-journal-non-empty-db":
+      return "unsafe-legacy";
+    case "pending-migrations":
+      return "pending";
+    case "missing-core-schema":
+      return "missing-core-schema";
+  }
+}
+
+function migrationPreflightSummary(report: MigrationPreflightReport) {
+  return {
+    status: report.status,
+    tableCount: report.tableCount,
+    journalPresent: report.journalPresent,
+    journalSchema: report.journalSchema,
+    coreSchemaPresent: report.coreSchemaPresent,
+    organizationsTablePresent: report.organizationsTablePresent,
+    historyStatus: report.history.status,
+    historyReason: report.history.reason,
+    manifestFingerprint: report.history.manifestFingerprint,
+  };
+}
+
+export async function runMigrationPreflightBeforeNodeInspection(options: {
+  connectionString: string;
+  label: string;
+  logger: MigrationPreflightLogger;
+  env?: NodeJS.ProcessEnv;
+  sourcePaths?: MigrationSourcePaths;
+}): Promise<MigrationPreflightStartupResult> {
+  const policy = resolveRudderNativeCapability({
+    capability: "migration-preflight",
+    env: options.env ?? process.env,
+  });
+  if (!policy.enabled) return { report: null, required: policy.required };
+
+  const sourcePaths = options.sourcePaths ?? getMigrationSourcePaths();
+  const migrationManifest = await createMigrationManifest({
+    migrationsFolder: sourcePaths.migrationsFolder,
+    journalFile: sourcePaths.journalFile,
+  });
+  try {
+    const report = await runMigrationPreflight({
+      databaseUrl: options.connectionString,
+      source: {
+        migrationsDir: sourcePaths.migrationsFolder,
+        journalFile: sourcePaths.journalFile,
+        expectedFingerprint: migrationManifest.fingerprint,
+      },
+    });
+    options.logger.info(
+      { label: options.label, ...migrationPreflightSummary(report) },
+      `${options.label} Rust migration preflight completed before Node migration inspection`,
+    );
+    return { report, required: policy.required };
+  } catch (error) {
+    const code = error instanceof MigrationPreflightAdapterError ? error.code : "unknown";
+    if (policy.required) {
+      throw new Error(
+        `${options.label} Rust migration preflight is required but failed (${code}); refusing to inspect or mutate migration state.`,
+        { cause: error },
+      );
+    }
+    options.logger.warn(
+      { label: options.label, code },
+      `${options.label} Rust migration preflight unavailable; continuing with the Node migration authority`,
+    );
+    return { report: null, required: false };
+  }
+}
+
+export function assertMigrationPreflightAgreement(options: {
+  label: string;
+  state: MigrationState;
+  report: MigrationPreflightReport | null;
+  required: boolean;
+  logger: MigrationPreflightLogger;
+}): void {
+  if (!options.report) return;
+  const expectedStatus = expectedMigrationPreflightStatus(options.state);
+  if (options.report.status === expectedStatus) return;
+
+  const detail = `${options.report.status} != ${expectedStatus}`;
+  if (options.required) {
+    throw new Error(
+      `${options.label} Rust migration preflight disagreed with the Node migration inspection (${detail}); refusing to mutate migration state.`,
+    );
+  }
+  options.logger.warn(
+    { label: options.label, nativeStatus: options.report.status, nodeStatus: expectedStatus },
+    `${options.label} Rust migration preflight disagreed with the Node migration inspection; continuing with the Node migration authority`,
+  );
 }
 
 export function resolveMigrationPreflightBinary(env: NodeJS.ProcessEnv = process.env): string {
