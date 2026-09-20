@@ -17,6 +17,7 @@ supersedes: []
 related_code:
   - packages/db/src/schema/organization_mutations.ts
   - packages/db/src/migrations/0163_organization_mutations.sql
+  - scripts/release-compatibility-matrix.mjs
   - native/crates/organization-mutation-core/src/lib.rs
   - native/crates/project-goal-link-core/src/lib.rs
 commit_refs:
@@ -82,3 +83,6 @@ rewrite earlier SQL, snapshots, or journal entries. The migration regression
 upgrades a real schema through entry 162, applies 0163 through the normal Node
 runner twice, preserves an existing organization write, and exercises guards,
 foreign-key scope, deletion order, signed bounds, immutability, and rollback.
+The release compatibility matrix now binds the 0.7.23 candidate declaration to
+the current 0163-inclusive migration fingerprint; historical declarations stay
+unchanged.
