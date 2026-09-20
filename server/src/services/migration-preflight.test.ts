@@ -159,8 +159,8 @@ describe("migration preflight adapter", () => {
   });
 
   it("maps a Rust error response to a typed error without exposing its message", async () => {
-    const secret = "db-password=do-not-disclose";
-    const fixture = spawnResponse(errorResponse("database", "database_connect_failed", secret), { exitCode: 2 });
+    const diagnosticMessage = "diagnostic fixture message";
+    const fixture = spawnResponse(errorResponse("database", "database_connect_failed", diagnosticMessage), { exitCode: 2 });
 
     const error = await runMigrationPreflight(
       { databaseUrl, source },
@@ -169,7 +169,7 @@ describe("migration preflight adapter", () => {
 
     expect(error).toBeInstanceOf(MigrationPreflightAdapterError);
     expect(error).toMatchObject({ classification: "database", code: "database_connect_failed" });
-    expect((error as Error).message).not.toContain(secret);
+    expect((error as Error).message).not.toContain(diagnosticMessage);
   });
 
   it("rejects malformed envelopes, extra output, and unexpected stderr", async () => {
