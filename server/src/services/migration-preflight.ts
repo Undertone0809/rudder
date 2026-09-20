@@ -1,10 +1,10 @@
+import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
 import {
   createMigrationManifest,
   getMigrationSourcePaths,
   type MigrationSourcePaths,
   type MigrationState,
 } from "@rudderhq/db";
-import { resolveNativeCommand } from "@rudderhq/agent-runtime-utils";
 import { resolveRudderNativeCapability } from "@rudderhq/shared";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
