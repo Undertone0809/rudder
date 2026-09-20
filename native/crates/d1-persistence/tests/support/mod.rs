@@ -2,6 +2,12 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{env, fs, net::TcpListener, path::PathBuf, process::Command};
 use tempfile::TempDir;
 
+// Bound Windows fixture teardown so a slow postmaster cannot consume the job timeout.
+#[cfg(windows)]
+const POSTGRES_STOP_ARGS: &[&str] = &["-m", "immediate", "-w", "-t", "5", "stop"];
+#[cfg(not(windows))]
+const POSTGRES_STOP_ARGS: &[&str] = &["-m", "immediate", "-w", "stop"];
+
 pub const ORG: &str = "10000000-0000-4000-8000-000000000001";
 pub const OTHER: &str = "10000000-0000-4000-8000-000000000002";
 pub const PROJECT: &str = "20000000-0000-4000-8000-000000000001";
@@ -200,8 +206,8 @@ impl Drop for Database {
             .env("LC_ALL", "C")
             .arg("-D")
             .arg(self.root.path().join("data"))
-            .args(["-m", "immediate", "-w", "stop"])
-            .output();
+            .args(POSTGRES_STOP_ARGS)
+            .status();
     }
 }
 
