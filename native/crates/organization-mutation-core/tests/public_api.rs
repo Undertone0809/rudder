@@ -96,6 +96,60 @@ fn downstream_adapter_can_consume_public_contract_helpers() {
 }
 
 #[test]
+fn trusted_integration_view_exposes_bound_values_without_a_second_json_path() {
+    let command = patch(serde_json::json!({
+        "name": "Rudder",
+        "description": null,
+        "brandColor": "#123456"
+    }))
+    .into_command(
+        "org-a",
+        Actor::CeoAgent {
+            organization_id: "org-a".to_owned(),
+            principal_id: "agent-a".to_owned(),
+        },
+        "branding-1",
+        3,
+        7,
+    )
+    .unwrap();
+
+    let view = command.as_integration_view().unwrap();
+    assert_eq!(view.organization_id(), "org-a");
+    assert_eq!(view.actor().kind(), "ceo_agent");
+    assert_eq!(view.actor().principal_id(), "agent-a");
+    assert_eq!(view.idempotency_key(), "branding-1");
+    assert_eq!(view.expected_version(), 3);
+    assert_eq!(view.fence_epoch(), 7);
+    assert_eq!(view.name(), Some("Rudder"));
+    assert_eq!(view.description(), Some(None));
+    assert_eq!(view.brand_color(), Some(Some("#123456")));
+    assert_eq!(view.fingerprint().unwrap(), command.fingerprint().unwrap());
+}
+
+#[test]
+fn integration_view_revalidates_commands_before_adapter_consumption() {
+    let mut command = patch(serde_json::json!({"name": "Rudder"}))
+        .into_command(
+            "org-a",
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            "branding-1",
+            3,
+            7,
+        )
+        .unwrap();
+    command.organization_id = "org-b".to_owned();
+
+    assert_eq!(
+        command.as_integration_view(),
+        Err(rudder_organization_mutation_core::MutationError::CrossOrganization)
+    );
+}
+
+#[test]
 fn nullable_patch_fields_preserve_absent_null_and_value_public_api_round_trips() {
     assert_nullable_patch_round_trip(
         "description",

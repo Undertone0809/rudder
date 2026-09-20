@@ -33,7 +33,7 @@ fn run_external_consumer_probe() {
         r#"
 use rudder_project_goal_link_core::{
     Actor, ActorBinding, ActorAuthority, Operation, ProjectGoalLinkCommand,
-    ProjectGoalLinkState, TargetVerifier, ValidatedLinkContext,
+    ProjectGoalLinkCommandView, ProjectGoalLinkState, TargetVerifier, ValidatedLinkContext,
 };
 
 struct ExistingTarget;
@@ -49,6 +49,22 @@ impl TargetVerifier for ExistingTarget {
     ) -> bool {
         true
     }
+}
+
+fn consume_integration_view(view: ProjectGoalLinkCommandView<'_>) {
+    let context = view.context();
+    let _ = (
+        context.organization_id(),
+        context.project_id(),
+        context.goal_id(),
+        context.actor().principal_id(),
+        view.operation(),
+        view.expected_version(),
+        view.fence_epoch(),
+        view.idempotency_key(),
+        view.link_identifier(),
+        view.fingerprint(),
+    );
 }
 
 fn main() {
@@ -73,6 +89,8 @@ fn main() {
         4,
         "known-target",
     );
+    let _unvalidated_command: ProjectGoalLinkCommand = serde_json::from_str("{}").unwrap();
+    let _unvalidated_view: ProjectGoalLinkCommandView<'_> = serde_json::from_str("{}").unwrap();
     let _unvalidated: ValidatedLinkContext = serde_json::from_str("{}").unwrap();
 }
 "#,
