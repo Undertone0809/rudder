@@ -30,7 +30,8 @@ pub(crate) async fn apply(
 ) -> Result<CommittedMutation, StoreError> {
     let (version, fence_epoch) = transaction::lock_scope(tx, metadata).await?;
     if let Some(receipt) = transaction::replay(tx, metadata).await? {
-        validate_project_goal_replay(&command, &receipt)?;
+        validate_project_goal_replay(tx, metadata, version, fence_epoch, &command, &receipt)
+            .await?;
         return Ok(receipt);
     }
     metadata.check_fresh(version, fence_epoch)?;
@@ -477,10 +478,39 @@ fn genesis_linked(receipt: &PersistedLinkReceipt) -> Result<bool, StoreError> {
     }
 }
 
-fn validate_project_goal_replay(
+async fn validate_project_goal_replay(
+    tx: &mut transaction::Tx<'_>,
+    metadata: &transaction::Metadata,
+    version: u64,
+    fence_epoch: u64,
     command: &ProjectGoalLinkCommand,
     receipt: &CommittedMutation,
 ) -> Result<(), StoreError> {
+    let project_id = metadata
+        .project_id
+        .as_deref()
+        .ok_or(StoreError::InvalidReceipt)?;
+    let goal_id = metadata
+        .goal_id
+        .as_deref()
+        .ok_or(StoreError::InvalidReceipt)?;
+    let linked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM project_goals
+             WHERE org_id=$1::uuid AND project_id=$2::uuid AND goal_id=$3::uuid
+         )",
+    )
+    .bind(&metadata.org)
+    .bind(project_id)
+    .bind(goal_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    // An idempotency row proves only its own snapshot. Rebuild the complete
+    // immutable history before accepting the replay.
+    load_link_state(tx, metadata, version, fence_epoch, linked).await?;
+
     let ResultState::ProjectGoalLink { state, .. } = &receipt.receipt.result else {
         return Err(StoreError::InvalidReceipt);
     };

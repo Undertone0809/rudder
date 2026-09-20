@@ -1,12 +1,13 @@
 mod support;
 
-use rudder_d1_persistence::{MutationStore, ResultState, StoreError};
+use rudder_d1_persistence::{MutationStore, Outcome, Receipt, ResultState, StoreError};
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
     ActorAuthority, ActorBinding, Operation, ProjectGoalLinkCommand, ProjectGoalLinkState,
     TargetVerifier,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use support::{
     ASSET, CEO, Database, FOREIGN_ASSET, FOREIGN_GOAL, FOREIGN_PROJECT, GOAL, GOAL_TWO, ORG, OTHER,
     PROJECT,
@@ -159,6 +160,19 @@ fn branding(key: &str, version: u64) -> OrganizationBrandingCommand {
 fn branding_at(key: &str, version: u64, fence_epoch: u64) -> OrganizationBrandingCommand {
     OrganizationBrandingCommand::board(ORG, "board-user", key, version, fence_epoch)
         .with_name(Some(format!("Name {key}")))
+}
+
+fn adapter_fingerprint(core_fingerprint: &str, primary_goal_after: Option<&str>) -> String {
+    let identity = json!({
+        "adapter_format": 1,
+        "kind": "project_goal_link",
+        "core_fingerprint": core_fingerprint,
+        "primary_goal_after": primary_goal_after,
+    });
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&identity).unwrap())
+    )
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -649,6 +663,129 @@ async fn project_goal_replay_returns_the_original_receipt_after_later_mutations(
         project_goals(&database).await,
         vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_replay_rejects_a_missing_predecessor_in_history() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let attached = store
+        .project_goal(
+            project_goal_command(GOAL, false, 0, Operation::Attach, "history-predecessor"),
+            Some(GOAL.to_owned()),
+        )
+        .await
+        .unwrap();
+    let attached_state = match &attached.receipt.result {
+        ResultState::ProjectGoalLink { state, .. } => state.as_ref().clone(),
+        result => panic!("unexpected project result: {result:?}"),
+    };
+    let detached_command =
+        project_goal_command_from_state(attached_state, Operation::Detach, 1, 7, "history-replay");
+    store
+        .project_goal(detached_command.clone(), None)
+        .await
+        .unwrap();
+
+    database
+        .sql(
+            "ALTER TABLE organization_mutation_receipts
+             DISABLE TRIGGER organization_mutation_receipts_guard;
+             DELETE FROM organization_mutation_receipts
+             WHERE org_id='10000000-0000-4000-8000-000000000001'
+               AND idempotency_key='history-predecessor';
+             ALTER TABLE organization_mutation_receipts
+             ENABLE TRIGGER organization_mutation_receipts_guard;",
+        )
+        .await;
+
+    assert!(matches!(
+        store.project_goal(detached_command, None).await,
+        Err(StoreError::InvalidReceipt)
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_replay_rejects_a_forked_history() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let first_command = project_goal_command(GOAL, false, 0, Operation::Attach, "fork-first");
+    store
+        .project_goal(first_command.clone(), Some(GOAL.to_owned()))
+        .await
+        .unwrap();
+
+    let branch_context = ProjectGoalLinkState::bootstrap(ORG, ORG, ORG, PROJECT, GOAL, 1, 7, true);
+    let branch_command = project_goal_command_from_state(
+        branch_context.clone(),
+        Operation::Attach,
+        1,
+        7,
+        "fork-branch",
+    );
+    let branch_view = branch_command.as_integration_view().unwrap();
+    let branch_state = branch_view.resulting_state().unwrap();
+    let core_fingerprint = branch_view.fingerprint().unwrap();
+    let primary_goal_after = Some(GOAL.to_owned());
+    let activity_id = "70000000-0000-4000-8000-000000000001";
+    let receipt = Receipt {
+        organization_id: ORG.to_owned(),
+        version: branch_state.version,
+        fence_epoch: branch_state.fence_epoch,
+        fingerprint: adapter_fingerprint(&core_fingerprint, primary_goal_after.as_deref()),
+        activity_id: activity_id.to_owned(),
+        outcome: Outcome::Noop,
+        result: ResultState::ProjectGoalLink {
+            state: Box::new(branch_state.clone()),
+            project_id: PROJECT.to_owned(),
+            goal_id: GOAL.to_owned(),
+            operation: Operation::Attach,
+            link_identifier: branch_view.link_identifier().unwrap(),
+            core_fingerprint,
+            target_version: branch_context.version,
+            target_fence_epoch: branch_context.fence_epoch,
+            linked: branch_state.linked,
+            cancelled: branch_state.cancelled,
+            primary_goal_after,
+            state_integrity: branch_state.state_integrity().to_owned(),
+            target_integrity: branch_context.state_integrity().to_owned(),
+        },
+    };
+    let receipt_json = serde_json::to_string(&receipt).unwrap();
+    database
+        .sql(
+            "INSERT INTO activity_log
+             (id, org_id, actor_type, actor_id, action, entity_type, entity_id, details, idempotency_key)
+             VALUES
+             ('70000000-0000-4000-8000-000000000001'::uuid,
+              '10000000-0000-4000-8000-000000000001'::uuid,
+              'user', 'board-user', 'project.updated', 'project',
+              '20000000-0000-4000-8000-000000000001', '{}'::jsonb, 'rust-d1:fork-branch')",
+        )
+        .await;
+    sqlx::query(
+        "INSERT INTO organization_mutation_receipts
+         (org_id, idempotency_key, command_kind, command_fingerprint, receipt_format,
+          outcome, resulting_version, fence_epoch, activity_id, result)
+         VALUES ($1::uuid, $2, 'project_goal_link', $3, 2, 'noop', $4, $5, $6::uuid, $7::jsonb)",
+    )
+    .bind(ORG)
+    .bind("fork-branch")
+    .bind(&receipt.fingerprint)
+    .bind(i64::try_from(receipt.version).unwrap())
+    .bind(i64::try_from(receipt.fence_epoch).unwrap())
+    .bind(activity_id)
+    .bind(receipt_json)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        store
+            .project_goal(first_command, Some(GOAL.to_owned()))
+            .await,
+        Err(StoreError::InvalidReceipt)
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
