@@ -22,6 +22,7 @@
     "verify:agent-request-planner-differential": "node cli/node_modules/tsx/dist/cli.mjs scripts/verify-agent-request-planner-differential.ts",
     "verify:migration-manifest-differential": "node cli/node_modules/tsx/dist/cli.mjs scripts/verify-migration-manifest-differential.ts",
     "verify:migration-preflight": "node cli/node_modules/tsx/dist/cli.mjs scripts/verify-migration-preflight.ts",
+    "verify:migration-preflight-startup": "node scripts/verify-migration-preflight-startup.mjs",
     "architecture:audit": "node scripts/architecture-audit.mjs",
     "architecture:audit:test": "node --test scripts/architecture-audit.test.mjs scripts/architecture-boundaries.test.mjs",
     "architecture:audit:check": "node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref origin/main --fail-on-regression",

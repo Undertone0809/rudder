@@ -14,6 +14,7 @@ const target = resolveNativeTarget(process.platform, targetArch);
 const binaryName = process.platform === "win32" ? "rudder-process-host.exe" : "rudder-process-host";
 const archiveBinaryName = process.platform === "win32" ? "rudder-native.exe" : "rudder-native";
 const updateHelperBinaryName = process.platform === "win32" ? "rudder-update-helper.exe" : "rudder-update-helper";
+const migrationPreflightBinaryName = process.platform === "win32" ? "migration-preflight.exe" : "migration-preflight";
 const cargoBin = process.platform === "win32" ? "cargo.exe" : "cargo";
 
 function run(command, args, cwd) {
@@ -39,6 +40,7 @@ async function main() {
   const cargoArgs = [
     "build", "--manifest-path", path.join(nativeRoot, "Cargo.toml"), "--release",
     "--bin", "rudder-process-host", "--bin", "rudder-native", "--bin", "rudder-update-helper",
+    "--bin", "migration-preflight",
   ];
   const requestedTarget = process.env.RUDDER_NATIVE_TARGET || (target === resolveNativeTarget(process.platform, process.arch) ? null : target);
   if (requestedTarget) cargoArgs.push("--target", requestedTarget);
@@ -50,22 +52,27 @@ async function main() {
   const sourcePath = path.join(profileRoot, binaryName);
   const archiveSourcePath = path.join(profileRoot, archiveBinaryName);
   const updateHelperSourcePath = path.join(profileRoot, updateHelperBinaryName);
+  const migrationPreflightSourcePath = path.join(profileRoot, migrationPreflightBinaryName);
   const targetRoot = path.join(stagedNativeRoot, target);
   const destinationPath = path.join(targetRoot, binaryName);
   const archiveDestinationPath = path.join(targetRoot, archiveBinaryName);
   const updateHelperDestinationPath = path.join(targetRoot, updateHelperBinaryName);
+  const migrationPreflightDestinationPath = path.join(targetRoot, migrationPreflightBinaryName);
   await fs.access(sourcePath);
   await fs.access(archiveSourcePath);
   await fs.access(updateHelperSourcePath);
+  await fs.access(migrationPreflightSourcePath);
   await fs.rm(targetRoot, { recursive: true, force: true });
   await fs.mkdir(targetRoot, { recursive: true });
   await fs.copyFile(sourcePath, destinationPath);
   await fs.copyFile(archiveSourcePath, archiveDestinationPath);
   await fs.copyFile(updateHelperSourcePath, updateHelperDestinationPath);
+  await fs.copyFile(migrationPreflightSourcePath, migrationPreflightDestinationPath);
   if (process.platform !== "win32") await fs.chmod(destinationPath, 0o755);
   if (process.platform !== "win32") await fs.chmod(archiveDestinationPath, 0o755);
   if (process.platform !== "win32") await fs.chmod(updateHelperDestinationPath, 0o755);
-  console.log(`[desktop:stage-native] staged ${target}/${binaryName} and ${updateHelperBinaryName}`);
+  if (process.platform !== "win32") await fs.chmod(migrationPreflightDestinationPath, 0o755);
+  console.log(`[desktop:stage-native] staged ${target}/${binaryName}, ${updateHelperBinaryName}, and ${migrationPreflightBinaryName}`);
 }
 
 void main().catch((error) => {

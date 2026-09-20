@@ -11,6 +11,7 @@ export const RUDDER_NATIVE_CAPABILITIES = [
   "workspace-manifest",
   "workspace-files",
   "plugin-archive",
+  "migration-preflight",
 ] as const;
 
 export type RudderNativeCapability = (typeof RUDDER_NATIVE_CAPABILITIES)[number];

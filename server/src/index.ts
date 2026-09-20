@@ -7,8 +7,10 @@ import {
   createDb,
   createEmbeddedPostgresStartupError,
   createLocalPostgresInstance,
+  createMigrationManifest,
   ensurePostgresDatabase,
   ensurePostgresRolePassword,
+  getMigrationSourcePaths,
   getPostgresDataDirectory,
   inspectMigrations,
   instanceUserRoles,
@@ -26,8 +28,10 @@ import {
   withMigrationAdvisoryLock,
   type Db,
   type LocalPostgresInstance,
+  type MigrationState,
 } from "@rudderhq/db";
 import {
+  resolveRudderNativeCapability,
   WORKSPACE_BACKUP_DEFAULT_INTERVAL_HOURS,
   WORKSPACE_BACKUP_DEFAULT_RETENTION_DAYS,
   type DeploymentExposure,
@@ -92,6 +96,12 @@ import {
 import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
 import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
 import { managedMcpOAuthService } from "./services/mcp/oauth.js";
+import {
+  MigrationPreflightAdapterError,
+  runMigrationPreflight,
+  type MigrationPreflightReport,
+  type MigrationPreflightStatus,
+} from "./services/migration-preflight.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
@@ -270,6 +280,34 @@ function mergeRuntimeConfig(baseConfig: Config, overrides?: ServerRuntimeOverrid
       (overrides.deploymentMode ?? baseConfig.deploymentMode) === "local_trusted"
         ? "private"
         : (overrides.deploymentExposure ?? baseConfig.deploymentExposure),
+  };
+}
+
+function expectedMigrationPreflightStatus(state: MigrationState): MigrationPreflightStatus {
+  if (state.status === "upToDate") return "current";
+  switch (state.reason) {
+    case "no-migration-journal-empty-db":
+      return "bootstrap";
+    case "no-migration-journal-non-empty-db":
+      return "unsafe-legacy";
+    case "pending-migrations":
+      return "pending";
+    case "missing-core-schema":
+      return "missing-core-schema";
+  }
+}
+
+function migrationPreflightSummary(report: MigrationPreflightReport) {
+  return {
+    status: report.status,
+    tableCount: report.tableCount,
+    journalPresent: report.journalPresent,
+    journalSchema: report.journalSchema,
+    coreSchemaPresent: report.coreSchemaPresent,
+    organizationsTablePresent: report.organizationsTablePresent,
+    historyStatus: report.history.status,
+    historyReason: report.history.reason,
+    manifestFingerprint: report.history.manifestFingerprint,
   };
 }
 
@@ -520,8 +558,62 @@ async function startServerRuntime(
     // Drift detection is read-only. The recovery point must be captured before
     // normalization, journal reconciliation, or SQL migrations can mutate the
     // schema or migration history.
+    const migrationSourcePaths = getMigrationSourcePaths();
+    const nativePreflightPolicy = resolveRudderNativeCapability({
+      capability: "migration-preflight",
+      env: process.env,
+    });
+    let nativePreflight: MigrationPreflightReport | null = null;
+    if (nativePreflightPolicy.enabled) {
+      const migrationManifest = await createMigrationManifest({
+        migrationsFolder: migrationSourcePaths.migrationsFolder,
+        journalFile: migrationSourcePaths.journalFile,
+      });
+      try {
+        nativePreflight = await runMigrationPreflight({
+          databaseUrl: connectionString,
+          source: {
+            migrationsDir: migrationSourcePaths.migrationsFolder,
+            journalFile: migrationSourcePaths.journalFile,
+            expectedFingerprint: migrationManifest.fingerprint,
+          },
+        });
+        logger.info(
+          { label, ...migrationPreflightSummary(nativePreflight) },
+          `${label} Rust migration preflight completed before Node migration inspection`,
+        );
+      } catch (error) {
+        const code = error instanceof MigrationPreflightAdapterError ? error.code : "unknown";
+        if (nativePreflightPolicy.required) {
+          throw new Error(
+            `${label} Rust migration preflight is required but failed (${code}); refusing to inspect or mutate migration state.`,
+            { cause: error },
+          );
+        }
+        logger.warn(
+          { label, code },
+          `${label} Rust migration preflight unavailable; continuing with the Node migration authority`,
+        );
+      }
+    }
+
     const legacyColumnRenames = await listLegacyColumnRenames(connectionString);
     const initialState = await inspectMigrations(connectionString);
+    if (nativePreflight) {
+      const expectedStatus = expectedMigrationPreflightStatus(initialState);
+      if (nativePreflight.status !== expectedStatus) {
+        const detail = `${nativePreflight.status} != ${expectedStatus}`;
+        if (nativePreflightPolicy.required) {
+          throw new Error(
+            `${label} Rust migration preflight disagreed with the Node migration inspection (${detail}); refusing to mutate migration state.`,
+          );
+        }
+        logger.warn(
+          { label, nativeStatus: nativePreflight.status, nodeStatus: expectedStatus },
+          `${label} Rust migration preflight disagreed with the Node migration inspection; continuing with the Node migration authority`,
+        );
+      }
+    }
     let recoveryPoint: string | null = null;
     if (
       initialState.tableCount > 0
