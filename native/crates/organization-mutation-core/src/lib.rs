@@ -64,6 +64,30 @@ impl Actor {
     }
 }
 
+/// Read-only actor identity exposed to a trusted persistence adapter.
+///
+/// This view carries no authority and cannot be constructed by an adapter. It
+/// only makes the actor already bound to a validated command available for
+/// activity attribution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActorView<'a> {
+    actor: &'a Actor,
+}
+
+impl ActorView<'_> {
+    pub fn organization_id(&self) -> &str {
+        self.actor.organization_id()
+    }
+
+    pub fn principal_id(&self) -> &str {
+        self.actor.principal_id()
+    }
+
+    pub fn kind(&self) -> &'static str {
+        self.actor.kind()
+    }
+}
+
 fn deserialize_nullable_patch<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -362,6 +386,69 @@ impl OrganizationBrandingCommand {
         let encoded = serde_json::to_vec(&payload).map_err(|_| MutationError::FingerprintFailed)?;
         let digest = Sha256::digest(encoded);
         Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    }
+
+    /// Expose the already validated command to a persistence adapter without
+    /// adding a second construction or JSON-ingress path.
+    pub fn as_integration_view(
+        &self,
+    ) -> Result<OrganizationBrandingCommandView<'_>, MutationError> {
+        self.validate()?;
+        Ok(OrganizationBrandingCommandView { command: self })
+    }
+}
+
+/// Read-only binding surface for a trusted organization-mutation adapter.
+///
+/// The view has no serde implementation and keeps the source command borrowed;
+/// an adapter can bind these values to one transaction, but cannot manufacture
+/// a command or actor through this type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OrganizationBrandingCommandView<'a> {
+    command: &'a OrganizationBrandingCommand,
+}
+
+impl<'a> OrganizationBrandingCommandView<'a> {
+    pub fn organization_id(&self) -> &str {
+        &self.command.organization_id
+    }
+
+    pub fn actor(&self) -> ActorView<'a> {
+        ActorView {
+            actor: &self.command.actor,
+        }
+    }
+
+    pub fn idempotency_key(&self) -> &str {
+        &self.command.idempotency_key
+    }
+
+    pub fn expected_version(&self) -> u64 {
+        self.command.expected_version
+    }
+
+    pub fn fence_epoch(&self) -> u64 {
+        self.command.fence_epoch
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        self.command.name.as_deref()
+    }
+
+    pub fn description(&self) -> Option<Option<&str>> {
+        self.command.description.as_ref().map(Option::as_deref)
+    }
+
+    pub fn brand_color(&self) -> Option<Option<&str>> {
+        self.command.brand_color.as_ref().map(Option::as_deref)
+    }
+
+    pub fn logo_asset_id(&self) -> Option<Option<&str>> {
+        self.command.logo_asset_id.as_ref().map(Option::as_deref)
+    }
+
+    pub fn fingerprint(&self) -> Result<String, MutationError> {
+        self.command.fingerprint()
     }
 }
 
