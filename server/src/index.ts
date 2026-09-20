@@ -92,6 +92,7 @@ import {
 import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/runtime.js";
 import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
 import { managedMcpOAuthService } from "./services/mcp/oauth.js";
+import { assertMigrationPreflightAgreement, runMigrationPreflightBeforeNodeInspection } from "./services/migration-preflight.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
@@ -517,11 +518,10 @@ async function startServerRuntime(
     label: string,
     opts?: EnsureMigrationsOptions,
   ): Promise<MigrationSummary> {
-    // Drift detection is read-only. The recovery point must be captured before
-    // normalization, journal reconciliation, or SQL migrations can mutate the
-    // schema or migration history.
+    const nativePreflight = await runMigrationPreflightBeforeNodeInspection({ connectionString, label, logger });
     const legacyColumnRenames = await listLegacyColumnRenames(connectionString);
     const initialState = await inspectMigrations(connectionString);
+    assertMigrationPreflightAgreement({ ...nativePreflight, label, state: initialState, logger });
     let recoveryPoint: string | null = null;
     if (
       initialState.tableCount > 0
