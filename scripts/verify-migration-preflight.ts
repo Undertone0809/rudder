@@ -372,18 +372,26 @@ async function databaseSignature(sql: SqlClient): Promise<string> {
 }
 
 async function assertReadOnlyTransactionContract(sql: SqlClient): Promise<void> {
-  await assert.rejects(
-    sql.begin(async (transaction) => {
-      await transaction`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`;
-      const settings = await transaction<{ transaction_read_only: string }[]>`
-        SHOW transaction_read_only
-      `;
-      assert.equal(settings[0]?.transaction_read_only, "on");
-      await transaction`CREATE TEMP TABLE migration_preflight_write_probe (id integer)`;
-    }),
-    /read-only/i,
-    "read-only transaction accepted a write",
-  );
+  await sql`CREATE TABLE public.migration_preflight_write_probe (id integer PRIMARY KEY)`;
+  try {
+    await assert.rejects(
+      sql.begin(async (transaction) => {
+        await transaction`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`;
+        const settings = await transaction<{ transaction_read_only: string }[]>`
+          SHOW transaction_read_only
+        `;
+        assert.equal(settings[0]?.transaction_read_only, "on");
+        await transaction`
+          INSERT INTO public.migration_preflight_write_probe (id)
+          VALUES (1)
+        `;
+      }),
+      /read-only/i,
+      "read-only transaction accepted a permanent-table write",
+    );
+  } finally {
+    await sql`DROP TABLE public.migration_preflight_write_probe`;
+  }
 }
 
 type Setup = (sql: SqlClient, fixture: Fixture) => Promise<void>;
