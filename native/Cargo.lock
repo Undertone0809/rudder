@@ -1384,6 +1384,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rudder-d1-persistence"
+version = "0.7.23"
+dependencies = [
+ "rudder-organization-mutation-core",
+ "rudder-project-goal-link-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "rudder-migration-core"
 version = "0.7.23"
 dependencies = [
