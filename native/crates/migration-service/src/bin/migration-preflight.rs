@@ -17,6 +17,8 @@ const PROTOCOL_VERSION: u8 = 1;
 const DATABASE_URL_ENV: &str = "RUDDER_MIGRATION_PREFLIGHT_DATABASE_URL";
 const MAX_INPUT_BYTES: usize = 256 * 1024;
 const MAX_DATABASE_URL_BYTES: usize = 8 * 1024;
+const DATABASE_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const APPLICATION_NAME: &str = "rudder-migration-preflight";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -122,25 +124,37 @@ async fn run() -> Result<MigrationPreflightReport, CliError> {
     }
 
     let database_url = database_url_from_env()?;
-    let connect_options = PgConnectOptions::from_str(&database_url).map_err(|_| {
-        CliError::new(
-            "configuration",
-            "database_url_invalid",
-            "database URL is invalid",
-        )
-    })?;
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(5))
-        .connect_with(connect_options)
-        .await
+    let connect_options = PgConnectOptions::from_str(&database_url)
+        .map(|options| options.application_name(APPLICATION_NAME))
         .map_err(|_| {
             CliError::new(
-                "database",
-                "database_connect_failed",
-                "database connection failed",
+                "configuration",
+                "database_url_invalid",
+                "database URL is invalid",
             )
         })?;
+    let pool = tokio::time::timeout(
+        DATABASE_CONNECT_TIMEOUT,
+        PgPoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(DATABASE_CONNECT_TIMEOUT)
+            .connect_with(connect_options),
+    )
+    .await
+    .map_err(|_| {
+        CliError::new(
+            "database",
+            "database_connect_failed",
+            "database connection failed",
+        )
+    })?
+    .map_err(|_| {
+        CliError::new(
+            "database",
+            "database_connect_failed",
+            "database connection failed",
+        )
+    })?;
     let service = MigrationPreflightService::new(pool.clone());
     let result = service.preflight(&manifest).await.map_err(|_| {
         CliError::new(

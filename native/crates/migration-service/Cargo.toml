@@ -12,7 +12,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0"
-tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
 tempfile = "3.23"

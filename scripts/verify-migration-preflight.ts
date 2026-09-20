@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer, type AddressInfo, type Socket } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,12 @@ type HistorySignature = {
 type DatabaseSignature = {
   tables: TableSignature[];
   history: HistorySignature[];
+};
+
+type TcpBlackhole = {
+  server: ReturnType<typeof createServer>;
+  port: number;
+  sockets: Set<Socket>;
 };
 
 function spawnProcess(
@@ -217,6 +223,25 @@ function assertDoesNotLeak(run: RustRun, secret: string, label: string): void {
   assert.equal(run.stderr.includes(secret), false, `${label} leaked secret to stderr`);
 }
 
+async function assertNoCliMutations(
+  postgresLogs: string[],
+  logCountBeforeCli: number,
+  label: string,
+): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+  const cliLogs = postgresLogs
+    .slice(logCountBeforeCli)
+    .filter((line) => line.includes("app=rudder-migration-preflight"));
+  assert.ok(cliLogs.length > 0, `${label} produced no tagged PostgreSQL statement logs`);
+  assert.equal(
+    cliLogs.some((line) =>
+      /\b(?:ALTER|CREATE|DROP|INSERT|UPDATE|DELETE|TRUNCATE|GRANT|REVOKE|COMMENT|VACUUM|REINDEX|CLUSTER|LOCK|COPY|CALL|DO)\b/i.test(line),
+    ),
+    false,
+    `${label} emitted a mutating PostgreSQL statement: ${cliLogs.join("\\n")}`,
+  );
+}
+
 async function findFreePort(): Promise<number> {
   const server = createServer();
   return new Promise((resolve, reject) => {
@@ -234,6 +259,63 @@ async function findFreePort(): Promise<number> {
       });
     });
   });
+}
+
+async function createTcpBlackhole(): Promise<TcpBlackhole> {
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    // Keep the TCP handshake open without speaking PostgreSQL.
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as AddressInfo | null;
+      if (!address) {
+        server.close();
+        reject(new Error("TCP blackhole did not expose a port"));
+        return;
+      }
+      resolve({ server, port: address.port, sockets });
+    });
+  });
+}
+
+async function closeTcpBlackhole(blackhole: TcpBlackhole): Promise<void> {
+  const { server, sockets } = blackhole;
+  if (!server.listening) {
+    for (const socket of sockets) socket.destroy();
+    return;
+  }
+  const closePromise = new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  });
+  for (const socket of sockets) socket.destroy();
+  await closePromise;
+}
+
+async function assertConnectionDeadline(binary: string, fixture: Fixture): Promise<void> {
+  const secret = "blackhole-db-password-secret";
+  const blackhole = await createTcpBlackhole();
+  try {
+    const startedAt = Date.now();
+    const { response, run } = await runCli(
+      binary,
+      preflightRequest(fixture),
+      `postgres://user:${secret}@127.0.0.1:${blackhole.port}/rudder`,
+      2,
+      "slow PostgreSQL handshake",
+    );
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(response.status, "error", "slow PostgreSQL handshake status");
+    assert.equal(response.error?.code, "database_connect_failed", "slow PostgreSQL handshake code");
+    assert.ok(elapsedMs >= 4_000, `blackhole handshake failed before deadline (${elapsedMs}ms)`);
+    assert.ok(elapsedMs < 8_000, `blackhole handshake exceeded deadline (${elapsedMs}ms)`);
+    assertDoesNotLeak(run, secret, "slow PostgreSQL handshake");
+  } finally {
+    await closeTcpBlackhole(blackhole);
+  }
 }
 
 async function resetDatabase(sql: SqlClient): Promise<void> {
@@ -311,6 +393,7 @@ async function assertBusinessStatus(
   databaseUrl: string,
   fixture: Fixture,
   sql: SqlClient,
+  postgresLogs: string[],
   expectedStatus: string,
   label: string,
   setup: Setup,
@@ -318,6 +401,7 @@ async function assertBusinessStatus(
   await resetDatabase(sql);
   await setup(sql, fixture);
   const before = await databaseSignature(sql);
+  const logCountBeforeCli = postgresLogs.length;
   const { response } = await runCli(
     binary,
     preflightRequest(fixture),
@@ -329,6 +413,7 @@ async function assertBusinessStatus(
   assert.equal(response.report?.status, expectedStatus, `${label} report status`);
   assert.equal(response.error, undefined, `${label} unexpectedly returned an error`);
   assert.equal(await databaseSignature(sql), before, `${label} changed database state`);
+  await assertNoCliMutations(postgresLogs, logCountBeforeCli, label);
 }
 
 async function assertUnlockedByAdvisoryLock(
@@ -336,6 +421,7 @@ async function assertUnlockedByAdvisoryLock(
   databaseUrl: string,
   fixture: Fixture,
   sql: SqlClient,
+  postgresLogs: string[],
 ): Promise<void> {
   await resetDatabase(sql);
   await createJournal(sql, fixture.migrationHash);
@@ -344,6 +430,7 @@ async function assertUnlockedByAdvisoryLock(
   const lockSql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
   try {
     await lockSql`SELECT pg_advisory_lock(hashtext(${advisoryLockName}))`;
+    const logCountBeforeCli = postgresLogs.length;
     const startedAt = Date.now();
     const { response } = await runCli(
       binary,
@@ -356,6 +443,7 @@ async function assertUnlockedByAdvisoryLock(
     assert.equal(response.status, "current");
     assert.ok(elapsedMs < 5_000, `preflight took ${elapsedMs}ms while advisory lock was held`);
     assert.equal(await databaseSignature(sql), before, "advisory-lock preflight changed database state");
+    await assertNoCliMutations(postgresLogs, logCountBeforeCli, "advisory-lock preflight");
   } finally {
     await lockSql`SELECT pg_advisory_unlock(hashtext(${advisoryLockName}))`.catch(() => undefined);
     await lockSql.end({ timeout: 0 });
@@ -440,6 +528,7 @@ async function main(): Promise<void> {
   temporaryRoots.push(databaseDir);
   let instance: LocalPostgresInstance | undefined;
   let sql: SqlClient | undefined;
+  const postgresLogs: string[] = [];
   const databaseUrl = `postgres://rudder:${encodeURIComponent(password)}@127.0.0.1:${port}/postgres`;
 
   try {
@@ -450,37 +539,41 @@ async function main(): Promise<void> {
       port,
       persistent: false,
       initdbFlags: ["--encoding=UTF8", "--locale=C"],
-      onLog: (message) => process.stderr.write(`[preflight-postgres:init] ${String(message)}\n`),
-      onError: (message) => process.stderr.write(`[preflight-postgres:error] ${String(message)}\n`),
+      onLog: (message) => postgresLogs.push(String(message)),
+      onError: (message) => postgresLogs.push(String(message)),
     });
     instance = selection.instance;
     await instance.initialise();
     await instance.start();
     sql = postgres(databaseUrl, { max: 2, onnotice: () => {} });
     await sql`SELECT 1`;
+    await sql`ALTER SYSTEM SET log_statement = 'all'`;
+    await sql`ALTER SYSTEM SET log_line_prefix = '%m [%p] user=%u,db=%d,app=%a '`;
+    await sql`SELECT pg_reload_conf()`;
 
     await assertReadOnlyTransactionContract(sql);
+    await assertConnectionDeadline(binary, fixture);
     await assertProtocolBoundaries(binary, fixture, databaseUrl);
-    await assertBusinessStatus(binary, databaseUrl, fixture, sql, "bootstrap", "bootstrap", async (db) => {
+    await assertBusinessStatus(binary, databaseUrl, fixture, sql, postgresLogs, "bootstrap", "bootstrap", async (db) => {
       await resetDatabase(db);
     });
-    await assertBusinessStatus(binary, databaseUrl, fixture, sql, "pending", "pending", async (db) => {
+    await assertBusinessStatus(binary, databaseUrl, fixture, sql, postgresLogs, "pending", "pending", async (db) => {
       await createJournal(db);
     });
-    await assertBusinessStatus(binary, databaseUrl, fixture, sql, "current", "current", async (db, item) => {
+    await assertBusinessStatus(binary, databaseUrl, fixture, sql, postgresLogs, "current", "current", async (db, item) => {
       await createJournal(db, item.migrationHash);
       await db`CREATE TABLE public.organizations (id uuid PRIMARY KEY)`;
     });
-    await assertBusinessStatus(binary, databaseUrl, fixture, sql, "mismatch", "mismatch", async (db) => {
+    await assertBusinessStatus(binary, databaseUrl, fixture, sql, postgresLogs, "mismatch", "mismatch", async (db) => {
       await createJournal(db, "wrong-migration-hash");
     });
-    await assertBusinessStatus(binary, databaseUrl, fixture, sql, "missing-core-schema", "missing core schema", async (db, item) => {
+    await assertBusinessStatus(binary, databaseUrl, fixture, sql, postgresLogs, "missing-core-schema", "missing core schema", async (db, item) => {
       await createJournal(db, item.migrationHash);
     });
-    await assertBusinessStatus(binary, databaseUrl, fixture, sql, "unsafe-legacy", "unsafe legacy", async (db) => {
+    await assertBusinessStatus(binary, databaseUrl, fixture, sql, postgresLogs, "unsafe-legacy", "unsafe legacy", async (db) => {
       await db`CREATE TABLE public.preflight_legacy_fixture (id integer PRIMARY KEY)`;
     });
-    await assertUnlockedByAdvisoryLock(binary, databaseUrl, fixture, sql);
+    await assertUnlockedByAdvisoryLock(binary, databaseUrl, fixture, sql, postgresLogs);
     console.log("PASS migration-preflight CLI disposable PostgreSQL verifier");
   } finally {
     if (sql) await sql.end({ timeout: 0 }).catch(() => undefined);
