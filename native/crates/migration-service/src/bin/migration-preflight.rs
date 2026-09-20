@@ -89,6 +89,10 @@ struct PreflightResponse {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("migration-preflight {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let response = match run().await {
         Ok(report) => success_response(report),
         Err(error) => error_response(error),

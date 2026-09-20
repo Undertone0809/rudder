@@ -12,6 +12,18 @@ const MIGRATIONS_FOLDER = fileURLToPath(new URL("./migrations", import.meta.url)
 const DRIZZLE_MIGRATIONS_TABLE = "__drizzle_migrations";
 const MIGRATIONS_JOURNAL_JSON = fileURLToPath(new URL("./migrations/meta/_journal.json", import.meta.url));
 export const MIGRATION_ADVISORY_LOCK_NAME = "rudder:database-migrations";
+
+export type MigrationSourcePaths = Readonly<{
+  migrationsFolder: string;
+  journalFile: string;
+}>;
+
+export function getMigrationSourcePaths(): MigrationSourcePaths {
+  return {
+    migrationsFolder: MIGRATIONS_FOLDER,
+    journalFile: MIGRATIONS_JOURNAL_JSON,
+  };
+}
 // These hashes belong to previously applied migration revisions that were
 // superseded by the current manifest but remain in existing journals. They are
 // accepted as historical evidence; any other unknown journal hash fails closed.
