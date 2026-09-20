@@ -95,10 +95,10 @@ pub struct ActorBinding {
 
 /// HMAC authority used by the trusted adapter boundary to verify actor bindings.
 ///
-/// Authority construction and proof minting are crate-private. A future
-/// trusted adapter/server must be co-located with this boundary or receive an
-/// explicitly authorized integration hook; an external consumer cannot create
-/// an authority from arbitrary bytes and mint a privileged actor binding.
+/// Verification-only authority construction is public for a trusted adapter;
+/// proof minting remains crate-private. An external consumer can verify a
+/// binding with a provisioned secret, but cannot mint a privileged actor
+/// binding through this crate's API.
 #[derive(Debug)]
 pub struct ActorAuthority {
     secret: Vec<u8>,
@@ -110,9 +110,44 @@ pub struct ValidatedActor {
     proof: String,
 }
 
+/// Read-only identity view for a successfully HMAC-verified actor.
+///
+/// The proof remains private. Adapters only need the bound identity for scoped
+/// SQL and activity attribution; they must use the command fingerprint for
+/// idempotency and never mint or replace this actor through the view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActorView<'a> {
+    actor: &'a Actor,
+}
+
+impl ActorView<'_> {
+    pub fn organization_id(&self) -> &str {
+        self.actor.organization_id()
+    }
+
+    pub fn principal_id(&self) -> &str {
+        self.actor.principal_id()
+    }
+
+    pub fn kind(&self) -> &'static str {
+        self.actor.kind()
+    }
+}
+
+impl ValidatedActor {
+    pub fn as_integration_view(&self) -> ActorView<'_> {
+        ActorView { actor: &self.actor }
+    }
+}
+
 impl ActorAuthority {
-    #[allow(dead_code)]
-    pub(crate) fn new(secret: impl AsRef<[u8]>) -> Result<Self, LinkMutationError> {
+    /// Construct an authority for verification only.
+    ///
+    /// The secret must come from the trusted adapter's configured authority.
+    /// This constructor intentionally exposes no public binding issuer; an
+    /// external consumer can verify a binding and create a validated context,
+    /// but cannot mint one through this crate's API.
+    pub fn verification_only(secret: impl AsRef<[u8]>) -> Result<Self, LinkMutationError> {
         let secret = secret.as_ref();
         if secret.is_empty() {
             return Err(LinkMutationError::InvalidActorBinding);
@@ -228,6 +263,66 @@ impl ValidatedLinkContext {
         }
         Ok(())
     }
+
+    /// Expose only the verified context values needed by a persistence
+    /// adapter. The returned view carries no serde implementation or authority
+    /// and cannot be constructed outside this crate.
+    pub fn as_integration_view(&self) -> Result<ValidatedLinkContextView<'_>, LinkMutationError> {
+        self.validate()?;
+        Ok(ValidatedLinkContextView { context: self })
+    }
+}
+
+/// Read-only view of an HMAC-verified, target-validated link context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ValidatedLinkContextView<'a> {
+    context: &'a ValidatedLinkContext,
+}
+
+impl<'a> ValidatedLinkContextView<'a> {
+    pub fn actor(&self) -> ActorView<'a> {
+        self.context.actor.as_integration_view()
+    }
+
+    pub fn organization_id(&self) -> &str {
+        &self.context.organization_id
+    }
+
+    pub fn project_organization_id(&self) -> &str {
+        &self.context.project_org_id
+    }
+
+    pub fn goal_organization_id(&self) -> &str {
+        &self.context.goal_org_id
+    }
+
+    pub fn project_id(&self) -> &str {
+        &self.context.project_id
+    }
+
+    pub fn goal_id(&self) -> &str {
+        &self.context.goal_id
+    }
+
+    pub fn version(&self) -> u64 {
+        self.context.version
+    }
+
+    pub fn fence_epoch(&self) -> u64 {
+        self.context.fence_epoch
+    }
+
+    pub fn linked(&self) -> bool {
+        self.context.linked
+    }
+
+    pub fn cancelled(&self) -> bool {
+        self.context.cancelled
+    }
+
+    pub fn state_integrity(&self) -> &str {
+        &self.context.state_integrity
+    }
 }
 
 /// A mutation command can only be created from an actor- and target-validated
@@ -292,6 +387,63 @@ impl ProjectGoalLinkCommand {
         validate_idempotency_key(&self.idempotency_key)?;
         let bytes = canonical_fingerprint_bytes(self);
         Ok(hex_digest(Sha256::digest(bytes)))
+    }
+
+    /// Expose a validated command to a trusted persistence adapter without
+    /// adding serde or making the opaque command constructible from JSON.
+    pub fn as_integration_view(&self) -> Result<ProjectGoalLinkCommandView<'_>, LinkMutationError> {
+        self.context.validate()?;
+        validate_idempotency_key(&self.idempotency_key)?;
+        if self.expected_version != self.context.version {
+            return Err(LinkMutationError::StaleVersion);
+        }
+        if self.fence_epoch != self.context.fence_epoch {
+            return Err(LinkMutationError::StaleFence);
+        }
+        Ok(ProjectGoalLinkCommandView { command: self })
+    }
+}
+
+/// Read-only binding surface for a trusted Project↔Goal persistence adapter.
+///
+/// The source command remains borrowed and its fields remain private. The
+/// adapter can bind the exact verified context, operation, concurrency values,
+/// idempotency key, and derived identities in one transaction, but cannot
+/// replace the HMAC-validated actor or construct a command from this view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectGoalLinkCommandView<'a> {
+    command: &'a ProjectGoalLinkCommand,
+}
+
+impl<'a> ProjectGoalLinkCommandView<'a> {
+    pub fn context(&self) -> ValidatedLinkContextView<'a> {
+        ValidatedLinkContextView {
+            context: &self.command.context,
+        }
+    }
+
+    pub fn operation(&self) -> Operation {
+        self.command.operation
+    }
+
+    pub fn expected_version(&self) -> u64 {
+        self.command.expected_version
+    }
+
+    pub fn fence_epoch(&self) -> u64 {
+        self.command.fence_epoch
+    }
+
+    pub fn idempotency_key(&self) -> &str {
+        &self.command.idempotency_key
+    }
+
+    pub fn link_identifier(&self) -> Result<String, LinkMutationError> {
+        self.command.link_identifier()
+    }
+
+    pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
+        self.command.fingerprint()
     }
 }
 
@@ -1054,7 +1206,7 @@ mod tests {
     }
 
     fn authority() -> ActorAuthority {
-        ActorAuthority::new("unit-test-authority").unwrap()
+        ActorAuthority::verification_only("unit-test-authority").unwrap()
     }
 
     fn binding(actor: Actor) -> ActorBinding {
@@ -1112,6 +1264,63 @@ mod tests {
             4,
             key,
         )
+    }
+
+    #[test]
+    fn trusted_integration_view_exposes_verified_context_and_derived_identities() {
+        let command = board(Operation::Attach, "integration-attach");
+        let view = command.as_integration_view().unwrap();
+        let context = view.context();
+
+        assert_eq!(context.organization_id(), "org-a");
+        assert_eq!(context.project_organization_id(), "org-a");
+        assert_eq!(context.goal_organization_id(), "org-a");
+        assert_eq!(context.project_id(), "project-a");
+        assert_eq!(context.goal_id(), "goal-a");
+        assert_eq!(context.actor().kind(), "board");
+        assert_eq!(context.actor().principal_id(), "board-a");
+        assert_eq!(context.version(), 2);
+        assert_eq!(context.fence_epoch(), 4);
+        assert!(!context.linked());
+        assert!(!context.cancelled());
+        assert_eq!(context.state_integrity().len(), SHA256_HEX_LENGTH);
+
+        assert_eq!(view.operation(), Operation::Attach);
+        assert_eq!(view.expected_version(), 2);
+        assert_eq!(view.fence_epoch(), 4);
+        assert_eq!(view.idempotency_key(), "integration-attach");
+        assert_eq!(
+            view.link_identifier().unwrap(),
+            command.link_identifier().unwrap()
+        );
+        assert_eq!(view.fingerprint().unwrap(), command.fingerprint().unwrap());
+    }
+
+    #[test]
+    fn integration_view_keeps_the_hmac_proof_out_of_the_adapter_surface() {
+        let command = board(Operation::Attach, "integration-proof");
+        let actor = command.as_integration_view().unwrap().context().actor();
+
+        assert_eq!(actor.organization_id(), "org-a");
+        assert_eq!(actor.principal_id(), "board-a");
+        assert_eq!(actor.kind(), "board");
+    }
+
+    #[test]
+    fn integration_view_rejects_command_concurrency_values_not_bound_to_context() {
+        let mut stale_version = board(Operation::Attach, "integration-stale-version");
+        stale_version.expected_version = 3;
+        assert_eq!(
+            stale_version.as_integration_view(),
+            Err(LinkMutationError::StaleVersion)
+        );
+
+        let mut stale_fence = board(Operation::Attach, "integration-stale-fence");
+        stale_fence.fence_epoch = 5;
+        assert_eq!(
+            stale_fence.as_integration_view(),
+            Err(LinkMutationError::StaleFence)
+        );
     }
 
     #[test]
