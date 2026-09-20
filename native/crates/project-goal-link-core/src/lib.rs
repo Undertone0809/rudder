@@ -228,6 +228,7 @@ impl Operation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidatedLinkContext {
+    state: ProjectGoalLinkState,
     actor: ValidatedActor,
     organization_id: String,
     project_org_id: String,
@@ -445,6 +446,20 @@ impl<'a> ProjectGoalLinkCommandView<'a> {
     pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
         self.command.fingerprint()
     }
+
+    /// Apply this trusted command to the exact validated state snapshot and
+    /// return the resulting state for a persistence adapter to store.
+    pub fn resulting_state(&self) -> Result<ProjectGoalLinkState, LinkMutationError> {
+        let mut state = self.command.context.state.clone();
+        state.apply(self.command.clone())?;
+        Ok(state)
+    }
+
+    /// Return the core transition outcome for this trusted command.
+    pub fn resulting_outcome(&self) -> Result<LinkMutationOutcome, LinkMutationError> {
+        let mut state = self.command.context.state.clone();
+        state.apply(self.command.clone())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -537,6 +552,32 @@ impl ProjectGoalLinkState {
         state
     }
 
+    /// Construct the explicit legacy-projection genesis used by a persistence
+    /// adapter when no project-goal receipt exists yet. The adapter must hold
+    /// the organization and target locks while deriving this baseline.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bootstrap(
+        organization_id: impl Into<String>,
+        project_org_id: impl Into<String>,
+        goal_org_id: impl Into<String>,
+        project_id: impl Into<String>,
+        goal_id: impl Into<String>,
+        version: u64,
+        fence_epoch: u64,
+        linked: bool,
+    ) -> Self {
+        Self::new(
+            organization_id,
+            project_org_id,
+            goal_org_id,
+            project_id,
+            goal_id,
+            version,
+            fence_epoch,
+            linked,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn for_target(
         organization_id: impl Into<String>,
@@ -562,6 +603,145 @@ impl ProjectGoalLinkState {
 
     pub fn link_identifier(&self) -> Result<String, LinkMutationError> {
         deterministic_link_identifier(&self.organization_id, &self.project_id, &self.goal_id)
+    }
+
+    /// Return the integrity binding that covers this complete state,
+    /// including its retained idempotency receipts.
+    pub fn state_integrity(&self) -> &str {
+        &self.integrity
+    }
+
+    /// Rebind a persisted link snapshot to a newer organization mutation
+    /// scope after unrelated mutations advanced the shared version or fence.
+    pub fn rebase_scope(&self, version: u64, fence_epoch: u64) -> Result<Self, LinkMutationError> {
+        if version < self.version || fence_epoch < self.fence_epoch {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
+        let mut rebased = self.clone();
+        rebased.version = version;
+        rebased.fence_epoch = fence_epoch;
+        rebased.refresh_integrity();
+        rebased.validate()?;
+        Ok(rebased)
+    }
+
+    /// Validate a state loaded from an immutable persistence receipt.
+    pub fn validate_persisted(&self) -> Result<(), LinkMutationError> {
+        self.validate()
+    }
+
+    /// Bind an immutable adapter receipt row to the corresponding core
+    /// idempotency entry in the persisted snapshot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_persisted_receipt(
+        &self,
+        idempotency_key: &str,
+        fingerprint: &str,
+        operation: Operation,
+        target_version: u64,
+        target_fence_epoch: u64,
+        version: u64,
+        fence_epoch: u64,
+        linked: bool,
+        cancelled: bool,
+        target_integrity: &str,
+        outcome: &str,
+    ) -> Result<(), LinkMutationError> {
+        self.validate()?;
+        let receipt = self
+            .applied_idempotency
+            .get(idempotency_key)
+            .ok_or(LinkMutationError::InvalidReceipt)?;
+        if receipt.fingerprint != fingerprint
+            || receipt.operation != operation
+            || receipt.target_version != target_version
+            || receipt.target_fence_epoch != target_fence_epoch
+            || receipt.version != version
+            || receipt.fence_epoch != fence_epoch
+            || receipt.linked != linked
+            || receipt.cancelled != cancelled
+            || receipt.target_integrity != target_integrity
+            || receipt.outcome.as_str() != outcome
+        {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
+        Ok(())
+    }
+
+    /// Validate that this snapshot is the exact successor of a previous
+    /// persisted snapshot, including the target-integrity chain and receipt
+    /// map continuity.
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_persisted_successor(
+        &self,
+        previous: &ProjectGoalLinkState,
+        idempotency_key: &str,
+        fingerprint: &str,
+        operation: Operation,
+        target_version: u64,
+        target_fence_epoch: u64,
+        target_integrity: &str,
+        outcome: &str,
+    ) -> Result<(), LinkMutationError> {
+        self.validate()?;
+        previous.validate()?;
+        if self.organization_id != previous.organization_id
+            || self.project_org_id != previous.project_org_id
+            || self.goal_org_id != previous.goal_org_id
+            || self.project_id != previous.project_id
+            || self.goal_id != previous.goal_id
+            || self.applied_idempotency.len() != previous.applied_idempotency.len() + 1
+        {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
+        for (key, receipt) in &previous.applied_idempotency {
+            if self.applied_idempotency.get(key) != Some(receipt) {
+                return Err(LinkMutationError::InvalidReceipt);
+            }
+        }
+        let rebased_previous = previous.rebase_scope(target_version, target_fence_epoch)?;
+        if target_integrity != rebased_previous.integrity.as_str() {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
+        self.validate_persisted_receipt(
+            idempotency_key,
+            fingerprint,
+            operation,
+            target_version,
+            target_fence_epoch,
+            self.version,
+            self.fence_epoch,
+            self.linked,
+            self.cancelled,
+            target_integrity,
+            outcome,
+        )
+    }
+
+    /// Validate and return the original result for an idempotent replay.
+    pub fn validate_replay(
+        &self,
+        command: &ProjectGoalLinkCommand,
+    ) -> Result<LinkMutationOutcome, LinkMutationError> {
+        self.validate()?;
+        let fingerprint = command.fingerprint()?;
+        let link_id = command.link_identifier()?;
+        let receipt = self
+            .applied_idempotency
+            .get(&command.idempotency_key)
+            .ok_or(LinkMutationError::InvalidReceipt)?;
+        if receipt.fingerprint != fingerprint || receipt.link_id != link_id {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
+        validate_replay_receipt(self, command, receipt, &fingerprint, &link_id)?;
+        Ok(LinkMutationOutcome::AlreadyApplied {
+            version: receipt.version,
+            fence_epoch: receipt.fence_epoch,
+            linked: receipt.linked,
+            cancelled: receipt.cancelled,
+            link_id,
+            fingerprint,
+        })
     }
 
     /// Validate the authenticated actor and the adapter's current target
@@ -595,6 +775,7 @@ impl ProjectGoalLinkState {
         }
 
         Ok(ValidatedLinkContext {
+            state: self.clone(),
             actor,
             organization_id: self.organization_id.clone(),
             project_org_id: self.project_org_id.clone(),
@@ -639,11 +820,17 @@ impl ProjectGoalLinkState {
             let Some(receipt) = cancellation_receipt else {
                 return Err(LinkMutationError::InvalidReceipt);
             };
-            if receipt.version != self.version
-                || receipt.fence_epoch != self.fence_epoch
+            if receipt.version > self.version
+                || receipt.fence_epoch > self.fence_epoch
                 || receipt.linked != self.linked
                 || !receipt.cancelled
             {
+                return Err(LinkMutationError::InvalidReceipt);
+            }
+            if self.applied_idempotency.values().any(|candidate| {
+                !matches!(candidate.operation, Operation::Cancel)
+                    && candidate.version >= receipt.version
+            }) {
                 return Err(LinkMutationError::InvalidReceipt);
             }
         } else if cancellation_receipt.is_some() {
@@ -1082,7 +1269,11 @@ fn validate_receipt(
         (Operation::Attach | Operation::Detach, AppliedReceiptOutcome::Noop) => {
             receipt.previous_version == receipt.version
                 && receipt.previous_fence_epoch == receipt.fence_epoch
-                && receipt.previous_linked == receipt.linked
+                && match receipt.operation {
+                    Operation::Attach => receipt.previous_linked && receipt.linked,
+                    Operation::Detach => !receipt.previous_linked && !receipt.linked,
+                    Operation::Cancel => false,
+                }
                 && receipt.previous_cancelled == receipt.cancelled
                 && !receipt.cancelled
         }
@@ -1092,7 +1283,11 @@ fn validate_receipt(
                 .checked_add(1)
                 .is_some_and(|version| version == receipt.version)
                 && receipt.previous_fence_epoch == receipt.fence_epoch
-                && receipt.previous_linked != receipt.linked
+                && match receipt.operation {
+                    Operation::Attach => !receipt.previous_linked && receipt.linked,
+                    Operation::Detach => receipt.previous_linked && !receipt.linked,
+                    Operation::Cancel => false,
+                }
                 && receipt.previous_cancelled == receipt.cancelled
                 && !receipt.cancelled
         }
@@ -1788,7 +1983,7 @@ mod tests {
                 format!("receipt-{index}"),
                 AppliedReceipt {
                     idempotency_key: format!("receipt-{index}"),
-                    operation: Operation::Attach,
+                    operation: Operation::Detach,
                     outcome: AppliedReceiptOutcome::Noop,
                     target_version: 2,
                     target_fence_epoch: 4,

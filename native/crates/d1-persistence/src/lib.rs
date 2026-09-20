@@ -12,7 +12,7 @@ mod transaction;
 use rudder_organization_mutation_core::{
     OrganizationBrandingCommand, OrganizationSettingsSnapshot,
 };
-use rudder_project_goal_link_core::ProjectGoalLinkCommand;
+use rudder_project_goal_link_core::{Operation, ProjectGoalLinkCommand, ProjectGoalLinkState};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use thiserror::Error;
@@ -43,12 +43,19 @@ pub enum ResultState {
         state: OrganizationSettingsSnapshot,
     },
     ProjectGoalLink {
+        state: Box<ProjectGoalLinkState>,
         project_id: String,
         goal_id: String,
+        operation: Operation,
+        link_identifier: String,
+        core_fingerprint: String,
+        target_version: u64,
+        target_fence_epoch: u64,
         linked: bool,
         cancelled: bool,
         primary_goal_after: Option<String>,
         state_integrity: String,
+        target_integrity: String,
     },
 }
 

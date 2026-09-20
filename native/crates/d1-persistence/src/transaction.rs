@@ -2,7 +2,7 @@ use crate::{
     CommittedMutation, Outcome, Receipt, ResultState, StoreError, branding_kind, project_goal_kind,
 };
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
-use rudder_project_goal_link_core::ProjectGoalLinkCommand;
+use rudder_project_goal_link_core::{Operation, ProjectGoalLinkCommand};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -10,6 +10,8 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 pub(crate) type Tx<'a> = Transaction<'a, Postgres>;
 
 pub(crate) const MAX_RESULT_BYTES: usize = 1024 * 1024;
+const BRANDING_RECEIPT_FORMAT: i32 = 1;
+const PROJECT_GOAL_RECEIPT_FORMAT: i32 = 2;
 const MAX_COMMAND_BYTES: usize = MAX_RESULT_BYTES / 2;
 pub(crate) const MAX_PROJECT_GOALS: usize = 1024;
 const MAX_TEXT_BYTES: usize = 256;
@@ -19,6 +21,25 @@ pub(crate) struct ActorMetadata {
     pub kind: &'static str,
     pub principal_id: String,
     pub agent_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ExpectedReceipt {
+    OrganizationBranding {
+        name: Option<String>,
+        description: Option<Option<String>>,
+        brand_color: Option<Option<String>>,
+        logo_asset_id: Option<Option<String>>,
+    },
+    ProjectGoalLink {
+        operation: Operation,
+        link_identifier: String,
+        core_fingerprint: String,
+        linked: bool,
+        cancelled: bool,
+        target_integrity: String,
+        primary_goal_after: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +54,8 @@ pub(crate) struct Metadata {
     pub project_id: Option<String>,
     pub goal_id: Option<String>,
     pub link_identifier: Option<String>,
+    pub expected_receipt: ExpectedReceipt,
+    pub receipt_format: i32,
 }
 
 impl Metadata {
@@ -71,6 +94,13 @@ impl Metadata {
             project_id: None,
             goal_id: None,
             link_identifier: None,
+            expected_receipt: ExpectedReceipt::OrganizationBranding {
+                name: view.name().map(str::to_owned),
+                description: view.description().map(|value| value.map(str::to_owned)),
+                brand_color: view.brand_color().map(|value| value.map(str::to_owned)),
+                logo_asset_id: view.logo_asset_id().map(|value| value.map(str::to_owned)),
+            },
+            receipt_format: BRANDING_RECEIPT_FORMAT,
         })
     }
 
@@ -128,7 +158,17 @@ impl Metadata {
             actor,
             project_id: Some(project_id),
             goal_id: Some(goal_id),
-            link_identifier: Some(link_identifier),
+            link_identifier: Some(link_identifier.clone()),
+            expected_receipt: ExpectedReceipt::ProjectGoalLink {
+                operation: view.operation(),
+                link_identifier: link_identifier.clone(),
+                core_fingerprint: core_fingerprint.clone(),
+                linked: context.linked(),
+                cancelled: context.cancelled(),
+                target_integrity: context.state_integrity().to_owned(),
+                primary_goal_after: primary_goal_after.clone(),
+            },
+            receipt_format: PROJECT_GOAL_RECEIPT_FORMAT,
         })
     }
 
@@ -262,15 +302,21 @@ pub(crate) async fn replay(
     {
         return Err(StoreError::IdempotencyConflict);
     }
-    if row.try_get::<i32, _>("receipt_format")? != 1 {
+    if row.try_get::<i32, _>("receipt_format")? != metadata.receipt_format {
         return Err(StoreError::InvalidReceipt);
     }
     let result_text: Option<String> = row.try_get("result_text")?;
     let Some(result_text) = result_text else {
         return Err(StoreError::InvalidReceipt);
     };
-    let receipt: Receipt =
+    let stored_value: Value =
         serde_json::from_str(&result_text).map_err(|_| StoreError::InvalidReceipt)?;
+    let receipt: Receipt =
+        serde_json::from_value(stored_value.clone()).map_err(|_| StoreError::InvalidReceipt)?;
+    let canonical_value = serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    if canonical_value != stored_value {
+        return Err(StoreError::InvalidReceipt);
+    }
     let resulting_version = unsigned(row.try_get::<i64, _>("resulting_version")?)?;
     let fence_epoch = unsigned(row.try_get::<i64, _>("fence_epoch")?)?;
     let row_outcome = row.try_get::<String, _>("outcome")?;
@@ -375,12 +421,13 @@ pub(crate) async fn persist(
           (org_id, idempotency_key, command_kind, command_fingerprint,
            receipt_format, outcome, resulting_version, fence_epoch,
            activity_id, result)
-         VALUES ($1::uuid, $2, $3, $4, 1, $5, $6, $7, $8::uuid, $9::jsonb)",
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::jsonb)",
     )
     .bind(&metadata.org)
     .bind(&metadata.key)
     .bind(metadata.kind)
     .bind(&metadata.fingerprint)
+    .bind(metadata.receipt_format)
     .bind(receipt.outcome.as_str())
     .bind(signed(receipt.version)?)
     .bind(signed(receipt.fence_epoch)?)
@@ -411,23 +458,66 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 return Err(StoreError::InvalidReceipt);
             }
             bounded_text(&state.organization_id, false)?;
-            bounded_text(&state.name, true)?;
+            bounded_text(&state.name, false)?;
             if let Some(value) = &state.description {
                 bounded_text(value, true)?;
             }
             if let Some(value) = &state.brand_color {
                 bounded_text(value, true)?;
+                if !valid_brand_color(value) {
+                    return Err(StoreError::InvalidReceipt);
+                }
             }
             if let Some(value) = &state.logo_asset_id {
                 uuid(value)?;
             }
+            let ExpectedReceipt::OrganizationBranding {
+                name,
+                description,
+                brand_color,
+                logo_asset_id,
+            } = &metadata.expected_receipt
+            else {
+                return Err(StoreError::InvalidReceipt);
+            };
+            let expected_version = metadata
+                .expected_version
+                .checked_add(1)
+                .ok_or(StoreError::InvalidReceipt)?;
+            if receipt.outcome != Outcome::Applied
+                || receipt.version != expected_version
+                || receipt.fence_epoch != metadata.fence_epoch
+                || name
+                    .as_deref()
+                    .is_some_and(|value| value != state.name.as_str())
+                || description
+                    .as_ref()
+                    .is_some_and(|value| value.as_deref() != state.description.as_deref())
+                || brand_color
+                    .as_ref()
+                    .is_some_and(|value| value.as_deref() != state.brand_color.as_deref())
+                || logo_asset_id
+                    .as_ref()
+                    .is_some_and(|value| value.as_deref() != state.logo_asset_id.as_deref())
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
         }
         (
             ResultState::ProjectGoalLink {
+                state,
                 project_id,
                 goal_id,
+                operation: result_operation,
+                link_identifier,
+                core_fingerprint,
+                target_version,
+                target_fence_epoch,
+                linked,
+                cancelled,
                 primary_goal_after,
                 state_integrity,
+                target_integrity,
                 ..
             },
             kind,
@@ -435,6 +525,21 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
             if Some(project_id) != metadata.project_id.as_ref()
                 || Some(goal_id) != metadata.goal_id.as_ref()
                 || !is_sha256_hex(state_integrity)
+                || state.project_id != *project_id
+                || state.goal_id != *goal_id
+                || state.organization_id != metadata.org
+                || state.project_org_id != metadata.org
+                || state.goal_org_id != metadata.org
+                || state.link_identifier().ok().as_deref() != Some(link_identifier.as_str())
+                || state.linked != *linked
+                || state.cancelled != *cancelled
+                || state.state_integrity() != state_integrity
+                || !is_sha256_hex(target_integrity)
+                || !is_sha256_hex(core_fingerprint)
+                || state.version != receipt.version
+                || state.fence_epoch != receipt.fence_epoch
+                || *target_version != metadata.expected_version
+                || *target_fence_epoch != metadata.fence_epoch
             {
                 return Err(StoreError::InvalidReceipt);
             }
@@ -443,6 +548,70 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
             if let Some(primary) = primary_goal_after {
                 uuid(primary)?;
             }
+            let ExpectedReceipt::ProjectGoalLink {
+                operation,
+                link_identifier: expected_link_identifier,
+                core_fingerprint: expected_core_fingerprint,
+                linked: target_linked,
+                cancelled: target_cancelled,
+                target_integrity: expected_integrity,
+                primary_goal_after: expected_primary,
+            } = &metadata.expected_receipt
+            else {
+                return Err(StoreError::InvalidReceipt);
+            };
+            if *target_cancelled
+                || *operation != *result_operation
+                || expected_link_identifier != link_identifier
+                || expected_core_fingerprint != core_fingerprint
+                || expected_integrity != target_integrity
+                || expected_primary.as_deref() != primary_goal_after.as_deref()
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            let transition_valid = match (*operation, receipt.outcome) {
+                (Operation::Attach, Outcome::Applied) => !*target_linked && *linked && !*cancelled,
+                (Operation::Attach, Outcome::Noop) => *target_linked && *linked && !*cancelled,
+                (Operation::Detach, Outcome::Applied) => *target_linked && !*linked && !*cancelled,
+                (Operation::Detach, Outcome::Noop) => !*target_linked && !*linked && !*cancelled,
+                (Operation::Cancel, Outcome::Applied) => *target_linked == *linked && *cancelled,
+                (Operation::Cancel, Outcome::Noop) => false,
+            };
+            let expected_version = match receipt.outcome {
+                Outcome::Applied => metadata
+                    .expected_version
+                    .checked_add(1)
+                    .ok_or(StoreError::InvalidReceipt)?,
+                Outcome::Noop => metadata.expected_version,
+            };
+            let expected_fence = if *operation == Operation::Cancel {
+                metadata
+                    .fence_epoch
+                    .checked_add(1)
+                    .ok_or(StoreError::InvalidReceipt)?
+            } else {
+                metadata.fence_epoch
+            };
+            if !transition_valid
+                || state.version != expected_version
+                || state.fence_epoch != expected_fence
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            state.validate_persisted()?;
+            state.validate_persisted_receipt(
+                &metadata.key,
+                core_fingerprint,
+                *result_operation,
+                *target_version,
+                *target_fence_epoch,
+                receipt.version,
+                receipt.fence_epoch,
+                *linked,
+                *cancelled,
+                target_integrity,
+                receipt.outcome.as_str(),
+            )?;
         }
         _ => return Err(StoreError::InvalidReceipt),
     }
@@ -463,7 +632,7 @@ fn actor_metadata(kind: &'static str, principal_id: &str) -> Result<ActorMetadat
     })
 }
 
-fn adapter_fingerprint(
+pub(crate) fn adapter_fingerprint(
     kind: &str,
     core_fingerprint: &str,
     primary_goal_after: Option<&str>,
@@ -530,11 +699,16 @@ fn ensure_json_size(value: &Value, max_bytes: usize) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn is_sha256_hex(value: &str) -> bool {
+pub(crate) fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn valid_brand_color(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
 fn hex_digest(digest: impl IntoIterator<Item = u8>) -> String {

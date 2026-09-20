@@ -42,16 +42,27 @@ impl Database {
                 ]),
         );
         let pg_ctl = binary("pg_ctl");
-        checked(
-            Command::new(&pg_ctl)
-                .env("LC_ALL", "C")
-                .arg("-D")
-                .arg(&data)
-                .arg("-l")
-                .arg(root.path().join("postgres.log"))
-                .arg("-o")
-                .arg(format!("-h 127.0.0.1 -p {port}"))
-                .args(["-w", "start"]),
+        let output = Command::new(&pg_ctl)
+            .env("LC_ALL", "C")
+            .arg("-D")
+            .arg(&data)
+            .arg("-l")
+            .arg(root.path().join("postgres.log"))
+            .arg("-o")
+            .arg(format!(
+                "-h 127.0.0.1 -p {port} -k {} -c shared_buffers=16MB -c max_connections=16 \
+                 -c dynamic_shared_memory_type=mmap",
+                root.path().display()
+            ))
+            .args(["-w", "start"])
+            .output()
+            .expect("run disposable PostgreSQL startup command");
+        let log = fs::read_to_string(root.path().join("postgres.log"))
+            .unwrap_or_else(|error| format!("<unavailable: {error}>"));
+        assert!(
+            output.status.success(),
+            "disposable PostgreSQL failed: {}\npostgres log:\n{log}",
+            String::from_utf8_lossy(&output.stderr)
         );
         let url = format!("postgresql://postgres@127.0.0.1:{port}/postgres");
         let pool = PgPoolOptions::new()

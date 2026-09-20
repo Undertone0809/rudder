@@ -7,7 +7,10 @@ use rudder_project_goal_link_core::{
     TargetVerifier,
 };
 use serde_json::json;
-use support::{ASSET, CEO, Database, FOREIGN_ASSET, GOAL, GOAL_TWO, ORG, OTHER, PROJECT};
+use support::{
+    ASSET, CEO, Database, FOREIGN_ASSET, FOREIGN_GOAL, FOREIGN_PROJECT, GOAL, GOAL_TWO, ORG, OTHER,
+    PROJECT,
+};
 
 struct SeedTargets;
 
@@ -25,6 +28,21 @@ impl TargetVerifier for SeedTargets {
             && goal_org_id == ORG
             && project_id == PROJECT
             && matches!(goal_id, GOAL | GOAL_TWO)
+    }
+}
+
+struct AnyTarget;
+
+impl TargetVerifier for AnyTarget {
+    fn target_exists_in_organization(
+        &self,
+        _organization_id: &str,
+        _project_org_id: &str,
+        _goal_org_id: &str,
+        _project_id: &str,
+        _goal_id: &str,
+    ) -> bool {
+        true
     }
 }
 
@@ -67,6 +85,30 @@ fn project_goal_command_at_fence(
         fence_epoch,
         linked,
     );
+    let context = state
+        .validated_context(&binding, &authority, &SeedTargets)
+        .unwrap();
+    ProjectGoalLinkCommand::from_validated_context(context, operation, version, fence_epoch, key)
+}
+
+fn project_goal_command_from_state(
+    state: ProjectGoalLinkState,
+    operation: Operation,
+    version: u64,
+    fence_epoch: u64,
+    key: &str,
+) -> ProjectGoalLinkCommand {
+    let authority = ActorAuthority::verification_only("known-secret").unwrap();
+    let binding: ActorBinding = serde_json::from_value(json!({
+        "actor": {
+            "ceo_agent": {
+                "organization_id": ORG,
+                "principal_id": CEO
+            }
+        },
+        "proof": "73431c93f5c11188b21ad422ff959aa702c3b38d5780d060c0c2007309e7f2dd"
+    }))
+    .unwrap();
     let context = state
         .validated_context(&binding, &authority, &SeedTargets)
         .unwrap();
@@ -150,6 +192,64 @@ async fn branding_replay_returns_original_receipt_after_a_later_mutation() {
     assert_eq!(replay.receipt, first.receipt);
     assert_eq!(database.name().await, "Name branding-later");
     assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn branding_replay_rejects_a_semantically_tampered_snapshot() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = branding("branding-tamper", 0);
+    store.branding(command.clone()).await.unwrap();
+    database
+        .sql(
+            "ALTER TABLE organization_mutation_receipts
+             DISABLE TRIGGER organization_mutation_receipts_guard;
+             UPDATE organization_mutation_receipts
+             SET result=jsonb_set(result, '{result,state,name}', to_jsonb('Tampered'::text))
+             WHERE org_id='10000000-0000-4000-8000-000000000001'
+               AND idempotency_key='branding-tamper';
+             ALTER TABLE organization_mutation_receipts
+             ENABLE TRIGGER organization_mutation_receipts_guard;",
+        )
+        .await;
+
+    assert!(matches!(
+        store.branding(command).await,
+        Err(StoreError::InvalidReceipt)
+    ));
+    assert_eq!(database.name().await, "Name branding-tamper");
+    assert_eq!(database.counts().await, (1, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_replay_rejects_a_semantically_tampered_transition() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = project_goal_command(GOAL, false, 0, Operation::Attach, "project-tamper");
+    store
+        .project_goal(command.clone(), Some(GOAL.to_owned()))
+        .await
+        .unwrap();
+    database
+        .sql(
+            "ALTER TABLE organization_mutation_receipts
+             DISABLE TRIGGER organization_mutation_receipts_guard;
+             UPDATE organization_mutation_receipts
+             SET result=jsonb_set(result, '{result,linked}', 'false'::jsonb)
+             WHERE org_id='10000000-0000-4000-8000-000000000001'
+               AND idempotency_key='project-tamper';
+             ALTER TABLE organization_mutation_receipts
+             ENABLE TRIGGER organization_mutation_receipts_guard;",
+        )
+        .await;
+
+    assert!(matches!(
+        store.project_goal(command, Some(GOAL.to_owned())).await,
+        Err(StoreError::InvalidReceipt)
+    ));
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
+    assert_eq!(project_goals(&database).await, vec![GOAL.to_owned()]);
+    assert_eq!(database.counts().await, (1, 1, 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -347,6 +447,10 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
         project_details(&database, &first.receipt.activity_id).await["goalIds"],
         json!([GOAL])
     );
+    let first_state = match &first.receipt.result {
+        ResultState::ProjectGoalLink { state, .. } => state.as_ref().clone(),
+        result => panic!("unexpected project result: {result:?}"),
+    };
 
     let second = store
         .project_goal(
@@ -365,10 +469,20 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
         project_details(&database, &second.receipt.activity_id).await["goalIds"],
         json!([GOAL, GOAL_TWO])
     );
+    let second_state = match &second.receipt.result {
+        ResultState::ProjectGoalLink { state, .. } => state.as_ref().clone(),
+        result => panic!("unexpected project result: {result:?}"),
+    };
 
     let detach_primary = store
         .project_goal(
-            project_goal_command(GOAL, true, 2, Operation::Detach, "project-detach"),
+            project_goal_command_from_state(
+                first_state.rebase_scope(2, 7).unwrap(),
+                Operation::Detach,
+                2,
+                7,
+                "project-detach",
+            ),
             Some(GOAL_TWO.to_owned()),
         )
         .await
@@ -383,7 +497,13 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
 
     let detach_last = store
         .project_goal(
-            project_goal_command(GOAL_TWO, true, 3, Operation::Detach, "project-last"),
+            project_goal_command_from_state(
+                second_state.rebase_scope(3, 7).unwrap(),
+                Operation::Detach,
+                3,
+                7,
+                "project-last",
+            ),
             None,
         )
         .await
@@ -430,6 +550,49 @@ async fn project_goal_rejects_a_primary_goal_that_is_not_in_the_project_set() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn project_goal_rejects_cross_organization_projection_targets_in_postgres() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let authority = ActorAuthority::verification_only("known-secret").unwrap();
+    let binding: ActorBinding = serde_json::from_value(json!({
+        "actor": {
+            "ceo_agent": {
+                "organization_id": ORG,
+                "principal_id": CEO
+            }
+        },
+        "proof": "73431c93f5c11188b21ad422ff959aa702c3b38d5780d060c0c2007309e7f2dd"
+    }))
+    .unwrap();
+
+    for (project_id, goal_id, key) in [
+        (FOREIGN_PROJECT, FOREIGN_GOAL, "foreign-both"),
+        (PROJECT, FOREIGN_GOAL, "foreign-goal"),
+    ] {
+        let state = ProjectGoalLinkState::new(ORG, ORG, ORG, project_id, goal_id, 0, 7, false);
+        let context = state
+            .validated_context(&binding, &authority, &AnyTarget)
+            .unwrap();
+        let error = store
+            .project_goal(
+                ProjectGoalLinkCommand::from_validated_context(
+                    context,
+                    Operation::Attach,
+                    0,
+                    7,
+                    key,
+                ),
+                Some(goal_id.to_owned()),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, StoreError::NotFound));
+    }
+    assert_eq!(database.counts().await, (0, 0, 0));
+    assert!(project_goals(&database).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn project_goal_replay_returns_the_original_receipt_after_later_mutations() {
     let database = Database::start().await;
     let store = MutationStore::new(database.pool.clone());
@@ -459,6 +622,141 @@ async fn project_goal_replay_returns_the_original_receipt_after_later_mutations(
         project_goals(&database).await,
         vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_cancel_is_durable_terminal_and_replays_after_scope_advances() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let attached = store
+        .project_goal(
+            project_goal_command(GOAL, false, 0, Operation::Attach, "cancel-attach"),
+            Some(GOAL.to_owned()),
+        )
+        .await
+        .unwrap();
+    let attached_state = match &attached.receipt.result {
+        ResultState::ProjectGoalLink { state, .. } => state.as_ref().clone(),
+        result => panic!("unexpected project result: {result:?}"),
+    };
+    let cancel_command = project_goal_command_from_state(
+        attached_state.rebase_scope(1, 7).unwrap(),
+        Operation::Cancel,
+        1,
+        7,
+        "cancel-link",
+    );
+    let cancelled = store
+        .project_goal(cancel_command.clone(), Some(GOAL.to_owned()))
+        .await
+        .unwrap();
+    assert!(!cancelled.replayed);
+    assert_eq!(cancelled.receipt.version, 2);
+    assert_eq!(cancelled.receipt.fence_epoch, 8);
+    match &cancelled.receipt.result {
+        ResultState::ProjectGoalLink {
+            state,
+            linked,
+            cancelled,
+            ..
+        } => {
+            assert!(state.cancelled);
+            assert!(*linked);
+            assert!(*cancelled);
+        }
+        result => panic!("unexpected project result: {result:?}"),
+    }
+
+    store
+        .branding(branding_at("after-cancel-branding", 2, 8))
+        .await
+        .unwrap();
+    let replay = store
+        .project_goal(cancel_command, Some(GOAL.to_owned()))
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, cancelled.receipt);
+
+    let cancelled_state = match &cancelled.receipt.result {
+        ResultState::ProjectGoalLink { state, .. } => state.as_ref().clone(),
+        result => panic!("unexpected project result: {result:?}"),
+    };
+    let error = store
+        .project_goal(
+            project_goal_command_from_state(
+                cancelled_state.rebase_scope(3, 8).unwrap(),
+                Operation::Attach,
+                3,
+                8,
+                "cancel-new-key",
+            ),
+            Some(GOAL.to_owned()),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        StoreError::Link(rudder_project_goal_link_core::LinkMutationError::Cancelled)
+    ));
+    assert_eq!(database.counts().await, (3, 3, 3));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_noop_persists_new_integrity_and_rejects_stale_context() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let first = store
+        .project_goal(
+            project_goal_command(GOAL, false, 0, Operation::Attach, "noop-attach"),
+            Some(GOAL.to_owned()),
+        )
+        .await
+        .unwrap();
+    let first_state = match &first.receipt.result {
+        ResultState::ProjectGoalLink { state, .. } => state.as_ref().clone(),
+        result => panic!("unexpected project result: {result:?}"),
+    };
+    let noop = store
+        .project_goal(
+            project_goal_command_from_state(
+                first_state.rebase_scope(1, 7).unwrap(),
+                Operation::Attach,
+                1,
+                7,
+                "noop-second-key",
+            ),
+            Some(GOAL.to_owned()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(noop.receipt.outcome, rudder_d1_persistence::Outcome::Noop);
+    assert_eq!(noop.receipt.version, 1);
+    assert_eq!(noop.receipt.fence_epoch, 7);
+    let noop_integrity = match &noop.receipt.result {
+        ResultState::ProjectGoalLink { state, .. } => state.state_integrity().to_owned(),
+        result => panic!("unexpected project result: {result:?}"),
+    };
+    assert_ne!(noop_integrity, first_state.state_integrity());
+
+    let error = store
+        .project_goal(
+            project_goal_command_from_state(
+                first_state.rebase_scope(1, 7).unwrap(),
+                Operation::Attach,
+                1,
+                7,
+                "noop-stale-context",
+            ),
+            Some(GOAL.to_owned()),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        StoreError::Link(rudder_project_goal_link_core::LinkMutationError::TargetStateMismatch)
+    ));
+    assert_eq!(database.counts().await, (1, 2, 2));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -512,6 +810,78 @@ async fn project_goal_respects_owner_fence_and_ceo_authority_before_mutation() {
             )
             .await,
         Err(StoreError::Unauthorized)
+    ));
+    assert_eq!(database.counts().await, (0, 0, 0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_rejects_stale_version_and_bigint_overflow_without_partial_mutation() {
+    let max = i64::MAX as u64;
+
+    {
+        let database = Database::start().await;
+        let store = MutationStore::new(database.pool.clone());
+
+        database
+            .sql("UPDATE organization_mutation_state SET mutation_version=1 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+            .await;
+        assert!(matches!(
+            store
+                .project_goal(
+                    project_goal_command(
+                        GOAL,
+                        false,
+                        0,
+                        Operation::Attach,
+                        "project-stale-version"
+                    ),
+                    Some(GOAL.to_owned()),
+                )
+                .await,
+            Err(StoreError::StaleVersion)
+        ));
+
+        database
+            .sql("UPDATE organization_mutation_state SET mutation_version=9223372036854775807, fence_epoch=7 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+            .await;
+        assert!(matches!(
+            store
+                .project_goal(
+                    project_goal_command(
+                        GOAL,
+                        false,
+                        max,
+                        Operation::Attach,
+                        "project-version-overflow"
+                    ),
+                    Some(GOAL.to_owned()),
+                )
+                .await,
+            Err(StoreError::VersionRange)
+        ));
+        assert_eq!(database.counts().await, (i64::MAX, 0, 0));
+    }
+
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    database
+        .sql("UPDATE organization_mutation_state SET fence_epoch=9223372036854775807 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .await;
+    assert!(matches!(
+        store
+            .project_goal(
+                project_goal_command_at_fence(
+                    GOAL,
+                    false,
+                    0,
+                    max,
+                    Operation::Cancel,
+                    "project-fence-overflow",
+                ),
+                None,
+            )
+            .await,
+        Err(StoreError::VersionRange)
     ));
     assert_eq!(database.counts().await, (0, 0, 0));
 }
