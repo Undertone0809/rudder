@@ -91,6 +91,7 @@ export { organizationIntelligenceProfiles } from "./organization_intelligence_pr
 export { organizationIssuePrefixAliases } from "./organization_issue_prefix_aliases.js";
 export { organizationLogos } from "./organization_logos.js";
 export { organizationMemberships } from "./organization_memberships.js";
+export { organizationMutationReceipts, organizationMutationState } from "./organization_mutations.js";
 export { organizationResources } from "./organization_resources.js";
 export { organizationSecretVersions } from "./organization_secret_versions.js";
 export { organizationSecrets } from "./organization_secrets.js";
