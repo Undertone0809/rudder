@@ -41,6 +41,7 @@ impl Outcome {
 pub enum ResultState {
     OrganizationBranding {
         state: OrganizationSettingsSnapshot,
+        state_integrity: String,
     },
     ProjectGoalLink {
         state: Box<ProjectGoalLinkState>,

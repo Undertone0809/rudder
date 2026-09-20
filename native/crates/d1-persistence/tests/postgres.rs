@@ -222,6 +222,33 @@ async fn branding_replay_rejects_a_semantically_tampered_snapshot() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn branding_replay_rejects_a_tampered_omitted_field() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = branding("branding-omitted-field-tamper", 0);
+    store.branding(command.clone()).await.unwrap();
+    database
+        .sql(
+            "ALTER TABLE organization_mutation_receipts
+             DISABLE TRIGGER organization_mutation_receipts_guard;
+             UPDATE organization_mutation_receipts
+             SET result=jsonb_set(result, '{result,state,description}', to_jsonb('Tampered'::text))
+             WHERE org_id='10000000-0000-4000-8000-000000000001'
+               AND idempotency_key='branding-omitted-field-tamper';
+             ALTER TABLE organization_mutation_receipts
+             ENABLE TRIGGER organization_mutation_receipts_guard;",
+        )
+        .await;
+
+    assert!(matches!(
+        store.branding(command).await,
+        Err(StoreError::InvalidReceipt)
+    ));
+    assert_eq!(database.name().await, "Name branding-omitted-field-tamper");
+    assert_eq!(database.counts().await, (1, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn project_goal_replay_rejects_a_semantically_tampered_transition() {
     let database = Database::start().await;
     let store = MutationStore::new(database.pool.clone());

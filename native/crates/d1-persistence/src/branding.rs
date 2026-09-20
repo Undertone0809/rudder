@@ -116,7 +116,10 @@ pub(crate) async fn apply(
             version: next.version,
             fence_epoch,
             outcome: Outcome::Applied,
-            result: ResultState::OrganizationBranding { state: next },
+            result: ResultState::OrganizationBranding {
+                state_integrity: transaction::branding_state_integrity(&next)?,
+                state: next,
+            },
             entity_id: metadata.org.clone(),
             details,
         },

@@ -1,7 +1,9 @@
 use crate::{
     CommittedMutation, Outcome, Receipt, ResultState, StoreError, branding_kind, project_goal_kind,
 };
-use rudder_organization_mutation_core::OrganizationBrandingCommand;
+use rudder_organization_mutation_core::{
+    OrganizationBrandingCommand, OrganizationSettingsSnapshot,
+};
 use rudder_project_goal_link_core::{Operation, ProjectGoalLinkCommand};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -10,7 +12,7 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 pub(crate) type Tx<'a> = Transaction<'a, Postgres>;
 
 pub(crate) const MAX_RESULT_BYTES: usize = 1024 * 1024;
-const BRANDING_RECEIPT_FORMAT: i32 = 1;
+const BRANDING_RECEIPT_FORMAT: i32 = 2;
 const PROJECT_GOAL_RECEIPT_FORMAT: i32 = 2;
 const MAX_COMMAND_BYTES: usize = MAX_RESULT_BYTES / 2;
 pub(crate) const MAX_PROJECT_GOALS: usize = 1024;
@@ -450,10 +452,18 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
         return Err(StoreError::InvalidReceipt);
     }
     match (&receipt.result, metadata.kind) {
-        (ResultState::OrganizationBranding { state }, kind) if *kind == *branding_kind() => {
+        (
+            ResultState::OrganizationBranding {
+                state,
+                state_integrity,
+            },
+            kind,
+        ) if *kind == *branding_kind() => {
             if state.organization_id != metadata.org
                 || state.version != receipt.version
                 || state.fence_epoch != receipt.fence_epoch
+                || !is_sha256_hex(state_integrity)
+                || branding_state_integrity(state)? != *state_integrity
             {
                 return Err(StoreError::InvalidReceipt);
             }
@@ -649,6 +659,19 @@ pub(crate) fn adapter_fingerprint(
     ensure_json_size(&identity, MAX_COMMAND_BYTES)?;
     Ok(hex_digest(Sha256::digest(
         serde_json::to_vec(&identity).map_err(|_| StoreError::InvalidInput)?,
+    )))
+}
+
+pub(crate) fn branding_state_integrity(
+    state: &OrganizationSettingsSnapshot,
+) -> Result<String, StoreError> {
+    let value = json!({
+        "schema": "rudder.d1.organization-branding-state.v1",
+        "state": state,
+    });
+    ensure_json_size(&value, MAX_RESULT_BYTES)?;
+    Ok(hex_digest(Sha256::digest(
+        serde_json::to_vec(&value).map_err(|_| StoreError::InvalidReceipt)?,
     )))
 }
 
