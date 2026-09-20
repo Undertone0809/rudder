@@ -1,8 +1,10 @@
-import { EventEmitter } from "node:events";
+import type { MigrationState } from "@rudderhq/db";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertMigrationPreflightAgreement,
   createMigrationPreflightRequest,
   MIGRATION_PREFLIGHT_DATABASE_URL_ENV,
   MIGRATION_PREFLIGHT_PROTOCOL_VERSION,
@@ -10,6 +12,7 @@ import {
   MigrationPreflightAdapterError,
   resolveMigrationPreflightBinary,
   runMigrationPreflight,
+  type MigrationPreflightReport,
   type MigrationPreflightSpawn,
 } from "./migration-preflight.js";
 
@@ -61,6 +64,52 @@ function report(status: string) {
   };
 }
 
+function migrationIdentity(fileName: string, order: number) {
+  return {
+    order,
+    fileName,
+    sha256: `${fileName}-sha256`,
+    id: order + 1,
+    name: null,
+    hash: null,
+    createdAt: null,
+  };
+}
+
+function agreementReport(options: {
+  status: string;
+  fingerprint?: string;
+  appliedMigrations?: string[];
+  pendingMigrations?: string[];
+}): MigrationPreflightReport {
+  const value = report(options.status) as unknown as MigrationPreflightReport;
+  value.history.manifestFingerprint = options.fingerprint ?? source.expectedFingerprint;
+  value.history.appliedMigrations = (options.appliedMigrations ?? []).map(migrationIdentity);
+  value.history.pendingMigrations = (options.pendingMigrations ?? [])
+    .map((fileName, order) => migrationIdentity(fileName, order));
+  return value;
+}
+
+function nodeState(options: {
+  reason?: "pending-migrations" | "missing-core-schema";
+  appliedMigrations?: string[];
+  pendingMigrations?: string[];
+} = {}): MigrationState {
+  const availableMigrations = ["0000_first.sql", "0001_second.sql"];
+  return {
+    status: "needsMigrations",
+    tableCount: 1,
+    availableMigrations,
+    appliedMigrations: options.appliedMigrations ?? [availableMigrations[0]!],
+    pendingMigrations: options.pendingMigrations ?? [availableMigrations[1]!],
+    reason: options.reason ?? "pending-migrations",
+  };
+}
+
+function agreementLogger() {
+  return { info: vi.fn(), warn: vi.fn() };
+}
+
 function successResponse(status: string): string {
   return JSON.stringify({
     schema: MIGRATION_PREFLIGHT_SCHEMA,
@@ -104,6 +153,124 @@ function spawnResponse(
 }
 
 describe("migration preflight adapter", () => {
+  it("fails closed on a Rust manifest fingerprint mismatch", () => {
+    const logger = agreementLogger();
+
+    expect(() => assertMigrationPreflightAgreement({
+      label: "test",
+      state: nodeState(),
+      report: agreementReport({ status: "pending", fingerprint: "different-fingerprint" }),
+      required: true,
+      manifestFingerprint: source.expectedFingerprint,
+      logger,
+    })).toThrow(/manifest-fingerprint/);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Rust applied migration order differs from Node", () => {
+    const logger = agreementLogger();
+
+    expect(() => assertMigrationPreflightAgreement({
+      label: "test",
+      state: nodeState({ appliedMigrations: ["0000_first.sql", "0001_second.sql"], pendingMigrations: [] }),
+      report: agreementReport({
+        status: "pending",
+        appliedMigrations: ["0001_second.sql", "0000_first.sql"],
+        pendingMigrations: [],
+      }),
+      required: true,
+      manifestFingerprint: source.expectedFingerprint,
+      logger,
+    })).toThrow(/applied-migrations/);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Rust pending migration order differs from Node", () => {
+    const logger = agreementLogger();
+
+    expect(() => assertMigrationPreflightAgreement({
+      label: "test",
+      state: nodeState({ pendingMigrations: ["0000_first.sql", "0001_second.sql"] }),
+      report: agreementReport({
+        status: "pending",
+        appliedMigrations: ["0000_first.sql"],
+        pendingMigrations: ["0001_second.sql", "0000_first.sql"],
+      }),
+      required: true,
+      manifestFingerprint: source.expectedFingerprint,
+      logger,
+    })).toThrow(/pending-migrations/);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("uses the sent manifest order for Node's derived pending plan", () => {
+    const logger = agreementLogger();
+    const manifestOrder = ["0000_first.sql", "0162_last.sql", "0055_legacy.sql"];
+
+    expect(() => assertMigrationPreflightAgreement({
+      label: "test",
+      state: nodeState({ pendingMigrations: ["0055_legacy.sql", "0162_last.sql"] }),
+      report: agreementReport({
+        status: "pending",
+        appliedMigrations: ["0000_first.sql"],
+        pendingMigrations: ["0162_last.sql", "0055_legacy.sql"],
+      }),
+      required: true,
+      manifestFingerprint: source.expectedFingerprint,
+      manifestMigrationFileNames: manifestOrder,
+      logger,
+    })).not.toThrow();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("records one bounded warning and continues in auto mode", () => {
+    const logger = agreementLogger();
+
+    expect(() => assertMigrationPreflightAgreement({
+      label: "test",
+      state: nodeState(),
+      report: agreementReport({
+        status: "pending",
+        fingerprint: "different-fingerprint",
+        appliedMigrations: ["0001_second.sql"],
+        pendingMigrations: ["0000_first.sql"],
+      }),
+      required: false,
+      manifestFingerprint: source.expectedFingerprint,
+      logger,
+    })).not.toThrow();
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn.mock.calls[0]?.[0]).toMatchObject({
+      disagreements: ["manifest-fingerprint", "applied-migrations", "pending-migrations"],
+    });
+    expect(JSON.stringify(logger.warn.mock.calls[0]?.[0])).not.toContain("0000_first.sql");
+  });
+
+  it("allows missing-core-schema's explicit Rust empty pending plan", () => {
+    const logger = agreementLogger();
+    const allMigrations = ["0000_first.sql", "0001_second.sql"];
+
+    // inspectMigrations synthesizes all available files as pending only after
+    // confirming that every migration is already applied and core schema is missing.
+    expect(() => assertMigrationPreflightAgreement({
+      label: "test",
+      state: nodeState({
+        reason: "missing-core-schema",
+        appliedMigrations: allMigrations,
+        pendingMigrations: allMigrations,
+      }),
+      report: agreementReport({
+        status: "missing-core-schema",
+        appliedMigrations: allMigrations,
+        pendingMigrations: [],
+      }),
+      required: true,
+      manifestFingerprint: source.expectedFingerprint,
+      logger,
+    })).not.toThrow();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it("builds the versioned request without putting the database URL in JSON", () => {
     const request = JSON.parse(createMigrationPreflightRequest(source)) as Record<string, unknown>;
 

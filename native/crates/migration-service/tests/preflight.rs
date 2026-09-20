@@ -1,10 +1,36 @@
+use rudder_migration_core::{MigrationLimits, MigrationManifest, load_migration_manifest};
 use rudder_migration_history_core::{
     MigrationHistoryColumns, MigrationHistoryPreflight, MigrationHistoryReason,
-    MigrationHistorySnapshot, MigrationHistoryStatus,
+    MigrationHistoryRow, MigrationHistorySnapshot, MigrationHistoryStatus,
+    reconcile_migration_history,
 };
 use rudder_migration_service::{
     MigrationPreflightDatabaseState, MigrationPreflightStatus, classify_preflight,
 };
+use std::fs::{create_dir_all, write};
+use tempfile::TempDir;
+
+fn manifest_fixture() -> (TempDir, MigrationManifest) {
+    let root = tempfile::tempdir().unwrap();
+    let migrations = root.path().join("migrations");
+    let meta = migrations.join("meta");
+    create_dir_all(&meta).unwrap();
+    for name in ["0000_first.sql", "0001_second.sql", "0002_third.sql"] {
+        write(migrations.join(name), name.as_bytes()).unwrap();
+    }
+    write(
+        meta.join("_journal.json"),
+        r#"{"version":"7","dialect":"postgresql","entries":[{"idx":0,"version":"7","when":1000,"tag":"0000_first","breakpoints":true},{"idx":1,"version":"7","when":1001,"tag":"0001_second","breakpoints":true},{"idx":2,"version":"7","when":1002,"tag":"0002_third","breakpoints":true}]}"#,
+    )
+    .unwrap();
+    let manifest = load_migration_manifest(
+        &meta.join("_journal.json"),
+        &migrations,
+        MigrationLimits::default(),
+    )
+    .unwrap();
+    (root, manifest)
+}
 
 fn history(reason: MigrationHistoryReason) -> MigrationHistoryPreflight {
     MigrationHistoryPreflight {
@@ -29,6 +55,62 @@ fn snapshot(schema: Option<&str>) -> MigrationHistorySnapshot {
         columns: MigrationHistoryColumns::default(),
         rows: Vec::new(),
     }
+}
+
+#[test]
+fn report_preserves_ordered_plan_and_manifest_fingerprint() {
+    let (_root, manifest) = manifest_fixture();
+    let snapshot = MigrationHistorySnapshot {
+        table_schema: Some("drizzle".to_owned()),
+        columns: MigrationHistoryColumns {
+            id: true,
+            hash: true,
+            created_at: true,
+            ..Default::default()
+        },
+        rows: manifest
+            .entries
+            .iter()
+            .take(2)
+            .enumerate()
+            .map(|(index, entry)| MigrationHistoryRow {
+                id: (index + 1) as u64,
+                name: None,
+                hash: Some(entry.sha256.clone()),
+                created_at: Some(1_000 + index as i64),
+            })
+            .collect(),
+    };
+    let history = reconcile_migration_history(&manifest, &snapshot).unwrap();
+    let report = classify_preflight(
+        &snapshot,
+        history,
+        MigrationPreflightDatabaseState {
+            table_count: 3,
+            core_schema_present: true,
+            organizations_table_present: true,
+        },
+    );
+
+    assert_eq!(report.history.manifest_fingerprint, manifest.fingerprint);
+    assert_eq!(
+        report
+            .history
+            .applied_migrations
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["0000_first.sql", "0001_second.sql"]
+    );
+    assert_eq!(
+        report
+            .history
+            .pending_migrations
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["0002_third.sql"]
+    );
 }
 
 #[test]
