@@ -49,7 +49,7 @@ impl Database {
         );
         let pg_ctl = binary("pg_ctl");
         let dynamic_shared_memory_type = if cfg!(windows) { "windows" } else { "mmap" };
-        let output = Command::new(&pg_ctl)
+        let status = Command::new(&pg_ctl)
             .env("LC_ALL", "C")
             .arg("-D")
             .arg(&data)
@@ -62,14 +62,14 @@ impl Database {
                 root.path().display()
             ))
             .args(["-w", "start"])
-            .output()
+            .status()
             .expect("run disposable PostgreSQL startup command");
         let log = fs::read_to_string(root.path().join("postgres.log"))
             .unwrap_or_else(|error| format!("<unavailable: {error}>"));
         assert!(
-            output.status.success(),
+            status.success(),
             "disposable PostgreSQL failed: {}\npostgres log:\n{log}",
-            String::from_utf8_lossy(&output.stderr)
+            status
         );
         let url = format!("postgresql://postgres@127.0.0.1:{port}/postgres");
         let pool = PgPoolOptions::new()
