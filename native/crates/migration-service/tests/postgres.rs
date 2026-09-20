@@ -59,7 +59,7 @@ async fn preflight_reads_history_and_schema_from_one_read_only_snapshot()
     .await?;
 
     let (_root, manifest) = manifest_fixture();
-    for (id, entry) in manifest.entries.iter().enumerate() {
+    for (id, entry) in manifest.entries.iter().take(1).enumerate() {
         sqlx::query(&format!(
             r#"INSERT INTO {table} ("id", "hash", "created_at") VALUES ($1, $2, $3)"#
         ))
@@ -75,8 +75,57 @@ async fn preflight_reads_history_and_schema_from_one_read_only_snapshot()
         .await?;
     assert!(report.journal_present);
     assert_eq!(report.journal_schema.as_deref(), Some(schema.as_str()));
-    assert_eq!(report.history.status, MigrationHistoryStatus::UpToDate);
+    assert_eq!(report.history.manifest_fingerprint, manifest.fingerprint);
+    assert_eq!(
+        report.history.status,
+        MigrationHistoryStatus::NeedsMigrations
+    );
+    assert_eq!(
+        report.history.reason,
+        MigrationHistoryReason::PendingMigrations
+    );
+    assert_eq!(
+        report
+            .history
+            .applied_migrations
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["0000_first.sql"]
+    );
+    assert_eq!(
+        report
+            .history
+            .pending_migrations
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["0001_second.sql"]
+    );
+    sqlx::query(&format!(
+        r#"INSERT INTO {table} ("id", "hash", "created_at") VALUES ($1, $2, $3)"#
+    ))
+    .bind(2_i32)
+    .bind(&manifest.entries[1].sha256)
+    .bind(1_001_i64)
+    .execute(&pool)
+    .await?;
+
+    let report = MigrationPreflightService::new(pool.clone())
+        .preflight(&manifest)
+        .await?;
+    assert_eq!(report.history.manifest_fingerprint, manifest.fingerprint);
     assert_eq!(report.history.reason, MigrationHistoryReason::ManifestMatch);
+    assert_eq!(
+        report
+            .history
+            .applied_migrations
+            .iter()
+            .map(|entry| entry.file_name.as_str())
+            .collect::<Vec<_>>(),
+        ["0000_first.sql", "0001_second.sql"]
+    );
+    assert!(report.history.pending_migrations.is_empty());
     assert!(matches!(
         report.status,
         MigrationPreflightStatus::Current | MigrationPreflightStatus::MissingCoreSchema

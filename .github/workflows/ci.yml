@@ -519,7 +519,7 @@ jobs:
           const target = process.env.NATIVE_TARGET;
           const extension = process.env.NATIVE_EXTENSION;
           const root = path.resolve("desktop/.packaged/native", target);
-          for (const name of ["rudder-process-host", "rudder-native", "rudder-update-helper"]) {
+          for (const name of ["rudder-process-host", "rudder-native", "rudder-update-helper", "migration-preflight"]) {
             const binary = path.join(root, `${name}${extension}`);
             execFileSync(binary, ["--version"], { stdio: "pipe" });
           }

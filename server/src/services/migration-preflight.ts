@@ -125,6 +125,8 @@ type MigrationPreflightLogger = {
 export type MigrationPreflightStartupResult = Readonly<{
   report: MigrationPreflightReport | null;
   required: boolean;
+  manifestFingerprint: string | null;
+  manifestMigrationFileNames: readonly string[] | null;
 }>;
 
 function expectedMigrationPreflightStatus(state: MigrationState): MigrationPreflightStatus {
@@ -166,7 +168,14 @@ export async function runMigrationPreflightBeforeNodeInspection(options: {
     capability: "migration-preflight",
     env: options.env ?? process.env,
   });
-  if (!policy.enabled) return { report: null, required: policy.required };
+  if (!policy.enabled) {
+    return {
+      report: null,
+      required: policy.required,
+      manifestFingerprint: null,
+      manifestMigrationFileNames: null,
+    };
+  }
 
   const sourcePaths = options.sourcePaths ?? getMigrationSourcePaths();
   const migrationManifest = await createMigrationManifest({
@@ -186,7 +195,12 @@ export async function runMigrationPreflightBeforeNodeInspection(options: {
       { label: options.label, ...migrationPreflightSummary(report) },
       `${options.label} Rust migration preflight completed before Node migration inspection`,
     );
-    return { report, required: policy.required };
+    return {
+      report,
+      required: policy.required,
+      manifestFingerprint: migrationManifest.fingerprint,
+      manifestMigrationFileNames: migrationManifest.entries.map(({ fileName }) => fileName),
+    };
   } catch (error) {
     const code = error instanceof MigrationPreflightAdapterError ? error.code : "unknown";
     if (policy.required) {
@@ -199,7 +213,12 @@ export async function runMigrationPreflightBeforeNodeInspection(options: {
       { label: options.label, code },
       `${options.label} Rust migration preflight unavailable; continuing with the Node migration authority`,
     );
-    return { report: null, required: false };
+    return {
+      report: null,
+      required: false,
+      manifestFingerprint: null,
+      manifestMigrationFileNames: null,
+    };
   }
 }
 
@@ -208,22 +227,91 @@ export function assertMigrationPreflightAgreement(options: {
   state: MigrationState;
   report: MigrationPreflightReport | null;
   required: boolean;
+  manifestFingerprint: string | null;
+  manifestMigrationFileNames?: readonly string[] | null;
   logger: MigrationPreflightLogger;
 }): void {
   if (!options.report) return;
   const expectedStatus = expectedMigrationPreflightStatus(options.state);
-  if (options.report.status === expectedStatus) return;
+  if (options.report.status !== expectedStatus) {
+    const detail = `${options.report.status} != ${expectedStatus}`;
+    if (options.required) {
+      throw new Error(
+        `${options.label} Rust migration preflight disagreed with the Node migration inspection (${detail}); refusing to mutate migration state.`,
+      );
+    }
+    options.logger.warn(
+      { label: options.label, nativeStatus: options.report.status, nodeStatus: expectedStatus },
+      `${options.label} Rust migration preflight disagreed with the Node migration inspection; continuing with the Node migration authority`,
+    );
+    return;
+  }
 
-  const detail = `${options.report.status} != ${expectedStatus}`;
+  const nodeAppliedMigrations = options.state.appliedMigrations;
+  const nodePendingMigrations = options.state.status === "needsMigrations"
+    ? options.state.pendingMigrations
+    : [];
+  const orderedNodePendingMigrations = options.manifestMigrationFileNames
+    ? orderMigrationsByManifest(nodePendingMigrations, options.manifestMigrationFileNames)
+    : nodePendingMigrations;
+  const nativeAppliedMigrations = options.report.history.appliedMigrations.map(({ fileName }) => fileName);
+  const nativePendingMigrations = options.report.history.pendingMigrations.map(({ fileName }) => fileName);
+  const expectedNativePendingMigrations = options.state.status === "needsMigrations"
+    && options.state.reason === "missing-core-schema"
+    ? []
+    : orderedNodePendingMigrations;
+  const disagreements: string[] = [];
+  if (options.manifestFingerprint === null
+    || options.report.history.manifestFingerprint !== options.manifestFingerprint) {
+    disagreements.push("manifest-fingerprint");
+  }
+  if (!sameMigrationPlan(nativeAppliedMigrations, nodeAppliedMigrations)) {
+    disagreements.push("applied-migrations");
+  }
+  if (!sameMigrationPlan(nativePendingMigrations, expectedNativePendingMigrations)) {
+    disagreements.push("pending-migrations");
+  }
+  if (disagreements.length === 0) return;
+
+  const detail = disagreements.join(", ");
   if (options.required) {
     throw new Error(
-      `${options.label} Rust migration preflight disagreed with the Node migration inspection (${detail}); refusing to mutate migration state.`,
+      `${options.label} Rust migration preflight disagreed with the Node migration plan (${detail}); refusing to mutate migration state.`,
     );
   }
   options.logger.warn(
-    { label: options.label, nativeStatus: options.report.status, nodeStatus: expectedStatus },
-    `${options.label} Rust migration preflight disagreed with the Node migration inspection; continuing with the Node migration authority`,
+    {
+      label: options.label,
+      nativeStatus: options.report.status,
+      nodeStatus: expectedStatus,
+      disagreements,
+    },
+    `${options.label} Rust migration preflight disagreed with the Node migration plan (${detail}); continuing with the Node migration authority`,
   );
+}
+
+function sameMigrationPlan(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((fileName, index) => fileName === right[index]);
+}
+
+function orderMigrationsByManifest(
+  migrations: readonly string[],
+  manifestFileNames: readonly string[],
+): string[] {
+  const orderByFileName = new Map(manifestFileNames.map((fileName, order) => [fileName, order]));
+  return migrations
+    .map((fileName, originalOrder) => ({ fileName, originalOrder }))
+    .sort((left, right) => {
+      const leftOrder = orderByFileName.get(left.fileName);
+      const rightOrder = orderByFileName.get(right.fileName);
+      if (leftOrder === undefined && rightOrder === undefined) {
+        return left.originalOrder - right.originalOrder;
+      }
+      if (leftOrder === undefined) return 1;
+      if (rightOrder === undefined) return -1;
+      return leftOrder - rightOrder;
+    })
+    .map(({ fileName }) => fileName);
 }
 
 export function resolveMigrationPreflightBinary(env: NodeJS.ProcessEnv = process.env): string {
