@@ -703,6 +703,19 @@ impl ProjectGoalLinkState {
         if target_integrity != rebased_previous.integrity.as_str() {
             return Err(LinkMutationError::InvalidReceipt);
         }
+        let receipt = self
+            .applied_idempotency
+            .get(idempotency_key)
+            .ok_or(LinkMutationError::InvalidReceipt)?;
+        if receipt.target_version != rebased_previous.version
+            || receipt.target_fence_epoch != rebased_previous.fence_epoch
+            || receipt.previous_version != rebased_previous.version
+            || receipt.previous_fence_epoch != rebased_previous.fence_epoch
+            || receipt.previous_linked != rebased_previous.linked
+            || receipt.previous_cancelled != rebased_previous.cancelled
+        {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
         self.validate_persisted_receipt(
             idempotency_key,
             fingerprint,
@@ -2068,6 +2081,64 @@ mod tests {
 
         assert_eq!(
             restored.apply(board(Operation::Attach, "tampered-receipt")),
+            Err(LinkMutationError::InvalidReceipt)
+        );
+    }
+
+    #[test]
+    fn persisted_successor_binds_receipt_to_rebased_previous_snapshot() {
+        let previous =
+            ProjectGoalLinkState::new("org-a", "org-a", "org-a", "project-a", "goal-a", 2, 4, true);
+        let rebased_previous = previous.rebase_scope(7, 9).unwrap();
+        let command = make_command(
+            &rebased_previous,
+            Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            },
+            Operation::Attach,
+            7,
+            9,
+            "forged-successor",
+        );
+        let fingerprint = command.fingerprint().unwrap();
+        let link_id = command.link_identifier().unwrap();
+        let mut successor = rebased_previous.clone();
+        successor.version = 8;
+        successor.applied_idempotency.insert(
+            "forged-successor".to_owned(),
+            AppliedReceipt {
+                idempotency_key: "forged-successor".to_owned(),
+                operation: Operation::Attach,
+                outcome: AppliedReceiptOutcome::Applied,
+                target_version: 7,
+                target_fence_epoch: 9,
+                target_integrity: rebased_previous.state_integrity().to_owned(),
+                previous_version: 7,
+                previous_fence_epoch: 9,
+                previous_linked: false,
+                previous_cancelled: false,
+                version: 8,
+                fence_epoch: 9,
+                linked: true,
+                cancelled: false,
+                link_id,
+                fingerprint,
+            },
+        );
+        successor.refresh_integrity();
+
+        assert_eq!(
+            successor.validate_persisted_successor(
+                &previous,
+                "forged-successor",
+                &command.fingerprint().unwrap(),
+                Operation::Attach,
+                7,
+                9,
+                rebased_previous.state_integrity(),
+                "applied",
+            ),
             Err(LinkMutationError::InvalidReceipt)
         );
     }
