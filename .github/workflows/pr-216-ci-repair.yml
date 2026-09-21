@@ -1,0 +1,119 @@
+name: PR 216 scoped repair
+on:
+  push:
+    branches: [codex/pr-216-ci-log-diagnostics]
+    paths: [pr-216-ci-repair.py, .github/workflows/pr-216-ci-repair.yml]
+permissions:
+  contents: write
+concurrency:
+  group: pr-216-scoped-repair
+  cancel-in-progress: true
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      sha: ${{ steps.publish.outputs.sha }}
+      branch: ${{ steps.publish.outputs.branch }}
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: maintenance
+      - uses: actions/checkout@v6
+        with:
+          ref: c5393f5c5bfd32d8104ff41dac3f350c182f5b4d
+          fetch-depth: 0
+          path: source
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Apply exact scoped patch
+        run: python3 ../maintenance/pr-216-ci-repair.py .
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+      - name: Resolve pnpm store
+        id: store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v5
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('source/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate unchanged architecture gates and imports
+        run: |
+          mkdir -p "$RUNNER_TEMP/pr-216-evidence"
+          git diff --check
+          node scripts/lint-imports.mjs
+          node scripts/architecture-boundaries.mjs
+          node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref 484eddc7e8da6591a33dfa556b391ba608e68ddb --fail-on-regression > "$RUNNER_TEMP/pr-216-evidence/architecture.txt"
+          tail -12 "$RUNNER_TEMP/pr-216-evidence/architecture.txt"
+      - name: Focused regressions
+        run: |
+          pnpm --filter @rudderhq/identity-core build
+          pnpm exec vitest run packages/agent-runtimes/codex-local/src/defaults.test.ts ui/src/components/OnboardingWizard.runtime-config.test.tsx ui/src/components/settings/OrganizationIntelligenceProfilesSettings.test.tsx ui/src/components/AgentConfigForm.helpers.test.ts ui/src/lib/organization-intelligence.test.ts server/src/__tests__/organization-intelligence-profile-defaults.test.ts server/src/__tests__/organization-intelligence-profiles.test.ts server/src/__tests__/organization-intelligence-profiles-routes.test.ts server/src/__tests__/product-intelligence.test.ts > "$RUNNER_TEMP/pr-216-evidence/focused-tests.txt" 2>&1 || { tail -160 "$RUNNER_TEMP/pr-216-evidence/focused-tests.txt"; exit 1; }
+          tail -20 "$RUNNER_TEMP/pr-216-evidence/focused-tests.txt"
+          for attempt in 1 2 3 4 5; do
+            pnpm exec vitest run desktop/src/local-apps-runtime.test.ts -t 'keeps watchdog startup and cleanup deadlines referenced' > "$RUNNER_TEMP/pr-216-evidence/watchdog-$attempt.txt" 2>&1 || { cat "$RUNNER_TEMP/pr-216-evidence/watchdog-$attempt.txt"; exit 1; }
+          done
+          tail -12 "$RUNNER_TEMP/pr-216-evidence/watchdog-5.txt"
+      - name: Publish tested candidate only (never main or PR branch)
+        id: publish
+        run: |
+          test "$(git rev-parse HEAD)" = c5393f5c5bfd32d8104ff41dac3f350c182f5b4d
+          test -z "$(git diff --name-only -- .github scripts/architecture-audit-baseline.json)"
+          git diff > "$RUNNER_TEMP/pr-216-evidence/repair.diff"
+          git config user.name "$(git show -s --format=%an HEAD)"
+          git config user.email "$(git show -s --format=%ae HEAD)"
+          git add -u
+          git commit -m 'fix: repair Luna default CI regressions and watchdog test timing'
+          branch="codex/pr-216-ci-repair-${GITHUB_RUN_ID}"
+          git push origin "HEAD:refs/heads/$branch"
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          printf 'CANDIDATE_SHA=%s\nCANDIDATE_BRANCH=%s\n' "$sha" "$branch"
+          git show --stat --oneline HEAD
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr-216-repair-evidence
+          path: ${{ runner.temp }}/pr-216-evidence
+          retention-days: 3
+  intel-watchdog:
+    needs: candidate
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.candidate.outputs.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          pnpm install --frozen-lockfile
+      - name: Repeat watchdog deadline regression on Intel
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            pnpm exec vitest run desktop/src/local-apps-runtime.test.ts -t 'keeps watchdog startup and cleanup deadlines referenced'
+          done
