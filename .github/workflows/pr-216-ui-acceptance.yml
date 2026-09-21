@@ -22,7 +22,7 @@ jobs:
           node-version: 24
       - name: Initialize isolated paths and install dependencies
         run: |
-          echo "RUDDER_E2E_HOME=$RUNNER_TEMP/rudder-pr216-ui" >> "$GITHUB_ENV"
+          echo "RUDDER_E2E_HOME=/tmp/rudder-pr216-ui-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
           echo "EVIDENCE_DIR=$RUNNER_TEMP/pr216-ui-evidence" >> "$GITHUB_ENV"
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
