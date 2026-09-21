@@ -23,12 +23,12 @@ main_adaptation:
     compatibility_decision: no_direct_rust_route_overlap; real_entry_and_default_path_evidence_requires_rebind
     old_receipts: invalidated
 source:
-  candidate_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
-  candidate_tree: 9ed2aa730252be96a097b829836122a8dea9098b
-  dirty_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  candidate_sha: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
+  candidate_tree: d4452f5fec44ac3aa323a8be42520bc3008ba626
+  dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   dirty_fingerprint_status: exact_clean_candidate_source_diff
   dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records
-  candidate_state: exact_candidate_post_main_sync_pending_bridge_fix_rebind
+  candidate_state: exact_candidate_post_authority_receipt_slice_pending_real_probe_and_stage_review
   counts_status: current_scan_refreshed; semantic_reconciliation_blocked_by_unfenced_writers
   current_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
   current_scan_counts:
