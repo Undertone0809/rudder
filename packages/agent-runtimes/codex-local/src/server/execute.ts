@@ -74,6 +74,7 @@ import {
   buildCodexReadinessFingerprint,
   claimCodexAuthProbe,
   clearMatchingCodexAuthFailure,
+  clearObservedCodexAuthSuccess,
   recordCodexAuthFailure,
   renewCodexAuthProbe,
   type CodexAuthProbeLease,
@@ -797,9 +798,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       })
     : null;
   let authProbeLease: CodexAuthProbeLease | null = null;
+  let authProbeObservation: CodexAuthProbeLease | null = null;
   if (readinessFingerprint) {
     const probeClaim = await claimCodexAuthProbe(effectiveAgentHome, readinessFingerprint);
-    if (!probeClaim.claimed) {
+    if (!probeClaim.claimed && probeClaim.readinessState !== "probing") {
       const readinessBusy = probeClaim.readinessState === "busy";
       return {
         exitCode: 1,
@@ -826,7 +828,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         clearSession: false,
       };
     }
-    authProbeLease = probeClaim.lease;
+    if (probeClaim.claimed) authProbeLease = probeClaim.lease;
+    else if (probeClaim.readinessState === "probing") authProbeObservation = probeClaim.observation;
   }
   const persistAuthFailureGate = async () => {
     if (!readinessFingerprint || !authProbeLease) return;
@@ -843,6 +846,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       await onLog(
         "stderr",
         "[rudder] Failed to clear the Codex provider readiness failure gate.\n",
+      ).catch(() => undefined);
+    });
+  };
+  const clearObservedAuthSuccess = async () => {
+    if (!readinessFingerprint || !authProbeObservation) return;
+    await clearObservedCodexAuthSuccess(
+      effectiveAgentHome,
+      readinessFingerprint,
+      authProbeObservation,
+    ).catch(async () => {
+      await onLog(
+        "stderr",
+        "[rudder] Failed to clear the observed Codex provider readiness probe.\n",
       ).catch(() => undefined);
     });
   };
@@ -953,6 +969,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         await persistAuthFailureGate();
       } else if (!providerAuthFailure && readinessFingerprint) {
         await clearAuthFailureGate();
+        if (appResult.exitCode === 0 && appResult.signal === null) {
+          await clearObservedAuthSuccess();
+        }
       }
       const inlineVisuals = appResult.sessionId
         && appResult.exitCode === 0
@@ -1189,6 +1208,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       await persistAuthFailureGate();
     } else if (readinessFingerprint) {
       await clearAuthFailureGate();
+      if (attempt.proc.exitCode === 0 && attempt.proc.signal === null && !attempt.proc.timedOut) {
+        await clearObservedAuthSuccess();
+      }
     }
     if (attempt.proc.timedOut) {
       return {
