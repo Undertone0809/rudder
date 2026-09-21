@@ -1,0 +1,103 @@
+name: PR 216 UI acceptance
+on:
+  push:
+    branches: [codex/pr-216-ci-log-diagnostics]
+    paths: [.github/workflows/pr-216-ui-acceptance.yml]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      RUDDER_E2E_HOME: ${{ runner.temp }}/rudder-pr216-ui
+      RUDDER_E2E_INSTANCE_ID: pr216
+      EVIDENCE_DIR: ${{ runner.temp }}/pr216-ui-evidence
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 0ed433319557547d7c215a1aaa052a3def009209
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Install locked dependencies and Chromium
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Build server dependency graph
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          git rev-parse HEAD > "$EVIDENCE_DIR/source-sha.txt"
+          pnpm --filter '@rudderhq/server...' build > "$EVIDENCE_DIR/build.txt" 2>&1 || { tail -100 "$EVIDENCE_DIR/build.txt"; exit 1; }
+      - name: Add black-box acceptance probe to disposable checkout only
+        run: |
+          cat > tests/e2e/pr-216-visual-acceptance.spec.ts <<'EOF'
+          import { expect, test } from '@playwright/test';
+          import path from 'node:path';
+          test('PR216 saved defaults survive reload and failed probes remain disabled', async ({ page }) => {
+            const res = await page.request.post('/api/orgs', { data: { name: `PR216 Visual ${Date.now()}` } });
+            expect(res.ok()).toBe(true);
+            const org = await res.json();
+            const settings = `/${org.urlKey ?? org.issuePrefix}/organization/settings`;
+            try {
+              await page.goto(settings);
+              await page.getByRole('tab', { name: 'Intelligence', exact: true }).click();
+              const card = page.getByTestId('intelligence-profile-default');
+              await expect(card).toBeVisible();
+              await expect(page.getByTestId('intelligence-profile-lightweight')).toHaveCount(0);
+              await expect(page.getByTestId('intelligence-profile-reasoning')).toHaveCount(0);
+              await expect(card.getByRole('button', { name: /gpt-5\.6-luna/i })).toBeVisible();
+              await expect(card.getByRole('button', { name: 'Medium', exact: true })).toBeVisible();
+              const saved = page.waitForResponse(r => r.request().method() === 'PUT' && r.url().endsWith('/intelligence-profiles/default'));
+              await card.getByRole('button', { name: 'Create', exact: true }).click();
+              expect((await saved).ok()).toBe(true);
+              await page.reload();
+              await page.getByRole('tab', { name: 'Intelligence', exact: true }).click();
+              await expect(card.getByText('Disabled', { exact: true })).toBeVisible();
+              await expect(card.getByRole('button', { name: 'Medium', exact: true })).toBeVisible();
+              await page.screenshot({ path: path.join(process.env.EVIDENCE_DIR!, 'intelligence-default.png'), fullPage: true });
+              // Stub only the external provider's probe. Settings persistence and
+              // status transitions use the real server and isolated PostgreSQL.
+              await page.route(`**/api/orgs/${org.id}/adapters/codex_local/test-environment`, route => route.fulfill({
+                status: 200, contentType: 'application/json', body: JSON.stringify({
+                  agentRuntimeType: 'codex_local', status: 'fail', testedAt: new Date().toISOString(),
+                  checks: [{ code: 'codex_model_unavailable', level: 'error', message: 'Acceptance probe: model unavailable.' }],
+                }),
+              }));
+              const invalidSaved = page.waitForResponse(r => r.request().method() === 'PUT' && r.url().endsWith('/intelligence-profiles/default'));
+              await card.getByRole('button', { name: 'Enable', exact: true }).click();
+              const invalidResponse = await invalidSaved;
+              expect(invalidResponse.ok()).toBe(true);
+              expect((await invalidResponse.json()).status).toBe('invalid');
+              await expect(card.getByText('Invalid', { exact: true })).toBeVisible();
+              await page.reload();
+              await page.getByRole('tab', { name: 'Intelligence', exact: true }).click();
+              await expect(card.getByText('Invalid', { exact: true })).toBeVisible();
+              await expect(card.getByRole('button', { name: 'Disable', exact: true })).toHaveCount(0);
+              const profiles = await (await page.request.get(`/api/orgs/${org.id}/intelligence-profiles`)).json();
+              expect(profiles).toHaveLength(1);
+              expect(profiles[0]).toMatchObject({ purpose: 'default', status: 'invalid', agentRuntimeConfig: { model: 'gpt-5.6-luna', modelReasoningEffort: 'medium' } });
+              await page.screenshot({ path: path.join(process.env.EVIDENCE_DIR!, 'intelligence-invalid.png'), fullPage: true });
+            } finally {
+              expect((await page.request.delete(`/api/orgs/${org.id}`)).ok()).toBe(true);
+            }
+          });
+          EOF
+      - name: Exercise settings and Codex onboarding journeys
+        run: |
+          pnpm exec playwright test --config tests/e2e/playwright.config.ts organization-intelligence-profiles.spec.ts onboarding.spec.ts pr-216-visual-acceptance.spec.ts --workers=1 --grep 'uses one Default model|persists Codex thinking effort|fresh onboarding creates|PR216 saved defaults' > "$EVIDENCE_DIR/browser-tests.txt" 2>&1 || { tail -160 "$EVIDENCE_DIR/browser-tests.txt"; exit 1; }
+          tail -35 "$EVIDENCE_DIR/browser-tests.txt"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr-216-ui-acceptance
+          path: |
+            ${{ runner.temp }}/pr216-ui-evidence
+            tests/e2e/test-results
+            tests/e2e/playwright-report
+          retention-days: 3
