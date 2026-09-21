@@ -74,8 +74,8 @@ describe("product intelligence execution", () => {
       expect.objectContaining({
         authToken: undefined,
         agent: expect.objectContaining({
-          id: "product-intelligence-lightweight",
-          name: "Fast Intelligence",
+          id: "product-intelligence-default",
+          name: "Default Intelligence",
         }),
         runtime: {
           sessionId: null,
@@ -90,7 +90,7 @@ describe("product intelligence execution", () => {
         context: expect.objectContaining({
           rudderScene: "product_intelligence",
           productIntelligence: {
-            purpose: "lightweight",
+            purpose: "default",
             feature: "chat_title",
           },
           rudderWorkspace: {
@@ -169,8 +169,8 @@ describe("product intelligence execution", () => {
       expect.objectContaining({
         authToken: undefined,
         agent: expect.objectContaining({
-          id: "product-intelligence-reasoning",
-          name: "Smart Intelligence",
+          id: "product-intelligence-default",
+          name: "Default Intelligence",
           agentRuntimeType: "claude_local",
         }),
         config: {

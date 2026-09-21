@@ -154,21 +154,21 @@ test.describe("Onboarding wizard", () => {
     await expectSelectedCodexModel(page);
     const onboardingDialog = page.getByTestId("onboarding-dialog");
 
-    const modelButton = onboardingDialog.getByRole("button", { name: "GPT-5.6-sol", exact: true });
-    await onboardingDialog.getByRole("button", { name: "Auto", exact: true }).click();
+    const modelButton = onboardingDialog.getByRole("button", { name: "GPT-5.6-luna", exact: true });
+    await onboardingDialog.getByRole("button", { name: "Medium", exact: true }).click();
     await page.locator("[data-radix-popper-content-wrapper]").last()
-      .getByText("Ultra", { exact: true }).click();
-    await expect(onboardingDialog.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
+      .getByText("Max", { exact: true }).click();
+    await expect(onboardingDialog.getByRole("button", { name: "Max", exact: true })).toBeVisible();
     await modelButton.click();
     const modelPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await modelPopover.getByRole("button", { name: "Default", exact: true }).click();
     await expect(onboardingDialog.getByRole("button", { name: "Default", exact: true })).toBeVisible();
-    await expect(onboardingDialog.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
-    await onboardingDialog.getByRole("button", { name: "Ultra", exact: true }).click();
+    await expect(onboardingDialog.getByRole("button", { name: "Max", exact: true })).toBeVisible();
+    await onboardingDialog.getByRole("button", { name: "Max", exact: true }).click();
     const defaultEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await expect(defaultEffortPopover.getByText("Low", { exact: true })).toBeVisible();
-    await expect(defaultEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
-    await defaultEffortPopover.getByText("Ultra", { exact: true }).click();
+    await expect(defaultEffortPopover.getByText("Max", { exact: true })).toBeVisible();
+    await defaultEffortPopover.getByText("Max", { exact: true }).click();
 
     await onboardingDialog.getByRole("button", { name: "Default", exact: true }).click();
     await page.locator("[data-radix-popper-content-wrapper]").last()
@@ -177,7 +177,7 @@ test.describe("Onboarding wizard", () => {
     await onboardingDialog.getByRole("button", { name: "Auto", exact: true }).click();
     const legacyEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await expect(legacyEffortPopover.getByText("Low", { exact: true })).toBeVisible();
-    await expect(legacyEffortPopover.getByText("Ultra", { exact: true })).toHaveCount(0);
+    await expect(legacyEffortPopover.getByText("Max", { exact: true })).toHaveCount(0);
     await legacyEffortPopover.getByText("Auto", { exact: true }).click();
 
     await onboardingDialog.getByRole("button", { name: "GPT-5.5", exact: true }).click();
@@ -269,7 +269,7 @@ test.describe("Onboarding wizard", () => {
     };
 
     const expectEffortOptions = async (options: string[]) => {
-      const effortButton = onboardingDialog.getByRole("button", { name: /^(Auto|Off|Low|Ultra|Plan)$/ }).last();
+      const effortButton = onboardingDialog.getByRole("button", { name: /^(Auto|Off|Low|Medium|Max|Ultra|Plan)$/ }).last();
       await effortButton.click();
       const popover = page.locator("[data-radix-popper-content-wrapper]").last();
       for (const option of options) {
@@ -289,7 +289,7 @@ test.describe("Onboarding wizard", () => {
     await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toBeVisible();
     await expectEffortOptions(["Low", "Medium", "High", "Extra High", "Max"]);
     await selectRuntime("Codex");
-    await expectEffortOptions(["Low", "Medium", "High", "Extra High", "Max", "Ultra"]);
+    await expectEffortOptions(["Low", "Medium", "High", "Extra High", "Max"]);
     await selectRuntime("OpenCode");
     await expectEffortOptions(["Low", "Medium", "High", "Max"]);
     await selectRuntime("Pi");
@@ -443,15 +443,16 @@ test.describe("Onboarding wizard", () => {
     await expect(onboardingNameInput).toHaveValue(/\S+/, { timeout: 15_000 });
     await page.getByRole("button", { name: "Codex" }).click();
     const selectedCodexModel = await expectSelectedCodexModel(page);
-    expect(selectedCodexModel).toBe("gpt-5.6-sol");
-    const thinkingEffortButton = page.getByRole("button", { name: "Auto", exact: true });
+    expect(selectedCodexModel).toBe("gpt-5.6-luna");
+    const thinkingEffortButton = page.getByRole("button", { name: "Medium", exact: true });
     await expect(thinkingEffortButton).toBeVisible();
     await thinkingEffortButton.click();
     const thinkingEffortPopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await expect(thinkingEffortPopover.getByText("Low", { exact: true })).toBeVisible();
-    await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toBeVisible();
-    await thinkingEffortPopover.getByText("Ultra", { exact: true }).click();
-    await expect(page.getByRole("button", { name: "Ultra", exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Max", { exact: true })).toBeVisible();
+    await expect(thinkingEffortPopover.getByText("Ultra", { exact: true })).toHaveCount(0);
+    await thinkingEffortPopover.getByText("Medium", { exact: true }).click();
+    await expect(page.getByRole("button", { name: "Medium", exact: true })).toBeVisible();
     await onboardingNameInput.fill(updatedAgentName);
 
     await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -492,7 +493,7 @@ test.describe("Onboarding wizard", () => {
     expect(rootAgent.title).toBe("Operator Assistant");
     expect(rootAgent.agentRuntimeType).toBe("codex_local");
     expect(rootAgent.agentRuntimeConfig.model).toBe(selectedCodexModel);
-    expect(rootAgent.agentRuntimeConfig.modelReasoningEffort).toBe("ultra");
+    expect(rootAgent.agentRuntimeConfig.modelReasoningEffort).toBe("medium");
 
     const profilesRes = await page.request.get(
       `${baseUrl}/api/orgs/${organization.id}/intelligence-profiles`,
@@ -509,11 +510,13 @@ test.describe("Onboarding wizard", () => {
     const profileByPurpose = new Map(
       profiles.filter(Boolean).map((profile) => [profile!.purpose, profile!]),
     );
-    for (const purpose of ["lightweight", "reasoning"]) {
+    expect(profiles).toHaveLength(1);
+    for (const purpose of ["default"]) {
       const profile = profileByPurpose.get(purpose);
       expect(profile).toBeTruthy();
       expect(profile!.agentRuntimeType).toBe("codex_local");
-      expect(profile!.agentRuntimeConfig.model).toBe("gpt-5.4-mini");
+      expect(profile!.agentRuntimeConfig.model).toBe("gpt-5.6-luna");
+      expect(profile!.agentRuntimeConfig.modelReasoningEffort).toBe("medium");
       expect(profile!.status).toBe("configured");
       expect(profile!.lastVerifiedAt).toBeTruthy();
       expect(profile!.lastError).toBeNull();

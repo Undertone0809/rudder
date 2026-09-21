@@ -146,11 +146,11 @@ describe("organization intelligence profile routes", () => {
     }));
   });
 
-  it("runs the full runtime chain before accepting configured status", async () => {
+  it.each(["default", "lightweight", "reasoning"])("tests the full runtime chain before enabling %s", async (purpose) => {
     const app = await createApp();
 
     const res = await request(app)
-      .put("/api/orgs/org-1/intelligence-profiles/lightweight")
+      .put(`/api/orgs/org-1/intelligence-profiles/${purpose}`)
       .send({
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {
@@ -185,7 +185,7 @@ describe("organization intelligence profile routes", () => {
     );
     expect(mockOrganizationIntelligenceProfiles.upsert).toHaveBeenCalledWith(
       "org-1",
-      "lightweight",
+      purpose,
       expect.objectContaining({
         status: "configured",
         lastVerifiedAt: expect.any(Date),
@@ -194,14 +194,14 @@ describe("organization intelligence profile routes", () => {
     );
   });
 
-  it("rejects configured status when the runtime chain does not pass", async () => {
+  it.each(["default", "lightweight", "reasoning"])("rejects enabling %s when the runtime chain fails", async (purpose) => {
     mockOrganizationIntelligenceRuntimeChain.assertUsable.mockRejectedValueOnce(
       unprocessable("Runtime chain test failed for Primary: Model is not available."),
     );
     const app = await createApp();
 
     const res = await request(app)
-      .put("/api/orgs/org-1/intelligence-profiles/lightweight")
+      .put(`/api/orgs/org-1/intelligence-profiles/${purpose}`)
       .send({
         agentRuntimeType: "codex_local",
         agentRuntimeConfig: {

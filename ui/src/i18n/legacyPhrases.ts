@@ -928,6 +928,8 @@ const zhExactPhrases: Record<string, string> = {
   "Issue AI search, reranking, complex summaries": "任务 AI 搜索、重排序、复杂摘要",
   "Organization-level AI profiles for product features that are not agent work.": "面向非智能体工作的产品功能，配置组织级 AI 档案。",
   "Provider used by this organization intelligence profile.": "此组织智能档案使用的提供商。",
+  "Titles, summaries, classification, and issue AI search": "标题、摘要、分类和任务 AI 搜索",
+  "Model defaults changed. Test the runtime chain before enabling.": "默认模型已更新，请先测试运行时链路，再启用。",
   "Heartbeat on interval": "按间隔心跳",
   "Run heartbeat every": "每隔",
   "sec": "秒",
