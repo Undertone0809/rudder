@@ -12,9 +12,7 @@ jobs:
     env:
       CI: true
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      RUDDER_E2E_HOME: ${{ runner.temp }}/rudder-pr216-ui
       RUDDER_E2E_INSTANCE_ID: pr216
-      EVIDENCE_DIR: ${{ runner.temp }}/pr216-ui-evidence
     steps:
       - uses: actions/checkout@v6
         with:
@@ -22,8 +20,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Install locked dependencies and Chromium
+      - name: Initialize isolated paths and install dependencies
         run: |
+          echo "RUDDER_E2E_HOME=$RUNNER_TEMP/rudder-pr216-ui" >> "$GITHUB_ENV"
+          echo "EVIDENCE_DIR=$RUNNER_TEMP/pr216-ui-evidence" >> "$GITHUB_ENV"
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
           pnpm install --frozen-lockfile
@@ -60,7 +60,7 @@ jobs:
               await expect(card.getByText('Disabled', { exact: true })).toBeVisible();
               await expect(card.getByRole('button', { name: 'Medium', exact: true })).toBeVisible();
               await page.screenshot({ path: path.join(process.env.EVIDENCE_DIR!, 'intelligence-default.png'), fullPage: true });
-              // Stub only the external provider's probe. Settings persistence and
+              // Only the external provider probe is stubbed. Persistence and
               // status transitions use the real server and isolated PostgreSQL.
               await page.route(`**/api/orgs/${org.id}/adapters/codex_local/test-environment`, route => route.fulfill({
                 status: 200, contentType: 'application/json', body: JSON.stringify({
