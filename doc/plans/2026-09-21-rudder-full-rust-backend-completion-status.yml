@@ -34,13 +34,13 @@ real_environment_lane:
   production_verified: false
 candidate:
   source_ref: codex/rudder-full-rust-backend-completion-20260921
-  source_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
-  tree_sha: 9ed2aa730252be96a097b829836122a8dea9098b
+  source_sha: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
+  tree_sha: d4452f5fec44ac3aa323a8be42520bc3008ba626
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  dirty_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   dirty_fingerprint_status: exact_clean_candidate_source_diff
   dirty_fingerprint_scope: committed_source_diff_origin_main_to_head_excluding_durable_plan_records
-  runtime: focused_local_checks_after_main_reconciliation
+  runtime: focused_local_checks_after_authority_receipt_slice; exact_real_probe_pending
   organization_data: disposable_embedded_postgres_fixtures
   acceptance_packet: d1-writer-fence-v8_pending_stage_review
   current_source_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
@@ -63,7 +63,7 @@ phase:
 slice:
   current: organization-project-writer-fence-and-private-d1-route
   next: signed-bridge-and-complete-writer-fence
-  status: main_reconciled_bridge_lifecycle_verified_local_writer_fence_in_progress
+  status: main_reconciled_member_read_authority_receipt_verified_local_writer_fence_in_progress
 evidence:
   reviewer: pending_current_candidate_stage_review
   reviewer_receipt: invalidated_after_fence_token_side_chat_strategy_main_drift_and_candidate_drift
@@ -79,7 +79,7 @@ blockers:
     owner: migration_implementation
     state: resolved
     detail: origin/main advanced from the migration base to c67ce0f00bb78e323068caac4a9ae349f863c9da. The six Main commits were rebased onto the migration checkpoint in an isolated reconcile worktree, the migration branch now points to 9883c548e19adb5d4915d17c33992e4bce98b4b9, and affected source scans were rerun.
-    next_step: rebind stage review and verifier receipts to the exact candidate after the current bridge hardening changes.
+    next_step: rebind stage review and verifier receipts to the exact candidate after the current authority-receipt slice and exact real probe.
   - id: P0-node-writer-fence
     owner: migration_implementation
     state: open
@@ -116,8 +116,8 @@ blockers:
     detail: First-party MCP/native process paths still select bundled Node implementations in fallback modes.
     next_step: add explicit missing-Rust failure and static/runtime negative checks.
 writer_audit:
-  candidate_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
-  candidate_fingerprint_status: exact_candidate_pending_post_fix_rebind
+  candidate_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
+  candidate_fingerprint_status: exact_candidate_pending_real_probe_and_stage_review
   verdict: needs_more_evidence
   d1_activation: blocked
   fence_contract:
@@ -162,7 +162,7 @@ completed_checks:
   - plan files added in isolated migration worktree
   - current source baseline read without resetting the original checkout
   - release migration compatibility matrix updated to 0167 and focused tests passed 16/16 (historical check; exact candidate rerun pending)
-  - current exact candidate is 9883c548e19adb5d4915d17c33992e4bce98b4b9 with tree 9ed2aa730252be96a097b829836122a8dea9098b and source fingerprint 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  - current exact candidate is 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9 with tree d4452f5fec44ac3aa323a8be42520bc3008ba626 and source fingerprint 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   - current migration manifest computed as 168 journal entries and 170 SQL files at this candidate
   - current route scan is 47 source files and 513 declaration hits; transaction scan is 62 files and 221 hits, 51 files and 200 production hits
   - current CLI/MCP scan is 118 CLI capability entries (107 agent-v1 and 11 compat contracts) and 107 MCP descriptors
@@ -176,19 +176,20 @@ completed_checks:
   - independent verifier on pre-v6 candidate fingerprint bfe1feee38420d564ce83a48e5efd7f91da51288a0627a2c4564a624a58e55f1 returned QUESTION because the Actix route is private and the signer/default bridge is absent; this receipt is stale and cannot support v6
   - prior db/server/CLI typechecks and migration tests remain supporting evidence; exact-candidate rerun is pending
   - focused lint/import check passed for 18 changed tracked files; full lint still has five clean baseline files requiring import organization
-  - status, ledger, and current-source-refresh YAML parse validation pending after this refresh
+  - status, ledger, and current-source-refresh YAML parse validation passed after the Main refresh; revalidation is required after this candidate rebind
+  - member-directory authority receipt route suite passed 18/18; bridge minimal-environment/lifecycle suite passed 5/5; server typecheck and changed import lint passed
 pending_checks:
-  - rebind the current bridge hardening and shadow observability changes to a new exact candidate after implementation
+  - run the current exact candidate's real TypeScript-to-Rust bridge workflow and capture authority receipts
   - validate plan/status/ledger/current-source YAML and Markdown references after the candidate refresh
   - complete semantic authority, writer, lifecycle, and contract reconciliation including the current writer audit rows
-  - invalidate v5 and v6 and create/validate the v7 exact-candidate delivery packet
+  - create/validate the v8 exact-candidate delivery packet after the real probe
   - complete the actor/state/fence/listener/audit contracts and extend the persisted fencing token to every competing writer before D1 activation
   - obtain exact-candidate stage review and independent verifier evidence for the current fence slice
-  - obtain v7 stage review and independent verifier evidence for the private D1 route and writer-fence slice
+  - obtain v8 stage review and independent verifier evidence for the private read/authority-receipt slice and writer-fence boundary
   - run the first authorized real-entry probe for the smallest accepted slice before the next dependent slice
   - run a real TypeScript-to-Rust bridge workflow with startup/readiness/close/retry and no-Node-read evidence on the same exact candidate
 receipts: []
 interrupt_resume:
-  last_durable_commit: 9883c548e19adb5d4915d17c33992e4bce98b4b9
+  last_durable_commit: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
   remaining_work: bridge hardening, semantic inventory and packet, signed actor/session authority, complete writer/token fencing, then supported listener integration and D1 verification
   next_command: review the current bridge hardening diff, create/validate the v8 packet, rerun affected checks, then obtain current-candidate stage review and verifier receipts before the next D1 writer slice
