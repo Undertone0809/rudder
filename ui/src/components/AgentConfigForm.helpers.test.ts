@@ -45,8 +45,10 @@ describe("AgentConfigForm runtime defaults", () => {
     expect(createValuesForRuntime("codex_local").countSubscriptionUsageAsCost).toBe(true);
     expect(defaultConfigForRuntime("codex_local")).not.toHaveProperty("countSubscriptionUsageAsCost");
     expect(defaultConfigForRuntime("codex_local")).toMatchObject({
-      model: "gpt-5.6-sol",
+      model: "gpt-5.6-luna",
+      modelReasoningEffort: "medium",
     });
+    expect(createValuesForRuntime("codex_local").thinkingEffort).toBe("medium");
   });
 
   it.each([

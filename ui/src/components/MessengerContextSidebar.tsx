@@ -68,6 +68,7 @@ import { resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
+import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
   DEFAULT_THREAD_ORGANIZATION_RULE,
@@ -1069,7 +1070,7 @@ export function MessengerContextSidebar() {
 
   const canRegenerateChatTitles = useMemo(() => {
     const profiles = intelligenceProfilesQuery.data ?? [];
-    return profiles.some((profile) => profile?.purpose === "lightweight" && profile.status === "configured");
+    return isOrganizationIntelligenceEnabled(profiles, "lightweight");
   }, [intelligenceProfilesQuery.data]);
 
   const customGroups = customGroupsQuery.data?.groups ?? [];

@@ -64,6 +64,7 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
+import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import {
   NO_CHAT_AGENT_ID,
   isSelectableChatAgentId,
@@ -518,7 +519,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   });
   const canRegenerateChatTitles = useMemo(() => {
     const profiles = intelligenceProfilesQuery.data ?? [];
-    return profiles.some((profile) => profile?.purpose === "lightweight" && profile.status === "configured");
+    return isOrganizationIntelligenceEnabled(profiles, "lightweight");
   }, [intelligenceProfilesQuery.data]);
   const { data: issues, error: issuesError } = useQuery({
     queryKey: queryKeys.issues.listPreview(selectedOrganizationId ?? "__none__", CHAT_ISSUE_MENTION_LIMIT),
