@@ -49,6 +49,7 @@ import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { resolveIssueReferenceInputs } from "./issue-references.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
 
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
@@ -132,6 +133,7 @@ async function stageIssueDescriptionAssets(input: {
   createdByAgentId?: string | null;
   createdByUserId?: string | null;
 }) {
+  await lockNodeMutationAuthority(input.tx, input.orgId);
   const sourceAssetIds = extractIssueDescriptionAssetIds(input.description);
   if (sourceAssetIds.length === 0) {
     return {
@@ -1171,6 +1173,7 @@ export function issueService(db: Db, storage?: StorageService) {
       const copiedObjectKeys: Array<{ orgId: string; objectKey: string }> = [];
       try {
         const createdIssue = await db.transaction(async (tx) => {
+          await lockNodeMutationAuthority(tx, orgId);
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         if (executionWorkspaceSettings == null && issueData.projectId) {
@@ -1817,6 +1820,13 @@ export function issueService(db: Db, storage?: StorageService) {
 
     remove: (id: string) =>
       db.transaction(async (tx) => {
+        const issueOrganization = await tx
+          .select({ orgId: issues.orgId })
+          .from(issues)
+          .where(eq(issues.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!issueOrganization) return null;
+        await lockNodeMutationAuthority(tx, issueOrganization.orgId);
         const attachmentAssetIds = await tx
           .select({ assetId: issueAttachments.assetId })
           .from(issueAttachments)

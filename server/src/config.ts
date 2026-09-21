@@ -28,6 +28,7 @@ import {
   parseMcpDeploymentPolicyEnv,
   type McpDeploymentAllowlists,
 } from "./services/mcp/security-policy.js";
+import type { RustFoundationMode } from "./services/rust-foundation-bridge.js";
 
 function loadEnvFileWithoutOverride(filePath: string, blockedKeys?: ReadonlySet<string>): void {
   if (!existsSync(filePath)) return;
@@ -109,6 +110,9 @@ export interface Config {
   authDisableSignUp: boolean;
   databaseMode: DatabaseMode;
   databaseUrl: string | undefined;
+  rustFoundationMode: RustFoundationMode;
+  rustFoundationBinaryPath: string | undefined;
+  rustFoundationActorEnvelopeKey: string | undefined;
   embeddedPostgresDataDir: string;
   embeddedPostgresPort: number;
   databaseBackupEnabled: boolean;
@@ -141,6 +145,14 @@ function parsePositiveInt(rawValue: string | undefined): number | null {
   const parsed = Number(rawValue);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) return null;
   return parsed;
+}
+
+function parseRustFoundationMode(rawValue: string | undefined): RustFoundationMode {
+  const value = rawValue?.trim() || "off";
+  if (value === "off" || value === "shadow" || value === "required") return value;
+  throw new Error(
+    `RUDDER_RUST_MEMBER_DIRECTORY_MODE must be off, shadow, or required; received ${value}`,
+  );
 }
 
 function parsePositiveBytes(rawValue: string | undefined): number | null {
@@ -346,6 +358,9 @@ export function loadConfig(): Config {
       : Number.isFinite(heartbeatRunInactivityTimeoutMsRaw)
         ? Math.max(0, heartbeatRunInactivityTimeoutMsRaw)
         : 0;
+  const rustFoundationMode = parseRustFoundationMode(process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE);
+  const rustFoundationBinaryPath = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim() || undefined;
+  const rustFoundationActorEnvelopeKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim() || undefined;
   const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);
 
   return {
@@ -360,6 +375,9 @@ export function loadConfig(): Config {
     authDisableSignUp,
     databaseMode: fileDatabaseMode,
     databaseUrl: process.env.DATABASE_URL ?? fileDbUrl,
+    rustFoundationMode,
+    rustFoundationBinaryPath,
+    rustFoundationActorEnvelopeKey,
     embeddedPostgresDataDir: resolveHomeAwarePath(
       fileConfig?.database.embeddedPostgresDataDir ?? resolveDefaultEmbeddedPostgresDir(),
     ),

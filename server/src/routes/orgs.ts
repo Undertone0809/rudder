@@ -28,6 +28,7 @@ import { createReadStream } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { forbidden, unprocessable } from "../errors.js";
+import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
@@ -48,6 +49,11 @@ import {
 } from "../services/index.js";
 import { libraryEntryService } from "../services/library-entries.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
+import {
+  RustFoundationBridgeError,
+  type RustFoundationBridge,
+  type RustFoundationResponse,
+} from "../services/rust-foundation-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -114,6 +120,7 @@ export function organizationRoutes(
   db: Db,
   storage?: StorageService,
   workspacePreview?: WorkspaceWebPreviewRuntime,
+  rustFoundationBridge?: RustFoundationBridge,
 ) {
   const router = Router();
   const svc = organizationService(db);
@@ -133,6 +140,31 @@ export function organizationRoutes(
   const secrets = secretService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
   const runtimeChain = organizationIntelligenceRuntimeChainService(db, { strictSecretsMode });
+
+  function sendRustResponse(res: Response, response: RustFoundationResponse) {
+    res
+      .status(response.status)
+      .set("Content-Type", response.contentType)
+      .end(response.body);
+  }
+
+  function canonicalizeJson(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(canonicalizeJson);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, canonicalizeJson(entry)]),
+    );
+  }
+
+  function jsonBody(response: RustFoundationResponse) {
+    try {
+      return canonicalizeJson(JSON.parse(response.body.toString("utf8")));
+    } catch {
+      return null;
+    }
+  }
 
   async function assertCanUpdateBranding(req: Request, orgId: string) {
     assertCompanyAccess(req, orgId);
@@ -260,6 +292,29 @@ export function organizationRoutes(
     const rawLimit = typeof req.query.limit === "string" && req.query.limit.trim()
       ? Number(req.query.limit)
       : undefined;
+
+    let shadowResponse: RustFoundationResponse | null = null;
+    if (rustFoundationBridge?.mode === "required") {
+      try {
+        sendRustResponse(res, await rustFoundationBridge.memberDirectory(req, orgId));
+      } catch (error) {
+        const code = error instanceof RustFoundationBridgeError ? error.code : "request_failed";
+        logger.error({ err: error, code, orgId }, "required Rust member directory bridge failed");
+        res.status(503).json({
+          error: "Rust member directory is unavailable",
+          code: "rust_foundation_member_directory_unavailable",
+        });
+      }
+      return;
+    }
+    if (rustFoundationBridge?.mode === "shadow") {
+      try {
+        shadowResponse = await rustFoundationBridge.memberDirectory(req, orgId);
+      } catch (error) {
+        logger.warn({ err: error, orgId }, "Rust member directory shadow request failed; serving Node result");
+      }
+    }
+
     const page = await members.list({
       orgId,
       query: typeof req.query.query === "string" ? req.query.query : null,
@@ -268,6 +323,16 @@ export function organizationRoutes(
       cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
       fullIds: req.query.fullIds === "true" || req.query.fullIds === "1",
     });
+    if (shadowResponse) {
+      const matches = shadowResponse.status === 200
+        && JSON.stringify(jsonBody(shadowResponse)) === JSON.stringify(canonicalizeJson(page));
+      if (!matches) {
+        logger.warn(
+          { orgId, status: shadowResponse.status, bodyBytes: shadowResponse.body.byteLength },
+          "Rust member directory shadow response differed from Node result",
+        );
+      }
+    }
     res.json(page);
   });
 

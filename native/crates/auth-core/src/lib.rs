@@ -278,6 +278,19 @@ impl ActorEnvelope {
         request: &RequestContext<'_>,
         replay: &mut NonceReplayGuard,
     ) -> Result<(), AuthError> {
+        self.verify_to_actor(secret, request, replay).map(|_| ())
+    }
+
+    /// Verify an envelope and return an opaque actor token for trusted
+    /// application services. The token is created only after all signature,
+    /// freshness, request-binding, and nonce-replay checks pass, and cannot
+    /// be deserialized or constructed by a caller.
+    pub fn verify_to_actor(
+        &self,
+        secret: &[u8],
+        request: &RequestContext<'_>,
+        replay: &mut NonceReplayGuard,
+    ) -> Result<VerifiedActor, AuthError> {
         self.validate()?;
         if request.now < self.issued_at {
             return Err(AuthError::NotYetValid);
@@ -287,7 +300,14 @@ impl ActorEnvelope {
         }
         self.verify_signature(secret)?;
         self.verify_request_bindings(request)?;
-        replay.claim(&self.nonce, self.expires_at, request.now)
+        replay.claim(&self.nonce, self.expires_at, request.now)?;
+        Ok(VerifiedActor {
+            actor: self.actor.clone(),
+            organization_id: self.organization_id.clone(),
+            session_id: self.session_id.clone(),
+            auth_epoch: self.auth_epoch,
+            signature: self.signature.clone(),
+        })
     }
 
     /// Verify using a non-serializable, zeroizing key wrapper.
@@ -298,6 +318,16 @@ impl ActorEnvelope {
         replay: &mut NonceReplayGuard,
     ) -> Result<(), AuthError> {
         self.verify(key.as_bytes(), request, replay)
+    }
+
+    /// Verify using a configured key and retain the authenticated actor token.
+    pub fn verify_with_key_to_actor(
+        &self,
+        key: &SigningKey,
+        request: &RequestContext<'_>,
+        replay: &mut NonceReplayGuard,
+    ) -> Result<VerifiedActor, AuthError> {
+        self.verify_to_actor(key.as_bytes(), request, replay)
     }
 
     /// Return the exact unsigned claims covered by the signature.
@@ -397,6 +427,44 @@ impl ActorEnvelope {
             return Err(AuthError::BodyHashMismatch);
         }
         Ok(())
+    }
+}
+
+/// Opaque evidence that one actor envelope passed the trusted boundary.
+///
+/// This type intentionally has no serde implementation and no public
+/// constructor. Downstream application services can inspect the bound
+/// identity, but cannot mint authority from client-provided fields.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedActor {
+    actor: ActorIdentity,
+    organization_id: String,
+    session_id: String,
+    auth_epoch: u64,
+    signature: String,
+}
+
+impl VerifiedActor {
+    pub fn actor(&self) -> &ActorIdentity {
+        &self.actor
+    }
+
+    pub fn organization_id(&self) -> &str {
+        &self.organization_id
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub fn auth_epoch(&self) -> u64 {
+        self.auth_epoch
+    }
+
+    /// Return the already-verified envelope signature for trusted adapter
+    /// integrity binding. It is not an authority constructor or a secret.
+    pub fn signature(&self) -> &str {
+        &self.signature
     }
 }
 

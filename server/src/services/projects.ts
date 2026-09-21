@@ -26,6 +26,7 @@ import {
   resolveOrganizationWorkspaceRoot,
 } from "../home-paths.js";
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import {
   listProjectResourceAttachmentsByProjectIds,
   replaceProjectResourceAttachments,
@@ -288,7 +289,9 @@ async function attachWorkspaces(db: Db, rows: ProjectWithGoals[]): Promise<Proje
 /** Sync the project_goals join table for a single project. */
 async function syncGoalLinks(dbOrTx: Db | any, projectId: string, orgId: string, goalIds: string[]) {
   // Delete existing links
-  await dbOrTx.delete(projectGoals).where(eq(projectGoals.projectId, projectId));
+  await dbOrTx
+    .delete(projectGoals)
+    .where(and(eq(projectGoals.projectId, projectId), eq(projectGoals.orgId, orgId)));
 
   // Insert new links
   if (goalIds.length > 0) {
@@ -541,17 +544,17 @@ export function projectService(db: Db) {
       projectData.name = resolveProjectNameForUniqueShortname(projectData.name, existingProjects);
       const projectId = projectData.id ?? randomUUID();
 
-      await ensureProjectLibraryLayout({
-        orgId,
-        projectId,
-        projectName: projectData.name,
-        projectUrlKey: deriveProjectUrlKey(projectData.name, projectId),
-      });
-
       // Also write goalId to the legacy column (first goal or null)
       const legacyGoalId = ids !== undefined ? (ids[0] ?? null) : projectData.goalId ?? null;
 
       const row = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, orgId);
+        await ensureProjectLibraryLayout({
+          orgId,
+          projectId,
+          projectName: projectData.name,
+          projectUrlKey: deriveProjectUrlKey(projectData.name, projectId),
+        });
         const created = await tx
           .insert(projects)
           .values({ ...projectData, id: projectId, goalId: legacyGoalId, orgId })
@@ -636,6 +639,7 @@ export function projectService(db: Db) {
         : [];
 
       const row = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, existingProject.orgId);
         const updatedRow = await tx
           .update(projects)
           .set(updates)
@@ -674,15 +678,23 @@ export function projectService(db: Db) {
     },
 
     remove: (id: string) =>
-      db
-        .delete(projects)
-        .where(eq(projects.id, id))
-        .returning()
-        .then((rows) => {
-          const row = rows[0] ?? null;
-          if (!row) return null;
-          return { ...row, icon: row.icon ?? DEFAULT_PROJECT_ICON, urlKey: deriveProjectUrlKey(row.name, row.id) };
-        }),
+      db.transaction(async (tx) => {
+        const existing = await tx
+          .select({ orgId: projects.orgId })
+          .from(projects)
+          .where(eq(projects.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+
+        await lockNodeMutationAuthority(tx, existing.orgId);
+        const row = await tx
+          .delete(projects)
+          .where(eq(projects.id, id))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!row) return null;
+        return { ...row, icon: row.icon ?? DEFAULT_PROJECT_ICON, urlKey: deriveProjectUrlKey(row.name, row.id) };
+      }),
 
     // Legacy internal Project Workspace CRUD. These methods are intentionally
     // not exposed by project routes; current product flows resolve codebases and
@@ -742,6 +754,7 @@ export function projectService(db: Db) {
 
       const shouldBePrimary = data.isPrimary === true || existing.length === 0;
       const created = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, project.orgId);
         if (shouldBePrimary) {
           await tx
             .update(projectWorkspaces)
@@ -844,6 +857,7 @@ export function projectService(db: Db) {
       if (data.metadata !== undefined) patch.metadata = data.metadata;
 
       const updated = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, existing.orgId);
         if (data.isPrimary === true) {
           await tx
             .update(projectWorkspaces)
@@ -925,19 +939,20 @@ export function projectService(db: Db) {
     },
 
     removeWorkspace: async (projectId: string, workspaceId: string): Promise<ProjectWorkspace | null> => {
-      const existing = await db
-        .select()
-        .from(projectWorkspaces)
-        .where(
-          and(
-            eq(projectWorkspaces.id, workspaceId),
-            eq(projectWorkspaces.projectId, projectId),
-          ),
-        )
-        .then((rows) => rows[0] ?? null);
-      if (!existing) return null;
-
       const removed = await db.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(projectWorkspaces)
+          .where(
+            and(
+              eq(projectWorkspaces.id, workspaceId),
+              eq(projectWorkspaces.projectId, projectId),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+
+        await lockNodeMutationAuthority(tx, existing.orgId);
         const row = await tx
           .delete(projectWorkspaces)
           .where(eq(projectWorkspaces.id, workspaceId))

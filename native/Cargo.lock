@@ -1519,6 +1519,7 @@ name = "rudder-project-goal-link-core"
 version = "0.7.23"
 dependencies = [
  "hmac",
+ "rudder-auth-core",
  "serde",
  "serde_json",
  "sha2",
@@ -1585,6 +1586,10 @@ dependencies = [
  "actix-web",
  "base64",
  "rudder-archive-core",
+ "rudder-auth-core",
+ "rudder-d1-persistence",
+ "rudder-organization-mutation-core",
+ "rudder-project-goal-link-core",
  "serde",
  "serde_json",
  "sha2",

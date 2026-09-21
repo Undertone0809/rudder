@@ -1,0 +1,446 @@
+schema: rudder.rust-backend-completion-ledger/v1
+plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
+updated_at: 2026-09-22
+integration_policy:
+  name: staged_narrowest_authorized_real_entry
+  correction_date: 2026-09-22
+  sequence: local_contract_review_exact_candidate_real_entry_probe_next_slice
+  target_order: [disposable_installed_runtime, supported_default_startup, staging, explicitly_allowlisted_production_canary_or_shadow]
+  constraints: [no_production_dual_write, no_silent_node_fallback, no_unrestricted_traffic_switch, no_stable_publication_without_release_gate]
+main_adaptation:
+  migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
+  latest_observed_main_sha: c67ce0f00bb78e323068caac4a9ae349f863c9da
+  commits_ahead_of_migration_base: 6
+  state: sync_required_before_exact_candidate
+  changed_path_classes: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+  changed_path_assessment: no_direct_rust_route_overlap_but_real_entry_evidence_depends_on_dev_runner_status_and_codex_local_readiness_recheck
+  rule: main_contract_drift_invalidates_affected_slice_receipts_even_when_rust_sources_are_unchanged
+source:
+  candidate_sha: c54001819ca38079b627994557db0a18ed278fc0
+  candidate_tree: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
+  dirty_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
+  dirty_fingerprint_status: historical_superseded_rebind_required
+  candidate_state: drifted_before_exact_candidate_freeze
+  counts_status: current_scan_refreshed; semantic_reconciliation_blocked_by_unfenced_writers
+  current_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
+  current_scan_counts:
+    route_source_files_with_declarations: 47
+    route_declaration_scan_hits: 513
+    transaction_source_files: 61
+    transaction_scan_hits: 212
+    production_transaction_source_files: 50
+    production_transaction_scan_hits: 192
+    sql_migration_files: 170
+    migration_journal_entries: 168
+    cli_capability_entries: 118
+    cli_agent_v1_entries: 107
+    cli_compat_entries: 11
+    mcp_descriptor_entries: 107
+  detailed_inputs:
+    - doc/plans/2026-08-20-rust-route-transaction-writer-inventory.yml
+    - doc/plans/2026-08-20-rust-cli-mcp-contract-inventory.yml
+    - doc/plans/2026-08-20-rust-electron-release-inventory.yml
+    - doc/plans/2026-08-28-rust-migration-g0-current-source-delta.yml
+    - doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
+status_vocabulary:
+  implemented: Rust code or contract exists
+  private_verified: focused private tests or differential evidence pass
+  real_entry_connected: installed or user-facing entry invokes Rust
+  default_path_verified: clean supported default path uses Rust
+  old_authority_retired: old first-party writer/runtime absent from receipts and guarded by tests
+capability_state_fields:
+  - implemented
+  - private_verified
+  - real_entry_connected
+  - default_path_verified
+  - old_authority_retired
+stage_review:
+  verdict: needs_more_evidence
+  level: stage_verdict
+  source: current_candidate_writer_audit_and_prior_independent_stage_review_2026-09-21
+  receipt_state: invalidated_by_main_drift_and_live_candidate_changes
+  blocking_findings:
+    - id: P0-main-drift
+      summary: origin/main advanced six commits beyond the migration base while the candidate remained dirty; the current source/tree/fingerprint must be rebound before any review or verifier receipt can be reused.
+      required_proof: Isolated Main sync, changed-path compatibility decision, affected scan rerun, and new exact candidate fingerprint.
+    - id: P0-node-writer-fence
+      summary: The current candidate fences the main organization, Project, resource, workspace, Issue-counter, cost, and all 17 Goal service writers, but the semantic audit still has Goal route/issue projection bypasses plus unfenced asset/logo, approval, budget/settings, portability, onboarding, and background writers.
+      required_proof: Every remaining legacy writer locks and validates the owner/epoch before its first business write, or is drained and removed from the default path.
+    - id: P1-project-goal-replacement
+      summary: The complete Rust goal-set command and standalone Actix route now exist and private black-box tests pass, but the route is not connected to the supported Node bridge or installed/default listener and competing writers remain.
+      required_proof: Server-issued actor bridge, supported entry connection, exact default workflow, old-writer rejection, and verifier PASS on the current candidate.
+    - id: P1-signed-actor-sequencing
+      summary: D1 public writes cannot precede a request-bound signed actor envelope and fail-closed bridge.
+      required_proof: Server-issued actor envelope, replay/substitution/revocation tests, and no client authority fields.
+    - id: P1-single-listener
+      summary: The supported startup has not selected or proven a sole public listener.
+      required_proof: One listener topology with process receipts and duplicate-listener negative proof.
+    - id: P1-audit-atomicity
+      summary: Existing Node activity logging is outside some business transactions while D1 requires atomic audit rollback.
+      required_proof: Explicit contract and rollback/recovery evidence for business state, receipt, projection, and activity.
+    - id: P1-no-node-fallback
+      summary: First-party CLI/MCP and native process resolution still have Node fallback paths.
+      required_proof: Missing Rust binary fails explicitly and packaged receipts contain no first-party Node fallback.
+    - id: P1-writer-token
+      summary: Selected Node/Rust D1 fences now validate owner/version/epoch and the persisted fencing token; all Goal service methods are covered, but route/issue bypasses and approval, comments, storage, portability, onboarding, automation, and background writers still lack the same fence.
+      required_proof: Extend the token check to every competing writer or drain and retire each writer before activating a Rust owner.
+  d1_activation: blocked
+  blockers_are_current: true
+authority_rows:
+  - id: runtime.http_public_listener
+    domain: server
+    authority_kind: rust_product_runtime
+    current_authority: node
+    rust_asset: native/bins/rudder-server-foundation and future rudder-server
+    public_entrypoint: Actix HTTP and WebSocket listener
+    auth_scope: actor, organization, session, request binding
+    transaction_boundary: per application mutation or read transaction
+    audit_side_effects: route-specific activity/outbox/effects
+    recovery: drain, restart, request cancellation, private bridge fail-closed
+    cli_mcp: shared Rust contract service
+    fence: listener and route authority epoch
+    status: private_verified
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: historical_private_foundation_only
+    retirement_gate: Actix sole listener, all route rows accepted, no Node listener
+    next_action: phase_1_public_health_and_read_entry
+  - id: runtime.sqlx_database_authority
+    domain: database
+    authority_kind: rust_product_runtime
+    current_authority: node_drizzle
+    rust_asset: native SQLx crates and future db core
+    public_entrypoint: server startup and application services
+    auth_scope: organization scope in every query and mutation
+    transaction_boundary: transaction-connected component
+    audit_side_effects: activity, receipt, outbox, budget/cost where applicable
+    recovery: advisory lock, backup, journal/invariant recovery
+    cli_mcp: shared application services
+    fence: persisted owner, epoch, token
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: source inspection/private D1 only
+    retirement_gate: historical migrations and old-version compatibility accepted
+    next_action: phase_0_query/writer inventory then phase_6 migration authority
+  - id: read.organization_member_directory
+    domain: organization_read
+    authority_kind: rust_product_runtime
+    current_authority: node_drizzle
+    rust_asset: native/crates/server-foundation/src/lib.rs
+    public_entrypoint: Node supported startup -> private authenticated Actix member-directory read route; CLI/MCP consumers remain to be connected
+    auth_scope: server-issued actor envelope, organization, session, audience, request binding
+    transaction_boundary: bounded SQLx read queries for count and ordered page
+    audit_side_effects: none; read receipt and process identity only
+    recovery: bounded query, cursor replay, restart, missing database, explicit auth failure
+    cli_mcp: existing organization member-directory contract requires differential parity before connection
+    fence: no business mutation fence; auth/session epoch and private bridge lease required
+    status: private_verified
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: private Actix/PostgreSQL fixture passed 8/8; bridge path exists but exact supported/default startup and real TypeScript-to-Rust process evidence remain pending
+    retirement_gate: exact public/default route and CLI/MCP read parity with Node route, then Node read path retirement
+    next_action: complete bridge lifecycle/interop proof, sync Main, then run the same Node startup -> Actix -> SQLx workflow and record real_entry_connected separately from default_path_verified
+  - id: security.actor_envelope_and_private_bridge
+    domain: identity_boundary
+    authority_kind: rust_product_runtime
+    current_authority: node_request_context
+    rust_asset: native/crates/auth-core and future Actix request extractor
+    public_entrypoint: Actix request and private transition bridge
+    auth_scope: server-issued actor, organization, audience, request hash, nonce, expiry, revocation epoch
+    transaction_boundary: envelope verification precedes every business transaction
+    audit_side_effects: bridge receipt and actor/run attribution
+    recovery: replay rejection, expiry, revocation, restart, fail-closed bridge
+    cli_mcp: runtime-owned identity injection; model cannot supply actor authority
+    fence: auth/session epoch and bridge lease
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: private protocol tests only; no public request extractor
+    retirement_gate: signed envelope and bridge negative tests pass for the exact public candidate
+    next_action: phase_0 actor and session contract freeze
+  - id: lifecycle.organization_mutation_state_provisioning
+    domain: organization_lifecycle
+    authority_kind: rust_product_runtime
+    current_authority: node_create_delete_paths
+    rust_asset: SQLx organization state lifecycle service
+    public_entrypoint: organization create/delete and authority handoff
+    auth_scope: instance admin, organization, actor, deletion receipt constraints
+    transaction_boundary: create provisioning and deletion ordering with organization transaction
+    audit_side_effects: provisioning receipt, deletion activity, mutation history retention
+    recovery: idempotent provisioning, missing-row repair, failed deletion rollback
+    cli_mcp: shared application service where organization lifecycle is exposed
+    fence: baseline mutation version, owner, epoch, token
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: 0164 backfill, transactional new-organization provisioning, migration guard tests, and organization deletion cascade; lifecycle recovery/default handoff remains unverified
+    retirement_gate: all existing and new organizations have a verified baseline row before D1 handoff
+    next_action: phase_0 state-row inventory and provisioning contract
+  - id: audit.activity_outbox_terminal_effects
+    domain: cross_cutting_effects
+    authority_kind: rust_product_runtime
+    current_authority: node_activity_and_outbox_writers
+    rust_asset: shared Rust audit/outbox application service
+    public_entrypoint: every mutating HTTP/WS/CLI/MCP/worker service
+    auth_scope: actor, organization, run, entity, action, request receipt
+    transaction_boundary: same transaction as business state where contract requires atomicity
+    audit_side_effects: activity, audit, notifications, outbox, terminal effects
+    recovery: rollback, dedupe, replay, delivery retry, poison-event handling
+    cli_mcp: shared service attribution and bounded receipts
+    fence: effect writer epoch and idempotency receipt
+    status: not_started
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: Node writers are split from some business transactions
+    retirement_gate: per-slice atomicity and recovery evidence plus no old effect writer
+    next_action: phase_0 effect-writer inventory
+  - id: domain.organization_branding
+    domain: organization
+    authority_kind: rust_product_runtime
+    current_authority: node_drizzle
+    rust_asset: native/crates/d1-persistence/src/branding.rs and native/crates/server-foundation/src/lib.rs
+    public_entrypoint: private Actix PATCH /api/orgs/{org_id}/branding; supported API/CLI/MCP entry remains unconnected
+    auth_scope: board or permitted agent, organization and logo asset scope
+    transaction_boundary: branding, mutation state, receipt, activity atomically
+    audit_side_effects: organization.branding_updated activity
+    recovery: rollback on audit failure, idempotent replay, stale fence rejection
+    cli_mcp: required parity inventory before activation
+    fence: organization_mutation_state owner/epoch/fence
+    status: private_verified
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: native PostgreSQL tests 25/25 and Actix black-box branding workflow passed within 10/10; route is private/loopback and no production signer or supported startup bridge exists
+    retirement_gate: real Actix/API path plus old writer fence/exit and verifier PASS
+    next_action: server-issued actor bridge, complete writer/token fence, then supported entry and independent verifier
+  - id: domain.project_goal_link
+    domain: organization_goal_project
+    authority_kind: rust_product_runtime
+    current_authority: node_drizzle
+    rust_asset: native/crates/project-goal-link-core, native/crates/d1-persistence/src/links.rs, native/crates/d1-persistence/src/goal_sets.rs, and native/crates/server-foundation/src/lib.rs
+    public_entrypoint: private Actix PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set; supported API/CLI/MCP entry remains unconnected
+    auth_scope: actor and same-organization project/goal target
+    transaction_boundary: project_goals, legacy primary projection, receipt, activity
+    audit_side_effects: project/goal link activity and projection effects
+    recovery: replay/conflict, cancel/detach, stale version/fence, rollback
+    cli_mcp: required parity inventory before activation
+    fence: organization_mutation_state owner/epoch/fence
+    status: private_verified
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: native PostgreSQL goal-set replacement and project-goal core tests pass; Actix black-box complete replacement/replay/conflict/target-isolation/audit-rollback/retry workflow passes within 10/10; supported startup and old-writer retirement remain unproven
+    retirement_gate: real Actix/API path plus all Node link writers fenced/retired
+    next_action: actor bridge, full writer/token inventory, supported entry, CLI/MCP parity where exposed, and old-writer negative test
+  - id: domain.project_goal_set_replacement
+    domain: organization_goal_project
+    authority_kind: rust_product_runtime
+    current_authority: node_drizzle
+    rust_asset: native/crates/d1-persistence/src/goal_sets.rs and native/crates/server-foundation/src/lib.rs
+    public_entrypoint: private Actix PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set
+    auth_scope: server-issued actor envelope, same-organization project and complete goal set
+    transaction_boundary: project_goals replacement, projects.goal_id projection, mutation state, receipt, activity
+    audit_side_effects: project.updated activity and immutable idempotency receipt
+    recovery: idempotent replay, conflict, audit rollback, retry, cross-organization rejection, owner rejection
+    cli_mcp: no Rust CLI/MCP operation connected yet; existing Node contract parity remains required
+    fence: organization_mutation_state owner/version/epoch/fence_token
+    status: private_verified
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: exact private Actix/PostgreSQL workflow passed 10/10 foundation suite; no supported startup, signer bridge, CLI/MCP, or old-writer retirement proof
+    retirement_gate: supported API/default path plus all project goal-set writers fenced/retired and verifier PASS
+    next_action: resolve P0 writer/token fence and signed actor bridge blockers
+  - id: runtime.migration_journal_authority
+    domain: database_lifecycle
+    authority_kind: rust_product_runtime
+    current_authority: node_drizzle_migration_runner
+    rust_asset: native/crates/migration-core, migration-history-core, migration-service
+    public_entrypoint: startup upgrade, preflight CLI, recovery and migration receipts
+    auth_scope: local profile, database identity, advisory lock, release compatibility
+    transaction_boundary: backup, journal validation, migration apply, invariant check
+    audit_side_effects: migration receipt, schema fingerprint, recovery point
+    recovery: pre-mutation backup, crash resume, checksum mismatch stop, rollback boundary
+    cli_mcp: Rust preflight and bounded migration command; no Node migration fallback
+    fence: migration runner lock and schema/journal epoch
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: private history/preflight tests; Node remains migration authority
+    retirement_gate: historical journal, upgrade, recovery and packaged startup matrix passes
+    next_action: phase_0 migration/lifecycle inventory
+  - id: runtime.first_party_cli_and_mcp_dispatch
+    domain: agent_tooling
+    authority_kind: rust_product_runtime
+    current_authority: node_cli_and_mcp
+    rust_asset: native/crates/cli-mcp-contract-core and future Rust dispatch binaries
+    public_entrypoint: installed CLI and managed MCP transport
+    auth_scope: runtime-injected actor, organization, audience, command/tool allowlist
+    transaction_boundary: shared Rust application service and mutation receipt
+    audit_side_effects: command/tool attribution, activity, run and cost effects
+    recovery: cancellation, reconnect, bounded output, process restart, explicit failure
+    cli_mcp: canonical Rust contract, generated schema, human/JSON output and exit status
+    fence: tool runtime identity and command server epoch
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: contract artifacts; current Node dispatch and fallback remain active
+    retirement_gate: installed CLI/MCP workflow and missing-Rust-binary negative proof
+    next_action: phase_0 capability and fallback inventory
+  - id: runtime.first_party_node_fallback_guards
+    domain: legacy_retirement
+    authority_kind: rust_product_runtime
+    current_authority: node_fallback_paths
+    rust_asset: Rust binary resolver and explicit missing-runtime errors
+    public_entrypoint: native process runner, CLI runtime resolver, MCP startup
+    auth_scope: signed artifact identity and runtime ownership
+    transaction_boundary: process selection before any product operation
+    audit_side_effects: process identity and fallback rejection receipt
+    recovery: unavailable binary, corrupt payload, restart, timeout, cancellation
+    cli_mcp: no first-party Node subprocess and no silent compatibility fallback
+    fence: release/runtime epoch
+    status: not_started
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: current sources still select bundled Node in non-required paths
+    retirement_gate: static scan and packaged runtime negative proof show explicit failure
+    next_action: phase_0 fallback scan and negative-test contract
+  - id: runtime.electron_backend_attachment
+    domain: desktop_lifecycle
+    authority_kind: rust_product_runtime
+    current_authority: electron_plus_node_bootstrap
+    rust_asset: Rust server/lifecycle/update services behind retained Electron shell
+    public_entrypoint: packaged Desktop boot, profile, update, recovery and UI API
+    auth_scope: local profile, signed release set, organization data identity
+    transaction_boundary: profile startup, migration, listener readiness, update slot
+    audit_side_effects: startup, recovery, update and rollback receipts
+    recovery: crash, stale process, failed readiness, last-known-good rollback
+    cli_mcp: bounded installer/launcher only; no business state in bootstrap
+    fence: profile/process/update epoch
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: Electron shell retained; Node lifecycle attachments not retired
+    retirement_gate: packaged desktop and recovery matrix proves Rust backend identity
+    next_action: phase_0 desktop attachment inventory
+  - id: domain.identity_session
+    domain: identity
+    authority_kind: rust_product_runtime
+    current_authority: node_and_external_idp
+    rust_asset: native/crates/auth-core plus future server auth service
+    public_entrypoint: login, callback, session, device, CLI/MCP, WebSocket
+    auth_scope: audience, actor, organization, expiry, nonce, revocation
+    transaction_boundary: session/device/credential mutation
+    audit_side_effects: identity/session activity and revocation effects
+    recovery: rotation, replay rejection, offline/local recovery, restart
+    cli_mcp: runtime-locked actor envelope and credential reference
+    fence: auth epoch and session revocation epoch
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: private protocol tests only
+    retirement_gate: real credential fixtures and Node auth handler retirement
+    next_action: phase_0 identity authority inventory
+  - id: runtime.analytics_collector
+    domain: analytics
+    authority_kind: rust_product_runtime
+    current_authority: node_private_collector
+    rust_asset: to_be_assigned_after_phase_0_scan
+    public_entrypoint: private collector ingestion and readback
+    auth_scope: collector auth and organization/data policy
+    transaction_boundary: event batch/receipt boundary
+    audit_side_effects: analytics event durability and privacy controls
+    recovery: retry, dedupe, backpressure, restart
+    cli_mcp: not_applicable_or_inventory_required
+    fence: collector epoch
+    status: not_started
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: unknown_until_current_scan
+    retirement_gate: Rust collector default path and Node collector absent
+    next_action: phase_0 explicit collector inventory
+  - id: runtime.managed_mcp
+    domain: agent_tooling
+    authority_kind: rust_product_runtime
+    current_authority: node_first_party_mcp
+    rust_asset: native MCP server and shared contract service
+    public_entrypoint: managed MCP stdio/transport
+    auth_scope: immutable injected actor, organization, audience, allowed tool set
+    transaction_boundary: shared application service boundary
+    audit_side_effects: tool activity/run attribution and durable mutations
+    recovery: cancellation, reconnect, bounded result, process restart
+    cli_mcp: canonical Rust MCP and CLI contract
+    fence: tool runtime identity and server epoch
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: contract artifacts only
+    retirement_gate: installed MCP workflow and Node MCP process retirement
+    next_action: phase_0 tool/runtime process inventory
+  - id: runtime.embedded_postgres
+    domain: database_lifecycle
+    authority_kind: rust_product_runtime
+    current_authority: node_desktop_helpers
+    rust_asset: native process/runtime helpers and future lifecycle owner
+    public_entrypoint: dev/packaged startup, readiness, stop, recovery
+    auth_scope: local profile/data directory ownership
+    transaction_boundary: lifecycle and migration ordering boundary
+    audit_side_effects: readiness/recovery receipts
+    recovery: shared memory/pipe cleanup, last-known-good, restart
+    cli_mcp: CLI bootstrap identity where applicable
+    fence: profile/process ownership epoch
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: helper/private tests only
+    retirement_gate: packaged startup and recovery with no Node lifecycle authority
+    next_action: phase_0 desktop/process authority scan
+  - id: runtime.update_recovery
+    domain: desktop_release
+    authority_kind: rust_product_runtime
+    current_authority: mixed_node_electron
+    rust_asset: native/bins/rudder-update-helper and update-helper-core
+    public_entrypoint: install, update, last-known-good, rollback, repair
+    auth_scope: signed release set, compatibility epoch, profile isolation
+    transaction_boundary: inactive-slot verify then atomic switch
+    audit_side_effects: update/recovery receipts
+    recovery: crash, failed probe, rollback, stale release
+    cli_mcp: installer and CLI entrypoint only as bounded launcher
+    fence: active slot/update epoch
+    status: implemented
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: private helper tests; packaged/default path not proven
+    retirement_gate: signed packaged update/rollback matrix and Node state owner exit
+    next_action: phase_0 release/lifecycle inventory
+  - id: workflow.agent_run_chat_side_chat
+    domain: execution_chat
+    authority_kind: rust_product_runtime
+    current_authority: node
+    rust_asset: to_be_assigned_after_phase_0_scan
+    public_entrypoint: API/WebSocket/UI, CLI/MCP where exposed
+    auth_scope: actor, organization, run/session, independent Chat ownership
+    transaction_boundary: run/chat event and terminal-effect unit
+    audit_side_effects: transcripts, activity, cost/budget, outbox
+    recovery: stream/cancel/reconnect, temporary/expired/promoted Side Chat, restart
+    cli_mcp: shared Rust services and canonical contracts
+    fence: run/chat owner and terminal-effect epoch
+    status: not_started
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: Node current authority
+    retirement_gate: public workflow and full continuity/recovery verifier PASS
+    next_action: phase_0 route/writer/workflow inventory
+  - id: runtime.scheduler_workers_adapters
+    domain: automation_execution
+    authority_kind: rust_product_runtime
+    current_authority: node
+    rust_asset: to_be_assigned_after_phase_0_scan
+    public_entrypoint: scheduler, worker claims, provider adapter supervisors
+    auth_scope: organization, job/run, provider credential, actor
+    transaction_boundary: claim, effect, outbox, terminal state
+    audit_side_effects: automation/run/activity/cost/budget
+    recovery: fence, retry, dedupe, drain, restart
+    cli_mcp: tool/run attribution and shared command contract
+    status: not_started
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: Node current authority
+    fence: persisted worker owner/epoch/token
+    retirement_gate: no Node scheduler/worker/adapter process in default receipts
+    next_action: phase_0 background-writer/process inventory
+  - id: retirement.first_party_node_backend
+    domain: legacy_retirement
+    authority_kind: rust_product_runtime
+    current_authority: node
+    rust_asset: all accepted Rust authority units
+    public_entrypoint: installed UI/API/CLI/MCP/default lifecycle
+    auth_scope: all supported actors and organizations
+    transaction_boundary: all transaction-connected domains
+    audit_side_effects: all Product Logic effects preserved
+    recovery: full startup, migration, execution, update, rollback, support platforms
+    cli_mcp: first-party Rust CLI/MCP only
+    fence: every old writer/process authority fenced or absent
+    status: not_started
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: blocked until all prior rows accepted
+    retirement_gate: static negative scan plus real installed workflow proof
+    next_action: phase_7 only

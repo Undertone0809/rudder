@@ -6,9 +6,10 @@
 //! public writer.
 
 use hmac::{Hmac, Mac};
+use rudder_auth_core::VerifiedActor;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 /// Maximum UTF-8 byte length of an organization, actor, project, or goal id.
@@ -17,12 +18,16 @@ pub const MAX_IDENTIFIER_BYTES: usize = 256;
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
 /// Maximum number of idempotency receipts retained by one link state.
 pub const MAX_APPLIED_RECEIPTS: usize = 1024;
+/// Maximum number of goals that may be attached to one project mutation.
+pub const MAX_GOAL_SET_SIZE: usize = 1024;
 /// Number of hexadecimal characters in a SHA-256 digest.
 pub const SHA256_HEX_LENGTH: usize = 64;
 /// Domain separator for deterministic Project-Goal link identifiers.
 pub const LINK_IDENTIFIER_SCHEMA: &str = "rudder.project-goal-link.v1";
 /// Domain separator for deterministic mutation fingerprints.
 pub const FINGERPRINT_SCHEMA: &str = "rudder.project-goal-link-mutation.v3";
+/// Domain separator for complete Project goal-set replacement fingerprints.
+pub const GOAL_SET_FINGERPRINT_SCHEMA: &str = "rudder.project-goal-set-replacement.v1";
 /// Domain separator for actor authorization bindings.
 const ACTOR_BINDING_SCHEMA: &str = "rudder.project-goal-link-actor-binding.v1";
 /// Domain separator for serialized link-state integrity bindings.
@@ -206,6 +211,330 @@ pub trait TargetVerifier {
         project_id: &str,
         goal_id: &str,
     ) -> bool;
+}
+
+/// Adapter-owned validation for the complete Project goal-set target.
+///
+/// The verifier is intentionally synchronous and read-only. A SQLx adapter
+/// must repeat this check while holding its PostgreSQL row locks before it
+/// writes, so this context is an authorization/shape boundary rather than a
+/// substitute for the transaction's target validation.
+pub trait GoalSetTargetVerifier {
+    fn goal_set_exists_in_organization(
+        &self,
+        organization_id: &str,
+        project_id: &str,
+        goal_ids: &[String],
+    ) -> bool;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedGoalSetContext {
+    actor: ValidatedActor,
+    organization_id: String,
+    project_id: String,
+    goal_ids: Vec<String>,
+    primary_goal_after: Option<String>,
+}
+
+impl ValidatedGoalSetContext {
+    /// Validate the server-issued actor binding and the adapter's target
+    /// snapshot before constructing a complete replacement command.
+    pub fn from_target_snapshot(
+        binding: &ActorBinding,
+        authority: &ActorAuthority,
+        target_verifier: &impl GoalSetTargetVerifier,
+        organization_id: impl Into<String>,
+        project_id: impl Into<String>,
+        goal_ids: Vec<String>,
+        primary_goal_after: Option<String>,
+    ) -> Result<Self, LinkMutationError> {
+        let organization_id = organization_id.into();
+        let project_id = project_id.into();
+        validate_identifier(&organization_id)?;
+        validate_identifier(&project_id)?;
+        validate_goal_set(&goal_ids, primary_goal_after.as_deref())?;
+
+        let actor = authority.verify(binding)?;
+        if actor.actor.organization_id() != organization_id || !actor.actor.can_mutate() {
+            return Err(if actor.actor.organization_id() != organization_id {
+                LinkMutationError::CrossOrganization
+            } else {
+                LinkMutationError::Unauthorized
+            });
+        }
+        if !target_verifier.goal_set_exists_in_organization(
+            &organization_id,
+            &project_id,
+            &goal_ids,
+        ) {
+            return Err(LinkMutationError::GoalSetTargetNotFound);
+        }
+
+        Ok(Self {
+            actor,
+            organization_id,
+            project_id,
+            goal_ids,
+            primary_goal_after,
+        })
+    }
+
+    /// Bind a complete goal-set command to an actor token that already passed
+    /// the signed request-envelope boundary. The SQLx adapter must still
+    /// repeat project/goal existence and organization checks in its write
+    /// transaction; this method only creates the opaque command context.
+    pub fn from_verified_actor(
+        verified_actor: &VerifiedActor,
+        target_verifier: &impl GoalSetTargetVerifier,
+        organization_id: impl Into<String>,
+        project_id: impl Into<String>,
+        goal_ids: Vec<String>,
+        primary_goal_after: Option<String>,
+    ) -> Result<Self, LinkMutationError> {
+        let organization_id = organization_id.into();
+        let project_id = project_id.into();
+        validate_identifier(&organization_id)?;
+        validate_identifier(&project_id)?;
+        validate_goal_set(&goal_ids, primary_goal_after.as_deref())?;
+        if verified_actor.organization_id() != organization_id {
+            return Err(LinkMutationError::CrossOrganization);
+        }
+        let actor = match verified_actor.actor().kind.as_str() {
+            "user" => Actor::Board {
+                organization_id: organization_id.clone(),
+                principal_id: verified_actor.actor().id.clone(),
+            },
+            "agent" => Actor::CeoAgent {
+                organization_id: organization_id.clone(),
+                principal_id: verified_actor.actor().id.clone(),
+            },
+            _ => return Err(LinkMutationError::Unauthorized),
+        };
+        validate_actor_shape(&actor)?;
+        if !target_verifier.goal_set_exists_in_organization(
+            &organization_id,
+            &project_id,
+            &goal_ids,
+        ) {
+            return Err(LinkMutationError::GoalSetTargetNotFound);
+        }
+
+        Ok(Self {
+            actor: ValidatedActor {
+                actor,
+                proof: verified_actor.signature().to_owned(),
+            },
+            organization_id,
+            project_id,
+            goal_ids,
+            primary_goal_after,
+        })
+    }
+
+    fn validate(&self) -> Result<(), LinkMutationError> {
+        validate_actor_shape(&self.actor.actor)?;
+        validate_identifier(&self.organization_id)?;
+        validate_identifier(&self.project_id)?;
+        validate_goal_set(&self.goal_ids, self.primary_goal_after.as_deref())?;
+        if self.actor.actor.organization_id() != self.organization_id {
+            return Err(LinkMutationError::CrossOrganization);
+        }
+        if !self.actor.actor.can_mutate() {
+            return Err(LinkMutationError::Unauthorized);
+        }
+        Ok(())
+    }
+
+    /// Expose only the verified values consumed by a trusted persistence
+    /// adapter. The view cannot be deserialized or constructed externally.
+    pub fn as_integration_view(
+        &self,
+    ) -> Result<ValidatedGoalSetContextView<'_>, LinkMutationError> {
+        self.validate()?;
+        Ok(ValidatedGoalSetContextView { context: self })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ValidatedGoalSetContextView<'a> {
+    context: &'a ValidatedGoalSetContext,
+}
+
+impl<'a> ValidatedGoalSetContextView<'a> {
+    pub fn actor(&self) -> ActorView<'a> {
+        self.context.actor.as_integration_view()
+    }
+
+    pub fn organization_id(&self) -> &str {
+        &self.context.organization_id
+    }
+
+    pub fn project_id(&self) -> &str {
+        &self.context.project_id
+    }
+
+    pub fn goal_ids(&self) -> &[String] {
+        &self.context.goal_ids
+    }
+
+    pub fn primary_goal_after(&self) -> Option<&str> {
+        self.context.primary_goal_after.as_deref()
+    }
+}
+
+/// An opaque command for atomically replacing the complete Project goal set.
+///
+/// It is deliberately not serializable: callers must first verify the
+/// server-issued actor binding and an adapter-owned target snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectGoalSetReplacementCommand {
+    context: ValidatedGoalSetContext,
+    expected_version: u64,
+    fence_epoch: u64,
+    idempotency_key: String,
+}
+
+impl ProjectGoalSetReplacementCommand {
+    pub fn from_validated_context(
+        context: ValidatedGoalSetContext,
+        expected_version: u64,
+        fence_epoch: u64,
+        idempotency_key: impl Into<String>,
+    ) -> Self {
+        Self {
+            context,
+            expected_version,
+            fence_epoch,
+            idempotency_key: idempotency_key.into(),
+        }
+    }
+
+    pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
+        self.context.validate()?;
+        validate_idempotency_key(&self.idempotency_key)?;
+        let bytes = canonical_goal_set_fingerprint_bytes(self);
+        Ok(hex_digest(Sha256::digest(bytes)))
+    }
+
+    pub fn as_integration_view(
+        &self,
+    ) -> Result<ProjectGoalSetReplacementCommandView<'_>, LinkMutationError> {
+        self.context.validate()?;
+        validate_idempotency_key(&self.idempotency_key)?;
+        Ok(ProjectGoalSetReplacementCommandView { command: self })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectGoalSetReplacementCommandView<'a> {
+    command: &'a ProjectGoalSetReplacementCommand,
+}
+
+impl<'a> ProjectGoalSetReplacementCommandView<'a> {
+    pub fn context(&self) -> ValidatedGoalSetContextView<'a> {
+        ValidatedGoalSetContextView {
+            context: &self.command.context,
+        }
+    }
+
+    pub fn expected_version(&self) -> u64 {
+        self.command.expected_version
+    }
+
+    pub fn fence_epoch(&self) -> u64 {
+        self.command.fence_epoch
+    }
+
+    pub fn idempotency_key(&self) -> &str {
+        &self.command.idempotency_key
+    }
+
+    pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
+        self.command.fingerprint()
+    }
+
+    pub fn resulting_state(
+        &self,
+        resulting_version: u64,
+        resulting_fence_epoch: u64,
+    ) -> Result<ProjectGoalSetState, LinkMutationError> {
+        let expected_version = self
+            .expected_version()
+            .checked_add(1)
+            .ok_or(LinkMutationError::VersionOverflow)?;
+        if resulting_version != expected_version {
+            return Err(LinkMutationError::StaleVersion);
+        }
+        if resulting_fence_epoch != self.fence_epoch() {
+            return Err(LinkMutationError::StaleFence);
+        }
+        Ok(ProjectGoalSetState::new(
+            self.context().organization_id(),
+            self.context().project_id(),
+            self.context().goal_ids().to_owned(),
+            self.context().primary_goal_after().map(str::to_owned),
+            resulting_version,
+            resulting_fence_epoch,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGoalSetState {
+    pub organization_id: String,
+    pub project_id: String,
+    pub goal_ids: Vec<String>,
+    pub primary_goal_after: Option<String>,
+    pub version: u64,
+    pub fence_epoch: u64,
+    integrity: String,
+}
+
+impl ProjectGoalSetState {
+    pub fn new(
+        organization_id: impl Into<String>,
+        project_id: impl Into<String>,
+        goal_ids: Vec<String>,
+        primary_goal_after: Option<String>,
+        version: u64,
+        fence_epoch: u64,
+    ) -> Self {
+        let mut state = Self {
+            organization_id: organization_id.into(),
+            project_id: project_id.into(),
+            goal_ids,
+            primary_goal_after,
+            version,
+            fence_epoch,
+            integrity: String::new(),
+        };
+        state.refresh_integrity();
+        state
+    }
+
+    pub fn state_integrity(&self) -> &str {
+        &self.integrity
+    }
+
+    pub fn validate_persisted(&self) -> Result<(), LinkMutationError> {
+        validate_identifier(&self.organization_id)?;
+        validate_identifier(&self.project_id)?;
+        validate_goal_set(&self.goal_ids, self.primary_goal_after.as_deref())?;
+        if !is_sha256_hex(&self.integrity) || self.integrity != self.computed_integrity() {
+            return Err(LinkMutationError::InvalidReceipt);
+        }
+        Ok(())
+    }
+
+    fn computed_integrity(&self) -> String {
+        hex_digest(Sha256::digest(canonical_goal_set_state_bytes(self)))
+    }
+
+    fn refresh_integrity(&mut self) {
+        self.integrity = self.computed_integrity();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1061,6 +1390,8 @@ pub enum LinkMutationError {
     CrossOrganization,
     #[error("mutation target does not exist in the organization")]
     TargetNotFound,
+    #[error("project goal-set target does not exist in the organization")]
+    GoalSetTargetNotFound,
     #[error("mutation target does not match the bound project-goal pair")]
     TargetMismatch,
     #[error("validated mutation target context is malformed or stale")]
@@ -1087,6 +1418,12 @@ pub enum LinkMutationError {
     InvalidReceipt,
     #[error("project-goal fingerprint could not be encoded")]
     FingerprintFailed,
+    #[error("project goal set exceeds its bounded size")]
+    GoalSetTooLarge,
+    #[error("project goal set contains a duplicate goal")]
+    DuplicateGoal,
+    #[error("project goal projection is not a member of the complete goal set")]
+    InvalidPrimaryGoal,
 }
 
 /// Hash the canonical scoped target `(organization_id, project_id, goal_id)`.
@@ -1164,6 +1501,57 @@ fn canonical_fingerprint_bytes(command: &ProjectGoalLinkCommand) -> Vec<u8> {
     output
 }
 
+fn canonical_goal_set_fingerprint_bytes(command: &ProjectGoalSetReplacementCommand) -> Vec<u8> {
+    let context = &command.context;
+    let mut output = Vec::new();
+    append_domain_separator(&mut output, GOAL_SET_FINGERPRINT_SCHEMA);
+    for field in [
+        context.organization_id.as_str(),
+        context.project_id.as_str(),
+        context.actor.actor.kind(),
+        context.actor.actor.principal_id(),
+        command.idempotency_key.as_str(),
+    ] {
+        append_length_prefixed(&mut output, field);
+    }
+    output.extend_from_slice(&command.expected_version.to_be_bytes());
+    output.extend_from_slice(&command.fence_epoch.to_be_bytes());
+    output.extend_from_slice(&(context.goal_ids.len() as u64).to_be_bytes());
+    for goal_id in &context.goal_ids {
+        append_length_prefixed(&mut output, goal_id);
+    }
+    match context.primary_goal_after.as_deref() {
+        Some(primary) => {
+            append_bool(&mut output, true);
+            append_length_prefixed(&mut output, primary);
+        }
+        None => append_bool(&mut output, false),
+    }
+    output
+}
+
+fn canonical_goal_set_state_bytes(state: &ProjectGoalSetState) -> Vec<u8> {
+    let mut output = Vec::new();
+    append_domain_separator(&mut output, GOAL_SET_FINGERPRINT_SCHEMA);
+    for field in [state.organization_id.as_str(), state.project_id.as_str()] {
+        append_length_prefixed(&mut output, field);
+    }
+    output.extend_from_slice(&(state.goal_ids.len() as u64).to_be_bytes());
+    for goal_id in &state.goal_ids {
+        append_length_prefixed(&mut output, goal_id);
+    }
+    match state.primary_goal_after.as_deref() {
+        Some(primary) => {
+            append_bool(&mut output, true);
+            append_length_prefixed(&mut output, primary);
+        }
+        None => append_bool(&mut output, false),
+    }
+    output.extend_from_slice(&state.version.to_be_bytes());
+    output.extend_from_slice(&state.fence_epoch.to_be_bytes());
+    output
+}
+
 fn canonical_state_integrity_bytes(state: &ProjectGoalLinkState) -> Vec<u8> {
     let mut output = Vec::new();
     append_domain_separator(&mut output, STATE_INTEGRITY_SCHEMA);
@@ -1227,6 +1615,30 @@ fn validate_identifier(value: &str) -> Result<(), LinkMutationError> {
         return Err(LinkMutationError::InvalidField);
     }
     Ok(())
+}
+
+fn validate_goal_set(
+    goal_ids: &[String],
+    primary_goal_after: Option<&str>,
+) -> Result<(), LinkMutationError> {
+    if goal_ids.len() > MAX_GOAL_SET_SIZE {
+        return Err(LinkMutationError::GoalSetTooLarge);
+    }
+    let mut unique = BTreeSet::<String>::new();
+    for goal_id in goal_ids {
+        validate_identifier(goal_id)?;
+        if !unique.insert(goal_id.clone()) {
+            return Err(LinkMutationError::DuplicateGoal);
+        }
+    }
+    match (goal_ids.is_empty(), primary_goal_after) {
+        (true, None) => Ok(()),
+        (true, Some(_)) => Err(LinkMutationError::InvalidPrimaryGoal),
+        (false, Some(primary)) if unique.iter().any(|goal_id| goal_id.as_str() == primary) => {
+            Ok(())
+        }
+        (false, _) => Err(LinkMutationError::InvalidPrimaryGoal),
+    }
 }
 
 fn validate_idempotency_key(value: &str) -> Result<(), LinkMutationError> {
@@ -1413,6 +1825,23 @@ mod tests {
         }
     }
 
+    struct ExistingGoalSetTarget;
+
+    impl GoalSetTargetVerifier for ExistingGoalSetTarget {
+        fn goal_set_exists_in_organization(
+            &self,
+            organization_id: &str,
+            project_id: &str,
+            goal_ids: &[String],
+        ) -> bool {
+            organization_id == "org-a"
+                && project_id == "project-a"
+                && goal_ids
+                    .iter()
+                    .all(|goal_id| matches!(goal_id.as_str(), "goal-a" | "goal-b"))
+        }
+    }
+
     fn authority() -> ActorAuthority {
         ActorAuthority::verification_only("unit-test-authority").unwrap()
     }
@@ -1472,6 +1901,168 @@ mod tests {
             4,
             key,
         )
+    }
+
+    fn goal_set(
+        goal_ids: Vec<String>,
+        primary_goal_after: Option<String>,
+        key: &str,
+    ) -> ProjectGoalSetReplacementCommand {
+        let authority = authority();
+        let binding = authority
+            .issue(Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            })
+            .unwrap();
+        let context = ValidatedGoalSetContext::from_target_snapshot(
+            &binding,
+            &authority,
+            &ExistingGoalSetTarget,
+            "org-a",
+            "project-a",
+            goal_ids,
+            primary_goal_after,
+        )
+        .unwrap();
+        ProjectGoalSetReplacementCommand::from_validated_context(context, 2, 4, key)
+    }
+
+    #[test]
+    fn complete_goal_set_replacement_binds_target_order_and_legacy_primary() {
+        let command = goal_set(
+            vec!["goal-a".to_owned(), "goal-b".to_owned()],
+            Some("goal-a".to_owned()),
+            "goal-set-apply",
+        );
+        let view = command.as_integration_view().unwrap();
+        let context = view.context();
+
+        assert_eq!(context.organization_id(), "org-a");
+        assert_eq!(context.project_id(), "project-a");
+        assert_eq!(context.goal_ids(), ["goal-a", "goal-b"]);
+        assert_eq!(context.primary_goal_after(), Some("goal-a"));
+        assert_eq!(context.actor().kind(), "board");
+        assert_eq!(view.expected_version(), 2);
+        assert_eq!(view.fence_epoch(), 4);
+
+        let state = view.resulting_state(3, 4).unwrap();
+        assert_eq!(state.goal_ids, ["goal-a", "goal-b"]);
+        assert_eq!(state.primary_goal_after.as_deref(), Some("goal-a"));
+        assert_eq!(state.version, 3);
+        assert_eq!(state.fence_epoch, 4);
+        assert_eq!(state.state_integrity().len(), SHA256_HEX_LENGTH);
+        assert!(state.validate_persisted().is_ok());
+    }
+
+    #[test]
+    fn goal_set_fingerprint_excludes_rotating_request_envelope_proof() {
+        let original = goal_set(
+            vec!["goal-a".to_owned(), "goal-b".to_owned()],
+            Some("goal-a".to_owned()),
+            "goal-set-replay",
+        );
+        let mut reauthenticated = goal_set(
+            vec!["goal-a".to_owned(), "goal-b".to_owned()],
+            Some("goal-a".to_owned()),
+            "goal-set-replay",
+        );
+        reauthenticated.context.actor.proof = "f".repeat(SHA256_HEX_LENGTH);
+
+        assert_eq!(
+            original.fingerprint().unwrap(),
+            reauthenticated.fingerprint().unwrap()
+        );
+    }
+
+    #[test]
+    fn complete_goal_set_replacement_rejects_duplicate_or_invalid_projection() {
+        let authority = authority();
+        let binding = authority
+            .issue(Actor::Board {
+                organization_id: "org-a".to_owned(),
+                principal_id: "board-a".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            ValidatedGoalSetContext::from_target_snapshot(
+                &binding,
+                &authority,
+                &ExistingGoalSetTarget,
+                "org-a",
+                "project-a",
+                vec!["goal-a".to_owned(), "goal-a".to_owned()],
+                Some("goal-a".to_owned()),
+            )
+            .unwrap_err(),
+            LinkMutationError::DuplicateGoal
+        );
+        assert_eq!(
+            ValidatedGoalSetContext::from_target_snapshot(
+                &binding,
+                &authority,
+                &ExistingGoalSetTarget,
+                "org-a",
+                "project-a",
+                vec!["goal-a".to_owned()],
+                None,
+            )
+            .unwrap_err(),
+            LinkMutationError::InvalidPrimaryGoal
+        );
+        assert_eq!(
+            ValidatedGoalSetContext::from_target_snapshot(
+                &binding,
+                &authority,
+                &ExistingGoalSetTarget,
+                "org-a",
+                "project-a",
+                vec![],
+                Some("goal-a".to_owned()),
+            )
+            .unwrap_err(),
+            LinkMutationError::InvalidPrimaryGoal
+        );
+    }
+
+    #[test]
+    fn complete_goal_set_replacement_rejects_tampered_state_and_cross_org_actor() {
+        let command = goal_set(
+            vec!["goal-a".to_owned()],
+            Some("goal-a".to_owned()),
+            "tamper",
+        );
+        let view = command.as_integration_view().unwrap();
+        let mut encoded = serde_json::to_value(view.resulting_state(3, 4).unwrap()).unwrap();
+        encoded["goalIds"] = serde_json::json!(["goal-b"]);
+        encoded["primaryGoalAfter"] = serde_json::json!("goal-b");
+        let tampered: ProjectGoalSetState = serde_json::from_value(encoded).unwrap();
+        assert_eq!(
+            tampered.validate_persisted(),
+            Err(LinkMutationError::InvalidReceipt)
+        );
+
+        let authority = authority();
+        let foreign_binding = authority
+            .issue(Actor::Board {
+                organization_id: "org-b".to_owned(),
+                principal_id: "board-b".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(
+            ValidatedGoalSetContext::from_target_snapshot(
+                &foreign_binding,
+                &authority,
+                &ExistingGoalSetTarget,
+                "org-a",
+                "project-a",
+                vec!["goal-a".to_owned()],
+                Some("goal-a".to_owned()),
+            )
+            .unwrap_err(),
+            LinkMutationError::CrossOrganization
+        );
     }
 
     #[test]

@@ -1,0 +1,193 @@
+schema: rudder.rust-backend-completion-status/v1
+plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
+updated_at: 2026-09-22
+status: in_progress
+strategy_correction:
+  date: 2026-09-22
+  source: user_followup
+  intent: Incrementally connect each safe migration slice to the narrowest available real environment and test it there while continuing independent slices; do not wait for the full migration before exercising real entrypoints.
+  supersedes: late_global_real_entry_validation_only
+  preserved_constraints:
+    - no production dual write
+    - no silent Node fallback
+    - no broad production database migration without target-specific authorization
+    - no unrestricted production traffic switch or stable publication without its release gate
+  integration_order: local_contract_and_review -> exact_candidate -> authorized_real_entry_probe -> next_slice
+main_adaptation:
+  migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
+  latest_observed_main_sha: c67ce0f00bb78e323068caac4a9ae349f863c9da
+  commits_ahead_of_migration_base: 6
+  changed_paths_observed: [docs/releases.mdx, docs/zh/releases.mdx, packages/agent-runtimes/codex-local/src/server/execute.ts, packages/agent-runtimes/codex-local/src/server/readiness-gate.ts, scripts/dev-local-env.mjs, scripts/dev-runner.mjs, server/src/__tests__/codex-local-execute.test.ts, tests/e2e, ui/src/components, ui/src/lib, releases/v0.7.23.md]
+  changed_path_assessment: no_direct_rust_bridge_route_overlap; dev_runner_status_path_and_codex_local_readiness_affect_real_entry_evidence; ui_and_release_changes_require_behavioral_recheck_after_sync
+  state: sync_required_before_exact_candidate
+  policy: isolate_main_sync_reconcile_changed_contracts_rerun_affected_scans_invalidate_affected_receipts
+real_environment_lane:
+  policy: staged_narrowest_authorized_target
+  eligible_targets:
+    - disposable_installed_runtime
+    - supported_default_startup
+    - staging
+    - explicitly_allowlisted_production_canary_or_shadow
+  current_target: disposable_embedded_postgres_fixtures_and_private_actix_runtime
+  target_status: local_real_runtime_only
+  production_target_status: blocked_target_specific_credentials_and_rollback_authority_not_present
+  production_verified: false
+candidate:
+  source_ref: codex/rudder-full-rust-backend-completion-20260921
+  source_sha: c54001819ca38079b627994557db0a18ed278fc0
+  tree_sha: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
+  worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
+  dirty_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
+  dirty_fingerprint_status: superseded_by_main_drift_and_concurrent_slice_changes
+  dirty_fingerprint_scope: tracked_and_untracked_source_diff_excluding_durable_plan_records
+  runtime: focused_local_checks_only
+  organization_data: disposable_embedded_postgres_fixtures
+  acceptance_packet: d1-writer-fence-v7_pending_rebind
+  current_source_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
+claims:
+  implementation_complete: false
+  release_ready: false
+  production_verified: false
+phase:
+  current: 0
+  next_executable: sync latest Main in an isolated checkout, reconcile affected contracts, then freeze and verify the bridge/read slice while continuing writer reconciliation
+  gates:
+    phase_0: in_progress
+    phase_1: not_started
+    phase_2: not_started
+    phase_3: not_started
+    phase_4: not_started
+    phase_5: not_started
+    phase_6: not_started
+    phase_7: not_started
+slice:
+  current: organization-project-writer-fence-and-private-d1-route
+  next: signed-bridge-and-complete-writer-fence
+  status: main_drift_reconciliation_and_bridge_lifecycle_in_progress
+evidence:
+  reviewer: pending_current_candidate_stage_review
+  reviewer_receipt: invalidated_after_fence_token_side_chat_strategy_main_drift_and_candidate_drift
+  verifier: pending_exact_candidate
+  final_review: pending
+  historical_inputs:
+    - doc/plans/2026-08-20-rust-migration-baseline-freeze.md
+    - doc/plans/2026-08-28-rust-migration-g0-current-source-delta.yml
+    - doc/plans/2026-09-16-rust-d1-persistence.md
+  current_source_refresh: current_candidate_rebound_semantic_reconciliation_blocked
+blockers:
+  - id: P0-main-drift-candidate
+    owner: migration_implementation
+    state: open
+    detail: origin/main advanced from the migration base to c67ce0f00bb78e323068caac4a9ae349f863c9da while this dirty candidate was being built. The prior dirty fingerprint and all runtime receipts are historical and cannot bind the next slice.
+    next_step: reconcile the six Main commits in an isolated sync checkout, rerun affected route/startup/CLI/MCP/UI contract scans, and compute a new exact candidate fingerprint.
+  - id: P0-node-writer-fence
+    owner: migration_implementation
+    state: open
+    detail: The current candidate fences organization update/archive/delete, Project CRUD/resources/workspaces, Issue counter creation, asset DB projection, Issue attachment DB projection, cost ledger, selected Chat projections, budget policy delete, and all 17 mutating methods in server/src/services/goals.ts. Those selected writers acquire the organization mutation row lock before their first business write and hold it through commit; the token is validated as the identity of the locked epoch, not embedded in every business-table predicate. Goal route/issue projection bypasses and the semantic inventory still has unfenced or row-only approval, comment, attachment storage, portability, onboarding, organization skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background writers.
+    next_step: finish the exact writer inventory, prove the serialized owner-lock contract for every selected writer, and make every competing writer acquire the same lock before its first business write, or drain and remove it from the default path.
+  - id: P1-d1-secondary-writers
+    owner: migration_implementation
+    state: open
+    detail: D1 still has direct or indirect legacy writers outside the currently fenced services, including Goal route and issue projection bypasses, approval state machines, issue comments, attachment and avatar storage, Chat operation approvals, Side Chat and inline visual persistence, portability import, onboarding, skills/plugins, budget/settings transitions, automation dispatch, heartbeat/workspace runtime, and activity/wakeup side effects.
+    next_step: enumerate each writer and its external side effects, add storage/process orphan recovery where needed, then fence it before any Rust owner activation or explicitly remove it from the default path.
+  - id: P1-project-goal-replacement-contract
+    owner: migration_implementation
+    state: private_slice_complete_default_entry_blocked
+    detail: The complete Rust goal-set replacement command, SQLx transaction, and standalone Actix HTTP route now pass private black-box success/replay/conflict/target-isolation/audit-rollback/retry checks. The supported Node bridge, installed/default entry, and all competing writers are still absent.
+    next_step: bind the route to a server-issued actor bridge, complete the writer fence/token inventory, then obtain exact-candidate verifier PASS before any owner handoff.
+  - id: P1-signed-actor-envelope
+    owner: migration_implementation
+    state: open
+    detail: Full auth migration is later than D1, so a signed request-bound actor bridge must be proven before any public Rust write.
+    next_step: add server-issued envelope, revocation/expiry/replay checks, and fail-closed bridge tests.
+  - id: P1-single-public-listener
+    owner: migration_implementation
+    state: open
+    detail: Node owns the current listener while Actix is private; the supported startup has not yet selected a sole public socket.
+    next_step: record one listener topology and prove no duplicate public listener.
+  - id: P1-audit-atomicity
+    owner: migration_implementation
+    state: open
+    detail: Existing Node activity logging is outside some business transactions; D1 requires business state, receipt, projection, and audit rollback together.
+    next_step: define effect boundary and add audit-failure/process-recovery evidence.
+  - id: P1-node-fallback
+    owner: migration_implementation
+    state: open
+    detail: First-party MCP/native process paths still select bundled Node implementations in fallback modes.
+    next_step: add explicit missing-Rust failure and static/runtime negative checks.
+writer_audit:
+  candidate_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
+  candidate_fingerprint_status: historical_superseded_rebind_required
+  verdict: needs_more_evidence
+  d1_activation: blocked
+  fence_contract:
+    node_current: serialized_owner_row_lock_held_through_transaction_commit_for_selected_writers; non_negative_version_epoch_and_token_shape_checked
+    rust_current: owner_version_epoch_token_checked_for_selected_writers
+    required_before_owner_handoff: every_competing_writer_uses_the_same_owner_row_lock_before_first_business_write_and_the_lock_sequence_has_real_postgres_race_evidence
+  unresolved_writer_families:
+    - id: organization_bootstrap_and_storage_cleanup
+      sources: [server/src/services/orgs.ts, server/src/services/knowledge-portability/organization-portability.import.ts]
+      state: no_or_mixed
+    - id: goals_and_project_goal_bypasses
+      sources: [server/src/services/goals.ts, server/src/routes/goals.ts, server/src/services/issues.ts]
+      state: goal_service_fenced_route_bypasses_unfenced
+      evidence: all_17_goal_service_mutators lock the organization fence before the first business write; route and issue projection writers remain unresolved
+    - id: issue_comments_approvals_and_reactivation
+      sources: [server/src/services/issues.comments-attachments.ts, server/src/services/approvals.ts, server/src/services/issue-approvals.ts]
+      state: no_or_mixed
+    - id: asset_avatar_attachment_storage
+      sources: [server/src/routes/assets.ts, server/src/routes/agents.management-routes.ts, server/src/routes/issues.comments-attachments.ts, server/src/routes/chats.generated-attachments.ts]
+      state: mixed_storage_and_db
+    - id: chat_side_chat_and_inline_visual
+      sources: [server/src/services/chats.ts, server/src/services/side-chats.ts, server/src/services/chats.inline-visual-persistence.ts]
+      state: mixed_or_no
+    - id: portability_onboarding_skills_plugins
+      sources: [server/src/services/organization-portability.import.ts, server/src/routes/onboarding.ts, server/src/services/organization-skills.ts, server/src/services/rudder-plugins.ts]
+      state: mixed_or_no
+    - id: budget_settings_cost_automation
+      sources: [server/src/services/budgets.ts, server/src/routes/costs.ts, server/src/services/automations.ts]
+      state: no_or_row_only
+    - id: heartbeat_workspace_and_runtime_background
+      sources: [server/src/services/runtime-kernel, server/src/services/execution-workspaces.ts, server/src/services/workspace-runtime.services.ts]
+      state: row_only_or_no
+  required_evidence:
+    - owner_epoch_token_stale_race_rejects_before_business_write
+    - storage_orphan_and_process_interruption_recovery
+    - activity_wakeup_outbox_rollback_and_retry
+    - current_candidate_static_and_runtime_no_node_fallback_proof
+missing_authority_or_environment:
+  - production_credentials_and_authorization_for_production_verified
+  - platform_signing_and_public_release_environment_for_release_ready
+completed_checks:
+  - plan files added in isolated migration worktree
+  - current source baseline read without resetting the original checkout
+  - release migration compatibility matrix updated to 0167 and focused tests passed 16/16 (historical check; exact candidate rerun pending)
+  - current migration manifest computed as 168 journal entries and 170 SQL files at this candidate
+  - current route scan is 47 source files and 513 declaration hits; transaction scan is 61 files and 212 hits, 50 files and 192 production hits
+  - current CLI/MCP scan is 118 CLI capability entries (107 agent-v1 and 11 compat contracts) and 107 MCP descriptors
+  - historical dirty candidate fingerprint 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8 was computed using tracked diff, untracked source SHA-256s, and status excluding four durable plan records; it is superseded by Main drift and later slice changes
+  - embedded PostgreSQL client and mutation migration tests passed 29/29
+  - Rust D1 PostgreSQL suite passed 25/25; project-goal core library passed 31/31 including rotating-envelope replay; Actix foundation black-box passed 10/10 including public goal-set replacement
+  - server organization/project fence focused suite passed 35/35, including cross-organization project resource rejection and corrupt-link non-disclosure; release compatibility matrix passed 16/16
+  - cargo fmt check, Rust foundation check with tests, focused auth core, and git diff check passed after the current route/fingerprint changes
+  - Goal/organization fence focused suite passed 96/96; server typecheck and changed-import lint passed after fencing all 17 Goal service writers and updating the 0167 handoff fixture
+  - Node fence contract suite passed 12/12 and the real PostgreSQL organization-mutation suite passed 12/12, including lock-timeout evidence that a Rust handoff waits for a Node transaction holding the owner row and a post-handoff writer fails closed
+  - independent verifier on pre-v6 candidate fingerprint bfe1feee38420d564ce83a48e5efd7f91da51288a0627a2c4564a624a58e55f1 returned QUESTION because the Actix route is private and the signer/default bridge is absent; this receipt is stale and cannot support v6
+  - prior db/server/CLI typechecks and migration tests remain supporting evidence; exact-candidate rerun is pending
+  - focused lint/import check passed for 18 changed tracked files; full lint still has five clean baseline files requiring import organization
+  - status, ledger, and current-source-refresh YAML parse validation pending after this refresh
+pending_checks:
+  - synchronize the migration branch with latest observed origin/main c67ce0f00bb78e323068caac4a9ae349f863c9da in an isolated checkout and record the changed-path compatibility decision
+  - validate plan/status/ledger/current-source YAML and Markdown references
+  - complete semantic authority, writer, lifecycle, and contract reconciliation including the current writer audit rows
+  - invalidate v5 and v6 and create/validate the v7 exact-candidate delivery packet
+  - complete the actor/state/fence/listener/audit contracts and extend the persisted fencing token to every competing writer before D1 activation
+  - obtain exact-candidate stage review and independent verifier evidence for the current fence slice
+  - obtain v7 stage review and independent verifier evidence for the private D1 route and writer-fence slice
+  - run the first authorized real-entry probe for the smallest accepted slice before the next dependent slice
+  - run a real TypeScript-to-Rust bridge workflow with startup/readiness/close/retry and no-Node-read evidence on the same exact candidate
+receipts: []
+interrupt_resume:
+  last_durable_commit: none
+  remaining_work: semantic inventory and packet, signed actor bridge, complete writer/token fencing, then supported listener integration and D1 verification
+  next_command: sync latest Main in isolation, validate refreshed durable artifacts, recompute the exact fingerprint, invalidate v5/v6, create the next packet, and obtain current-candidate reviewer/verifier receipts before the next D1 writer slice

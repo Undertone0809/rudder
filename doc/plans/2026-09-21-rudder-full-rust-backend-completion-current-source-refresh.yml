@@ -1,0 +1,167 @@
+schema: rudder.rust-backend-completion-current-source-refresh/v1
+plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
+updated_at: 2026-09-22
+candidate:
+  source_sha: c54001819ca38079b627994557db0a18ed278fc0
+  branch: codex/rudder-full-rust-backend-completion-20260921
+  worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
+  tree_sha: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
+  dirty_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
+  dirty_fingerprint_scope: source_diff_excluding_durable_plan_records
+  dirty_fingerprint_status: historical_superseded_by_main_drift_and_live_slice_changes
+  scan_status: current_counts_refreshed_semantic_reconciliation_blocked
+  semantic_rows: partial_with_current_writer_audit
+main_adaptation:
+  migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
+  latest_observed_main_sha: c67ce0f00bb78e323068caac4a9ae349f863c9da
+  commits_ahead_of_migration_base: 6
+  changed_path_classes: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+  changed_path_assessment: no_direct_rust_route_overlap_but_dev_runner_and_codex_local_changes_affect_real_entry_and_runtime_evidence
+  reconciliation_status: pending_isolated_sync_and_affected_scan_rerun
+  receipt_policy: affected_review_and_verifier_receipts_are_invalid_until_rebound
+scan_commands:
+  route_declaration_scan: "rg -o 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' server/src/routes -g '*.ts'"
+  transaction_scan: "rg -o '\\.transaction\\s*\\(' server/src -g '*.ts'"
+  migration_file_scan: "find packages/db/src/migrations -maxdepth 1 -type f -name '*.sql'"
+  migration_journal_scan: "JSON.parse(packages/db/src/migrations/meta/_journal.json).entries.length"
+  cli_capability_scan: "rg -o '\"id\": \"[^\"]+\"' cli/src/agent-v1-capabilities.generated.ts"
+  mcp_descriptor_scan: "rg -o '\"capabilityId\": \"[^\"]+\"' packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts"
+counts:
+  route_source_files_with_declarations: 47
+  route_declaration_scan_hits: 513
+  transaction_source_files: 61
+  transaction_scan_hits: 212
+  production_transaction_source_files: 50
+  production_transaction_scan_hits: 192
+  sql_migration_files: 170
+  migration_journal_entries: 168
+  product_analytics_route_files_with_declarations: 3
+  cli_capability_entries: 118
+  cli_agent_v1_entries: 107
+  cli_compat_entries: 11
+  mcp_descriptor_entries: 107
+observed_runtime_roots:
+  - path: server/src/index.ts
+    authority: node
+    evidence: creates the HTTP server, attaches the live-events WebSocket upgrade, starts schedulers, embedded PostgreSQL, migrations, and runtime reconciliation
+    status: node_authoritative
+  - path: server/src/bootstrap/create-http-app.ts
+    authority: node
+    evidence: Express middleware, auth/session, API route registration, managed MCP and UI serving
+    status: node_authoritative
+  - path: server/src/product-analytics-collector-server.ts
+    authority: node
+    evidence: separate Express product analytics collector listener
+    status: node_authoritative
+  - path: native/bins/rudder-server-foundation/src/main.rs
+    authority: rust
+    evidence: starts the Actix foundation binary and emits startup/shutdown receipts
+    status: private_or_explicit_entry_only
+  - path: native/crates/server-foundation/src/lib.rs
+    authority: rust
+    evidence: loopback-only foundation, health/readiness/capabilities, workspace-backup read routes, organization member-directory read route, organization branding mutation route, and complete Project goal-set replacement route; receipt still says public_listener=false and product_write_authority=false
+    status: private_verified_read_and_d1_write_slice_pending_supported_entry
+  - path: native/crates/d1-persistence/src/lib.rs
+    authority: rust
+    evidence: private SQLx branding and complete Project goal-set transaction adapters; comments still state no ownership acquisition or Node integration
+    status: private_verified_write_core_only
+  - path: native/crates/server-foundation/src/lib.rs#organization_branding
+    authority: rust
+    evidence: PATCH /api/orgs/{org_id}/branding verifies request-bound signed actor, idempotency, organization fence, SQLx transaction, receipt, activity, rollback, and owner rejection in a disposable PostgreSQL fixture
+    status: private_verified_loopback_only
+  - path: native/crates/server-foundation/src/lib.rs#project_goal_set
+    authority: rust
+    evidence: PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set atomically replaces project_goals and projects.goal_id, verifies project/goal organization scope, replays/conflicts by idempotency key, and rolls back audit failures in a disposable PostgreSQL fixture
+    status: private_verified_loopback_only
+  - path: native/crates/server-foundation/src/lib.rs#organization_member_directory
+    authority: rust
+    evidence: Actix/SQLx organization member-directory read route with signed request-bound actor envelope, bounded count/page queries, cursor ordering, organization-scoped visibility filters, and black-box PostgreSQL fixture
+    status: implementation_present_private_verification_pending
+  - path: cli/src/agent-v1-mcp-server.ts
+    authority: node
+    evidence: first-party MCP JSON-RPC server and direct API/CLI dispatch
+    status: node_authoritative
+  - path: cli/src/commands/start.ts
+    authority: node
+    evidence: first-party CLI startup, runtime installation, PostgreSQL payload and Desktop launch orchestration
+    status: node_authoritative_bounded_entry_with_stateful_runtime_calls
+  - path: desktop/src/main.ts
+    authority: electron
+    evidence: retained Desktop shell but currently owns or coordinates PostgreSQL/product analytics and update attachment points
+    status: retained_shell_with_runtime_subunits_to_migrate
+authority_families_requiring_semantic_row_refresh:
+  - http_routes_and_websockets
+  - auth_sessions_device_exchange_and_identity
+  - organization_goal_project_agent_mutations
+  - issue_routing_checkout_review_approval_budget
+  - agent_runs_execution_results_transcripts
+  - chat_and_side_chat_stream_cancel_reconnect_promotion_expiry
+  - automation_scheduler_workers_and_recovery
+  - rudder_owned_provider_adapters_and_backend_helpers
+  - analytics_collector
+  - managed_mcp_and_first_party_mcp
+  - embedded_postgresql_lifecycle
+  - sqlx_query_transaction_and_migration_authority
+  - first_party_cli_and_install_bootstrap
+  - electron_update_last_known_good_recovery_and_rollback
+  - external_user_selected_processes_and_plugin_boundary
+semantic_scan_gaps:
+  - route declaration hits include nested router.use calls and are not public route identities
+  - generated capability counts include compatibility entries and need canonical contract reconciliation
+  - transaction scan does not identify direct SQL writes, helper-owned transactions, or background writers
+  - process scan must distinguish tests, external user-selected processes, bounded installers, and state-owning runtimes
+  - route, WebSocket, CLI, MCP, migration, writer, lifecycle, and release rows must be rebound to this SHA before any authority handoff
+  - the member-directory route is still a standalone loopback foundation entry and has no supported Node bridge or installed/default startup connection
+  - the signed actor envelope verifier currently relies on a trusted signer/bridge contract; session membership and revocation integration are not yet a real Actix authority
+  - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
+  - the new goal-set route is a standalone private Actix entry; it is not the supported Node signer/bridge, installed/default startup, CLI/MCP, or sole-listener path
+current_writer_audit:
+  candidate_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
+  verdict: needs_more_evidence
+  activation: blocked
+  fence_contract:
+    existing_selected_writers: node_serialized_owner_row_lock_held_through_commit_with_counter_and_token_shape_validation; rust_owner_epoch_token_checked_in_mutations
+    missing: proof_and_coverage_for_every_remaining_writer_family; node_token_is_not_a_business_predicate_and_is_not_claimed_as_one
+  rows:
+    - id: organization_bootstrap_cleanup
+      sources: [server/src/services/orgs.ts, server/src/services/knowledge-portability/organization-portability.import.ts]
+      state: no_or_mixed
+      effects: organization_state, default_labels, workspace_layout, storage_cleanup
+    - id: goals_and_project_goal_bypasses
+      sources: [server/src/services/goals.ts, server/src/routes/goals.ts, server/src/services/issues.ts]
+      state: goal_service_fenced_route_bypasses_unfenced
+      effects: goal_state, activity, wakeup, issue_goal_projection
+      evidence: all_17_goal_service_mutators fence before business writes; goal routes and issue goal projection remain outside the fence contract
+    - id: issue_comments_approvals
+      sources: [server/src/services/issues.comments-attachments.ts, server/src/services/approvals.ts, server/src/services/issue-approvals.ts]
+      state: no_or_mixed
+      effects: comments, approvals, reactivation, activity, wakeup
+    - id: asset_avatar_attachment_storage
+      sources: [server/src/routes/assets.ts, server/src/routes/agents.management-routes.ts, server/src/routes/issues.comments-attachments.ts, server/src/routes/chats.generated-attachments.ts]
+      state: mixed_storage_and_db
+      effects: storage_objects, asset_rows, avatars, attachments, activity
+    - id: chat_side_chat_inline_visual
+      sources: [server/src/services/chats.ts, server/src/services/side-chats.ts, server/src/services/chats.inline-visual-persistence.ts]
+      state: mixed_or_no
+      effects: messages, side_chat_lifecycle, stream_state, visual_state, activity
+    - id: portability_onboarding_skills_plugins
+      sources: [server/src/services/organization-portability.import.ts, server/src/routes/onboarding.ts, server/src/services/organization-skills.ts, server/src/services/rudder-plugins.ts]
+      state: mixed_or_no
+      effects: imported_graph, projects, issues, skills, plugin_links, filesystem
+    - id: budget_settings_cost_automation
+      sources: [server/src/services/budgets.ts, server/src/routes/costs.ts, server/src/services/automations.ts]
+      state: no_or_row_only
+      effects: budgets, settings, cost_evaluation, issue_dispatch, activity
+    - id: heartbeat_workspace_runtime
+      sources: [server/src/services/runtime-kernel, server/src/services/execution-workspaces.ts, server/src/services/workspace-runtime.services.ts]
+      state: row_only_or_no
+      effects: claims, runs, workspaces, processes, logs, filesystem
+next_actions:
+  - enumerate semantic route bindings from register-api-routes and route modules
+  - enumerate direct SQL writes and every background claim/terminal-effect writer
+  - reconcile current CLI/MCP generated contracts and hashes
+  - classify identity, analytics, managed MCP, embedded PostgreSQL, update/recovery, and Electron attachment boundaries
+  - record exact scan output fingerprints and current writer rows in the delivery packet before Phase 1 authority changes
+  - freeze the signed actor/session bridge and persisted owner/epoch/token contract
+  - fence or retire every current writer row before activating the Rust D1 owner
+  - obtain independent stage review and verifier PASS for the exact private D1 candidate before supported entry integration

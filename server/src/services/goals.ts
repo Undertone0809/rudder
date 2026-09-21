@@ -79,6 +79,7 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from 
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { createHash, randomUUID } from "node:crypto";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { buildDeferredWakePayload, readDeferredWakePayload } from "./runtime-kernel/heartbeat.sessions.js";
 
 type GoalRow = typeof goals.$inferSelect;
@@ -1196,6 +1197,14 @@ function assertSameResultProposalPayload(
 export function goalService(db: Db) {
   type Database = typeof db;
 
+  async function lockGoalNodeMutationAuthority(database: Database, goalId: string) {
+    const scope = await database.select({ orgId: goals.orgId })
+      .from(goals)
+      .where(eq(goals.id, goalId))
+      .then((rows) => rows[0] ?? null);
+    if (scope) await lockNodeMutationAuthority(database, scope.orgId);
+  }
+
   function facetFor(
     goal: GoalRow,
     pendingChange: typeof goalChangeProposals.$inferSelect | null,
@@ -2116,21 +2125,27 @@ export function goalService(db: Db) {
         if (replay.status !== "completed" || !replay.goalId) {
           throw conflict("Goal Start request has not completed");
         }
-        const goal = await db.select().from(goals).where(and(
-          eq(goals.id, replay.goalId),
-          eq(goals.orgId, orgId),
-        )).then((rows) => rows[0] ?? null);
-        if (!goal) throw conflict("Completed Goal Start request has no Goal");
-        const dispatch = await ensureGoalWakeupIntent(db, goal, {
-          event: "goal_started",
-          eventId: replay.id,
-          actor,
+        const replayGoalId = replay.goalId;
+        return db.transaction(async (tx) => {
+          const database = tx as unknown as Database;
+          await lockNodeMutationAuthority(database, orgId);
+          const goal = await database.select().from(goals).where(and(
+            eq(goals.id, replayGoalId),
+            eq(goals.orgId, orgId),
+          )).then((rows) => rows[0] ?? null);
+          if (!goal) throw conflict("Completed Goal Start request has no Goal");
+          const dispatch = await ensureGoalWakeupIntent(database, goal, {
+            event: "goal_started",
+            eventId: replay.id,
+            actor,
+          });
+          return { goal, replayed: true, dispatch };
         });
-        return { goal, replayed: true, dispatch };
       }
 
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockNodeMutationAuthority(database, orgId);
         const owner = await requireInvokableOwner(database, orgId, input.packet.ownerAgentId);
         if (!ownerCanAdvanceGoal(owner, {
           title: input.packet.title,
@@ -2401,20 +2416,24 @@ export function goalService(db: Db) {
       ownerAgentRuntimeOverrides?: IssueAssigneeAgentRuntimeOverrides | null;
       targetTime?: Date | null;
     }) => {
-      if (data.ownerAgentId) await requireInvokableOwner(db, orgId, data.ownerAgentId);
-      return db.insert(goals).values({
-        orgId,
-        title: data.title,
-        description: data.description ?? null,
-        alignmentQuestion: data.alignmentQuestion ?? null,
-        evaluationDeadline: data.targetTime ?? null,
-        level: "task",
-        status: "planned",
-        lifecycle: "draft",
-        parentId: null,
-        ownerAgentId: data.ownerAgentId ?? null,
-        ownerAgentRuntimeOverrides: data.ownerAgentRuntimeOverrides ?? null,
-      }).returning().then((rows) => rows[0]);
+      return db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        await lockNodeMutationAuthority(database, orgId);
+        if (data.ownerAgentId) await requireInvokableOwner(database, orgId, data.ownerAgentId);
+        return database.insert(goals).values({
+          orgId,
+          title: data.title,
+          description: data.description ?? null,
+          alignmentQuestion: data.alignmentQuestion ?? null,
+          evaluationDeadline: data.targetTime ?? null,
+          level: "task",
+          status: "planned",
+          lifecycle: "draft",
+          parentId: null,
+          ownerAgentId: data.ownerAgentId ?? null,
+          ownerAgentRuntimeOverrides: data.ownerAgentRuntimeOverrides ?? null,
+        }).returning().then((rows) => rows[0]);
+      });
     },
 
     update: async (id: string, data: {
@@ -2427,6 +2446,7 @@ export function goalService(db: Db) {
     }, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         assertGoalOwner(current, actorAgentId);
         if (current.lifecycle === "closed") {
@@ -2469,7 +2489,9 @@ export function goalService(db: Db) {
       }
       await requireInvokableOwner(db, current.orgId, input.ownerAgentId);
       const result = await db.transaction(async (tx) => {
-        const [goal] = await tx.update(goals).set({
+        const database = tx as unknown as Database;
+        await lockNodeMutationAuthority(database, current.orgId);
+        const [goal] = await database.update(goals).set({
           outcomeStatement: input.outcomeStatement,
           objectiveMode: input.objectiveMode,
           lifecycle: "active",
@@ -2490,21 +2512,21 @@ export function goalService(db: Db) {
           updatedAt: new Date(),
         }).where(and(eq(goals.id, id), eq(goals.lifecycle, "draft"))).returning();
         if (!goal) throw conflict("Goal changed before activation; reload and retry");
-        await tx.insert(goalOwnerAssignments).values({
+        await database.insert(goalOwnerAssignments).values({
           orgId: current.orgId,
           goalId: id,
           agentId: input.ownerAgentId,
           assignedByAuthorityRef: "activation",
           assignmentRevision: 1,
         });
-        await tx.insert(goalPlans).values({
+        await database.insert(goalPlans).values({
           orgId: current.orgId,
           goalId: id,
           revision: 1,
           ...input.initialPlan,
           createdByAgentId: actorAgentId,
         });
-        await tx.insert(goalActivities).values({
+        await database.insert(goalActivities).values({
           orgId: current.orgId,
           goalId: id,
           contractRevision: 1,
@@ -2522,6 +2544,7 @@ export function goalService(db: Db) {
     updatePlan: async (id: string, input: UpdateGoalPlan, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         assertCanonicalActiveGoal(current);
         assertGoalOwner(current, actorAgentId);
@@ -2558,6 +2581,7 @@ export function goalService(db: Db) {
       });
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         assertCanonicalActiveGoal(current);
         assertGoalOwner(current, actorAgentId);
@@ -2671,6 +2695,7 @@ export function goalService(db: Db) {
     createActivity: async (id: string, input: CreateGoalActivity, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         assertCanonicalActiveGoal(current);
         assertGoalOwner(current, actorAgentId);
@@ -2723,6 +2748,7 @@ export function goalService(db: Db) {
     feedback: async (id: string, input: CreateGoalFeedback, actorUserId: string) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         return recordFeedback(database, current, input, actorUserId);
       });
@@ -2737,6 +2763,7 @@ export function goalService(db: Db) {
       const normalizedPatch = normalizeContractPatch(input.afterContract);
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         assertCanonicalActiveGoal(current);
         assertGoalOwner(current, actorAgentId);
@@ -2857,6 +2884,7 @@ export function goalService(db: Db) {
         const proposal = await database.select().from(goalChangeProposals)
           .where(eq(goalChangeProposals.id, proposalId)).then((rows) => rows[0] ?? null);
         if (!proposal) throw notFound("Goal change proposal not found");
+        await lockNodeMutationAuthority(database, proposal.orgId);
         const approval = await database.select().from(approvals).where(and(
           eq(approvals.id, proposal.approvalId),
           eq(approvals.orgId, proposal.orgId),
@@ -3042,6 +3070,7 @@ export function goalService(db: Db) {
         // deadlock on heartbeat_runs.agent_id foreign-key checks.
         await database.select({ id: agents.id }).from(agents)
           .where(eq(agents.id, actorAgentId)).for("update");
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         assertGoalOwner(current, actorAgentId);
         if (actorRunId) await requireGoalRun(database, current, actorRunId, actorAgentId);
@@ -3146,6 +3175,7 @@ export function goalService(db: Db) {
         const proposal = await database.select().from(goalResultProposals)
           .where(eq(goalResultProposals.id, proposalId)).then((rows) => rows[0] ?? null);
         if (!proposal) throw notFound("Goal Result Proposal not found");
+        await lockNodeMutationAuthority(database, proposal.orgId);
         const current = await requireGoalForUpdate(database, proposal.goalId);
         if (current.orgId !== proposal.orgId) throw unprocessable("Goal Result Proposal organization mismatch");
         if (proposal.consumedAt) {
@@ -3239,6 +3269,7 @@ export function goalService(db: Db) {
         const proposal = await database.select().from(goalResultProposals)
           .where(eq(goalResultProposals.id, proposalId)).then((rows) => rows[0] ?? null);
         if (!proposal) throw notFound("Goal Result Proposal not found");
+        await lockNodeMutationAuthority(database, proposal.orgId);
         if (proposal.status === "rejected") {
           if (proposal.rejectionFeedback !== input.feedback) {
             throw conflict("Goal Result Proposal rejection was replayed with different feedback");
@@ -3288,6 +3319,7 @@ export function goalService(db: Db) {
     assignOwner: async (id: string, input: AssignGoalOwner, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         assertCanonicalActiveGoal(current);
         assertGoalOwner(current, actorAgentId);
@@ -3317,6 +3349,7 @@ export function goalService(db: Db) {
     setFocus: async (id: string, focus: boolean, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const candidate = await requireGoal(database, id);
         await database.execute(sql`select id from organizations where id = ${candidate.orgId} for update`);
         const current = await requireGoalForUpdate(database, id);
@@ -3339,16 +3372,21 @@ export function goalService(db: Db) {
     evaluate: async (id: string, input: EvaluateGoal, actorAgentId: string | null = null) => {
       return db.transaction(async (tx) => {
         const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
         const current = await requireGoalForUpdate(database, id);
         return evaluateInTransaction(database, current, input, actorAgentId);
       });
     },
 
     remove: async (id: string) => {
-      const existing = await requireGoal(db, id);
-      const dependencies = await getGoalDependencies(db, existing);
-      if (!dependencies.canDelete) throw conflict("Only an unlinked draft Goal can be deleted", dependencies);
-      return db.delete(goals).where(eq(goals.id, id)).returning().then((rows) => rows[0] ?? null);
+      return db.transaction(async (tx) => {
+        const database = tx as unknown as Database;
+        await lockGoalNodeMutationAuthority(database, id);
+        const existing = await requireGoalForUpdate(database, id);
+        const dependencies = await getGoalDependencies(database, existing);
+        if (!dependencies.canDelete) throw conflict("Only an unlinked draft Goal can be deleted", dependencies);
+        return database.delete(goals).where(eq(goals.id, id)).returning().then((rows) => rows[0] ?? null);
+      });
     },
   };
 }

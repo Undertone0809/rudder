@@ -955,6 +955,10 @@ describe("applyPendingMigrations", () => {
           "0161_chat_message_mutation_fingerprint.sql",
           "0162_run_debug_issue_origin.sql",
           "0163_organization_mutations.sql",
+          "0164_organization_mutation_state_backfill.sql",
+          "0165_project_goal_set_receipt_kind.sql",
+          "0166_organization_mutation_state_provisioning.sql",
+          "0167_organization_mutation_fence_token.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1139,6 +1143,10 @@ describe("applyPendingMigrations", () => {
           "0161_chat_message_mutation_fingerprint.sql",
           "0162_run_debug_issue_origin.sql",
           "0163_organization_mutations.sql",
+          "0164_organization_mutation_state_backfill.sql",
+          "0165_project_goal_set_receipt_kind.sql",
+          "0166_organization_mutation_state_provisioning.sql",
+          "0167_organization_mutation_fence_token.sql",
         ],
         reason: "pending-migrations",
       });

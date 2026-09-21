@@ -10,11 +10,11 @@ pub(crate) async fn apply(
     command: OrganizationBrandingCommand,
     metadata: &transaction::Metadata,
 ) -> Result<CommittedMutation, StoreError> {
-    let (version, fence_epoch) = transaction::lock_scope(tx, metadata).await?;
+    let scope = transaction::lock_scope(tx, metadata).await?;
     if let Some(receipt) = transaction::replay(tx, metadata).await? {
         return Ok(receipt);
     }
-    metadata.check_fresh(version, fence_epoch)?;
+    metadata.check_fresh(scope.version, scope.fence_epoch)?;
 
     let row = sqlx::query(
         "SELECT name, description, brand_color
@@ -47,8 +47,8 @@ pub(crate) async fn apply(
 
     let mut state = OrganizationSettingsState::new(
         &metadata.org,
-        version,
-        fence_epoch,
+        scope.version,
+        scope.fence_epoch,
         row.try_get::<String, _>("name")?,
     );
     state.description = row.try_get("description")?;
@@ -112,9 +112,10 @@ pub(crate) async fn apply(
     transaction::persist(
         tx,
         metadata,
+        &scope,
         transaction::Effect {
             version: next.version,
-            fence_epoch,
+            fence_epoch: scope.fence_epoch,
             outcome: Outcome::Applied,
             result: ResultState::OrganizationBranding {
                 state_integrity: transaction::branding_state_integrity(&next)?,

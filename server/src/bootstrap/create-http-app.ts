@@ -16,6 +16,7 @@ import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middlew
 import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { llmRoutes } from "../routes/llms.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
+import { createRustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { workspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import { applyUiBranding } from "../ui-branding.js";
 import { registerApiRoutes } from "./register-api-routes.js";
@@ -44,6 +45,12 @@ export async function createHttpApp(
     requireLoopbackParent: !opts.workspacePreviewOrigin,
   });
   const chatBackgroundRuntime = createChatBackgroundRuntime();
+  const rustFoundationBridge = createRustFoundationBridge({
+    databaseUrl: opts.databaseUrl ?? "",
+    mode: opts.rustFoundationMode,
+    binaryPath: opts.rustFoundationBinaryPath,
+    actorEnvelopeKey: opts.rustFoundationActorEnvelopeKey,
+  });
   let closeVite: (() => Promise<void>) | null = null;
   let closeInFlight: Promise<void> | null = null;
   const close = () => {
@@ -54,6 +61,7 @@ export async function createHttpApp(
       const results = await Promise.allSettled([
         Promise.resolve().then(() => chatBackgroundRuntime.close()),
         Promise.resolve().then(() => disposeVite?.()),
+        Promise.resolve().then(() => rustFoundationBridge.close()),
       ]);
       const failures = results
         .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -71,6 +79,13 @@ export async function createHttpApp(
     }
     throw startupError;
   };
+  if (rustFoundationBridge.mode === "required") {
+    try {
+      await rustFoundationBridge.start();
+    } catch (error) {
+      return rollbackStartup(error);
+    }
+  }
   const privateHostnameGateEnabled =
     opts.deploymentMode === "authenticated" && opts.deploymentExposure === "private";
   const privateHostnameAllowSet = resolvePrivateHostnameAllowSet({
@@ -148,7 +163,13 @@ export async function createHttpApp(
     }).syncAllLocalApps();
     app.use(
       "/api",
-      registerApiRoutes(db, opts, workspacePreview, chatBackgroundRuntime),
+      registerApiRoutes(
+        db,
+        opts,
+        workspacePreview,
+        chatBackgroundRuntime,
+        rustFoundationBridge,
+      ),
     );
   } catch (error) {
     return rollbackStartup(error);

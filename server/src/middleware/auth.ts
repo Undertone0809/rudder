@@ -29,7 +29,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
   return async (req, res, next) => {
     req.actor =
       authRequirement === "optional"
-        ? { type: "board", userId: "local-board", isInstanceAdmin: true, source: "local_implicit" }
+        ? { type: "board", userId: "local-board", isInstanceAdmin: true, source: "local_implicit", sessionId: "local-implicit", authEpoch: 1 }
         : { type: "none", source: "none" };
 
     const runIdHeader = req.header("x-rudder-run-id")?.trim() || undefined;
@@ -47,7 +47,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
             "Failed to resolve auth session from request headers",
           );
         }
-        if (session?.user?.id) {
+        if (session?.user?.id && session.session?.id) {
           const userId = session.user.id;
           const [roleRow, memberships] = await Promise.all([
             db
@@ -71,6 +71,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
             userId,
             orgIds: memberships.map((row) => row.orgId),
             isInstanceAdmin: Boolean(roleRow),
+            sessionId: session.session.id,
+            authEpoch: 1,
             runId: runIdHeader ?? undefined,
             source: "session",
           };
@@ -103,6 +105,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
           orgIds: access.orgIds,
           isInstanceAdmin: access.isInstanceAdmin,
           keyId: boardKey.id,
+          sessionId: `board-key:${boardKey.id}`,
+          authEpoch: 1,
           runId: runIdHeader || undefined,
           source: "board_key",
         };
@@ -162,6 +166,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         agentId: claims.sub,
         orgId: claims.org_id,
         keyId: undefined,
+        sessionId: `agent-jwt:${claims.sub}`,
+        authEpoch: 1,
         runId: claims.run_id,
         adapterType: claims.adapter_type,
         source: "agent_jwt",
@@ -193,6 +199,8 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
       agentId: key.agentId,
       orgId: key.orgId,
       keyId: key.id,
+      sessionId: `agent-key:${key.id}`,
+      authEpoch: 1,
       runId: runIdHeader || undefined,
       source: "agent_key",
     };

@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { organizationRoutes } from "../routes/orgs.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const mockCompanyService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -66,6 +67,10 @@ const mockWorkspaceBrowser = vi.hoisted(() => ({
   createFile: vi.fn(),
   writeFile: vi.fn(),
 }));
+const mockOrganizationMemberService = vi.hoisted(() => ({
+  list: vi.fn(),
+  countActiveVisible: vi.fn(),
+}));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockSecretService = vi.hoisted(() => ({
@@ -98,7 +103,7 @@ vi.mock("../services/index.js", () => ({
     ensureDefaultsFromRuntime: vi.fn(),
   }),
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
-  organizationMemberService: () => ({ list: vi.fn(), countActiveVisible: vi.fn() }),
+  organizationMemberService: () => mockOrganizationMemberService,
   logActivity: mockLogActivity,
 }));
 vi.mock("../services/organization-workspace-browser.js", () => ({
@@ -127,14 +132,14 @@ function createOrganization() {
 
 const activeServers = new Set<Server>();
 
-async function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>, rustFoundationBridge?: RustFoundationBridge) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api/orgs", organizationRoutes({} as any));
+  app.use("/api/orgs", organizationRoutes({} as any, undefined, undefined, rustFoundationBridge));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -154,6 +159,7 @@ describe("PATCH /api/orgs/:orgId/branding", () => {
     mockCompanyService.update.mockReset();
     mockAgentService.getById.mockReset();
     mockLogActivity.mockReset();
+    mockOrganizationMemberService.list.mockReset();
   });
 
   it("rejects non-CEO agent callers", async () => {
@@ -265,6 +271,92 @@ describe("PATCH /api/orgs/:orgId/branding", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation error");
     expect(mockCompanyService.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
+  function bridge(mode: "shadow" | "required", response: unknown): RustFoundationBridge {
+    return {
+      mode,
+      start: vi.fn(),
+      memberDirectory: vi.fn().mockResolvedValue(response),
+      close: vi.fn(),
+    } as unknown as RustFoundationBridge;
+  }
+
+  const page = {
+    total: 1,
+    items: [{ name: "Operator", type: "human", role: "owner", ref: "usr_operator" }],
+    nextCursor: null,
+    hasMore: false,
+  };
+
+  it("forwards required reads to Actix and never invokes the Node read service", async () => {
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+      sessionId: "session-1",
+      authEpoch: 1,
+    }, rustBridge);
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory?type=all&limit=1");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(page);
+    expect(rustBridge.memberDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({ originalUrl: "/api/orgs/organization-1/members/directory?type=all&limit=1" }),
+      "organization-1",
+    );
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with an explicit unavailable response when required Actix is down", async () => {
+    const rustBridge = bridge("required", null);
+    vi.mocked(rustBridge.memberDirectory).mockRejectedValueOnce(new Error("bridge unavailable"));
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory");
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      error: "Rust member directory is unavailable",
+      code: "rust_foundation_member_directory_unavailable",
+    });
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Node result as an explicit shadow fallback while comparing Rust output", async () => {
+    mockOrganizationMemberService.list.mockResolvedValueOnce(page);
+    const rustBridge = bridge("shadow", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(page);
+    expect(rustBridge.memberDirectory).toHaveBeenCalledOnce();
+    expect(mockOrganizationMemberService.list).toHaveBeenCalledOnce();
   });
 });
 

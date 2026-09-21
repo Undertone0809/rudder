@@ -1,10 +1,13 @@
 use crate::{
     CommittedMutation, Outcome, Receipt, ResultState, StoreError, branding_kind, project_goal_kind,
+    project_goal_set_kind,
 };
 use rudder_organization_mutation_core::{
     OrganizationBrandingCommand, OrganizationSettingsSnapshot,
 };
-use rudder_project_goal_link_core::{Operation, ProjectGoalLinkCommand};
+use rudder_project_goal_link_core::{
+    Operation, ProjectGoalLinkCommand, ProjectGoalSetReplacementCommand,
+};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -14,6 +17,7 @@ pub(crate) type Tx<'a> = Transaction<'a, Postgres>;
 pub(crate) const MAX_RESULT_BYTES: usize = 1024 * 1024;
 const BRANDING_RECEIPT_FORMAT: i32 = 2;
 const PROJECT_GOAL_RECEIPT_FORMAT: i32 = 2;
+const PROJECT_GOAL_SET_RECEIPT_FORMAT: i32 = 1;
 const MAX_COMMAND_BYTES: usize = MAX_RESULT_BYTES / 2;
 pub(crate) const MAX_PROJECT_GOALS: usize = 1024;
 const MAX_TEXT_BYTES: usize = 256;
@@ -42,6 +46,11 @@ pub(crate) enum ExpectedReceipt {
         target_integrity: String,
         primary_goal_after: Option<String>,
     },
+    ProjectGoalSetReplacement {
+        project_id: String,
+        goal_ids: Vec<String>,
+        primary_goal_after: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +67,13 @@ pub(crate) struct Metadata {
     pub link_identifier: Option<String>,
     pub expected_receipt: ExpectedReceipt,
     pub receipt_format: i32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LockedScope {
+    pub version: u64,
+    pub fence_epoch: u64,
+    pub fence_token: String,
 }
 
 impl Metadata {
@@ -174,6 +190,54 @@ impl Metadata {
         })
     }
 
+    pub fn project_goal_set(
+        command: &ProjectGoalSetReplacementCommand,
+    ) -> Result<Self, StoreError> {
+        let view = command.as_integration_view()?;
+        let context = view.context();
+        let actor = actor_metadata(context.actor().kind(), context.actor().principal_id())?;
+        let org = uuid(context.organization_id())?.to_owned();
+        let project_id = uuid(context.project_id())?.to_owned();
+        for goal_id in context.goal_ids() {
+            uuid(goal_id)?;
+        }
+        let key = bounded_text(view.idempotency_key(), false)?;
+        let core_fingerprint = view.fingerprint()?;
+        let fingerprint = adapter_fingerprint(project_goal_set_kind(), &core_fingerprint, None)?;
+        let body = json!({
+            "organization_id": org,
+            "actor_kind": actor.kind,
+            "actor_id": actor.principal_id,
+            "project_id": project_id,
+            "goal_ids": context.goal_ids(),
+            "primary_goal_after": context.primary_goal_after(),
+            "idempotency_key": key,
+            "expected_version": view.expected_version(),
+            "fence_epoch": view.fence_epoch(),
+        });
+        ensure_json_size(&body, MAX_COMMAND_BYTES)?;
+        signed(view.expected_version())?;
+        signed(view.fence_epoch())?;
+        Ok(Self {
+            org,
+            key,
+            kind: project_goal_set_kind(),
+            fingerprint,
+            expected_version: view.expected_version(),
+            fence_epoch: view.fence_epoch(),
+            actor,
+            project_id: Some(project_id.clone()),
+            goal_id: None,
+            link_identifier: None,
+            expected_receipt: ExpectedReceipt::ProjectGoalSetReplacement {
+                project_id,
+                goal_ids: context.goal_ids().to_owned(),
+                primary_goal_after: context.primary_goal_after().map(str::to_owned),
+            },
+            receipt_format: PROJECT_GOAL_SET_RECEIPT_FORMAT,
+        })
+    }
+
     pub fn check_fresh(&self, version: u64, fence_epoch: u64) -> Result<(), StoreError> {
         if self.expected_version != version {
             return Err(StoreError::StaleVersion);
@@ -225,27 +289,42 @@ pub(crate) async fn finish(
 pub(crate) async fn lock_scope(
     tx: &mut Tx<'_>,
     metadata: &Metadata,
-) -> Result<(u64, u64), StoreError> {
-    let organization = sqlx::query("SELECT id FROM organizations WHERE id=$1::uuid FOR UPDATE")
-        .bind(&metadata.org)
-        .fetch_optional(&mut **tx)
-        .await?;
-    if organization.is_none() {
-        return Err(StoreError::NotFound);
-    }
-
+) -> Result<LockedScope, StoreError> {
     let state = sqlx::query(
-        "SELECT owner, mutation_version, fence_epoch
+        "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
          FROM organization_mutation_state
          WHERE org_id=$1::uuid
          FOR UPDATE",
     )
     .bind(&metadata.org)
     .fetch_optional(&mut **tx)
-    .await?
-    .ok_or(StoreError::NotOwned)?;
+    .await?;
+    let Some(state) = state else {
+        let organization_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1::uuid)",
+        )
+        .bind(&metadata.org)
+        .fetch_one(&mut **tx)
+        .await?;
+        return Err(if organization_exists {
+            StoreError::NotOwned
+        } else {
+            StoreError::NotFound
+        });
+    };
     if state.try_get::<String, _>("owner")? != "rust" {
         return Err(StoreError::NotOwned);
+    }
+
+    // Legacy Node writers acquire this fence row before touching any business
+    // row. Keep Rust's lock order identical so an ownership handoff cannot
+    // deadlock on organizations versus organization_mutation_state.
+    let organization = sqlx::query("SELECT id FROM organizations WHERE id=$1::uuid FOR UPDATE")
+        .bind(&metadata.org)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if organization.is_none() {
+        return Err(StoreError::NotFound);
     }
 
     if metadata.actor.kind == "ceo_agent" || metadata.actor.kind == "agent" {
@@ -272,10 +351,13 @@ pub(crate) async fn lock_scope(
         return Err(StoreError::Unauthorized);
     }
 
-    Ok((
-        unsigned(state.try_get::<i64, _>("mutation_version")?)?,
-        unsigned(state.try_get::<i64, _>("fence_epoch")?)?,
-    ))
+    let fence_token = state.try_get::<String, _>("fence_token")?;
+    uuid(&fence_token)?;
+    Ok(LockedScope {
+        version: unsigned(state.try_get::<i64, _>("mutation_version")?)?,
+        fence_epoch: unsigned(state.try_get::<i64, _>("fence_epoch")?)?,
+        fence_token,
+    })
 }
 
 pub(crate) async fn replay(
@@ -341,10 +423,16 @@ pub(crate) async fn replay(
 pub(crate) async fn persist(
     tx: &mut Tx<'_>,
     metadata: &Metadata,
+    scope: &LockedScope,
     effect: Effect,
 ) -> Result<CommittedMutation, StoreError> {
     signed(effect.version)?;
     signed(effect.fence_epoch)?;
+    if effect.fence_epoch < scope.fence_epoch
+        || effect.fence_epoch > scope.fence_epoch.saturating_add(1)
+    {
+        return Err(StoreError::StaleFence);
+    }
     ensure_json_size(&effect.details, MAX_RESULT_BYTES)?;
     let receipt = Receipt {
         organization_id: metadata.org.clone(),
@@ -363,17 +451,22 @@ pub(crate) async fn persist(
 
     let updated = sqlx::query(
         "UPDATE organization_mutation_state
-         SET mutation_version=$2, fence_epoch=$3, updated_at=now()
+         SET mutation_version=$2,
+             fence_epoch=$3,
+             fence_token=CASE WHEN $3 > $5 THEN gen_random_uuid() ELSE fence_token END,
+             updated_at=now()
          WHERE org_id=$1::uuid
            AND owner='rust'
            AND mutation_version=$4
-           AND fence_epoch=$5",
+           AND fence_epoch=$5
+           AND fence_token=$6::uuid",
     )
     .bind(&metadata.org)
     .bind(signed(effect.version)?)
     .bind(signed(effect.fence_epoch)?)
     .bind(signed(metadata.expected_version)?)
     .bind(signed(metadata.fence_epoch)?)
+    .bind(&scope.fence_token)
     .execute(&mut **tx)
     .await?;
     if updated.rows_affected() != 1 {
@@ -623,6 +716,58 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 receipt.outcome.as_str(),
             )?;
         }
+        (
+            ResultState::ProjectGoalSetReplacement {
+                state,
+                project_id,
+                goal_ids,
+                primary_goal_after,
+                state_integrity,
+            },
+            kind,
+        ) if *kind == *project_goal_set_kind() => {
+            if Some(project_id) != metadata.project_id.as_ref()
+                || state.organization_id != metadata.org
+                || state.project_id != *project_id
+                || state.goal_ids != *goal_ids
+                || state.primary_goal_after != *primary_goal_after
+                || !is_sha256_hex(state_integrity)
+                || state.state_integrity() != state_integrity
+                || state.version != receipt.version
+                || state.fence_epoch != receipt.fence_epoch
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            uuid(project_id)?;
+            for goal_id in goal_ids {
+                uuid(goal_id)?;
+            }
+            if let Some(primary) = primary_goal_after {
+                uuid(primary)?;
+            }
+            let ExpectedReceipt::ProjectGoalSetReplacement {
+                project_id: expected_project_id,
+                goal_ids: expected_goal_ids,
+                primary_goal_after: expected_primary,
+            } = &metadata.expected_receipt
+            else {
+                return Err(StoreError::InvalidReceipt);
+            };
+            let expected_version = metadata
+                .expected_version
+                .checked_add(1)
+                .ok_or(StoreError::InvalidReceipt)?;
+            if receipt.outcome != Outcome::Applied
+                || receipt.version != expected_version
+                || receipt.fence_epoch != metadata.fence_epoch
+                || expected_project_id != project_id
+                || expected_goal_ids != goal_ids
+                || expected_primary.as_deref() != primary_goal_after.as_deref()
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            state.validate_persisted()?;
+        }
         _ => return Err(StoreError::InvalidReceipt),
     }
     Ok(())
@@ -698,7 +843,7 @@ pub(crate) fn signed(value: u64) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| StoreError::VersionRange)
 }
 
-fn unsigned(value: i64) -> Result<u64, StoreError> {
+pub(crate) fn unsigned(value: i64) -> Result<u64, StoreError> {
     u64::try_from(value).map_err(|_| StoreError::InvalidReceipt)
 }
 
