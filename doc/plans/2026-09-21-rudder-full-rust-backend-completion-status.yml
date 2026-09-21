@@ -19,7 +19,7 @@ main_adaptation:
   commits_ahead_of_migration_base: 6
   changed_paths_observed: [docs/releases.mdx, docs/zh/releases.mdx, packages/agent-runtimes/codex-local/src/server/execute.ts, packages/agent-runtimes/codex-local/src/server/readiness-gate.ts, scripts/dev-local-env.mjs, scripts/dev-runner.mjs, server/src/__tests__/codex-local-execute.test.ts, tests/e2e, ui/src/components, ui/src/lib, releases/v0.7.23.md]
   changed_path_assessment: no_direct_rust_bridge_route_overlap; dev_runner_status_path_and_codex_local_readiness_affect_real_entry_evidence; ui_and_release_changes_require_behavioral_recheck_after_sync
-  state: sync_required_before_exact_candidate
+  state: synced_and_reconciled_before_exact_candidate
   policy: isolate_main_sync_reconcile_changed_contracts_rerun_affected_scans_invalidate_affected_receipts
 real_environment_lane:
   policy: staged_narrowest_authorized_target
@@ -34,15 +34,15 @@ real_environment_lane:
   production_verified: false
 candidate:
   source_ref: codex/rudder-full-rust-backend-completion-20260921
-  source_sha: c54001819ca38079b627994557db0a18ed278fc0
-  tree_sha: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
+  source_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
+  tree_sha: 9ed2aa730252be96a097b829836122a8dea9098b
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  dirty_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
-  dirty_fingerprint_status: superseded_by_main_drift_and_concurrent_slice_changes
-  dirty_fingerprint_scope: tracked_and_untracked_source_diff_excluding_durable_plan_records
-  runtime: focused_local_checks_only
+  dirty_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  dirty_fingerprint_status: exact_clean_candidate_source_diff
+  dirty_fingerprint_scope: committed_source_diff_origin_main_to_head_excluding_durable_plan_records
+  runtime: focused_local_checks_after_main_reconciliation
   organization_data: disposable_embedded_postgres_fixtures
-  acceptance_packet: d1-writer-fence-v7_pending_rebind
+  acceptance_packet: d1-writer-fence-v8_pending_stage_review
   current_source_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
 claims:
   implementation_complete: false
@@ -63,7 +63,7 @@ phase:
 slice:
   current: organization-project-writer-fence-and-private-d1-route
   next: signed-bridge-and-complete-writer-fence
-  status: main_drift_reconciliation_and_bridge_lifecycle_in_progress
+  status: main_reconciled_bridge_lifecycle_verified_local_writer_fence_in_progress
 evidence:
   reviewer: pending_current_candidate_stage_review
   reviewer_receipt: invalidated_after_fence_token_side_chat_strategy_main_drift_and_candidate_drift
@@ -77,9 +77,9 @@ evidence:
 blockers:
   - id: P0-main-drift-candidate
     owner: migration_implementation
-    state: open
-    detail: origin/main advanced from the migration base to c67ce0f00bb78e323068caac4a9ae349f863c9da while this dirty candidate was being built. The prior dirty fingerprint and all runtime receipts are historical and cannot bind the next slice.
-    next_step: reconcile the six Main commits in an isolated sync checkout, rerun affected route/startup/CLI/MCP/UI contract scans, and compute a new exact candidate fingerprint.
+    state: resolved
+    detail: origin/main advanced from the migration base to c67ce0f00bb78e323068caac4a9ae349f863c9da. The six Main commits were rebased onto the migration checkpoint in an isolated reconcile worktree, the migration branch now points to 9883c548e19adb5d4915d17c33992e4bce98b4b9, and affected source scans were rerun.
+    next_step: rebind stage review and verifier receipts to the exact candidate after the current bridge hardening changes.
   - id: P0-node-writer-fence
     owner: migration_implementation
     state: open
@@ -116,8 +116,8 @@ blockers:
     detail: First-party MCP/native process paths still select bundled Node implementations in fallback modes.
     next_step: add explicit missing-Rust failure and static/runtime negative checks.
 writer_audit:
-  candidate_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
-  candidate_fingerprint_status: historical_superseded_rebind_required
+  candidate_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  candidate_fingerprint_status: exact_candidate_pending_post_fix_rebind
   verdict: needs_more_evidence
   d1_activation: blocked
   fence_contract:
@@ -162,10 +162,11 @@ completed_checks:
   - plan files added in isolated migration worktree
   - current source baseline read without resetting the original checkout
   - release migration compatibility matrix updated to 0167 and focused tests passed 16/16 (historical check; exact candidate rerun pending)
+  - current exact candidate is 9883c548e19adb5d4915d17c33992e4bce98b4b9 with tree 9ed2aa730252be96a097b829836122a8dea9098b and source fingerprint 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
   - current migration manifest computed as 168 journal entries and 170 SQL files at this candidate
-  - current route scan is 47 source files and 513 declaration hits; transaction scan is 61 files and 212 hits, 50 files and 192 production hits
+  - current route scan is 47 source files and 513 declaration hits; transaction scan is 62 files and 221 hits, 51 files and 200 production hits
   - current CLI/MCP scan is 118 CLI capability entries (107 agent-v1 and 11 compat contracts) and 107 MCP descriptors
-  - historical dirty candidate fingerprint 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8 was computed using tracked diff, untracked source SHA-256s, and status excluding four durable plan records; it is superseded by Main drift and later slice changes
+  - historical dirty candidate fingerprint 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8 remains historical; the active clean candidate fingerprint is a SHA-256 of the committed origin/main..HEAD binary diff excluding the four durable plan records
   - embedded PostgreSQL client and mutation migration tests passed 29/29
   - Rust D1 PostgreSQL suite passed 25/25; project-goal core library passed 31/31 including rotating-envelope replay; Actix foundation black-box passed 10/10 including public goal-set replacement
   - server organization/project fence focused suite passed 35/35, including cross-organization project resource rejection and corrupt-link non-disclosure; release compatibility matrix passed 16/16
@@ -177,8 +178,8 @@ completed_checks:
   - focused lint/import check passed for 18 changed tracked files; full lint still has five clean baseline files requiring import organization
   - status, ledger, and current-source-refresh YAML parse validation pending after this refresh
 pending_checks:
-  - synchronize the migration branch with latest observed origin/main c67ce0f00bb78e323068caac4a9ae349f863c9da in an isolated checkout and record the changed-path compatibility decision
-  - validate plan/status/ledger/current-source YAML and Markdown references
+  - rebind the current bridge hardening and shadow observability changes to a new exact candidate after implementation
+  - validate plan/status/ledger/current-source YAML and Markdown references after the candidate refresh
   - complete semantic authority, writer, lifecycle, and contract reconciliation including the current writer audit rows
   - invalidate v5 and v6 and create/validate the v7 exact-candidate delivery packet
   - complete the actor/state/fence/listener/audit contracts and extend the persisted fencing token to every competing writer before D1 activation
@@ -188,6 +189,6 @@ pending_checks:
   - run a real TypeScript-to-Rust bridge workflow with startup/readiness/close/retry and no-Node-read evidence on the same exact candidate
 receipts: []
 interrupt_resume:
-  last_durable_commit: none
-  remaining_work: semantic inventory and packet, signed actor bridge, complete writer/token fencing, then supported listener integration and D1 verification
-  next_command: sync latest Main in isolation, validate refreshed durable artifacts, recompute the exact fingerprint, invalidate v5/v6, create the next packet, and obtain current-candidate reviewer/verifier receipts before the next D1 writer slice
+  last_durable_commit: 9883c548e19adb5d4915d17c33992e4bce98b4b9
+  remaining_work: bridge hardening, semantic inventory and packet, signed actor/session authority, complete writer/token fencing, then supported listener integration and D1 verification
+  next_command: review the current bridge hardening diff, create/validate the v8 packet, rerun affected checks, then obtain current-candidate stage review and verifier receipts before the next D1 writer slice
