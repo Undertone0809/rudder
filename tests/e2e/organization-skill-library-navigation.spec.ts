@@ -41,7 +41,7 @@ test("organization skill links land in Library instead of the legacy Skills deta
   await expect(page.getByTestId("org-workspaces-files-scroll")).toContainText("skills");
 });
 
-test("legacy skill visits do not hijack the Organization rail destination", async ({ page }) => {
+test("legacy skill visits do not hijack the Projects rail destination", async ({ page }) => {
   const organization = await createOrganization(page, "Skill-Organization-Rail");
   const skillsRes = await page.request.get(`/api/orgs/${organization.id}/skills`);
   expect(skillsRes.ok()).toBe(true);
@@ -69,7 +69,7 @@ test("legacy skill visits do not hijack the Organization rail destination", asyn
   );
   await expect(page.getByTestId("org-workspaces-virtual-skill-readonly")).toContainText("Read-only skill");
 
-  await page.getByTestId("primary-rail").getByRole("link", { name: "Organization" }).click();
+  await page.getByTestId("primary-rail").getByRole("link", { name: "Projects" }).click();
   await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`));
   await expect(
     page.getByTestId("dashboard-calendar-switcher").getByRole("link", { name: "Dashboard", exact: true }),

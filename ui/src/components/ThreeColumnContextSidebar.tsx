@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CALENDAR_EVENT_STATUS_OPTIONS, useCalendarWorkspace } from "@/context/CalendarWorkspaceContext";
 import { useDialog } from "@/context/DialogContext";
+import { useI18n } from "@/context/I18nContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useToast } from "@/context/ToastContext";
@@ -37,6 +38,8 @@ import {
   summarizeIssueDrafts,
 } from "@/lib/new-issue-dialog";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
+import { readRememberedPrimaryRailPath } from "@/lib/primary-rail-memory";
+import { buildProjectsContextItems } from "@/lib/projects-context-navigation";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   RECENT_ISSUES_CHANGED_EVENT,
@@ -45,27 +48,21 @@ import {
   resolveRecentIssues,
 } from "@/lib/recent-issues";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { SKILLS_LIBRARY_DIRECTORY_HREF } from "@/lib/skill-library-routes";
 import { statusBadge, statusBadgeDefault } from "@/lib/status-colors";
 import { agentUrl, cn, issueUrl, projectRouteRef, relativeTime } from "@/lib/utils";
 import type { Agent, CalendarEventStatus, CalendarSource, Issue } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
-  Boxes,
   CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   Circle,
-  Clock3,
   Copy,
-  DollarSign,
   Eye,
   EyeOff,
-  History,
-  LayoutDashboard,
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
@@ -177,7 +174,7 @@ function resolveContextColumnHeader(relativePath: string): { title: string; desc
     return { title: "Calendar", description: "Sources and filters" };
   }
   if (/^\/(?:dashboard|org|projects|library|resources|workspaces|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath)) {
-    return { title: "Org", description: "Organization surfaces" };
+    return { title: "Projects", description: "" };
   }
   return { title: "Agents", description: "" };
 }
@@ -408,6 +405,7 @@ function ContextItem({
     <Link
       to={to}
       data-testid={testId}
+      aria-current={active ? "page" : undefined}
       className={cn(
         "relative z-10 mx-1.5 flex items-center gap-3 rounded-[calc(var(--radius-sm)-1px)] border border-transparent px-3 py-2 text-sm transition-[background-color,border-color,color]",
         slidingActiveIndicator && "min-h-[var(--motion-context-item-height)]",
@@ -707,6 +705,7 @@ function SidebarIssueListSection({
 }
 
 export function ThreeColumnContextSidebar() {
+  const { locale } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const relativePath = toOrganizationRelativePath(location.pathname);
@@ -908,24 +907,12 @@ export function ThreeColumnContextSidebar() {
     const routeRef = projectRouteRef(project);
     return selectedProjectId === project.id || activeProjectRef === routeRef;
   });
-  const orgContextItems = [
-    { key: "dashboard", to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", active: /^\/dashboard(?:\/|$)/.test(relativePath) },
-    { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\/heartbeats(?:\/|$)/.test(relativePath) },
-    {
-      key: "skills",
-      to: SKILLS_LIBRARY_DIRECTORY_HREF,
-      icon: Boxes,
-      label: "Skills",
-      active:
-        /^\/skills(?:\/|$)/.test(relativePath)
-        || (
-          /^\/library(?:\/|$)/.test(relativePath)
-          && (searchParams.get("directory") === "skills" || searchParams.has("skill"))
-        ),
-    },
-    { key: "costs", to: "/costs", icon: DollarSign, label: "Costs", active: /^\/costs(?:\/|$)/.test(relativePath) },
-    { key: "activity", to: "/activity", icon: History, label: "Activity", active: /^\/activity(?:\/|$)/.test(relativePath) },
-  ];
+  const orgContextItems = buildProjectsContextItems({
+    relativePath,
+    searchParams,
+    libraryPath: readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library"),
+    locale,
+  });
   const activeOrgContextIndex = orgContextItems.findIndex((item) => item.active);
   const activeAgentIndex = visibleAgents.findIndex((agent) => activeAgentRef === agent.urlKey || activeAgentRef === agent.id);
   const googleSources = (calendarSources ?? [])

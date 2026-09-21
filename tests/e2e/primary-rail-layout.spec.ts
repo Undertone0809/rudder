@@ -87,7 +87,7 @@ test.describe("Primary rail layout", () => {
         expect(mainBox).not.toBeNull();
         expect(navBox!.x + navBox!.width).toBeLessThanOrEqual(mainBox!.x + 0.5);
 
-        for (const label of ["Messenger", "Organization", "Automations"]) {
+        for (const label of ["Messenger", "Projects", "Automations"]) {
           const item = nav.getByRole("link", { name: label, exact: true });
           await expect(item).toBeVisible();
           const itemBox = await item.boundingBox();

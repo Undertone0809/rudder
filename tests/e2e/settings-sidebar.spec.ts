@@ -194,8 +194,8 @@ test.describe("Settings sidebar", () => {
     await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/messenger$`));
     await expect(page.getByTestId("settings-modal-shell")).toHaveCount(0);
 
-    await page.getByTestId("primary-rail").getByRole("link", { name: "Organization" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/dashboard$`));
+    await page.getByTestId("primary-rail").getByRole("link", { name: "Projects" }).click();
+    await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/projects$`));
     await expect(page.getByTestId("settings-modal-shell")).toHaveCount(0);
     await page.evaluate(() => {
       window.localStorage.setItem("rudder.lastWorkspacePath", "/org?legacy=1#old");

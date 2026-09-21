@@ -20,6 +20,8 @@ const mockState = vi.hoisted(() => ({
   setSidebarOpen: vi.fn(),
   toggleFollowIssue: vi.fn(),
   isMobile: true,
+  locale: "en",
+  libraryPath: "/library",
   pathname: "/RUD/issues",
   search: "",
   relativePath: "/issues",
@@ -121,6 +123,15 @@ vi.mock("@/lib/router", () => ({
 
 vi.mock("@/lib/organization-routes", () => ({
   toOrganizationRelativePath: () => mockState.relativePath,
+}));
+
+vi.mock("@/context/I18nContext", () => ({
+  useI18n: () => ({ locale: mockState.locale }),
+}));
+
+vi.mock("@/lib/primary-rail-memory", () => ({
+  readRememberedPrimaryRailPath: (_orgId: string, section: string, fallback: string) =>
+    section === "library" ? mockState.libraryPath : fallback,
 }));
 
 vi.mock("@/context/OrganizationContext", () => ({
@@ -272,6 +283,8 @@ beforeEach(() => {
   mockState.toggleFollowIssue.mockReset();
   mockState.toggleFollowIssue.mockResolvedValue(undefined);
   mockState.isMobile = true;
+  mockState.locale = "en";
+  mockState.libraryPath = "/library";
   mockState.pathname = "/RUD/issues";
   mockState.search = "";
   mockState.relativePath = "/issues";
@@ -347,6 +360,54 @@ describe("ThreeColumnContextSidebar issue draft recovery", () => {
     expect(document.body.textContent).toContain("Project");
     expect(document.body.textContent).not.toContain("Project workspace");
     expect(document.querySelector("[aria-label='Projects']")).not.toBeNull();
+  });
+
+  it.each(["/projects", "/projects/rudder/configuration", "/dashboard", "/heartbeats"])(
+    "includes Library in the Projects context for %s",
+    (relativePath) => {
+      mockState.relativePath = relativePath;
+      mockState.pathname = `/RUD${relativePath}`;
+      renderSidebar();
+
+      expect(document.querySelector("[data-testid='workspace-context-header'] h2")?.textContent).toBe("Projects");
+      const links = Array.from(document.querySelectorAll("a"));
+      expect(links.find((link) => link.textContent === "Library")?.getAttribute("href")).toBe("/library");
+    },
+  );
+
+  it("restores the Library document path from the nested Projects entry", () => {
+    mockState.relativePath = "/projects";
+    mockState.libraryPath = "/library?path=docs%2Froadmap.md#next";
+    renderSidebar();
+
+    const library = Array.from(document.querySelectorAll("a")).find((link) => link.textContent === "Library");
+    expect(library?.getAttribute("href")).toBe(mockState.libraryPath);
+  });
+
+  it("labels the nested Library entry in Chinese", () => {
+    mockState.locale = "zh-CN";
+    mockState.relativePath = "/projects";
+    renderSidebar();
+
+    expect(Array.from(document.querySelectorAll("a"))
+      .find((link) => link.textContent === "文档")?.getAttribute("href")).toBe("/library");
+  });
+
+  it.each(["?directory=skills", "?skill=skill-1&skillFile=SKILL.md"])(
+    "keeps the Skills shortcut uniquely selected for %s",
+    (search) => {
+      mockState.relativePath = "/library";
+      mockState.search = search;
+      renderSidebar();
+
+      const selected = Array.from(document.querySelectorAll("a[aria-current='page']"));
+      expect(selected.map((link) => link.textContent)).toEqual(["Skills"]);
+    },
+  );
+
+  it("does not add Library to Issue navigation", () => {
+    renderSidebar();
+    expect(Array.from(document.querySelectorAll("a")).some((link) => link.textContent === "Library")).toBe(false);
   });
 
   it("shows calendar timeline filters with user-facing status labels", () => {

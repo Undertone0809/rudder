@@ -28,7 +28,7 @@ import { openApp, useOpenApps } from "@/lib/open-apps";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { readRememberedPrimaryRailPath } from "@/lib/primary-rail-memory";
 import { queryKeys } from "@/lib/queryKeys";
-import { NavLink, useLocation, useNavigate } from "@/lib/router";
+import { Link, useLocation, useNavigate } from "@/lib/router";
 import { SETTINGS_PREFETCH_STALE_TIME_MS } from "@/lib/settings-prefetch";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -40,10 +40,8 @@ import {
   FolderKanban,
   Inbox,
   Inbox as InboxIcon,
-  LibraryBig,
   MessageCirclePlus,
   MessageSquare,
-  Network,
   Plus,
   Repeat,
   Search,
@@ -109,7 +107,6 @@ function RailNavItem({
   onDoubleClick,
   onContextMenu,
   localAppIdentity,
-  end,
   onClose,
   closePending,
 }: {
@@ -120,36 +117,33 @@ function RailNavItem({
   badge?: number;
   badgeTone?: "default" | "danger";
   badgeTestId?: string;
-  active?: boolean;
+  active: boolean;
   onDoubleClick?: () => void;
   onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
   localAppIdentity?: LocalAppOpaqueIdentity;
-  end?: boolean;
   onClose?: () => void;
   closePending?: boolean;
 }) {
+  // Active state belongs to the section, not its remembered destination URL.
   const link = (
-    <NavLink
+    <Link
       to={to}
-      end={end}
       aria-current={active ? "page" : undefined}
       data-tour-target={tourTarget}
       data-tour-spotlight={tourTarget ? "compact-rail" : undefined}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      className={({ isActive }) =>
-        cn(
-          "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
-          (active ?? isActive)
-            ? "text-white"
-            : [
-              "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
-              "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
-              "hover:text-[color:var(--sidebar-foreground)]",
-              "dark:text-white/74 dark:hover:bg-white/[0.07] dark:hover:text-white",
-            ].join(" "),
-        )
-      }
+      className={cn(
+        "relative z-10 flex min-h-[56px] w-[var(--primary-rail-item-width,66px)] translate-x-[var(--primary-rail-item-shift,0.25rem)] flex-col items-center justify-center gap-1 rounded-[var(--radius-sm)] px-1 py-2 text-[9px] font-medium leading-[1.05] transition-colors",
+        active
+          ? "text-white"
+          : [
+            "text-[color:color-mix(in_oklab,var(--sidebar-foreground)_86%,var(--sidebar))]",
+            "hover:bg-[color:color-mix(in_oklab,var(--sidebar)_58%,white)]",
+            "hover:text-[color:var(--sidebar-foreground)]",
+            "dark:text-white/74 dark:hover:bg-white/[0.07] dark:hover:text-white",
+          ].join(" "),
+      )}
     >
       <span className="relative">
         {localAppIdentity ? (
@@ -176,7 +170,7 @@ function RailNavItem({
         ) : null}
       </span>
       <span className="block w-full min-w-0 truncate text-center" title={label}>{label}</span>
-    </NavLink>
+    </Link>
   );
   if (!onClose) return link;
   return (
@@ -263,14 +257,16 @@ export function PrimaryRail({
   const previousInboxCountRef = useRef<number | null>(null);
   const previousInboxOrgRef = useRef<string | null | undefined>(selectedOrganizationId);
   const requestedNotificationPermissionRef = useRef(false);
-  const orgGroupActive = /^\/(?:dashboard|calendar|org|projects|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath);
+  const projectsGroupActive = /^\/(?:dashboard|calendar|org|projects|library|resources|workspaces|heartbeats|skills|costs|activity)(?:\/|$)/.test(relativePath)
+    && !/^\/workspaces\/backups(?:\/|$)/.test(relativePath);
   const issueEntryPath = readRememberedIssueNavigationPath(selectedOrganizationId);
   const messengerEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "messenger", "/messenger");
   const issuesEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "issues", issueEntryPath);
   const goalsEntryPath = "/goals";
   const agentsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "agents", "/agents");
-  const libraryEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library");
-  const organizationEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/dashboard");
+  // Keep the legacy storage key and separate Library memory so this entry
+  // returns from the file tree to the last project/workspace navigation surface.
+  const projectsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "organization", "/projects");
   const automationsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "automations", "/automations");
   const pluginsEntryPath = readRememberedPrimaryRailPath(selectedOrganizationId, "plugins", "/hub");
   const railItems: RailItem[] = [
@@ -307,13 +303,6 @@ export function PrimaryRail({
       icon: UsersRound,
       active: /^\/agents(?:\/|$)/.test(relativePath),
     },
-    {
-      key: "library",
-      to: libraryEntryPath,
-      label: locale === "zh-CN" ? "文档" : "Library",
-      icon: LibraryBig,
-      active: /^\/(?:library|resources|workspaces)(?:\/|$)/.test(relativePath),
-    },
     ...(pluginsEnabled
       ? [{
           key: "plugins",
@@ -325,11 +314,11 @@ export function PrimaryRail({
         }]
       : []),
     {
-      key: "organization",
-      to: organizationEntryPath,
-      label: "Organization",
-      icon: Network,
-      active: orgGroupActive,
+      key: "projects",
+      to: projectsEntryPath,
+      label: locale === "zh-CN" ? "项目" : "Projects",
+      icon: FolderKanban,
+      active: projectsGroupActive,
     },
     {
       key: "automations",
@@ -610,7 +599,6 @@ export function PrimaryRail({
             onDoubleClick={item.key === "messenger" ? handleMessengerDoubleClick : undefined}
             onContextMenu={item.key === "messenger" ? handleMessengerContextMenu : undefined}
             localAppIdentity={item.localAppIdentity}
-            end={item.key === "plugins" ? true : undefined}
           />
         ))}
         {pinnedLocalAppItems.length > 0 ? (

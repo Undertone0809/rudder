@@ -740,7 +740,7 @@ export const en = {
   "productTour.stepCounter": "{{current}} / {{total}}",
   "productTour.step.workspace.title": "Rudder keeps agent work connected",
   "productTour.step.workspace.body":
-    "The rail keeps the main work surfaces close: Messenger, Dashboard, Issues, Agents, Organization, Automations, and Calendar. Use it to move between action, inspection, and review.",
+    "The rail keeps Messenger, Issues, Agents, Projects, and Automations close. Open Projects to reach project work and Library. Optional work surfaces appear when enabled.",
   "productTour.step.create.title": "Start with one task an agent can actually move",
   "productTour.step.create.body":
     "The create menu is where new chats, issues, agents, and projects begin. For the first loop, choose a small Chat or issue with a clear boundary and a result you can review.",

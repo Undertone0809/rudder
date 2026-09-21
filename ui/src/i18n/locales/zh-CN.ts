@@ -695,7 +695,7 @@ export const zhCN: Messages = {
   "productTour.stepCounter": "{{current}} / {{total}}",
   "productTour.step.workspace.title": "Rudder 是 agent work 的控制台",
   "productTour.step.workspace.body":
-    "主导航把关键工作面放在一起：Messenger、Dashboard、Issues、Agents、Organization、Automations 和 Calendar。用它在行动、检查和 review 之间切换。",
+    "主导航汇集消息、任务、智能体、项目和自动化。打开项目，可以访问具体项目和文档。其他可选工作区会在启用后显示。",
   "productTour.step.create.title": "从一个 agent 真能推进的小任务开始",
   "productTour.step.create.body":
     "创建菜单是新 Chat、issue、agent 和 project 的入口。第一次闭环可以选择边界清楚、结果可 review 的小 Chat 或 issue。",

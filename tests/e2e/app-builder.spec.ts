@@ -461,7 +461,7 @@ test.describe("Apps workspace", () => {
       }).desktopShell;
       if (shell?.appBuilder) shell.appBuilder.supported = true;
     });
-    await page.getByRole("link", { name: "Organization" }).click();
+    await page.getByRole("link", { name: "Projects" }).click();
     await page.getByRole("link", { name: "Hub" }).click();
     await expect(page).toHaveURL(/\/apps$/);
     await page.getByTestId("primary-rail").getByRole("link", { name: "Alpha CRM", exact: true }).click();
