@@ -37,6 +37,7 @@ import {
   MANAGED_GROUP_SHORT_LIST_MAX_COUNT,
   MANAGED_GROUP_VISIBLE_INCREMENT,
   MessengerThreadSectionControls,
+  usePreserveShortManagedThreadGroupEntryLimits,
 } from "@/components/messenger/MessengerThreadSectionControls";
 import { MessengerDiscordCta } from "@/components/MessengerDiscordCta";
 import { ProjectIcon } from "@/components/ProjectIdentity";
@@ -797,6 +798,8 @@ export function MessengerContextSidebar() {
     readCollapsedThreadGroups(model.selectedOrganizationId, threadOrganizationRule),
   );
   const [collapsedThreadGroupEntryKeys, setCollapsedThreadGroupEntryKeys] = useState<Set<string>>(() => new Set());
+  const collapsedThreadGroupEntryKeysRef = useRef<Set<string>>(collapsedThreadGroupEntryKeys);
+  collapsedThreadGroupEntryKeysRef.current = collapsedThreadGroupEntryKeys;
   const [visibleThreadGroupEntryLimits, setVisibleThreadGroupEntryLimits] = useState<Record<string, number>>({});
   const sessionQuery = useQuery({
     queryKey: queryKeys.auth.session,
@@ -1590,6 +1593,8 @@ export function MessengerContextSidebar() {
     }
     return required;
   }, [activeThreadKey, effectiveThreadOrganizationRule, organizedThreadSections]);
+  usePreserveShortManagedThreadGroupEntryLimits(effectiveThreadOrganizationRule, organizedThreadSections, collapsedThreadGroupEntryKeys, setVisibleThreadGroupEntryLimits);
+
   const activeThread = useMemo(
     () => visibleThreadSummaries.find((thread) => thread.threadKey === activeThreadKey) ?? null,
     [activeThreadKey, visibleThreadSummaries],
@@ -2676,7 +2681,11 @@ export function MessengerContextSidebar() {
   };
 
   const handleAutoLoadThreadSection = (section: OrganizedThreadSection, visibleCount: number) => {
-    if (visibleCount < section.entries.length || customGroupBySectionKey.has(section.key)) return;
+    if (
+      visibleCount < section.entries.length
+      || customGroupBySectionKey.has(section.key)
+      || collapsedThreadGroupEntryKeysRef.current.has(section.key)
+    ) return;
     if (model.hasMoreThreadSummaries && !model.isFetchingMoreThreadSummaries) {
       void model.loadMoreThreadSummaries?.();
     }

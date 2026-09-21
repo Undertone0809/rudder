@@ -5090,6 +5090,8 @@ describe("MessengerContextSidebar chat actions", () => {
     );
     messengerModel = {
       ...baseModel(),
+      hasMoreThreadSummaries: true,
+      loadMoreThreadSummaries: vi.fn().mockResolvedValue(undefined),
       threadSummaries: chatList.map((conversation, index) => ({
         threadKey: `chat:${conversation.id}`,
         kind: "chat",
@@ -5124,6 +5126,19 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-8"]')).toBeTruthy();
 
+    const autoLoader = document.querySelector<HTMLElement>(
+      '[data-testid="messenger-thread-section-agent-agent-1-auto-loader"]',
+    );
+    const sectionObserver = intersectionObservers.find((candidate) => candidate.element === autoLoader);
+    expect(autoLoader).toBeTruthy();
+    expect(sectionObserver).toBeTruthy();
+
+    await act(async () => {
+      sectionObserver?.callback([{ isIntersecting: true }]);
+      await Promise.resolve();
+    });
+    expect(messengerModel.loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
+
     const collapse = document.querySelector<HTMLButtonElement>(
       '[data-testid="messenger-thread-section-agent-agent-1-collapse"]',
     );
@@ -5139,6 +5154,12 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.activeElement).toBe(document.querySelector(
       '[data-testid="messenger-thread-section-agent-agent-1-show-more"]',
     ));
+
+    await act(async () => {
+      sectionObserver?.callback([{ isIntersecting: true }]);
+      await Promise.resolve();
+    });
+    expect(messengerModel.loadMoreThreadSummaries).toHaveBeenCalledTimes(1);
   });
 
   it("lets Collapse hide a managed group even when the active thread is beyond the initial limit", async () => {
@@ -5186,7 +5207,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector(`[data-testid="${sectionId}-show-more"]`)).toBeTruthy();
   });
 
-  it("shows short managed thread groups without progressive disclosure controls", () => {
+  it("shows short managed thread groups without progressive disclosure controls", async () => {
     installLocalStorage({
       "rudder.messengerThreadOrganizationByOrg": JSON.stringify({ "org-1": "agent" }),
     });
@@ -5218,13 +5239,50 @@ describe("MessengerContextSidebar chat actions", () => {
       })),
     };
 
-    renderSidebar();
+    const { root } = renderSidebar();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-show-more"]')).toBeNull();
     expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-collapse"]')).toBeNull();
     expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-auto-loader"]')).toBeNull();
     expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
+
+    chatList = Array.from({ length: 8 }, (_, index) =>
+      baseConversation({
+        id: `chat-${index + 1}`,
+        title: `Short agent thread ${index + 1}`,
+        preferredAgentId: "agent-1",
+      }),
+    );
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: chatList.map((conversation, index) => ({
+        threadKey: `chat:${conversation.id}`,
+        kind: "chat",
+        title: conversation.title,
+        preview: "Short agent conversation",
+        subtitle: null,
+        href: `/messenger/chat/${conversation.id}`,
+        latestActivityAt: `2026-04-11T09:${String(59 - index).padStart(2, "0")}:00.000Z`,
+        lastReadAt: null,
+        unreadCount: 0,
+        needsAttention: false,
+        isPinned: false,
+        metadata: { preferredAgentId: "agent-1" },
+      })),
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="messenger-thread-chat-chat-8"]')).toBeNull();
+    expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-show-more"]')).toBeTruthy();
   });
 
   it("applies stored thread-type order and collapses thread-type groups", async () => {

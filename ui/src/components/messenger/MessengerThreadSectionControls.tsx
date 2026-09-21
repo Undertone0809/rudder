@@ -1,11 +1,60 @@
+import {
+  isManagedThreadGroupRule,
+  type ThreadOrganizationRule,
+} from "@/lib/messenger-preferences";
+import {
+  flattenThreadSections,
+  type OrganizedThreadSection,
+} from "@/lib/messenger-thread-organization";
 import { Loader2 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from "react";
 
 export const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
 // A one-row overflow is not enough to justify a disclosure control. Keep
 // short groups stable so the auto-loader does not immediately undo Collapse.
 export const MANAGED_GROUP_SHORT_LIST_MAX_COUNT = MANAGED_GROUP_INITIAL_VISIBLE_COUNT + 1;
 export const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
+
+export function preserveShortManagedThreadGroupEntryLimits(
+  current: Record<string, number>,
+  sections: OrganizedThreadSection[],
+  collapsedSectionKeys: Set<string>,
+) {
+  let next = current;
+  for (const section of flattenThreadSections(sections)) {
+    if (
+      section.entries.length > MANAGED_GROUP_SHORT_LIST_MAX_COUNT
+      || collapsedSectionKeys.has(section.key)
+    ) continue;
+    const currentLimit = current[section.key] ?? MANAGED_GROUP_INITIAL_VISIBLE_COUNT;
+    if (section.entries.length <= currentLimit) continue;
+    if (next === current) next = { ...current };
+    next[section.key] = section.entries.length;
+  }
+  return next;
+}
+
+export function usePreserveShortManagedThreadGroupEntryLimits(
+  effectiveThreadOrganizationRule: ThreadOrganizationRule,
+  organizedThreadSections: OrganizedThreadSection[],
+  collapsedThreadGroupEntryKeys: Set<string>,
+  setVisibleThreadGroupEntryLimits: Dispatch<SetStateAction<Record<string, number>>>,
+) {
+  useEffect(() => {
+    if (!isManagedThreadGroupRule(effectiveThreadOrganizationRule)) return;
+    setVisibleThreadGroupEntryLimits((current) => preserveShortManagedThreadGroupEntryLimits(
+      current,
+      organizedThreadSections,
+      collapsedThreadGroupEntryKeys,
+    ));
+  }, [collapsedThreadGroupEntryKeys, effectiveThreadOrganizationRule, organizedThreadSections, setVisibleThreadGroupEntryLimits]);
+}
 
 function MessengerSectionAutoLoader({
   loading,
