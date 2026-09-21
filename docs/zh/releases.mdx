@@ -18,6 +18,36 @@ Rudder 稳定版本对应默认安装路径：
 npx @rudderhq/cli@latest start
 ```
 
+<Update label="2026年9月21日" description="v0.7.23" tags={["新功能","改进","问题修复"]}>
+
+## v0.7.23
+
+[GitHub Release](https://github.com/Undertone0809/rudder/releases/tag/v0.7.23)
+
+Rudder 0.7.23 让 Projects 与 Library 更容易导航，提升本地 Chat 图片和已保存 Issue 草稿的可恢复性，并改善 Messenger、Desktop 更新、本地 Agent 运行、工作区文件和启动流程的可靠性。
+
+### 新功能
+
+- Chat Markdown 和附件中的本地图片现在可以直接内联显示，并支持图片预览；本地图片不可用时仍会保留文件链接作为回退。
+
+### 改进
+
+- 主导航现在将项目工作和 Library 纳入 Projects 下，同时保留已有的 Library 文档 URL 和导航记忆。
+- 保存的 Issue 草稿现在可以重新打开、编辑并保存回原草稿，不再以只读内容打开。
+- Messenger 线程分组在需要时使用明确的“显示更多”和“收起”控件；短列表不再显示多余控件，收起时也能保持焦点和未读线程定位。
+- Codex 本地运行不会再把并发中的 provider 检查误判为认证失败。
+- Desktop 更新检查现在会忽略尚未提供当前平台安装包和校验文件的新版本。
+- 本地 Agent Run 的日志输出现在会对慢速消费者施加背压，在大量输出时不会因为队列满而终止已接受的运行。
+- 工作区文件读取现在通过有大小限制且校验路径安全的原生读取流程服务预览和批注。
+- 启动时会先进行只读的迁移历史和计划预检；发现不安全的不一致时，会拒绝修改迁移状态。
+
+### 问题修复
+
+- 恢复 Projects 和 Library 导航重组后的主导航栏宽度，桌面和浏览器布局中的标签与当前状态保持在栏内。
+- 修复 Chat 图片预览关闭后的清理和焦点恢复问题，同时确保 Proposal 中的图片保持静态，不会意外打开交互式预览。
+
+</Update>
+
 <Update label="2026年9月18日" description="v0.7.22" tags={["改进","问题修复"]}>
 
 ## v0.7.22
