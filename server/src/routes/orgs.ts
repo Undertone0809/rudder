@@ -52,6 +52,7 @@ import { organizationWorkspaceBrowserService } from "../services/organization-wo
 import {
   RustFoundationBridgeError,
   type RustFoundationBridge,
+  type RustFoundationMode,
   type RustFoundationResponse,
 } from "../services/rust-foundation-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
@@ -61,6 +62,22 @@ import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
 const EMBEDDED_IMAGE_DATA_URL_ERROR =
   "Embedded image data URLs are not allowed in Library files. Upload images as attachments or assets and reference their content URL instead.";
+
+export type RustFoundationProbeReceipt = {
+  orgId: string;
+  requestId: string | null;
+  probeMode: RustFoundationMode;
+  rustInvoked: boolean;
+  responseAuthority: "rust" | "node" | "none";
+  fallbackReason: string | null;
+  oldAuthority: "node" | null;
+  oldAuthorityInvoked: boolean;
+  status: number | null;
+};
+
+type OrganizationRouteOptions = {
+  onRustFoundationProbe?: (receipt: RustFoundationProbeReceipt) => void;
+};
 
 function assertNoEmbeddedImageDataUrls(content: string) {
   if (EMBEDDED_IMAGE_DATA_URL_RE.test(content)) {
@@ -121,6 +138,7 @@ export function organizationRoutes(
   storage?: StorageService,
   workspacePreview?: WorkspaceWebPreviewRuntime,
   rustFoundationBridge?: RustFoundationBridge,
+  options: OrganizationRouteOptions = {},
 ) {
   const router = Router();
   const svc = organizationService(db);
@@ -164,6 +182,42 @@ export function organizationRoutes(
     } catch {
       return null;
     }
+  }
+
+  function emitRustFoundationProbeReceipt(input: Omit<RustFoundationProbeReceipt, "requestId">, req: Request) {
+    const receipt: RustFoundationProbeReceipt = {
+      ...input,
+      requestId: req.header("x-rudder-request-id")?.trim() || null,
+    };
+    options.onRustFoundationProbe?.(receipt);
+    logger.info(
+      {
+        orgId: receipt.orgId,
+        requestId: receipt.requestId,
+        probe_mode: receipt.probeMode,
+        rust_invoked: receipt.rustInvoked,
+        response_authority: receipt.responseAuthority,
+        fallback_reason: receipt.fallbackReason,
+        old_authority: receipt.oldAuthority,
+        old_authority_invoked: receipt.oldAuthorityInvoked,
+        status: receipt.status,
+      },
+      "Rust member directory bridge receipt",
+    );
+  }
+
+  function nodeErrorFromRustResponse(response: RustFoundationResponse) {
+    const body = jsonBody(response);
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+      const record = body as Record<string, unknown>;
+      const message = typeof record.error === "string"
+        ? record.error
+        : typeof record.reason === "string"
+          ? record.reason
+          : null;
+      if (message) return { error: message };
+    }
+    return { error: "Rust member directory request failed" };
   }
 
   async function assertCanUpdateBranding(req: Request, orgId: string) {
@@ -296,10 +350,35 @@ export function organizationRoutes(
     let shadowResponse: RustFoundationResponse | null = null;
     if (rustFoundationBridge?.mode === "required") {
       try {
-        sendRustResponse(res, await rustFoundationBridge.memberDirectory(req, orgId));
+        const rustResponse = await rustFoundationBridge.memberDirectory(req, orgId);
+        emitRustFoundationProbeReceipt({
+          orgId,
+          probeMode: "required",
+          rustInvoked: true,
+          responseAuthority: "rust",
+          fallbackReason: null,
+          oldAuthority: null,
+          oldAuthorityInvoked: false,
+          status: rustResponse.status,
+        }, req);
+        if (rustResponse.status >= 200 && rustResponse.status < 300) {
+          sendRustResponse(res, rustResponse);
+        } else {
+          res.status(rustResponse.status).json(nodeErrorFromRustResponse(rustResponse));
+        }
       } catch (error) {
         const code = error instanceof RustFoundationBridgeError ? error.code : "request_failed";
         logger.error({ err: error, code, orgId }, "required Rust member directory bridge failed");
+        emitRustFoundationProbeReceipt({
+          orgId,
+          probeMode: "required",
+          rustInvoked: true,
+          responseAuthority: "none",
+          fallbackReason: `required_bridge_${code}`,
+          oldAuthority: null,
+          oldAuthorityInvoked: false,
+          status: null,
+        }, req);
         res.status(503).json({
           error: "Rust member directory is unavailable",
           code: "rust_foundation_member_directory_unavailable",
@@ -311,7 +390,8 @@ export function organizationRoutes(
       try {
         shadowResponse = await rustFoundationBridge.memberDirectory(req, orgId);
       } catch (error) {
-        logger.warn({ err: error, orgId }, "Rust member directory shadow request failed; serving Node result");
+        const code = error instanceof RustFoundationBridgeError ? error.code : "request_failed";
+        logger.warn({ err: error, code, orgId }, "Rust member directory shadow request failed; serving Node result");
       }
     }
 
@@ -323,15 +403,52 @@ export function organizationRoutes(
       cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
       fullIds: req.query.fullIds === "true" || req.query.fullIds === "1",
     });
-    if (shadowResponse) {
+    if (rustFoundationBridge?.mode === "off") {
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "off",
+        rustInvoked: false,
+        responseAuthority: "node",
+        fallbackReason: "mode_off",
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: 200,
+      }, req);
+    } else if (shadowResponse) {
       const matches = shadowResponse.status === 200
         && JSON.stringify(jsonBody(shadowResponse)) === JSON.stringify(canonicalizeJson(page));
+      const shadowFallbackReason = shadowResponse.status < 200 || shadowResponse.status >= 300
+        ? "shadow_non_success_response"
+        : matches
+          ? "shadow_probe_only"
+          : "shadow_response_mismatch";
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "shadow",
+        rustInvoked: true,
+        responseAuthority: "node",
+        fallbackReason: shadowFallbackReason,
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: shadowResponse.status,
+      }, req);
       if (!matches) {
         logger.warn(
           { orgId, status: shadowResponse.status, bodyBytes: shadowResponse.body.byteLength },
           "Rust member directory shadow response differed from Node result",
         );
       }
+    } else if (rustFoundationBridge?.mode === "shadow") {
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "shadow",
+        rustInvoked: true,
+        responseAuthority: "node",
+        fallbackReason: "shadow_bridge_error",
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: 200,
+      }, req);
     }
     res.json(page);
   });

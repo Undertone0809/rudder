@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
-import { organizationRoutes } from "../routes/orgs.js";
+import { organizationRoutes, type RustFoundationProbeReceipt } from "../routes/orgs.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const mockCompanyService = vi.hoisted(() => ({
@@ -132,14 +132,21 @@ function createOrganization() {
 
 const activeServers = new Set<Server>();
 
-async function createApp(actor: Record<string, unknown>, rustFoundationBridge?: RustFoundationBridge) {
+async function createApp(
+  actor: Record<string, unknown>,
+  rustFoundationBridge?: RustFoundationBridge,
+  onRustFoundationProbe?: (receipt: RustFoundationProbeReceipt) => void,
+) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api/orgs", organizationRoutes({} as any, undefined, undefined, rustFoundationBridge));
+  app.use(
+    "/api/orgs",
+    organizationRoutes({} as any, undefined, undefined, rustFoundationBridge, { onRustFoundationProbe }),
+  );
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -275,6 +282,10 @@ describe("PATCH /api/orgs/:orgId/branding", () => {
 });
 
 describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
+  beforeEach(() => {
+    mockOrganizationMemberService.list.mockReset();
+  });
+
   function bridge(mode: "shadow" | "required", response: unknown): RustFoundationBridge {
     return {
       mode,
@@ -292,6 +303,7 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
   };
 
   it("forwards required reads to Actix and never invokes the Node read service", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
     const rustBridge = bridge("required", {
       status: 200,
       contentType: "application/json",
@@ -303,7 +315,7 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
       source: "local_implicit",
       sessionId: "session-1",
       authEpoch: 1,
-    }, rustBridge);
+    }, rustBridge, (receipt) => receipts.push(receipt));
 
     const res = await request(app)
       .get("/api/orgs/organization-1/members/directory?type=all&limit=1");
@@ -315,16 +327,26 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
       "organization-1",
     );
     expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      orgId: "organization-1",
+      probeMode: "required",
+      rustInvoked: true,
+      responseAuthority: "rust",
+      fallbackReason: null,
+      oldAuthorityInvoked: false,
+      status: 200,
+    })]);
   });
 
   it("fails closed with an explicit unavailable response when required Actix is down", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
     const rustBridge = bridge("required", null);
     vi.mocked(rustBridge.memberDirectory).mockRejectedValueOnce(new Error("bridge unavailable"));
     const app = await createApp({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
-    }, rustBridge);
+    }, rustBridge, (receipt) => receipts.push(receipt));
 
     const res = await request(app)
       .get("/api/orgs/organization-1/members/directory");
@@ -335,9 +357,50 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
       code: "rust_foundation_member_directory_unavailable",
     });
     expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "required",
+      rustInvoked: true,
+      responseAuthority: "none",
+      fallbackReason: "required_bridge_request_failed",
+      oldAuthorityInvoked: false,
+      status: null,
+    })]);
+  });
+
+  it("maps a required Rust error into the Node error response shape", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    const rustBridge = bridge("required", {
+      status: 422,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({
+        schema: "rudder.native.server.error.v1",
+        status: "error",
+        reason: "member_directory_invalid_limit",
+      })),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory?limit=bad");
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "member_directory_invalid_limit" });
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "required",
+      responseAuthority: "rust",
+      fallbackReason: null,
+      oldAuthorityInvoked: false,
+      status: 422,
+    })]);
   });
 
   it("keeps the Node result as an explicit shadow fallback while comparing Rust output", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
     mockOrganizationMemberService.list.mockResolvedValueOnce(page);
     const rustBridge = bridge("shadow", {
       status: 200,
@@ -348,7 +411,7 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
       type: "board",
       userId: "user-1",
       source: "local_implicit",
-    }, rustBridge);
+    }, rustBridge, (receipt) => receipts.push(receipt));
 
     const res = await request(app)
       .get("/api/orgs/organization-1/members/directory");
@@ -357,6 +420,15 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
     expect(res.body).toEqual(page);
     expect(rustBridge.memberDirectory).toHaveBeenCalledOnce();
     expect(mockOrganizationMemberService.list).toHaveBeenCalledOnce();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "shadow",
+      rustInvoked: true,
+      responseAuthority: "node",
+      fallbackReason: "shadow_probe_only",
+      oldAuthority: "node",
+      oldAuthorityInvoked: true,
+      status: 200,
+    })]);
   });
 });
 

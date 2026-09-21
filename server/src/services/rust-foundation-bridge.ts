@@ -1,12 +1,12 @@
 import type { Request } from "express";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
-import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 export type RustFoundationMode = "off" | "shadow" | "required";
 
@@ -211,6 +211,18 @@ function candidateBinaryPaths(configured: string | undefined) {
   ].filter((value): value is string => Boolean(value));
 }
 
+function createFoundationChildEnvironment(input: {
+  databaseUrl: string;
+  actorEnvelopeKey: string;
+}): Record<string, string> {
+  return {
+    RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
+    RUDDER_NATIVE_DATABASE_URL: input.databaseUrl,
+    RUDDER_NATIVE_DATABASE_REQUIRED: "true",
+    RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: input.actorEnvelopeKey,
+  };
+}
+
 function resolveBinaryPath(configured: string | undefined) {
   const candidate = candidateBinaryPaths(configured).find((value) => {
     try {
@@ -296,13 +308,10 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       lastStderr = "";
       const processHandle = spawn(binary, [], {
         cwd: resolve(dirname(fileURLToPath(import.meta.url)), "../../.."),
-        env: {
-          ...process.env,
-          RUDDER_NATIVE_LISTEN: "127.0.0.1:0",
-          RUDDER_NATIVE_DATABASE_URL: options.databaseUrl,
-          RUDDER_NATIVE_DATABASE_REQUIRED: "true",
-          RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: secret,
-        },
+        env: createFoundationChildEnvironment({
+          databaseUrl: options.databaseUrl,
+          actorEnvelopeKey: secret,
+        }),
         stdio: ["ignore", "pipe", "pipe"],
       });
       spawned = processHandle as RustFoundationChild;
