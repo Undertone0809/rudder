@@ -1,0 +1,252 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-full-rust-backend-completion-v8",
+  "status": "acceptance_pending",
+  "owner": {
+    "root_id": "rudder-full-rust-backend-completion-2026-09-21",
+    "agent_id": "codex-implementation-agent"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。最终目标不是 Node orchestration + Rust sidecar，而是 Actix Web 接管核心 HTTP/WebSocket 服务；SQLx 接管 PostgreSQL 查询、事务和迁移；第一方业务服务、鉴权/session、调度器、workers、Agent Run、Chat/Side Chat、Automation、provider adapters、常用后端组件、CLI 和 MCP 均由 Rust 实现，对应 Node 后端退出运行时。同时纳入第一方 identity、analytics collector、managed MCP、嵌入式 PostgreSQL 生命周期，以及拥有产品状态的维护和更新恢复工具。保留 React、前端工具、Electron shell，以及用户选择的外部 provider CLI、MCP、Local App 和插件组件。按 Phase 0–7 连续推进，优先接通已有 Actix/read 能力；每个切片都包括真实入口、鉴权、事务、审计、副作用、恢复、相关 CLI/MCP 和旧 writer 的退出。禁止生产双写、陈旧 writer 继续写入、静默 Node fallback、用 Node 子进程包装旧实现，以及把后端业务转移进 Electron/bootstrap。最终必须证明移除旧第一方 Node 后端资产后，安装后的 UI/API/CLI/MCP、数据库升级、调度、执行、恢复和支持平台仍通过验收。分别报告 implementation_complete、release_ready 和 production_verified；没有实际生产证据，不得声称已上线完成。未经额外授权，不删除真实用户数据、不迁移生产数据库、不发布 stable、不切换生产流量、不购买服务。开始推进。",
+    "corrections": [
+      "记得先把这个 plan 写进 doc/plans。",
+      "调整策略，让开发更快一点：很多真实环境可以先迁移进来，因为单纯离线测试和真正切进来测试完全是不一样的。可以持续地、一点一点把这些功能先接入到生产环境里，逐步替换掉，但保持可回滚并遵守旧 writer、生产双写和授权边界。",
+      "重构过程中 Main 分支时不时会有新功能或者修改进来，Rust 也要对应做好适配；在每个切片候选前刷新 origin/main、隔离同步、重跑受影响扫描，并使受影响 receipt 失效。"
+    ],
+    "non_goals": [
+      "本 v8 packet 不声明完整 Rust backend completion、release readiness 或 production verification。",
+      "不切换生产流量，不迁移生产数据库，不发布 stable，不删除真实用户数据。",
+      "不把 shadow/probe invocation 当作 Rust serving 或旧 authority retirement。"
+    ],
+    "authorization": "implementation and isolated local/CI candidate verification; no production deployment, stable publication, production database migration, or traffic switch"
+  },
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_ref": "refs/heads/codex/rudder-full-rust-backend-completion-20260921 (source freeze 3e1eedcdde626a0c22363a33774741ed11cd9082; plan-only descendant fd3665a607ddc5e722f29c1a8a5843f76b4459b2)",
+    "source_sha": "3e1eedcdde626a0c22363a33774741ed11cd9082",
+    "dirty_fingerprint": "92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969",
+    "fingerprint_method": "SHA-256 of committed origin/main..source-freeze diff paths and content hashes, excluding the four durable completion plan records",
+    "changed_paths": [
+      "desktop/scripts/stage-native.mjs",
+      "desktop/scripts/stage-native.test.mjs",
+      "native/Cargo.lock",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/auth-core/src/lib.rs",
+      "native/crates/d1-persistence/src/branding.rs",
+      "native/crates/d1-persistence/src/goal_sets.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/links.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/d1-persistence/tests/support/mod.rs",
+      "native/crates/project-goal-link-core/Cargo.toml",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/server-foundation/Cargo.toml",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/db/src/client.test.ts",
+      "packages/db/src/migrations/0164_organization_mutation_state_backfill.sql",
+      "packages/db/src/migrations/0165_project_goal_set_receipt_kind.sql",
+      "packages/db/src/migrations/0166_organization_mutation_state_provisioning.sql",
+      "packages/db/src/migrations/0167_organization_mutation_fence_token.sql",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/schema/organization_mutations.ts",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "server/src/__tests__/budgets-service.test.ts",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/config-env-loading.test.ts",
+      "server/src/__tests__/goals-contract.test.ts",
+      "server/src/__tests__/organization-mutation-fence.test.ts",
+      "server/src/__tests__/organization-row-writer-fence.test.ts",
+      "server/src/__tests__/projects-service.test.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "server/src/services/assets.ts",
+      "server/src/services/budgets.ts",
+      "server/src/services/chats.annotation-persistence.ts",
+      "server/src/services/chats.queued-message-create.ts",
+      "server/src/services/chats.ts",
+      "server/src/services/costs.ts",
+      "server/src/services/goals.ts",
+      "server/src/services/issues.comments-attachments.ts",
+      "server/src/services/issues.ts",
+      "server/src/services/organization-mutation-fence.ts",
+      "server/src/services/orgs.ts",
+      "server/src/services/projects.ts",
+      "server/src/services/resource-catalog.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "server/src/services/side-chats.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/bootstrap/create-http-app.ts",
+      "server/src/bootstrap/register-api-routes.ts",
+      "server/src/bootstrap/types.ts",
+      "server/src/config.ts",
+      "server/src/index.ts",
+      "server/src/middleware/auth.ts",
+      "server/src/types/express.d.ts"
+    ],
+    "build": {
+      "id": "rudder-server-foundation-debug-40c03d2413a733732431011f6743b8dde082542784934b851e831ad8894f654a-source-3e1eedcd",
+      "source_sha": "3e1eedcdde626a0c22363a33774741ed11cd9082",
+      "artifact_hash": "40c03d2413a733732431011f6743b8dde082542784934b851e831ad8894f654a"
+    },
+    "runtime": {
+      "id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug",
+      "source_sha": "3e1eedcdde626a0c22363a33774741ed11cd9082"
+    },
+    "organization_data": {
+      "organization_id": "00870d42-d422-475f-9a19-83216e34f02c",
+      "data_id": "disposable-embedded-postgres-rust-real-v8-dOQ0hf"
+    },
+    "workload_fixture": "Node server startup with 170 embedded-PostgreSQL migrations, one disposable organization, required member-directory read, Actix child termination/restart, and final server shutdown",
+    "budget_lease": {
+      "id": "current-local-run",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "v8",
+      "fingerprint": "d1-writer-fence-v8-real-entry-authority-receipt",
+      "criteria": [
+        "The exact source candidate starts the supported Node server against a disposable embedded PostgreSQL instance without touching the user's existing instance.",
+        "The required bridge starts a loopback-only rudder-server-foundation child and rejects a startup receipt that claims a public listener or product-write authority.",
+        "A real authenticated local-trusted API request to the organization member-directory endpoint returns a Rust-authoritative 200 response with rust_invoked=true, response_authority=rust, old_authority_invoked=false, and no fallback reason.",
+        "The real bridge restarts its Actix child after the child is terminated and the next public API request still returns the Rust-authoritative response.",
+        "The final server shutdown leaves no candidate Actix child, embedded PostgreSQL listener, or server listener on the probe ports.",
+        "Node migration authority, unresolved legacy writers, private-only route status, and the three top-level completion claims remain explicitly recorded rather than promoted by this probe."
+      ],
+      "state_inventory": [
+        "Startup: health 200, embedded PostgreSQL ready, 170 Node-applied migrations, required bridge ready.",
+        "Read success: empty member-directory page for the disposable organization; HTTP 200 and Rust authority receipt.",
+        "Recovery: Actix child SIGTERM, automatic bridge restart, second HTTP 200 and Rust authority receipt.",
+        "Shutdown: server termination, child and PostgreSQL cleanup, ports closed.",
+        "Deferred: default public listener, SQLx migration authority, auth/session revocation epoch, D1 writer retirement, CLI/MCP parity, production canary and release evidence."
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "pending",
+      "candidate_fingerprint": "92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969",
+      "source_sha": "3e1eedcdde626a0c22363a33774741ed11cd9082",
+      "build_id": "rudder-server-foundation-debug-40c03d2413a733732431011f6743b8dde082542784934b851e831ad8894f654a-source-3e1eedcd",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug",
+      "data_id": "disposable-embedded-postgres-rust-real-v8-dOQ0hf",
+      "packet_version": "v8"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969",
+      "source_sha": "3e1eedcdde626a0c22363a33774741ed11cd9082",
+      "build_id": "rudder-server-foundation-debug-40c03d2413a733732431011f6743b8dde082542784934b851e831ad8894f654a-source-3e1eedcd",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug",
+      "data_id": "disposable-embedded-postgres-rust-real-v8-dOQ0hf",
+      "packet_version": "v8"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969",
+      "source_sha": "3e1eedcdde626a0c22363a33774741ed11cd9082",
+      "build_id": "rudder-server-foundation-debug-40c03d2413a733732431011f6743b8dde082542784934b851e831ad8894f654a-source-3e1eedcd",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug",
+      "data_id": "disposable-embedded-postgres-rust-real-v8-dOQ0hf",
+      "packet_version": "v8"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      "origin/main c67ce0f00bb78e323068caac4a9ae349f863c9da was reconciled in /private/tmp/rudder-rust-main-reconcile-20260922; prior receipts were invalidated before the source freeze.",
+      "The plan-only descendant fd3665a607ddc5e722f29c1a8a5843f76b4459b2 updates durable candidate records without changing the source-freeze diff or fingerprint; packet identity keeps the source freeze 3e1eedcd and records the descendant explicitly."
+    ],
+    "invalidated_receipts": [
+      "pre-v8 stage and verifier receipts tied to older source fingerprints"
+    ]
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "c67ce0f00bb78e323068caac4a9ae349f863c9da",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "c67ce0f00bb78e323068caac4a9ae349f863c9da",
+    "branch_refs": [
+      "refs/heads/codex/rudder-full-rust-backend-completion-20260921@fd3665a607ddc5e722f29c1a8a5843f76b4459b2",
+      "refs/remotes/origin/main@c67ce0f00bb78e323068caac4a9ae349f863c9da",
+      "refs/heads/main@c67ce0f00bb78e323068caac4a9ae349f863c9da"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss",
+    "patch_tree_sha": "28f37396b80f85b5e4a22c123dae8b65cdef63b8",
+    "expected_old_sha": "c67ce0f00bb78e323068caac4a9ae349f863c9da",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "The original /Users/zeeland/.codex/worktrees/7b2a/rudder-oss checkout retained its pre-existing staged and unstaged changes; this isolated worktree was used for all migration edits and probes."
+    ],
+    "index_fingerprint_before": "cdc3e828740238c3840a4fbd51a0732fe3398f9c",
+    "index_fingerprint_after": "cdc3e828740238c3840a4fbd51a0732fe3398f9c",
+    "worktree_fingerprint_before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "worktree_fingerprint_after": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "No reset, checkout, or live-index replacement was used on the original dirty checkout.",
+      "The migration worktree was clean at packet creation; its current index and empty-status fingerprints match before/after probe checks.",
+      "The disposable probe home was /private/tmp/rudder-rust-real-v8.dOQ0hf and was not a user data directory."
+    ]
+  },
+  "evidence": {
+    "candidate_source_tree": "3fc49d7cfc3587e34e863a4887f22b3bde3fc3c5",
+    "runtime_probe": {
+      "home": "/private/tmp/rudder-rust-real-v8.dOQ0hf",
+      "instance_id": "rust-real-v8",
+      "server_url": "http://127.0.0.1:3417",
+      "embedded_postgres_port": 54377,
+      "health_http_status": 200,
+      "health_payload": "status=ok; version=0.7.23; instanceId=rust-real-v8; deploymentMode=local_trusted; authReady=true",
+      "migration_summary": "applied (pending migrations); 170 SQL migrations applied by Node after Rust migration preflight returned process_failed",
+      "organization_id": "00870d42-d422-475f-9a19-83216e34f02c",
+      "member_directory_http_status": 200,
+      "member_directory_body": "{total:0,items:[],nextCursor:null,hasMore:false}",
+      "authority_receipt": "probe_mode=required; rust_invoked=true; response_authority=rust; fallback_reason=null; old_authority=null; old_authority_invoked=false; status=200",
+      "retry_request_id": "v8-retry-request-1",
+      "rust_child_pid_initial": 40679,
+      "rust_child_pid_after_restart": 65527,
+      "shutdown_observation": "server, Actix child, embedded PostgreSQL, port 3417, and port 54377 absent after SIGINT"
+    },
+    "supporting_checks": [
+      "Focused member-directory authority route suite: 18/18 PASS",
+      "Bridge minimal-environment/lifecycle suite: 5/5 PASS",
+      "Server typecheck: PASS",
+      "Changed import lint: PASS",
+      "Rust auth protocol: 12/12 PASS",
+      "Rust D1 PostgreSQL: 25/25 PASS",
+      "Rust Project-Goal core/API: 33/33 PASS",
+      "Actix black-box: 10/10 PASS",
+      "YAML parse, git diff check, and cargo fmt: PASS"
+    ],
+    "known_limits": [
+      "This probe is local disposable real-entry evidence only; it is not a production canary.",
+      "Node remains the supported HTTP listener and migration authority; Actix is a private route-scoped bridge.",
+      "D1 activation is blocked by unfenced legacy writers, signed session/revocation authority, audit/recovery boundary, and default listener selection.",
+      "CLI/MCP, identity, analytics collector, managed MCP, embedded PostgreSQL lifecycle ownership, update/recovery, and provider adapters remain incomplete."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}
