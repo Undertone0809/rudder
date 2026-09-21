@@ -534,6 +534,57 @@ process.stdin.on("end", () => {
   await fs.chmod(commandPath, 0o755);
 }
 
+async function writeConcurrentSuccessfulCodexCommand(
+  commandPath: string,
+  attemptPath: string,
+): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+process.stdin.resume();
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(attemptPath)}, "1\\n", "utf8");
+  setTimeout(() => {
+    console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-concurrent" }));
+    console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "concurrent success" } }));
+    console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+  }, 250);
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function writeConcurrentMixedOutcomeCodexCommand(
+  commandPath: string,
+  attemptPath: string,
+  failureRunId: string,
+  failureDelayMs: number,
+  successDelayMs: number,
+): Promise<void> {
+  const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const runId = process.env.RUDDER_RUN_ID;
+process.stdin.resume();
+process.stdin.on("end", () => {
+  fs.appendFileSync(${JSON.stringify(attemptPath)}, String(runId) + "\\n", "utf8");
+  if (runId === ${JSON.stringify(failureRunId)}) {
+    setTimeout(() => {
+      console.error('unexpected status 401 Unauthorized: {"code":"API_KEY_REQUIRED"}');
+      process.exit(1);
+    }, ${failureDelayMs});
+    return;
+  }
+  setTimeout(() => {
+    console.log(JSON.stringify({ type: "thread.started", thread_id: "codex-session-concurrent-mixed" }));
+    console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "concurrent mixed success" } }));
+    console.log(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+  }, ${successDelayMs});
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
 async function writeTerminalTransportFailureCodexCommand(commandPath: string, invocationPath: string): Promise<void> {
   const script = `#!/usr/bin/env node
 const fs = require("node:fs");
@@ -4345,7 +4396,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("atomically gates concurrent Runs sharing a provider readiness scope", async () => {
+  it("does not turn an active readiness probe into an authentication failure", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-concurrent-"));
     const workspace = path.join(root, "workspace");
     const agentHome = path.join(root, "agent-home");
@@ -4355,7 +4406,7 @@ describe("codex execute", { timeout: 20_000 }, () => {
     await fs.mkdir(workspace, { recursive: true });
     await fs.mkdir(sharedCodexHome, { recursive: true });
     await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"subscription-auth"}\n', "utf8");
-    await writeSigtermIgnoringAuthFailureCodexCommand(commandPath, attemptPath);
+    await writeConcurrentSuccessfulCodexCommand(commandPath, attemptPath);
 
     const run = (runId: string) => execute({
       runId,
@@ -4392,19 +4443,83 @@ describe("codex execute", { timeout: 20_000 }, () => {
       const first = await firstPromise;
       expect([first, second]).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          errorCode: "codex_provider_auth_required",
-          resultJson: expect.objectContaining({
-            providerFailure: expect.objectContaining({ readinessState: "failed" }),
-          }),
+          exitCode: 0,
+          signal: null,
+          summary: "concurrent success",
         }),
-        expect.objectContaining({
-          errorCode: "codex_provider_auth_required",
-          resultJson: expect.objectContaining({
-            providerFailure: expect.objectContaining({ readinessState: "unchanged" }),
-          }),
-        }),
+        expect.objectContaining({ exitCode: 0, signal: null, summary: "concurrent success" }),
       ]));
-      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1"]);
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual(["1", "1"]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not cache an owner authentication failure after a concurrent request succeeds", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-execute-auth-mixed-concurrent-"));
+    const workspace = path.join(root, "workspace");
+    const agentHome = path.join(root, "agent-home");
+    const sharedCodexHome = path.join(root, "shared-codex-home");
+    const commandPath = path.join(root, "codex");
+    const attemptPath = path.join(root, "attempts.log");
+    const ownerFailureRunId = "run-auth-mixed-owner-failure";
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(sharedCodexHome, { recursive: true });
+    await fs.writeFile(path.join(sharedCodexHome, "auth.json"), '{"token":"subscription-auth"}\n', "utf8");
+    await writeConcurrentMixedOutcomeCodexCommand(commandPath, attemptPath, ownerFailureRunId, 5_000, 50);
+
+    const run = (runId: string) => execute({
+      runId,
+      agent: {
+        id: "agent-readiness-mixed",
+        orgId: "organization-1",
+        name: "Codex Coder",
+        agentRuntimeType: "codex_local",
+        agentRuntimeConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: {
+        command: commandPath,
+        cwd: workspace,
+        env: {
+          CODEX_HOME: sharedCodexHome,
+          RUDDER_OPERATOR_HOME: path.join(root, "operator-home"),
+        },
+        promptTemplate: "Continue the assigned work.",
+      },
+      context: { rudderScene: "issue", rudderWorkspace: { agentHome } },
+      authToken: "run-jwt-token",
+      onLog: async () => {},
+    });
+
+    try {
+      const ownerFailure = run(ownerFailureRunId);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (await fs.stat(attemptPath).then(() => true).catch(() => false)) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      const concurrentSuccess = await run("run-auth-mixed-concurrent-success");
+      const ownerResult = await ownerFailure;
+      expect(ownerResult).toMatchObject({ errorCode: "codex_provider_auth_required" });
+      expect(concurrentSuccess).toMatchObject({
+        exitCode: 0,
+        signal: null,
+        summary: "concurrent mixed success",
+      });
+
+      const afterConcurrentSuccess = await run("run-auth-mixed-after-success");
+      expect(afterConcurrentSuccess).toMatchObject({
+        exitCode: 0,
+        signal: null,
+        summary: "concurrent mixed success",
+      });
+      expect(afterConcurrentSuccess.errorCode).toBeUndefined();
+      expect((await fs.readFile(attemptPath, "utf8")).trim().split(/\r?\n/u)).toEqual([
+        ownerFailureRunId,
+        "run-auth-mixed-concurrent-success",
+        "run-auth-mixed-after-success",
+      ]);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

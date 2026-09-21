@@ -42,7 +42,8 @@ export type CodexAuthProbeLease = {
 
 export type CodexAuthProbeClaim =
   | { claimed: true; lease: CodexAuthProbeLease }
-  | { claimed: false; readinessState: "unchanged" | "busy" };
+  | { claimed: false; readinessState: "unchanged" | "busy" }
+  | { claimed: false; readinessState: "probing"; observation: CodexAuthProbeLease };
 
 type StateLockSnapshot = {
   raw: string;
@@ -683,7 +684,23 @@ export async function claimCodexAuthProbe(
     const current = await readState(agentHome, fingerprint);
     const now = Date.now();
     if (current && isActiveState(agentHome, fingerprint, current, now)) {
-      return { claimed: false, readinessState: "unchanged" } as const;
+      // An active probe is an in-flight Codex request, not evidence of an
+      // authentication failure. Let another request run instead of turning
+      // concurrent use into a false non-retryable auth error.
+      if (current.state === "probing") {
+        return {
+          claimed: false,
+          readinessState: "probing",
+          observation: {
+            probeId: current.probeId!,
+            generation: current.generation,
+          },
+        } as const;
+      }
+      return {
+        claimed: false,
+        readinessState: "unchanged",
+      } as const;
     }
 
     const lease: CodexAuthProbeLease = {
@@ -737,6 +754,7 @@ export async function recordCodexAuthFailure(
         errorCode: "codex_provider_auth_required",
         state: "failed",
         generation: lease.generation,
+        probeId: lease.probeId,
         failedAt: new Date(now).toISOString(),
       });
       forgetActiveProbe(agentHome, fingerprint, lease.probeId);
@@ -808,6 +826,40 @@ export async function clearMatchingCodexAuthFailure(
     await fs.unlink(target).catch(() => undefined);
     await fs.rmdir(path.dirname(target)).catch(() => undefined);
     forgetActiveProbe(agentHome, fingerprint, lease?.probeId);
+    return true;
+  });
+
+  if (cleared !== null) {
+    await fs.rmdir(path.dirname(statePath(agentHome, fingerprint)))
+      .catch(() => undefined);
+  }
+  return cleared ?? false;
+}
+
+/**
+ * Clear the exact readiness generation observed by a concurrent successful
+ * request. This may remove either the in-flight probe or the failure it
+ * produced, but never a later generation claimed by another request.
+ */
+export async function clearObservedCodexAuthSuccess(
+  agentHome: string,
+  fingerprint: string,
+  observation: CodexAuthProbeLease,
+): Promise<boolean> {
+  const cleared = await withStateLock(agentHome, fingerprint, async () => {
+    const current = await readState(agentHome, fingerprint);
+    if (
+      (current?.state !== "probing" && current?.state !== "failed")
+      || current.fingerprint !== fingerprint
+      || current.probeId !== observation.probeId
+      || current.generation !== observation.generation
+    ) {
+      return false;
+    }
+    const target = statePath(agentHome, fingerprint);
+    await fs.unlink(target).catch(() => undefined);
+    await fs.rmdir(path.dirname(target)).catch(() => undefined);
+    forgetActiveProbe(agentHome, fingerprint, observation.probeId);
     return true;
   });
 

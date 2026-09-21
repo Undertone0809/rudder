@@ -9,6 +9,7 @@ import {
   buildCodexReadinessFingerprint,
   claimCodexAuthProbe,
   clearMatchingCodexAuthFailure,
+  clearObservedCodexAuthSuccess,
   hasMatchingCodexAuthFailure,
   recordCodexAuthFailure,
   renewCodexAuthProbe,
@@ -267,6 +268,47 @@ describe("Codex provider readiness gate", () => {
     expect(await hasMatchingCodexAuthFailure(agentHome, "same-scope")).toBe(true);
   });
 
+  it("distinguishes an active probe from a confirmed authentication failure", async () => {
+    const { agentHome } = await createFixture();
+    const first = await claimCodexAuthProbe(agentHome, "same-scope");
+    expect(first.claimed).toBe(true);
+    if (!first.claimed) throw new Error("missing first probe lease");
+
+    const observation = await claimCodexAuthProbe(agentHome, "same-scope");
+    expect(observation).toMatchObject({
+      claimed: false,
+      readinessState: "probing",
+      observation: first.lease,
+    });
+
+    expect(await recordCodexAuthFailure(agentHome, "same-scope", first.lease)).toBe(true);
+    if (observation.claimed || observation.readinessState !== "probing") {
+      throw new Error("missing concurrent probe observation");
+    }
+    expect(await clearObservedCodexAuthSuccess(agentHome, "same-scope", observation.observation)).toBe(true);
+    expect(await hasMatchingCodexAuthFailure(agentHome, "same-scope")).toBe(false);
+    const replacement = await claimCodexAuthProbe(agentHome, "same-scope");
+    expect(replacement.claimed).toBe(true);
+  });
+
+  it("does not let an old concurrent success clear a later readiness generation", async () => {
+    const { agentHome } = await createFixture();
+    const first = await claimCodexAuthProbe(agentHome, "generation-scope");
+    if (!first.claimed) throw new Error("missing first probe lease");
+    const observation = await claimCodexAuthProbe(agentHome, "generation-scope");
+    if (observation.claimed || observation.readinessState !== "probing") {
+      throw new Error("missing concurrent probe observation");
+    }
+    expect(await recordCodexAuthFailure(agentHome, "generation-scope", first.lease)).toBe(true);
+    expect(await clearObservedCodexAuthSuccess(agentHome, "generation-scope", observation.observation)).toBe(true);
+
+    const second = await claimCodexAuthProbe(agentHome, "generation-scope");
+    expect(second.claimed).toBe(true);
+    if (!second.claimed) throw new Error("missing replacement probe lease");
+    expect(await clearObservedCodexAuthSuccess(agentHome, "generation-scope", observation.observation)).toBe(false);
+    expect(await hasMatchingCodexAuthFailure(agentHome, "generation-scope")).toBe(true);
+  });
+
   it("keeps a locally renewed probe active but recovers an abandoned future-dated state", async () => {
     const { agentHome } = await createFixture();
     const claim = await claimCodexAuthProbe(agentHome, "future-probe");
@@ -279,9 +321,10 @@ describe("Codex provider readiness gate", () => {
     state.probeOwnerPid = process.pid;
     await fs.writeFile(gatePath, `${JSON.stringify(state)}\n`, "utf8");
 
-    expect(await claimCodexAuthProbe(agentHome, "future-probe")).toEqual({
+    expect(await claimCodexAuthProbe(agentHome, "future-probe")).toMatchObject({
       claimed: false,
-      readinessState: "unchanged",
+      readinessState: "probing",
+      observation: claim.lease,
     });
 
     state.probeId = "abandoned-future-probe";
@@ -412,9 +455,12 @@ describe("Codex provider readiness gate", () => {
     try {
       const [firstClaim, secondClaim] = await Promise.all([first.claimed, second.claimed]);
       expect([firstClaim, secondClaim].filter((claim) => claim.claimed)).toHaveLength(1);
-      expect([firstClaim, secondClaim].filter((claim) => !claim.claimed)).toEqual([
-        { claimed: false, readinessState: "unchanged" },
-      ]);
+      const blocked = [firstClaim, secondClaim].find((claim) => !claim.claimed);
+      expect(blocked).toMatchObject({
+        claimed: false,
+        readinessState: "probing",
+        observation: { probeId: expect.any(String), generation: expect.any(Number) },
+      });
       await Promise.all([first.exited, second.exited]);
     } finally {
       if (first.child.exitCode === null) first.child.kill();
@@ -438,9 +484,13 @@ describe("Codex provider readiness gate", () => {
     try {
       const claims = await Promise.all(probes.map((probe) => probe.claimed));
       expect(claims.filter((claim) => claim.claimed)).toHaveLength(1);
-      expect(claims.filter((claim) => !claim.claimed)).toEqual(
-        Array.from({ length: 7 }, () => ({ claimed: false, readinessState: "unchanged" })),
-      );
+      for (const claim of claims.filter((candidate) => !candidate.claimed)) {
+        expect(claim).toMatchObject({
+          claimed: false,
+          readinessState: "probing",
+          observation: { probeId: expect.any(String), generation: expect.any(Number) },
+        });
+      }
       await Promise.all(probes.map((probe) => probe.exited));
     } finally {
       for (const probe of probes) {
