@@ -253,7 +253,7 @@ describe("OnboardingWizard runtime config", () => {
     document.body.innerHTML = "";
   });
 
-  it("defaults Codex onboarding to GPT-5.6-sol", async () => {
+  it("defaults Codex onboarding to GPT-5.6 Luna with Medium reasoning", async () => {
     const { OnboardingWizard } = await import("./OnboardingWizard");
     await render(<OnboardingWizard />);
     const surface = document.body;
@@ -269,7 +269,8 @@ describe("OnboardingWizard runtime config", () => {
       await flush();
     });
 
-    expect(findButton(surface, "GPT-5.6-sol")).toBeTruthy();
+    expect(findButton(surface, "GPT-5.6-luna")).toBeTruthy();
+    expect(findButton(surface, "Medium")).toBeTruthy();
   }, 15_000);
 
   it("creates the default Claude agent with auto permission mode instead of dangerous bypass", async () => {

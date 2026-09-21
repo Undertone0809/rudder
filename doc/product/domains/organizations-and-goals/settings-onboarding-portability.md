@@ -209,6 +209,21 @@ Product model:
   and intentionally shares signed-in website sessions across organizations.
 - Operator profile settings are user-scoped.
 - Organization settings and intelligence profiles are organization-scoped.
+- Product Intelligence exposes one Default model profile, shared by title
+  generation, summaries, classification, and AI search. Codex defaults to
+  `gpt-5.6-luna` with `medium` reasoning for both organization profiles and
+  newly created agents. Explicit alternative agent models/efforts remain valid.
+- `lightweight` and `reasoning` API purpose values are legacy aliases for
+  `default`, not independently configurable tiers. New saves/seeding write one
+  default row. Legacy records are retained, never deleted during reads.
+- If no default row exists, the enabled legacy profile wins, then the newest
+  update, then reasoning as a deterministic tie-breaker. A canonical default
+  always wins, including when disabled or invalid. Legacy Codex GPT-5.5,
+  GPT-5.4 Mini, or missing models upgrade to Luna Medium. A changed model or
+  implicit Luna effort clears prior verification and requires a fresh runtime
+  test before enabling. Other providers, model choices, credentials, and
+  fallback chains are retained. This is an organization-profile migration,
+  not a bulk rewrite of existing agents.
 - Organization General settings expose the organization display name and
   appearance controls. They do not expose the system-maintained Issue Key or
   the optional organization description as operator configuration.

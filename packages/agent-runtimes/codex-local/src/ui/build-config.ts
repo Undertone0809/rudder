@@ -2,8 +2,9 @@ import { normalizeModelFallbacks, type CreateConfigValues } from "@rudderhq/agen
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST,
-  DEFAULT_CODEX_LOCAL_MODEL,
   DEFAULT_CODEX_LOCAL_SEARCH,
+  resolveCodexLocalModel,
+  resolveCodexLocalReasoningEffort,
 } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {
@@ -74,10 +75,10 @@ export function buildCodexLocalConfig(v: CreateConfigValues): Record<string, unk
   if (v.instructionsFilePath) ac.instructionsFilePath = v.instructionsFilePath;
   if (v.promptTemplate) ac.promptTemplate = v.promptTemplate;
   if (v.bootstrapPrompt) ac.bootstrapPromptTemplate = v.bootstrapPrompt;
-  ac.model = v.model || DEFAULT_CODEX_LOCAL_MODEL;
+  ac.model = resolveCodexLocalModel({ model: v.model });
   const modelFallbacks = normalizeModelFallbacks(v.modelFallbacks, { agentRuntimeType: "codex_local", model: ac.model });
   if (modelFallbacks.length > 0) ac.modelFallbacks = modelFallbacks;
-  if (v.thinkingEffort) ac.modelReasoningEffort = v.thinkingEffort;
+  ac.modelReasoningEffort = resolveCodexLocalReasoningEffort({ modelReasoningEffort: v.thinkingEffort });
   ac.timeoutSec = 0;
   ac.graceSec = 15;
   const env = parseEnvBindings(v.envBindings);
