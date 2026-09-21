@@ -2,14 +2,14 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
 candidate:
-  source_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
+  source_sha: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
   branch: codex/rudder-full-rust-backend-completion-20260921
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  tree_sha: 9ed2aa730252be96a097b829836122a8dea9098b
-  dirty_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  tree_sha: d4452f5fec44ac3aa323a8be42520bc3008ba626
+  dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records
   dirty_fingerprint_status: exact_clean_candidate_source_diff
-  scan_status: current_counts_refreshed_after_main_sync_semantic_reconciliation_blocked
+  scan_status: current_counts_refreshed_after_main_sync_and_authority_receipt_slice_semantic_reconciliation_blocked
   semantic_rows: partial_with_current_writer_audit
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
@@ -125,7 +125,7 @@ semantic_scan_gaps:
   - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
   - the new goal-set route is a standalone private Actix entry; it is not the supported Node signer/bridge, installed/default startup, CLI/MCP, or sole-listener path
 current_writer_audit:
-  candidate_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  candidate_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   verdict: needs_more_evidence
   activation: blocked
   fence_contract:
