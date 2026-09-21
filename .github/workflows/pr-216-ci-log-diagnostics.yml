@@ -1,0 +1,52 @@
+name: PR 216 CI diagnostics
+on:
+  push:
+    branches: [codex/pr-216-ci-log-diagnostics]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Existing CI run to inspect (read only)
+        default: '35635474263'
+        type: string
+permissions:
+  actions: read
+  contents: read
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read failed job logs and print bounded failure summaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run_id || '35635474263' }}
+        run: |
+          python3 - <<'PY'
+          import os, re, urllib.request, json
+          repository = os.environ['REPOSITORY']
+          run_id = os.environ['RUN_ID']
+          assert repository == 'Undertone0809/rudder'
+          assert run_id.isdigit()
+          base = f'https://api.github.com/repos/{repository}'
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
+          def get(path):
+              request = urllib.request.Request(base + path, headers=headers)
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return response.read().decode('utf-8-sig')
+          jobs = json.loads(get(f'/actions/runs/{run_id}/jobs?per_page=100'))['jobs']
+          for job in jobs:
+              if job['conclusion'] != 'failure':
+                  continue
+              print('\nJOB', job['id'], job['name'])
+              log = re.sub(r'\x1b\[[0-9;]*m', '', get(f"/actions/jobs/{job['id']}/logs"))
+              lines = log.splitlines()
+              matches = [i for i, line in enumerate(lines) if re.search(r'Failed (Tests|Suites)|\bFAIL\s+|\bAssertionError:|\bError:|Comparison regressions:', line)]
+              selected = set()
+              for index in matches[-25:]:
+                  selected.update(range(max(0,index-1), min(len(lines),index+30)))
+              if not selected:
+                  selected.update(range(max(0, len(lines)-100), len(lines)))
+              for index in sorted(selected)[-350:]:
+                  print(lines[index][:1200])
+          PY
