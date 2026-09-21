@@ -14,6 +14,7 @@ import {
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import path from "node:path";
+import { resolveCodexLocalModel, resolveCodexLocalReasoningEffort } from "../defaults.js";
 import { prepareManagedCodexHome } from "./codex-home.js";
 import { parseCodexJsonl } from "./parse.js";
 import { resolveCodexCommand } from "./resolve-command.js";
@@ -132,12 +133,9 @@ export async function testEnvironment(
         hint: "Use the `codex` CLI command to run the automatic login and installation probe.",
       });
     } else {
-      const model = asString(config.model, "").trim();
+      const model = resolveCodexLocalModel(config);
       const helloProbeTimeoutSec = Math.max(1, Number(config.helloProbeTimeoutSec) || DEFAULT_CODEX_HELLO_PROBE_TIMEOUT_SEC);
-      const modelReasoningEffort = asString(
-        config.modelReasoningEffort,
-        asString(config.reasoningEffort, ""),
-      ).trim();
+      const modelReasoningEffort = resolveCodexLocalReasoningEffort(config);
       const search = asBoolean(config.search, false);
       const bypass = asBoolean(
         config.dangerouslyBypassApprovalsAndSandbox,

@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from "@/lib/router";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   DEFAULT_CODEX_LOCAL_SEARCH
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
@@ -382,7 +383,7 @@ export function OnboardingWizard() {
   function selectRuntimeType(nextType: AdapterType) {
     setAdapterType(nextType);
     setModel(defaultModelForRuntime(nextType));
-    setThinkingEffort("");
+    setThinkingEffort(nextType === "codex_local" ? DEFAULT_CODEX_LOCAL_REASONING_EFFORT : "");
     setThinkingEffortOpen(false);
     setCursorMode("");
     setProviderApiKey("");

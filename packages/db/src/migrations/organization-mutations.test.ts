@@ -173,17 +173,26 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     });
 
     const nodeTransaction = db.begin(async (tx) => {
-      await tx`SELECT org_id FROM organization_mutation_state WHERE org_id = ${org} FOR UPDATE`;
+      await tx.unsafe(
+        "SELECT org_id FROM organization_mutation_state WHERE org_id = $1 FOR UPDATE",
+        [org],
+      );
       nodeFenceLocked();
-      await tx`UPDATE organizations SET name = 'Node transaction owns the fence' WHERE id = ${org}`;
+      await tx.unsafe(
+        "UPDATE organizations SET name = 'Node transaction owns the fence' WHERE id = $1",
+        [org],
+      );
       await nodeTransactionMayCommit;
     });
     await nodeFenceIsLocked;
 
     await expect(
       db.begin(async (tx) => {
-        await tx`SET LOCAL lock_timeout = '50ms'`;
-        await tx`SELECT org_id FROM organization_mutation_state WHERE org_id = ${org} FOR UPDATE`;
+        await tx.unsafe("SET LOCAL lock_timeout = '50ms'");
+        await tx.unsafe(
+          "SELECT org_id FROM organization_mutation_state WHERE org_id = $1 FOR UPDATE",
+          [org],
+        );
       }),
     ).rejects.toMatchObject({ code: "55P03" });
 
@@ -191,18 +200,27 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     await nodeTransaction;
 
     await db.begin(async (tx) => {
-      await tx`UPDATE organization_mutation_state
-        SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
-        WHERE org_id = ${org}`;
+      await tx.unsafe(
+        "UPDATE organization_mutation_state "
+          + "SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid() "
+          + "WHERE org_id = $1",
+        [org],
+      );
     });
 
     await expect(
       db.begin(async (tx) => {
-        const [state] = await tx`SELECT owner FROM organization_mutation_state WHERE org_id = ${org} FOR UPDATE`;
+        const [state] = await tx.unsafe<{ owner: string }[]>(
+          "SELECT owner FROM organization_mutation_state WHERE org_id = $1 FOR UPDATE",
+          [org],
+        );
         if (state.owner !== "node") {
           throw new Error("Node authority is no longer owned by Node");
         }
-        await tx`UPDATE organizations SET name = 'stale Node writer' WHERE id = ${org}`;
+        await tx.unsafe(
+          "UPDATE organizations SET name = 'stale Node writer' WHERE id = $1",
+          [org],
+        );
       }),
     ).rejects.toThrow("Node authority is no longer owned by Node");
     expect(await db`SELECT name FROM organizations WHERE id = ${org}`).toEqual([

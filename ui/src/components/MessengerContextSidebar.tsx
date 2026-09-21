@@ -136,6 +136,7 @@ import {
   markMessengerUnreadScrollRequestHandled,
   MESSENGER_SCROLL_TO_UNREAD_EVENT,
 } from "@/lib/messenger-unread-scroll";
+import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   getProjectOrderStorageKey,
@@ -1067,10 +1068,8 @@ export function MessengerContextSidebar() {
     return map;
   }, [projectsQuery.data]);
 
-  const canRegenerateChatTitles = useMemo(() => {
-    const profiles = intelligenceProfilesQuery.data ?? [];
-    return profiles.some((profile) => profile?.purpose === "lightweight" && profile.status === "configured");
-  }, [intelligenceProfilesQuery.data]);
+  const canRegenerateChatTitles =
+    isOrganizationIntelligenceEnabled(intelligenceProfilesQuery.data, "lightweight");
 
   const customGroups = customGroupsQuery.data?.groups ?? [];
   const customGroupMembershipKnown = customGroupsQuery.data !== undefined;

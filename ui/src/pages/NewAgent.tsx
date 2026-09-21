@@ -15,6 +15,7 @@ import { useNavigate, useSearchParams } from "@/lib/router";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
+  DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
@@ -72,6 +73,7 @@ function createValuesForAdapterType(
   const nextValues: CreateConfigValues = { ...defaults, agentRuntimeType };
   if (agentRuntimeType === "codex_local") {
     nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
+    nextValues.thinkingEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
     nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
     nextValues.dangerouslyBypassSandbox =
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;

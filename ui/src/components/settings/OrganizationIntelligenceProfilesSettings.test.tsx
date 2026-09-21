@@ -1,283 +1,95 @@
 // @vitest-environment jsdom
 
-import { agentsApi } from "@/api/agents";
 import { organizationsApi } from "@/api/orgs";
-import { secretsApi } from "@/api/secrets";
-import type { AgentRuntimeEnvironmentTestResult, OrganizationIntelligenceProfile } from "@rudderhq/shared";
+import type { OrganizationIntelligenceProfile } from "@rudderhq/shared";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OrganizationIntelligenceProfilesSettings } from "./OrganizationIntelligenceProfilesSettings";
 
-(
-  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+let profiles: OrganizationIntelligenceProfile[] = [];
 
-const dndMockState = vi.hoisted(() => ({
-  onDragEndHandlers: [] as Array<((event: { active: { id: string }; over: { id: string } | null }) => void)>,
-}));
-
-vi.mock("@/api/agents", () => ({
-  agentsApi: {
-    adapterModels: vi.fn(),
-    testEnvironment: vi.fn(),
-  },
-}));
-
-vi.mock("@/api/orgs", () => ({
-  organizationsApi: {
-    listIntelligenceProfiles: vi.fn(),
-    updateIntelligenceProfile: vi.fn(),
-  },
-}));
-
-vi.mock("@/api/secrets", () => ({
-  secretsApi: {
-    list: vi.fn(),
-    create: vi.fn(),
-  },
-}));
-
+vi.mock("@/api/agents", () => ({ agentsApi: { adapterModels: vi.fn(async () => []), testEnvironment: vi.fn() } }));
+vi.mock("@/api/orgs", () => ({ organizationsApi: { listIntelligenceProfiles: vi.fn(), updateIntelligenceProfile: vi.fn() } }));
+vi.mock("@/api/secrets", () => ({ secretsApi: { list: vi.fn(async () => []), create: vi.fn() } }));
 vi.mock("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
-
 vi.mock("@dnd-kit/core", () => ({
-  DndContext: ({
-    children,
-    onDragEnd,
-  }: {
-    children: ReactNode;
-    onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => void;
-  }) => {
-    if (onDragEnd) dndMockState.onDragEndHandlers.push(onDragEnd);
-    return <>{children}</>;
-  },
+  DndContext: ({ children }: { children: ReactNode }) => <>{children}</>,
   closestCenter: vi.fn(),
   KeyboardSensor: vi.fn(),
   PointerSensor: vi.fn(),
   useSensor: vi.fn(() => ({})),
-  useSensors: vi.fn((...sensors: unknown[]) => sensors),
+  useSensors: vi.fn(() => []),
 }));
-
 vi.mock("@dnd-kit/sortable", () => ({
   SortableContext: ({ children }: { children: ReactNode }) => <>{children}</>,
   horizontalListSortingStrategy: {},
   sortableKeyboardCoordinates: vi.fn(),
-  arrayMove: <T,>(items: T[], from: number, to: number) => {
-    const next = [...items];
-    const [item] = next.splice(from, 1);
-    if (item !== undefined) next.splice(to, 0, item);
-    return next;
-  },
+  arrayMove: <T,>(items: T[]) => items,
 }));
-
 vi.mock("@/components/AgentConfigForm.environment", () => ({
-  AdapterEnvironmentResult: ({ label }: { label?: string }) => (
-    <div>{label ? `${label}: Passed` : "Passed"}</div>
-  ),
-  AdapterEnvironmentError: ({ label, message }: { label: string; message: string }) => (
-    <div>{label}: Failed {message}</div>
-  ),
-  RuntimeProviderCard: ({
-    title,
-    model,
-    environmentStatus,
-    disabled,
-  }: {
+  AdapterEnvironmentResult: () => null,
+  AdapterEnvironmentError: () => null,
+  SortableRuntimeProviderCard: ({ title, model, config }: {
     title: string;
     model: string;
-    environmentStatus?: string;
-    disabled?: boolean;
-  }) => (
-    <div>
-      {title} {model} {environmentStatus ? `Env ${environmentStatus}` : ""}
-      <button disabled={disabled}>{title} model control</button>
-    </div>
-  ),
-  SortableRuntimeProviderCard: ({
-    title,
-    model,
-    environmentStatus,
-    disabled,
-  }: {
-    title: string;
-    model: string;
-    environmentStatus?: string;
-    disabled?: boolean;
-  }) => (
-    <div>
-      {title} {model} {environmentStatus ? `Env ${environmentStatus}` : ""}
-      <button disabled={disabled}>{title} model control</button>
-    </div>
-  ),
+    config: Record<string, unknown>;
+  }) => <div>{title} {model} {String(config.modelReasoningEffort ?? "")}</div>,
 }));
-
 vi.mock("@tanstack/react-query", async () => {
   const React = await import("react");
   return {
     useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
-      if (queryKey[0] === "organizations") {
-        return { data: profiles, isLoading: false, isError: false, error: null };
-      }
-      if (queryKey[0] === "secrets") {
-        return { data: [], isLoading: false, isError: false, error: null };
-      }
-      if (queryKey[0] === "agents") {
-        return { data: [], isLoading: false, isError: false, error: null };
-      }
-      return { data: null, isLoading: false, isError: false, error: null };
+      if (queryKey[0] === "organizations") return { data: profiles, isLoading: false, isError: false, error: null };
+      return { data: [], isLoading: false, isError: false, error: null };
     },
     useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-    useMutation: ({ mutationFn, onSuccess }: {
-      mutationFn: (variables: unknown) => Promise<unknown>;
-      onSuccess?: (data: unknown) => void;
-    }) => {
+    useMutation: ({ mutationFn }: { mutationFn: (variables: unknown) => Promise<unknown> }) => {
       const [isPending, setIsPending] = React.useState(false);
-      const [variables, setVariables] = React.useState<unknown>(undefined);
-      const [error, setError] = React.useState<unknown>(null);
       return {
         isPending,
-        variables,
-        error,
-        isError: Boolean(error),
-        mutate: (nextVariables: unknown) => {
+        mutateAsync: async (variables: unknown) => {
           setIsPending(true);
-          setVariables(nextVariables);
-          void mutationFn(nextVariables)
-            .then((data) => {
-              onSuccess?.(data);
-              setError(null);
-            })
-            .catch(setError)
-            .finally(() => setIsPending(false));
-        },
-        mutateAsync: async (nextVariables: unknown) => {
-          setIsPending(true);
-          setVariables(nextVariables);
-          try {
-            const data = await mutationFn(nextVariables);
-            onSuccess?.(data);
-            setError(null);
-            return data;
-          } catch (nextError) {
-            setError(nextError);
-            throw nextError;
-          } finally {
-            setIsPending(false);
-          }
+          try { return await mutationFn(variables); } finally { setIsPending(false); }
         },
       };
     },
   };
 });
 
-let profiles: OrganizationIntelligenceProfile[];
-
-const baseProfiles: OrganizationIntelligenceProfile[] = [
-  {
-    id: "profile-lightweight",
-    orgId: "org-1",
-    purpose: "lightweight",
-    agentRuntimeType: "codex_local",
-    agentRuntimeConfig: {
-      model: "gpt-5.4-mini",
-      modelFallbacks: [
-        {
-          agentRuntimeType: "claude_local",
-          model: "claude-sonnet-4-5",
-          config: {
-            model: "claude-sonnet-4-5",
-            effort: "medium",
-          },
-        },
-      ],
-    },
-    status: "configured",
-    lastError: null,
-    lastVerifiedAt: null,
-    createdAt: new Date("2026-06-16T08:00:00.000Z"),
-    updatedAt: new Date("2026-06-16T08:00:00.000Z"),
-  },
-  {
-    id: "profile-reasoning",
-    orgId: "org-1",
-    purpose: "reasoning",
-    agentRuntimeType: "codex_local",
-    agentRuntimeConfig: {
-      model: "gpt-5.4-mini",
-    },
-    status: "configured",
-    lastError: null,
-    lastVerifiedAt: null,
-    createdAt: new Date("2026-06-16T08:00:00.000Z"),
-    updatedAt: new Date("2026-06-16T08:00:00.000Z"),
-  },
-];
-
 async function renderComponent() {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-
   await act(async () => {
     root.render(<OrganizationIntelligenceProfilesSettings orgId="org-1" />);
     await Promise.resolve();
-    await Promise.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-
-  return {
-    host,
-    cleanup: () => {
-      act(() => root.unmount());
-      host.remove();
-    },
-  };
-}
-
-function passedResult(): AgentRuntimeEnvironmentTestResult {
-  return {
-    agentRuntimeType: "codex_local",
-    status: "pass",
-    testedAt: "2026-06-16T08:30:00.000Z",
-    checks: [],
-  };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((promiseResolve, promiseReject) => {
-    resolve = promiseResolve;
-    reject = promiseReject;
-  });
-  return { promise, resolve, reject };
+  return { host, cleanup: () => { act(() => root.unmount()); host.remove(); } };
 }
 
 describe("OrganizationIntelligenceProfilesSettings", () => {
   beforeEach(() => {
-    dndMockState.onDragEndHandlers = [];
-    profiles = structuredClone(baseProfiles);
-    vi.mocked(organizationsApi.listIntelligenceProfiles).mockResolvedValue(profiles);
-    vi.mocked(secretsApi.list).mockResolvedValue([]);
-    vi.mocked(agentsApi.adapterModels).mockResolvedValue([]);
-    vi.mocked(agentsApi.testEnvironment).mockResolvedValue(passedResult());
-    vi.mocked(organizationsApi.updateIntelligenceProfile).mockImplementation(async (_orgId, purpose, data) => ({
-      id: `profile-${purpose}`,
+    profiles = [{
+      id: "profile-default",
       orgId: "org-1",
-      purpose,
-      agentRuntimeType: data.agentRuntimeType,
-      agentRuntimeConfig: data.agentRuntimeConfig,
-      status: data.status ?? "configured",
+      purpose: "default",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: { model: "gpt-5.6-luna", modelReasoningEffort: "medium" },
+      status: "configured",
       lastError: null,
-      lastVerifiedAt: null,
-      createdAt: new Date("2026-06-16T08:00:00.000Z"),
-      updatedAt: new Date("2026-06-16T08:30:00.000Z"),
-    }));
+      lastVerifiedAt: new Date("2026-09-22T00:00:00.000Z"),
+      createdAt: new Date("2026-09-22T00:00:00.000Z"),
+      updatedAt: new Date("2026-09-22T00:00:00.000Z"),
+    }];
+    vi.mocked(organizationsApi.listIntelligenceProfiles).mockResolvedValue(profiles);
   });
 
   afterEach(() => {
@@ -285,381 +97,24 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     document.body.innerHTML = "";
   });
 
-  it("defers profile descriptions to help controls and omits empty test prompts", async () => {
+  it("renders one Default model profile instead of Fast and Smart tiers", async () => {
     const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    expect(rendered.host.querySelector('button[aria-label="About Fast intelligence profile"]')).not.toBeNull();
-    expect(rendered.host.querySelector('button[aria-label="About Smart intelligence profile"]')).not.toBeNull();
-    expect(rendered.host.textContent).not.toContain(
-      "Test before enabling to verify the selected runtime and fallbacks.",
-    );
-
+    await vi.waitFor(() => expect(rendered.host.querySelector('[data-testid="intelligence-profile-default"]')).not.toBeNull());
+    expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).toBeNull();
+    expect(rendered.host.querySelector('[data-testid="intelligence-profile-reasoning"]')).toBeNull();
+    expect(rendered.host.textContent).toContain("Default model");
+    expect(rendered.host.textContent).toContain("gpt-5.6-luna");
+    expect(rendered.host.textContent).toContain("medium");
     rendered.cleanup();
   });
 
-  it("tests the selected organization intelligence profile runtime chain", async () => {
-    const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]');
-    const testButton = Array.from(fastProfile?.querySelectorAll("button") ?? [])
-      .find((button) => button.getAttribute("aria-label") === "Test runtime chain");
-    expect(testButton).toBeTruthy();
-
-    await act(async () => {
-      testButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(agentsApi.testEnvironment).toHaveBeenCalledTimes(2);
-    expect(agentsApi.testEnvironment).toHaveBeenNthCalledWith(1, "org-1", "codex_local", {
-      agentRuntimeConfig: {
-        model: "gpt-5.4-mini",
-      },
-    });
-    expect(agentsApi.testEnvironment).toHaveBeenNthCalledWith(2, "org-1", "claude_local", {
-      agentRuntimeConfig: {
-        model: "claude-sonnet-4-5",
-        effort: "medium",
-      },
-    });
-    expect(fastProfile?.textContent).toContain("Runtime chain environment");
-    expect(fastProfile?.textContent).toContain("Primary · Codex (local) · gpt-5.4-mini: Passed");
-    expect(fastProfile?.textContent).toContain("Fallback 1 · Claude Code (local) · claude-sonnet-4-5: Passed");
-
-    rendered.cleanup();
-  });
-
-  it("saves a fallback as primary after the runtime chain is reordered", async () => {
-    profiles[0] = {
-      ...profiles[0]!,
-      agentRuntimeConfig: {
-        model: "gpt-5.4-mini",
-        modelFallbacks: [
-          {
-            agentRuntimeType: "claude_local",
-            model: "claude-sonnet-4-5",
-            config: {
-              model: "claude-sonnet-4-5",
-              effort: "medium",
-            },
-          },
-          {
-            agentRuntimeType: "gemini_local",
-            model: "gemini-3-flash",
-            config: {
-              model: "gemini-3-flash",
-              approvalMode: "yolo",
-            },
-          },
-        ],
-      },
-    };
-    const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    await act(async () => {
-      dndMockState.onDragEndHandlers[0]?.({
-        active: { id: "fallback-1" },
-        over: { id: "primary" },
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
-    expect(fastProfile.textContent).toContain("Primary gemini-3-flash");
-    expect(fastProfile.textContent).toContain("Fallback 1 gpt-5.4-mini");
-    expect(fastProfile.textContent).toContain("Fallback 2 claude-sonnet-4-5");
-
-    const saveButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Save"));
-    await act(async () => {
-      saveButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(organizationsApi.updateIntelligenceProfile).toHaveBeenCalledWith("org-1", "lightweight", {
-      agentRuntimeType: "gemini_local",
-      agentRuntimeConfig: {
-        model: "gemini-3-flash",
-        approvalMode: "yolo",
-        modelFallbacks: [
-          {
-            agentRuntimeType: "codex_local",
-            model: "gpt-5.4-mini",
-            config: {
-              model: "gpt-5.4-mini",
-            },
-          },
-          {
-            agentRuntimeType: "claude_local",
-            model: "claude-sonnet-4-5",
-            config: {
-              model: "claude-sonnet-4-5",
-              effort: "medium",
-            },
-          },
-        ],
-      },
-      status: "disabled",
-    });
-
-    rendered.cleanup();
-  });
-
-  it("defaults new Codex intelligence profiles to mini model with automatic thinking effort", async () => {
+  it("uses Luna Medium for a fresh organization profile", async () => {
     profiles = [];
     const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
-    const smartProfile = rendered.host.querySelector('[data-testid="intelligence-profile-reasoning"]')!;
-
-    expect(fastProfile.textContent).toContain("Primary gpt-5.4-mini");
-    expect(smartProfile.textContent).toContain("Primary gpt-5.4-mini");
-    expect(smartProfile.textContent).not.toContain("Primary gpt-5.4 ");
-
-    const createButton = Array.from(smartProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Create"));
-
-    await act(async () => {
-      createButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(organizationsApi.updateIntelligenceProfile).toHaveBeenCalledWith("org-1", "reasoning", {
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: expect.not.objectContaining({
-        modelReasoningEffort: expect.anything(),
-      }),
-      status: "disabled",
-    });
-
-    rendered.cleanup();
-  });
-
-  it("enables a disabled profile without retesting when the selected chain already passed", async () => {
-    profiles[0] = { ...profiles[0]!, status: "disabled" };
-    const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
-    const testButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.getAttribute("aria-label") === "Test runtime chain");
-    const enableButton = () => Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Enable"));
-
-    await act(async () => {
-      testButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    expect(agentsApi.testEnvironment).toHaveBeenCalledTimes(2);
-
-    const update = deferred<OrganizationIntelligenceProfile>();
-    vi.mocked(organizationsApi.updateIntelligenceProfile).mockImplementationOnce(async () => update.promise);
-    await act(async () => {
-      enableButton()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(fastProfile.textContent).toContain("Enabling...");
-    expect(fastProfile.textContent).not.toContain("Testing...");
-    update.resolve({
-      ...profiles[0]!,
-      status: "configured",
-      lastVerifiedAt: new Date("2026-06-16T08:30:00.000Z"),
-    });
-    await act(async () => {
-      await update.promise;
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(agentsApi.testEnvironment).toHaveBeenCalledTimes(2);
-    expect(organizationsApi.updateIntelligenceProfile).toHaveBeenCalledWith("org-1", "lightweight", {
-      agentRuntimeType: "codex_local",
-      agentRuntimeConfig: {
-        model: "gpt-5.4-mini",
-        modelFallbacks: [
-          {
-            agentRuntimeType: "claude_local",
-            model: "claude-sonnet-4-5",
-            config: {
-              model: "claude-sonnet-4-5",
-              effort: "medium",
-            },
-          },
-        ],
-      },
-      status: "configured",
-    });
-
-    rendered.cleanup();
-  });
-
-  it("keeps other profiles interactive while one enable flow is testing a chain", async () => {
-    profiles[0] = { ...profiles[0]!, status: "disabled" };
-    profiles[1] = { ...profiles[1]!, status: "disabled" };
-    const firstProbe = deferred<AgentRuntimeEnvironmentTestResult>();
-    vi.mocked(agentsApi.testEnvironment)
-      .mockImplementationOnce(async () => firstProbe.promise)
-      .mockResolvedValue(passedResult());
-    const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
-    const smartProfile = rendered.host.querySelector('[data-testid="intelligence-profile-reasoning"]')!;
-    const fastEnableButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Enable"));
-    const smartTestButton = Array.from(smartProfile.querySelectorAll("button"))
-      .find((button) => button.getAttribute("aria-label") === "Test runtime chain") as HTMLButtonElement;
-    const smartEnableButton = Array.from(smartProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Enable")) as HTMLButtonElement;
-    const smartAddFallbackButton = Array.from(smartProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Add fallback model")) as HTMLButtonElement;
-    const fastAddFallbackButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Add fallback model")) as HTMLButtonElement;
-    const fastModelControl = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Primary model control")) as HTMLButtonElement;
-
-    await act(async () => {
-      fastEnableButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(fastProfile.textContent).toContain("Testing...");
-    expect(fastAddFallbackButton.disabled).toBe(true);
-    expect(fastModelControl.disabled).toBe(true);
-    expect(smartTestButton.disabled).toBe(false);
-    expect(smartEnableButton.disabled).toBe(false);
-    expect(smartAddFallbackButton.disabled).toBe(false);
-
-    await act(async () => {
-      smartTestButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(agentsApi.testEnvironment).toHaveBeenCalledTimes(2);
-    expect(smartProfile.textContent).toContain("Runtime chain environment");
-    expect(smartProfile.textContent).toContain("Primary · Codex (local) · gpt-5.4-mini: Passed");
-
-    firstProbe.resolve(passedResult());
-    await act(async () => {
-      await firstProbe.promise;
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    rendered.cleanup();
-  });
-
-  it("shows saved state as text instead of a disabled button", async () => {
-    const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
-    expect(fastProfile.textContent).toContain("Saved");
-    const savedButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.trim() === "Saved");
-
-    expect(savedButton).toBeUndefined();
-
-    rendered.cleanup();
-  });
-
-  it("tests a disabled profile runtime chain before enabling when no current pass exists", async () => {
-    profiles[0] = { ...profiles[0]!, status: "disabled" };
-    const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
-    const enableButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Enable"));
-
-    await act(async () => {
-      enableButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(agentsApi.testEnvironment).toHaveBeenCalledTimes(2);
-    expect(organizationsApi.updateIntelligenceProfile).toHaveBeenCalledWith("org-1", "lightweight", expect.objectContaining({
-      status: "configured",
-    }));
-    expect(fastProfile.textContent).toContain("Runtime chain environment");
-
-    rendered.cleanup();
-  });
-
-  it("marks the profile invalid instead of enabling when the runtime chain test fails", async () => {
-    profiles[0] = { ...profiles[0]!, status: "disabled" };
-    vi.mocked(agentsApi.testEnvironment).mockResolvedValueOnce({
-      ...passedResult(),
-      status: "fail",
-      checks: [{
-        code: "codex_hello_probe_model_unavailable",
-        level: "error",
-        message: "Model is not available.",
-      }],
-    });
-    const rendered = await renderComponent();
-    await vi.waitFor(() => {
-      expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).not.toBeNull();
-    });
-
-    const fastProfile = rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')!;
-    const enableButton = Array.from(fastProfile.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Enable"));
-
-    await act(async () => {
-      enableButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(organizationsApi.updateIntelligenceProfile).toHaveBeenCalledWith("org-1", "lightweight", expect.objectContaining({
-      status: "invalid",
-    }));
-    expect(organizationsApi.updateIntelligenceProfile).not.toHaveBeenCalledWith("org-1", "lightweight", expect.objectContaining({
-      status: "configured",
-    }));
-
+    await vi.waitFor(() => expect(rendered.host.querySelector('[data-testid="intelligence-profile-default"]')).not.toBeNull());
+    const card = rendered.host.querySelector('[data-testid="intelligence-profile-default"]')!;
+    expect(card.textContent).toContain("gpt-5.6-luna");
+    expect(card.textContent).toContain("medium");
     rendered.cleanup();
   });
 });

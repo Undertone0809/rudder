@@ -12,8 +12,53 @@ const journalPath = "packages/db/src/migrations/meta/_journal.json";
 const migrationsPath = "packages/db/src/migrations";
 
 export const migrationCompatibilityMatrix = {
+  "0.7.24": {
+    candidateFingerprint: "6c0ac651a7e6b4c23cbce94171bcf498ee5eabc413a97e46df2b108cc4c13259",
+    fixtures: [
+      {
+        version: "0.7.23",
+        ref: "v0.7.23",
+        fingerprint: "dc8a093838a7ebfc29ec8330831de01598cfb970b4ba834406712192a2a53237",
+      },
+      {
+        version: "0.7.22",
+        ref: "v0.7.22",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.21",
+        ref: "v0.7.21",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.20",
+        ref: "v0.7.20",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.19",
+        ref: "v0.7.19",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.18",
+        ref: "v0.7.18",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.16",
+        ref: "v0.7.16",
+        fingerprint: "085c15c2a32685dbbddd775ee6fe21aea4ff5c151193f1711ad8c1c52a04a0db",
+      },
+      {
+        version: "0.7.15",
+        ref: "v0.7.15",
+        fingerprint: "3fa86ccfeb959872e3d87af335928aff13880fc990c51f1dcf3c42baa6eb07ce",
+      },
+    ],
+  },
   "0.7.23": {
-    candidateFingerprint: "a33c791346eea558ac8cfcf8a35fea7ed0a46986c8ee3e48b8f7fcd5a2c7d6a2",
+    candidateFingerprint: "dc8a093838a7ebfc29ec8330831de01598cfb970b4ba834406712192a2a53237",
     fixtures: [
       {
         version: "0.7.22",

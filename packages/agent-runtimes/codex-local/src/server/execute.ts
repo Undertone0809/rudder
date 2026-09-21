@@ -53,6 +53,7 @@ import { COMPUTER_USE_AGENT_INSTRUCTION } from "@rudderhq/shared";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveCodexLocalModel, resolveCodexLocalReasoningEffort } from "../defaults.js";
 import { executeCodexAppServerChat } from "./app-server-chat.js";
 import {
   discoverExternalCodexSkillDisablePaths,
@@ -292,7 +293,7 @@ export async function getProviderReadinessFingerprint(
     ),
     sharedCodexHome,
     codexHome: effectiveCodexHome,
-    model: asString(ctx.config.model, ""),
+    model: resolveCodexLocalModel(ctx.config),
   });
 }
 
@@ -304,12 +305,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     context,
   );
   const command = asString(config.command, "codex");
-  const model = asString(config.model, "");
+  const model = resolveCodexLocalModel(config);
   const countSubscriptionUsageAsCost = asBoolean(config.countSubscriptionUsageAsCost, true);
-  const modelReasoningEffort = asString(
-    config.modelReasoningEffort,
-    asString(config.reasoningEffort, ""),
-  );
+  const modelReasoningEffort = resolveCodexLocalReasoningEffort(config);
   const search = asBoolean(config.search, false);
   const bypass = asBoolean(
     config.dangerouslyBypassApprovalsAndSandbox,

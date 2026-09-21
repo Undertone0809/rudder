@@ -47,6 +47,7 @@ import {
   type GlobalSearchScope,
 } from "../lib/global-search-scope";
 import { eventMatchesShortcutAction, isEditableShortcutTarget } from "../lib/keyboard-shortcuts";
+import { isOrganizationIntelligenceEnabled } from "../lib/organization-intelligence";
 import { queryKeys } from "../lib/queryKeys";
 import { buildLibrarySkillHref, SKILLS_LIBRARY_DIRECTORY_HREF } from "../lib/skill-library-routes";
 import { agentUrl, projectUrl, relativeTime } from "../lib/utils";
@@ -100,9 +101,7 @@ export function CommandPalette() {
     queryFn: () => organizationsApi.listIntelligenceProfiles(selectedOrganizationId!),
     enabled: !!selectedOrganizationId && open,
   });
-  const smartSearchEnabled = (intelligenceProfilesQuery.data ?? []).some(
-    (profile) => profile?.purpose === "reasoning" && profile.status === "configured",
-  );
+  const smartSearchEnabled = isOrganizationIntelligenceEnabled(intelligenceProfilesQuery.data, "reasoning");
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {

@@ -38,10 +38,6 @@ interface ExecuteResolvedProductIntelligenceInput extends ProductIntelligenceExe
   workspaceCwd?: string;
 }
 
-function intelligenceLabel(purpose: OrganizationIntelligenceProfilePurpose) {
-  return purpose === "lightweight" ? "Fast" : "Smart";
-}
-
 function defaultProductIntelligenceCwd() {
   return path.join(os.tmpdir(), "rudder-product-intelligence");
 }
@@ -68,12 +64,12 @@ export async function executeResolvedProductIntelligenceProfile(
     promptTemplate: input.prompt,
   };
   const workspaceCwd = input.workspaceCwd ?? defaultProductIntelligenceCwd();
-  const label = intelligenceLabel(input.purpose);
+  const label = "Default";
 
   return executeAdapterWithModelFallbacks(input.adapter, {
     runId,
     agent: {
-      id: `product-intelligence-${input.purpose}`,
+      id: "product-intelligence-default",
       orgId: input.orgId,
       name: `${label} Intelligence`,
       agentRuntimeType: input.profile.agentRuntimeType,
@@ -90,7 +86,7 @@ export async function executeResolvedProductIntelligenceProfile(
       ...(input.context ?? {}),
       rudderScene: "product_intelligence",
       productIntelligence: {
-        purpose: input.purpose,
+        purpose: "default",
         feature: input.feature,
       },
       rudderWorkspace: {
@@ -119,7 +115,7 @@ export function productIntelligenceService(db: Db) {
 
   async function execute(input: ProductIntelligenceExecuteInput): Promise<AgentRuntimeExecutionResult> {
     const profile = await profiles.getByPurpose(input.orgId, input.purpose);
-    const label = intelligenceLabel(input.purpose);
+    const label = "Default";
     if (!profile) {
       throw unprocessable(`${label} Intelligence is not configured`);
     }

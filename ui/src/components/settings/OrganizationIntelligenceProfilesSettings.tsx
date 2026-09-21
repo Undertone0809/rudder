@@ -58,45 +58,19 @@ type ActivationState = {
   phase: "testing" | "enabling";
 };
 
-const profileCopy: Record<OrganizationIntelligenceProfilePurpose, {
-  label: string;
-  description: string;
-  defaultModel: string;
-  defaultReasoning: string;
-}> = {
-  lightweight: {
-    label: "Fast",
-    description: "Titles, short summaries, classification",
-    defaultModel: "gpt-5.4-mini",
-    defaultReasoning: "",
-  },
-  reasoning: {
-    label: "Smart",
-    description: "Issue AI search, reranking, complex summaries",
-    defaultModel: "gpt-5.4-mini",
-    defaultReasoning: "",
-  },
+const profileCopy = {
+  label: "Default model",
+  description: "Titles, summaries, classification, and issue AI search",
 };
 
-const purposes: OrganizationIntelligenceProfilePurpose[] = ["lightweight", "reasoning"];
+const purposes: OrganizationIntelligenceProfilePurpose[] = ["default"];
 const providerHint = "Provider used by this organization intelligence profile.";
 
 function defaultConfigForProfileRuntime(
-  purpose: OrganizationIntelligenceProfilePurpose,
+  _purpose: OrganizationIntelligenceProfilePurpose,
   agentRuntimeType: string,
 ): Record<string, unknown> {
-  const config = defaultConfigForRuntime(agentRuntimeType);
-  if (agentRuntimeType !== "codex_local") return config;
-  const base = { ...config };
-  delete base.modelReasoningEffort;
-  delete base.reasoningEffort;
-  return {
-    ...base,
-    model: profileCopy[purpose].defaultModel,
-    ...(profileCopy[purpose].defaultReasoning
-      ? { modelReasoningEffort: profileCopy[purpose].defaultReasoning }
-      : {}),
-  };
+  return defaultConfigForRuntime(agentRuntimeType);
 }
 
 function defaultDraft(purpose: OrganizationIntelligenceProfilePurpose): ProfileDraft {
@@ -395,10 +369,13 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
       <div className="space-y-5">
         {purposes.map((purpose) => {
           const draft = currentDrafts[purpose];
-          const copy = profileCopy[purpose];
+          const copy = profileCopy;
           const model = profileModel(draft);
           const fallbacks = fallbackModels(draft);
           const dirty = !draft.exists || !sameDraft(draft, serverDrafts[purpose]);
+          const persistedError = !dirty
+            ? profilesQuery.data?.find((item) => item?.purpose === purpose)?.lastError
+            : null;
           const primaryConfig = { ...draft.agentRuntimeConfig, model };
           const runtimeChainItems = runtimeChainItemsFromConfig({
             primaryRuntimeType: draft.agentRuntimeType,
@@ -516,6 +493,10 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                   </Button>
                 </div>
               </div>
+
+              {persistedError ? (
+                <p role="status" className="text-xs text-muted-foreground">{persistedError}</p>
+              ) : null}
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">

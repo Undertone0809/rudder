@@ -56,16 +56,45 @@ function manifest(tags, sqlByTag, label) {
 
 describe("release migration compatibility matrix", () => {
   it.each([
-    ["0.7.23", "stable"],
-    ["0.7.23-canary.0", "canary"],
-  ])("accepts %s with the current 0165 migration fingerprint", (candidateVersion, channel) => {
+    ["0.7.24", "stable"],
+    ["0.7.24-canary.0", "canary"],
+  ])("accepts %s with the current 0167 migration fingerprint", (candidateVersion, channel) => {
     const result = runCompatibilityPreflight({ candidateVersion, channel });
 
     expect(result.candidateFingerprint).toBe(
-      "a33c791346eea558ac8cfcf8a35fea7ed0a46986c8ee3e48b8f7fcd5a2c7d6a2",
+      "6c0ac651a7e6b4c23cbce94171bcf498ee5eabc413a97e46df2b108cc4c13259",
     );
-    expect(result.candidateMigrations).toBe(166);
-    expect(result.candidateSqlFiles).toBe(168);
+    expect(result.candidateMigrations).toBe(168);
+    expect(result.candidateSqlFiles).toBe(170);
+    expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
+      "0.7.23",
+      "0.7.22",
+      "0.7.21",
+      "0.7.20",
+      "0.7.19",
+      "0.7.18",
+      "0.7.16",
+      "0.7.15",
+    ]);
+  }, 60_000);
+
+  it("accepts the frozen shipped 0.7.23 candidate against immutable stable fixtures", () => {
+    const candidate = readFixtureManifest(repoRoot, {
+      version: "0.7.23",
+      ref: "v0.7.23",
+    });
+    const result = validateCompatibilityMatrix({
+      candidateManifest: candidate,
+      candidateVersion: "0.7.23",
+      channel: "stable",
+      loadFixture: (fixture) => readFixtureManifest(repoRoot, fixture),
+    });
+
+    expect(result.candidateFingerprint).toBe(
+      "dc8a093838a7ebfc29ec8330831de01598cfb970b4ba834406712192a2a53237",
+    );
+    expect(result.candidateMigrations).toBe(164);
+    expect(result.candidateSqlFiles).toBe(166);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.22",
       "0.7.21",
