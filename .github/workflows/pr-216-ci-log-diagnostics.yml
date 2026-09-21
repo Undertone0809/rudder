@@ -23,16 +23,25 @@ jobs:
           RUN_ID: ${{ inputs.run_id || '35635474263' }}
         run: |
           python3 - <<'PY'
-          import os, re, urllib.request, json
+          import os, re, urllib.request, urllib.error, json
           repository = os.environ['REPOSITORY']
           run_id = os.environ['RUN_ID']
           assert repository == 'Undertone0809/rudder'
           assert run_id.isdigit()
           base = f'https://api.github.com/repos/{repository}'
           headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs):
+                  return None
           def get(path):
               request = urllib.request.Request(base + path, headers=headers)
-              with urllib.request.urlopen(request, timeout=60) as response:
+              try:
+                  response = urllib.request.build_opener(NoRedirect).open(request, timeout=60)
+              except urllib.error.HTTPError as error:
+                  if error.code != 302:
+                      raise
+                  response = urllib.request.urlopen(error.headers['Location'], timeout=60)
+              with response:
                   return response.read().decode('utf-8-sig')
           jobs = json.loads(get(f'/actions/runs/{run_id}/jobs?per_page=100'))['jobs']
           for job in jobs:
