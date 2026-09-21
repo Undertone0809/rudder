@@ -1,0 +1,22 @@
+name: Navigation workbench (temporary)
+on:
+  push:
+    branches: [codex/projects-library-navigation]
+    paths: [.github/workflows/codex-navigation-workbench.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked source for the isolated coding environment
+        run: git archive --format=tar.gz HEAD -o /tmp/rudder-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: navigation-source
+          path: /tmp/rudder-source.tar.gz
+          retention-days: 1
