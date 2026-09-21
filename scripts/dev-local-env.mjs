@@ -212,6 +212,12 @@ export function resolveHomeDir(value) {
   return path.resolve(envHome);
 }
 
+export function resolveDevServerStatusFile(env = {}) {
+  const rudderHome = resolveHomeDir(env.RUDDER_HOME);
+  const instanceId = nonEmpty(env.RUDDER_INSTANCE_ID) ?? localEnvProfiles.dev.instanceId;
+  return path.resolve(rudderHome, "instances", instanceId, "runtime", "dev-server-status.json");
+}
+
 export function resolveDevScriptEnvironment({ repoRoot, baseEnv, defaultLocalEnvName = "dev", extraEnv = {} }) {
   const repoLocalEnvPath = resolveRepoLocalEnvFile(repoRoot);
   const repoLocalConfigPath = resolveRepoLocalConfigFile(repoRoot);
