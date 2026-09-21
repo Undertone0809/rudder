@@ -23,8 +23,8 @@ main_adaptation:
     compatibility_decision: no_direct_rust_route_overlap; real_entry_and_default_path_evidence_requires_rebind
     old_receipts: invalidated
 source:
-  candidate_sha: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
-  candidate_tree: d4452f5fec44ac3aa323a8be42520bc3008ba626
+  candidate_sha: 3e1eedcdde626a0c22363a33774741ed11cd9082
+  candidate_tree: 3fc49d7cfc3587e34e863a4887f22b3bde3fc3c5
   dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   dirty_fingerprint_status: exact_clean_candidate_source_diff
   dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records

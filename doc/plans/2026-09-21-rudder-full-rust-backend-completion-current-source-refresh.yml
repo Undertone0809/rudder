@@ -2,10 +2,10 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
 candidate:
-  source_sha: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
+  source_sha: 3e1eedcdde626a0c22363a33774741ed11cd9082
   branch: codex/rudder-full-rust-backend-completion-20260921
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  tree_sha: d4452f5fec44ac3aa323a8be42520bc3008ba626
+  tree_sha: 3fc49d7cfc3587e34e863a4887f22b3bde3fc3c5
   dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records
   dirty_fingerprint_status: exact_clean_candidate_source_diff
