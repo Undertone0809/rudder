@@ -14,7 +14,8 @@ import type {
   UpdateProjectResourceAttachmentRequest,
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
-import { badRequest, conflict } from "../errors.js";
+import { badRequest, conflict, unprocessable } from "../errors.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 
 function toOrganizationResource(row: typeof organizationResources.$inferSelect): OrganizationResource {
   return {
@@ -217,6 +218,18 @@ export async function replaceProjectResourceAttachments(
     newResources?: CreateProjectInlineResourceInput[];
   },
 ): Promise<ProjectResourceAttachment[]> {
+  const project = await dbOrTx
+    .select({ orgId: projects.orgId })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .then((rows: Array<{ orgId: string }>) => rows[0] ?? null);
+  if (!project) {
+    throw unprocessable("Project not found");
+  }
+  if (project.orgId !== input.orgId) {
+    throw unprocessable("Project must belong to same organization");
+  }
+
   const createdResourceIds: string[] = [];
 
   for (const inlineResource of input.newResources ?? []) {
@@ -237,6 +250,18 @@ export async function replaceProjectResourceAttachments(
   const dedupedAttachments = combinedAttachments.filter((attachment, index, attachments) =>
     attachments.findIndex((candidate) => candidate.resourceId === attachment.resourceId) === index,
   );
+
+  const resourceIds = [...new Set(dedupedAttachments.map((attachment) => attachment.resourceId))];
+  if (resourceIds.length > 0) {
+    const resources = await dbOrTx
+      .select({ id: organizationResources.id })
+      .from(organizationResources)
+      .where(and(eq(organizationResources.orgId, input.orgId), inArray(organizationResources.id, resourceIds)));
+    if (resources.length !== resourceIds.length) {
+      throw unprocessable("Project resources must belong to same organization");
+    }
+  }
+
   if (dedupedAttachments.filter((attachment) => attachment.isPrimary).length > 1) {
     throw badRequest("A project can have at most one primary source.");
   }
@@ -285,7 +310,10 @@ export function resourceCatalogService(db: Db) {
       orgId: string,
       input: CreateOrganizationResourceRequest,
     ): Promise<OrganizationResource> => {
-      const row = await createOrReuseOrganizationResource(db, orgId, input);
+      const row = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, orgId);
+        return createOrReuseOrganizationResource(tx, orgId, input);
+      });
       return toOrganizationResource(row);
     },
 
@@ -294,63 +322,74 @@ export function resourceCatalogService(db: Db) {
       resourceId: string,
       input: UpdateOrganizationResourceRequest,
     ): Promise<OrganizationResource | null> => {
-      const existing = await db
-        .select()
-        .from(organizationResources)
-        .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
-        .then((rows) => rows[0] ?? null);
-      if (!existing) return null;
-
-      assertValidLibraryResource({
-        sourceType: input.sourceType ?? existing.sourceType,
-        kind: input.kind ?? existing.kind,
-        locator: input.locator?.trim() ?? existing.locator,
-      });
-      const nextSourceType = input.sourceType ?? existing.sourceType;
-      const nextLocator = input.locator?.trim() ?? existing.locator;
-      if (nextSourceType === "library") {
-        const duplicate = await db
-          .select({ id: organizationResources.id })
+      const row = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, orgId);
+        const existing = await tx
+          .select()
           .from(organizationResources)
           .where(
             and(
               eq(organizationResources.orgId, orgId),
-              eq(organizationResources.sourceType, "library"),
-              eq(organizationResources.locator, nextLocator),
-              ne(organizationResources.id, resourceId),
+              eq(organizationResources.id, resourceId),
             ),
           )
           .then((rows) => rows[0] ?? null);
-        if (duplicate) {
-          throw conflict("A Library resource already exists for this path.");
+        if (!existing) return null;
+
+        assertValidLibraryResource({
+          sourceType: input.sourceType ?? existing.sourceType,
+          kind: input.kind ?? existing.kind,
+          locator: input.locator?.trim() ?? existing.locator,
+        });
+        const nextSourceType = input.sourceType ?? existing.sourceType;
+        const nextLocator = input.locator?.trim() ?? existing.locator;
+        if (nextSourceType === "library") {
+          const duplicate = await tx
+            .select({ id: organizationResources.id })
+            .from(organizationResources)
+            .where(
+              and(
+                eq(organizationResources.orgId, orgId),
+                eq(organizationResources.sourceType, "library"),
+                eq(organizationResources.locator, nextLocator),
+                ne(organizationResources.id, resourceId),
+              ),
+            )
+            .then((rows) => rows[0] ?? null);
+          if (duplicate) {
+            throw conflict("A Library resource already exists for this path.");
+          }
         }
-      }
 
-      const patch: Partial<typeof organizationResources.$inferInsert> = {
-        updatedAt: new Date(),
-      };
-      if (input.name !== undefined) patch.name = input.name.trim();
-      if (input.kind !== undefined) patch.kind = input.kind;
-      if (input.sourceType !== undefined) patch.sourceType = input.sourceType;
-      if (input.locator !== undefined) patch.locator = input.locator.trim();
-      if (input.description !== undefined) patch.description = normalizeNullableText(input.description) ?? null;
-      if (input.metadata !== undefined) patch.metadata = input.metadata;
+        const patch: Partial<typeof organizationResources.$inferInsert> = {
+          updatedAt: new Date(),
+        };
+        if (input.name !== undefined) patch.name = input.name.trim();
+        if (input.kind !== undefined) patch.kind = input.kind;
+        if (input.sourceType !== undefined) patch.sourceType = input.sourceType;
+        if (input.locator !== undefined) patch.locator = input.locator.trim();
+        if (input.description !== undefined) patch.description = normalizeNullableText(input.description) ?? null;
+        if (input.metadata !== undefined) patch.metadata = input.metadata;
 
-      const row = await db
-        .update(organizationResources)
-        .set(patch)
-        .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
-        .returning()
-        .then((rows) => rows[0] ?? null);
+        return tx
+          .update(organizationResources)
+          .set(patch)
+          .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+      });
       return row ? toOrganizationResource(row) : null;
     },
 
     removeOrganizationResource: async (orgId: string, resourceId: string): Promise<OrganizationResource | null> => {
-      const row = await db
-        .delete(organizationResources)
-        .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
-        .returning()
-        .then((rows) => rows[0] ?? null);
+      const row = await db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, orgId);
+        return tx
+          .delete(organizationResources)
+          .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+      });
       return row ? toOrganizationResource(row) : null;
     },
 
@@ -365,35 +404,43 @@ export function resourceCatalogService(db: Db) {
       projectId: string;
       attachments: ProjectResourceAttachmentInput[];
       newResources?: CreateProjectInlineResourceInput[];
-    }) => replaceProjectResourceAttachments(db, input),
+    }) => db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, input.orgId);
+      return replaceProjectResourceAttachments(tx, input);
+    }),
 
     createProjectResourceAttachment: async (
       projectId: string,
       input: ProjectResourceAttachmentInput,
     ): Promise<ProjectResourceAttachment | null> => {
-      const orgId = await fetchProjectOrgId(db, projectId);
-      if (!orgId) return null;
+      return db.transaction(async (tx) => {
+        const project = await tx
+          .select({ orgId: projects.orgId })
+          .from(projects)
+          .where(eq(projects.id, projectId))
+          .then((rows) => rows[0] ?? null);
+        if (!project) return null;
 
-      const resource = await db
-        .select()
-        .from(organizationResources)
-        .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, input.resourceId)))
-        .then((rows) => rows[0] ?? null);
-      if (!resource) return null;
+        await lockNodeMutationAuthority(tx, project.orgId);
+        const resource = await tx
+          .select()
+          .from(organizationResources)
+          .where(and(eq(organizationResources.orgId, project.orgId), eq(organizationResources.id, input.resourceId)))
+          .then((rows) => rows[0] ?? null);
+        if (!resource) return null;
 
-      const existing = await db
-        .select()
-        .from(projectResourceAttachments)
-        .where(
-          and(
-            eq(projectResourceAttachments.projectId, projectId),
-            eq(projectResourceAttachments.resourceId, input.resourceId),
-          ),
-        )
-        .then((rows) => rows[0] ?? null);
+        const existing = await tx
+          .select()
+          .from(projectResourceAttachments)
+          .where(
+            and(
+              eq(projectResourceAttachments.projectId, projectId),
+              eq(projectResourceAttachments.resourceId, input.resourceId),
+            ),
+          )
+          .then((rows) => rows[0] ?? null);
 
-      if (existing) {
-        return db.transaction(async (tx) => {
+        if (existing) {
           if (input.isPrimary) {
             await tx
               .update(projectResourceAttachments)
@@ -404,34 +451,32 @@ export function resourceCatalogService(db: Db) {
               ));
           }
           const updated = await tx
-          .update(projectResourceAttachments)
-          .set({
-            role: input.role ?? existing.role,
-            note: normalizeNullableText(input.note) ?? existing.note ?? null,
-            sortOrder: input.sortOrder ?? existing.sortOrder,
-            isPrimary: input.isPrimary ?? existing.isPrimary,
-            updatedAt: new Date(),
-          })
-          .where(eq(projectResourceAttachments.id, existing.id))
-          .returning()
-          .then((rows) => rows[0] ?? null);
+            .update(projectResourceAttachments)
+            .set({
+              role: input.role ?? existing.role,
+              note: normalizeNullableText(input.note) ?? existing.note ?? null,
+              sortOrder: input.sortOrder ?? existing.sortOrder,
+              isPrimary: input.isPrimary ?? existing.isPrimary,
+              updatedAt: new Date(),
+            })
+            .where(eq(projectResourceAttachments.id, existing.id))
+            .returning()
+            .then((rows) => rows[0] ?? null);
           return updated ? toProjectResourceAttachment(updated, toOrganizationResource(resource)) : null;
-        });
-      }
+        }
 
-      const nextSortOrder = input.sortOrder ?? await db
-        .select({ sortOrder: projectResourceAttachments.sortOrder })
-        .from(projectResourceAttachments)
-        .where(
-          and(
-            eq(projectResourceAttachments.orgId, orgId),
-            eq(projectResourceAttachments.projectId, projectId),
-          ),
-        )
-        .orderBy(desc(projectResourceAttachments.sortOrder))
-        .then((rows) => (rows[0]?.sortOrder ?? -1) + 1);
+        const nextSortOrder = input.sortOrder ?? await tx
+          .select({ sortOrder: projectResourceAttachments.sortOrder })
+          .from(projectResourceAttachments)
+          .where(
+            and(
+              eq(projectResourceAttachments.orgId, project.orgId),
+              eq(projectResourceAttachments.projectId, projectId),
+            ),
+          )
+          .orderBy(desc(projectResourceAttachments.sortOrder))
+          .then((rows) => (rows[0]?.sortOrder ?? -1) + 1);
 
-      return db.transaction(async (tx) => {
         if (input.isPrimary) {
           await tx
             .update(projectResourceAttachments)
@@ -444,7 +489,7 @@ export function resourceCatalogService(db: Db) {
         const row = await tx
           .insert(projectResourceAttachments)
           .values({
-            orgId,
+            orgId: project.orgId,
             projectId,
             resourceId: input.resourceId,
             role: input.role ?? "reference",
@@ -463,21 +508,25 @@ export function resourceCatalogService(db: Db) {
       attachmentId: string,
       input: UpdateProjectResourceAttachmentRequest,
     ): Promise<ProjectResourceAttachment | null> => {
-      const existing = await db
-        .select()
-        .from(projectResourceAttachments)
-        .where(and(eq(projectResourceAttachments.projectId, projectId), eq(projectResourceAttachments.id, attachmentId)))
-        .then((rows) => rows[0] ?? null);
-      if (!existing) return null;
-
-      const resource = await db
-        .select()
-        .from(organizationResources)
-        .where(eq(organizationResources.id, existing.resourceId))
-        .then((rows) => rows[0] ?? null);
-      if (!resource) return null;
-
       return db.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(projectResourceAttachments)
+          .where(and(eq(projectResourceAttachments.projectId, projectId), eq(projectResourceAttachments.id, attachmentId)))
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
+
+        await lockNodeMutationAuthority(tx, existing.orgId);
+        const resource = await tx
+          .select()
+          .from(organizationResources)
+          .where(and(
+            eq(organizationResources.id, existing.resourceId),
+            eq(organizationResources.orgId, existing.orgId),
+          ))
+          .then((rows) => rows[0] ?? null);
+        if (!resource) return null;
+
         if (input.isPrimary) {
           await tx
             .update(projectResourceAttachments)
@@ -507,26 +556,32 @@ export function resourceCatalogService(db: Db) {
       projectId: string,
       attachmentId: string,
     ): Promise<ProjectResourceAttachment | null> => {
-      const existing = await db
-        .select()
-        .from(projectResourceAttachments)
-        .where(and(eq(projectResourceAttachments.projectId, projectId), eq(projectResourceAttachments.id, attachmentId)))
-        .then((rows) => rows[0] ?? null);
-      if (!existing) return null;
+      return db.transaction(async (tx) => {
+        const existing = await tx
+          .select()
+          .from(projectResourceAttachments)
+          .where(and(eq(projectResourceAttachments.projectId, projectId), eq(projectResourceAttachments.id, attachmentId)))
+          .then((rows) => rows[0] ?? null);
+        if (!existing) return null;
 
-      const resource = await db
-        .select()
-        .from(organizationResources)
-        .where(eq(organizationResources.id, existing.resourceId))
-        .then((rows) => rows[0] ?? null);
-      if (!resource) return null;
+        await lockNodeMutationAuthority(tx, existing.orgId);
+        const resource = await tx
+          .select()
+          .from(organizationResources)
+          .where(and(
+            eq(organizationResources.id, existing.resourceId),
+            eq(organizationResources.orgId, existing.orgId),
+          ))
+          .then((rows) => rows[0] ?? null);
+        if (!resource) return null;
 
-      const row = await db
-        .delete(projectResourceAttachments)
-        .where(eq(projectResourceAttachments.id, existing.id))
-        .returning()
-        .then((rows) => rows[0] ?? null);
-      return row ? toProjectResourceAttachment(row, toOrganizationResource(resource)) : null;
+        const row = await tx
+          .delete(projectResourceAttachments)
+          .where(eq(projectResourceAttachments.id, existing.id))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        return row ? toProjectResourceAttachment(row, toOrganizationResource(resource)) : null;
+      });
     },
   };
 }

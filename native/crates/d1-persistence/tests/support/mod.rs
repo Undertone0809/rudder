@@ -119,7 +119,9 @@ impl Database {
             .expect("seed organization");
             sqlx::query(
                 "INSERT INTO organization_mutation_state (org_id, owner, fence_epoch)
-                 VALUES ($1::uuid, 'rust', 7)",
+                 VALUES ($1::uuid, 'rust', 7)
+                 ON CONFLICT (org_id) DO UPDATE
+                 SET owner='rust', fence_epoch=7, fence_token=gen_random_uuid(), updated_at=now()",
             )
             .bind(organization_id)
             .execute(&self.pool)

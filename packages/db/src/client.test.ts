@@ -959,6 +959,10 @@ describe("applyPendingMigrations", () => {
           "0165_heartbeat_attempt_owner_fencing.sql",
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
+          "0164_organization_mutation_state_backfill.sql",
+          "0165_project_goal_set_receipt_kind.sql",
+          "0166_organization_mutation_state_provisioning.sql",
+          "0167_organization_mutation_fence_token.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1147,6 +1151,10 @@ describe("applyPendingMigrations", () => {
           "0165_heartbeat_attempt_owner_fencing.sql",
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
+          "0164_organization_mutation_state_backfill.sql",
+          "0165_project_goal_set_receipt_kind.sql",
+          "0166_organization_mutation_state_provisioning.sql",
+          "0167_organization_mutation_fence_token.sql",
         ],
         reason: "pending-migrations",
       });

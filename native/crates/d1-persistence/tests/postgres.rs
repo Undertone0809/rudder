@@ -3,8 +3,9 @@ mod support;
 use rudder_d1_persistence::{MutationStore, Outcome, Receipt, ResultState, StoreError};
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
-    ActorAuthority, ActorBinding, Operation, ProjectGoalLinkCommand, ProjectGoalLinkState,
-    TargetVerifier,
+    ActorAuthority, ActorBinding, GoalSetTargetVerifier, Operation, ProjectGoalLinkCommand,
+    ProjectGoalLinkState, ProjectGoalSetReplacementCommand, TargetVerifier,
+    ValidatedGoalSetContext,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -29,6 +30,21 @@ impl TargetVerifier for SeedTargets {
             && goal_org_id == ORG
             && project_id == PROJECT
             && matches!(goal_id, GOAL | GOAL_TWO)
+    }
+}
+
+impl GoalSetTargetVerifier for SeedTargets {
+    fn goal_set_exists_in_organization(
+        &self,
+        organization_id: &str,
+        project_id: &str,
+        goal_ids: &[String],
+    ) -> bool {
+        organization_id == ORG
+            && project_id == PROJECT
+            && goal_ids
+                .iter()
+                .all(|goal_id| matches!(goal_id.as_str(), GOAL | GOAL_TWO))
     }
 }
 
@@ -114,6 +130,36 @@ fn project_goal_command_from_state(
         .validated_context(&binding, &authority, &SeedTargets)
         .unwrap();
     ProjectGoalLinkCommand::from_validated_context(context, operation, version, fence_epoch, key)
+}
+
+fn project_goal_set_command(
+    goal_ids: Vec<String>,
+    primary_goal_after: Option<String>,
+    version: u64,
+    key: &str,
+) -> ProjectGoalSetReplacementCommand {
+    let authority = ActorAuthority::verification_only("known-secret").unwrap();
+    let binding: ActorBinding = serde_json::from_value(json!({
+        "actor": {
+            "ceo_agent": {
+                "organization_id": ORG,
+                "principal_id": CEO
+            }
+        },
+        "proof": "73431c93f5c11188b21ad422ff959aa702c3b38d5780d060c0c2007309e7f2dd"
+    }))
+    .unwrap();
+    let context = ValidatedGoalSetContext::from_target_snapshot(
+        &binding,
+        &authority,
+        &SeedTargets,
+        ORG,
+        PROJECT,
+        goal_ids,
+        primary_goal_after,
+    )
+    .unwrap();
+    ProjectGoalSetReplacementCommand::from_validated_context(context, version, 7, key)
 }
 
 async fn project_primary(database: &Database) -> Option<String> {
@@ -328,14 +374,14 @@ async fn branding_checks_owner_scope_freshness_and_bigint_boundaries() {
     let store = MutationStore::new(database.pool.clone());
 
     database
-        .sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=8 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=8, fence_token='60000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store.branding(branding("node-owned", 0)).await,
         Err(StoreError::NotOwned)
     ));
     database
-        .sql("UPDATE organization_mutation_state SET owner='rust', fence_epoch=9 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_mutation_state SET owner='rust', fence_epoch=9, fence_token='70000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
 
     assert!(matches!(
@@ -569,6 +615,109 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
         project_details(&database, &detach_last.receipt.activity_id).await["goalIds"],
         json!([])
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_set_replacement_is_atomic_and_replays_its_original_receipt() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let first_command = project_goal_set_command(
+        vec![GOAL.to_owned(), GOAL_TWO.to_owned()],
+        Some(GOAL.to_owned()),
+        0,
+        "project-goal-set-first",
+    );
+    let first = store.project_goal_set(first_command.clone()).await.unwrap();
+
+    assert!(!first.replayed);
+    assert_eq!(first.receipt.version, 1);
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
+    assert_eq!(
+        project_goals(&database).await,
+        vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
+    );
+    assert_eq!(
+        project_details(&database, &first.receipt.activity_id).await,
+        json!({"goalIds": [GOAL, GOAL_TWO], "primaryGoalId": GOAL})
+    );
+    match &first.receipt.result {
+        ResultState::ProjectGoalSetReplacement {
+            project_id,
+            goal_ids,
+            primary_goal_after,
+            ..
+        } => {
+            assert_eq!(project_id, PROJECT);
+            assert_eq!(goal_ids, &[GOAL.to_owned(), GOAL_TWO.to_owned()]);
+            assert_eq!(primary_goal_after.as_deref(), Some(GOAL));
+        }
+        result => panic!("unexpected project goal-set result: {result:?}"),
+    }
+
+    let later = store
+        .project_goal_set(project_goal_set_command(
+            vec![GOAL_TWO.to_owned()],
+            Some(GOAL_TWO.to_owned()),
+            1,
+            "project-goal-set-later",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(later.receipt.version, 2);
+
+    let replay = store.project_goal_set(first_command).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, first.receipt);
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
+    assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
+    assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_set_replacement_rolls_back_business_projection_receipt_and_audit() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    database
+        .sql(
+            "CREATE FUNCTION fail_goal_set_activity() RETURNS trigger
+             LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test goal-set audit failure'; END; $$;
+             CREATE TRIGGER fail_goal_set_activity_trigger
+             BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_goal_set_activity();",
+        )
+        .await;
+
+    let error = store
+        .project_goal_set(project_goal_set_command(
+            vec![GOAL.to_owned(), GOAL_TWO.to_owned()],
+            Some(GOAL.to_owned()),
+            0,
+            "project-goal-set-audit-rollback",
+        ))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, StoreError::Database(_)));
+    assert_eq!(project_primary(&database).await, None);
+    assert!(project_goals(&database).await.is_empty());
+    assert_eq!(database.counts().await, (0, 0, 0));
+    database
+        .sql(
+            "DROP TRIGGER fail_goal_set_activity_trigger ON activity_log;
+             DROP FUNCTION fail_goal_set_activity();",
+        )
+        .await;
+
+    store
+        .project_goal_set(project_goal_set_command(
+            vec![GOAL_TWO.to_owned()],
+            Some(GOAL_TWO.to_owned()),
+            0,
+            "project-goal-set-audit-retry",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
+    assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -929,7 +1078,7 @@ async fn project_goal_respects_owner_fence_and_ceo_authority_before_mutation() {
     let store = MutationStore::new(database.pool.clone());
 
     database
-        .sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=8 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=8, fence_token='60000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store
@@ -942,7 +1091,7 @@ async fn project_goal_respects_owner_fence_and_ceo_authority_before_mutation() {
     ));
 
     database
-        .sql("UPDATE organization_mutation_state SET owner='rust', fence_epoch=9 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_mutation_state SET owner='rust', fence_epoch=9, fence_token='70000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store
@@ -1029,7 +1178,7 @@ async fn project_goal_rejects_stale_version_and_bigint_overflow_without_partial_
     let database = Database::start().await;
     let store = MutationStore::new(database.pool.clone());
     database
-        .sql("UPDATE organization_mutation_state SET fence_epoch=9223372036854775807 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_mutation_state SET fence_epoch=9223372036854775807, fence_token='80000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store

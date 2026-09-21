@@ -80,10 +80,10 @@ describe("release migration compatibility matrix", () => {
     });
 
     expect(result.candidateFingerprint).toBe(
-      "dc8a093838a7ebfc29ec8330831de01598cfb970b4ba834406712192a2a53237",
+      "a33c791346eea558ac8cfcf8a35fea7ed0a46986c8ee3e48b8f7fcd5a2c7d6a2",
     );
-    expect(result.candidateMigrations).toBe(164);
-    expect(result.candidateSqlFiles).toBe(166);
+    expect(result.candidateMigrations).toBe(166);
+    expect(result.candidateSqlFiles).toBe(168);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.22",
       "0.7.21",

@@ -10,6 +10,7 @@ import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import type { LocalAccountExchangePolicy } from "../services/local-account-auth.js";
 import type { LocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 import type { McpDeploymentAllowlists } from "../services/mcp/security-policy.js";
+import type { RustFoundationMode } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 
 export type UiMode = "none" | "static" | "vite-dev";
@@ -51,6 +52,12 @@ export interface RudderAppOptions {
   instanceId?: string;
   localEnv?: string | null;
   runtimeOwnerKind?: string | null;
+  /** Active database identity passed to an explicitly enabled Rust bridge. */
+  databaseUrl?: string;
+  /** Transitional private Actix bridge mode for independently connected slices. */
+  rustFoundationMode?: RustFoundationMode;
+  rustFoundationBinaryPath?: string;
+  rustFoundationActorEnvelopeKey?: string;
   hostVersion?: string;
   localPluginDir?: string;
   betterAuthHandler?: RequestHandler;

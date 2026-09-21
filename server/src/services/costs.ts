@@ -4,6 +4,7 @@ import { ADDITIONAL_CACHED_INPUT_TOKEN_PROVIDERS, type CostTrendGranularity } fr
 import { and, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { budgetService, type BudgetServiceHooks } from "./budgets.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 
 export interface CostDateRange {
   from?: Date;
@@ -263,6 +264,7 @@ export function costService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
       : data.idempotencyKey ?? null;
 
     const result = await db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, orgId);
       if (options?.oncePerHeartbeatRun && data.heartbeatRunId) {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-cost:${data.heartbeatRunId}`}))`);
         let existing = await tx

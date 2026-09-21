@@ -1,6 +1,11 @@
 #![cfg(unix)]
 
 use rudder_archive_core::create_archive;
+use rudder_server_foundation_core::{
+    ACTOR_ENVELOPE_AUDIENCE, ACTOR_ENVELOPE_HEADER, ACTOR_ENVELOPE_REQUEST_ID_HEADER,
+    ActorEnvelope, ActorIdentity, IDEMPOTENCY_KEY_HEADER, MEMBER_DIRECTORY_ACTION,
+    ORGANIZATION_BRANDING_ACTION, PROJECT_GOAL_SET_ACTION,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
@@ -10,7 +15,7 @@ use std::{
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tempfile::TempDir;
 
@@ -19,6 +24,785 @@ const READ_PARITY_FIXTURE: &str =
 
 fn parity_fixture() -> Value {
     serde_json::from_str(READ_PARITY_FIXTURE).expect("workspace backup read parity fixture")
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn member_directory_is_scoped_paginated_and_fail_closed() {
+    const ORG_ONE: &str = "00000000-0000-0000-0000-000000000001";
+    const SECRET: &str = "member-directory-test-secret";
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&postgres.url)
+        .await
+        .expect("connect test PostgreSQL");
+    sqlx::raw_sql(MEMBER_DIRECTORY_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install member directory fixture");
+    pool.close().await;
+
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
+    ]);
+    let route = format!("/api/orgs/{ORG_ONE}/members/directory");
+
+    let missing_envelope =
+        http_request(bound_addr, "GET", &route).expect("missing envelope request");
+    assert!(
+        missing_envelope.starts_with("HTTP/1.1 401"),
+        "{missing_envelope}"
+    );
+    assert!(
+        missing_envelope.contains("actor_envelope_invalid"),
+        "{missing_envelope}"
+    );
+
+    let malformed_org_route = "/api/orgs/not-a-uuid/members/directory";
+    let malformed_without_auth =
+        http_request(bound_addr, "GET", malformed_org_route).expect("malformed org request");
+    assert!(
+        malformed_without_auth.starts_with("HTTP/1.1 401"),
+        "{malformed_without_auth}"
+    );
+    let malformed_with_auth = signed_member_directory_get(
+        bound_addr,
+        malformed_org_route,
+        "not-a-uuid",
+        SECRET,
+        "directory-malformed-org",
+    );
+    assert!(
+        malformed_with_auth.starts_with("HTTP/1.1 404"),
+        "{malformed_with_auth}"
+    );
+
+    let wrong_secret = signed_member_directory_get(
+        bound_addr,
+        &route,
+        ORG_ONE,
+        "wrong-secret",
+        "wrong-secret-nonce",
+    );
+    assert!(wrong_secret.starts_with("HTTP/1.1 401"), "{wrong_secret}");
+
+    let cross_org = signed_member_directory_get_with_claimed_org(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000002/members/directory",
+        ORG_ONE,
+        SECRET,
+        "cross-org-nonce",
+    );
+    assert!(cross_org.starts_with("HTTP/1.1 401"), "{cross_org}");
+
+    let first = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?type=all&limit=2"),
+        ORG_ONE,
+        SECRET,
+        "directory-page-one",
+    );
+    assert!(first.starts_with("HTTP/1.1 200"), "{first}");
+    let first_body = response_json(&first);
+    assert_eq!(first_body["total"], 3);
+    assert_eq!(first_body["hasMore"], true);
+    assert_eq!(first_body["items"][0]["name"], "Alice");
+    assert_eq!(first_body["items"][0]["type"], "human");
+    assert_eq!(first_body["items"][0]["role"], "owner");
+    assert_eq!(first_body["items"][0]["ref"], "usr_usera");
+    assert_eq!(first_body["items"][1]["name"], "Bob");
+    assert_eq!(first_body["items"][1]["ref"], "usr_userb");
+    let cursor = first_body["nextCursor"]
+        .as_str()
+        .expect("next cursor")
+        .to_owned();
+
+    let replay = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?type=all&limit=2"),
+        ORG_ONE,
+        SECRET,
+        "directory-page-one",
+    );
+    assert!(replay.starts_with("HTTP/1.1 401"), "{replay}");
+
+    let second = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?limit=2&cursor={cursor}&fullIds=1"),
+        ORG_ONE,
+        SECRET,
+        "directory-page-two",
+    );
+    assert!(second.starts_with("HTTP/1.1 200"), "{second}");
+    let second_body = response_json(&second);
+    assert_eq!(second_body["total"], 3);
+    assert_eq!(second_body["hasMore"], false);
+    assert_eq!(second_body["items"][0]["name"], "Visible Agent");
+    assert_eq!(second_body["items"][0]["type"], "agent");
+    assert_eq!(
+        second_body["items"][0]["ref"],
+        "30000000-0000-0000-0000-000000000001"
+    );
+
+    let human = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?type=human"),
+        ORG_ONE,
+        SECRET,
+        "directory-human",
+    );
+    assert!(human.starts_with("HTTP/1.1 200"), "{human}");
+    let human_body = response_json(&human);
+    assert_eq!(human_body["total"], 2);
+    assert_eq!(human_body["items"].as_array().unwrap().len(), 2);
+
+    let agent = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?type=agent&query=visible"),
+        ORG_ONE,
+        SECRET,
+        "directory-agent",
+    );
+    assert!(agent.starts_with("HTTP/1.1 200"), "{agent}");
+    let agent_body = response_json(&agent);
+    assert_eq!(agent_body["total"], 1);
+    assert_eq!(agent_body["items"][0]["name"], "Visible Agent");
+
+    let signed_route = format!("{route}?type=all&limit=2");
+    let tampered_query = signed_member_directory_get_with_sent_route(
+        bound_addr,
+        &signed_route,
+        &format!("{route}?type=all&limit=3"),
+        ORG_ONE,
+        SECRET,
+        "directory-query-tamper",
+    );
+    assert!(
+        tampered_query.starts_with("HTTP/1.1 401"),
+        "{tampered_query}"
+    );
+
+    let invalid_type = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?type=board"),
+        ORG_ONE,
+        SECRET,
+        "directory-invalid-type",
+    );
+    assert!(invalid_type.starts_with("HTTP/1.1 422"), "{invalid_type}");
+    assert!(
+        invalid_type.contains("member_directory_invalid_type"),
+        "{invalid_type}"
+    );
+
+    let invalid_limit = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?limit=101"),
+        ORG_ONE,
+        SECRET,
+        "directory-invalid-limit",
+    );
+    assert!(invalid_limit.starts_with("HTTP/1.1 400"), "{invalid_limit}");
+    assert!(
+        invalid_limit.contains("member_directory_invalid_limit"),
+        "{invalid_limit}"
+    );
+
+    let invalid_cursor = signed_member_directory_get(
+        bound_addr,
+        &format!("{route}?cursor=not-a-cursor"),
+        ORG_ONE,
+        SECRET,
+        "directory-invalid-cursor",
+    );
+    assert!(
+        invalid_cursor.starts_with("HTTP/1.1 400"),
+        "{invalid_cursor}"
+    );
+    assert!(
+        invalid_cursor.contains("member_directory_invalid_cursor"),
+        "{invalid_cursor}"
+    );
+
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
+    const ORG: &str = "00000000-0000-0000-0000-000000000001";
+    const OTHER_ORG: &str = "00000000-0000-0000-0000-000000000002";
+    const SECRET: &str = "branding-mutation-test-secret";
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&postgres.url)
+        .await
+        .expect("connect branding fixture PostgreSQL");
+    sqlx::raw_sql(BRANDING_MUTATION_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install branding mutation fixture");
+
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
+    ]);
+    let route = format!("/api/orgs/{ORG}/branding");
+    let body = br##"{"name":"Rust branding","description":"private D1","brandColor":"#336699"}"##;
+
+    let missing_key = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-missing-key",
+        "branding-missing-key",
+        body,
+        false,
+    );
+    assert!(missing_key.starts_with("HTTP/1.1 400"), "{missing_key}");
+    assert!(
+        missing_key.contains("idempotency_key_required"),
+        "{missing_key}"
+    );
+
+    let first = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-first",
+        "branding-first",
+        body,
+        true,
+    );
+    assert!(first.starts_with("HTTP/1.1 200"), "{first}");
+    let first_json = response_json(&first);
+    assert_eq!(first_json["version"], 1);
+    assert_eq!(first_json["result"]["state"]["name"], "Rust branding");
+    let activity_id = first_json["activity_id"].as_str().expect("activity id");
+
+    let replay = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-replay",
+        "branding-first",
+        body,
+        true,
+    );
+    assert!(replay.starts_with("HTTP/1.1 200"), "{replay}");
+    assert_eq!(response_json(&replay), first_json);
+
+    let conflict_body = br#"{"name":"Conflicting branding"}"#;
+    let conflict = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-conflict",
+        "branding-first",
+        conflict_body,
+        true,
+    );
+    assert!(conflict.starts_with("HTTP/1.1 409"), "{conflict}");
+    assert!(
+        conflict.contains("mutation_idempotency_conflict"),
+        "{conflict}"
+    );
+
+    sqlx::raw_sql(
+        "CREATE FUNCTION fail_branding_activity() RETURNS trigger
+         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test branding audit failure'; END; $$;
+         CREATE TRIGGER fail_branding_activity_trigger
+         BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_branding_activity();",
+    )
+    .execute(&pool)
+    .await
+    .expect("install branding audit failure");
+    let rollback_body = br#"{"name":"Should roll back"}"#;
+    let rollback = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-rollback",
+        "branding-rollback",
+        rollback_body,
+        true,
+    );
+    assert!(rollback.starts_with("HTTP/1.1 500"), "{rollback}");
+    let persisted_name: String =
+        sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&pool)
+            .await
+            .expect("read rolled-back branding");
+    assert_eq!(persisted_name, "Rust branding");
+    sqlx::raw_sql(
+        "DROP TRIGGER fail_branding_activity_trigger ON activity_log;
+         DROP FUNCTION fail_branding_activity();",
+    )
+    .execute(&pool)
+    .await
+    .expect("remove branding audit failure");
+
+    sqlx::query(
+        "UPDATE organization_mutation_state SET owner='node', fence_epoch=2, fence_token=gen_random_uuid() WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .execute(&pool)
+    .await
+    .expect("move branding fixture to node owner");
+    let node_owned = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-node-owned",
+        "branding-node-owned",
+        br#"{"name":"Must not write"}"#,
+        true,
+    );
+    assert!(node_owned.starts_with("HTTP/1.1 409"), "{node_owned}");
+    assert!(node_owned.contains("mutation_not_owned"), "{node_owned}");
+
+    let wrong_secret = signed_patch_request(
+        bound_addr,
+        &route,
+        ORG,
+        "wrong-secret",
+        "branding-wrong-secret",
+        "branding-wrong-secret",
+        body,
+        true,
+    );
+    assert!(wrong_secret.starts_with("HTTP/1.1 401"), "{wrong_secret}");
+
+    let cross_org = signed_patch_request(
+        bound_addr,
+        &format!("/api/orgs/{OTHER_ORG}/branding"),
+        ORG,
+        SECRET,
+        "branding-cross-org",
+        "branding-cross-org",
+        body,
+        true,
+    );
+    assert!(cross_org.starts_with("HTTP/1.1 401"), "{cross_org}");
+
+    assert!(!activity_id.is_empty());
+    pool.close().await;
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
+    const ORG: &str = "00000000-0000-0000-0000-000000000001";
+    const OTHER_ORG: &str = "00000000-0000-0000-0000-000000000002";
+    const PROJECT: &str = "10000000-0000-0000-0000-000000000001";
+    const OTHER_PROJECT: &str = "10000000-0000-0000-0000-000000000002";
+    const GOAL_ONE: &str = "20000000-0000-0000-0000-000000000001";
+    const GOAL_TWO: &str = "20000000-0000-0000-0000-000000000002";
+    const SECRET: &str = "project-goal-set-test-secret";
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&postgres.url)
+        .await
+        .expect("connect project goal-set fixture PostgreSQL");
+    sqlx::raw_sql(BRANDING_MUTATION_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install project goal-set fixture");
+
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
+    ]);
+    let route = format!("/api/orgs/{ORG}/projects/{PROJECT}/goal-set");
+    let first_body = br#"{"goalIds":["20000000-0000-0000-0000-000000000001","20000000-0000-0000-0000-000000000002"],"primaryGoalId":"20000000-0000-0000-0000-000000000002"}"#;
+
+    let missing_key = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-missing-key",
+        "goal-set-missing-key",
+        first_body,
+        false,
+    );
+    assert!(missing_key.starts_with("HTTP/1.1 400"), "{missing_key}");
+    assert!(
+        missing_key.contains("idempotency_key_required"),
+        "{missing_key}"
+    );
+
+    let first = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-first",
+        "goal-set-first",
+        first_body,
+        true,
+    );
+    assert!(first.starts_with("HTTP/1.1 200"), "{first}");
+    let first_json = response_json(&first);
+    assert_eq!(first_json["version"], 1);
+    assert_eq!(first_json["result"]["kind"], "project_goal_set_replacement");
+    assert_eq!(
+        first_json["result"]["state"]["goalIds"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(first_json["result"]["state"]["primaryGoalAfter"], GOAL_TWO);
+
+    let attached: Vec<String> = sqlx::query_scalar(
+        "SELECT goal_id::text FROM project_goals WHERE project_id=$1::uuid ORDER BY goal_id",
+    )
+    .bind(PROJECT)
+    .fetch_all(&pool)
+    .await
+    .expect("read first project goal set");
+    assert_eq!(attached, vec![GOAL_ONE.to_owned(), GOAL_TWO.to_owned()]);
+    let primary: Option<String> =
+        sqlx::query_scalar("SELECT goal_id::text FROM projects WHERE id=$1::uuid")
+            .bind(PROJECT)
+            .fetch_one(&pool)
+            .await
+            .expect("read first primary goal");
+    assert_eq!(primary.as_deref(), Some(GOAL_TWO));
+
+    let replay = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-replay",
+        "goal-set-first",
+        first_body,
+        true,
+    );
+    assert!(replay.starts_with("HTTP/1.1 200"), "{replay}");
+    assert_eq!(response_json(&replay), first_json);
+
+    let conflict = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-conflict",
+        "goal-set-first",
+        br#"{"goalIds":["20000000-0000-0000-0000-000000000001"],"primaryGoalId":"20000000-0000-0000-0000-000000000001"}"#,
+        true,
+    );
+    assert!(conflict.starts_with("HTTP/1.1 409"), "{conflict}");
+    assert!(
+        conflict.contains("mutation_idempotency_conflict"),
+        "{conflict}"
+    );
+
+    let invalid_target = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-invalid-target",
+        "goal-set-invalid-target",
+        br#"{"goalIds":["20000000-0000-0000-0000-000000000004"],"primaryGoalId":"20000000-0000-0000-0000-000000000004"}"#,
+        true,
+    );
+    assert!(
+        invalid_target.starts_with("HTTP/1.1 422"),
+        "{invalid_target}"
+    );
+    assert!(
+        invalid_target.contains("project_goal_set_invalid"),
+        "{invalid_target}"
+    );
+
+    sqlx::raw_sql(
+        "CREATE FUNCTION fail_goal_set_activity() RETURNS trigger
+         LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test goal-set audit failure'; END; $$;
+         CREATE TRIGGER fail_goal_set_activity_trigger
+         BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_goal_set_activity();",
+    )
+    .execute(&pool)
+    .await
+    .expect("install goal-set audit failure");
+    let rollback_body = br#"{"goalIds":["20000000-0000-0000-0000-000000000001"],"primaryGoalId":"20000000-0000-0000-0000-000000000001"}"#;
+    let rollback = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-rollback",
+        "goal-set-rollback",
+        rollback_body,
+        true,
+    );
+    assert!(rollback.starts_with("HTTP/1.1 500"), "{rollback}");
+    let version: i64 = sqlx::query_scalar(
+        "SELECT mutation_version FROM organization_mutation_state WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&pool)
+    .await
+    .expect("read rolled-back goal-set version");
+    assert_eq!(version, 1);
+    let receipt_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+           SELECT 1 FROM organization_mutation_receipts
+           WHERE org_id=$1::uuid AND idempotency_key=$2
+         )",
+    )
+    .bind(ORG)
+    .bind("goal-set-rollback")
+    .fetch_one(&pool)
+    .await
+    .expect("read rolled-back goal-set receipt");
+    assert!(!receipt_exists);
+    let attached_after_failure: Vec<String> = sqlx::query_scalar(
+        "SELECT goal_id::text FROM project_goals WHERE project_id=$1::uuid ORDER BY goal_id",
+    )
+    .bind(PROJECT)
+    .fetch_all(&pool)
+    .await
+    .expect("read rolled-back project goal set");
+    assert_eq!(
+        attached_after_failure,
+        vec![GOAL_ONE.to_owned(), GOAL_TWO.to_owned()]
+    );
+    sqlx::raw_sql(
+        "DROP TRIGGER fail_goal_set_activity_trigger ON activity_log;
+         DROP FUNCTION fail_goal_set_activity();",
+    )
+    .execute(&pool)
+    .await
+    .expect("remove goal-set audit failure");
+
+    let recovered = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-recovery",
+        "goal-set-rollback",
+        rollback_body,
+        true,
+    );
+    assert!(recovered.starts_with("HTTP/1.1 200"), "{recovered}");
+    assert_eq!(response_json(&recovered)["version"], 2);
+    let recovered_primary: Option<String> =
+        sqlx::query_scalar("SELECT goal_id::text FROM projects WHERE id=$1::uuid")
+            .bind(PROJECT)
+            .fetch_one(&pool)
+            .await
+            .expect("read recovered primary goal");
+    assert_eq!(recovered_primary.as_deref(), Some(GOAL_ONE));
+
+    let foreign_org = signed_goal_set_request(
+        bound_addr,
+        &format!("/api/orgs/{OTHER_ORG}/projects/{OTHER_PROJECT}/goal-set"),
+        ORG,
+        SECRET,
+        "goal-set-cross-org",
+        "goal-set-cross-org",
+        first_body,
+        true,
+    );
+    assert!(foreign_org.starts_with("HTTP/1.1 401"), "{foreign_org}");
+
+    sqlx::query(
+        "UPDATE organization_mutation_state SET owner='node', fence_epoch=8, fence_token=gen_random_uuid() WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .execute(&pool)
+    .await
+    .expect("move goal-set fixture to node owner");
+    let node_owned = signed_goal_set_request(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-node-owned",
+        "goal-set-node-owned",
+        first_body,
+        true,
+    );
+    assert!(node_owned.starts_with("HTTP/1.1 409"), "{node_owned}");
+    assert!(node_owned.contains("mutation_not_owned"), "{node_owned}");
+
+    pool.close().await;
+    stop_server(child, stdout);
+}
+
+fn signed_patch_request(
+    addr: SocketAddr,
+    route: &str,
+    claimed_org_id: &str,
+    secret: &str,
+    nonce: &str,
+    idempotency_key: &str,
+    body: &[u8],
+    include_idempotency_key: bool,
+) -> String {
+    signed_patch_request_with_action(
+        addr,
+        route,
+        claimed_org_id,
+        secret,
+        nonce,
+        idempotency_key,
+        ORGANIZATION_BRANDING_ACTION,
+        body,
+        include_idempotency_key,
+    )
+}
+
+fn signed_goal_set_request(
+    addr: SocketAddr,
+    route: &str,
+    claimed_org_id: &str,
+    secret: &str,
+    nonce: &str,
+    idempotency_key: &str,
+    body: &[u8],
+    include_idempotency_key: bool,
+) -> String {
+    signed_patch_request_with_action(
+        addr,
+        route,
+        claimed_org_id,
+        secret,
+        nonce,
+        idempotency_key,
+        PROJECT_GOAL_SET_ACTION,
+        body,
+        include_idempotency_key,
+    )
+}
+
+fn signed_patch_request_with_action(
+    addr: SocketAddr,
+    route: &str,
+    claimed_org_id: &str,
+    secret: &str,
+    nonce: &str,
+    idempotency_key: &str,
+    action: &str,
+    body: &[u8],
+    include_idempotency_key: bool,
+) -> String {
+    let request_id = format!("request-{nonce}");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_secs();
+    let envelope = ActorEnvelope::new(
+        ActorIdentity::new("user", "board-user").expect("test actor"),
+        claimed_org_id,
+        "session-branding",
+        1,
+        ACTOR_ENVELOPE_AUDIENCE,
+        "PATCH",
+        route,
+        action,
+        body,
+        &request_id,
+        nonce,
+        now.saturating_sub(1),
+        now + 120,
+    )
+    .expect("mutation envelope")
+    .sign(secret.as_bytes())
+    .expect("sign mutation envelope");
+    let envelope_text = serde_json::to_string(&envelope).expect("serialize mutation envelope");
+    let mut headers = vec![
+        (ACTOR_ENVELOPE_HEADER, envelope_text),
+        (ACTOR_ENVELOPE_REQUEST_ID_HEADER, request_id),
+    ];
+    if include_idempotency_key {
+        headers.push((IDEMPOTENCY_KEY_HEADER, idempotency_key.to_owned()));
+    }
+    let header_refs = headers
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect::<Vec<_>>();
+    http_request_with_body(addr, "PATCH", route, &header_refs, body).expect("mutation request")
+}
+
+fn signed_member_directory_get(
+    addr: SocketAddr,
+    route: &str,
+    org_id: &str,
+    secret: &str,
+    nonce: &str,
+) -> String {
+    signed_member_directory_get_with_sent_route(addr, route, route, org_id, secret, nonce)
+}
+
+fn signed_member_directory_get_with_claimed_org(
+    addr: SocketAddr,
+    route: &str,
+    claimed_org_id: &str,
+    secret: &str,
+    nonce: &str,
+) -> String {
+    signed_member_directory_get_with_sent_route(addr, route, route, claimed_org_id, secret, nonce)
+}
+
+fn signed_member_directory_get_with_sent_route(
+    addr: SocketAddr,
+    signed_route: &str,
+    sent_route: &str,
+    claimed_org_id: &str,
+    secret: &str,
+    nonce: &str,
+) -> String {
+    let request_id = format!("request-{nonce}");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_secs();
+    let envelope = ActorEnvelope::new(
+        ActorIdentity::new("user", "user-a").expect("test actor"),
+        claimed_org_id,
+        "session-black-box",
+        1,
+        ACTOR_ENVELOPE_AUDIENCE,
+        "GET",
+        signed_route,
+        MEMBER_DIRECTORY_ACTION,
+        &[],
+        &request_id,
+        nonce,
+        now.saturating_sub(1),
+        now + 120,
+    )
+    .expect("member directory envelope")
+    .sign(secret.as_bytes())
+    .expect("sign member directory envelope");
+    let envelope_text =
+        serde_json::to_string(&envelope).expect("serialize member directory envelope");
+    let headers = [
+        (ACTOR_ENVELOPE_HEADER, envelope_text.as_str()),
+        (ACTOR_ENVELOPE_REQUEST_ID_HEADER, request_id.as_str()),
+    ];
+    http_request_with_headers(addr, "GET", sent_route, &headers).expect("member directory request")
 }
 
 fn assert_parity_error(response: &str, fixture: &Value, error_name: &str) {
@@ -42,6 +826,7 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_rudder-server-foundation"))
         .env("RUDDER_NATIVE_LISTEN", "127.0.0.1:0")
         .env("RUDDER_NATIVE_DATABASE_REQUIRED", "false")
+        .env_remove("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -60,14 +845,22 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         .expect("socket address");
     assert_eq!(startup["publicListener"], false);
     assert_eq!(startup["productWriteAuthority"], false);
-    assert_eq!(startup["databaseAuthority"], "read-only-product-data");
+    assert_eq!(
+        startup["databaseAuthority"],
+        "read-and-private-d1-mutations"
+    );
+    assert_eq!(
+        startup["privateMutationAuthorities"],
+        serde_json::json!(["organization_branding", "project_goal_set_replacement"])
+    );
     assert_eq!(
         startup["readOnlyAuthorities"],
         serde_json::json!([
             "workspace_backup_list",
             "workspace_backup_files_list",
             "workspace_backup_file_read",
-            "workspace_backup_download"
+            "workspace_backup_download",
+            "organization_member_directory"
         ])
     );
 
@@ -88,6 +881,20 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     assert!(capabilities.contains("workspace_backup_files_list"));
     assert!(capabilities.contains("workspace_backup_file_read"));
     assert!(capabilities.contains("workspace_backup_download"));
+    assert!(capabilities.contains("organization_member_directory"));
+
+    let unconfigured_directory = get_with_retry(
+        bound_addr,
+        "/api/orgs/00000000-0000-0000-0000-000000000001/members/directory",
+    );
+    assert!(
+        unconfigured_directory.starts_with("HTTP/1.1 503"),
+        "{unconfigured_directory}"
+    );
+    assert!(
+        unconfigured_directory.contains("actor_envelope_unconfigured"),
+        "{unconfigured_directory}"
+    );
 
     let parity = parity_fixture();
 
@@ -782,6 +1589,7 @@ fn spawn_server(overrides: &[(&str, &str)]) -> (Child, BufReader<ChildStdout>, S
         "RUDDER_NATIVE_READINESS_TIMEOUT_MS",
         "RUDDER_NATIVE_SHUTDOWN_GRACE_MS",
         "RUDDER_NATIVE_DATABASE_URL",
+        "RUDDER_NATIVE_ACTOR_ENVELOPE_KEY",
     ] {
         command.env_remove(name);
     }
@@ -850,7 +1658,41 @@ fn http_get(addr: SocketAddr, path: &str) -> std::io::Result<String> {
 }
 
 fn http_request(addr: SocketAddr, method: &str, path: &str) -> std::io::Result<String> {
-    http_request_with_read_timeout(addr, method, path, Duration::from_secs(2))
+    http_request_with_headers(addr, method, path, &[])
+}
+
+fn http_request_with_headers(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> std::io::Result<String> {
+    http_request_with_body(addr, method, path, headers, &[])
+}
+
+fn http_request_with_body(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> std::io::Result<String> {
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(250))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    write!(stream, "{method} {path} HTTP/1.1\r\nHost: {addr}\r\n")?;
+    for (name, value) in headers {
+        write!(stream, "{name}: {value}\r\n")?;
+    }
+    write!(
+        stream,
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )?;
+    stream.write_all(body)?;
+    stream.flush()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
 }
 
 fn http_request_with_read_timeout(
@@ -1449,6 +2291,151 @@ fn workspace_backup_archive_fixture() -> WorkspaceBackupArchiveFixture {
         legacy_sha256,
     }
 }
+
+const BRANDING_MUTATION_FIXTURE_SQL: &str = r#"
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE organizations (
+  id uuid PRIMARY KEY,
+  name text NOT NULL,
+  description text,
+  brand_color text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE organization_mutation_state (
+  org_id uuid PRIMARY KEY,
+  mutation_version bigint NOT NULL DEFAULT 0,
+  fence_epoch bigint NOT NULL DEFAULT 0,
+  fence_token uuid NOT NULL DEFAULT gen_random_uuid(),
+  owner text NOT NULL DEFAULT 'node',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE agents (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  role text NOT NULL,
+  status text NOT NULL
+);
+CREATE TABLE assets (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL
+);
+CREATE TABLE organization_logos (
+  org_id uuid PRIMARY KEY,
+  asset_id uuid NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE projects (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  goal_id uuid,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE goals (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  name text NOT NULL
+);
+CREATE TABLE project_goals (
+  project_id uuid NOT NULL,
+  goal_id uuid NOT NULL,
+  org_id uuid NOT NULL,
+  PRIMARY KEY (project_id, goal_id)
+);
+CREATE TABLE activity_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  actor_type text NOT NULL,
+  actor_id text NOT NULL,
+  action text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id text NOT NULL,
+  agent_id uuid,
+  details jsonb,
+  idempotency_key text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE organization_mutation_receipts (
+  org_id uuid NOT NULL,
+  idempotency_key text NOT NULL,
+  command_kind text NOT NULL,
+  command_fingerprint text NOT NULL,
+  receipt_format integer NOT NULL,
+  outcome text NOT NULL,
+  resulting_version bigint NOT NULL,
+  fence_epoch bigint NOT NULL,
+  activity_id uuid NOT NULL,
+  result jsonb NOT NULL,
+  PRIMARY KEY (org_id, idempotency_key)
+);
+INSERT INTO organizations (id, name) VALUES
+  ('00000000-0000-0000-0000-000000000001', 'Original'),
+  ('00000000-0000-0000-0000-000000000002', 'Other');
+INSERT INTO organization_mutation_state (org_id, owner, fence_epoch) VALUES
+  ('00000000-0000-0000-0000-000000000001', 'rust', 7),
+  ('00000000-0000-0000-0000-000000000002', 'rust', 7);
+INSERT INTO projects (id, org_id, goal_id) VALUES
+  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001'),
+  ('10000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003');
+INSERT INTO goals (id, org_id, name) VALUES
+  ('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Goal One'),
+  ('20000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Goal Two'),
+  ('20000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002', 'Other Goal');
+INSERT INTO project_goals (project_id, goal_id, org_id) VALUES
+  ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),
+  ('10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002');
+"#;
+
+const MEMBER_DIRECTORY_FIXTURE_SQL: &str = r#"
+CREATE TABLE organization_memberships (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  principal_type text NOT NULL,
+  principal_id text NOT NULL,
+  status text NOT NULL,
+  membership_role text
+);
+CREATE TABLE agents (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  name text NOT NULL,
+  role text,
+  status text NOT NULL,
+  metadata jsonb
+);
+CREATE TABLE "user" (
+  id text PRIMARY KEY,
+  name text NOT NULL
+);
+CREATE TABLE operator_profiles (
+  user_id text PRIMARY KEY,
+  nickname text
+);
+INSERT INTO "user" (id, name) VALUES
+  ('user-a', 'Fallback Alice'),
+  ('user-b', 'Bob'),
+  ('user-other', 'Other Org Human'),
+  ('local-board', 'Local Board');
+INSERT INTO operator_profiles (user_id, nickname) VALUES
+  ('user-a', ' Alice ');
+INSERT INTO agents (id, org_id, name, role, status, metadata) VALUES
+  ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Visible Agent', 'builder', 'idle', '{}'),
+  ('30000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Hidden Agent', 'builder', 'idle', '{"hidden":"true"}'),
+  ('30000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'System Agent', 'system', 'idle', '{"systemManaged":"rudder_copilot"}'),
+  ('30000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'Terminated Agent', 'builder', 'terminated', '{}'),
+  ('30000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'Pending Agent', 'builder', 'pending_approval', '{}'),
+  ('30000000-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000002', 'Other Org Agent', 'builder', 'idle', '{}');
+INSERT INTO organization_memberships (id, org_id, principal_type, principal_id, status, membership_role) VALUES
+  ('40000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'user', 'user-a', 'active', 'owner'),
+  ('40000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'user', 'user-b', 'active', NULL),
+  ('40000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'user', 'local-board', 'active', 'owner'),
+  ('40000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000001', 'agent', '30000000-0000-0000-0000-000000000001', 'active', NULL),
+  ('40000000-0000-0000-0000-000000000005', '00000000-0000-0000-0000-000000000001', 'agent', '30000000-0000-0000-0000-000000000002', 'active', NULL),
+  ('40000000-0000-0000-0000-000000000006', '00000000-0000-0000-0000-000000000001', 'agent', '30000000-0000-0000-0000-000000000003', 'active', NULL),
+  ('40000000-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000001', 'agent', '30000000-0000-0000-0000-000000000004', 'active', NULL),
+  ('40000000-0000-0000-0000-000000000008', '00000000-0000-0000-0000-000000000001', 'agent', '30000000-0000-0000-0000-000000000005', 'active', NULL),
+  ('40000000-0000-0000-0000-000000000009', '00000000-0000-0000-0000-000000000002', 'user', 'user-other', 'active', 'member'),
+  ('40000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000002', 'agent', '30000000-0000-0000-0000-000000000006', 'active', NULL);
+"#;
 
 const WORKSPACE_BACKUP_FIXTURE_SQL: &str = r#"
 CREATE TABLE organizations (id uuid PRIMARY KEY);
