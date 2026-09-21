@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "rudder-full-rust-backend-completion-v8",
-  "status": "acceptance_pending",
+  "status": "invalidated",
   "owner": {
     "root_id": "rudder-full-rust-backend-completion-2026-09-21",
     "agent_id": "codex-implementation-agent"
@@ -155,13 +155,16 @@
     }
   },
   "drift": {
-    "active": false,
+    "active": true,
     "events": [
       "origin/main c67ce0f00bb78e323068caac4a9ae349f863c9da was reconciled in /private/tmp/rudder-rust-main-reconcile-20260922; prior receipts were invalidated before the source freeze.",
-      "The plan-only descendant fd3665a607ddc5e722f29c1a8a5843f76b4459b2 updates durable candidate records without changing the source-freeze diff or fingerprint; packet identity keeps the source freeze 3e1eedcd and records the descendant explicitly."
+      "The plan-only descendant fd3665a607ddc5e722f29c1a8a5843f76b4459b2 updates durable candidate records without changing the source-freeze diff or fingerprint; packet identity keeps the source freeze 3e1eedcd and records the descendant explicitly.",
+      "origin/main advanced to b4c2f46966d080a18b8ce8d9545e427aa5b50ced with the 0.7.24 release, organization intelligence defaults/routes/services, and native Cargo.lock changes; merge candidate 508978ce9f309ac537eb57b03e54b8b44ade8b25 was created in /private/tmp/rudder-rust-main-reconcile-20260922-v2.",
+      "The reconciliation corrected the release compatibility matrix to the 0167 candidate fingerprint, restored the shipped 0.7.23 fixture identity, and fixed the postgres TransactionSql test typing; all v8 candidate, runtime, reviewer, and verifier receipts are invalidated and must be rebound to v9."
     ],
     "invalidated_receipts": [
-      "pre-v8 stage and verifier receipts tied to older source fingerprints"
+      "pre-v8 stage and verifier receipts tied to older source fingerprints",
+      "v8 receipts tied to source 3e1eedcdde626a0c22363a33774741ed11cd9082 and fingerprint 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969"
     ]
   },
   "integration": {
