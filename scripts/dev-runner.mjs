@@ -13,6 +13,7 @@ import { serverVersion } from "../server/src/version.ts";
 import {
   DEV_RUNTIME_STARTUP_TIMEOUT_MS,
   resolveDevScriptEnvironment,
+  resolveDevServerStatusFile,
 } from "./dev-local-env.mjs";
 import { shouldTrackDevServerPath } from "./dev-runner-paths.mjs";
 import { assertDevRuntimeTakeoverAllowed } from "./dev-runner-safety.mjs";
@@ -24,7 +25,6 @@ const gracefulShutdownTimeoutMs = 10_000;
 const startupReadyTimeoutMs = DEV_RUNTIME_STARTUP_TIMEOUT_MS;
 const changedPathSampleLimit = 5;
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const devServerStatusFilePath = path.join(repoRoot, ".rudder", "dev-server-status.json");
 
 const watchedDirectories = [
   "cli",
@@ -54,10 +54,6 @@ const ignoredDirectoryNames = new Set([
   "dist",
   "node_modules",
   "ui-dist",
-]);
-
-const ignoredRelativePaths = new Set([
-  ".rudder/dev-server-status.json",
 ]);
 
 const tailscaleAuthFlagNames = new Set([
@@ -90,6 +86,7 @@ const { env, localEnvName } = resolveDevScriptEnvironment({
     RUDDER_RUNTIME_OWNER_KIND: "dev_runner",
   },
 });
+const devServerStatusFilePath = resolveDevServerStatusFile(env);
 
 if (mode === "dev") {
   env.RUDDER_DEV_SERVER_STATUS_FILE = devServerStatusFilePath;
@@ -182,7 +179,6 @@ function readSignature(absolutePath) {
 
 function addFileToSnapshot(snapshot, absolutePath) {
   const relativePath = toRelativePath(absolutePath);
-  if (ignoredRelativePaths.has(relativePath)) return;
   if (!shouldTrackDevServerPath(relativePath)) return;
   snapshot.set(relativePath, readSignature(absolutePath));
 }
