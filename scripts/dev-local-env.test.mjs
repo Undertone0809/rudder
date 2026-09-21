@@ -7,6 +7,7 @@ import {
   isolateDevShellFromParentRuntime,
   resolveDevDesktopEnvironment,
   resolveDevScriptEnvironment,
+  resolveDevServerStatusFile,
 } from "./dev-local-env.mjs";
 
 test("defaults the development Desktop to local workspace access", () => {
@@ -160,4 +161,17 @@ test("repo-local Rudder env disables Codex worktree auto-isolation", () => {
   assert.equal(env.PORT, "4567");
   assert.equal(env.RUDDER_EMBEDDED_POSTGRES_PORT, "5567");
   assert.equal(env.RUDDER_IN_WORKTREE, undefined);
+});
+
+test("stores dev server status under the active Rudder instance", () => {
+  const rudderHome = path.join(os.tmpdir(), "rudder-status-home");
+  const statusPath = resolveDevServerStatusFile({
+    RUDDER_HOME: rudderHome,
+    RUDDER_INSTANCE_ID: "worktree-123",
+  });
+
+  assert.equal(
+    statusPath,
+    path.resolve(rudderHome, "instances", "worktree-123", "runtime", "dev-server-status.json"),
+  );
 });
