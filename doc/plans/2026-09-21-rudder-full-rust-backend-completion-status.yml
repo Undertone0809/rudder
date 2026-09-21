@@ -34,8 +34,8 @@ real_environment_lane:
   production_verified: false
 candidate:
   source_ref: codex/rudder-full-rust-backend-completion-20260921
-  source_sha: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
-  tree_sha: d4452f5fec44ac3aa323a8be42520bc3008ba626
+  source_sha: 3e1eedcdde626a0c22363a33774741ed11cd9082
+  tree_sha: 3fc49d7cfc3587e34e863a4887f22b3bde3fc3c5
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
   dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   dirty_fingerprint_status: exact_clean_candidate_source_diff
@@ -50,7 +50,7 @@ claims:
   production_verified: false
 phase:
   current: 0
-  next_executable: sync latest Main in an isolated checkout, reconcile affected contracts, then freeze and verify the bridge/read slice while continuing writer reconciliation
+  next_executable: run the exact-candidate TypeScript-to-Rust bridge workflow and capture authority receipts, then obtain stage review and verifier evidence while continuing writer reconciliation
   gates:
     phase_0: in_progress
     phase_1: not_started
@@ -78,7 +78,7 @@ blockers:
   - id: P0-main-drift-candidate
     owner: migration_implementation
     state: resolved
-    detail: origin/main advanced from the migration base to c67ce0f00bb78e323068caac4a9ae349f863c9da. The six Main commits were rebased onto the migration checkpoint in an isolated reconcile worktree, the migration branch now points to 9883c548e19adb5d4915d17c33992e4bce98b4b9, and affected source scans were rerun.
+    detail: origin/main advanced from the migration base to c67ce0f00bb78e323068caac4a9ae349f863c9da. The six Main commits were reconciled in an isolated worktree, affected source scans were rerun, and the current exact candidate is 3e1eedcdde626a0c22363a33774741ed11cd9082.
     next_step: rebind stage review and verifier receipts to the exact candidate after the current authority-receipt slice and exact real probe.
   - id: P0-node-writer-fence
     owner: migration_implementation
@@ -162,7 +162,7 @@ completed_checks:
   - plan files added in isolated migration worktree
   - current source baseline read without resetting the original checkout
   - release migration compatibility matrix updated to 0167 and focused tests passed 16/16 (historical check; exact candidate rerun pending)
-  - current exact candidate is 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9 with tree d4452f5fec44ac3aa323a8be42520bc3008ba626 and source fingerprint 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
+  - current exact candidate is 3e1eedcdde626a0c22363a33774741ed11cd9082 with tree 3fc49d7cfc3587e34e863a4887f22b3bde3fc3c5 and source fingerprint 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
   - current migration manifest computed as 168 journal entries and 170 SQL files at this candidate
   - current route scan is 47 source files and 513 declaration hits; transaction scan is 62 files and 221 hits, 51 files and 200 production hits
   - current CLI/MCP scan is 118 CLI capability entries (107 agent-v1 and 11 compat contracts) and 107 MCP descriptors
@@ -190,6 +190,6 @@ pending_checks:
   - run a real TypeScript-to-Rust bridge workflow with startup/readiness/close/retry and no-Node-read evidence on the same exact candidate
 receipts: []
 interrupt_resume:
-  last_durable_commit: 9d4ffe563ddf5d83054b2ca384aad395d44a1eb9
+  last_durable_commit: 3e1eedcdde626a0c22363a33774741ed11cd9082
   remaining_work: bridge hardening, semantic inventory and packet, signed actor/session authority, complete writer/token fencing, then supported listener integration and D1 verification
-  next_command: review the current bridge hardening diff, create/validate the v8 packet, rerun affected checks, then obtain current-candidate stage review and verifier receipts before the next D1 writer slice
+  next_command: run the exact-candidate real bridge probe, create/validate the v8 packet, then obtain current-candidate stage review and verifier receipts before the next D1 writer slice
