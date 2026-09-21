@@ -1,0 +1,46 @@
+name: PR 216 baseline onboarding diagnostic
+on:
+  push:
+    branches: [codex/pr-216-ci-log-diagnostics]
+    paths: [.github/workflows/pr-216-baseline-onboarding.yml]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      RUDDER_E2E_INSTANCE_ID: pr216-baseline
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 484eddc7e8da6591a33dfa556b391ba608e68ddb
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Prepare unchanged base
+        run: |
+          echo "RUDDER_E2E_HOME=/tmp/rudder-pr216-baseline-$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          echo "EVIDENCE_DIR=$RUNNER_TEMP/pr216-baseline-evidence" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/pr216-baseline-evidence"
+          git rev-parse HEAD > "$RUNNER_TEMP/pr216-baseline-evidence/source-sha.txt"
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          pnpm --filter '@rudderhq/server...' build > "$RUNNER_TEMP/pr216-baseline-evidence/build.txt" 2>&1
+      - name: Exercise the unchanged base onboarding test
+        run: |
+          pnpm exec playwright test --config tests/e2e/playwright.config.ts onboarding.spec.ts --workers=1 --grep 'fresh onboarding creates' > "$EVIDENCE_DIR/browser-tests.txt" 2>&1 || { tail -75 "$EVIDENCE_DIR/browser-tests.txt"; exit 1; }
+          tail -20 "$EVIDENCE_DIR/browser-tests.txt"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pr-216-baseline-onboarding
+          path: |
+            ${{ runner.temp }}/pr216-baseline-evidence
+            tests/e2e/test-results
+          retention-days: 3
