@@ -96,6 +96,12 @@ function MessengerSectionAutoLoader({
   );
 }
 
+type PendingSectionControlFocus = "after-collapse" | "after-show-more";
+
+function focusSectionControl(testId: string, control: "show-more" | "collapse") {
+  document.querySelector<HTMLButtonElement>(`[data-testid="${testId}-${control}"]`)?.focus();
+}
+
 export function MessengerThreadSectionControls({
   hasHiddenLoadedEntries,
   loading,
@@ -117,10 +123,38 @@ export function MessengerThreadSectionControls({
   showMore: boolean;
   testId: string;
 }) {
-  const pendingFocusRef = useRef<"after-collapse" | "after-show-more" | null>(null);
+  const pendingFocusRef = useRef<PendingSectionControlFocus | null>(null);
+  const focusFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showMoreButtonRef = useRef<HTMLButtonElement | null>(null);
   const collapseButtonRef = useRef<HTMLButtonElement | null>(null);
   const subject = sectionLabel?.trim() || "threads";
+
+  const scheduleBrowserFocusFallback = (pendingFocus: PendingSectionControlFocus) => {
+    if (focusFallbackTimerRef.current !== null) {
+      globalThis.clearTimeout(focusFallbackTimerRef.current);
+    }
+    focusFallbackTimerRef.current = globalThis.setTimeout(() => {
+      focusFallbackTimerRef.current = null;
+      // Native activation can blur the old button after React's layout effect
+      // runs. Resolve the replacement from the committed DOM after that turn.
+      if (pendingFocus === "after-collapse") {
+        focusSectionControl(testId, "show-more");
+        return;
+      }
+      if (document.querySelector<HTMLButtonElement>(`[data-testid="${testId}-show-more"]`)) {
+        focusSectionControl(testId, "show-more");
+        return;
+      }
+      focusSectionControl(testId, "collapse");
+    }, 0);
+  };
+
+  useEffect(() => () => {
+    if (focusFallbackTimerRef.current !== null) {
+      globalThis.clearTimeout(focusFallbackTimerRef.current);
+      focusFallbackTimerRef.current = null;
+    }
+  }, [testId]);
 
   useLayoutEffect(() => {
     const pendingFocus = pendingFocusRef.current;
@@ -154,6 +188,7 @@ export function MessengerThreadSectionControls({
             className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
             onClick={() => {
               pendingFocusRef.current = "after-show-more";
+              scheduleBrowserFocusFallback("after-show-more");
               onShowMore();
             }}
           >
@@ -176,6 +211,7 @@ export function MessengerThreadSectionControls({
           className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
           onClick={() => {
             pendingFocusRef.current = "after-collapse";
+            scheduleBrowserFocusFallback("after-collapse");
             onCollapse();
           }}
         >
