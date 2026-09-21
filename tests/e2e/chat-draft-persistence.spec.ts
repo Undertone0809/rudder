@@ -43,9 +43,9 @@ test("keeps an unsent messenger composer draft and attachments when switching pr
 
   await page
     .getByTestId("primary-rail")
-    .getByRole("link", { name: "Organization", exact: true })
+    .getByRole("link", { name: "Projects", exact: true })
     .click();
-  await expect(page).toHaveURL(new RegExp(`/${organizationPath}/dashboard$`), { timeout: 15_000 });
+  await expect(page).toHaveURL(new RegExp(`/${organizationPath}/projects$`), { timeout: 15_000 });
 
   await page
     .getByTestId("primary-rail")

@@ -549,11 +549,11 @@ test.describe("Workspace shell", () => {
     const primaryRail = page.getByTestId("primary-rail");
     const sidebar = page.getByTestId("workspace-sidebar");
 
-    await expect(primaryRail.getByRole("link", { name: "Projects" })).toHaveCount(0);
-    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Org", exact: true })).toBeVisible();
+    await expect(primaryRail.getByRole("link", { name: "Projects" })).toBeVisible();
+    await expect(page.getByTestId("workspace-context-header").getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await expect(page.getByTestId("workspace-main-header").getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Add Project" })).toBeVisible();
-    await expect(sidebar.getByText("Projects", { exact: true })).toBeVisible();
+    await expect(sidebar.getByTestId("workspace-projects-section")).toContainText("Projects");
     await expect(sidebar.getByText("Surface hierarchy project", { exact: true })).toBeVisible();
     const projectSectionHeader = sidebar.getByTestId("workspace-projects-section");
     const sidebarCreateProjectButton = sidebar.getByRole("button", { name: "New project" });
@@ -996,7 +996,7 @@ test.describe("Workspace shell", () => {
     await expect(mainHeader).toBeVisible();
     await expect(mainCard).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Structure" })).toHaveCount(0);
-    await expect(sidebar.getByRole("link", { name: "Library" })).toHaveCount(0);
+    await expect(sidebar.getByRole("link", { name: "Library", exact: true })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Heartbeats" })).toBeVisible();
     await expect(sidebar.getByRole("link", { name: "Workspaces" })).toHaveCount(0);
     await expect(sidebar.getByRole("link", { name: "Goals" })).toHaveCount(0);

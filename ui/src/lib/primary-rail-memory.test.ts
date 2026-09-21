@@ -71,6 +71,21 @@ describe("primary rail memory", () => {
     expect(readRememberedPrimaryRailPath("org-2", "issues", "/issues")).toBe("/issues/ZST-100");
   });
 
+  it("keeps Projects navigation separate from its nested Library destination", () => {
+    rememberPrimaryRailPath("org-1", "/projects/rudder/configuration");
+    rememberPrimaryRailPath("org-1", "/library?path=docs%2Froadmap.md#next");
+    rememberPrimaryRailPath("org-2", "/library?path=other.md");
+
+    expect(readRememberedPrimaryRailPath("org-1", "organization", "/projects"))
+      .toBe("/projects/rudder/configuration");
+    expect(readRememberedPrimaryRailPath("org-1", "library", "/library"))
+      .toBe("/library?path=docs%2Froadmap.md#next");
+    expect(readRememberedPrimaryRailPath("org-2", "organization", "/projects"))
+      .toBe("/projects");
+    expect(readRememberedPrimaryRailPath("org-2", "library", "/library"))
+      .toBe("/library?path=other.md");
+  });
+
   it("keeps Goal paths independent from Organization memory", () => {
     rememberPrimaryRailPath("org-1", "/goals/goal-1");
     rememberPrimaryRailPath("org-1", "/dashboard");

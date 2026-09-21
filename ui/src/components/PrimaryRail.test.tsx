@@ -51,6 +51,7 @@ const mockState = vi.hoisted(() => ({
   listSavedViews: vi.fn(),
   pushToast: vi.fn(),
   organizationId: "org-1",
+  locale: "en",
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -141,6 +142,7 @@ vi.mock("@/context/SidebarContext", () => ({
 vi.mock("@/context/I18nContext", () => ({
   useI18n: () => ({
     t: (key: string) => key,
+    locale: mockState.locale,
   }),
 }));
 
@@ -158,21 +160,19 @@ vi.mock("@/lib/organization-routes", () => ({
 }));
 
 vi.mock("@/lib/router", () => ({
-  NavLink: ({
+  Link: ({
     children,
     className,
-    end: _end,
     to,
     ...props
   }: {
     children: ReactNode;
-    className?: string | ((input: { isActive: boolean }) => string);
-    end?: boolean;
+    className?: string;
     to: string;
   }) => (
     <a
       href={to}
-      className={typeof className === "function" ? className({ isActive: false }) : className}
+      className={className}
       {...props}
     >
       {children}
@@ -214,6 +214,7 @@ function setUserAgent(userAgent: string) {
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  mockState.locale = "en";
   mockState.organizationId = "org-1";
   mockState.updateSavedView.mockReset().mockResolvedValue({});
   mockState.listSavedViews.mockReset().mockImplementation(async () => ({ items: mockState.pinnedLocalApps, pageInfo: { hasMore: false, nextOffset: null } }));
@@ -428,7 +429,7 @@ describe("PrimaryRail active motion indicator", () => {
 
     const searchButton = document.querySelector('button[aria-label="common.search"]');
     const organizationLink = Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Organization"));
+      .find((link) => link.textContent?.includes("Projects"));
     const organizationSwitcher = Array.from(document.querySelectorAll("div"))
       .find((element) =>
         element.textContent === "Organization switcher"
@@ -499,17 +500,17 @@ describe("PrimaryRail active motion indicator", () => {
     expect(mockState.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1", "threads", "preview"] });
   });
 
-  it("positions the rail indicator on the organization item for dashboard routes", async () => {
+  it("positions the rail indicator on the Projects item for dashboard routes", async () => {
     await renderPrimaryRail();
 
     const nav = document.querySelector(".motion-rail-nav");
     const indicator = document.querySelector('[data-testid="primary-rail-active-indicator"]');
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("3");
     expect(indicator).not.toBeNull();
   });
 
-  it("keeps calendar nested under the organization rail item", async () => {
+  it("keeps calendar nested under the Projects rail item", async () => {
     mockState.pathname = "/dashboard/calendar";
 
     await renderPrimaryRail();
@@ -518,7 +519,7 @@ describe("PrimaryRail active motion indicator", () => {
     const dashboardLink = Array.from(document.querySelectorAll("a"))
       .find((link) => link.textContent?.includes("Dashboard"));
 
-    expect(nav?.getAttribute("data-active-index")).toBe("4");
+    expect(nav?.getAttribute("data-active-index")).toBe("3");
     expect(dashboardLink).toBeUndefined();
   });
 
@@ -544,17 +545,37 @@ describe("PrimaryRail active motion indicator", () => {
     expect(messengerLink?.className).not.toContain("text-[color:var(--sidebar-foreground)]");
   });
 
-  it("surfaces Library as a primary rail destination", async () => {
-    mockState.pathname = "/library";
+  it.each(["/library", "/library/nested", "/resources", "/workspaces", "/workspaces/files"])(
+    "keeps %s active under Projects without a separate Library rail entry",
+    async (pathname) => {
+      mockState.pathname = pathname;
+      mockState.primaryRailPaths.organization = "/projects/project-1/configuration";
+      await renderPrimaryRail();
 
+      const nav = document.querySelector(".motion-rail-nav");
+      const links = Array.from(nav!.querySelectorAll("a"));
+      const projects = links.find((link) => link.textContent === "Projects");
+      expect(projects?.getAttribute("href")).toBe("/projects/project-1/configuration");
+      expect(projects?.getAttribute("aria-current")).toBe("page");
+      expect(links.some((link) => link.textContent === "Library" || link.textContent === "Organization")).toBe(false);
+      expect(nav?.getAttribute("data-active-index")).toBe("3");
+    },
+  );
+
+  it("labels Projects in Chinese", async () => {
+    mockState.locale = "zh-CN";
     await renderPrimaryRail();
 
-    const nav = document.querySelector(".motion-rail-nav");
-    const libraryLink = Array.from(document.querySelectorAll("a"))
-      .find((link) => link.textContent?.includes("Library"));
+    const links = Array.from(document.querySelectorAll(".motion-rail-nav a"));
+    expect(links.find((link) => link.textContent === "项目")?.getAttribute("href")).toBe("/projects");
+    expect(links.some((link) => link.textContent === "文档" || link.textContent === "组织")).toBe(false);
+  });
 
-    expect(libraryLink?.getAttribute("href")).toBe("/library");
-    expect(nav?.getAttribute("data-active-index")).toBe("3");
+  it("does not select Projects for workspace backups", async () => {
+    mockState.pathname = "/workspaces/backups";
+    await renderPrimaryRail();
+
+    expect(document.querySelector(".motion-rail-nav")?.hasAttribute("data-active-index")).toBe(false);
   });
 
   it("shows Hub only after the Plugins experiment is enabled", async () => {
@@ -581,7 +602,7 @@ describe("PrimaryRail active motion indicator", () => {
       .find((link) => link.textContent?.includes("Hub"));
     expect(hubLink?.getAttribute("href")).toBe("/hub");
     expect(hubLink?.getAttribute("aria-current")).toBe("page");
-    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("4");
+    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("3");
   });
 
   it("shows Goals only after the Goals experiment is enabled", async () => {
@@ -652,12 +673,12 @@ describe("PrimaryRail active motion indicator", () => {
     expect(pinned?.className).toContain("text-white");
     expect(pinned?.querySelector('[data-testid="primary-rail-pinned-active-indicator"]')).toBeNull();
     expect(document.querySelector('[data-testid="primary-rail-active-indicator"]')).not.toBeNull();
-    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("7");
+    expect(document.querySelector(".motion-rail-nav")?.getAttribute("data-active-index")).toBe("6");
     expect(document.querySelector<HTMLElement>(".motion-rail-nav")?.style
       .getPropertyValue("--motion-rail-active-offset")).toContain("0.6875rem");
   });
 
-  it("keeps the legacy resources route active under Library", async () => {
+  it("keeps the legacy resources route active under Projects", async () => {
     mockState.pathname = "/resources";
 
     await renderPrimaryRail();
@@ -688,8 +709,8 @@ describe("PrimaryRail active motion indicator", () => {
     expect(linkHref("Issue")).toBe("/issues/ZST-586");
     expect(linkHref("Goals")).toBe("/goals");
     expect(linkHref("Agents")).toBe("/agents/wesley/runs/run-1");
-    expect(linkHref("Library")).toBe("/library?path=projects%2Frudder");
-    expect(linkHref("Organization")).toBe("/dashboard/calendar");
+    expect(linkHref("Library")).toBeUndefined();
+    expect(linkHref("Projects")).toBe("/dashboard/calendar");
     expect(linkHref("Automations")).toBe("/automations/weekly-ci");
   });
 });
