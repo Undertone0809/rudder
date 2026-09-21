@@ -9,26 +9,26 @@ integration_policy:
   constraints: [no_production_dual_write, no_silent_node_fallback, no_unrestricted_traffic_switch, no_stable_publication_without_release_gate]
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
-  latest_observed_main_sha: c67ce0f00bb78e323068caac4a9ae349f863c9da
-  commits_ahead_of_migration_base: 6
-  state: synced_and_reconciled_before_exact_candidate
-  changed_path_classes: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-  changed_path_assessment: no_direct_rust_route_overlap_but_real_entry_evidence_depends_on_dev_runner_status_and_codex_local_readiness_recheck
+  latest_observed_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
+  commits_ahead_of_migration_base: 11
+  state: synced_and_reconciled_current_candidate
+  changed_path_classes: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+  changed_path_assessment: organization_intelligence_and_release_contracts_reconciled; exact candidate runtime evidence requires fresh build and probe
   rule: main_contract_drift_invalidates_affected_slice_receipts_even_when_rust_sources_are_unchanged
   reconciliation_receipt:
-    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922
-    migration_checkpoint_sha: a4e762b5075ce56c8690766e24e29bfb678382a2
-    resulting_candidate_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
-    changed_paths_rechecked: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-    compatibility_decision: no_direct_rust_route_overlap; real_entry_and_default_path_evidence_requires_rebind
+    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v2
+    migration_checkpoint_sha: 4ec7f0990360bea7a89c516ce9c2bedd0577b84f
+    resulting_candidate_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
+    changed_paths_rechecked: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+    compatibility_decision: release_matrix_rebased_to_0167_candidate_and_0163_shipped_fixture; db_transaction_test_adapted_to_postgres_3_4_8_types; real_entry_and_default_path_evidence_requires_rebind
     old_receipts: invalidated
 source:
-  candidate_sha: 3e1eedcdde626a0c22363a33774741ed11cd9082
-  candidate_tree: 3fc49d7cfc3587e34e863a4887f22b3bde3fc3c5
-  dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
+  candidate_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
+  candidate_tree: a31267ba2e619b4169a10fed778bb6875447b397
+  dirty_fingerprint: b329289d7f70e8debb1edb38d691271041ad4ef07d29f63ea3089343c204ac25
   dirty_fingerprint_status: exact_clean_candidate_source_diff
-  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records
-  candidate_state: exact_candidate_post_authority_receipt_slice_pending_real_probe_and_stage_review
+  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_all_durable_plan_records_and_candidate_packets
+  candidate_state: exact_candidate_post_main_reconciliation_pending_real_probe_and_stage_review
   counts_status: current_scan_refreshed; semantic_reconciliation_blocked_by_unfenced_writers
   current_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
   current_scan_counts:
@@ -69,8 +69,8 @@ stage_review:
   receipt_state: invalidated_by_main_drift_and_live_candidate_changes
   blocking_findings:
     - id: P0-main-drift
-      summary: origin/main advanced six commits beyond the migration base while the candidate remained dirty; the current source/tree/fingerprint must be rebound before any review or verifier receipt can be reused.
-      required_proof: Isolated Main sync, changed-path compatibility decision, affected scan rerun, and new exact candidate fingerprint.
+      summary: origin/main advanced to b4c2f46966d080a18b8ce8d9545e427aa5b50ced; the 0.7.24 release and organization intelligence contract were reconciled, and all pre-reconciliation receipts remain invalid.
+      required_proof: Current candidate 508978ce9f309ac537eb57b03e54b8b44ade8b25 must receive fresh build, real-entry probe, stage review, and independent verifier evidence.
     - id: P0-node-writer-fence
       summary: The current candidate fences the main organization, Project, resource, workspace, Issue-counter, cost, and all 17 Goal service writers, but the semantic audit still has Goal route/issue projection bypasses plus unfenced asset/logo, approval, budget/settings, portability, onboarding, and background writers.
       required_proof: Every remaining legacy writer locks and validates the owner/epoch before its first business write, or is drained and removed from the default path.

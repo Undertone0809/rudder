@@ -2,31 +2,31 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
 candidate:
-  source_sha: 3e1eedcdde626a0c22363a33774741ed11cd9082
+  source_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
   branch: codex/rudder-full-rust-backend-completion-20260921
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  tree_sha: 3fc49d7cfc3587e34e863a4887f22b3bde3fc3c5
-  dirty_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
-  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records
+  tree_sha: a31267ba2e619b4169a10fed778bb6875447b397
+  dirty_fingerprint: b329289d7f70e8debb1edb38d691271041ad4ef07d29f63ea3089343c204ac25
+  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_all_durable_plan_records_and_candidate_packets
   dirty_fingerprint_status: exact_clean_candidate_source_diff
-  scan_status: current_counts_refreshed_after_main_sync_and_authority_receipt_slice_semantic_reconciliation_blocked
+  scan_status: current_counts_refreshed_after_main_0_7_24_reconciliation_and_release_matrix_fix_semantic_reconciliation_blocked
   semantic_rows: partial_with_current_writer_audit
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
-  latest_observed_main_sha: c67ce0f00bb78e323068caac4a9ae349f863c9da
-  commits_ahead_of_migration_base: 6
-  changed_path_classes: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-  changed_path_assessment: no_direct_rust_route_overlap_but_dev_runner_and_codex_local_changes_affect_real_entry_and_runtime_evidence
-  reconciliation_status: isolated_sync_complete_affected_scan_rerun_complete
+  latest_observed_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
+  commits_ahead_of_migration_base: 11
+  changed_path_classes: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+  changed_path_assessment: organization_intelligence_and_release_contracts_reconciled; no_direct_rust_route_overlap_but_package_version_native_lock_and_runtime_defaults_affect_exact_candidate_runtime_evidence
+  reconciliation_status: isolated_merge_complete_affected_scan_compatibility_and_typecheck_rerun_complete
   receipt_policy: affected_review_and_verifier_receipts_are_invalid_until_rebound
   reconciliation_receipt:
-    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922
-    operation: rebase_checkpoint_onto_origin_main_then_rebase_migration_branch
-    migration_checkpoint_sha: a4e762b5075ce56c8690766e24e29bfb678382a2
-    resulting_candidate_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
-    resulting_candidate_tree: 9ed2aa730252be96a097b829836122a8dea9098b
-    changed_paths_rechecked: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-    compatibility_decision: no_direct_rust_route_overlap; refresh_real_entry_status_and_rebind_all_receipts
+    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v2
+    operation: merge_no_commit_no_ff_origin_main_then_commit_and_fast_forward_migration_branch
+    migration_checkpoint_sha: 4ec7f0990360bea7a89c516ce9c2bedd0577b84f
+    resulting_candidate_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
+    resulting_candidate_tree: a31267ba2e619b4169a10fed778bb6875447b397
+    changed_paths_rechecked: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+    compatibility_decision: release_matrix_rebased_to_0167_candidate_and_0163_shipped_fixture; db_transaction_test_adapted_to_postgres_3_4_8_types; refresh_real_entry_status_and_rebind_all_receipts
     old_receipts: invalidated
 scan_commands:
   route_declaration_scan: "rg -o 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' server/src/routes -g '*.ts'"
@@ -125,7 +125,7 @@ semantic_scan_gaps:
   - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
   - the new goal-set route is a standalone private Actix entry; it is not the supported Node signer/bridge, installed/default startup, CLI/MCP, or sole-listener path
 current_writer_audit:
-  candidate_fingerprint: 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969
+  candidate_fingerprint: b329289d7f70e8debb1edb38d691271041ad4ef07d29f63ea3089343c204ac25
   verdict: needs_more_evidence
   activation: blocked
   fence_contract:
