@@ -4,6 +4,7 @@ import {
   DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   resolveCodexLocalModel,
   resolveCodexLocalReasoningEffort,
+  withCodexLocalModelDefaults,
 } from "./defaults.js";
 
 describe("Codex local defaults", () => {
@@ -18,5 +19,25 @@ describe("Codex local defaults", () => {
     expect(resolveCodexLocalModel({ model: "gpt-5.6-sol" })).toBe("gpt-5.6-sol");
     expect(resolveCodexLocalReasoningEffort({ modelReasoningEffort: "high" })).toBe("high");
     expect(resolveCodexLocalReasoningEffort({ reasoningEffort: "low" })).toBe("low");
+  });
+});
+
+describe("Codex creation model defaults", () => {
+  it("fills blank settings without changing the input or unrelated controls", () => {
+    const source = { model: "  ", reasoningEffort: "", search: false, env: { KEY: "value" } };
+    expect(withCodexLocalModelDefaults(source)).toEqual({
+      ...source,
+      model: "gpt-5.6-luna",
+      modelReasoningEffort: "medium",
+    });
+    expect(source.model).toBe("  ");
+    expect(source).not.toHaveProperty("modelReasoningEffort");
+  });
+
+  it.each([
+    { model: "gpt-5.6-sol", modelReasoningEffort: "ultra" },
+    { model: "gpt-5.5", reasoningEffort: "high" },
+  ])("preserves explicit model/effort settings: %j", (config) => {
+    expect(withCodexLocalModelDefaults(config)).toEqual(config);
   });
 });

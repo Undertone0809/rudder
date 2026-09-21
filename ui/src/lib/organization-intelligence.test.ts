@@ -19,3 +19,15 @@ describe("isOrganizationIntelligenceEnabled", () => {
     )).toBe(false);
   });
 });
+
+describe("canonical organization intelligence precedence", () => {
+  it.each(["disabled", "invalid"] as const)("does not revive a %s default through a legacy alias", (status) => {
+    const profiles = [
+      { purpose: "default", status },
+      { purpose: "lightweight", status: "configured" },
+      { purpose: "reasoning", status: "configured" },
+    ] as const;
+    expect(isOrganizationIntelligenceEnabled(profiles, "lightweight")).toBe(false);
+    expect(isOrganizationIntelligenceEnabled(profiles, "reasoning")).toBe(false);
+  });
+});

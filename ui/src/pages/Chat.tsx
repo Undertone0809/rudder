@@ -64,7 +64,6 @@ import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { translateLegacyString } from "@/i18n/legacyPhrases";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
-import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import {
   NO_CHAT_AGENT_ID,
   isSelectableChatAgentId,
@@ -166,6 +165,7 @@ import {
   renameMessengerChatInCache,
   upsertMessengerThreadSummaryQueries,
 } from "@/lib/messenger-query-cache";
+import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   appendSkillReferencesToDraft,
@@ -517,10 +517,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryFn: () => organizationsApi.listIntelligenceProfiles(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
-  const canRegenerateChatTitles = useMemo(() => {
-    const profiles = intelligenceProfilesQuery.data ?? [];
-    return isOrganizationIntelligenceEnabled(profiles, "lightweight");
-  }, [intelligenceProfilesQuery.data]);
+  const canRegenerateChatTitles =
+    isOrganizationIntelligenceEnabled(intelligenceProfilesQuery.data, "lightweight");
   const { data: issues, error: issuesError } = useQuery({
     queryKey: queryKeys.issues.listPreview(selectedOrganizationId ?? "__none__", CHAT_ISSUE_MENTION_LIMIT),
     queryFn: () => issuesApi.list(selectedOrganizationId!, { limit: CHAT_ISSUE_MENTION_LIMIT }), enabled: !!selectedOrganizationId, }); const { data: libraryDocuments } = useQuery({

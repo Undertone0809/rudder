@@ -9,8 +9,9 @@ export function isOrganizationIntelligenceEnabled(
   profiles: readonly IntelligenceProfileLike[] | null | undefined,
   legacyPurpose?: Extract<OrganizationIntelligenceProfilePurpose, "lightweight" | "reasoning">,
 ): boolean {
-  return (profiles ?? []).some((profile) => {
-    if (!profile || profile.status !== "configured") return false;
-    return profile.purpose === "default" || profile.purpose === legacyPurpose;
-  });
+  const canonical = profiles?.find((profile) => profile?.purpose === "default");
+  if (canonical) return canonical.status === "configured";
+  return (profiles ?? []).some((profile) =>
+    profile?.purpose === legacyPurpose && profile?.status === "configured",
+  );
 }

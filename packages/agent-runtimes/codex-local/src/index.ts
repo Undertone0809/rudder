@@ -5,6 +5,7 @@ export {
   DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   resolveCodexLocalModel,
   resolveCodexLocalReasoningEffort,
+  withCodexLocalModelDefaults
 } from "./defaults.js";
 export const DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX = true;
 export const DEFAULT_CODEX_LOCAL_SEARCH = true;

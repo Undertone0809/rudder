@@ -16,3 +16,13 @@ export function resolveCodexLocalReasoningEffort(config: Record<string, unknown>
     ?? nonEmptyString(config.reasoningEffort)
     ?? DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
 }
+
+/** Fill omitted creation settings without mutating caller-owned configuration. */
+export function withCodexLocalModelDefaults(config: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...config };
+  if (!nonEmptyString(next.model)) next.model = DEFAULT_CODEX_LOCAL_MODEL;
+  if (!nonEmptyString(next.modelReasoningEffort) && !nonEmptyString(next.reasoningEffort)) {
+    next.modelReasoningEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
+  }
+  return next;
+}

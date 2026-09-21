@@ -8,9 +8,8 @@
  */
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-  DEFAULT_CODEX_LOCAL_MODEL,
-  DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
   DEFAULT_CODEX_LOCAL_SEARCH,
+  withCodexLocalModelDefaults,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
@@ -852,14 +851,10 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     agentRuntimeType: string | null | undefined,
     agentRuntimeConfig: Record<string, unknown>,
   ): Record<string, unknown> {
-    const next = { ...agentRuntimeConfig };
+    const next = agentRuntimeType === "codex_local"
+      ? withCodexLocalModelDefaults(agentRuntimeConfig)
+      : { ...agentRuntimeConfig };
     if (agentRuntimeType === "codex_local") {
-      if (!asNonEmptyString(next.model)) {
-        next.model = DEFAULT_CODEX_LOCAL_MODEL;
-      }
-      if (!asNonEmptyString(next.modelReasoningEffort) && !asNonEmptyString(next.reasoningEffort)) {
-        next.modelReasoningEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
-      }
       const hasBypassFlag =
         typeof next.dangerouslyBypassApprovalsAndSandbox === "boolean" ||
         typeof next.dangerouslyBypassSandbox === "boolean";

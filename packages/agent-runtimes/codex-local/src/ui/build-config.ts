@@ -2,9 +2,9 @@ import { normalizeModelFallbacks, type CreateConfigValues } from "@rudderhq/agen
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_COUNT_SUBSCRIPTION_USAGE_AS_COST,
+  DEFAULT_CODEX_LOCAL_SEARCH,
   resolveCodexLocalModel,
   resolveCodexLocalReasoningEffort,
-  DEFAULT_CODEX_LOCAL_SEARCH,
 } from "../index.js";
 
 function parseCommaArgs(value: string): string[] {

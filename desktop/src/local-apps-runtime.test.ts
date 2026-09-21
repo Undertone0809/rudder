@@ -1347,44 +1347,67 @@ describe("Desktop Local App runtime", { timeout: localAppRuntimeTestTimeoutMs },
     "keeps watchdog startup and cleanup deadlines referenced while start is pending",
     { timeout: 15_000 },
     async () => {
-    const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
-    const helper = watchdogEmitting({ type: "ignored" });
-    helper.send = vi.fn((_payload: unknown, callback?: (error: Error | null) => void) => {
-      callback?.(null);
-    });
-    const spawnWatchdog = vi.fn(() => helper) as unknown as typeof spawn;
-    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
-    const manager = new LocalAppRuntimeManager({
-      registry,
-      platform: "win32",
-      spawnWatchdog,
-      watchdogStartTimeoutMs: 1_001,
-      cleanupTimeoutMs: 1_002,
-    });
+      const { registry, definition } = await approvedFixture({ readinessTimeoutMs: 250 });
+      const helper = watchdogEmitting({ type: "ignored" });
+      helper.send = vi.fn((_payload: unknown, callback?: (error: Error | null) => void) => {
+        callback?.(null);
+      });
+      const spawnWatchdog = vi.fn(() => helper) as unknown as typeof spawn;
+      let phase: "startup" | "cleanup" | "done" = "startup";
+      let observeStartup!: (timer: NodeJS.Timeout) => void;
+      let observeCleanup!: (timer: NodeJS.Timeout) => void;
+      const startupArmed = new Promise<NodeJS.Timeout>((resolve) => { observeStartup = resolve; });
+      const cleanupArmed = new Promise<NodeJS.Timeout>((resolve) => { observeCleanup = resolve; });
+      const scheduleTimeout = globalThis.setTimeout;
+      const timeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((
+        (...args: Parameters<typeof setTimeout>) => {
+          const timer = scheduleTimeout(...args);
+          const delay = args[1];
+          if (phase === "startup" && delay === 1_001) observeStartup(timer);
+          // Cleanup computes a remaining duration from a deadline; elapsed time
+          // between those calls must not make a valid timer invisible to the test.
+          if (phase === "cleanup" && typeof delay === "number" && delay > 0 && delay <= 1_002) {
+            observeCleanup(timer);
+          }
+          return timer;
+        }
+      ) as typeof setTimeout);
+      const manager = new LocalAppRuntimeManager({
+        registry,
+        platform: "win32",
+        spawnWatchdog,
+        watchdogStartTimeoutMs: 1_001,
+        cleanupTimeoutMs: 1_002,
+      });
 
-    try {
-      const pendingStart = manager.start(definition.id);
-      await vi.waitFor(() => expect(spawnWatchdog).toHaveBeenCalledOnce());
-      const startupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 1_001);
-      expect(startupCallIndex).toBeGreaterThanOrEqual(0);
-      const startupTimer = timeoutSpy.mock.results[startupCallIndex]?.value as NodeJS.Timeout;
-      expect(startupTimer.hasRef()).toBe(true);
+      try {
+        const startOutcome = manager.start(definition.id).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        expect((await startupArmed).hasRef()).toBe(true);
+        expect(spawnWatchdog).toHaveBeenCalledOnce();
 
-      helper.emit("error", new Error("watchdog fixture failed"));
-      await vi.waitFor(() => {
-        expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 1_002)).toBe(true);
-      }, { timeout: 5_000 });
-      const cleanupCallIndex = timeoutSpy.mock.calls.findIndex(([, delay]) => delay === 1_002);
-      const cleanupTimer = timeoutSpy.mock.results[cleanupCallIndex]?.value as NodeJS.Timeout;
-      expect(cleanupTimer.hasRef()).toBe(true);
+        phase = "cleanup";
+        helper.emit("error", new Error("watchdog fixture failed"));
+        expect((await cleanupArmed).hasRef()).toBe(true);
 
-      helper.emit("message", { type: "stopped" });
-      helper.emit("exit", 1, null);
-      await expect(pendingStart).rejects.toThrow("watchdog fixture failed");
-    } finally {
-      timeoutSpy.mockRestore();
-      await manager.shutdown();
-    }
+        phase = "done";
+        helper.emit("message", { type: "stopped" });
+        helper.emit("exit", 1, null);
+        expect(await startOutcome).toMatchObject({ message: "watchdog fixture failed" });
+        await expect(registry.getRuntimeDescriptor(definition.id)).resolves.toMatchObject({
+          status: "failed",
+          pid: null,
+          pgid: null,
+        });
+      } finally {
+        phase = "done";
+        helper.emit("message", { type: "stopped" });
+        helper.emit("exit", 1, null);
+        timeoutSpy.mockRestore();
+        await manager.shutdown();
+      }
     },
   );
 

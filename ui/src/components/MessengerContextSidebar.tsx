@@ -68,7 +68,6 @@ import { resolveMessengerRoute, useMessengerModel } from "@/hooks/useMessenger";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { isFeishuBackedConversation } from "@/lib/chat-source";
 import { displayChatTitle } from "@/lib/chat-title";
-import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import { rememberMessengerPath } from "@/lib/messenger-memory";
 import {
   DEFAULT_THREAD_ORGANIZATION_RULE,
@@ -137,6 +136,7 @@ import {
   markMessengerUnreadScrollRequestHandled,
   MESSENGER_SCROLL_TO_UNREAD_EVENT,
 } from "@/lib/messenger-unread-scroll";
+import { isOrganizationIntelligenceEnabled } from "@/lib/organization-intelligence";
 import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import {
   getProjectOrderStorageKey,
@@ -1068,10 +1068,8 @@ export function MessengerContextSidebar() {
     return map;
   }, [projectsQuery.data]);
 
-  const canRegenerateChatTitles = useMemo(() => {
-    const profiles = intelligenceProfilesQuery.data ?? [];
-    return isOrganizationIntelligenceEnabled(profiles, "lightweight");
-  }, [intelligenceProfilesQuery.data]);
+  const canRegenerateChatTitles =
+    isOrganizationIntelligenceEnabled(intelligenceProfilesQuery.data, "lightweight");
 
   const customGroups = customGroupsQuery.data?.groups ?? [];
   const customGroupMembershipKnown = customGroupsQuery.data !== undefined;
