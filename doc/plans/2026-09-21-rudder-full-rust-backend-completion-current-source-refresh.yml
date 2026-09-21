@@ -2,14 +2,14 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
 candidate:
-  source_sha: c54001819ca38079b627994557db0a18ed278fc0
+  source_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
   branch: codex/rudder-full-rust-backend-completion-20260921
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  tree_sha: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
-  dirty_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
-  dirty_fingerprint_scope: source_diff_excluding_durable_plan_records
-  dirty_fingerprint_status: historical_superseded_by_main_drift_and_live_slice_changes
-  scan_status: current_counts_refreshed_semantic_reconciliation_blocked
+  tree_sha: 9ed2aa730252be96a097b829836122a8dea9098b
+  dirty_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records
+  dirty_fingerprint_status: exact_clean_candidate_source_diff
+  scan_status: current_counts_refreshed_after_main_sync_semantic_reconciliation_blocked
   semantic_rows: partial_with_current_writer_audit
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
@@ -17,8 +17,17 @@ main_adaptation:
   commits_ahead_of_migration_base: 6
   changed_path_classes: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
   changed_path_assessment: no_direct_rust_route_overlap_but_dev_runner_and_codex_local_changes_affect_real_entry_and_runtime_evidence
-  reconciliation_status: pending_isolated_sync_and_affected_scan_rerun
+  reconciliation_status: isolated_sync_complete_affected_scan_rerun_complete
   receipt_policy: affected_review_and_verifier_receipts_are_invalid_until_rebound
+  reconciliation_receipt:
+    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922
+    operation: rebase_checkpoint_onto_origin_main_then_rebase_migration_branch
+    migration_checkpoint_sha: a4e762b5075ce56c8690766e24e29bfb678382a2
+    resulting_candidate_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
+    resulting_candidate_tree: 9ed2aa730252be96a097b829836122a8dea9098b
+    changed_paths_rechecked: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+    compatibility_decision: no_direct_rust_route_overlap; refresh_real_entry_status_and_rebind_all_receipts
+    old_receipts: invalidated
 scan_commands:
   route_declaration_scan: "rg -o 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' server/src/routes -g '*.ts'"
   transaction_scan: "rg -o '\\.transaction\\s*\\(' server/src -g '*.ts'"
@@ -29,10 +38,10 @@ scan_commands:
 counts:
   route_source_files_with_declarations: 47
   route_declaration_scan_hits: 513
-  transaction_source_files: 61
-  transaction_scan_hits: 212
-  production_transaction_source_files: 50
-  production_transaction_scan_hits: 192
+  transaction_source_files: 62
+  transaction_scan_hits: 221
+  production_transaction_source_files: 51
+  production_transaction_scan_hits: 200
   sql_migration_files: 170
   migration_journal_entries: 168
   product_analytics_route_files_with_declarations: 3
@@ -116,7 +125,7 @@ semantic_scan_gaps:
   - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
   - the new goal-set route is a standalone private Actix entry; it is not the supported Node signer/bridge, installed/default startup, CLI/MCP, or sole-listener path
 current_writer_audit:
-  candidate_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
+  candidate_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
   verdict: needs_more_evidence
   activation: blocked
   fence_contract:

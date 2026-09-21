@@ -11,25 +11,33 @@ main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
   latest_observed_main_sha: c67ce0f00bb78e323068caac4a9ae349f863c9da
   commits_ahead_of_migration_base: 6
-  state: sync_required_before_exact_candidate
+  state: synced_and_reconciled_before_exact_candidate
   changed_path_classes: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
   changed_path_assessment: no_direct_rust_route_overlap_but_real_entry_evidence_depends_on_dev_runner_status_and_codex_local_readiness_recheck
   rule: main_contract_drift_invalidates_affected_slice_receipts_even_when_rust_sources_are_unchanged
+  reconciliation_receipt:
+    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922
+    migration_checkpoint_sha: a4e762b5075ce56c8690766e24e29bfb678382a2
+    resulting_candidate_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
+    changed_paths_rechecked: [release_docs, codex_local_runtime_readiness, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
+    compatibility_decision: no_direct_rust_route_overlap; real_entry_and_default_path_evidence_requires_rebind
+    old_receipts: invalidated
 source:
-  candidate_sha: c54001819ca38079b627994557db0a18ed278fc0
-  candidate_tree: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
-  dirty_fingerprint: 86b41c6798934072d36c450378fedb808237fe022e2271396dfb1ca6806c2bf8
-  dirty_fingerprint_status: historical_superseded_rebind_required
-  candidate_state: drifted_before_exact_candidate_freeze
+  candidate_sha: 9883c548e19adb5d4915d17c33992e4bce98b4b9
+  candidate_tree: 9ed2aa730252be96a097b829836122a8dea9098b
+  dirty_fingerprint: 697b197b79f6df6f580bd97b7a30ae848026023e99a17ccd7d486b6ae7103292
+  dirty_fingerprint_status: exact_clean_candidate_source_diff
+  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_durable_plan_records
+  candidate_state: exact_candidate_post_main_sync_pending_bridge_fix_rebind
   counts_status: current_scan_refreshed; semantic_reconciliation_blocked_by_unfenced_writers
   current_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
   current_scan_counts:
     route_source_files_with_declarations: 47
     route_declaration_scan_hits: 513
-    transaction_source_files: 61
-    transaction_scan_hits: 212
-    production_transaction_source_files: 50
-    production_transaction_scan_hits: 192
+    transaction_source_files: 62
+    transaction_scan_hits: 221
+    production_transaction_source_files: 51
+    production_transaction_scan_hits: 200
     sql_migration_files: 170
     migration_journal_entries: 168
     cli_capability_entries: 118
