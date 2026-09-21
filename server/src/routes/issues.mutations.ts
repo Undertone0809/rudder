@@ -26,10 +26,13 @@ import {
   recordProductAnalyticsEvent,
   requestService,
 } from "../services/index.js";
-import { queueIssueAssignmentWakeup } from "../services/issue-assignment-wakeup.js";
+import {
+  isIssueAssignmentWakeupStatus,
+  queueIssueAssignmentWakeup,
+} from "../services/issue-assignment-wakeup.js";
+import { resolveIssueReferenceInputs } from "../services/issue-references.js";
 import { buildIssueReviewWakeupOptions, queueIssueReviewWakeup } from "../services/issue-review-wakeup.js";
 import { buildCommentMentionWakeup } from "../services/issues.comments-attachments.js";
-import { resolveIssueReferenceInputs } from "../services/issue-references.js";
 import { publishLiveEvent } from "../services/live-events.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -879,9 +882,9 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
 
     const assigneeChanged = assigneeWillChange;
     const reviewerChanged = reviewerWillChange;
-    const statusChangedFromBacklog =
+    const statusChangedFromBacklogToAssigneeQueue =
       existing.status === "backlog" &&
-      issue.status !== "backlog" &&
+      isIssueAssignmentWakeupStatus(issue.status) &&
       updateFields.status !== undefined;
     const statusChangedToInReview =
       existing.status !== "in_review" &&
@@ -904,7 +907,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
     void (async () => {
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
 
-      if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
+      if (assigneeChanged && issue.assigneeAgentId && isIssueAssignmentWakeupStatus(issue.status)) {
         wakeups.set(issue.assigneeAgentId, {
           source: "assignment",
           triggerDetail: "system",
@@ -928,7 +931,7 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
         });
       }
 
-      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId) {
+      if (!assigneeChanged && statusChangedFromBacklogToAssigneeQueue && issue.assigneeAgentId) {
         wakeups.set(issue.assigneeAgentId, {
           source: "automation",
           triggerDetail: "system",

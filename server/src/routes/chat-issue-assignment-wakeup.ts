@@ -1,7 +1,11 @@
 import type { Db } from "@rudderhq/db";
 import { logger } from "../middleware/logger.js";
 import type { logActivity } from "../services/activity-log.js";
-import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "../services/issue-assignment-wakeup.js";
+import {
+  isIssueAssignmentWakeupStatus,
+  queueIssueAssignmentWakeup,
+  type IssueAssignmentWakeupDeps,
+} from "../services/issue-assignment-wakeup.js";
 
 export type ChatConvertedIssue = {
   id: string;
@@ -28,7 +32,7 @@ export async function wakeIssueAssigneeAfterChatConversion(input: {
   activityDetails?: Record<string, unknown>;
   logActivityFn?: typeof logActivity;
 }) {
-  if (!input.issue.assigneeAgentId || input.issue.status === "backlog") return;
+  if (!input.issue.assigneeAgentId || !isIssueAssignmentWakeupStatus(input.issue.status)) return;
 
   try {
     const wakeRun = await queueIssueAssignmentWakeup({

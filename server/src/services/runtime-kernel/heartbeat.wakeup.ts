@@ -437,6 +437,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
           .select({
             id: issues.id,
             orgId: issues.orgId,
+            status: issues.status,
             assigneeAgentId: issues.assigneeAgentId,
             reviewerAgentId: issues.reviewerAgentId,
             executionRunId: issues.executionRunId,
@@ -463,6 +464,35 @@ export function createHeartbeatWakeupHandlers(context: any) {
               source,
               triggerDetail,
               reason: "issue_execution_issue_not_found",
+              payload,
+              status: "skipped",
+              requestedByActorType: opts.requestedByActorType ?? null,
+              requestedByActorId: opts.requestedByActorId ?? null,
+              idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
+              finishedAt: new Date(),
+            });
+          }
+          return { kind: "skipped" as const };
+        }
+
+        if ((issue.status === "done" || issue.status === "cancelled") && !commentMentionWake) {
+          if (existingWakeupRequestId) {
+            await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+              status: "skipped",
+              reason: "issue_execution_issue_not_actionable",
+              runId: null,
+              claimedAt: null,
+              finishedAt: new Date(),
+              error: null,
+            });
+          } else {
+            await insertWakeupRequestRecord(tx, {
+              orgId: agent.orgId,
+              agentId,
+              source,
+              triggerDetail,
+              reason: "issue_execution_issue_not_actionable",
               payload,
               status: "skipped",
               requestedByActorType: opts.requestedByActorType ?? null,
