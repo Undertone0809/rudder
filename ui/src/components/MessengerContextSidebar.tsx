@@ -32,6 +32,12 @@ import {
   ThreadRow,
   type SortableDragHandleProps
 } from "@/components/messenger/MessengerThreadListViews";
+import {
+  MANAGED_GROUP_INITIAL_VISIBLE_COUNT,
+  MANAGED_GROUP_SHORT_LIST_MAX_COUNT,
+  MANAGED_GROUP_VISIBLE_INCREMENT,
+  MessengerThreadSectionControls,
+} from "@/components/messenger/MessengerThreadSectionControls";
 import { MessengerDiscordCta } from "@/components/MessengerDiscordCta";
 import { ProjectIcon } from "@/components/ProjectIdentity";
 import {
@@ -347,11 +353,6 @@ function InstantCustomGroupDisclosure({
   return children(renderState.collapsed, toggle, rootRef);
 }
 
-const MANAGED_GROUP_INITIAL_VISIBLE_COUNT = 6;
-// A one-row overflow is not enough to justify a disclosure control. Keep
-// short groups stable so the auto-loader does not immediately undo Collapse.
-const MANAGED_GROUP_SHORT_LIST_MAX_COUNT = MANAGED_GROUP_INITIAL_VISIBLE_COUNT + 1;
-const MANAGED_GROUP_VISIBLE_INCREMENT = 10;
 const MESSENGER_SAVED_VIEW_PAGE_LIMIT = 50;
 // Keep at least one continuous sidebar viewport mounted ahead of the current
 // scroll direction after nested group measurement and range-chunk boundaries.
@@ -511,45 +512,6 @@ type ProjectOrderUpdatedDetail = {
   storageKey: string;
   orderedIds: string[];
 };
-
-function MessengerSectionAutoLoader({
-  loading,
-  onVisible,
-  testId,
-}: {
-  loading: boolean;
-  onVisible: () => void;
-  testId: string;
-}) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel || loading || typeof IntersectionObserver === "undefined") return undefined;
-    const root = sentinel.closest<HTMLElement>("nav");
-    if (!root) return undefined;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) onVisible();
-    }, { root, rootMargin: "0px 0px 320px 0px" });
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [loading, onVisible]);
-
-  return (
-    <div
-      ref={sentinelRef}
-      data-testid={testId}
-      className="flex min-h-7 items-center px-2 text-[11px] text-muted-foreground"
-      aria-live="polite"
-    >
-      {loading ? (
-        <span className="inline-flex items-center gap-1.5">
-          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-          Loading
-        </span>
-      ) : null}
-    </div>
-  );
-}
 
 function MessengerThreadSectionHeader({
   rule,
@@ -2711,7 +2673,10 @@ export function MessengerContextSidebar() {
       }));
       return;
     }
-    if (customGroupBySectionKey.has(section.key)) return;
+  };
+
+  const handleAutoLoadThreadSection = (section: OrganizedThreadSection, visibleCount: number) => {
+    if (visibleCount < section.entries.length || customGroupBySectionKey.has(section.key)) return;
     if (model.hasMoreThreadSummaries && !model.isFetchingMoreThreadSummaries) {
       void model.loadMoreThreadSummaries?.();
     }
@@ -3125,6 +3090,7 @@ export function MessengerContextSidebar() {
     const hasHiddenLoadedEntries = isManagedSection && visibleCount < section.entries.length;
     const canFetchMoreForSection = isManagedSection
       && !customGroup
+      && !isShortManagedSection
       && Boolean(model.hasMoreThreadSummaries)
       && visibleCount >= section.entries.length
       && section.entries.length >= MANAGED_GROUP_INITIAL_VISIBLE_COUNT;
@@ -3299,41 +3265,17 @@ export function MessengerContextSidebar() {
         <div className="flex flex-col gap-1">
           {renderedEntries}
         </div>
-        {showMoreControl || showCollapseControl ? (
-          <div
-            data-messenger-scroll-coverage-row
-            className="mx-1.5 flex items-center gap-1.5 px-2 py-1"
-          >
-            {showMoreControl ? (
-              hasHiddenLoadedEntries ? (
-                <button
-                  type="button"
-                  data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-show-more`}
-                  className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
-                  onClick={() => handleShowMoreThreadSection(section, visibleCount)}
-                >
-                  Show more
-                </button>
-              ) : (
-                <MessengerSectionAutoLoader
-                  testId={`messenger-thread-section-${sanitizeThreadKey(section.key)}-auto-loader`}
-                  loading={Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection)}
-                  onVisible={() => handleShowMoreThreadSection(section, visibleCount)}
-                />
-              )
-            ) : null}
-            {showCollapseControl ? (
-              <button
-                type="button"
-                data-testid={`messenger-thread-section-${sanitizeThreadKey(section.key)}-collapse`}
-                className="inline-flex h-7 items-center rounded-[calc(var(--radius-sm)-1px)] px-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
-                onClick={() => handleCollapseThreadSectionEntries(section.key)}
-              >
-                Collapse
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+        <MessengerThreadSectionControls
+          hasHiddenLoadedEntries={hasHiddenLoadedEntries}
+          loading={Boolean(model.isFetchingMoreThreadSummaries && canFetchMoreForSection)}
+          onCollapse={() => handleCollapseThreadSectionEntries(section.key)}
+          onAutoLoad={() => handleAutoLoadThreadSection(section, visibleCount)}
+          onShowMore={() => handleShowMoreThreadSection(section, visibleCount)}
+          sectionLabel={section.label}
+          showCollapse={showCollapseControl}
+          showMore={showMoreControl}
+          testId={`messenger-thread-section-${sanitizeThreadKey(section.key)}`}
+        />
       </>
     );
 

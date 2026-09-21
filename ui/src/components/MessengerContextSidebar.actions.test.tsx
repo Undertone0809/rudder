@@ -5111,26 +5111,34 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-6"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
 
+    const showMore = document.querySelector<HTMLButtonElement>(
+      '[data-testid="messenger-thread-section-agent-agent-1-show-more"]',
+    );
+    expect(showMore).toBeTruthy();
+    showMore?.focus();
+
     await act(async () => {
-      expect(document.querySelector(
-        '[data-testid="messenger-thread-section-agent-agent-1-show-more"]',
-      )).toBeTruthy();
-      document.querySelector<HTMLButtonElement>(
-        '[data-testid="messenger-thread-section-agent-agent-1-show-more"]',
-      )?.click();
+      showMore?.click();
     });
 
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-8"]')).toBeTruthy();
 
+    const collapse = document.querySelector<HTMLButtonElement>(
+      '[data-testid="messenger-thread-section-agent-agent-1-collapse"]',
+    );
+    expect(document.activeElement).toBe(collapse);
+    collapse?.focus();
+
     await act(async () => {
-      document.querySelector<HTMLButtonElement>(
-        '[data-testid="messenger-thread-section-agent-agent-1-collapse"]',
-      )?.click();
+      collapse?.click();
     });
 
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-6"]')).toBeTruthy();
     expect(document.querySelector('[data-testid="messenger-thread-chat-chat-7"]')).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector(
+      '[data-testid="messenger-thread-section-agent-agent-1-show-more"]',
+    ));
   });
 
   it("lets Collapse hide a managed group even when the active thread is beyond the initial limit", async () => {
@@ -5189,8 +5197,11 @@ describe("MessengerContextSidebar chat actions", () => {
         preferredAgentId: "agent-1",
       }),
     );
+    const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
     messengerModel = {
       ...baseModel(),
+      hasMoreThreadSummaries: true,
+      loadMoreThreadSummaries,
       threadSummaries: chatList.map((conversation, index) => ({
         threadKey: `chat:${conversation.id}`,
         kind: "chat",
@@ -5213,6 +5224,7 @@ describe("MessengerContextSidebar chat actions", () => {
     expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-show-more"]')).toBeNull();
     expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-collapse"]')).toBeNull();
     expect(document.querySelector('[data-testid="messenger-thread-section-agent-agent-1-auto-loader"]')).toBeNull();
+    expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
   });
 
   it("applies stored thread-type order and collapses thread-type groups", async () => {
