@@ -1,0 +1,41 @@
+name: PR 216 remaining CI progress
+on:
+  push:
+    branches: [codex/pr-216-ci-log-diagnostics]
+    paths: [.github/workflows/pr-216-live-ci-diagnostics.yml]
+permissions:
+  actions: read
+jobs:
+  progress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Summarize the remaining job without exposing full logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, urllib.request, urllib.error
+          base = 'https://api.github.com/repos/Undertone0809/rudder'
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, *args, **kwargs): return None
+          def get(path):
+              request = urllib.request.Request(base + path, headers=headers)
+              try:
+                  response = urllib.request.build_opener(NoRedirect).open(request, timeout=60)
+              except urllib.error.HTTPError as error:
+                  if error.code != 302: raise
+                  response = urllib.request.urlopen(error.headers['Location'], timeout=60)
+              with response: return response.read().decode('utf-8-sig')
+          job = json.loads(get('/actions/jobs/106493508967'))
+          print(json.dumps({key:job[key] for key in ['id','status','conclusion','started_at','completed_at','steps']}, indent=2))
+          try:
+              log = re.sub(r'\x1b\[[0-9;]*m', '', get('/actions/jobs/106493508967/logs'))
+              lines = log.splitlines()
+              summary = [line for line in lines if re.search(r'Test Files|Tests\s+[0-9]|Failed Tests|Failed Suites|AssertionError|\bFAIL\b', line)]
+              print('TEST SUMMARIES\n' + '\n'.join(summary[-30:]))
+              print('RECENT LOG\n' + '\n'.join(line[:1600] for line in lines[-55:]))
+          except urllib.error.HTTPError as error:
+              print('Log download is not available yet:', error.code)
+          PY
