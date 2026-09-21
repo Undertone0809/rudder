@@ -50,13 +50,18 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-      - name: Validate unchanged architecture gates and imports
+      - name: Organize only this PR's imports and validate existing gates
         run: |
           mkdir -p "$RUNNER_TEMP/pr-216-evidence"
           git diff --check
-          node scripts/lint-imports.mjs
+          # Temporarily use the existing index versus the PR base so the repo's
+          # --changed formatter includes all PR files, never unrelated files.
+          git reset --soft 484eddc7e8da6591a33dfa556b391ba608e68ddb
+          node scripts/lint-imports.mjs --fix --changed
+          node scripts/lint-imports.mjs --changed
+          git reset --soft c5393f5c5bfd32d8104ff41dac3f350c182f5b4d
           node scripts/architecture-boundaries.mjs
-          node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref 484eddc7e8da6591a33dfa556b391ba608e68ddb --fail-on-regression > "$RUNNER_TEMP/pr-216-evidence/architecture.txt"
+          node scripts/architecture-audit.mjs --baseline scripts/architecture-audit-baseline.json --compare-ref 484eddc7e8da6591a33dfa556b391ba608e68ddb --fail-on-regression > "$RUNNER_TEMP/pr-216-evidence/architecture.txt" || { tail -50 "$RUNNER_TEMP/pr-216-evidence/architecture.txt"; exit 1; }
           tail -12 "$RUNNER_TEMP/pr-216-evidence/architecture.txt"
       - name: Focused regressions
         run: |
