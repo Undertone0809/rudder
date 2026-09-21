@@ -28,6 +28,9 @@ export const organizationMutationState = pgTable(
     fenceEpoch: bigint("fence_epoch", { mode: "bigint" })
       .notNull()
       .default(sql`0`),
+    fenceToken: uuid("fence_token")
+      .notNull()
+      .default(sql`gen_random_uuid()`),
     owner: text("owner").$type<"node" | "rust">().notNull().default("node"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -60,7 +63,9 @@ export const organizationMutationReceipts = pgTable(
       }),
     idempotencyKey: text("idempotency_key").notNull(),
     commandKind: text("command_kind")
-      .$type<"organization_branding" | "project_goal_link">()
+      .$type<
+        "organization_branding" | "project_goal_link" | "project_goal_set_replacement"
+      >()
       .notNull(),
     commandFingerprint: text("command_fingerprint").notNull(),
     receiptFormat: integer("receipt_format").notNull().default(1),
@@ -94,7 +99,7 @@ export const organizationMutationReceipts = pgTable(
     ),
     kindCheck: check(
       "organization_mutation_receipts_kind_ck",
-      sql`${table.commandKind} in ('organization_branding', 'project_goal_link')`,
+      sql`${table.commandKind} in ('organization_branding', 'project_goal_link', 'project_goal_set_replacement')`,
     ),
     outcomeCheck: check(
       "organization_mutation_receipts_outcome_ck",

@@ -43,7 +43,6 @@ async function organization(): Promise<string> {
   const id = randomUUID();
   await db`INSERT INTO organizations (id, url_key, name, issue_prefix)
     VALUES (${id}, ${id}, 'Synthetic D1 organization', ${id})`;
-  await db`INSERT INTO organization_mutation_state (org_id) VALUES (${id})`;
   return id;
 }
 
@@ -127,13 +126,14 @@ afterAll(async () => {
 });
 
 describe("D1 durable mutation schema on real PostgreSQL", () => {
-  it("upgrades without activating Rust or changing old Node organization writes", async () => {
+  it("backfills Node-owned baselines without activating Rust or changing old writes", async () => {
     expect(
       await db`SELECT name FROM organizations WHERE id = ${originalOrg}`,
     ).toMatchObject([{ name: "Before D1" }]);
     expect(
-      await db`SELECT * FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
-    ).toHaveLength(0);
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
     await db`UPDATE organizations SET name = 'Node still writes' WHERE id = ${originalOrg}`;
     const org = await organization();
     const [row] =
@@ -146,14 +146,79 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     });
   });
 
+  it("provisions the Node-owned baseline for a newly inserted organization", async () => {
+    const id = randomUUID();
+    await db`INSERT INTO organizations (id, url_key, name, issue_prefix)
+      VALUES (${id}, ${id}, 'Trigger-provisioned organization', ${id})`;
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${id}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    const [state] = await db`SELECT fence_token::text
+      FROM organization_mutation_state WHERE org_id = ${id}`;
+    expect(state.fence_token).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("serializes a Node business transaction before a Rust ownership handoff", async () => {
+    const org = await organization();
+    let releaseNodeTransaction!: () => void;
+    const nodeTransactionMayCommit = new Promise<void>((resolve) => {
+      releaseNodeTransaction = resolve;
+    });
+    let nodeFenceLocked!: () => void;
+    const nodeFenceIsLocked = new Promise<void>((resolve) => {
+      nodeFenceLocked = resolve;
+    });
+
+    const nodeTransaction = db.begin(async (tx) => {
+      await tx`SELECT org_id FROM organization_mutation_state WHERE org_id = ${org} FOR UPDATE`;
+      nodeFenceLocked();
+      await tx`UPDATE organizations SET name = 'Node transaction owns the fence' WHERE id = ${org}`;
+      await nodeTransactionMayCommit;
+    });
+    await nodeFenceIsLocked;
+
+    await expect(
+      db.begin(async (tx) => {
+        await tx`SET LOCAL lock_timeout = '50ms'`;
+        await tx`SELECT org_id FROM organization_mutation_state WHERE org_id = ${org} FOR UPDATE`;
+      }),
+    ).rejects.toMatchObject({ code: "55P03" });
+
+    releaseNodeTransaction();
+    await nodeTransaction;
+
+    await db.begin(async (tx) => {
+      await tx`UPDATE organization_mutation_state
+        SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+        WHERE org_id = ${org}`;
+    });
+
+    await expect(
+      db.begin(async (tx) => {
+        const [state] = await tx`SELECT owner FROM organization_mutation_state WHERE org_id = ${org} FOR UPDATE`;
+        if (state.owner !== "node") {
+          throw new Error("Node authority is no longer owned by Node");
+        }
+        await tx`UPDATE organizations SET name = 'stale Node writer' WHERE id = ${org}`;
+      }),
+    ).rejects.toThrow("Node authority is no longer owned by Node");
+    expect(await db`SELECT name FROM organizations WHERE id = ${org}`).toEqual([
+      { name: "Node transaction owns the fence" },
+    ]);
+  });
+
   it("does not grant Rust authority with an unfenced initial row", async () => {
-    await expect(db`INSERT INTO organization_mutation_state (org_id, owner)
-      VALUES (${originalOrg}, 'rust')`).rejects.toMatchObject({
+    await expect(db`UPDATE organization_mutation_state
+      SET owner = 'rust' WHERE org_id = ${originalOrg}`).rejects.toMatchObject({
       code: "23514",
     });
     expect(
-      await db`SELECT * FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
-    ).toHaveLength(0);
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
   });
 
   it("requires the receipt activity to belong to the same organization", async () => {
@@ -214,9 +279,21 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     await expect(
       db`UPDATE organization_mutation_state SET owner = 'rust' WHERE org_id = ${org}`,
     ).rejects.toMatchObject({ code: "23514" });
-    await db`UPDATE organization_mutation_state SET owner = 'rust', fence_epoch = 1 WHERE org_id = ${org}`;
+    await db`UPDATE organization_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
     await expect(
       db`UPDATE organization_mutation_state SET fence_epoch = 0 WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_mutation_state
+        SET fence_epoch = 2
+        WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_mutation_state
+        SET fence_token = gen_random_uuid()
+        WHERE org_id = ${org}`,
     ).rejects.toMatchObject({ code: "23514" });
   });
 

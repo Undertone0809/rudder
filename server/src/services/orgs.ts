@@ -39,6 +39,7 @@ import {
   organizationIssuePrefixAliases,
   organizationLogos,
   organizationMemberships,
+  organizationMutationState,
   organizations,
   organizationSecrets,
   organizationSkills,
@@ -59,6 +60,7 @@ import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { recordProductAnalyticsEvent } from "./product-analytics.js";
 
@@ -298,6 +300,11 @@ export function organizationService(db: Db) {
           ...organizationData,
         });
 
+        await tx
+          .insert(organizationMutationState)
+          .values({ orgId: created.id })
+          .onConflictDoNothing({ target: organizationMutationState.orgId });
+
         await tx.insert(labels).values(
           DEFAULT_ISSUE_LABELS.map((label) => ({
             orgId: created.id,
@@ -343,6 +350,7 @@ export function organizationService(db: Db) {
       data: Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
     ) =>
       db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, id);
         const existing = await getCompanyQuery(tx)
           .where(eq(organizations.id, id))
           .then((rows) => rows[0] ?? null);
@@ -455,6 +463,7 @@ export function organizationService(db: Db) {
 
     archive: (id: string) =>
       db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, id);
         const updated = await tx
           .update(organizations)
           .set({ status: "archived", updatedAt: new Date() })
@@ -472,6 +481,7 @@ export function organizationService(db: Db) {
 
     remove: (id: string) =>
       db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, id);
         // Delete from child tables in dependency order
         await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.orgId, id));
         await tx.delete(requests).where(eq(requests.orgId, id));
