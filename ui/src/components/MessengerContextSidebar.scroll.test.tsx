@@ -1081,6 +1081,72 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     expect(document.querySelector('[data-messenger-thread-key="chat:pinned-6"]')).not.toBeNull();
   });
 
+  it("reveals an unread managed-group row after Collapse hides it", async () => {
+    window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "project" }));
+    const groupedThreads = Array.from({ length: 8 }, (_, index) =>
+      baseThread(`chat:collapsed-unread-${index}`, `Collapsed unread ${index}`, index === 7 ? 1 : 0),
+    );
+    chatList = groupedThreads.map((thread, index) => baseConversation({
+      id: `collapsed-unread-${index}`,
+      title: thread.title,
+      unreadCount: thread.unreadCount,
+    }));
+    customGroupList = [{
+      id: "collapsed-unread-group",
+      orgId: "org-1",
+      userId: "local-board",
+      name: "Collapsed unread group",
+      icon: "folder",
+      sortOrder: 0,
+      collapsed: false,
+      pinnedAt: null,
+      entries: groupedThreads.map((thread, index) => ({
+        id: `entry-${index}`,
+        groupId: "collapsed-unread-group",
+        threadKey: thread.threadKey,
+        sortOrder: index,
+        thread,
+      })),
+    }];
+    messengerModel = {
+      ...messengerModel,
+      threadSummaries: groupedThreads,
+    };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanupFn = () => {
+      act(() => root.unmount());
+      container.remove();
+    };
+
+    await act(async () => {
+      root.render(<MessengerContextSidebar />);
+      await Promise.resolve();
+    });
+
+    const groupSectionId = "messenger-thread-section-custom-group-collapsed-unread-group";
+    expect(document.querySelector('[data-messenger-thread-key="chat:collapsed-unread-7"]')).toBeNull();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(`[data-testid="${groupSectionId}-show-more"]`)?.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>(`[data-testid="${groupSectionId}-collapse"]`)?.click();
+    });
+    expect(document.querySelector('[data-messenger-thread-key="chat:collapsed-unread-7"]')).toBeNull();
+
+    await act(async () => {
+      requestMessengerUnreadScroll();
+      await Promise.resolve();
+    });
+
+    const unreadRow = document.querySelector<HTMLElement>(
+      '[data-messenger-thread-key="chat:collapsed-unread-7"]',
+    );
+    expect(unreadRow).not.toBeNull();
+    expect(unreadRow?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+  });
+
   it("keeps Project custom-group expansion local when more global thread pages exist", async () => {
     window.localStorage.setItem("rudder.messengerThreadOrganizationByOrg", JSON.stringify({ "org-1": "project" }));
     const loadMoreThreadSummaries = vi.fn().mockResolvedValue(undefined);
@@ -1130,16 +1196,9 @@ describe("MessengerContextSidebar unread scroll requests", () => {
     const groupSectionId = "messenger-thread-section-custom-group-project-group";
     expect(document.querySelector(`[data-testid="${groupSectionId}"]`)).not.toBeNull();
     expect(document.querySelector('[data-messenger-thread-key="chat:project-group-5"]')).not.toBeNull();
-    expect(document.querySelector('[data-messenger-thread-key="chat:project-group-6"]')).toBeNull();
-
-    expect(document.querySelector(`[data-testid="${groupSectionId}-auto-loader"]`)).not.toBeNull();
-
-    await act(async () => {
-      intersect(`${groupSectionId}-auto-loader`);
-      await Promise.resolve();
-    });
-
     expect(document.querySelector('[data-messenger-thread-key="chat:project-group-6"]')).not.toBeNull();
+    expect(document.querySelector(`[data-testid="${groupSectionId}-show-more"]`)).toBeNull();
+    expect(document.querySelector(`[data-testid="${groupSectionId}-collapse"]`)).toBeNull();
     expect(document.querySelector(`[data-testid="${groupSectionId}-auto-loader"]`)).toBeNull();
     expect(loadMoreThreadSummaries).not.toHaveBeenCalled();
   });
