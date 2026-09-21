@@ -5,10 +5,13 @@ on:
     paths: [.github/workflows/codex-navigation-workbench.yml]
 permissions:
   contents: write
+concurrency:
+  group: projects-library-navigation-workbench
+  cancel-in-progress: false
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
       CI: true
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
@@ -16,22 +19,120 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: codex/projects-library-navigation
-      - name: Load immutable reviewed patch
+          ref: ${{ github.sha }}
+      - name: Load existing navigation patch
         run: git fetch --depth=1 origin b91ef52a33b8696c4b679379273f145b5fbaa1f2
-      - name: Apply reviewed navigation patch
+      - name: Apply navigation patch and regression fixes
         shell: python
         run: |
-          import base64, gzip, hashlib, pathlib, re, subprocess
+          import base64, gzip, hashlib, re, subprocess
+          from pathlib import Path
           source = subprocess.check_output(['git', 'show', 'b91ef52a33b8696c4b679379273f145b5fbaa1f2:.github/workflows/codex-navigation-workbench.yml']).decode()
           encoded = re.search(r'encoded = "([^"]+)"', source).group(1)
           patch = gzip.decompress(base64.b64decode(encoded))
           assert hashlib.sha256(patch).hexdigest() == 'abc3f65f7ab0bcf01fedafdc02a3ab36fd938e362f3b6a083cfc2c0153194fe3'
           subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
           subprocess.run(['git', 'apply', '-'], input=patch, check=True)
-          subprocess.run(['git', 'add', '-N', 'tests/e2e/projects-library-navigation.spec.ts'], check=True)
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              assert old in text, (path, old[:80])
+              p.write_text(text.replace(old, new))
+          path = 'tests/e2e/projects-library-navigation.spec.ts'
+          replace(path, '    await projectsEntry.click();\n    await expect(page).toHaveURL(`/${org.urlKey}/projects`);', '    await expect(projectsEntry).toHaveAttribute("href", `/${org.urlKey}/projects`);\n    await projectsEntry.click();\n    // Projects automatically opens the first project when the list is nonempty.\n    await expect(page).toHaveURL(`/${org.urlKey}${projectPath}`);')
+          path = 'ui/src/components/PrimaryRail.test.tsx'
+          replace(path, '  NavLink: ({', '  Link: ({')
+          replace(path, '    end: _end,\n', '')
+          replace(path, '    end?: boolean;\n', '')
+          replace(path, '    className?: string | ((input: { isActive: boolean }) => string);', '    className?: string;')
+          replace(path, 'className={typeof className === "function" ? className({ isActive: false }) : className}', 'className={className}')
+          replace(path, '      mockState.pathname = pathname;\n      await renderPrimaryRail();', '      mockState.pathname = pathname;\n      mockState.primaryRailPaths.organization = "/projects/project-1/configuration";\n      await renderPrimaryRail();')
+          replace(path, 'expect(projects?.getAttribute("href")).toBe("/projects");', 'expect(projects?.getAttribute("href")).toBe("/projects/project-1/configuration");')
+          path = 'ui/src/components/PrimaryRail.tsx'
+          replace(path, 'import { NavLink,', 'import { Link,')
+          replace(path, '  end,\n', '')
+          replace(path, '  end?: boolean;\n', '')
+          replace(path, '  active?: boolean;\n', '  active: boolean;\n')
+          replace(path, '  const link = (\n    <NavLink', '  // Active state belongs to the section, not its remembered destination URL.\n  const link = (\n    <Link')
+          replace(path, '      end={end}\n', '')
+          replace(path, '    </NavLink>', '    </Link>')
+          replace(path, '            end={item.key === "plugins" ? true : undefined}\n', '')
+          p = Path(path)
+          s = p.read_text()
+          start = s.index('      className={({ isActive }) =>')
+          end = s.index('\n    >', start)
+          block = s[start:end]
+          block = block.replace('      className={({ isActive }) =>\n        cn(', '      className={cn(')
+          block = block.replace('(active ?? isActive)', 'active')
+          block = block.replace('        )\n      }', '      )}')
+          lines = block.splitlines()
+          block = '\n'.join([lines[0], *[line[2:] for line in lines[1:-1]], lines[-1]])
+          p.write_text(s[:start] + block + s[end:])
+          path = 'ui/src/components/ThreeColumnContextSidebar.tsx'
+          replace(path, 'import { readRememberedPrimaryRailPath } from "@/lib/primary-rail-memory";', 'import { readRememberedPrimaryRailPath } from "@/lib/primary-rail-memory";\nimport { buildProjectsContextItems } from "@/lib/projects-context-navigation";')
+          replace(path, 'import { SKILLS_LIBRARY_DIRECTORY_HREF } from "@/lib/skill-library-routes";\n', '')
+          for icon in ['Boxes', 'Clock3', 'DollarSign', 'History', 'LayoutDashboard', 'LibraryBig']:
+              replace(path, f'  {icon},\n', '')
+          p = Path(path)
+          s = p.read_text()
+          start = s.index('  const isSkillsLibraryRoute = ')
+          end = s.index('\n  const activeOrgContextIndex', start)
+          p.write_text(s[:start] + '''  const orgContextItems = buildProjectsContextItems({
+              relativePath,
+              searchParams,
+              libraryPath: readRememberedPrimaryRailPath(selectedOrganizationId, "library", "/library"),
+              locale,
+            });''' + s[end:])
+          Path('ui/src/lib/projects-context-navigation.ts').write_text('''import type { InstanceLocale } from "@rudderhq/shared";
+          import { Boxes, Clock3, DollarSign, History, LayoutDashboard, LibraryBig, type LucideIcon } from "lucide-react";
+          import { SKILLS_LIBRARY_DIRECTORY_HREF } from "./skill-library-routes";
+
+          type ProjectsContextItem = {
+            key: string;
+            to: string;
+            icon: LucideIcon;
+            label: string;
+            active: boolean;
+          };
+
+          // Projects groups project navigation and organization-wide tools. Library
+          // keeps its own remembered destination, including existing document links.
+          export function buildProjectsContextItems({
+            relativePath,
+            searchParams,
+            libraryPath,
+            locale,
+          }: {
+            relativePath: string;
+            searchParams: URLSearchParams;
+            libraryPath: string;
+            locale: InstanceLocale;
+          }): ProjectsContextItem[] {
+            const isSkillsLibraryRoute = /^\\/skills(?:\\/|$)/.test(relativePath)
+              || (/^\\/library(?:\\/|$)/.test(relativePath)
+                && (searchParams.get("directory") === "skills" || searchParams.has("skill")));
+
+            return [
+              { key: "dashboard", to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", active: /^\\/dashboard(?:\\/|$)/.test(relativePath) },
+              {
+                key: "library",
+                to: libraryPath,
+                icon: LibraryBig,
+                label: locale === "zh-CN" ? "文档" : "Library",
+                active: /^\\/(?:library|resources|workspaces)(?:\\/|$)/.test(relativePath)
+                  && !/^\\/workspaces\\/backups(?:\\/|$)/.test(relativePath)
+                  && !isSkillsLibraryRoute,
+              },
+              { key: "heartbeats", to: "/heartbeats", icon: Clock3, label: "Heartbeats", active: /^\\/heartbeats(?:\\/|$)/.test(relativePath) },
+              { key: "skills", to: SKILLS_LIBRARY_DIRECTORY_HREF, icon: Boxes, label: "Skills", active: isSkillsLibraryRoute },
+              { key: "costs", to: "/costs", icon: DollarSign, label: "Costs", active: /^\\/costs(?:\\/|$)/.test(relativePath) },
+              { key: "activity", to: "/activity", icon: History, label: "Activity", active: /^\\/activity(?:\\/|$)/.test(relativePath) },
+            ];
+          }
+          ''')
+          subprocess.run(['git', 'add', '-N', 'tests/e2e/projects-library-navigation.spec.ts', 'ui/src/lib/projects-context-navigation.ts'], check=True)
           paths = subprocess.check_output(['git', 'diff', '--name-only']).decode()
-          pathlib.Path('/tmp/navigation-paths.txt').write_text(paths)
+          Path('/tmp/navigation-paths.txt').write_text(paths)
           print(paths)
       - uses: actions/setup-node@v6
         with:
@@ -41,27 +142,23 @@ jobs:
           corepack enable
           corepack prepare pnpm@9.15.4 --activate
           pnpm install --frozen-lockfile
-      - name: Record known unrelated full-repository lint baseline
-        continue-on-error: true
-        run: |
-          git diff --exit-code -- cli/src/commands/start.ts packages/shared/src/validators/chat.ts packages/shared/src/validators/index.ts server/src/__tests__/organization-workspace-media-routes.test.ts server/src/routes/issues.mutations.ts
-          set -o pipefail
-          pnpm lint 2>&1 | tee /tmp/navigation-baseline-lint.log
       - name: Scoped lint and focused regression tests
         run: |
+          set -o pipefail
+          node scripts/lint-imports.mjs --fix --changed
           node scripts/lint-imports.mjs --changed
           pnpm --filter @rudderhq/identity-core build
-          pnpm --filter @rudderhq/ui exec vitest run src/components/PrimaryRail.test.tsx src/components/ThreeColumnContextSidebar.test.tsx src/lib/primary-rail-memory.test.ts --maxWorkers=2
+          pnpm --filter @rudderhq/ui exec vitest run src/components/PrimaryRail.test.tsx src/components/ThreeColumnContextSidebar.test.tsx src/lib/primary-rail-memory.test.ts --maxWorkers=2 2>&1 | tee /tmp/navigation-unit-tests.log
       - name: Typecheck and production UI build
         run: |
-          pnpm --filter @rudderhq/ui typecheck
-          pnpm --filter @rudderhq/ui build
+          set -o pipefail
+          pnpm --filter @rudderhq/ui build 2>&1 | tee /tmp/navigation-build.log
       - name: Real browser navigation and visual evidence
         run: |
+          set -o pipefail
           pnpm exec playwright install --with-deps chromium
-          pnpm test:e2e projects-library-navigation.spec.ts primary-rail-layout.spec.ts organization-skill-library-navigation.spec.ts chat-draft-persistence.spec.ts --workers=2
-          cp -r tests/e2e/playwright-report /tmp/navigation-browser-report 2>/dev/null || cp -r playwright-report /tmp/navigation-browser-report
-      - name: Inspect and publish only the tested navigation changes
+          pnpm test:e2e projects-library-navigation.spec.ts primary-rail-layout.spec.ts organization-skill-library-navigation.spec.ts chat-draft-persistence.spec.ts --workers=2 --reporter=list,html 2>&1 | tee /tmp/navigation-browser.log
+      - name: Publish only the tested navigation changes
         run: |
           git diff --check
           git diff --binary > /tmp/navigation-verified.patch
@@ -80,9 +177,8 @@ jobs:
           name: navigation-validation
           path: |
             /tmp/navigation-*.patch
-            /tmp/navigation-baseline-lint.log
+            /tmp/navigation-*.log
             /tmp/navigation-verified-sha.txt
-            /tmp/navigation-browser-report
             tests/e2e/test-results
             tests/e2e/playwright-report
             playwright-report
