@@ -18,19 +18,19 @@ main_adaptation:
   reconciliation_receipt:
     isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v4
     previous_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
-    migration_checkpoint_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+    migration_checkpoint_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
     resulting_snapshot_sha: ef71a1462a5c7998e361fe2193e585318a6a9f91
     resulting_snapshot_tree: fb968231c160d5ff75095cf89a336f43e035ef86
     changed_paths_rechecked: [desktop/src/desktop-quit-flow.test.ts, desktop/src/desktop-quit-flow.ts, desktop/src/desktop-update-flow.test.ts, desktop/src/desktop-update-flow.ts, desktop/src/desktop-update-launch.ts, tests/e2e/desktop-update-prompt.spec.ts, ui/src/components/DesktopUpdatePromptBridge.test.tsx, ui/src/components/DesktopUpdatePromptBridge.tsx, ui/src/components/DesktopUpdateStatusCard.test.tsx, ui/src/components/DesktopUpdateStatusCard.tsx, ui/src/components/LiveRunWidget.test.tsx, ui/src/components/LiveRunWidget.tsx]
     compatibility_decision: desktop_update_and_quit_behavior_preserved; Rust server foundation and migration-preflight staging remains an explicit migration-owned addition; rebuild_exact_candidate_and_rebind_real_entry_receipts
     old_receipts: invalidated
 source:
-  candidate_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
-  candidate_tree: fdbb1b03349290a8b41b050ccb63848575242dda
-  dirty_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
-  dirty_fingerprint_status: exact_dirty_candidate_source_diff_with_project_goal_probe_v9_signed_idempotency_binding_complete_negative_coverage
-  dirty_fingerprint_scope: sorted_current_worktree_diff_and_untracked_source_paths_excluding_durable_plan_records_packets_and_artifacts
-  candidate_state: exact_project_goal_candidate_v9_post_main_drift_signed_idempotency_allowlist_and_complete_negative_real_probe_passed_stage_review_pending
+  candidate_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
+  candidate_tree: bcd68ce026354bb56af742ced22a76c50071a0f3
+  dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  dirty_fingerprint_status: exact_clean_commit_fc733_project_goal_probe_v10_signed_idempotency_binding_complete_negative_coverage
+  dirty_fingerprint_scope: clean_committed_candidate_source_tree_excluding_durable_plan_records_packets_and_artifacts
+  candidate_state: exact_project_goal_candidate_v10_clean_commit_post_main_drift_signed_idempotency_allowlist_and_complete_negative_real_probe_passed_final_handoff_accepted
   counts_status: current_scan_refreshed; semantic_reconciliation_blocked_by_unfenced_writers
   current_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
   current_scan_counts:
@@ -69,7 +69,7 @@ stage_review:
   level: stage_verdict
   source: independent_reviewer_Archimedes
   agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3
-  receipt_state: current_v15_stage_accept
+  receipt_state: current_v16_stage_accept
   blocking_findings:
     - id: P0-node-writer-fence
       summary: The current candidate fences the main organization, Project, resource, workspace, Issue-counter, cost, and all 17 Goal service writers, but the semantic audit still has Goal route/issue projection bypasses plus unfenced asset/logo, approval, budget/settings, portability, onboarding, and background writers.
@@ -97,9 +97,9 @@ stage_review:
 verifier:
   verdict: PASS
   agent: independent_verifier_Sagan/01a0c903-973c-77a0-8116-8867ff5f43e5
-  candidate_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
-  source_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
-  data_id: rust-project-goal-real-entry-68674
+  candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
+  data_id: rust-project-goal-real-entry-16304
   runtime: disposable_embedded_postgres_node_private_actix
   evidence: fresh_independent_rerun_marker_RUST_PROJECT_GOAL_REAL_ENTRY_PASS_create_with_goals_201_mixed_update_409_signed_substitution_401_allowlist_rejection_unlisted_fail_closed_cli_0_mcp_0_restart_replay_200_conflict_409_cross_org_422_clear_all_200_final_receipts_4_activities_2_version_2_lease_current
   final_review: accept_final_handoff_Archimedes_01a0c913-8d45-72e3-ad30-d3ebe87839f3
@@ -237,9 +237,9 @@ authority_rows:
     fence: organization_mutation_state owner/epoch/fence
     status: real_entry_connected
     capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: native PostgreSQL goal-set replacement and project-goal core tests pass; exact v9 Node API -> Actix -> SQLx probe after d1f55c5 Main reconciliation plus signed idempotency binding, create-with-goals compatibility, mixed-update rejection, explicit allowlist rejection/success, unlisted fail-closed, direct CLI/MCP, replay/conflict/target-isolation/clear-all/restart checks pass; installed/default startup and old-writer retirement remain unproven
+    evidence_status: native PostgreSQL goal-set replacement and project-goal core tests pass; exact v10 clean-commit Node API -> Actix -> SQLx probe after d1f55c5 Main reconciliation plus signed idempotency binding, create-with-goals compatibility, mixed-update rejection, explicit allowlist rejection/success, unlisted fail-closed, direct CLI/MCP, replay/conflict/target-isolation/clear-all/restart checks pass; installed/default startup and old-writer retirement remain unproven
     retirement_gate: real Actix/API path plus all Node link writers fenced/retired
-    next_action: commit and push v15, then actor/session bridge hardening, full writer/token inventory, and old-writer negative test
+    next_action: push v16, then actor/session bridge hardening, full writer/token inventory, and old-writer negative test
   - id: domain.project_goal_set_replacement
     domain: organization_goal_project
     authority_kind: rust_product_runtime
@@ -254,9 +254,9 @@ authority_rows:
     fence: organization_mutation_state owner/version/epoch/fence_token
     status: real_entry_connected
     capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: exact v9 Node API -> private Actix -> SQLx workflow after latest Main reconciliation, explicit allowlist and unlisted fail-closed startup evidence, Node create-with-goals compatibility, mixed-update 409, signed idempotency-key/header comparison, direct CLI and MCP dispatch including direct MCP project creation, replay/conflict/cross-organization/clear-all/restart and final readback passed; installed/default startup, signed session authority, and old-writer retirement remain unproven
+    evidence_status: exact v10 clean-commit Node API -> private Actix -> SQLx workflow after latest Main reconciliation, explicit allowlist and unlisted fail-closed startup evidence, Node create-with-goals compatibility, mixed-update 409, signed idempotency-key/header comparison, direct CLI and MCP dispatch including direct MCP project creation, replay/conflict/cross-organization/clear-all/restart and final readback passed; installed/default startup, signed session authority, and old-writer retirement remain unproven
     retirement_gate: supported API/default path plus all project goal-set writers fenced/retired and verifier PASS
-    next_action: continue writer/token fence and signed actor/session bridge blockers after v15 commit
+    next_action: continue writer/token fence and signed actor/session bridge blockers after v16 PR integration
   - id: runtime.migration_journal_authority
     domain: database_lifecycle
     authority_kind: rust_product_runtime

@@ -32,7 +32,8 @@ related_code:
   - cli/src
   - packages/agent-runtime-utils/src
   - desktop
-commit_refs: []
+commit_refs:
+  - fc73374bb15933ef5bad7f3056336c87e455cee0
 updated_at: 2026-09-22
 ---
 
@@ -188,10 +189,11 @@ updated the associated UI and E2E states. Those changes were reconciled in the
 isolated snapshot worktree `/private/tmp/rudder-rust-main-reconcile-20260922-v4`
 (`ef71a1462a5c7998e361fe2193e585318a6a9f91`, tree
 `fb968231c160d5ff75095cf89a336f43e035ef86`) over the migration checkpoint
-`5873b34bc3522807248aa179da22aa7a9ab7ca9a`. The current dirty source
-candidate is rebound to that reconciled content; its durable records are the
-active source of truth. This observation is not a merge or a completion claim;
-it is the synchronization input for the v6 exact-candidate receipts.
+`5873b34bc3522807248aa179da22aa7a9ab7ca9a`. The current clean committed source
+candidate is rebound to that reconciled content; the clean committed candidate
+is `fc73374bb15933ef5bad7f3056336c87e455cee0` and packet v16 is the durable
+source of truth. This observation is not a merge or a completion claim; it is
+the synchronization input for the v16 exact-candidate receipts.
 
 ## Current checkpoint (2026-09-22)
 
@@ -225,16 +227,18 @@ the receipt or activity. The exact evidence is recorded in
 This changes the capability ledger for organization branding to
 `real_entry_connected`; it does not make branding the default installed
 authority, retire every legacy writer, or activate the broader D1 owner. The
-Project-Goal route remains private until its signer, competing-writer fence,
-CLI/MCP parity, and independent verifier gates are complete. The migration
+Project-Goal route remains private until its competing-writer fence, default
+listener decision, and old-writer retirement gates are complete. Its signer,
+CLI/MCP parity, and independent verifier gates now have exact local evidence. The migration
 continues to refresh `origin/main` before each candidate and keeps
 `implementation_complete`, `release_ready`, and `production_verified` false.
 
-The v6 Project-Goal probe was rerun after the latest Main reconciliation using
-fresh Rust foundation and migration-preflight binaries. It passed the same
-supported Node API, private Actix/SQLx, direct CLI/MCP, explicit allowlist,
-unlisted fail-closed, idempotency, cross-organization, clear-all, deletion
-fence, and restart/replay workflow. The probe is still disposable local
+The v10 Project-Goal probe was rerun on clean committed `fc73374bb` after the
+latest Main reconciliation using fresh Rust foundation and migration-preflight
+binaries. It passed the same supported Node API, private Actix/SQLx, direct
+CLI/MCP, explicit allowlist, unlisted fail-closed, idempotency,
+cross-organization, clear-all, deletion fence, and restart/replay workflow. The
+probe is still disposable local
 evidence only; it does not make the listener, migration authority, old-writer
 retirement, release, or production claims true.
 
