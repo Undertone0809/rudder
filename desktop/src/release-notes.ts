@@ -153,6 +153,29 @@ export function readReleaseNotesBundle(input: {
   return Object.keys(translations).length > 0 ? { ...notes, translations } : notes;
 }
 
+export function readReleaseNotesBundleFromModule(input: {
+  moduleDir: string;
+  packaged: boolean;
+  version: string;
+}): DesktopReleaseNotes | null {
+  return readReleaseNotesBundle({
+    version: input.version,
+    releaseNotesPath: resolveReleaseNotesPath({
+      moduleDir: input.moduleDir,
+      packaged: input.packaged,
+      version: input.version,
+    }),
+    localizedReleaseNotesPaths: {
+      "zh-CN": resolveReleaseNotesPath({
+        moduleDir: input.moduleDir,
+        packaged: input.packaged,
+        version: input.version,
+        locale: "zh-CN",
+      }),
+    },
+  });
+}
+
 export function resolveReleaseNotesStatePath(userDataPath: string): string {
   return path.join(userDataPath, "release-notes-state.json");
 }
