@@ -217,6 +217,7 @@ export async function withRuntimeStartLock<T>(
 ): Promise<T> {
   const instanceId = input.instanceId ?? resolveRudderInstanceId();
   const { runtimeDir, lockPath } = resolveLocalRuntimePaths(instanceId);
+  const recoveryPath = `${lockPath}.recovery`;
   const timeoutMs = input.timeoutMs ?? 20_000;
   const startedAt = Date.now();
   const payload: StartLockPayload = {
@@ -228,8 +229,26 @@ export async function withRuntimeStartLock<T>(
   await mkdir(runtimeDir, { recursive: true });
 
   while (true) {
+    // Recovery can crash after unlinking the stale start.lock. Its remaining
+    // marker still owns that transition, even when start.lock is absent.
+    if (existsSync(recoveryPath)) {
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(
+          `Timed out waiting for local runtime startup lock for instance '${instanceId}'. ` +
+            "A recovery lock is present; refusing to start a second runtime.",
+        );
+      }
+      await delay(START_LOCK_POLL_MS);
+      continue;
+    }
     try {
       await writeFile(lockPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      // A reclaimer may have acquired its marker while this write was pending.
+      // Release only our newly acquired lock and wait for that transition.
+      if (existsSync(recoveryPath)) {
+        await rm(lockPath, { force: true });
+        continue;
+      }
       break;
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
@@ -240,7 +259,6 @@ export async function withRuntimeStartLock<T>(
         // Serialize stale-owner recovery and re-read after acquiring it. Two
         // starters must not unlink the replacement lock based on the same
         // stale observation. An abandoned recovery lock fails closed.
-        const recoveryPath = `${lockPath}.recovery`;
         let recovering = false;
         try {
           await writeFile(recoveryPath, `${JSON.stringify(payload)}\n`, { encoding: "utf8", flag: "wx" });
