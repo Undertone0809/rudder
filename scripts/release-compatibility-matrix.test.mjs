@@ -61,10 +61,10 @@ describe("release migration compatibility matrix", () => {
   ])("accepts %s with the current native-session migration fingerprint", (candidateVersion, channel) => {
     const result = runCompatibilityPreflight({ candidateVersion, channel });
     expect(result.candidateFingerprint).toBe(
-      "dc33441aed2b2ecf9b21969362fa4c8ed6fc7906c48103021c212468b6035e1a",
+      "bdaa2aaac9c6e7b31feae9ff3b27a79caf92adc406d90fe81d21416fadc5f19f",
     );
-    expect(result.candidateMigrations).toBe(168);
-    expect(result.candidateSqlFiles).toBe(170);
+    expect(result.candidateMigrations).toBe(169);
+    expect(result.candidateSqlFiles).toBe(171);
     expect(result.fixtures[0].version).toBe("0.7.23");
   }, 60_000);
 
