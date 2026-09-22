@@ -1,0 +1,248 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-full-rust-backend-completion-v10",
+  "status": "review_ready",
+  "owner": {
+    "root_id": "rudder-full-rust-backend-completion-2026-09-21",
+    "agent_id": "codex-implementation-agent"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。最终目标不是 Node orchestration + Rust sidecar，而是 Actix Web 接管核心 HTTP/WebSocket 服务；SQLx 接管 PostgreSQL 查询、事务和迁移；第一方业务服务、鉴权/session、调度器、workers、Agent Run、Chat/Side Chat、Automation、provider adapters、常用后端组件、CLI 和 MCP 均由 Rust 实现，对应 Node 后端退出运行时。同时纳入第一方 identity、analytics collector、managed MCP、嵌入式 PostgreSQL 生命周期，以及拥有产品状态的维护和更新恢复工具。保留 React、前端工具、Electron shell，以及用户选择的外部 provider CLI、MCP、Local App 和插件组件。按 Phase 0–7 连续推进，优先接通已有 Actix/read 能力；每个切片都包括真实入口、鉴权、事务、审计、副作用、恢复、相关 CLI/MCP 和旧 writer 的退出。禁止生产双写、陈旧 writer 继续写入、静默 Node fallback、用 Node 子进程包装旧实现，以及把后端业务转移进 Electron/bootstrap。最终必须证明移除旧第一方 Node 后端资产后，安装后的 UI/API/CLI/MCP、数据库升级、调度、执行、恢复和支持平台仍通过验收。分别报告 implementation_complete、release_ready 和 production_verified；没有实际生产证据，不得声称已上线完成。未经额外授权，不删除真实用户数据、不迁移生产数据库、不发布 stable、不切换生产流量、不购买服务。开始推进。",
+    "corrections": [
+      "记得先把这个 plan 写进 doc/plans。",
+      "调整策略，让开发更快一点：很多真实环境可以先迁移进来，因为单纯离线测试和真正切进来测试完全是不一样的。可以持续地、一点一点把这些功能先接入到生产环境里，逐步替换掉，但保持可回滚并遵守旧 writer、生产双写和授权边界。",
+      "重构过程中 Main 分支时不时会有新功能或者修改进来，Rust 也要对应做好适配；在每个切片候选前刷新 origin/main、隔离同步、重跑受影响扫描，并使受影响 receipt 失效。",
+      "利用 spawn agent 多 agents 来并发推进任务，加速推进任务，由根 agent 负责整体调度。"
+    ],
+    "non_goals": [
+      "本 v10 packet 不声明完整 Rust backend completion、release readiness 或 production verification。",
+      "不切换生产流量，不迁移生产数据库，不发布 stable，不删除真实用户数据。",
+      "不把 shadow/probe invocation 当作 Rust serving 或旧 authority retirement。"
+    ],
+    "authorization": "implementation and isolated local/CI candidate verification; no production deployment, stable publication, production database migration, or traffic switch"
+  },
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_ref": "refs/heads/codex/rudder-full-rust-backend-completion-20260921 (current HEAD 5873b34bc3522807248aa179da22aa7a9ab7ca9a; implementation ancestor 508978ce9f309ac537eb57b03e54b8b44ade8b25; current scoped dirty candidate)",
+    "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "dirty_fingerprint": "5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91",
+    "fingerprint_method": "SHA-256 of sorted current worktree diff and untracked source paths with each path and git hash-object content hash, excluding durable completion plan records, delivery packets, and artifacts",
+    "changed_paths": [
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/__tests__/agent-v1-registry.test.ts",
+      "cli/src/__tests__/http.test.ts",
+      "cli/src/agent-v1-capabilities.generated.ts",
+      "cli/src/agent-v1-mcp-server.ts",
+      "cli/src/client/http.ts",
+      "cli/src/commands/client/company.ts",
+      "contracts/rudder-agent-contract/v1.json",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/agent-contract-core/src/contract.generated.json",
+      "native/crates/d1-persistence/src/branding.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/d1-persistence/tests/support/mod.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "packages/db/src/migrations/0168_organization_branding_mutation_authority.sql",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/schema/index.ts",
+      "packages/db/src/schema/organization_branding_mutations.ts",
+      "packages/shared/src/constants.ts",
+      "scripts/smoke/rust-branding-real-entry.ts",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/config-env-loading.test.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "server/src/bootstrap/create-http-app.ts",
+      "server/src/bootstrap/types.ts",
+      "server/src/config.ts",
+      "server/src/index.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/services/index.ts",
+      "server/src/services/organization-branding-fence.ts",
+      "server/src/services/organization-mutation-outbox.test.ts",
+      "server/src/services/organization-mutation-outbox.ts",
+      "server/src/services/orgs.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts"
+    ],
+    "build": {
+      "id": "rudder-server-foundation-debug-2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a-source-5873b34b-dirty-5b2b7ac8",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "artifact_hash": "2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a"
+    },
+    "runtime": {
+      "id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-2022af954-preflight-d6f6bb0c-source-5873b34b-dirty-5b2b7ac8",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a"
+    },
+    "organization_data": {
+      "organization_id": "0eeae263-0bef-42af-8527-66525e123f6a",
+      "data_id": "rust-branding-real-entry-38958"
+    },
+    "workload_fixture": "Node 0.7.24 startup with Rust migration preflight over 169 journal entries and 171 SQL migrations, one disposable organization, required branding write/replay, Actix child lifecycle, and final cleanup",
+    "budget_lease": {
+      "id": "current-local-run",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "v10",
+      "fingerprint": "d1-organization-branding-v10-real-entry-transaction-recovery",
+      "criteria": [
+        "The exact current dirty candidate starts the supported Node 0.7.24 server against a disposable embedded PostgreSQL instance without touching the user's existing instance.",
+        "Rust migration preflight is invoked through the supported startup path and returns bootstrap on the first run and current after restart for the current 169-entry/171-SQL migration manifest.",
+        "A real board-authorized local-trusted PATCH /api/orgs/:orgId/branding request in required Rust branding mode returns 200 with the requested scalar brandColor and a Rust-authority receipt; the legacy Node branding writer is not invoked.",
+        "The same request atomically persists organization branding, the Rust owner/version/epoch state, immutable idempotency receipt, activity audit, and retryable outbox state; database readback observes all identities.",
+        "After a complete server and embedded PostgreSQL restart, replaying the same idempotency key returns the original successful result without duplicating the activity or receipt.",
+        "The existing private bridge and Actix lifecycle negative/ready/shutdown evidence remains supporting evidence only; the slice does not claim the public listener, full session authority, CLI/MCP real workflow, or old-authority retirement.",
+        "Node remains the HTTP and migration authority, D1 owner activation remains blocked by unresolved writer/auth/audit/default-listener gates, and implementation_complete, release_ready, and production_verified remain false."
+      ],
+      "state_inventory": [
+        "Startup: health 200, embedded PostgreSQL ready, Rust preflight bootstrap/current, Node migration compatibility, and required branding bridge ready.",
+        "Write success: board-created organization receives brandColor #abcdef through the public API request; database state, receipt, activity, and outbox are read back.",
+        "Recovery: complete server/database restart followed by the same idempotency-key PATCH returns 200 without a duplicate activity or receipt.",
+        "Supporting lifecycle: private Actix /readyz=200, SIGINT state=stopped/reason=ctrl_c, and invalid public/product-write startup receipt rejection are recorded in the prior probe artifact.",
+        "Deferred: public Actix listener, SQLx migration authority, auth/session revocation epoch, complete D1 writer retirement, Project-Goal supported entry, CLI/MCP real parity, production canary, and release evidence."
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "level": "stage_verdict",
+      "agent_id": "01a0c741-41ca-7292-aeec-9071d7ecd0c6",
+      "summary": "Branding real-entry slice accepted for independent black-box verification; D1 activation remains blocked by unresolved global writers, session/revocation authority, listener, fallback, and recovery gates.",
+      "candidate_fingerprint": "5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "build_id": "rudder-server-foundation-debug-2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a-source-5873b34b-dirty-5b2b7ac8",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-2022af954-preflight-d6f6bb0c-source-5873b34b-dirty-5b2b7ac8",
+      "data_id": "rust-branding-real-entry-38958",
+      "packet_version": "v10"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "build_id": "rudder-server-foundation-debug-2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a-source-5873b34b-dirty-5b2b7ac8",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-2022af954-preflight-d6f6bb0c-source-5873b34b-dirty-5b2b7ac8",
+      "data_id": "rust-branding-real-entry-38958",
+      "packet_version": "v10"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "build_id": "rudder-server-foundation-debug-2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a-source-5873b34b-dirty-5b2b7ac8",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-2022af954-preflight-d6f6bb0c-source-5873b34b-dirty-5b2b7ac8",
+      "data_id": "rust-branding-real-entry-38958",
+      "packet_version": "v10"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      "origin/main advanced to b4c2f46966d080a18b8ce8d9545e427aa5b50ced with the 0.7.24 release, organization intelligence defaults/routes/services, and native Cargo.lock changes; merge candidate 508978ce9f309ac537eb57b03e54b8b44ade8b25 was created in /private/tmp/rudder-rust-main-reconcile-20260922-v2.",
+      "The reconciliation corrected the release compatibility matrix to the 0167 candidate fingerprint, restored the shipped 0.7.23 fixture identity, and fixed the postgres TransactionSql test typing; all v8 candidate, runtime, reviewer, and verifier receipts are invalidated and were rebound to this v9 packet.",
+      "The current HEAD 5873b34bc3522807248aa179da22aa7a9ab7ca9a contains the durable candidate records and keeps the implementation tree content-equivalent to the 508978ce9f309ac537eb57b03e54b8b44ade8b25 implementation ancestor; the active source and dirty fingerprint are rebound below.",
+      "The current real-entry probe uses disposable data identity disposable_embedded_postgres_rust_v9_exact_2c3cf4c1_rerun and explicitly fixed foundation/preflight artifacts; it is local-only and does not authorize a production canary or owner handoff.",
+      "The first exact rerun was invalidated because its negative fixture could not start under the bridge's minimal environment; an absolute-node negative fixture then proved receipt rejection and is recorded in the durable probe artifact.",
+      "The v9 member-directory packet was rebound to v10 because the current slice adds organization branding mutation authority, immutable receipt/outbox recovery, the real branding entry probe, and a type-safe postgres-js outbox result normalization; all previous v9 receipts are invalidated.",
+      "The current branding real-entry probe v2 uses disposable data identity rust-branding-real-entry-38958, current artifacts 2022af95 and d6f6bb0c, current migration manifest 169 journal entries/171 SQL files, and is local-only."
+    ],
+    "invalidated_receipts": [
+      "pre-v8 stage and verifier receipts tied to older source fingerprints",
+      "v8 receipts tied to source 3e1eedcdde626a0c22363a33774741ed11cd9082 and fingerprint 92b37b07d5419f9c60e07b2d1b2a8047ab0d0bf0ee4b08dc2ec66f51405e0969",
+      "v9 receipts tied to fingerprint b329289d7f70e8debb1edb38d691271041ad4ef07d29f63ea3089343c204ac25 and the member-directory-only acceptance packet",
+      "v10 receipts tied to fingerprint 6067376f97430ae8763e31fda4fecf5c9d8dba9ae5d3498602de87ff5c8dc71e and the first branding probe artifact"
+    ]
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "branch_refs": [
+      "refs/heads/codex/rudder-full-rust-backend-completion-20260921@5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "source-freeze@508978ce9f309ac537eb57b03e54b8b44ade8b25",
+      "refs/remotes/origin/main@b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+      "refs/heads/main@c54001819ca38079b627994557db0a18ed278fc0"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss",
+    "patch_tree_sha": "f972acbfc4807b20c9a2eece1f5a3f4f0a4d3e39",
+    "expected_old_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "The original /Users/zeeland/.codex/worktrees/7b2a/rudder-oss checkout retained its pre-existing staged and unstaged changes; this isolated worktree was used for all migration edits and probes."
+    ],
+    "index_fingerprint_before": "f1e12909fba48f44c5bd0e2221dca6480c57dc91bd7cac471af13d5a3b131c08",
+    "index_fingerprint_after": "f1e12909fba48f44c5bd0e2221dca6480c57dc91bd7cac471af13d5a3b131c08",
+    "worktree_fingerprint_before": "not_captured_before_current_turn",
+    "worktree_fingerprint_after": "abead83e3e10d5f72b995d40b2259e32620f259e22c30ec1dec1a3f0db57454b",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "No reset, checkout, or live-index replacement was used on the original dirty checkout.",
+      "The migration worktree index was not replaced; all source edits and evidence records remain in the isolated migration worktree and the original dirty checkout was not touched.",
+      "The disposable branding probe home was isolated from user data; its durable identity is rust-branding-real-entry-38958 and it was disposed after the probe."
+    ]
+  },
+  "evidence": {
+    "candidate_source_tree": "f972acbfc4807b20c9a2eece1f5a3f4f0a4d3e39",
+    "durable_probe_artifact": "doc/plans/artifacts/2026-09-22-rudder-branding-real-entry-probe-v2.json",
+    "prior_supporting_probe_artifact": "doc/plans/artifacts/2026-09-22-rudder-rust-v9-real-entry-probe.json",
+    "runtime_probe": {
+      "home": "disposed disposable home for rust-branding-real-entry-38958",
+      "instance_id": "rust-branding-real-entry-38958",
+      "server_url": "http://127.0.0.1:62821",
+      "embedded_postgres_port": 62822,
+      "health_http_status": 200,
+      "health_payload": "status=ok; version=0.7.24; deploymentMode=local_trusted; authReady=true",
+      "migration_summary": "Rust migration preflight bootstrap then current; 169 journal entries; 171 SQL files; fingerprint 6df10b65da8034a116003108d9951d1e119b31be0e979f09874406f87af417da",
+      "organization_id": "84f7d2b8-f721-4951-b03e-b7ce213f6380",
+      "branding_http_status": 200,
+      "branding_body": "{brandColor:#abcdef}",
+      "authority_receipt": "required bridge; rust_invoked=true; response_authority=rust; fallback_reason=null; old_authority_invoked=false; status=200",
+      "database_readback": "brand_color=#abcdef; owner=rust; mutation_version=1; fence_epoch=1; receipt=applied; activity=organization.branding_updated; outbox=pending/0",
+      "restart_replay": "same data identity; HTTP 200; same brandColor; no duplicate receipt or activity",
+      "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+      "shutdown_observation": "Node server, Actix child, embedded PostgreSQL, port 62821, and port 62822 disposed after probe"
+    },
+    "supporting_checks": [
+      "Actix foundation black-box: 10/10 PASS",
+      "Bridge/config/branding/outbox/startup Vitest: 51/51 PASS",
+      "Server, DB, CLI, and agent-runtime-utils typechecks plus changed import lint: PASS",
+      "Rust D1 PostgreSQL: 25/25 PASS with test-threads=1; Actix foundation black-box: 10/10 PASS",
+      "MCP contract check, git diff check, and cargo fmt: PASS",
+      "YAML parse, git diff check, and cargo fmt: PASS"
+    ],
+    "known_limits": [
+      "This probe is local disposable real-entry evidence only; it is not a production canary.",
+      "Node remains the supported HTTP listener and migration authority; Actix is a private route-scoped bridge and default mode remains off.",
+      "D1 activation is blocked by unfenced legacy writers, signed session/revocation authority, audit/recovery boundary, and default listener selection.",
+      "CLI/MCP parity, identity, analytics collector, managed MCP, embedded PostgreSQL lifecycle ownership, update/recovery, and provider adapters remain incomplete."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

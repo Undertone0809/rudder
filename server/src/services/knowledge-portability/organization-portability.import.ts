@@ -15,7 +15,7 @@ import {
   PROJECT_STATUSES
 } from "@rudderhq/shared";
 import path from "node:path";
-import { notFound, unprocessable } from "../../errors.js";
+import { conflict, notFound, unprocessable } from "../../errors.js";
 import type { StorageService } from "../../storage/types.js";
 import { accessService } from "../access.js";
 import { agentInstructionsService } from "../agent-instructions.js";
@@ -65,16 +65,33 @@ type ImportContext = {
   issues: ReturnType<typeof issueService>;
   organizationSkills: ReturnType<typeof organizationSkillService>;
   buildPreview: ReturnType<typeof createOrganizationPortabilityPreviewHandlers>["buildPreview"];
+  organizationBrandingMode?: "off" | "shadow" | "required";
 };
 
 export function createOrganizationPortabilityImportHandlers(context: ImportContext) {
-  const { db, storage, access, organizations, agents, assetRecords, instructions, projects, issues, organizationSkills, buildPreview } = context;
+  const {
+    db,
+    storage,
+    access,
+    organizations,
+    agents,
+    assetRecords,
+    instructions,
+    projects,
+    issues,
+    organizationSkills,
+    buildPreview,
+    organizationBrandingMode,
+  } = context;
 
   async function importBundle(
     input: OrganizationPortabilityImport,
     actorUserId: string | null | undefined,
     options?: ImportBehaviorOptions,
   ): Promise<OrganizationPortabilityImportResult> {
+    if (organizationBrandingMode === "required" && input.include?.organization !== false) {
+      throw conflict("Organization portability imports that include organization settings are unavailable while Rust branding authority is required; import organization data separately from branding");
+    }
     const mode = resolveImportMode(options);
     const plan = await buildPreview(input, options);
     if (plan.preview.errors.length > 0) {

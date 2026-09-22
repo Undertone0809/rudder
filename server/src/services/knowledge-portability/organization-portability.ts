@@ -15,7 +15,11 @@ import { createOrganizationPortabilityPreviewHandlers } from "./organization-por
 export type { OrganizationPortabilityExportOptions } from "./organization-portability.core.js";
 export { parseGitHubSourceUrl } from "./organization-portability.package.js";
 
-export function organizationPortabilityService(db: Db, storage?: StorageService) {
+export function organizationPortabilityService(
+  db: Db,
+  storage?: StorageService,
+  options: { organizationBrandingMode?: "off" | "shadow" | "required" } = {},
+) {
   const organizations = organizationService(db);
   const agents = agentService(db);
   const assetRecords = assetService(db);
@@ -52,6 +56,7 @@ export function organizationPortabilityService(db: Db, storage?: StorageService)
     issues,
     organizationSkills,
     buildPreview: previewHandlers.buildPreview,
+    organizationBrandingMode: options.organizationBrandingMode,
   });
 
   return {

@@ -48,6 +48,7 @@ operating-practices guide for operating behavior:
 | `rudder_agent_me` | `rudder agent me` | Show the authenticated agent identity and budget. | no | no | no | no |
 | `rudder_agent_inbox` | `rudder agent inbox` | List the compact assignee and reviewer work inbox for the authenticated agent. | no | no | no | no |
 | `rudder_organization_members_list` | `rudder org members --org-id <id> [--query <text>] [--type <human|agent|all>] [--limit <n>] [--cursor <cursor>]` | List active visible human and agent members in the authenticated organization. | no | required | no | no |
+| `rudder_organization_brand_color_update` | `rudder org brand-color update --org-id <id> --brand-color <hex> --idempotency-key <key>` | Update the authenticated organization's brand color. | yes | required | no | attached when available |
 | `rudder_agent_capabilities` | `rudder agent capabilities` | List the stable Rudder agent command contract. | no | no | no | no |
 | `rudder_agent_update` | `rudder agent update [agent-id] [--title <title>] [--description <text>]` | Update an agent's identity fields; defaults to the authenticated agent. | yes | no | no | attached when available |
 | `rudder_agent_skills_create` | `rudder agent skills create [agent-id] --name <name> [--enable]` | Create an agent-private skill package under AGENT_HOME/skills. | yes | no | no | attached when available |
@@ -75,7 +76,7 @@ operating-practices guide for operating behavior:
 | `rudder_project_list` | `rudder project list --org-id <id>` | List projects in an organization. | no | required | no | no |
 | `rudder_project_get` | `rudder project get <project-id-or-shortname> [--org-id <id>]` | Read one project by ID or shortname. | no | no | no | no |
 | `rudder_project_create` | `rudder project create --org-id <id> --name <name>` | Create a project in the organization. | yes | required | no | attached when available |
-| `rudder_project_update` | `rudder project update <project-id-or-shortname> [--org-id <id>]` | Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. | yes | no | no | attached when available |
+| `rudder_project_update` | `rudder project update <project-id-or-shortname> [--org-id <id>] [--idempotency-key <key>]` | Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt. | yes | no | no | attached when available |
 | `rudder_user_activity` | `rudder user activity --user me --since today --json` | Read a user-centered activity ledger with safe excerpts and provenance across chats, issue comments, approval comments, and user actor activity. | no | required | no | no |
 | `rudder_library_file_list` | `rudder library file list [directory]` | List Library files and folders; file rows include `libraryEntryId` when a strong reference can be generated. | no | required | no | no |
 | `rudder_library_file_get` | `rudder library file get <path>` | Fallback read when local filesystem access is unavailable; JSON includes `mentionHref` and `markdownLink`. | no | required | no | no |

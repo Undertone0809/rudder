@@ -56,6 +56,10 @@ export interface RudderAppOptions {
   databaseUrl?: string;
   /** Transitional private Actix bridge mode for independently connected slices. */
   rustFoundationMode?: RustFoundationMode;
+  /** Transitional private Actix organization-branding write mode. */
+  rustOrganizationBrandingMode?: RustFoundationMode;
+  /** Transitional private Actix Project-Goal replacement write mode. */
+  rustProjectGoalSetMode?: RustFoundationMode;
   rustFoundationBinaryPath?: string;
   rustFoundationActorEnvelopeKey?: string;
   hostVersion?: string;

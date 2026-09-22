@@ -13,10 +13,12 @@ function toLiveEvent(input: {
   orgId: string;
   type: LiveEventType;
   payload?: LiveEventPayload;
+  dedupeKey?: string;
 }): LiveEvent {
   nextEventId += 1;
   return {
     id: nextEventId,
+    ...(input.dedupeKey ? { dedupeKey: input.dedupeKey } : {}),
     orgId: input.orgId,
     type: input.type,
     createdAt: new Date().toISOString(),
@@ -28,6 +30,7 @@ export function publishLiveEvent(input: {
   orgId: string;
   type: LiveEventType;
   payload?: LiveEventPayload;
+  dedupeKey?: string;
 }) {
   const event = toLiveEvent(input);
   emitter.emit(input.orgId, event);
@@ -37,8 +40,14 @@ export function publishLiveEvent(input: {
 export function publishGlobalLiveEvent(input: {
   type: LiveEventType;
   payload?: LiveEventPayload;
+  dedupeKey?: string;
 }) {
-  const event = toLiveEvent({ orgId: "*", type: input.type, payload: input.payload });
+  const event = toLiveEvent({
+    orgId: "*",
+    type: input.type,
+    payload: input.payload,
+    dedupeKey: input.dedupeKey,
+  });
   emitter.emit("*", event);
   return event;
 }

@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, createHmac, randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
@@ -13,6 +13,8 @@ export type RustFoundationMode = "off" | "shadow" | "required";
 export type RustFoundationBridgeOptions = {
   databaseUrl: string;
   mode?: RustFoundationMode;
+  organizationBrandingMode?: RustFoundationMode;
+  projectGoalSetMode?: RustFoundationMode;
   binaryPath?: string;
   actorEnvelopeKey?: string;
   requestTimeoutMs?: number;
@@ -26,8 +28,24 @@ export type RustFoundationResponse = {
 
 export interface RustFoundationBridge {
   readonly mode: RustFoundationMode;
+  readonly organizationBrandingMode: RustFoundationMode;
+  readonly projectGoalSetMode: RustFoundationMode;
+  readonly requiresStartup: boolean;
   start(): Promise<void>;
   memberDirectory(req: Request, orgId: string): Promise<RustFoundationResponse>;
+  organizationBranding(
+    req: Request,
+    orgId: string,
+    body: Buffer,
+    requestPath?: string,
+  ): Promise<RustFoundationResponse>;
+  projectGoalSet(
+    req: Request,
+    orgId: string,
+    projectId: string,
+    body: Buffer,
+    requestPath?: string,
+  ): Promise<RustFoundationResponse>;
   close(): Promise<void>;
 }
 
@@ -65,6 +83,8 @@ type BridgeLifecycleState = "idle" | "starting" | "ready" | "closing";
 
 const ACTOR_ENVELOPE_AUDIENCE = "rudder-server-foundation";
 const ACTOR_ENVELOPE_ACTION = "organization.members.directory.read";
+const ORGANIZATION_BRANDING_ACTION = "organization.branding.update";
+const PROJECT_GOAL_SET_ACTION = "project.goal_set.replace";
 const ACTOR_ENVELOPE_PROTOCOL_VERSION = 2;
 const ACTOR_ENVELOPE_SCHEMA = "rudder.actor-envelope.v2";
 const ACTOR_ENVELOPE_LIFETIME_SECONDS = 60;
@@ -77,12 +97,12 @@ function debugBridge(message: string) {
   }
 }
 
-function configuredMode(value: string | undefined): RustFoundationMode {
+function configuredMode(value: string | undefined, envName: string): RustFoundationMode {
   const mode = value?.trim() || "off";
   if (mode === "off" || mode === "shadow" || mode === "required") return mode;
   throw new RustFoundationBridgeError(
     "invalid_mode",
-    `RUDDER_RUST_MEMBER_DIRECTORY_MODE must be off, shadow, or required; received ${mode}`,
+    `${envName} must be off, shadow, or required; received ${mode}`,
   );
 }
 
@@ -122,6 +142,7 @@ function canonicalSigningBytes(input: {
   bodySha256: string;
   requestId: string;
   nonce: string;
+  idempotencyKey?: string | null;
   issuedAt: number;
   expiresAt: number;
 }) {
@@ -144,6 +165,9 @@ function canonicalSigningBytes(input: {
   ]) {
     appendLengthPrefixed(output, field);
   }
+  if (input.idempotencyKey) {
+    appendLengthPrefixed(output, input.idempotencyKey);
+  }
   for (const value of [input.authEpoch, input.issuedAt, input.expiresAt]) {
     const encoded = Buffer.allocUnsafe(8);
     encoded.writeBigUInt64BE(BigInt(value));
@@ -163,6 +187,7 @@ export function createRustActorEnvelope(input: {
   nowSeconds?: number;
   requestId?: string;
   nonce?: string;
+  idempotencyKey?: string;
 }) {
   const now = input.nowSeconds ?? Math.floor(Date.now() / 1000);
   const requestId = input.requestId ?? randomUUID();
@@ -185,6 +210,7 @@ export function createRustActorEnvelope(input: {
     bodySha256: createHash("sha256").update(input.body).digest("hex"),
     requestId,
     nonce,
+    idempotencyKey: input.idempotencyKey ?? null,
     issuedAt: Math.max(1, now - 1),
     expiresAt: now + ACTOR_ENVELOPE_LIFETIME_SECONDS,
   };
@@ -203,9 +229,11 @@ function isLoopbackBoundAddress(value: string) {
 }
 
 function candidateBinaryPaths(configured: string | undefined) {
+  const explicit = configured?.trim();
+  if (explicit) return [explicit];
+
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   return [
-    configured?.trim(),
     join(repositoryRoot, "native", "target", "debug", "rudder-server-foundation"),
     join(repositoryRoot, "native", "target", "release", "rudder-server-foundation"),
   ].filter((value): value is string => Boolean(value));
@@ -226,7 +254,9 @@ function createFoundationChildEnvironment(input: {
 function resolveBinaryPath(configured: string | undefined) {
   const candidate = candidateBinaryPaths(configured).find((value) => {
     try {
-      return existsSync(value) && statSync(value).isFile();
+      if (!existsSync(value) || !statSync(value).isFile()) return false;
+      accessSync(value, process.platform === "win32" ? fsConstants.F_OK : fsConstants.X_OK);
+      return true;
     } catch {
       return false;
     }
@@ -280,7 +310,21 @@ async function stopChild(child: RustFoundationChild, spawnFailed = false) {
 }
 
 export function createRustFoundationBridge(options: RustFoundationBridgeOptions): RustFoundationBridge {
-  const mode = configuredMode(options.mode ?? process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE);
+  const mode = configuredMode(
+    options.mode ?? process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE,
+    "RUDDER_RUST_MEMBER_DIRECTORY_MODE",
+  );
+  const organizationBrandingMode = configuredMode(
+    options.organizationBrandingMode ?? process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE,
+    "RUDDER_RUST_ORGANIZATION_BRANDING_MODE",
+  );
+  const projectGoalSetMode = configuredMode(
+    options.projectGoalSetMode ?? process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE,
+    "RUDDER_RUST_PROJECT_GOAL_SET_MODE",
+  );
+  const requiresStartup = mode === "required"
+    || organizationBrandingMode === "required"
+    || projectGoalSetMode === "required";
   let child: RustFoundationChild | null = null;
   let baseUrl: string | null = null;
   let lifecycleState: BridgeLifecycleState = "idle";
@@ -435,6 +479,9 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
 
   return {
     mode,
+    organizationBrandingMode,
+    projectGoalSetMode,
+    requiresStartup,
     start: ensureStarted,
     async memberDirectory(req, orgId) {
       if (mode === "off") {
@@ -473,6 +520,108 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
         status: response.status,
         contentType: response.headers.get("content-type") ?? "application/json",
         body: Buffer.from(await response.arrayBuffer()),
+      } satisfies RustFoundationResponse;
+    },
+    async organizationBranding(req, orgId, body, requestPath = req.originalUrl) {
+      if (organizationBrandingMode === "off") {
+        throw new RustFoundationBridgeError("request_failed", "Rust foundation organization branding bridge is disabled");
+      }
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const secret = options.actorEnvelopeKey?.trim() || process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim();
+      if (!secret) throw new RustFoundationBridgeError("actor_envelope_unconfigured", "Rust foundation actor envelope key is not configured");
+      const requestId = randomUUID();
+      const idempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
+      if (!idempotencyKey) {
+        throw new RustFoundationBridgeError("request_failed", "Rust organization branding requires x-rudder-idempotency-key");
+      }
+      const envelope = createRustActorEnvelope({
+        actor: req.actor,
+        organizationId: orgId,
+        method: "PATCH",
+        path: requestPath,
+        action: ORGANIZATION_BRANDING_ACTION,
+        body,
+        secret,
+        requestId,
+        idempotencyKey,
+      });
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "PATCH",
+          headers: {
+            "content-type": req.header("content-type") ?? "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+            "x-rudder-idempotency-key": idempotencyKey,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
+      }
+      const responseBody = Buffer.from(await response.arrayBuffer());
+      debugBridge(`organization-branding response status=${response.status} body=${responseBody.toString("utf8").slice(0, 512)}`);
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? "application/json",
+        body: responseBody,
+      } satisfies RustFoundationResponse;
+    },
+    async projectGoalSet(
+      req,
+      orgId,
+      projectId,
+      body,
+      requestPath = `/api/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectId)}/goal-set`,
+    ) {
+      if (projectGoalSetMode !== "required") {
+        throw new RustFoundationBridgeError("request_failed", "Rust foundation Project-Goal writes require required mode");
+      }
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const secret = options.actorEnvelopeKey?.trim() || process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim();
+      if (!secret) throw new RustFoundationBridgeError("actor_envelope_unconfigured", "Rust foundation actor envelope key is not configured");
+      const requestId = randomUUID();
+      const idempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
+      if (!idempotencyKey) {
+        throw new RustFoundationBridgeError("request_failed", "Rust Project-Goal replacement requires x-rudder-idempotency-key");
+      }
+      const envelope = createRustActorEnvelope({
+        actor: req.actor,
+        organizationId: orgId,
+        method: "PATCH",
+        path: requestPath,
+        action: PROJECT_GOAL_SET_ACTION,
+        body,
+        secret,
+        requestId,
+        idempotencyKey,
+      });
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "PATCH",
+          headers: {
+            "content-type": req.header("content-type") ?? "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+            "x-rudder-idempotency-key": idempotencyKey,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
+      }
+      const responseBody = Buffer.from(await response.arrayBuffer());
+      debugBridge(`project-goal response status=${response.status} body=${responseBody.toString("utf8").slice(0, 512)}`);
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? "application/json",
+        body: responseBody,
       } satisfies RustFoundationResponse;
     },
     close,

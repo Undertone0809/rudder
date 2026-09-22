@@ -180,10 +180,18 @@ each slice candidate, not only at final integration.
   executable step must name the exact slice that resumes after reconciliation.
 
 The latest observed Main ref at this update is
-`c67ce0f00bb78e323068caac4a9ae349f863c9da`, six commits after the migration
-base `c54001819ca38079b627994557db0a18ed278fc0`. This observation is not a
-merge or a completion claim; it is a synchronization input for the next exact
-candidate.
+`d1f55c5c180901392804178aa44b3ba3f077a6cb`, fifteen commits after the migration
+base `c54001819ca38079b627994557db0a18ed278fc0`. Since the previous
+`b4c2f46966d080a18b8ce8d9545e427aa5b50ced` observation, Main changed the
+Desktop update/quit handoff, extracted the Desktop update child launcher, and
+updated the associated UI and E2E states. Those changes were reconciled in the
+isolated snapshot worktree `/private/tmp/rudder-rust-main-reconcile-20260922-v4`
+(`ef71a1462a5c7998e361fe2193e585318a6a9f91`, tree
+`fb968231c160d5ff75095cf89a336f43e035ef86`) over the migration checkpoint
+`5873b34bc3522807248aa179da22aa7a9ab7ca9a`. The current dirty source
+candidate is rebound to that reconciled content; its durable records are the
+active source of truth. This observation is not a merge or a completion claim;
+it is the synchronization input for the v6 exact-candidate receipts.
 
 ## Current checkpoint (2026-09-22)
 
@@ -202,6 +210,33 @@ workspace/runtime, and background effect writers remain unresolved. The D1
 route therefore remains private and the three completion claims remain false
 until the remaining writers, signed bridge, supported listener, audit/recovery
 boundary, and installed workflow are independently verified.
+
+## Incremental real-entry checkpoint (2026-09-22)
+
+The scalar organization `brandColor` mutation has now been connected through a
+disposable real startup path with `RUDDER_RUST_ORGANIZATION_BRANDING_MODE=required`:
+the supported Node API accepted the authenticated board request, the private
+Actix bridge invoked SQLx, PostgreSQL readback observed the Rust owner/version/
+epoch, immutable receipt, activity, and retryable outbox row, and a complete
+server/database restart replayed the same idempotency key without duplicating
+the receipt or activity. The exact evidence is recorded in
+`doc/plans/artifacts/2026-09-22-rudder-branding-real-entry-probe-v2.json`.
+
+This changes the capability ledger for organization branding to
+`real_entry_connected`; it does not make branding the default installed
+authority, retire every legacy writer, or activate the broader D1 owner. The
+Project-Goal route remains private until its signer, competing-writer fence,
+CLI/MCP parity, and independent verifier gates are complete. The migration
+continues to refresh `origin/main` before each candidate and keeps
+`implementation_complete`, `release_ready`, and `production_verified` false.
+
+The v6 Project-Goal probe was rerun after the latest Main reconciliation using
+fresh Rust foundation and migration-preflight binaries. It passed the same
+supported Node API, private Actix/SQLx, direct CLI/MCP, explicit allowlist,
+unlisted fail-closed, idempotency, cross-organization, clear-all, deletion
+fence, and restart/replay workflow. The probe is still disposable local
+evidence only; it does not make the listener, migration authority, old-writer
+retirement, release, or production claims true.
 
 ## Explicit scope boundary
 

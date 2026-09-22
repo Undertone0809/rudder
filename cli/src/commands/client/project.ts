@@ -37,6 +37,7 @@ interface ProjectUpdateOptions extends BaseClientOptions {
   targetDate?: string;
   color?: string;
   archivedAt?: string;
+  idempotencyKey?: string;
 }
 
 export function registerProjectCommands(program: Command): void {
@@ -143,6 +144,7 @@ export function registerProjectCommands(program: Command): void {
       .option("--target-date <date>", "Target date")
       .option("--color <value>", "Project color or supported gradient token")
       .option("--archived-at <iso8601|null>", "Set archivedAt timestamp or literal 'null'")
+      .option("--idempotency-key <key>", "Stable key for safe Project-Goal retry")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
           {
@@ -173,7 +175,14 @@ export function registerProjectCommands(program: Command): void {
             color: opts.color,
             archivedAt: parseNullableOption(opts.archivedAt),
           });
-          const updated = await ctx.api.patch<Project>(projectPath(projectRef, ctx.orgId), payload);
+          const hasGoalMutation = opts.goalIds !== undefined || opts.goalId !== undefined;
+          const headers = hasGoalMutation
+            ? {
+              "x-rudder-idempotency-key": requiredProjectGoalIdempotencyKey(opts.idempotencyKey),
+              "x-rudder-required-authority": "rust",
+            }
+            : undefined;
+          const updated = await ctx.api.patch<Project>(projectPath(projectRef, ctx.orgId), payload, headers ? { headers } : undefined);
           printOutput(updated, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);
@@ -184,12 +193,18 @@ export function registerProjectCommands(program: Command): void {
 }
 
 function parseCsv(value: string | undefined): string[] | undefined {
-  if (!value) return undefined;
+  if (value === undefined) return undefined;
   const items = value
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-  return items.length > 0 ? items : undefined;
+  return items;
+}
+
+function requiredProjectGoalIdempotencyKey(value: string | undefined): string {
+  const key = value?.trim();
+  if (!key) throw new Error("--idempotency-key is required when updating Project-Goal links");
+  return key;
 }
 
 function parseNullableOption(value: string | undefined): string | null | undefined {

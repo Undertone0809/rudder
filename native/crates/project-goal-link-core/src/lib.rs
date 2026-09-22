@@ -393,6 +393,7 @@ pub struct ProjectGoalSetReplacementCommand {
     expected_version: u64,
     fence_epoch: u64,
     idempotency_key: String,
+    run_id: Option<String>,
 }
 
 impl ProjectGoalSetReplacementCommand {
@@ -407,7 +408,18 @@ impl ProjectGoalSetReplacementCommand {
             expected_version,
             fence_epoch,
             idempotency_key: idempotency_key.into(),
+            run_id: None,
         }
+    }
+
+    /// Bind optional agent-run provenance after the authenticated request has
+    /// been checked against the current organization and agent.
+    pub fn with_run_id(mut self, run_id: Option<String>) -> Result<Self, LinkMutationError> {
+        if let Some(run_id) = run_id.as_deref() {
+            validate_identifier(run_id)?;
+        }
+        self.run_id = run_id;
+        Ok(self)
     }
 
     pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
@@ -448,6 +460,10 @@ impl<'a> ProjectGoalSetReplacementCommandView<'a> {
 
     pub fn idempotency_key(&self) -> &str {
         &self.command.idempotency_key
+    }
+
+    pub fn run_id(&self) -> Option<&str> {
+        self.command.run_id.as_deref()
     }
 
     pub fn fingerprint(&self) -> Result<String, LinkMutationError> {
@@ -1513,6 +1529,13 @@ fn canonical_goal_set_fingerprint_bytes(command: &ProjectGoalSetReplacementComma
         command.idempotency_key.as_str(),
     ] {
         append_length_prefixed(&mut output, field);
+    }
+    match command.run_id.as_deref() {
+        Some(run_id) => {
+            append_bool(&mut output, true);
+            append_length_prefixed(&mut output, run_id);
+        }
+        None => append_bool(&mut output, false),
     }
     output.extend_from_slice(&command.expected_version.to_be_bytes());
     output.extend_from_slice(&command.fence_epoch.to_be_bytes());

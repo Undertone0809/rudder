@@ -9,26 +9,28 @@ integration_policy:
   constraints: [no_production_dual_write, no_silent_node_fallback, no_unrestricted_traffic_switch, no_stable_publication_without_release_gate]
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
-  latest_observed_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
-  commits_ahead_of_migration_base: 11
+  latest_observed_main_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
+  commits_ahead_of_migration_base: 15
   state: synced_and_reconciled_current_candidate
-  changed_path_classes: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-  changed_path_assessment: organization_intelligence_and_release_contracts_reconciled; exact candidate runtime evidence requires fresh build and probe
+  changed_path_classes: [desktop_update_quit_handoff, desktop_update_child_launcher, desktop_update_ui_status_live_run, desktop_update_e2e]
+  changed_path_assessment: desktop_update_and_quit_contracts_reconciled; exact Project-Goal candidate runtime and packet evidence rebound after current Main drift
   rule: main_contract_drift_invalidates_affected_slice_receipts_even_when_rust_sources_are_unchanged
   reconciliation_receipt:
-    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v2
-    migration_checkpoint_sha: 4ec7f0990360bea7a89c516ce9c2bedd0577b84f
-    resulting_candidate_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
-    changed_paths_rechecked: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-    compatibility_decision: release_matrix_rebased_to_0167_candidate_and_0163_shipped_fixture; db_transaction_test_adapted_to_postgres_3_4_8_types; real_entry_and_default_path_evidence_requires_rebind
+    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v4
+    previous_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
+    migration_checkpoint_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+    resulting_snapshot_sha: ef71a1462a5c7998e361fe2193e585318a6a9f91
+    resulting_snapshot_tree: fb968231c160d5ff75095cf89a336f43e035ef86
+    changed_paths_rechecked: [desktop/src/desktop-quit-flow.test.ts, desktop/src/desktop-quit-flow.ts, desktop/src/desktop-update-flow.test.ts, desktop/src/desktop-update-flow.ts, desktop/src/desktop-update-launch.ts, tests/e2e/desktop-update-prompt.spec.ts, ui/src/components/DesktopUpdatePromptBridge.test.tsx, ui/src/components/DesktopUpdatePromptBridge.tsx, ui/src/components/DesktopUpdateStatusCard.test.tsx, ui/src/components/DesktopUpdateStatusCard.tsx, ui/src/components/LiveRunWidget.test.tsx, ui/src/components/LiveRunWidget.tsx]
+    compatibility_decision: desktop_update_and_quit_behavior_preserved; Rust server foundation and migration-preflight staging remains an explicit migration-owned addition; rebuild_exact_candidate_and_rebind_real_entry_receipts
     old_receipts: invalidated
 source:
-  candidate_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
-  candidate_tree: a31267ba2e619b4169a10fed778bb6875447b397
-  dirty_fingerprint: b329289d7f70e8debb1edb38d691271041ad4ef07d29f63ea3089343c204ac25
-  dirty_fingerprint_status: exact_clean_candidate_source_diff
-  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_all_durable_plan_records_and_candidate_packets
-  candidate_state: exact_candidate_post_main_reconciliation_pending_real_probe_and_stage_review
+  candidate_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+  candidate_tree: fdbb1b03349290a8b41b050ccb63848575242dda
+  dirty_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
+  dirty_fingerprint_status: exact_dirty_candidate_source_diff_with_project_goal_probe_v9_signed_idempotency_binding_complete_negative_coverage
+  dirty_fingerprint_scope: sorted_current_worktree_diff_and_untracked_source_paths_excluding_durable_plan_records_packets_and_artifacts
+  candidate_state: exact_project_goal_candidate_v9_post_main_drift_signed_idempotency_allowlist_and_complete_negative_real_probe_passed_stage_review_pending
   counts_status: current_scan_refreshed; semantic_reconciliation_blocked_by_unfenced_writers
   current_refresh: doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
   current_scan_counts:
@@ -38,8 +40,8 @@ source:
     transaction_scan_hits: 221
     production_transaction_source_files: 51
     production_transaction_scan_hits: 200
-    sql_migration_files: 170
-    migration_journal_entries: 168
+    sql_migration_files: 172
+    migration_journal_entries: 170
     cli_capability_entries: 118
     cli_agent_v1_entries: 107
     cli_compat_entries: 11
@@ -63,20 +65,15 @@ capability_state_fields:
   - default_path_verified
   - old_authority_retired
 stage_review:
-  verdict: needs_more_evidence
+  verdict: accept
   level: stage_verdict
-  source: current_candidate_writer_audit_and_prior_independent_stage_review_2026-09-21
-  receipt_state: invalidated_by_main_drift_and_live_candidate_changes
+  source: independent_reviewer_Archimedes
+  agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3
+  receipt_state: current_v15_stage_accept
   blocking_findings:
-    - id: P0-main-drift
-      summary: origin/main advanced to b4c2f46966d080a18b8ce8d9545e427aa5b50ced; the 0.7.24 release and organization intelligence contract were reconciled, and all pre-reconciliation receipts remain invalid.
-      required_proof: Current candidate 508978ce9f309ac537eb57b03e54b8b44ade8b25 must receive fresh build, real-entry probe, stage review, and independent verifier evidence.
     - id: P0-node-writer-fence
       summary: The current candidate fences the main organization, Project, resource, workspace, Issue-counter, cost, and all 17 Goal service writers, but the semantic audit still has Goal route/issue projection bypasses plus unfenced asset/logo, approval, budget/settings, portability, onboarding, and background writers.
       required_proof: Every remaining legacy writer locks and validates the owner/epoch before its first business write, or is drained and removed from the default path.
-    - id: P1-project-goal-replacement
-      summary: The complete Rust goal-set command and standalone Actix route now exist and private black-box tests pass, but the route is not connected to the supported Node bridge or installed/default listener and competing writers remain.
-      required_proof: Server-issued actor bridge, supported entry connection, exact default workflow, old-writer rejection, and verifier PASS on the current candidate.
     - id: P1-signed-actor-sequencing
       summary: D1 public writes cannot precede a request-bound signed actor envelope and fail-closed bridge.
       required_proof: Server-issued actor envelope, replay/substitution/revocation tests, and no client authority fields.
@@ -92,8 +89,20 @@ stage_review:
     - id: P1-writer-token
       summary: Selected Node/Rust D1 fences now validate owner/version/epoch and the persisted fencing token; all Goal service methods are covered, but route/issue bypasses and approval, comments, storage, portability, onboarding, automation, and background writers still lack the same fence.
       required_proof: Extend the token check to every competing writer or drain and retire each writer before activating a Rust owner.
+    - id: P1-branding-race-recovery
+      summary: Stage review accepted the bounded branding slice but requires exact-candidate real PostgreSQL owner/token race evidence and process/outbox recovery evidence before treating the slice as independently accepted.
+      required_proof: Independent verifier reproduces stale writer rejection, restart replay without duplicate receipt/activity, and retryable outbox/process recovery on the same candidate.
   d1_activation: blocked
   blockers_are_current: true
+verifier:
+  verdict: PASS
+  agent: independent_verifier_Sagan/01a0c903-973c-77a0-8116-8867ff5f43e5
+  candidate_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
+  source_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+  data_id: rust-project-goal-real-entry-68674
+  runtime: disposable_embedded_postgres_node_private_actix
+  evidence: fresh_independent_rerun_marker_RUST_PROJECT_GOAL_REAL_ENTRY_PASS_create_with_goals_201_mixed_update_409_signed_substitution_401_allowlist_rejection_unlisted_fail_closed_cli_0_mcp_0_restart_replay_200_conflict_409_cross_org_422_clear_all_200_final_receipts_4_activities_2_version_2_lease_current
+  final_review: accept_final_handoff_Archimedes_01a0c913-8d45-72e3-ad30-d3ebe87839f3
 authority_rows:
   - id: runtime.http_public_listener
     domain: server
@@ -142,10 +151,10 @@ authority_rows:
     cli_mcp: existing organization member-directory contract requires differential parity before connection
     fence: no business mutation fence; auth/session epoch and private bridge lease required
     status: private_verified
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: private Actix/PostgreSQL fixture passed 8/8; bridge path exists but exact supported/default startup and real TypeScript-to-Rust process evidence remain pending
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    evidence_status: private Actix/PostgreSQL fixture plus current Node required-mode bridge probe; fresh disposable startup, same-data restart, Rust-authoritative HTTP 200, old_authority_invoked=false, and child SIGINT cleanup passed; default mode remains off and CLI/MCP parity is pending
     retirement_gate: exact public/default route and CLI/MCP read parity with Node route, then Node read path retirement
-    next_action: complete bridge lifecycle/interop proof, sync Main, then run the same Node startup -> Actix -> SQLx workflow and record real_entry_connected separately from default_path_verified
+    next_action: obtain exact-candidate independent verifier PASS, then add CLI/MCP differential parity before default-path or Node read retirement
   - id: security.actor_envelope_and_private_bridge
     domain: identity_boundary
     authority_kind: rust_product_runtime
@@ -159,8 +168,8 @@ authority_rows:
     cli_mcp: runtime-owned identity injection; model cannot supply actor authority
     fence: auth/session epoch and bridge lease
     status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: private protocol tests only; no public request extractor
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    evidence_status: private protocol tests plus current Node required-mode member-directory request with a server-created signed envelope; full session/revocation authority and default path remain unverified
     retirement_gate: signed envelope and bridge negative tests pass for the exact public candidate
     next_action: phase_0 actor and session contract freeze
   - id: lifecycle.organization_mutation_state_provisioning
@@ -209,45 +218,45 @@ authority_rows:
     recovery: rollback on audit failure, idempotent replay, stale fence rejection
     cli_mcp: required parity inventory before activation
     fence: organization_mutation_state owner/epoch/fence
-    status: private_verified
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: native PostgreSQL tests 25/25 and Actix black-box branding workflow passed within 10/10; route is private/loopback and no production signer or supported startup bridge exists
+    status: real_entry_connected
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    evidence_status: native PostgreSQL 25/25 serial, Actix black-box 10/10, server branding/bridge/outbox checks 51/51, and disposable Node API -> private Actix -> SQLx branding PATCH/replay probe passed with owner/version/fence/receipt/activity/outbox readback; default path, full session authority, and old writer retirement remain unproven
     retirement_gate: real Actix/API path plus old writer fence/exit and verifier PASS
-    next_action: server-issued actor bridge, complete writer/token fence, then supported entry and independent verifier
+    next_action: current stage review and independent verifier PASS, then complete writer/token fence and default-path decision
   - id: domain.project_goal_link
     domain: organization_goal_project
     authority_kind: rust_product_runtime
     current_authority: node_drizzle
     rust_asset: native/crates/project-goal-link-core, native/crates/d1-persistence/src/links.rs, native/crates/d1-persistence/src/goal_sets.rs, and native/crates/server-foundation/src/lib.rs
-    public_entrypoint: private Actix PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set; supported API/CLI/MCP entry remains unconnected
+    public_entrypoint: Node supported Project API -> private Actix PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set; direct first-party CLI and MCP dispatch use the same HTTP authority
     auth_scope: actor and same-organization project/goal target
     transaction_boundary: project_goals, legacy primary projection, receipt, activity
     audit_side_effects: project/goal link activity and projection effects
     recovery: replay/conflict, cancel/detach, stale version/fence, rollback
-    cli_mcp: required parity inventory before activation
+    cli_mcp: Project-Goal CLI and MCP operations use the same HTTP authority; complete first-party Rust CLI/MCP migration remains open
     fence: organization_mutation_state owner/epoch/fence
-    status: private_verified
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: native PostgreSQL goal-set replacement and project-goal core tests pass; Actix black-box complete replacement/replay/conflict/target-isolation/audit-rollback/retry workflow passes within 10/10; supported startup and old-writer retirement remain unproven
+    status: real_entry_connected
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    evidence_status: native PostgreSQL goal-set replacement and project-goal core tests pass; exact v9 Node API -> Actix -> SQLx probe after d1f55c5 Main reconciliation plus signed idempotency binding, create-with-goals compatibility, mixed-update rejection, explicit allowlist rejection/success, unlisted fail-closed, direct CLI/MCP, replay/conflict/target-isolation/clear-all/restart checks pass; installed/default startup and old-writer retirement remain unproven
     retirement_gate: real Actix/API path plus all Node link writers fenced/retired
-    next_action: actor bridge, full writer/token inventory, supported entry, CLI/MCP parity where exposed, and old-writer negative test
+    next_action: commit and push v15, then actor/session bridge hardening, full writer/token inventory, and old-writer negative test
   - id: domain.project_goal_set_replacement
     domain: organization_goal_project
     authority_kind: rust_product_runtime
     current_authority: node_drizzle
     rust_asset: native/crates/d1-persistence/src/goal_sets.rs and native/crates/server-foundation/src/lib.rs
-    public_entrypoint: private Actix PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set
+    public_entrypoint: Node supported Project API plus direct CLI/MCP dispatch -> private Actix PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set
     auth_scope: server-issued actor envelope, same-organization project and complete goal set
     transaction_boundary: project_goals replacement, projects.goal_id projection, mutation state, receipt, activity
     audit_side_effects: project.updated activity and immutable idempotency receipt
     recovery: idempotent replay, conflict, audit rollback, retry, cross-organization rejection, owner rejection
-    cli_mcp: no Rust CLI/MCP operation connected yet; existing Node contract parity remains required
+    cli_mcp: Project-Goal CLI and MCP operations connected to the same HTTP authority; complete first-party Rust CLI/MCP migration remains open
     fence: organization_mutation_state owner/version/epoch/fence_token
-    status: private_verified
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: exact private Actix/PostgreSQL workflow passed 10/10 foundation suite; no supported startup, signer bridge, CLI/MCP, or old-writer retirement proof
+    status: real_entry_connected
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    evidence_status: exact v9 Node API -> private Actix -> SQLx workflow after latest Main reconciliation, explicit allowlist and unlisted fail-closed startup evidence, Node create-with-goals compatibility, mixed-update 409, signed idempotency-key/header comparison, direct CLI and MCP dispatch including direct MCP project creation, replay/conflict/cross-organization/clear-all/restart and final readback passed; installed/default startup, signed session authority, and old-writer retirement remain unproven
     retirement_gate: supported API/default path plus all project goal-set writers fenced/retired and verifier PASS
-    next_action: resolve P0 writer/token fence and signed actor bridge blockers
+    next_action: continue writer/token fence and signed actor/session bridge blockers after v15 commit
   - id: runtime.migration_journal_authority
     domain: database_lifecycle
     authority_kind: rust_product_runtime
@@ -261,8 +270,8 @@ authority_rows:
     cli_mcp: Rust preflight and bounded migration command; no Node migration fallback
     fence: migration runner lock and schema/journal epoch
     status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: private history/preflight tests; Node remains migration authority
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    evidence_status: current required-mode Node startup invoked Rust preflight before Node migration inspection and returned bootstrap/current with the exact 0.7.24 manifest; Node still applies migrations and remains authority
     retirement_gate: historical journal, upgrade, recovery and packaged startup matrix passes
     next_action: phase_0 migration/lifecycle inventory
   - id: runtime.first_party_cli_and_mcp_dispatch

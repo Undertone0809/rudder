@@ -1,0 +1,125 @@
+{
+  "schema": "rudder.rust-backend-completion.real-entry-probe/v1",
+  "recorded_at": "2026-09-22",
+  "scope": "v9 private member-directory authority receipt and Actix lifecycle probe",
+  "authorization": "disposable local runtime and embedded PostgreSQL only",
+  "candidate": {
+    "source_sha": "508978ce9f309ac537eb57b03e54b8b44ade8b25",
+    "source_tree": "a31267ba2e619b4169a10fed778bb6875447b397",
+    "plan_descendant": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "branch": "codex/rudder-full-rust-backend-completion-20260921"
+  },
+  "artifacts": {
+    "foundation_path": "/private/tmp/rudder-rust-v9-artifacts.EqTEHK/debug/rudder-server-foundation",
+    "foundation_sha256": "2c3cf4c15c4c2cba69650bd5027a91fc8bbd764bcfd28d6d364052ec098a9010",
+    "migration_preflight_path": "/private/tmp/rudder-rust-v9-artifacts.EqTEHK/debug/migration-preflight",
+    "migration_preflight_sha256": "a40b43964fd14e5f35d96d78fc6008a9da291f43ae1a5eea1f950629e8e68e6f",
+    "runtime": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug"
+  },
+  "data": {
+    "instance_id": "disposable_embedded_postgres_rust_v9_exact_2c3cf4c1_rerun",
+    "home": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-rust-v9-exact-home-rerun.KsDCkH",
+    "api_port": 59854,
+    "embedded_postgres_port": 59855,
+    "organization_id": "1c8155db-f387-47c0-badb-c8fd2c2640c3",
+    "disposal": "server, bridge children, embedded PostgreSQL, and temporary home disposed after probe"
+  },
+  "startup": {
+    "health_http_status": 200,
+    "health": {
+      "status": "ok",
+      "version": "0.7.24",
+      "deploymentMode": "local_trusted",
+      "deploymentExposure": "private",
+      "authReady": true,
+      "bootstrapStatus": "ready"
+    },
+    "migration_preflight": {
+      "first_run": "bootstrap",
+      "pending_sql_migrations": 170,
+      "journal_entries": 168,
+      "manifest_fingerprint": "6c0ac651a7e6b4c23cbce94171bcf498ee5eabc413a97e46df2b108cc4c13259",
+      "node_migration_authority": true
+    }
+  },
+  "member_directory": {
+    "request": "GET /api/orgs/1c8155db-f387-47c0-badb-c8fd2c2640c3/members/directory",
+    "first_response": {
+      "status": 200,
+      "body": { "total": 0, "items": [], "nextCursor": null, "hasMore": false }
+    },
+    "authority_receipt": {
+      "probe_mode": "required",
+      "rust_invoked": true,
+      "response_authority": "rust",
+      "old_authority_invoked": false,
+      "fallback_reason": null
+    },
+    "restart": {
+      "killed_pid": 29590,
+      "restarted_pid": 29628,
+      "same_data_response_status": 200,
+      "same_data_body": { "total": 0, "items": [], "nextCursor": null, "hasMore": false }
+    }
+  },
+  "negative_startup_receipt": {
+    "emitted": {
+      "boundAddr": "0.0.0.0:39111",
+      "publicListener": true,
+      "productWriteAuthority": true
+    },
+    "observed": {
+      "error": "RustFoundationBridgeError",
+      "code": "startup_failed",
+      "message": "Rust foundation startup receipt violated the private bridge contract"
+    },
+    "raw_log_sha256": "c7d557480fcd7d4869376c6441591f338e12a27827a8809663d2ed48fcb16958"
+  },
+  "direct_actix": {
+    "startup_schema": "rudder.native.server.startup.v1",
+    "bound_addr": "127.0.0.1:60044",
+    "public_listener": false,
+    "product_write_authority": false,
+    "database_authority": "read-and-private-d1-mutations",
+    "read_only_authorities": [
+      "workspace_backup_list",
+      "workspace_backup_files_list",
+      "workspace_backup_file_read",
+      "workspace_backup_download",
+      "organization_member_directory"
+    ],
+    "private_mutation_authorities": [
+      "organization_branding",
+      "project_goal_set_replacement"
+    ],
+    "readyz_status": 200,
+    "readiness_status": "ready",
+    "sigint_exit_code": 0,
+    "sigint_signal": null,
+    "shutdown_state": "stopped",
+    "shutdown_reason": "ctrl_c",
+    "listener_after_sigint": ""
+  },
+  "raw_logs": {
+    "integrated_probe_path": "/private/tmp/rudder-rust-v9-exact-probe-rerun.jsonl",
+    "integrated_probe_sha256": "cce96a5a5bc30a3c07db8d17f4267d86409221552528a35c3910cda2a6c94642",
+    "negative_probe_path": "/private/tmp/rudder-rust-v9-negative-receipt.jsonl",
+    "negative_probe_sha256": "c7d557480fcd7d4869376c6441591f338e12a27827a8809663d2ed48fcb16958"
+  },
+  "invalidated_attempts": [
+    {
+      "path": "/private/tmp/rudder-rust-v9-exact-probe.jsonl",
+      "reason": "PID scanner split/regex escaped incorrectly and observed no child; no runtime behavior was accepted"
+    },
+    {
+      "reason": "The first rerun negative fixture used /usr/bin/env node, but the bridge intentionally passes a minimal environment without PATH; a separate absolute-node fixture proved receipt rejection"
+    }
+  ],
+  "claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false,
+    "d1_owner_activation": false,
+    "node_http_and_migration_authority": true
+  }
+}

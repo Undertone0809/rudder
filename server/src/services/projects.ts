@@ -28,6 +28,9 @@ import {
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import {
+  lockNodeProjectGoalMutationAuthority,
+} from "./project-goal-mutation-fence.js";
+import {
   listProjectResourceAttachmentsByProjectIds,
   replaceProjectResourceAttachments,
 } from "./resource-catalog.js";
@@ -561,6 +564,13 @@ export function projectService(db: Db) {
           .returning()
           .then((rows) => rows[0]);
 
+        // The insert trigger provisions the component row. Acquire it only
+        // when this create actually writes the Project-Goal component; plain
+        // Project creation remains independent of the migrated writer.
+        if (ids !== undefined) {
+          await lockNodeProjectGoalMutationAuthority(tx, orgId, created.id);
+        }
+
         if (ids && ids.length > 0) {
           await syncGoalLinks(tx, created.id, orgId, ids);
         }
@@ -639,7 +649,11 @@ export function projectService(db: Db) {
         : [];
 
       const row = await db.transaction(async (tx) => {
-        await lockNodeMutationAuthority(tx, existingProject.orgId);
+        if (ids !== undefined) {
+          await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
+        } else {
+          await lockNodeMutationAuthority(tx, existingProject.orgId);
+        }
         const updatedRow = await tx
           .update(projects)
           .set(updates)
@@ -686,7 +700,7 @@ export function projectService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
-        await lockNodeMutationAuthority(tx, existing.orgId);
+        await lockNodeProjectGoalMutationAuthority(tx, existing.orgId, id);
         const row = await tx
           .delete(projects)
           .where(eq(projects.id, id))

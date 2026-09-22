@@ -2,31 +2,33 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
 candidate:
-  source_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
+  source_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
   branch: codex/rudder-full-rust-backend-completion-20260921
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  tree_sha: a31267ba2e619b4169a10fed778bb6875447b397
-  dirty_fingerprint: b329289d7f70e8debb1edb38d691271041ad4ef07d29f63ea3089343c204ac25
-  dirty_fingerprint_scope: committed_origin_main_to_head_diff_excluding_all_durable_plan_records_and_candidate_packets
-  dirty_fingerprint_status: exact_clean_candidate_source_diff
-  scan_status: current_counts_refreshed_after_main_0_7_24_reconciliation_and_release_matrix_fix_semantic_reconciliation_blocked
+  tree_sha: fdbb1b03349290a8b41b050ccb63848575242dda
+  dirty_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
+  source_path_count: 80
+  dirty_fingerprint_scope: sorted_current_worktree_diff_and_untracked_source_paths_excluding_durable_plan_records_packets_and_artifacts
+  dirty_fingerprint_status: exact_dirty_candidate_source_diff_with_main_d1f55c5_project_goal_real_entry_probe_v9_complete_negative_coverage
+  scan_status: current_counts_refreshed_after_main_0_7_24_reconciliation_and_project_goal_real_entry_probe_v9_semantic_reconciliation_blocked
   semantic_rows: partial_with_current_writer_audit
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
-  latest_observed_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
-  commits_ahead_of_migration_base: 11
-  changed_path_classes: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-  changed_path_assessment: organization_intelligence_and_release_contracts_reconciled; no_direct_rust_route_overlap_but_package_version_native_lock_and_runtime_defaults_affect_exact_candidate_runtime_evidence
-  reconciliation_status: isolated_merge_complete_affected_scan_compatibility_and_typecheck_rerun_complete
+  latest_observed_main_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
+  commits_ahead_of_migration_base: 15
+  changed_path_classes: [desktop_update_quit_handoff, desktop_update_child_launcher, desktop_update_ui_status_live_run, desktop_update_e2e]
+  changed_path_assessment: desktop_update_and_quit_contracts_reconciled; no_direct_rust_route_overlap_but_desktop_runtime_and_packaging_receipts_affect_exact_candidate_runtime_evidence
+  reconciliation_status: isolated_snapshot_reconciled_affected_desktop_checks_and_project_goal_real_probe_rerun
   receipt_policy: affected_review_and_verifier_receipts_are_invalid_until_rebound
   reconciliation_receipt:
-    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v2
-    operation: merge_no_commit_no_ff_origin_main_then_commit_and_fast_forward_migration_branch
-    migration_checkpoint_sha: 4ec7f0990360bea7a89c516ce9c2bedd0577b84f
-    resulting_candidate_sha: 508978ce9f309ac537eb57b03e54b8b44ade8b25
-    resulting_candidate_tree: a31267ba2e619b4169a10fed778bb6875447b397
-    changed_paths_rechecked: [release_compatibility_matrix, package_versions_and_native_lockfile, organization_intelligence_defaults_routes_services, codex_local_runtime_defaults, dev_startup_environment, ui_navigation_and_messenger, e2e_contracts]
-    compatibility_decision: release_matrix_rebased_to_0167_candidate_and_0163_shipped_fixture; db_transaction_test_adapted_to_postgres_3_4_8_types; refresh_real_entry_status_and_rebind_all_receipts
+    isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v4
+    operation: apply_origin_main_desktop_update_quit_changes_to_migration_snapshot_without_resetting_dirty_work
+    previous_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
+    migration_checkpoint_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+    resulting_snapshot_sha: ef71a1462a5c7998e361fe2193e585318a6a9f91
+    resulting_snapshot_tree: fb968231c160d5ff75095cf89a336f43e035ef86
+    changed_paths_rechecked: [desktop/src/desktop-quit-flow.test.ts, desktop/src/desktop-quit-flow.ts, desktop/src/desktop-update-flow.test.ts, desktop/src/desktop-update-flow.ts, desktop/src/desktop-update-launch.ts, tests/e2e/desktop-update-prompt.spec.ts, ui/src/components/DesktopUpdatePromptBridge.test.tsx, ui/src/components/DesktopUpdatePromptBridge.tsx, ui/src/components/DesktopUpdateStatusCard.test.tsx, ui/src/components/DesktopUpdateStatusCard.tsx, ui/src/components/LiveRunWidget.test.tsx, ui/src/components/LiveRunWidget.tsx]
+    compatibility_decision: desktop_update_and_quit_behavior_preserved; Rust server foundation and migration-preflight staging remains an explicit migration-owned addition; rebuild_exact_candidate_and_rebind_real_entry_receipts
     old_receipts: invalidated
 scan_commands:
   route_declaration_scan: "rg -o 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' server/src/routes -g '*.ts'"
@@ -42,8 +44,8 @@ counts:
   transaction_scan_hits: 221
   production_transaction_source_files: 51
   production_transaction_scan_hits: 200
-  sql_migration_files: 170
-  migration_journal_entries: 168
+  sql_migration_files: 172
+  migration_journal_entries: 170
   product_analytics_route_files_with_declarations: 3
   cli_capability_entries: 118
   cli_agent_v1_entries: 107
@@ -68,24 +70,24 @@ observed_runtime_roots:
     status: private_or_explicit_entry_only
   - path: native/crates/server-foundation/src/lib.rs
     authority: rust
-    evidence: loopback-only foundation, health/readiness/capabilities, workspace-backup read routes, organization member-directory read route, organization branding mutation route, and complete Project goal-set replacement route; receipt still says public_listener=false and product_write_authority=false
-    status: private_verified_read_and_d1_write_slice_pending_supported_entry
+    evidence: loopback-only foundation, health/readiness/capabilities, workspace-backup read routes, organization member-directory read route, organization branding mutation route, and complete Project goal-set replacement route; v9 Node API/CLI/MCP real-entry evidence includes create-with-goals compatibility, mixed-update rejection, signed idempotency binding, and receipt still says public_listener=false and product_write_authority=false
+    status: real_entry_connected_private_verified_supported_default_path_pending
   - path: native/crates/d1-persistence/src/lib.rs
     authority: rust
-    evidence: private SQLx branding and complete Project goal-set transaction adapters; comments still state no ownership acquisition or Node integration
+    evidence: private SQLx branding and complete Project goal-set transaction adapters; Project-Goal has a current Node/CLI/MCP bridge probe, but comments still state no ownership acquisition and Node remains the listener/migration authority
     status: private_verified_write_core_only
   - path: native/crates/server-foundation/src/lib.rs#organization_branding
     authority: rust
     evidence: PATCH /api/orgs/{org_id}/branding verifies request-bound signed actor, idempotency, organization fence, SQLx transaction, receipt, activity, rollback, and owner rejection in a disposable PostgreSQL fixture
-    status: private_verified_loopback_only
+    status: real_entry_connected_private_verified; default_mode_off; old_writer_retirement_pending
   - path: native/crates/server-foundation/src/lib.rs#project_goal_set
     authority: rust
-    evidence: PATCH /api/orgs/{org_id}/projects/{project_id}/goal-set atomically replaces project_goals and projects.goal_id, verifies project/goal organization scope, replays/conflicts by idempotency key, and rolls back audit failures in a disposable PostgreSQL fixture
-    status: private_verified_loopback_only
+    evidence: Node supported Project PATCH and direct CLI/MCP dispatch reach the private Actix route; it atomically replaces project_goals and projects.goal_id, verifies project/goal organization scope, replays/conflicts by idempotency key, and rolls back audit failures in a disposable PostgreSQL fixture
+    status: real_entry_connected_private_verified; default_mode_off; old_writer_retirement_pending
   - path: native/crates/server-foundation/src/lib.rs#organization_member_directory
     authority: rust
-    evidence: Actix/SQLx organization member-directory read route with signed request-bound actor envelope, bounded count/page queries, cursor ordering, organization-scoped visibility filters, and black-box PostgreSQL fixture
-    status: implementation_present_private_verification_pending
+    evidence: Actix/SQLx organization member-directory read route with signed request-bound actor envelope, bounded count/page queries, cursor ordering, organization-scoped visibility filters, private PostgreSQL black-box coverage, and a real Node required-mode bridge probe
+    status: real_entry_connected_private_verified
   - path: cli/src/agent-v1-mcp-server.ts
     authority: node
     evidence: first-party MCP JSON-RPC server and direct API/CLI dispatch
@@ -120,12 +122,12 @@ semantic_scan_gaps:
   - transaction scan does not identify direct SQL writes, helper-owned transactions, or background writers
   - process scan must distinguish tests, external user-selected processes, bounded installers, and state-owning runtimes
   - route, WebSocket, CLI, MCP, migration, writer, lifecycle, and release rows must be rebound to this SHA before any authority handoff
-  - the member-directory route is still a standalone loopback foundation entry and has no supported Node bridge or installed/default startup connection
+  - the member-directory route has an explicit Node required-mode loopback bridge and current disposable startup/restart evidence, but the default mode remains off and installed/default-path verification is not complete
   - the signed actor envelope verifier currently relies on a trusted signer/bridge contract; session membership and revocation integration are not yet a real Actix authority
   - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
-  - the new goal-set route is a standalone private Actix entry; it is not the supported Node signer/bridge, installed/default startup, CLI/MCP, or sole-listener path
+  - the new goal-set route has a supported Node bridge and direct CLI/MCP real-entry evidence, but installed/default startup, full session/revocation authority, old-writer retirement, and sole-listener proof remain open
 current_writer_audit:
-  candidate_fingerprint: b329289d7f70e8debb1edb38d691271041ad4ef07d29f63ea3089343c204ac25
+  candidate_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
   verdict: needs_more_evidence
   activation: blocked
   fence_contract:
@@ -173,4 +175,70 @@ next_actions:
   - record exact scan output fingerprints and current writer rows in the delivery packet before Phase 1 authority changes
   - freeze the signed actor/session bridge and persisted owner/epoch/token contract
   - fence or retire every current writer row before activating the Rust D1 owner
-  - obtain independent stage review and verifier PASS for the exact private D1 candidate before supported entry integration
+  - obtain independent stage review and verifier PASS for the exact Project-Goal candidate before default-path owner integration
+
+project_goal_real_entry_probe:
+  artifact: doc/plans/artifacts/2026-09-22-rudder-project-goal-real-entry-probe-v9.json
+  candidate_source_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+  candidate_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
+  dirty_candidate_tree_sha: fdbb1b03349290a8b41b050ccb63848575242dda
+  build_artifacts:
+    rudder_server_foundation_sha256: 322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306
+    migration_preflight_sha256: f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0
+  runtime:
+    node: v22.23.1
+    package_manager: pnpm_9.15.4
+    rust: rustc_1.93.0
+    cargo: cargo_1.93.0
+    embedded_postgres: 18.1.0-beta.16
+  target:
+    kind: disposable_embedded_postgres_and_local_trusted_node
+    data_id: rust-project-goal-real-entry-68674
+    organization_id: a211760a-7012-4e70-b28e-89ccf4509090
+    api_port: 53521
+    embedded_postgres_port: 53522
+  observations:
+    migration_preflight: bootstrap_then_current; 170 journal entries; 172 SQL files; fingerprint ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812
+    node_to_actix: supported Project API create/PATCH HTTP 201/200; create-with-goals compatibility returned 201; mixed project-plus-goal update returned 409; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null; signed_idempotency_header_substitution_rejected_before business write
+    cli_mcp: direct CLI exit 0 and MCP stdio tools/call exit 0; Project create/update direct HTTP dispatch and MCP missing legacy binary path completed without Node CLI fallback
+    allowlist: invalid missing-UUID startup rejected before partial handoff; valid allowlist handed off two projects; unlisted existing Project remained node-owned and required PATCH returned mutation_not_owned 409
+    restart: same data identity and same-config allowlist/replay recovery returned HTTP 200 with final receipts=4, activities=2, links=0, mutation_version=2; signed/header substitution returned 401 without version change
+    negative: idempotency conflict 409, cross-organization 422, mixed update 409, Rust-owned organization deletion 409, missing Rust binary fails closed
+    cleanup: disposable home, Node server, Actix children, and embedded PostgreSQL were disposed; no production data or traffic involved
+  checks:
+    vitest: server 3 files / 28 tests and CLI MCP 1 file / 81 tests
+    d1_postgres: 25/25
+    actix_foundation_black_box: 10/10
+    project_goal_core: 33/33
+    typechecks: server, CLI, DB, agent-runtime-utils
+    contract_format_diff: MCP contract, cargo fmt, git diff check
+  claims: local_real_entry_only; project_goal_real_entry_connected=true; default_path_verified=false; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false
+
+supporting_branding_real_entry_historical:
+  artifact: doc/plans/artifacts/2026-09-22-rudder-branding-real-entry-probe-v2.json
+  candidate_fingerprint: 5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91
+  build_artifacts:
+    rudder_server_foundation_sha256: 2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a
+    migration_preflight_sha256: d6f6bb0c0a37aef7fd0e0f65bee53c97600e7be785080a22f4015fb367faab1b
+  target:
+    kind: disposable_embedded_postgres_and_local_trusted_node
+    data_id: rust-branding-real-entry-38958
+    organization_id: 84f7d2b8-f721-4951-b03e-b7ce213f6380
+    api_port: 62821
+    embedded_postgres_port: 62822
+  observations:
+    migration_preflight: bootstrap_then_current; 169 journal entries; 171 SQL files; fingerprint 6df10b65da8034a116003108d9951d1e119b31be0e979f09874406f87af417da
+    node_to_actix: POST organization HTTP 201, then PATCH branding HTTP 200; brandColor=#abcdef; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null
+    database_readback: owner=rust; mutation_version=1; fence_epoch=1; immutable_receipt=applied; activity=organization.branding_updated; outbox=pending/0
+    restart_replay: same data identity and same idempotency key returned HTTP 200 without duplicate activity or receipt
+    cleanup: disposable home, Node server, Actix child, and embedded PostgreSQL were disposed; no production data or traffic involved
+  checks:
+    server_bridge_config_branding_outbox_startup: 51/51
+    d1_postgres_serial: 25/25
+    actix_foundation_black_box: 10/10
+    affected_typechecks_contract_lint_fmt: pass
+    planner_contract_differential_and_manifest: pass
+    server_vitest: 52/52
+    db_migration_vitest: 14/14
+    delivery_packet_validation: pass
+  claims: local_real_entry_only; branding_real_entry_connected=true; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false
