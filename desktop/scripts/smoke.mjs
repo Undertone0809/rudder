@@ -6490,6 +6490,10 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     await restoreWorkspace();
     await failedTerminal.getByRole("button", { name: "Restart terminal" }).click();
     await failedTerminal.getByText("Terminal unavailable").waitFor({ state: "hidden", timeout: 15_000 });
+    await waitForSmokeCondition("Agent Terminal restart ready", async () => {
+      const text = await failedTerminal.innerText();
+      return !text.includes("Starting terminal") && !text.includes("Terminal unavailable") ? text : null;
+    });
     const restartedInput = failedTerminal.locator(".xterm-helper-textarea");
     await restartedInput.pressSequentially("printf 'TERMINAL_RESTARTED=yes\\n'", { delay: 2 });
     await restartedInput.press("Enter");
