@@ -955,6 +955,10 @@ describe("applyPendingMigrations", () => {
           "0161_chat_message_mutation_fingerprint.sql",
           "0162_run_debug_issue_origin.sql",
           "0163_organization_mutations.sql",
+          "0164_native_chat_runtime_binding.sql",
+          "0165_heartbeat_attempt_owner_fencing.sql",
+          "0166_runtime_binding_targets.sql",
+          "0167_delegation_run_scene.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1139,6 +1143,10 @@ describe("applyPendingMigrations", () => {
           "0161_chat_message_mutation_fingerprint.sql",
           "0162_run_debug_issue_origin.sql",
           "0163_organization_mutations.sql",
+          "0164_native_chat_runtime_binding.sql",
+          "0165_heartbeat_attempt_owner_fencing.sql",
+          "0166_runtime_binding_targets.sql",
+          "0167_delegation_run_scene.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1966,6 +1974,174 @@ describe("applyPendingMigrations", () => {
       }
     },
     migrationTestTimeout(20_000),
+  );
+
+  it(
+    "preserves retention claims and source aliases against parent deletion",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Retention regression', 'retention-regression', 'RETAIN') RETURNING id
+        `;
+        const [agent] = await sql`
+          INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Retention agent') RETURNING id
+        `;
+        const [chat] = await sql`
+          INSERT INTO chat_conversations (org_id) VALUES (${org!.id}) RETURNING id
+        `;
+        const [binding] = await sql`
+          INSERT INTO runtime_bindings (org_id, agent_id, conversation_id, principal_scope_ref, runtime_type)
+          VALUES (${org!.id}, ${agent!.id}, ${chat!.id}, 'test:owner', 'codex_local') RETURNING id
+        `;
+        const [segment] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type)
+          VALUES (${org!.id}, ${binding!.id}, 'codex_local') RETURNING id
+        `;
+        await sql`
+          INSERT INTO runtime_retention_claims (org_id, binding_id, segment_id, resource_ref, purpose, principal_scope_ref)
+          VALUES (${org!.id}, ${binding!.id}, ${segment!.id}, 'native:test', 'descendant-history', 'test:owner')
+        `;
+        await sql`
+          INSERT INTO runtime_source_aliases (org_id, conversation_id, binding_id, segment_id, source_kind, source_ref, principal_scope_ref)
+          VALUES (${org!.id}, ${chat!.id}, ${binding!.id}, ${segment!.id}, 'native', 'native:test', 'test:owner')
+        `;
+        await expect(sql`DELETE FROM native_segments WHERE id = ${segment!.id}`).rejects.toMatchObject({ code: '23503' });
+        await expect(sql`DELETE FROM runtime_bindings WHERE id = ${binding!.id}`).rejects.toMatchObject({ code: '23503' });
+        await expect(sql`DELETE FROM chat_conversations WHERE id = ${chat!.id}`).rejects.toMatchObject({ code: '23503' });
+        expect(await sql`SELECT id FROM runtime_retention_claims WHERE org_id = ${org!.id}`).toHaveLength(1);
+        expect(await sql`SELECT id FROM runtime_source_aliases WHERE org_id = ${org!.id}`).toHaveLength(1);
+        // Authorized cleanup must explicitly release and remove its references;
+        // a parent DELETE cannot silently do that work on its behalf.
+        await sql`UPDATE runtime_retention_claims SET status = 'released', released_at = now() WHERE org_id = ${org!.id}`;
+        await sql`UPDATE runtime_source_aliases SET released_at = now() WHERE org_id = ${org!.id}`;
+        await sql`DELETE FROM runtime_source_aliases WHERE org_id = ${org!.id}`;
+        await sql`DELETE FROM runtime_retention_claims WHERE org_id = ${org!.id}`;
+        await sql`DELETE FROM chat_conversations WHERE id = ${chat!.id}`;
+        expect(await sql`SELECT id FROM runtime_bindings WHERE org_id = ${org!.id}`).toHaveLength(0);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "rejects incomplete binding targets and cross-organization lineage after migration",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Binding regression', 'binding-regression', 'BIND') RETURNING id
+        `;
+        const [otherOrg] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Other regression', 'other-regression', 'OTHER') RETURNING id
+        `;
+        const [agent] = await sql`
+          INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Binding agent') RETURNING id
+        `;
+        const [chat] = await sql`
+          INSERT INTO chat_conversations (org_id) VALUES (${org!.id}) RETURNING id
+        `;
+        const insertBinding = (orgId: string, targetType: string | null, targetId: string | null, conversationId: string | null) => sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, target_type, target_id, conversation_id)
+          VALUES (${orgId}, ${agent!.id}, 'test:owner', 'codex_local', ${targetType}, ${targetId}, ${conversationId})
+          RETURNING id
+        `;
+        for (const [type, id, conversation] of [
+          [null, 'orphan', null], [null, null, null], ['manual', null, null],
+          [null, 'orphan', chat!.id], ['chat_conversation', chat!.id, null],
+        ] as const) {
+          await expect(insertBinding(org!.id, type, id, conversation)).rejects.toMatchObject({
+            code: '23514',
+            constraint_name: 'runtime_bindings_target_shape_check',
+          });
+        }
+        await expect(insertBinding(org!.id, null, null, chat!.id)).resolves.toHaveLength(1);
+        await expect(insertBinding(org!.id, 'manual', 'manual-1', null)).resolves.toHaveLength(1);
+        await expect(insertBinding(otherOrg!.id, 'manual', 'cross-org', null)).rejects.toMatchObject({
+          code: '23503',
+          constraint_name: 'runtime_bindings_org_agent_fk',
+        });
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "enforces complete owner fences while preserving legacy attempts",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Fence regression', 'fence-regression', 'FENCE') RETURNING id
+        `;
+        const [agent] = await sql`
+          INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Fence agent') RETURNING id
+        `;
+        const [run] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id)
+          VALUES (${org!.id}, ${agent!.id}) RETURNING id
+        `;
+        let attemptIndex = 0;
+        const insertAttempt = (token: string | null, epoch: number | null) => sql`
+          INSERT INTO heartbeat_run_attempts
+            (org_id, agent_id, run_id, attempt_index, runtime_type, owner_token, attempt_epoch)
+          VALUES (${org!.id}, ${agent!.id}, ${run!.id}, ${attemptIndex++}, 'codex_local', ${token}, ${epoch})
+          RETURNING id
+        `;
+        await expect(insertAttempt(null, null)).resolves.toHaveLength(1);
+        await expect(insertAttempt('worker', 1)).resolves.toHaveLength(1);
+        for (const [token, epoch] of [
+          ['worker', null], [null, 1], ['', 1], ['   ', 1], ['worker', 0], ['worker', -1],
+        ] as const) {
+          await expect(insertAttempt(token, epoch)).rejects.toMatchObject({
+            code: '23514',
+            constraint_name: 'heartbeat_run_attempts_owner_fence_shape_check',
+          });
+        }
+        const [count] = await sql`SELECT count(*)::int AS count FROM heartbeat_run_attempts`;
+        expect(count!.count).toBe(2);
+        const [attempt] = await sql`SELECT id FROM heartbeat_run_attempts WHERE owner_token = 'worker'`;
+        const [binding] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'codex_local', 'manual', 'delete-attempt')
+          RETURNING id
+        `;
+        const [segment] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type)
+          VALUES (${org!.id}, ${binding!.id}, 'codex_local') RETURNING id
+        `;
+        const [span] = await sql`
+          INSERT INTO run_runtime_spans
+            (org_id, run_id, binding_id, segment_id, attempt_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${run!.id}, ${binding!.id}, ${segment!.id}, ${attempt!.id}, 'attempt-1', 'worker')
+          RETURNING id
+        `;
+        await sql`DELETE FROM heartbeat_run_attempts WHERE id = ${attempt!.id}`;
+        const [retainedSpan] = await sql`
+          SELECT org_id, run_id, attempt_id FROM run_runtime_spans WHERE id = ${span!.id}
+        `;
+        expect(retainedSpan).toMatchObject({ org_id: org!.id, run_id: run!.id, attempt_id: null });
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
   );
 
   it(

@@ -4438,7 +4438,9 @@ async function verifyOrganizationWorkspacesNavigation(electronApp, page, company
 
   const primaryRail = page.getByTestId("primary-rail");
   await primaryRail.waitFor({ state: "visible", timeout: 30_000 });
-  await primaryRail
+  // Library lives in the Projects context sidebar, not the primary rail.
+  await primaryRail.getByRole("link", { name: "Projects", exact: true }).click();
+  await page.getByTestId("workspace-sidebar")
     .locator('a[href*="/library"], a[href*="/resources"], a[href*="/workspaces"]')
     .first()
     .click();
