@@ -7,6 +7,7 @@ import {
   markReleaseNotesShown,
   parseReleaseNotesMarkdown,
   readReleaseNotes,
+  readReleaseNotesBundle,
   resolveReleaseNotesPath,
   resolveReleaseNotesStatePath,
   shouldShowReleaseNotes,
@@ -122,6 +123,51 @@ describe("desktop release notes", () => {
       packaged: true,
       version: "v0.4.0",
     })).toBe(path.join("/Applications/Rudder.app/Contents/Resources/app", "releases", "v0.4.0.md"));
+    expect(resolveReleaseNotesPath({
+      moduleDir: "/Applications/Rudder.app/Contents/Resources/app/dist",
+      packaged: true,
+      version: "v0.4.0",
+      locale: "zh-CN",
+    })).toBe(path.join("/Applications/Rudder.app/Contents/Resources/app", "releases", "zh", "v0.4.0.md"));
+  });
+
+  it("bundles the Chinese release notes alongside the English source", async () => {
+    const root = await makeTempDir("rudder-release-notes-locales-");
+    cleanupDirs.add(root);
+    const englishPath = path.join(root, "v0.7.23.md");
+    const chinesePath = path.join(root, "zh", "v0.7.23.md");
+    await fs.mkdir(path.dirname(chinesePath), { recursive: true });
+    await fs.writeFile(englishPath, [
+      "A user-facing summary.",
+      "",
+      "## Improved",
+      "",
+      "- Improved one thing.",
+    ].join("\n"), "utf8");
+    await fs.writeFile(chinesePath, [
+      "面向用户的版本摘要。",
+      "",
+      "## 改进",
+      "",
+      "- 改进了一项功能。",
+    ].join("\n"), "utf8");
+
+    expect(readReleaseNotesBundle({
+      version: "0.7.23",
+      releaseNotesPath: englishPath,
+      localizedReleaseNotesPaths: { "zh-CN": chinesePath },
+    })).toEqual({
+      version: "0.7.23",
+      title: "What's new in Rudder 0.7.23",
+      sections: [{ title: "Improved", items: ["Improved one thing."] }],
+      translations: {
+        "zh-CN": {
+          version: "0.7.23",
+          title: "Rudder 0.7.23 更新内容",
+          sections: [{ title: "改进", items: ["改进了一项功能。"] }],
+        },
+      },
+    });
   });
 
   it("returns null when the release note file is missing", async () => {

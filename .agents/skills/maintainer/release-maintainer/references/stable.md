@@ -5,8 +5,9 @@
 1. Resolve the stable version with `./scripts/release.sh stable --print-version`.
 2. Immediately lock the reviewed source SHA. Do not keep following a moving
    `main`; work that lands after the cutoff belongs to the next release.
-3. Require matching English and Chinese public changelog entries and
-   `releases/vX.Y.Z.md`.
+3. Require matching English and Chinese public changelog entries,
+   `releases/vX.Y.Z.md`, and the localized Desktop payload
+   `releases/zh/vX.Y.Z.md`.
 4. Confirm the exact source has a successful `Qualification summary`, then
    passed stable preflight.
 5. Confirm the version is absent from every public npm package and the stable
@@ -55,9 +56,9 @@ use `partial-recovery.md`; do not republish.
 
 ## Public Notes
 
-When any of the three narratives are missing and subagents are available, start
+When any of the four narratives are missing and subagents are available, start
 a dedicated release-notes subagent immediately after freezing the SHA. Give it
-the previous stable tag, locked SHA, user-visible diff, and the three exact
+the previous stable tag, locked SHA, user-visible diff, and the four exact
 output paths. Let it draft in parallel with read-only preflight while the
 primary agent owns source selection, reviews the narrative, integrates the
 files, and runs the notes checks.

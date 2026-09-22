@@ -138,13 +138,19 @@ export type OpenNotificationSettingsResult = {
   platform: string;
 };
 
-export type DesktopReleaseNotes = {
+export type DesktopReleaseNotesLocale = "zh-CN";
+
+export type DesktopReleaseNotesContent = {
   version: string;
   title: string;
   sections: Array<{
     title: string;
     items: string[];
   }>;
+};
+
+export type DesktopReleaseNotes = DesktopReleaseNotesContent & {
+  translations?: Partial<Record<DesktopReleaseNotesLocale, DesktopReleaseNotesContent>>;
 };
 
 export type DesktopReleaseNotesResult =

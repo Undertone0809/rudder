@@ -5,15 +5,10 @@ import {
   type DesktopIdentityState,
   type DesktopSignInHint,
 } from "./identity-ipc.js";
-
-type BootReleaseNotes = {
-  version: string;
-  title: string;
-  sections: Array<{ title: string; items: string[] }>;
-};
+import type { DesktopReleaseNotes } from "./release-notes.js";
 
 type BootReleaseNotesResult =
-  | { status: "available"; notes: BootReleaseNotes }
+  | { status: "available"; notes: DesktopReleaseNotes }
   | { status: "unavailable" | "already-shown" };
 
 contextBridge.exposeInMainWorld("rudderBoot", {

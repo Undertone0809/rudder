@@ -7,15 +7,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useI18n } from "@/context/I18nContext";
 import { readDesktopShell, type DesktopReleaseNotes } from "@/lib/desktop-shell";
-import { RUDDER_DOCS_URL } from "@/lib/product-links";
+import { RUDDER_DOCS_URL, RUDDER_ZH_RELEASES_URL } from "@/lib/product-links";
 import { ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { RudderLogo } from "./RudderLogo";
 
 export function DesktopReleaseNotesDialog() {
+  const { locale, t } = useI18n();
   const [notes, setNotes] = useState<DesktopReleaseNotes | null>(null);
   const notesRef = useRef<DesktopReleaseNotes | null>(null);
+  const localizedNotes = locale === "zh-CN"
+    ? notes?.translations?.["zh-CN"] ?? notes
+    : notes;
 
   useEffect(() => {
     const desktopShell = readDesktopShell();
@@ -44,12 +49,13 @@ export function DesktopReleaseNotesDialog() {
   }
 
   async function openDocs() {
+    const docsUrl = locale === "zh-CN" ? RUDDER_ZH_RELEASES_URL : RUDDER_DOCS_URL;
     const desktopShell = readDesktopShell();
     if (desktopShell) {
-      await desktopShell.openExternal(RUDDER_DOCS_URL).catch(() => undefined);
+      await desktopShell.openExternal(docsUrl).catch(() => undefined);
       return;
     }
-    window.open(RUDDER_DOCS_URL, "_blank", "noopener,noreferrer");
+    window.open(docsUrl, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -66,16 +72,16 @@ export function DesktopReleaseNotesDialog() {
           </span>
           <DialogHeader className="min-w-0 gap-1 text-left">
             <DialogTitle className="text-base leading-6">
-              {notes?.title ?? "What's new in Rudder"}
+              {localizedNotes?.title ?? t("desktopReleaseNotes.defaultTitle")}
             </DialogTitle>
             <DialogDescription className="text-sm leading-5">
-              Updates installed with this version.
+              {t("desktopReleaseNotes.description")}
             </DialogDescription>
           </DialogHeader>
         </div>
         <div className="max-h-[min(62vh,34rem)] overflow-y-auto px-5 py-4">
           <div className="space-y-4">
-            {notes?.sections.map((section) => (
+            {localizedNotes?.sections.map((section) => (
               <section key={section.title} className="space-y-2">
                 <h2 className="text-sm font-semibold text-foreground">{section.title}</h2>
                 <ul className="space-y-1.5 text-sm leading-5 text-muted-foreground">
@@ -93,10 +99,10 @@ export function DesktopReleaseNotesDialog() {
         <DialogFooter className="border-t border-border/70 px-5 py-4 sm:justify-between">
           <Button type="button" variant="outline" onClick={() => void openDocs()}>
             <ExternalLink className="h-4 w-4" />
-            Docs
+            {t("desktopReleaseNotes.docs")}
           </Button>
           <Button type="button" onClick={() => void close()}>
-            Continue
+            {t("desktopReleaseNotes.continue")}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -286,6 +286,12 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: test "$GITHUB_REF" = "refs/heads/main"
 
+      - name: Verify localized stable notes on resume
+        if: steps.release.outputs.resume == 'true'
+        run: |
+          node scripts/verify-stable-changelog.mjs --version "${{ steps.release.outputs.version }}"
+          node scripts/verify-desktop-release-notes.mjs --version "${{ steps.release.outputs.version }}"
+
       - name: Report Tencent COS sync policy
         run: |
           if [ "${{ steps.release.outputs.mirror_cos }}" = "true" ]; then

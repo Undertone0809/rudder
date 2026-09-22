@@ -153,7 +153,7 @@ import type { DesktopProductAnalyticsScheduler } from "./product-analytics-sched
 import {
   createReleaseNotesReservation,
   markReleaseNotesShown,
-  readReleaseNotes,
+  readReleaseNotesBundle,
   resolveReleaseNotesPath,
   resolveReleaseNotesStatePath,
   shouldShowReleaseNotes,
@@ -2651,13 +2651,21 @@ function registerIpc(): void {
       clearPostUpdateReloadMarker(app.getPath("userData"));
       return { status: "already-shown" };
     }
-    const notes = readReleaseNotes({
+    const notes = readReleaseNotesBundle({
       version,
       releaseNotesPath: resolveReleaseNotesPath({
         moduleDir: MODULE_DIR,
         packaged: app.isPackaged,
         version,
       }),
+      localizedReleaseNotesPaths: {
+        "zh-CN": resolveReleaseNotesPath({
+          moduleDir: MODULE_DIR,
+          packaged: app.isPackaged,
+          version,
+          locale: "zh-CN",
+        }),
+      },
     });
     if (!notes) {
       clearPostUpdateReloadMarker(app.getPath("userData"));
