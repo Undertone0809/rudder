@@ -51,11 +51,11 @@ beforeAll(async () => {
   url = `postgres://rudder:rudder@127.0.0.1:${port}/postgres`;
   db = postgres(url, { max: 3, onnotice: () => {} });
   const migrationsFolder = path.join(repoRoot, "packages/db/src/migrations");
-  const previousMigrations = path.join(root, "migrations-through-0169");
+  const previousMigrations = path.join(root, "migrations-through-0173");
   await cp(migrationsFolder, previousMigrations, { recursive: true });
   const journalPath = path.join(previousMigrations, "meta/_journal.json");
   const journal = JSON.parse(await readFile(journalPath, "utf8"));
-  journal.entries = journal.entries.filter((entry: { idx: number }) => entry.idx <= 169);
+  journal.entries = journal.entries.filter((entry: { idx: number }) => entry.idx <= 173);
   await writeFile(journalPath, JSON.stringify(journal));
   await migrate(drizzle(db), { migrationsFolder: previousMigrations });
   upgradedPending = await seed();
@@ -120,7 +120,7 @@ async function state(id: string) {
   return row!;
 }
 
-it("upgrades a stopped 0169 publisher's pending event and delivers it after 0170", async () => {
+it("upgrades a stopped 0173 publisher's pending event and delivers it after 0174", async () => {
   expect(await state(upgradedPending.id)).toMatchObject({
     state: "pending", attempts: 0, claim_token: null, claim_owner: null, lease_expires_at: null,
   });

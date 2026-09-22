@@ -246,6 +246,474 @@ function createCurrentMigrationsFolderThrough(maxIdx: number) {
   return migrationsFolder;
 }
 
+type MigrationTestSql = ReturnType<typeof postgres>;
+
+type PopulatedLineageFixture = {
+  orgId: string;
+  activityId: string;
+  agentId: string;
+  conversationId: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  segmentId: string;
+  spanId: string;
+  retentionClaimId: string;
+  sourceAliasId: string;
+};
+
+const populatedLineageFixture: PopulatedLineageFixture = {
+  orgId: "00000000-0000-0000-0000-000000001631",
+  activityId: "00000000-0000-0000-0000-000000001632",
+  agentId: "00000000-0000-0000-0000-000000001633",
+  conversationId: "00000000-0000-0000-0000-000000001634",
+  runId: "00000000-0000-0000-0000-000000001635",
+  attemptId: "00000000-0000-0000-0000-000000001636",
+  bindingId: "00000000-0000-0000-0000-000000001637",
+  segmentId: "00000000-0000-0000-0000-000000001638",
+  spanId: "00000000-0000-0000-0000-000000001639",
+  retentionClaimId: "00000000-0000-0000-0000-00000000163a",
+  sourceAliasId: "00000000-0000-0000-0000-00000000163b",
+};
+
+const populatedOutboxId = "00000000-0000-0000-0000-00000000163c";
+
+async function migrateDatabaseThrough(sql: MigrationTestSql, maxIdx: number) {
+  await migratePg(drizzlePg(sql), {
+    migrationsFolder: createCurrentMigrationsFolderThrough(maxIdx),
+  });
+}
+
+async function seedUpgradeOrganization(
+  sql: MigrationTestSql,
+  mutationBaseline?: { mutationVersion: number; fenceEpoch: number },
+) {
+  const fixture = populatedLineageFixture;
+  await sql`
+    INSERT INTO organizations (id, url_key, name, issue_prefix)
+    VALUES (${fixture.orgId}, 'lineage-upgrade', 'Lineage upgrade', 'LUP')
+  `;
+  await sql`
+    INSERT INTO activity_log (id, org_id, actor_id, action, entity_type, entity_id)
+    VALUES (${fixture.activityId}, ${fixture.orgId}, 'lineage-upgrade-test', 'organization.updated', 'organization', ${fixture.orgId})
+  `;
+  if (mutationBaseline) {
+    await sql`
+      INSERT INTO organization_mutation_state (org_id, mutation_version, fence_epoch, owner)
+      VALUES (${fixture.orgId}, ${mutationBaseline.mutationVersion}, ${mutationBaseline.fenceEpoch}, 'node')
+    `;
+  }
+  return fixture;
+}
+
+async function seedPopulatedRuntimeLineage(sql: MigrationTestSql, fixture: PopulatedLineageFixture) {
+  await sql`
+    INSERT INTO agents (id, org_id, name)
+    VALUES (${fixture.agentId}, ${fixture.orgId}, 'Lineage upgrade agent')
+  `;
+  await sql`
+    INSERT INTO chat_conversations (id, org_id, title)
+    VALUES (${fixture.conversationId}, ${fixture.orgId}, 'Lineage upgrade conversation')
+  `;
+  const sessionIntent = JSON.stringify({
+    kind: "fresh",
+    reuseScope: "none",
+    sourceRunId: null,
+    sessionId: null,
+    sessionParams: null,
+  });
+  await sql`
+    INSERT INTO heartbeat_runs (
+      id,
+      org_id,
+      agent_id,
+      status,
+      scene,
+      target_type,
+      target_id,
+      idempotency_key,
+      session_intent_json,
+      result_json,
+      context_snapshot
+    )
+    VALUES (
+      ${fixture.runId},
+      ${fixture.orgId},
+      ${fixture.agentId},
+      'completed',
+      'delegation',
+      'manual',
+      'lineage-upgrade-target',
+      'lineage-upgrade-run',
+      ${sessionIntent}::jsonb,
+      '{"preserved":true}'::jsonb,
+      '{"source":"historical-upgrade"}'::jsonb
+    )
+  `;
+  await sql`
+    INSERT INTO heartbeat_run_attempts (
+      id,
+      org_id,
+      run_id,
+      agent_id,
+      attempt_index,
+      runtime_type,
+      owner_token,
+      attempt_epoch,
+      status
+    )
+    VALUES (
+      ${fixture.attemptId},
+      ${fixture.orgId},
+      ${fixture.runId},
+      ${fixture.agentId},
+      0,
+      'codex_local',
+      'historical-owner',
+      3,
+      'completed'
+    )
+  `;
+  await sql`
+    INSERT INTO runtime_bindings (
+      id,
+      org_id,
+      agent_id,
+      conversation_id,
+      principal_scope_ref,
+      runtime_type,
+      target_type,
+      target_id,
+      binding_epoch,
+      status
+    )
+    VALUES (
+      ${fixture.bindingId},
+      ${fixture.orgId},
+      ${fixture.agentId},
+      ${fixture.conversationId},
+      'lineage-upgrade-owner',
+      'codex_local',
+      'chat_conversation',
+      ${fixture.conversationId},
+      4,
+      'active'
+    )
+  `;
+  await sql`
+    INSERT INTO native_segments (
+      id,
+      org_id,
+      binding_id,
+      runtime_type,
+      segment_ordinal,
+      native_session_id,
+      root_session_id,
+      leaf_id,
+      source_boundary_ref,
+      state
+    )
+    VALUES (
+      ${fixture.segmentId},
+      ${fixture.orgId},
+      ${fixture.bindingId},
+      'codex_local',
+      0,
+      'native-session-upgrade',
+      'native-session-upgrade',
+      'leaf-upgrade',
+      'boundary-upgrade',
+      'open'
+    )
+  `;
+  await sql`
+    UPDATE runtime_bindings
+    SET current_segment_id = ${fixture.segmentId}
+    WHERE id = ${fixture.bindingId}
+  `;
+  await sql`
+    INSERT INTO run_runtime_spans (
+      id,
+      org_id,
+      run_id,
+      binding_id,
+      segment_id,
+      attempt_id,
+      attempt_ref,
+      attempt_epoch,
+      owner_token,
+      ordinal,
+      relation,
+      native_execution_ref,
+      input_correlation_ref,
+      selector_json,
+      source_revision,
+      state,
+      completeness
+    )
+    VALUES (
+      ${fixture.spanId},
+      ${fixture.orgId},
+      ${fixture.runId},
+      ${fixture.bindingId},
+      ${fixture.segmentId},
+      ${fixture.attemptId},
+      'attempt-ref-upgrade',
+      3,
+      'historical-owner',
+      0,
+      'primary',
+      'native-execution-upgrade',
+      'input-upgrade',
+      '{"mode":"historical"}'::jsonb,
+      'revision-upgrade',
+      'open',
+      'partial'
+    )
+  `;
+  await sql`
+    INSERT INTO runtime_retention_claims (
+      id,
+      org_id,
+      binding_id,
+      segment_id,
+      resource_ref,
+      purpose,
+      principal_scope_ref
+    )
+    VALUES (
+      ${fixture.retentionClaimId},
+      ${fixture.orgId},
+      ${fixture.bindingId},
+      ${fixture.segmentId},
+      'native-resource-upgrade',
+      'descendant-history',
+      'lineage-upgrade-owner'
+    )
+  `;
+  await sql`
+    INSERT INTO runtime_source_aliases (
+      id,
+      org_id,
+      conversation_id,
+      run_id,
+      binding_id,
+      segment_id,
+      source_kind,
+      source_ref,
+      source_range_json,
+      content_sha256,
+      principal_scope_ref
+    )
+    VALUES (
+      ${fixture.sourceAliasId},
+      ${fixture.orgId},
+      ${fixture.conversationId},
+      ${fixture.runId},
+      ${fixture.bindingId},
+      ${fixture.segmentId},
+      'native',
+      'native-source-upgrade',
+      '{"start":0,"end":12}'::jsonb,
+      repeat('a', 64),
+      'lineage-upgrade-owner'
+    )
+  `;
+}
+
+async function seedPendingUpgradeOutbox(sql: MigrationTestSql, fixture: PopulatedLineageFixture) {
+  await sql`
+    INSERT INTO organization_mutation_outbox (
+      id,
+      org_id,
+      activity_id,
+      event_type,
+      payload,
+      state,
+      attempts,
+      last_error
+    )
+    VALUES (
+      ${populatedOutboxId},
+      ${fixture.orgId},
+      ${fixture.activityId},
+      'organization.updated',
+      '{"source":"historical-upgrade","event":"pending"}'::jsonb,
+      'pending',
+      2,
+      'transient publisher failure'
+    )
+  `;
+}
+
+async function assertPopulatedLineageAfterUpgrade(
+  sql: MigrationTestSql,
+  fixture: PopulatedLineageFixture,
+  expectedMutationBaseline: { mutationVersion: number; fenceEpoch: number },
+) {
+  const [run] = await sql`
+    SELECT scene, target_type, target_id, idempotency_key, session_intent_json, result_json, context_snapshot
+    FROM heartbeat_runs
+    WHERE id = ${fixture.runId}
+  `;
+  expect(run).toMatchObject({
+    scene: "delegation",
+    target_type: "manual",
+    target_id: "lineage-upgrade-target",
+    idempotency_key: "lineage-upgrade-run",
+    session_intent_json: {
+      kind: "fresh",
+      reuseScope: "none",
+      sourceRunId: null,
+      sessionId: null,
+      sessionParams: null,
+    },
+    result_json: { preserved: true },
+    context_snapshot: { source: "historical-upgrade" },
+  });
+
+  const [attempt] = await sql`
+    SELECT owner_token, attempt_epoch
+    FROM heartbeat_run_attempts
+    WHERE id = ${fixture.attemptId}
+  `;
+  expect(attempt).toEqual({ owner_token: "historical-owner", attempt_epoch: 3 });
+
+  const [binding] = await sql`
+    SELECT org_id, agent_id, conversation_id, target_type, target_id, binding_epoch, current_segment_id, status
+    FROM runtime_bindings
+    WHERE id = ${fixture.bindingId}
+  `;
+  expect(binding).toMatchObject({
+    org_id: fixture.orgId,
+    agent_id: fixture.agentId,
+    conversation_id: fixture.conversationId,
+    target_type: "chat_conversation",
+    target_id: fixture.conversationId,
+    binding_epoch: 4,
+    current_segment_id: fixture.segmentId,
+    status: "active",
+  });
+
+  const [segment] = await sql`
+    SELECT org_id, binding_id, native_session_id, root_session_id, leaf_id, source_boundary_ref, state
+    FROM native_segments
+    WHERE id = ${fixture.segmentId}
+  `;
+  expect(segment).toMatchObject({
+    org_id: fixture.orgId,
+    binding_id: fixture.bindingId,
+    native_session_id: "native-session-upgrade",
+    root_session_id: "native-session-upgrade",
+    leaf_id: "leaf-upgrade",
+    source_boundary_ref: "boundary-upgrade",
+    state: "open",
+  });
+
+  const [span] = await sql`
+    SELECT org_id, run_id, binding_id, segment_id, attempt_id, attempt_ref, attempt_epoch, owner_token,
+      native_execution_ref, input_correlation_ref, selector_json, source_revision, state, completeness
+    FROM run_runtime_spans
+    WHERE id = ${fixture.spanId}
+  `;
+  expect(span).toMatchObject({
+    org_id: fixture.orgId,
+    run_id: fixture.runId,
+    binding_id: fixture.bindingId,
+    segment_id: fixture.segmentId,
+    attempt_id: fixture.attemptId,
+    attempt_ref: "attempt-ref-upgrade",
+    attempt_epoch: 3,
+    owner_token: "historical-owner",
+    native_execution_ref: "native-execution-upgrade",
+    input_correlation_ref: "input-upgrade",
+    selector_json: { mode: "historical" },
+    source_revision: "revision-upgrade",
+    state: "open",
+    completeness: "partial",
+  });
+
+  const [retentionClaim] = await sql`
+    SELECT org_id, binding_id, segment_id, resource_ref, purpose, principal_scope_ref, status
+    FROM runtime_retention_claims
+    WHERE id = ${fixture.retentionClaimId}
+  `;
+  expect(retentionClaim).toEqual({
+    org_id: fixture.orgId,
+    binding_id: fixture.bindingId,
+    segment_id: fixture.segmentId,
+    resource_ref: "native-resource-upgrade",
+    purpose: "descendant-history",
+    principal_scope_ref: "lineage-upgrade-owner",
+    status: "active",
+  });
+
+  const [sourceAlias] = await sql`
+    SELECT org_id, conversation_id, run_id, binding_id, segment_id, source_kind, source_ref,
+      source_range_json, content_sha256, principal_scope_ref, read_only
+    FROM runtime_source_aliases
+    WHERE id = ${fixture.sourceAliasId}
+  `;
+  expect(sourceAlias).toMatchObject({
+    org_id: fixture.orgId,
+    conversation_id: fixture.conversationId,
+    run_id: fixture.runId,
+    binding_id: fixture.bindingId,
+    segment_id: fixture.segmentId,
+    source_kind: "native",
+    source_ref: "native-source-upgrade",
+    source_range_json: { start: 0, end: 12 },
+    content_sha256: "a".repeat(64),
+    principal_scope_ref: "lineage-upgrade-owner",
+    read_only: true,
+  });
+
+  const [mutationState] = await sql`
+    SELECT mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch,
+      owner, fence_token IS NOT NULL AS has_fence_token
+    FROM organization_mutation_state
+    WHERE org_id = ${fixture.orgId}
+  `;
+  expect(mutationState).toEqual({
+    mutation_version: String(expectedMutationBaseline.mutationVersion),
+    fence_epoch: String(expectedMutationBaseline.fenceEpoch),
+    owner: "node",
+    has_fence_token: true,
+  });
+
+  const [brandingState] = await sql`
+    SELECT mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch,
+      owner, fence_token IS NOT NULL AS has_fence_token
+    FROM organization_branding_mutation_state
+    WHERE org_id = ${fixture.orgId}
+  `;
+  expect(brandingState).toEqual({
+    mutation_version: "0",
+    fence_epoch: "0",
+    owner: "node",
+    has_fence_token: true,
+  });
+
+  const [outbox] = await sql`
+    SELECT org_id, activity_id, event_type, payload, state, attempts, last_error,
+      claim_token, claim_owner, lease_expires_at
+    FROM organization_mutation_outbox
+    WHERE id = ${populatedOutboxId}
+  `;
+  expect(outbox).toEqual({
+    org_id: fixture.orgId,
+    activity_id: fixture.activityId,
+    event_type: "organization.updated",
+    payload: { source: "historical-upgrade", event: "pending" },
+    state: "pending",
+    attempts: 2,
+    last_error: "transient publisher failure",
+    claim_token: null,
+    claim_owner: null,
+    lease_expires_at: null,
+  });
+}
+
 afterEach(async () => {
   const instances = runningInstances.splice(0).reverse();
   const results = await Promise.allSettled(instances.map((instance) => instance.stop()));
@@ -267,6 +735,49 @@ afterEach(async () => {
     });
   }
 }, migrationTestTimeout(30_000));
+
+describe("populated native lineage upgrades", () => {
+  it(
+    "preserves populated 0167 runtime lineage through 0174 outbox claims",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migrateDatabaseThrough(sql, 167);
+        const fixture = await seedUpgradeOrganization(sql);
+        await seedPopulatedRuntimeLineage(sql, fixture);
+        await migrateDatabaseThrough(sql, 173);
+        await seedPendingUpgradeOutbox(sql, fixture);
+        await migrateDatabaseThrough(sql, 174);
+        await assertPopulatedLineageAfterUpgrade(sql, fixture, { mutationVersion: 0, fenceEpoch: 0 });
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(90_000),
+  );
+
+  it(
+    "preserves a populated 0163 baseline across 0164-0167 and through 0174",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migrateDatabaseThrough(sql, 163);
+        const fixture = await seedUpgradeOrganization(sql, { mutationVersion: 4, fenceEpoch: 2 });
+        await migrateDatabaseThrough(sql, 167);
+        await seedPopulatedRuntimeLineage(sql, fixture);
+        await migrateDatabaseThrough(sql, 173);
+        await seedPendingUpgradeOutbox(sql, fixture);
+        await migrateDatabaseThrough(sql, 174);
+        await assertPopulatedLineageAfterUpgrade(sql, fixture, { mutationVersion: 4, fenceEpoch: 2 });
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(90_000),
+  );
+});
 
 describe("applyPendingMigrations", () => {
   it(
