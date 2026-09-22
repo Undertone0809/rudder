@@ -1,0 +1,634 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-main-lineage-reconciliation-v19",
+  "status": "invalidated",
+  "owner": {
+    "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
+    "agent_id": "codex-parent"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。\n\n最终目标不是 Node orchestration + Rust sidecar，而是：\nActix Web 接管核心 HTTP/WebSocket 服务；SQLx 接管 PostgreSQL 查询、\n事务和迁移；第一方业务服务、鉴权/session、调度器、workers、\nAgent Run、Chat/Side Chat、Automation、provider adapters、常用后端\n组件、CLI 和 MCP 均由 Rust 实现，对应 Node 后端退出运行时。\n\n同时纳入第一方 identity、analytics collector、managed MCP、\n嵌入式 PostgreSQL 生命周期，以及拥有产品状态的维护和更新恢复工具。\n不能因为它们不在 server 目录，就把它们排除。\n\n保留 React、前端工具、Electron shell，以及用户选择的外部\nprovider CLI、MCP、Local App 和插件组件。允许短生命周期安装入口，\n但不能用这些例外保留第一方 Node 业务、迁移、调度或常驻工具运行时。\n\n先读取当前 AGENTS.md、完整计划、原始迁移方案和实际实现/测试。\n保护已有未提交工作，使用独立迁移 worktree，不把当前代码 reset\n回计划中的旧 SHA。复用已有 Rust 实现，不无审查合并历史大 PR。\n\n刷新完整能力与 authority 清单，区分：\n已实现、私有验证、真实入口接入、默认路径验证、旧实现退出。\n持续维护计划指定的 ledger 和 status 文件，不沿用聊天中的估算百分比。\n\n按 Phase 0–7 连续推进，优先接通已有 Actix/read 能力；\n第一个完整写入切片优先完成现有 D1 组织 branding 与 Project–Goal link。\n每个切片都包括真实入口、鉴权、事务、审计、副作用、恢复、\n相关 CLI/MCP 和旧 writer 的退出，而不是只迁移文件或新增 crate。\n\n保持现有功能和行为，尤其保留 Side Chat 临时/过期/转永久、\n消息历史、stream/cancel/reconnect 和受支持的会话连续性。\n不要强迫 Chat 依赖 Issue，不要借迁移删功能或进行未授权产品重设计。\n\n禁止生产双写、陈旧 writer 继续写入、静默 Node fallback、\n用 Node 子进程包装旧实现，以及把后端业务转移进 Electron/bootstrap。\n迁移事务关联单元前，必须确保所有旧 writer 也遵守 ownership/fence。\n\n每个切片按当前仓库规则完成测试、reviewer、精确候选冻结、\n独立真实工作流 verifier 和最终 reviewer 验收。\n通过后提交合格增量并继续下一切片，不等我再次说“继续”。\n\n最终必须证明：移除旧第一方 Node 后端资产后，安装后的\nUI/API/CLI/MCP、数据库升级、调度、执行、恢复和支持平台仍通过验收。\n私有 Rust 测试通过、Actix 能启动或单个 PR 合并，都不代表总目标完成。\n\n你被授权在隔离本地环境、测试数据库和正常开发/CI 范围实施、\n测试、制作候选产物，并按仓库规则提交和更新 PR。\n未经额外授权，不删除真实用户数据、不迁移生产数据库、\n不发布 stable、不切换生产流量、不购买服务。\n\n缺少凭证、签名、平台环境或生产授权时，只阻塞受影响步骤，\n继续其他可执行工作，并明确记录缺口。\n分别报告 implementation_complete、release_ready 和 production_verified；\n没有实际生产证据，不得声称已上线完成。\n\n如因上下文、额度或环境中断，持久化精确提交、已通过检查、\n剩余任务、阻塞和下一条可执行步骤，保持未完成状态以便恢复。\n不要因为完成一个小切片或一个 PR 就结束整个目标。",
+    "corrections": [
+      "对了，记得先把这个 plan 写进 doc/plans",
+      "我觉得你的开发节奏可以再快一点。\n\n比如你现在生产环境好多地方都还没真实接入，其实完全可以现在就逐步接进去，不需要一口气全部接完。很多部分完全可以一边接一边测试，并不影响的。\n\n建议你调整一下策略，让开发更快一点：很多真实环境可以先迁移进来，因为单纯离线测试和真正切进来测试完全是不一样的。你可以持续地、一点一点把这些功能先接入到生产环境里，逐步替换掉",
+      "需要说明的是，重构的过程中 Main 分支时不时会有新功能或者修改进来，你的 rust 也要对应去做好适配。这个你自己调度分析就好。"
+    ],
+    "slice": "Reconcile the accepted pre-Main Rust slices onto Main 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf, preserve Main migration identities through 0167, append unreleased task migrations as 0168–0174, and prepare one fresh integrated acceptance gate for D1 branding/project-goal entrypoints, outbox recovery, UI reconnect, and installed Desktop member-directory defaults.",
+    "delivery_contract": "This packet represents integrated delivery owned by the parent. Source and product-equivalent artifacts are frozen; independent v19 real workflows PASS. Stage reviewer runtime/data rebind, standard packaged account-gate diagnosis and final-review acceptance remain pending. Historical pre-Main receipts are not current proof. No production or full migration completion is claimed.",
+    "authorization": "local_integration",
+    "non_goals": [
+      "Production traffic, production data, or production database migration",
+      "Stable publication, signing, release, or deployment",
+      "Treating pre-38 Main v17 or pre-integrated v18 receipts as current proof",
+      "Claiming the full Rust migration, Rust public listener/auth/session/CLI/MCP retirement, or all-platform installed support"
+    ],
+    "request_entrypoint": "/goal 2026-09-21-rudder-full-rust-backend-completion-plan.md"
+  },
+  "preparation_scope": {
+    "agent_role": "packet_preparation_only",
+    "write_scope": [
+      "doc/plans/2026-09-23-rudder-main-lineage-reconciliation-delivery-packet-v19.json"
+    ],
+    "contributor_limitation": "This turn does not edit parent implementation, tests, ledger, status, plan, source, refs, builds, or runtime/data fixtures. This is an execution boundary, not a delivery non-goal."
+  },
+  "candidate": {
+    "branch": "codex/rudder-main-lineage-reconcile-20260923",
+    "source_ref": "codex/rudder-main-lineage-reconcile-20260923",
+    "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+    "source_tree": "5fea688abee9389723b307bbcbde1046fe7c3285",
+    "freeze_state": "frozen_source_pending_acceptance",
+    "freeze_reason": "Source/test ceb08 frozen; product artifacts equivalent to d328. Independent bounded v19 workflows PASS including supplemental populated Main lineage. Standard packaged account-gate diagnosis and final review remain open.",
+    "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "dirty_scope": "Clean committed source at ceb08be24; delivery metadata and generated build directories excluded.",
+    "changed_paths": [
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/__tests__/agent-v1-registry.test.ts",
+      "cli/src/__tests__/http.test.ts",
+      "cli/src/agent-v1-capabilities.generated.ts",
+      "cli/src/agent-v1-mcp-organization-project.ts",
+      "cli/src/agent-v1-mcp-server.ts",
+      "cli/src/client/http.ts",
+      "cli/src/commands/client/company-organization-commands.ts",
+      "cli/src/commands/client/company.ts",
+      "cli/src/commands/client/project.ts",
+      "cli/src/commands/start.ts",
+      "cli/src/commands/worktree-merge.ts",
+      "contracts/rudder-agent-contract/v1.json",
+      "desktop/scripts/rust-member-directory-smoke.mjs",
+      "desktop/scripts/smoke.mjs",
+      "desktop/scripts/stage-native.mjs",
+      "desktop/scripts/stage-native.test.mjs",
+      "desktop/src/main.ts",
+      "desktop/src/runtime-options.test.ts",
+      "desktop/src/runtime-options.ts",
+      "desktop/src/rust-foundation-runtime.test.ts",
+      "desktop/src/rust-foundation-runtime.ts",
+      "native/Cargo.lock",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/agent-contract-core/src/contract.generated.json",
+      "native/crates/agent-contract-core/src/lib.rs",
+      "native/crates/agent-request-planner/src/bin/agent-request-planner-differential.rs",
+      "native/crates/agent-request-planner/src/lib.rs",
+      "native/crates/agent-request-planner/tests/planner.rs",
+      "native/crates/auth-core/src/lib.rs",
+      "native/crates/auth-core/tests/protocol.rs",
+      "native/crates/d1-persistence/src/branding.rs",
+      "native/crates/d1-persistence/src/goal_sets.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/links.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/d1-persistence/tests/support/mod.rs",
+      "native/crates/migration-core/tests/validation.rs",
+      "native/crates/project-goal-link-core/Cargo.toml",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/server-foundation/Cargo.toml",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-0.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-1.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-2.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-3.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-4.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-5.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-6.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-7.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.test.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-0.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-1.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-2.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-3.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-4.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-5.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "packages/db/src/client.test.ts",
+      "packages/db/src/migrations/0168_organization_mutation_state_backfill.sql",
+      "packages/db/src/migrations/0169_project_goal_set_receipt_kind.sql",
+      "packages/db/src/migrations/0170_organization_mutation_state_provisioning.sql",
+      "packages/db/src/migrations/0171_organization_mutation_fence_token.sql",
+      "packages/db/src/migrations/0172_organization_branding_mutation_authority.sql",
+      "packages/db/src/migrations/0173_project_goal_mutation_authority.sql",
+      "packages/db/src/migrations/0174_organization_mutation_outbox_claims.sql",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/migrations/organization-outbox-recovery.test.ts",
+      "packages/db/src/schema/index.ts",
+      "packages/db/src/schema/organization_branding_mutations.ts",
+      "packages/db/src/schema/organization_mutations.ts",
+      "packages/db/src/schema/project_goal_mutations.ts",
+      "packages/shared/src/constants.ts",
+      "packages/shared/src/types/live.ts",
+      "packages/shared/src/validators/chat.ts",
+      "packages/shared/src/validators/index.ts",
+      "scripts/architecture-audit-baseline.json",
+      "scripts/generate-rudder-mcp-tool-descriptors.ts",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "scripts/smoke/organization-outbox-recovery-worker.ts",
+      "scripts/smoke/rust-branding-real-entry.ts",
+      "scripts/smoke/rust-project-goal-real-entry.ts",
+      "scripts/smoke/rust-reconnect-browser.mjs",
+      "scripts/smoke/rust-reconnect-ui-fixture.ts",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
+      "server/src/__tests__/budgets-service.test.ts",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/config-env-loading.test.ts",
+      "server/src/__tests__/goals-contract.test.ts",
+      "server/src/__tests__/local-runtime.test.ts",
+      "server/src/__tests__/organization-mutation-fence.test.ts",
+      "server/src/__tests__/organization-row-writer-fence.test.ts",
+      "server/src/__tests__/organization-workspace-browser.test.ts",
+      "server/src/__tests__/organization-workspace-media-routes.test.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/__tests__/projects-service.test.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "server/src/bootstrap/create-http-app.ts",
+      "server/src/bootstrap/register-api-routes.ts",
+      "server/src/bootstrap/types.ts",
+      "server/src/config.ts",
+      "server/src/index.ts",
+      "server/src/local-runtime.ts",
+      "server/src/middleware/auth.ts",
+      "server/src/realtime/live-events-ws.ts",
+      "server/src/routes/issues.mutations.ts",
+      "server/src/routes/orgs-rust-foundation.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/routes/projects.ts",
+      "server/src/runtime/server-app-runtime.ts",
+      "server/src/services/assets.ts",
+      "server/src/services/budgets.ts",
+      "server/src/services/chats.annotation-persistence.ts",
+      "server/src/services/chats.mutation-helpers.ts",
+      "server/src/services/chats.queued-message-create.ts",
+      "server/src/services/chats.ts",
+      "server/src/services/costs.ts",
+      "server/src/services/goals.contract-helpers.ts",
+      "server/src/services/goals.ts",
+      "server/src/services/index.ts",
+      "server/src/services/issues.comments-attachments.ts",
+      "server/src/services/issues.description-assets.ts",
+      "server/src/services/issues.ts",
+      "server/src/services/knowledge-portability/organization-portability.import.ts",
+      "server/src/services/knowledge-portability/organization-portability.ts",
+      "server/src/services/live-events.ts",
+      "server/src/services/organization-branding-fence.test.ts",
+      "server/src/services/organization-branding-fence.ts",
+      "server/src/services/organization-members.ts",
+      "server/src/services/organization-mutation-fence.ts",
+      "server/src/services/organization-mutation-outbox.test.ts",
+      "server/src/services/organization-mutation-outbox.ts",
+      "server/src/services/orgs.ts",
+      "server/src/services/project-goal-mutation-fence.test.ts",
+      "server/src/services/project-goal-mutation-fence.ts",
+      "server/src/services/projects.ts",
+      "server/src/services/resource-catalog.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "server/src/services/side-chats.ts",
+      "server/src/types/express.d.ts",
+      "ui/src/context/LiveUpdatesProvider.queue.test.tsx",
+      "ui/src/context/LiveUpdatesProvider.tsx",
+      "ui/src/context/live-updates-reconnect.ts"
+    ],
+    "changed_paths_basis": "Complete committed source/test diff from Main38acc to ceb08 excluding delivery records under doc/plans; path set unchanged by the two existing smoke-harness edits.",
+    "build": {
+      "id": "d328-macos-arm64-a2d26a9d36d9a2d0e5f33dd660fa7ba3f3c8f76a19256b2e877b81ba0866ddd5",
+      "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+      "artifact_sha256": {
+        "executable": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
+        "desktop": "26d69d45237e6962131c8d4e92685c05ea578251336ebda52cef6a4bc0245348",
+        "server": "f59b3e9e5de038632399640a2bcbb8d5e6414f52171231ecd71bf38c2b8e4209",
+        "foundation": "11570bbb0eb262d39ecb9cb222099c25ef2081ab40852f3426ac62115e2d58ff"
+      },
+      "status": "built_packaged_and_package_verifier_passed_unsigned_local_candidate",
+      "manifest_path": "/tmp/codex-rudder-lineage-build-manifest.json",
+      "build_log": "/tmp/codex-rudder-lineage-build-final.log",
+      "package_log": "/tmp/codex-rudder-lineage-package.log",
+      "built_from_source_sha": "d3287434fd1632d57086f329c69b5b07efd32c2b",
+      "content_equivalence": "Only external smoke harness files changed8+/2- from d328; all packaged product inputs and artifact hashes remain identical."
+    },
+    "runtime": {
+      "id": "v19-ceb08-branding85017-project85018-reconnect31719-desktop71069",
+      "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+      "status": "independent_bounded_workflows_PASS",
+      "evidence": "doc/plans/artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json",
+      "cwd": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss",
+      "processes": {
+        "branding_fixture": 85017,
+        "project_goal_fixture": 85018,
+        "reconnect": 31719,
+        "desktop_server_after_restart": 71069
+      },
+      "lease_rechecked_at": "2026-09-22T18:06:56.414Z"
+    },
+    "organization_data": {
+      "organization_id": "342d9d34-35fa-4824-9b82-bc75617167bf",
+      "data_id": "v19-ceb08-independent-disposable-fixtures",
+      "project_goal_organization_id": "6a7bef32-24e3-498d-a61f-159d4dea6e1c",
+      "reconnect_organization_id": "a9d73a92-74b4-406a-a2e7-43ee50d2e6a0",
+      "installed_organization_id": "0e550dfc-22d6-40c7-8295-3c5f35cae76e",
+      "scope": "disposable local fixtures only; exact ports, foreign orgs, PID/cwd and upgrade fixtures in verifier receipt"
+    },
+    "workload_fixture": "Independent populated0167-to0174 and0163-via0167-to0174 PostgreSQL upgrades; branding/Project-Goal HTTP/CLI/MCP, outbox fault recovery, ego-browser reconnect, installed macOS arm64 default-member fixtures. No production data.",
+    "budget_lease": {
+      "id": "not_applicable",
+      "fingerprint": "no_explicit_budget_or_deadline",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "19",
+      "fingerprint": "16fb93f88b9c0e2bd447e9238d5984f4070433886dfb3a37c1fb500a5ffb969d",
+      "criteria": [
+        "The exact integrated candidate preserves Main migration prefix identities through 0167 and proves, on disposable PostgreSQL with populated data, both the 0163-era to 0167 upgrade and the 0167 to appended 0174 upgrade, including journal continuity, schema/data readback, and no collision or silent loss. Populated upgrade continuity covers common Run/attempt, bindings, segments/spans, retention/source aliases, organization mutation state and pending outbox; Project-Goal public mutation continuity is exercised under criterion 2 rather than claimed from the populated-upgrade fixture.",
+        "Real HTTP, Node CLI, and MCP D1 organization-branding and Project-Goal-link entrypoints prove authentication, organization scoping, signed actor envelopes, SQLx/Rust authority, audit rows, ownership/fence rejection of legacy writers, idempotent replay/conflict behavior, and persisted database readback.",
+        "The organization mutation outbox and recovery workflow proves pending/claimed/published or recoverable states, migration 0173-to-0174 compatibility, stale-claim or worker-loss recovery, retry/backoff, stable delivery keys, and no duplicate business mutation under disposable PostgreSQL. Delivery is at-least-once. dedupeKey is not durable consumer deduplication; duplicate live hints are allowed and trigger persisted-state reconciliation. No exactly-once or durable fanout claim is made.",
+        "The real UI reconnect workflow keeps HTTP online while WebSocket delivery is withheld, performs the scoped branding and Project-Goal mutations, reconnects, updates the organization icon, rereads the mounted project's goalIds, and preserves selected-organization/cache and chat continuity.",
+        "The installed macOS arm64 Desktop default member-directory path uses packaged required Rust/SQLx with no Node fallback, proves own-organization read, foreign-organization 403, pagination/error behavior, child restart and same-server identity, full Desktop restart persistence, and missing foundation-asset fail-closed diagnostics.",
+        "The independent observations bind the frozen source, equivalent build artifact hashes, fresh runtime/process and disposable organization/data identities. Applicable author baseline and packaged checks are accounted for with explicit omissions. Historical pre-38 v17 and pre-integrated v18 receipts do not substitute for current observations.",
+        "The packet makes no production, signing, release, other-platform or full-migration claim. Qualified PR221 branch updates require stage accept, independent verifier PASS and final reviewer accept on this candidate; merging to main still requires separate user authority."
+      ],
+      "state_inventory": [
+        {
+          "state": "main_lineage_reconciled_source_frozen",
+          "decision": "continue parent repair and freeze preparation",
+          "controls": "current checkpoint, base SHA, migration manifest, dirty-scope fingerprint",
+          "safety_context": "preserve Main 0163–0167 identities and parent dirty paths; no receipt reuse",
+          "continuity": "test repairs and upgrade validation remain pending"
+        },
+        {
+          "state": "populated_upgrade",
+          "decision": "run both migration lineage transitions",
+          "controls": "disposable PostgreSQL and explicit pre/post schema/data readback",
+          "safety_context": "no shared or production database",
+          "continuity": "existing Main rows and migration journal identities remain stable"
+        },
+        {
+          "state": "rust_entrypoints",
+          "decision": "exercise branding and Project-Goal link public entrypoints",
+          "controls": "HTTP, CLI, MCP, auth, idempotency, conflict, audit, fence",
+          "safety_context": "organization isolation and Rust ownership must be observable",
+          "continuity": "legacy Node writers fail closed; persisted values remain authoritative"
+        },
+        {
+          "state": "outbox_recovery",
+          "decision": "recover delivery across worker/process failure",
+          "controls": "pending/claimed/published state and receipt readback",
+          "safety_context": "at-least-once hints cannot duplicate business mutation",
+          "continuity": "stable delivery keys and retry behavior"
+        },
+        {
+          "state": "ui_reconnect",
+          "decision": "continue the existing mounted project workflow after socket recovery",
+          "controls": "HTTP-online/socket-withheld fixture, reconnect, selected-org refresh",
+          "safety_context": "stale late responses must not overwrite current organization",
+          "continuity": "icon, goalIds, navigation, and chat queue semantics remain intact"
+        },
+        {
+          "state": "installed_member_default",
+          "decision": "use the packaged Desktop member directory",
+          "controls": "default required Rust path, foreign-org boundary, pagination, child/full restart, missing-asset diagnostic",
+          "safety_context": "disposable profile and embedded PostgreSQL; no Node fallback",
+          "continuity": "persisted member data and authorization survive restart"
+        }
+      ],
+      "fingerprint_basis": "SHA256(JSON.stringify({criteria,state_inventory})) in field order"
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "agent_id": "01a0c92c-a981-7170-8c24-7ae2a98dfe52",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+      "build_id": "d328-macos-arm64-a2d26a9d36d9a2d0e5f33dd660fa7ba3f3c8f76a19256b2e877b81ba0866ddd5",
+      "runtime_id": "v19-ceb08-branding85017-project85018-reconnect31719-desktop71069",
+      "data_id": "v19-ceb08-independent-disposable-fixtures",
+      "packet_version": "19",
+      "scope": "Arendt stage accept explicitly rebound from planned runtime/data to actual Peirce v19 tuple after reading terminal PASS, both populated Main lineage cases and matching packaged artifacts. Not final handoff acceptance.",
+      "level": "stage verdict",
+      "recorded_at": "2026-09-22T18:19:58Z",
+      "recorded_at_basis": "Parent recording time after issuing reviewer explicitly accepted the actual tuple; verifier lease remains 2026-09-22T18:06:56.414Z."
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "agent_id": "01a0c921-5f77-7c73-8f7e-0ae752bcf450",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+      "build_id": "d328-macos-arm64-a2d26a9d36d9a2d0e5f33dd660fa7ba3f3c8f76a19256b2e877b81ba0866ddd5",
+      "runtime_id": "v19-ceb08-branding85017-project85018-reconnect31719-desktop71069",
+      "data_id": "v19-ceb08-independent-disposable-fixtures",
+      "packet_version": "19",
+      "scope": "Independent exact v19 criteria including both supplemental populated lineage cases. Standard packaged account-gate timeout remains a separate required author baseline gap, not resolved by this receipt.",
+      "evidence": "doc/plans/artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json",
+      "recorded_at": "2026-09-22T18:06:56.414Z"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "agent_id": "pending-final-reviewer",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+      "build_id": "d328-macos-arm64-a2d26a9d36d9a2d0e5f33dd660fa7ba3f3c8f76a19256b2e877b81ba0866ddd5",
+      "runtime_id": "v19-ceb08-branding85017-project85018-reconnect31719-desktop71069",
+      "data_id": "v19-ceb08-independent-disposable-fixtures",
+      "packet_version": "19",
+      "scope": "Pending final review of actual verifier tuple and remaining standard packaged account-gate/auto-update baseline. Stage reviewer still must rebind the planned runtime/data tuple; parent does not impersonate that receipt."
+    }
+  },
+  "drift": {
+    "active": true,
+    "events": [
+      {
+        "kind": "packaged_identity_dependency_and_main_drift",
+        "previous_main_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+        "current_main_sha": "e73976f0fa0662b1605838e92232b2b27cdc0faa",
+        "reason": "Relocated Desktop package cannot resolve identity-core; original repository-resident package can resolve ancestor dependencies. Auto-update target and LKG fail probation. Parent is fixing staging and rebuilding; Main delta audit is also pending.",
+        "resolution": "v19 remains historical exact-source evidence only. Rebind unchanged backend observations explicitly; new package needs fresh relocated acceptance and final review. No publication authorized by this packet."
+      },
+      {
+        "kind": "main_lineage_reconciliation",
+        "previous_main_sha": "5ef9b5475787dd662b2c8ec04b64158387d9dcb7",
+        "current_main_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+        "reason": "Main #223 added native session lineage and common Run schema plus migrations 0164–0167, colliding with unreleased task migration slots.",
+        "resolution": "Main prefix identities through 0167 are retained and task-only migrations are appended as 0168–0174 in the isolated reconciliation worktree.",
+        "current_state": "Source reconciliation is frozen at ceb08be24dcbf71ae110e55b9907deca54d91a0f; author validation is recorded separately and independent acceptance remains pending."
+      },
+      {
+        "kind": "local_main_ref_observation",
+        "local_main_sha": "cb71b391f96020b3bd8971f671d064cba77f2b3c",
+        "remote_main_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+        "reason": "The packet uses origin/main and the user-provided 38acc base as the authoritative integration base; the local main ref is separately recorded and is not silently substituted."
+      }
+    ],
+    "invalidated_receipts": [
+      "v19 packaged build/runtime observations do not apply to the identity dependency repair and new artifact; backend-only observations remain supporting evidence pending explicit content-equivalence review",
+      "v17 reviewer/verifier/final-review receipts for pre-38 Main source e80deae94a441cc8cfa0411cf37a0a5949614285",
+      "v17 packaged/runtime/data receipts bound to the pre-38 Main lineage",
+      "v18 member-default stage/build/runtime assumptions bound before Main 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf reconciliation"
+    ],
+    "note": "No v19 receipt is being reused or upgraded from historical packets."
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "isolated_risk",
+    "target_ref": "refs/heads/main",
+    "base_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+    "remote_ref": "refs/heads/codex/rudder-full-rust-backend-completion-20260921",
+    "observed_remote_sha": "6e37a563523db92b63589557be18d12e65593101",
+    "branch_refs": [
+      {
+        "ref": "refs/heads/codex/rudder-main-lineage-reconcile-20260923",
+        "sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+        "role": "current frozen source awaiting independent acceptance"
+      },
+      {
+        "ref": "refs/remotes/origin/main",
+        "sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+        "role": "authoritative observed Main base"
+      },
+      {
+        "ref": "refs/heads/main",
+        "sha": "cb71b391f96020b3bd8971f671d064cba77f2b3c",
+        "role": "local Main ref observed separately; not used as base"
+      },
+      {
+        "ref": "refs/heads/codex/rudder-branding-outbox-recovery-20260922",
+        "sha": "3750433bf2a088d6ea78b6adc291088b1ba8c9cc",
+        "role": "historical branding/outbox branch tip; v17 receipts remain pre-38 and invalidated"
+      },
+      {
+        "ref": "refs/heads/codex/rudder-member-directory-default-20260922",
+        "sha": "42d4cc337665d8cf118179aae44334dbe8dd88e7",
+        "role": "historical member-default branch tip; v18 assumptions remain pre-integrated"
+      }
+    ],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss",
+    "patch_tree_sha": "5fea688abee9389723b307bbcbde1046fe7c3285",
+    "expected_old_sha": "6e37a563523db92b63589557be18d12e65593101",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none",
+    "note": "Authorized qualified PR221 branch update only after exact-candidate review/verifier gates. Main38 and PR221 head6e37 reconfirmed with git ls-remote. No merge, release or production deployment authority. Recheck remote lease before publication."
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/__tests__/agent-v1-registry.test.ts",
+      "cli/src/__tests__/http.test.ts",
+      "cli/src/agent-v1-capabilities.generated.ts",
+      "cli/src/agent-v1-mcp-server.ts",
+      "cli/src/client/http.ts",
+      "cli/src/commands/client/company.ts",
+      "contracts/rudder-agent-contract/v1.json",
+      "native/Cargo.lock",
+      "native/crates/agent-contract-core/src/contract.generated.json",
+      "native/crates/auth-core/src/lib.rs",
+      "native/crates/auth-core/tests/protocol.rs",
+      "native/crates/project-goal-link-core/Cargo.toml",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/project-goal-link-core/tests/public_api.rs",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "server/src/routes/orgs.ts",
+      "cli/src/__tests__/organization-brand-color.test.ts"
+    ],
+    "index_fingerprint_before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "index_fingerprint_after": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "worktree_fingerprint_before": "a805bb0666c88f91f610b56bcc241a2acc04a88c0c4174bf639dbf256c3a54e0",
+    "worktree_fingerprint_after": "a805bb0666c88f91f610b56bcc241a2acc04a88c0c4174bf639dbf256c3a54e0",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "Parent read-only checks of protected original checkout confirmed tracked git diff HEAD --binary, empty index, and untracked branding-test hashes equal pre-task snapshot. All writes and checkpoint commits occurred in isolated task worktrees.",
+      "Task-owned delivery metadata in the integration checkout is not unrelated user work. Packaging generated directory was restored after successful packaging."
+    ],
+    "checkout": "/Users/zeeland/.codex/worktrees/7b2a/rudder-oss",
+    "untracked_file_sha256": {
+      "cli/src/__tests__/organization-brand-color.test.ts": "ebbfae2e69258d770a8ad9d435ab61e3c5f3fd4ecb3c4b1f533a3753e05a1f80"
+    }
+  },
+  "reconciliation_observation": {
+    "checkpoint": {
+      "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+      "tree_sha": "5fea688abee9389723b307bbcbde1046fe7c3285",
+      "state": "source_frozen_author_installed_PASS_independent_acceptance_pending"
+    },
+    "main_lineage": {
+      "base_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+      "prefix": "Main migrations 0163 through 0167 preserved; task-only migrations appended 0168 through 0174",
+      "manifest_fingerprint": "48588b72335d9d3f9a7b6c1e70e25e60dd9ce3dc133b0b45648ed7c68a42ed7f",
+      "manifest_counts": {
+        "journal_entries": 175,
+        "sql_files": 177
+      }
+    },
+    "author_claimed_checks": [
+      "release compatibility matrix: PASS, 18 tests including frozen 0.7.23",
+      "migration-core validation: PASS",
+      "Node/Rust migration manifest differential: PASS",
+      "lint: PASS, 2987 files",
+      "author real branding/link entry: PASS with new manifest",
+      "D125/blackbox10/matrix18/outbox19/upgrade2: PASS",
+      "full recursive typecheck/lint/Node-Rust differential: PASS",
+      "runtime/data and independent integrated acceptance: pending",
+      "Full build and unsigned macOS arm64 package plus package verifier PASS; installed member-default complete author probe PASS on equivalent artifact bytes.",
+      "Split baseline PASS after isolated auth timing2/2 rerun under idle load; remaining195 server files2196 tests and UI3368 CLI453 Desktop1004 scripts189 pass. No threshold/source change."
+    ],
+    "pending_gates": [
+      "Independent fresh upgrade, public entry, reconnect and installed workflow observations",
+      "Fresh independent runtime/process and organization/data identities",
+      "Desktop dev smoke completion",
+      "Final reviewer accept after verifier PASS",
+      "Qualified PR221 exact-head update; main merge remains unauthorized"
+    ],
+    "scope_boundary": "No production database, production traffic, stable publication, signing, or other-platform installed claim."
+  },
+  "supporting_evidence": [
+    "doc/plans/2026-09-21-rudder-full-rust-backend-completion-plan.md#Main-lineage-integration-checkpoint",
+    "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml",
+    "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+    "doc/plans/2026-09-21-rudder-full-rust-backend-completion-delivery-packet-v17.json (historical and invalidated for v19)",
+    "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss/doc/plans/2026-09-23-rudder-installed-member-directory-delivery-packet-v18.json (historical pre-integrated packet)",
+    "Current source ceb08be24dcbf71ae110e55b9907deca54d91a0f/tree 5fea688abee9389723b307bbcbde1046fe7c3285; ls-remote Main38acc and PR2216e37 confirmed; old55c checkpoint appears only as historical correction text.",
+    "ceb08be24dcbf71ae110e55b9907deca54d91a0f only changes external smoke harnesses from d328; author idle auth2/2 log /tmp/codex-rudder-lineage-auth-idle.log; source context/source tests unchanged."
+  ],
+  "planned_evidence": {
+    "root": "pending per-run /tmp/codex-rudder-v19-evidence-* root",
+    "root_policy": "Every real run uses a disposable per-task root, records exact logs and hashes, and never uses shared or production data.",
+    "slots": [
+      {
+        "id": "main_prefix_populated_upgrade",
+        "criteria": [
+          1
+        ],
+        "command": "Fresh disposable PostgreSQL migration validation for populated 0163-era to 0167 and 0167 to 0174 histories",
+        "output": "migration-prefix-populated-v19.log and receipt.json",
+        "state": "pending"
+      },
+      {
+        "id": "branding_project_goal_real_entries",
+        "criteria": [
+          2
+        ],
+        "command": "node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/smoke/rust-branding-real-entry.ts plus rust-project-goal-real-entry.ts",
+        "output": "branding-project-goal-v19.log and receipt.json",
+        "state": "pending"
+      },
+      {
+        "id": "outbox_recovery",
+        "criteria": [
+          3
+        ],
+        "command": "organization-outbox-recovery worker and focused PostgreSQL recovery tests on the integrated migration chain",
+        "output": "outbox-recovery-v19.log and receipt.json",
+        "state": "pending"
+      },
+      {
+        "id": "ui_reconnect",
+        "criteria": [
+          4
+        ],
+        "command": "rust-reconnect-ui-fixture.ts plus rust-reconnect-browser.mjs using a disposable browser/Desktop fixture",
+        "output": "ui-reconnect-v19.log, screenshots, and receipt.json",
+        "state": "pending"
+      },
+      {
+        "id": "installed_member_default",
+        "criteria": [
+          5
+        ],
+        "command": "node desktop/scripts/smoke.mjs --mode=packaged --scenario=rust-member-directory",
+        "output": "installed-member-default-v19.log and receipt.json",
+        "state": "pending"
+      },
+      {
+        "id": "baseline_and_package",
+        "criteria": [
+          6,
+          7
+        ],
+        "command": "Fresh exact-candidate lint, recursive typecheck, architecture/generator checks, applicable tests/build, packaged Desktop checks, and identity manifest reconciliation",
+        "output": "baseline-v19 logs and exact build/runtime receipt",
+        "state": "pending"
+      }
+    ]
+  },
+  "historical_only": [
+    {
+      "packet_version": "17",
+      "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+      "base_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+      "status": "invalidated",
+      "reason": "Its final source and receipts were bound to the pre-38 Main lineage; no integrated acceptance is inferred."
+    },
+    {
+      "packet_version": "18",
+      "source_sha": "42d4cc337665d8cf118179aae44334dbe8dd88e7",
+      "base_sha": "5ef9b5475787dd662b2c8ec04b64158387d9dcb7",
+      "status": "historical_only",
+      "reason": "Installed member-default proof was prepared before the current Main lineage reconciliation; it must be rerun on the exact v19 candidate."
+    }
+  ],
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  },
+  "claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "current_preparation_findings": {
+    "stage_review": "Arendt explicit stage accept after all four remaining current-source metadata findings were repaired; independent verifier Peirce dispatched on this frozen candidate.",
+    "author_installed_probe": {
+      "status": "author_PASS_ceb08_complete_scenario",
+      "log": "/tmp/codex-rudder-lineage-installed.log",
+      "positive_scope": [
+        "default Rust directory",
+        "same-name pagination",
+        "foreign-org403",
+        "child recovery",
+        "Desktop restart"
+      ],
+      "retry_log": "/tmp/codex-rudder-lineage-installed-final.log",
+      "resolution": "Startup error is emitted on Desktop stderr before sanitized recovery view; test-only accessor observes existing captured output. Same artifact hashes as d328; final marker and no successful Node read confirmed."
+    },
+    "source_claims": {
+      "implementation_complete": false,
+      "release_ready": false,
+      "production_verified": false
+    },
+    "baseline": "195 remaining server files2196 tests PASS; UI3368 CLI453 Desktop1004 scripts189 PASS. Original aggregate auth2s failures passed idle focused rerun2/2 (1580ms,1223ms), no threshold/source change. Baseline evidence is split, not one clean aggregate invocation."
+  },
+  "coordinator_preparation_history": {
+    "provenance": "Parent/subagent coordination, not additional user authorization",
+    "observations": [
+      "Findings reconciled: accept1-3 as blockers, instructed worker restore explicitoff/shadow (required default no silent fallback; retiredfalse), normalize/query-error parity and installed server/CLI binary provisioning. For4 parent task explicitly requested random key only when no explicit config; preserving an explicit static key is existing behavior, not defaultper-startclaim. Default random per spawn and immediate clear on exit required; static config compatibility may remain documented nondefault. Please distinguish that from a blanket required remove-static policy, which wasn't authorized. Re-review after worker concrete fixes; no proxy needed.",
+      "Parent evaluating narrower default-read slice: installed Desktop has staged foundation already; default required there only, generic standalone server/CLI defaults remain explicitly Node pending later native-asset provisioning slice. Config only passed by shell, no business moved into Electron. Ledger default proof scope Desktop, not whole product. This avoids breaking npm startup and huge all-platform packaging expansion while connecting an actual installed default now. Consider this valid incremental scope rather than requiring global default in one slice; query/error parity and explicitmode semantics remain gates.",
+      "Next slice scope correction persisted in parent plan: installed Desktop-only default, generic server/CLI unchanged; explicit off/shadow preserved; never select mode by binary existence. Epicurus actively implementing launch overrides and query parity. Please coordinate stage review of final worker snapshot when ready, avoid premature dirty-snapshot verdict while patch underway; required acceptance includes missing binary, child restart key lifecycle, duplicate/array query and error/cursor parity.",
+      "Epicurus source-ready now in member-directory-default worktree: scoped59/59+Desktop4/4, typechecks/lint PASS. Please stage-review current diff plus parent installed smoke helper. Parent starting package author build now, not acceptance. Required default from packaged identity and explicit resource path (no process.resourcesPath in server), off/shadow retained, canonical cursors. Return exact dirty diff fingerprint/scope and blockers; no edits.",
+      "Final source checkpoint2a247bc576a7046dc74b368d88713b1236d3568c/treec3401fdc568e772480476c920e7a116749b66430 now clean in next worktree. runtime-options extraction included, architecture-final.log PASS and full recursive typecheck PASS; full baseline tests active. Please bind stage review to this immutable candidate, no source changes pending. Package build before extraction supporting only; will rebuild frozen source.",
+      "Read stage accept2a. Parent added TEST-ONLY installed smoke strength in desktop/scripts/rust-member-directory-smoke.mjs: two same-name agents+real two-page cursor traversal; POSIX exact child identification (ppid=fixture runtime descriptor PID AND executable full path=packaged foundation) then SIGKILL only that child, wait replacement, assert same server PID and successful unchanged read. Windows explicitly records child case not_exercised, no platform claim. Product inputs unchanged so2a package build remains applicable. Please bounded review this helper delta for safety/false positives and rebind stage after final checkpoint; do not rerun baseline. This addresses high-risk default-read restart/query normalization.",
+      "Installed smoke strengthening frozen now42d4cc337665d8cf118179aae44334dbe8dd88e7/tree5ac327a032670c497ed6a1d7ee1a8474b4fac478, only smoke helper changes from2a. Product/build inputs identical. Syntax+changed lint PASS. Final2a desktop build PASS; packaging delayed until scripts baseline avoids rename collision. Please bind bounded helper stage rebind to42d, safety check before actual fixture child SIGKILL.",
+      "Current checkpoint55c02da44159456d3ac54b161dc6f0c0da0129a not frozen (test repairs pending); base38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf. Criteria Main prefix stable, populated0163->0167 and0167->0174, scoped D1 branding/link entry auth fence audit/outbox/recovery UI reconnect, installed default member Rust and no fallback/foreign403/restart/missing asset. Old receipts historical only; all integrated reviewer/verifier/build/runtime/data pending. Parent doing source/tests, reviewer Arendt audit.",
+      "Candidate now frozen source d3287434fd1632d57086f329c69b5b07efd32c2b tree d02699265029bd7155bf771820c1d23beb8e2fd3; only metadata dirty now. Parent author real branding/link entry PASS new manifest, D125/blackbox10/matrix18/outbox19/upgrade2 all PASS, full typecheck/lint/differential PASS. Build rerun running consistent pnpm store; full baseline timing failure unchanged codex execute2s tests worker diagnosing. Runtime/data for independent acceptance still pending. Arendt stage requested after packet ready.",
+      "v19 represents whole integrated delivery owned by parent, not your packet-only subtask. The contributor-only packet write limitation must not be recorded as a delivery non-goal."
+    ]
+  },
+  "independent_verification_reconciliation": {
+    "initial_gap": "Initial draft criterion1 ran historical upgrades but omitted two exact populated Main lineage cases.",
+    "resolution": "Issuing verifier independently ran both client.test.ts populated lineage cases, 2 PASS, and confirmed terminal PASS after parent hash/readback checks.",
+    "evidence": "doc/plans/artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json",
+    "criteria_unchanged": true,
+    "metadata_only_rebind": true,
+    "stage_reviewer_actual_tuple_rebind": "Arendt_accept"
+  }
+}

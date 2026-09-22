@@ -36,10 +36,47 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-09-22
+updated_at: 2026-09-23
 ---
 
 # Purpose and terminal outcome
+
+## Main lineage integration checkpoint (2026-09-23)
+
+The isolated integration branch now contains Main `38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf`
+and the installed Desktop member-directory default increment. Main migrations
+0164–0167 retain their identities; the seven unreleased mutation migrations are
+appended as 0168–0174. Checkpoint `ceb08be24dcbf71ae110e55b9907deca54d91a0f`
+freezes source and a test-only Desktop stderr observation repair for independent
+review; it is not an accepted or published candidate. Product artifact bytes
+remain equivalent to the d328 build. Both populated upgrade paths pass locally.
+
+The regenerated manifest has 175 journal entries and 177 SQL files. The release
+matrix (18 tests) and Node/Rust manifest differential pass, as do the author-run
+branding and Project–Goal HTTP/CLI/MCP probes. Prior e80 acceptance remains
+historical: independent real-entry and installed workflows need fresh evidence.
+The initial baseline stopped on Codex authentication termination timing assertions;
+both passed an idle rerun without code or threshold changes. Remaining server
+tests, UI/CLI/Desktop/scripts tests, full build and packaging pass. The complete
+installed default-member author probe passes; independent acceptance and standard
+Desktop smoke completion remain pending. This is split baseline evidence, not a
+single clean aggregate invocation. Continue from the current status file; all three terminal goal
+claims remain false. No production database or traffic has been changed.
+
+Development Desktop scenarios now pass, as do packaged Computer Use and App
+Builder checks. Standard packaged account-gate acceptance remains unresolved:
+its copied identity application timed out during Electron launch, and the later
+packaged scenarios were not reached. Diagnosis continues without weakening the
+criterion or changing the frozen product candidate. The independent verifier
+is exercising the integrated public workflows separately.
+
+Organization-name implementation has started concurrently from `ceb08be24` in
+`codex/rudder-branding-name-authority-20260923`, using a separate worktree and
+build outputs. Its transaction boundary must include both supported Chat
+approval paths, their proposal and system-message effects, audit, and replayable
+recovery. Failing an existing approval or organization import is an incomplete
+capability, not successful writer retirement. The current source boundary is
+recorded in `artifacts/2026-09-23-rudder-full-branding-next-slice-boundaries.md`.
 
 This is the implementation plan for completing the first-party Rudder backend
 and Agent tooling migration to Rust. The target is a Rust-owned product runtime,

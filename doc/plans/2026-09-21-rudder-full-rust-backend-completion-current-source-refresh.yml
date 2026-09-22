@@ -1,30 +1,59 @@
 schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-22
+updated_at: 2026-09-23
 candidate:
-  source_sha: 3d22263016324bff63c36be0ce332ff1f09ebdad
-  branch: codex/rudder-branding-outbox-recovery-20260922
-  worktree: /Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss
-  tree_sha: 94386cc163f8289986017a2efbdf314aabaa73db
+  source_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  branch: codex/rudder-main-lineage-reconcile-20260923
+  worktree: /Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss
+  tree_sha: 5fea688abee9389723b307bbcbde1046fe7c3285
   dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  source_path_count: 69
-  source_path_count_basis: git_diff_6e37a563_to_e80deae94_excluding_doc_plans_incremental_PR_update_only
-  latest_test_only_checkpoint: e80deae94a441cc8cfa0411cf37a0a5949614285
-  latest_test_only_delta: desktop/scripts/smoke.mjs_navigation_and_method_log; inventory_count_classes_unchanged
-  dirty_fingerprint_scope: immutable_committed_candidate_source_content_excluding_durable_plan_records_packets_and_artifacts
-  dirty_fingerprint_status: exact_immutable_commit_3d222_source_content_rebound_from_b4793; worktree_metadata_remains_parent_owned
-  scan_status: current_bounded_counts_rebound_to_3d222_from_17c_immutable_scans; no_full_semantic_audit
-  semantic_rows: partial_with_current_writer_audit; authority_handoff_not_claimed
+  source_path_count: 97
+  source_path_count_basis: git_diff_6e37a563_to_ceb08be_excluding_doc_plans_current_integrated_candidate
+  latest_test_only_checkpoint: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  latest_test_only_delta: desktop_scripts_rust_member_directory_smoke_and_smoke_only; product_inputs_and_all_count_classes_unchanged_from_d328_by_exact_diff_and_ceb08_bounded_scan
+  dirty_fingerprint_scope: clean_committed_candidate_source_tree_excluding_durable_plan_records_packets_artifacts_and_build_owned_generated_paths_including_desktop_node_modules_packaging_hidden
+  dirty_fingerprint_status: exact_clean_committed_source_ceb08; packaging_generated_desktop_node_modules_excluded; independent_acceptance_pending
+  scan_status: bounded_counts_recomputed_at_ceb08; exact_non_doc_source_equivalence_to_d328_except_two_desktop_smoke_helpers; no_full_semantic_audit
+  semantic_rows: historical_snapshots_explicitly_historical; current_ceb08_semantic_inventory_not_recomputed; authority_handoff_not_claimed
+  source_equivalence_receipt:
+    baseline_source_sha: d3287434fd1632d57086f329c69b5b07efd32c2b
+    baseline_tree_sha: d02699265029bd7155bf771820c1d23beb8e2fd3
+    candidate_source_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+    candidate_tree_sha: 5fea688abee9389723b307bbcbde1046fe7c3285
+    command: "git diff --name-status --no-renames d3287434fd1632d57086f329c69b5b07efd32c2b..ceb08be24dcbf71ae110e55b9907deca54d91a0f -- ':!doc/plans/**'"
+    result: two_non_doc_paths_changed; eight_insertions; two_deletions; no_server_native_packages_cli_or_identity_source_paths_changed
+    changed_paths:
+      - path: desktop/scripts/rust-member-directory-smoke.mjs
+        baseline_blob: 580a0190336c2989167c7ebe8a77a46a54147f45
+        candidate_blob: dbcfc3c5e0e5e7f74afbdaf191a2f230dfb1e9c5
+        classification: test_only_missing_foundation_diagnostic_includes_desktop_startup_output
+      - path: desktop/scripts/smoke.mjs
+        baseline_blob: 8a49382e12a8a402736c36e5f781417396bf37a9
+        candidate_blob: c1e8577f3ce69fd6d17fad2e9472716cf90c26a6
+        classification: test_only_exposes_captured_startup_output_to_child_smoke
+    diff_quiet_exit: 1_expected_two_test_only_paths_above
+    source_equivalence_scope: inventory_source_paths_and_product_implementation_unchanged; only_desktop_smoke_harness_observation_changed
+  current_semantic_inventory:
+    status: source_equivalent_reference_only_not_recomputed_for_ceb08
+    candidate_source_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+    candidate_tree_sha: 5fea688abee9389723b307bbcbde1046fe7c3285
+    reference: doc/plans/artifacts/2026-09-23-rudder-identity-analytics-managed-mcp-authority-inventory.md
+    reference_source_sha: d3287434fd1632d57086f329c69b5b07efd32c2b
+    reference_source_tree: d02699265029bd7155bf771820c1d23beb8e2fd3
+    source_equivalence: exact_d328_to_ceb08_diff_contains_only_two_desktop_smoke_helpers; referenced_identity_analytics_managed_mcp_paths_unchanged
+    scope: first_party_identity_product_analytics_collector_managed_mcp; external_providers_remain_separate; not_global_semantic_completion_or_node_retirement
 main_adaptation:
   migration_base_sha: 6e37a563523db92b63589557be18d12e65593101
-  latest_observed_main_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
-  latest_increment_base_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
-  main_commits_not_in_previous_pr_head: 5
-  commit_count_basis: git_rev_list_count_6e37a563_to_origin_main; graph_count_not_source_equivalence
-  changed_path_classes: [docs_ga_js]
-  changed_path_assessment: docs_ga_js_only_increment_from_d1f55c5c_to_5ef9b547; not_full_migration_candidate_or_source_equivalence
-  reconciliation_status: latest_main_docs_only_increment_recorded; no_full_migration_vs_main_equivalence
-  receipt_policy: receipts_remain_bound_to_exact_candidate_3d222; main_comparison_does_not_upgrade_authority_or_verifier_evidence
+  latest_observed_main_sha: 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf
+  latest_increment_base_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
+  main_commits_not_in_previous_pr_head: 6
+  commit_count_basis: git_rev_list_count_6e37a563_to_origin_main_38acc; graph_count_not_source_equivalence
+  current_candidate_merge_base_sha: 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf
+  current_candidate_ahead_of_main_commits: 20
+  changed_path_classes: [desktop, native, packages, scripts]
+  changed_path_assessment: main_38acc_native_session_lineage_and_common_run_foundation_increment_from_5ef9; relevant_to_migration_and_runtime_baseline_only; not_full_migration_candidate_or_source_equivalence
+  reconciliation_status: current_main_delta_identity_recorded; no_full_migration_vs_main_equivalence
+  receipt_policy: independent_receipts_pending_for_exact_candidate_ceb08; author_tests_and_packaged_probe_do_not_upgrade_authority_or_verifier_evidence
   reconciliation_receipt:
     status: historical_v16_desktop_reconciliation_not_current_candidate
     isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v4
@@ -37,35 +66,44 @@ main_adaptation:
     compatibility_decision: desktop_update_and_quit_behavior_preserved; Rust server foundation and migration-preflight staging remains an explicit migration-owned addition; rebuild_exact_candidate_and_rebind_real_entry_receipts
     old_receipts: historical_only_invalidated_for_current_candidate
   latest_main_increment:
-    status: current_increment_only
+    status: current_increment_identity_only
+    base_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
+    resulting_sha: 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf
+    commit_count: 1
+    changed_path_count: 17
+    changed_paths: [desktop/scripts/smoke.mjs, native/crates/migration-core/tests/validation.rs, packages/db/src/client.test.ts, packages/db/src/migrations/0164_native_chat_runtime_binding.sql, packages/db/src/migrations/0165_heartbeat_attempt_owner_fencing.sql, packages/db/src/migrations/0166_runtime_binding_targets.sql, packages/db/src/migrations/0167_delegation_run_scene.sql, packages/db/src/migrations/meta/_journal.json, packages/db/src/native-chat-runtime-binding-schema.test.ts, packages/db/src/schema/chat_conversations.ts, packages/db/src/schema/heartbeat_run_attempts.ts, packages/db/src/schema/heartbeat_runs.ts, packages/db/src/schema/index.ts, packages/db/src/schema/runtime_bindings.ts, packages/db/src/schema/runtime_retention.ts, scripts/release-compatibility-matrix.mjs, scripts/release-compatibility-matrix.test.mjs]
+    changed_path_classes: [desktop, native, packages, scripts]
+    assessment: main_native_session_lineage_and_common_run_foundation_increment; counts_only_identity; no_full_migration_branch_equivalence
+  historical_main_increment:
+    status: historical_not_current
     base_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
     resulting_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
     changed_paths: [docs/ga.js]
-    assessment: docs_only_latest_main_increment; no_full_migration_branch_equivalence
+    assessment: historical_docs_only_increment; retained_for_history_not_current_main_delta
 scan_commands:
-  route_declaration_scan: "git grep -o -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/routes/*.ts' | wc -l"
-  route_source_file_scan: "git grep -l -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/routes/*.ts' | wc -l"
-  transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
-  transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
-  production_transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
-  production_transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
-  migration_file_scan: "git ls-tree -r --name-only 3d22263016324bff63c36be0ce332ff1f09ebdad packages/db/src/migrations | rg '\\.sql$' | wc -l"
+  route_declaration_scan: "git grep -o -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' ceb08be24dcbf71ae110e55b9907deca54d91a0f -- 'server/src/routes/*.ts' | wc -l"
+  route_source_file_scan: "git grep -l -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' ceb08be24dcbf71ae110e55b9907deca54d91a0f -- 'server/src/routes/*.ts' | wc -l"
+  transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' ceb08be24dcbf71ae110e55b9907deca54d91a0f -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
+  transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' ceb08be24dcbf71ae110e55b9907deca54d91a0f -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
+  production_transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' ceb08be24dcbf71ae110e55b9907deca54d91a0f -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
+  production_transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' ceb08be24dcbf71ae110e55b9907deca54d91a0f -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
+  migration_file_scan: "git ls-tree -r --name-only ceb08be24dcbf71ae110e55b9907deca54d91a0f packages/db/src/migrations | rg '\\.sql$' | wc -l"
   migration_journal_scan: >-
-    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:packages/db/src/migrations/meta/_journal.json |
+    git show ceb08be24dcbf71ae110e55b9907deca54d91a0f:packages/db/src/migrations/meta/_journal.json |
     node -e "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).entries.length))"
   cli_capability_scan: >-
-    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:cli/src/agent-v1-capabilities.generated.ts |
+    git show ceb08be24dcbf71ae110e55b9907deca54d91a0f:cli/src/agent-v1-capabilities.generated.ts |
     rg -o '"id": "[^"]+"' | wc -l
   cli_agent_v1_scan: >-
-    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:cli/src/agent-v1-capabilities.generated.ts |
+    git show ceb08be24dcbf71ae110e55b9907deca54d91a0f:cli/src/agent-v1-capabilities.generated.ts |
     rg -o '"contract": "agent-v1"' | wc -l
   cli_compat_scan: >-
-    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:cli/src/agent-v1-capabilities.generated.ts |
+    git show ceb08be24dcbf71ae110e55b9907deca54d91a0f:cli/src/agent-v1-capabilities.generated.ts |
     rg -o '"contract": "compat"' | wc -l
   mcp_descriptor_scan: >-
-    for f in $(git ls-tree -r --name-only 3d22263016324bff63c36be0ce332ff1f09ebdad packages/agent-runtime-utils/src |
+    for f in $(git ls-tree -r --name-only ceb08be24dcbf71ae110e55b9907deca54d91a0f packages/agent-runtime-utils/src |
     rg 'rudder-mcp-tool-descriptors.generated.descriptors-[0-9]+\\.ts$'); do
-    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:$f; done |
+    git show ceb08be24dcbf71ae110e55b9907deca54d91a0f:$f; done |
     rg -o '"capabilityId": "[^"]+"' | wc -l
 counts:
   route_source_files_with_declarations: 48
@@ -74,22 +112,99 @@ counts:
   transaction_scan_hits: 225
   production_transaction_source_files: 56
   production_transaction_scan_hits: 204
-  sql_migration_files: 173
-  migration_journal_entries: 171
+  sql_migration_files: 177
+  migration_journal_entries: 175
   product_analytics_route_files_with_declarations: 3
   cli_capability_entries: 119
   cli_agent_v1_entries: 108
   cli_compat_entries: 11
   mcp_descriptor_entries: 108
 counts_basis:
-  current_candidate: 3d22263016324bff63c36be0ce332ff1f09ebdad
-  immutable_scan_basis: 17c9613e3df39e2c67c07d455206312b7ac33a75
-  bounded_rebind_basis: b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
+  current_candidate: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  immutable_scan_basis: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  bounded_rebind_basis: ceb08_immutable_bounded_counts_rerun_2026-09-23
+  historical_d328_scan_basis: d3287434fd1632d57086f329c69b5b07efd32c2b
+  historical_immutable_scan_basis: 17c9613e3df39e2c67c07d455206312b7ac33a75
+  historical_bounded_rebind_basis: b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
   scope: route_declaration_transaction_migration_journal_cli_and_mcp_count_classes_only
-  assessment: current_3d222_counts_rebound_from_immutable_17c_scan; bounded_count_equivalence_only
+  assessment: ceb08_bounded_count_rerun_matches_d328_for_all_count_classes; bounded_count_inventory_only
   limitation: not_full_source_equivalence_semantic_audit_authority_handoff_or_release_evidence
+historical_d328_scan:
+  status: historical_not_current
+  source_sha: d3287434fd1632d57086f329c69b5b07efd32c2b
+  tree_sha: d02699265029bd7155bf771820c1d23beb8e2fd3
+  scan_commands:
+    route_declaration_scan: "git grep -o -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' d3287434fd1632d57086f329c69b5b07efd32c2b -- 'server/src/routes/*.ts' | wc -l"
+    route_source_file_scan: "git grep -l -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' d3287434fd1632d57086f329c69b5b07efd32c2b -- 'server/src/routes/*.ts' | wc -l"
+    transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' d3287434fd1632d57086f329c69b5b07efd32c2b -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
+    transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' d3287434fd1632d57086f329c69b5b07efd32c2b -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
+    production_transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' d3287434fd1632d57086f329c69b5b07efd32c2b -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
+    production_transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' d3287434fd1632d57086f329c69b5b07efd32c2b -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
+    migration_file_scan: "git ls-tree -r --name-only d3287434fd1632d57086f329c69b5b07efd32c2b packages/db/src/migrations | rg '\\.sql$' | wc -l"
+    migration_journal_scan: >-
+      git show d3287434fd1632d57086f329c69b5b07efd32c2b:packages/db/src/migrations/meta/_journal.json |
+      node -e "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).entries.length))"
+    cli_capability_scan: >-
+      git show d3287434fd1632d57086f329c69b5b07efd32c2b:cli/src/agent-v1-capabilities.generated.ts |
+      rg -o '"id": "[^"]+"' | wc -l
+    cli_agent_v1_scan: >-
+      git show d3287434fd1632d57086f329c69b5b07efd32c2b:cli/src/agent-v1-capabilities.generated.ts |
+      rg -o '"contract": "agent-v1"' | wc -l
+    cli_compat_scan: >-
+      git show d3287434fd1632d57086f329c69b5b07efd32c2b:cli/src/agent-v1-capabilities.generated.ts |
+      rg -o '"contract": "compat"' | wc -l
+    mcp_descriptor_scan: >-
+      for f in $(git ls-tree -r --name-only d3287434fd1632d57086f329c69b5b07efd32c2b packages/agent-runtime-utils/src |
+      rg 'rudder-mcp-tool-descriptors.generated.descriptors-[0-9]+\\.ts$'); do
+      git show d3287434fd1632d57086f329c69b5b07efd32c2b:$f; done |
+      rg -o '"capabilityId": "[^"]+"' | wc -l
+  counts:
+    route_source_files_with_declarations: 48
+    route_declaration_scan_hits: 513
+    transaction_source_files: 67
+    transaction_scan_hits: 225
+    production_transaction_source_files: 56
+    production_transaction_scan_hits: 204
+    sql_migration_files: 177
+    migration_journal_entries: 175
+    product_analytics_route_files_with_declarations: 3
+    cli_capability_entries: 119
+    cli_agent_v1_entries: 108
+    cli_compat_entries: 11
+    mcp_descriptor_entries: 108
+  note: raw_d328_command_basis_is_preserved_by_source_equivalence_receipt; not_current_counts
+historical_scan_55c:
+  status: historical_not_current
+  source_sha: 55c02da44159456d3ac54b161dc6f0c0da0129a1
+  tree_sha: 3f9c6e71b2b77b2ec4dd78f6443aecae940de827
+  dirty_fingerprint: 9c0bab68adaf7725be6cd67777f5f5a7e096c186624976d22b072e301d661979
+  source_path_count: 98
+  source_path_count_basis: git_diff_6e37a563_to_55c02da44_excluding_doc_plans_historical_integrated_candidate
+  counts:
+    route_source_files_with_declarations: 48
+    route_declaration_scan_hits: 513
+    transaction_source_files: 67
+    transaction_scan_hits: 225
+    production_transaction_source_files: 56
+    production_transaction_scan_hits: 204
+    sql_migration_files: 177
+    migration_journal_entries: 175
+    product_analytics_route_files_with_declarations: 3
+    cli_capability_entries: 119
+    cli_agent_v1_entries: 108
+    cli_compat_entries: 11
+    mcp_descriptor_entries: 108
+  note: prior current-source-refresh scan and command basis retained for history only; no current receipt or semantic authority claim
+receipt_state:
+  current_candidate_source_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  current_candidate_tree_sha: 5fea688abee9389723b307bbcbde1046fe7c3285
+  current_candidate_dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  status: current_bounded_counts_rebound; build_runtime_data_verifier_and_stage_receipts_pending
+  pending_receipts: [build, runtime, data, verifier, stage_review]
+  historical_receipts: [historical_d328_scan, historical_scan_55c, historical_v16_current_source_refresh, history.project_goal_real_entry_probe, history.supporting_branding_real_entry_historical]
+  note: exact committed-tree counts do not establish a fresh runtime receipt, semantic inventory, authority handoff, or release evidence
 historical_receipts:
-  v16_current_source_refresh:
+  historical_v16_current_source_refresh:
     status: historical_not_current
     source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
     tree_sha: bcd68ce026354bb56af742ced22a76c50071a0f3
@@ -108,7 +223,14 @@ historical_receipts:
       cli_compat_entries: 11
       mcp_descriptor_entries: 107
     note: retained_for_receipt_history_only; not_current_counts
-observed_runtime_roots:
+historical_semantic_snapshot:
+  status: historical_rows_not_rebound_to_current_candidate
+  snapshot_source_sha: 3d22263016324bff63c36be0ce332ff1f09ebdad
+  superseded_intermediate_source_sha: d3287434fd1632d57086f329c69b5b07efd32c2b
+  superseded_intermediate_tree_sha: d02699265029bd7155bf771820c1d23beb8e2fd3
+  preserved_sections: [historical_observed_runtime_roots, historical_semantic_scan_gaps, historical_current_writer_audit, historical_next_actions]
+  limitation: count refresh does not constitute a full semantic inventory or authority handoff
+historical_observed_runtime_roots:
   - path: server/src/index.ts
     authority: node
     evidence: creates the HTTP server, attaches the live-events WebSocket upgrade, starts schedulers, embedded PostgreSQL, migrations, and runtime reconciliation
@@ -157,7 +279,7 @@ observed_runtime_roots:
     authority: electron
     evidence: retained Desktop shell but currently owns or coordinates PostgreSQL/product analytics and update attachment points
     status: retained_shell_with_runtime_subunits_to_migrate
-authority_families_requiring_semantic_row_refresh:
+historical_authority_families_requiring_semantic_row_refresh:
   - http_routes_and_websockets
   - auth_sessions_device_exchange_and_identity
   - organization_goal_project_agent_mutations
@@ -173,7 +295,7 @@ authority_families_requiring_semantic_row_refresh:
   - first_party_cli_and_install_bootstrap
   - electron_update_last_known_good_recovery_and_rollback
   - external_user_selected_processes_and_plugin_boundary
-semantic_scan_gaps:
+historical_semantic_scan_gaps:
   - route declaration hits include nested router.use calls and are not public route identities
   - generated capability counts include compatibility entries and need canonical contract reconciliation
   - transaction scan does not identify direct SQL writes, helper-owned transactions, or background writers
@@ -183,7 +305,9 @@ semantic_scan_gaps:
   - the signed actor envelope verifier currently relies on a trusted signer/bridge contract; session membership and revocation integration are not yet a real Actix authority
   - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
   - the new goal-set route has a supported Node bridge and direct CLI/MCP real-entry evidence, but installed/default startup, full session/revocation authority, old-writer retirement, and sole-listener proof remain open
-current_writer_audit:
+historical_current_writer_audit:
+  snapshot_status: historical_not_rebound_to_current_candidate
+  snapshot_source_sha: 3d22263016324bff63c36be0ce332ff1f09ebdad
   candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   verdict: needs_more_evidence
   activation: blocked
@@ -224,7 +348,7 @@ current_writer_audit:
       sources: [server/src/services/runtime-kernel, server/src/services/execution-workspaces.ts, server/src/services/workspace-runtime.services.ts]
       state: row_only_or_no
       effects: claims, runs, workspaces, processes, logs, filesystem
-next_actions:
+historical_next_actions:
   - enumerate semantic route bindings from register-api-routes and route modules
   - enumerate direct SQL writes and every background claim/terminal-effect writer
   - reconcile current CLI/MCP generated contracts and hashes
@@ -234,72 +358,72 @@ next_actions:
   - fence or retire every current writer row before activating the Rust D1 owner
   - obtain independent stage review and verifier PASS for the exact Project-Goal candidate before default-path owner integration
 
-project_goal_real_entry_probe:
-  evidence_status: historical_receipt_not_current_3d222_candidate
-  receipt_scope: historical_fc733_project_goal_real_entry_probe_v10
-  artifact: doc/plans/artifacts/2026-09-22-rudder-project-goal-real-entry-probe-v10.json
-  candidate_source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
-  candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  candidate_tree_sha: bcd68ce026354bb56af742ced22a76c50071a0f3
-  build_artifacts:
-    rudder_server_foundation_sha256: 322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306
-    migration_preflight_sha256: f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0
-  runtime:
-    node: v22.23.1
-    package_manager: pnpm_9.15.4
-    rust: rustc_1.93.0
-    cargo: cargo_1.93.0
-    embedded_postgres: 18.1.0-beta.16
-  target:
-    kind: disposable_embedded_postgres_and_local_trusted_node
-    data_id: rust-project-goal-real-entry-16304
-    organization_id: e47160b1-266f-4539-8d2e-5b0fcf9c6da6
-    api_port: 52017
-    embedded_postgres_port: 52018
-  observations:
-    migration_preflight: bootstrap_then_current; 170 journal entries; 172 SQL files; fingerprint ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812
-    node_to_actix: supported Project API create/PATCH HTTP 201/200; create-with-goals compatibility returned 201; mixed project-plus-goal update returned 409; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null; signed_idempotency_header_substitution_rejected_before business write
-    cli_mcp: direct CLI exit 0 and MCP stdio tools/call exit 0; Project create/update direct HTTP dispatch and MCP missing legacy binary path completed without Node CLI fallback
-    allowlist: invalid missing-UUID startup rejected before partial handoff; valid allowlist handed off two projects; unlisted existing Project remained node-owned and required PATCH returned mutation_not_owned 409
-    restart: same data identity and same-config allowlist/replay recovery returned HTTP 200 with final receipts=4, activities=2, links=0, mutation_version=2; signed/header substitution returned 401 without version change
-    negative: idempotency conflict 409, cross-organization 422, mixed update 409, Rust-owned organization deletion 409, missing Rust binary fails closed
-    cleanup: disposable home, Node server, Actix children, and embedded PostgreSQL were disposed; no production data or traffic involved
-  checks:
-    vitest: server 3 files / 28 tests and CLI MCP 1 file / 81 tests
-    d1_postgres: 25/25
-    actix_foundation_black_box: 10/10
-    project_goal_core: 33/33
-    typechecks: server, CLI, DB, agent-runtime-utils
-    contract_format_diff: MCP contract, cargo fmt, git diff check
-  claims: local_real_entry_only; project_goal_real_entry_connected=true; default_path_verified=false; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false
-
-supporting_branding_real_entry_historical:
-  evidence_status: historical_receipt_not_current_3d222_candidate
-  receipt_scope: historical_branding_real_entry_probe_v2
-  artifact: doc/plans/artifacts/2026-09-22-rudder-branding-real-entry-probe-v2.json
-  candidate_fingerprint: 5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91
-  build_artifacts:
-    rudder_server_foundation_sha256: 2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a
-    migration_preflight_sha256: d6f6bb0c0a37aef7fd0e0f65bee53c97600e7be785080a22f4015fb367faab1b
-  target:
-    kind: disposable_embedded_postgres_and_local_trusted_node
-    data_id: rust-branding-real-entry-38958
-    organization_id: 84f7d2b8-f721-4951-b03e-b7ce213f6380
-    api_port: 62821
-    embedded_postgres_port: 62822
-  observations:
-    migration_preflight: bootstrap_then_current; 169 journal entries; 171 SQL files; fingerprint 6df10b65da8034a116003108d9951d1e119b31be0e979f09874406f87af417da
-    node_to_actix: POST organization HTTP 201, then PATCH branding HTTP 200; brandColor=#abcdef; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null
-    database_readback: owner=rust; mutation_version=1; fence_epoch=1; immutable_receipt=applied; activity=organization.branding_updated; outbox=pending/0
-    restart_replay: same data identity and same idempotency key returned HTTP 200 without duplicate activity or receipt
-    cleanup: disposable home, Node server, Actix child, and embedded PostgreSQL were disposed; no production data or traffic involved
-  checks:
-    server_bridge_config_branding_outbox_startup: 51/51
-    d1_postgres_serial: 25/25
-    actix_foundation_black_box: 10/10
-    affected_typechecks_contract_lint_fmt: pass
-    planner_contract_differential_and_manifest: pass
-    server_vitest: 52/52
-    db_migration_vitest: 14/14
-    delivery_packet_validation: pass
-  claims: local_real_entry_only; branding_real_entry_connected=true; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false
+history:
+  project_goal_real_entry_probe:
+    evidence_status: historical_receipt_not_current_3d222_candidate
+    receipt_scope: historical_fc733_project_goal_real_entry_probe_v10
+    artifact: doc/plans/artifacts/2026-09-22-rudder-project-goal-real-entry-probe-v10.json
+    candidate_source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
+    candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    candidate_tree_sha: bcd68ce026354bb56af742ced22a76c50071a0f3
+    build_artifacts:
+      rudder_server_foundation_sha256: 322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306
+      migration_preflight_sha256: f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0
+    runtime:
+      node: v22.23.1
+      package_manager: pnpm_9.15.4
+      rust: rustc_1.93.0
+      cargo: cargo_1.93.0
+      embedded_postgres: 18.1.0-beta.16
+    target:
+      kind: disposable_embedded_postgres_and_local_trusted_node
+      data_id: rust-project-goal-real-entry-16304
+      organization_id: e47160b1-266f-4539-8d2e-5b0fcf9c6da6
+      api_port: 52017
+      embedded_postgres_port: 52018
+    observations:
+      migration_preflight: bootstrap_then_current; 170 journal entries; 172 SQL files; fingerprint ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812
+      node_to_actix: supported Project API create/PATCH HTTP 201/200; create-with-goals compatibility returned 201; mixed project-plus-goal update returned 409; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null; signed_idempotency_header_substitution_rejected_before business write
+      cli_mcp: direct CLI exit 0 and MCP stdio tools/call exit 0; Project create/update direct HTTP dispatch and MCP missing legacy binary path completed without Node CLI fallback
+      allowlist: invalid missing-UUID startup rejected before partial handoff; valid allowlist handed off two projects; unlisted existing Project remained node-owned and required PATCH returned mutation_not_owned 409
+      restart: same data identity and same-config allowlist/replay recovery returned HTTP 200 with final receipts=4, activities=2, links=0, mutation_version=2; signed/header substitution returned 401 without version change
+      negative: idempotency conflict 409, cross-organization 422, mixed update 409, Rust-owned organization deletion 409, missing Rust binary fails closed
+      cleanup: disposable home, Node server, Actix children, and embedded PostgreSQL were disposed; no production data or traffic involved
+    checks:
+      vitest: server 3 files / 28 tests and CLI MCP 1 file / 81 tests
+      d1_postgres: 25/25
+      actix_foundation_black_box: 10/10
+      project_goal_core: 33/33
+      typechecks: server, CLI, DB, agent-runtime-utils
+      contract_format_diff: MCP contract, cargo fmt, git diff check
+    claims: local_real_entry_only; project_goal_real_entry_connected=true; default_path_verified=false; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false
+  supporting_branding_real_entry_historical:
+    evidence_status: historical_receipt_not_current_3d222_candidate
+    receipt_scope: historical_branding_real_entry_probe_v2
+    artifact: doc/plans/artifacts/2026-09-22-rudder-branding-real-entry-probe-v2.json
+    candidate_fingerprint: 5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91
+    build_artifacts:
+      rudder_server_foundation_sha256: 2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a
+      migration_preflight_sha256: d6f6bb0c0a37aef7fd0e0f65bee53c97600e7be785080a22f4015fb367faab1b
+    target:
+      kind: disposable_embedded_postgres_and_local_trusted_node
+      data_id: rust-branding-real-entry-38958
+      organization_id: 84f7d2b8-f721-4951-b03e-b7ce213f6380
+      api_port: 62821
+      embedded_postgres_port: 62822
+    observations:
+      migration_preflight: bootstrap_then_current; 169 journal entries; 171 SQL files; fingerprint 6df10b65da8034a116003108d9951d1e119b31be0e979f09874406f87af417da
+      node_to_actix: POST organization HTTP 201, then PATCH branding HTTP 200; brandColor=#abcdef; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null
+      database_readback: owner=rust; mutation_version=1; fence_epoch=1; immutable_receipt=applied; activity=organization.branding_updated; outbox=pending/0
+      restart_replay: same data identity and same idempotency key returned HTTP 200 without duplicate activity or receipt
+      cleanup: disposable home, Node server, Actix child, and embedded PostgreSQL were disposed; no production data or traffic involved
+    checks:
+      server_bridge_config_branding_outbox_startup: 51/51
+      d1_postgres_serial: 25/25
+      actix_foundation_black_box: 10/10
+      affected_typechecks_contract_lint_fmt: pass
+      planner_contract_differential_and_manifest: pass
+      server_vitest: 52/52
+      db_migration_vitest: 14/14
+      delivery_packet_validation: pass
+    claims: local_real_entry_only; branding_real_entry_connected=true; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false

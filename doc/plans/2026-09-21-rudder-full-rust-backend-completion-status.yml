@@ -1,16 +1,166 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-22
+updated_at: 2026-09-23
 status: in_progress
+next_main_reconciliation:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-main-e739-reconcile-20260923/rudder-oss
+  branch: codex/rudder-main-e739-reconcile-20260923
+  source_sha: 007b8d0ecc02e95586b8e17d75dcf19c98dd99b3
+  source_tree: 6bc97e98c9d8621a08655e8a87233af0c046a764
+  base_sha: e73976f0fa0662b1605838e92232b2b27cdc0faa
+  prior_packaging_repair_checkpoint: ed1fed277
+  state: clean_rebase_complete_affected_checks_and_fresh_package_pending
+  equivalence: native_packages_db_server_and_cli_identical_to_ed1_source_only_Main_release_notes_UI_and_release_checks_changed
+  publication: blocked_pending_affected_package_verifier_and_final_review_no_push
+  checks:
+    full_build: PASS_log_tmp_codex_rudder_e739_build_log
+    desktop_release_notes_and_packaging: PASS14
+    release_contracts: PASS46
+    ui_release_notes: PASS4
+  prior_diagnostic_package:
+    account_gate: PASS_author_Sagan
+    account_gate_log: /tmp/codex-rudder-v20-account-gate.hzyZnX/smoke.log
+    auto_update: FAIL_dual_failure_after_runtime_startup_ready
+    auto_update_log: /tmp/codex-rudder-v20-auto-update.5GqFWq/smoke.log
+    direct_preserved_LKG_probation: PASS_exit0_5377ms_existing_fixture
+    direct_preserved_target_probation: PASS_exit0_4451ms_existing_fixture
+    limitation: diagnostic_artifact_not_final_e739_package_unexplained_helper_failure_still_blocks_update_acceptance
+  packaging_stage_review: Arendt_accept_ed1fed27700df2ea84fa2855fc55f39538a7ab51_no_final_handoff_claim
+current_main_reconciliation:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss
+  branch: codex/rudder-main-lineage-reconcile-20260923
+  base_sha: 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf
+  observed_remote_main_sha: e73976f0fa0662b1605838e92232b2b27cdc0faa
+  main_drift_state: audit_in_progress_no_integration_yet
+  checkpoint_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  checkpoint_tree: 5fea688abee9389723b307bbcbde1046fe7c3285
+  product_build_source: d3287434fd1632d57086f329c69b5b07efd32c2b
+  product_equivalence: only_two_external_smoke_harnesses_changed8_additions2_deletions_package_inputs_and_hashes_unchanged
+  state: packaging_repair_in_progress_v19_package_receipts_invalidated
+  source_followups: stage_identity_core_unconditionally_and_reject_external_dependency_resolution_then_rebuild_and_reverify_relocated_package
+  packaging_diagnosis: relocated_app_cannot_resolve_identity_core_electron_original_repo_resident_app_can_accidentally_resolve_ancestor_dependency
+  packaging_diagnosis_log: /tmp/codex-rudder-probation-diagnose.nw8aVL/errors.log
+  packaging_repair_tests: PASS_3_containment_regressions_plus_1_manifest_normalization
+  migration_identity: Main_prefix_through0167_preserved_task_only_migrations_appended0168_through0174
+  manifest_fingerprint: 48588b72335d9d3f9a7b6c1e70e25e60dd9ce3dc133b0b45648ed7c68a42ed7f
+  manifest_counts: {journal: 175, sql: 177}
+  checks:
+    release_matrix: PASS_18_tests_including_frozen_0_7_23
+    migration_core: PASS
+    node_rust_manifest_differential: PASS
+    lint: PASS_2987_files
+    database_initial: 107_PASS_then_corrected_cutoff_outbox_and_mutation19_PASS_populated_upgrade2_PASS
+    rust_d1_postgres: PASS_25
+    actix_black_box: PASS_10
+    branding_real_entry: author_PASS_API_CLI_MCP_five_receipts_five_published_outbox_restart_and_cross_org_rejection
+    project_goal_real_entry: author_PASS_API_CLI_MCP_idempotency_scope_restart_and_old_writer_rejection
+    typecheck: PASS_full_recursive
+    build: PASS_CI_true_and_consistent_shared_pnpm_store_after_stopped_interactive_restore_child
+    native_staging: PASS_five_current_source_release_binaries_shared_Cargo_cache
+    packaging: PASS_mac_arm64_and_verify_server_package
+    installed_member_probe: author_PASS_complete_default_pagination_foreign_scope_child_recovery_restart_missing_asset_reason_and_no_Node_read_after_test_only_stderr_fix
+    architecture: PASS_no_regression_against_Main38
+    native_migration_preflight: PASS_disposable_PostgreSQL
+    ui_tests: PASS_3368
+    cli_tests: PASS_453_skipped2
+    desktop_tests: PASS_1004_skipped21
+    scripts_tests: PASS_189_skipped1
+    baseline_other_projects: remaining195_server_files2196_tests_PASS_idle_auth_timing_rerun2_PASS_split_baseline_not_single_clean_aggregate
+    desktop_dev_smokes: PASS_startup_recovery_update_session_fetch_app_builder_clean_local_apps_and_standalone_assets
+    computer_use_package: PASS_darwin_arm64
+    app_builder_package: PASS_macOS_Windows_specific_assertions_not_run
+    standard_packaged_smoke: FAIL_account_gate_electron_launch_timeout180s_and_separate_auto_update_public_dual_failure_diagnosis_running
+    auto_update_public_log: /tmp/codex-rudder-v19-auto-update.4mitkU/smoke.log
+    auto_update_public_journal: /tmp/codex-rudder-v19-auto-update.4mitkU/rudder-desktop-smoke-B2gvaj/auto-update-public/electron-user-data/update-helper/transactions/138e52a9-7f2c-477d-afc5-fa4b3fe89f62.journal.json
+    auto_update_observation: candidate_staged_policy_verified_runtime_drained_helper_handoff_completed_but_target_and_LKG_probation_failed_recovery_required
+  member_directory: installed_Desktop_required_default_author_and_independent_probe_PASS_final_handoff_pending_packaged_baseline
+  independent_review: Arendt_stage_accept_ceb08_corrected_packet_no_blocking_findings
+  independent_verifier: Peirce_terminal_PASS_after_exact_populated_lineage_supplement_parent_read_and_hash_reconciled
+  verifier_receipt_draft: artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json
+  verifier_parent_finding: resolved_by_independent_client_populated_lineage2_PASS_log_and_runner_hashes_verified
+  stage_tuple_rebind: Arendt_explicit_stage_accept_actual_verifier_runtime_data_tuple_packet_validated_acceptance_pending
+  upgrade_tests: Epicurus_populated_Main0167_and_pre0163_histories_PASS_two_tests
+  logs:
+    database: /tmp/codex-rudder-lineage-db-run.log
+    outbox: /tmp/codex-rudder-lineage-outbox.log
+    d1: /tmp/codex-rudder-lineage-d1.log
+    black_box: /tmp/codex-rudder-lineage-blackbox.log
+    branding: /tmp/codex-rudder-lineage-branding.log
+    project_goal: /tmp/codex-rudder-lineage-project-goal.log
+    baseline: /tmp/codex-rudder-lineage-tests.log
+    auth_timing_rerun: /tmp/codex-rudder-lineage-auth-timing.log
+    build_retry: /tmp/codex-rudder-lineage-build-final.log
+    package: /tmp/codex-rudder-lineage-package.log
+    build_manifest: /tmp/codex-rudder-lineage-build-manifest.json
+    installed_member: /tmp/codex-rudder-lineage-installed.log
+    installed_member_final: /tmp/codex-rudder-lineage-installed-final.log
+    remaining_server: /tmp/codex-rudder-lineage-server-rest.log
+    remaining_projects: /tmp/codex-rudder-lineage-ui-cli-desktop.log
+    native_migration_preflight: /tmp/codex-rudder-lineage-preflight.log
+    desktop_dev_app_builder: /tmp/codex-rudder-lineage-debug-smoke.S4C2Py/app-builder/app-builder.log
+    desktop_dev_clean: /tmp/codex-rudder-lineage-debug-smoke.S4C2Py/clean/clean.log
+    desktop_dev_local_apps: /tmp/codex-rudder-lineage-debug-smoke.S4C2Py/local-apps/local-apps.log
+    computer_use_package: /tmp/codex-rudder-v19-computer-use.fI9vrk/verify-computer-use-package.log
+    app_builder_package: /tmp/codex-rudder-v19-app-builder.x4LGrC/app-builder-smoke.log
+    standard_packaged_smoke_failure: /tmp/codex-rudder-v19-packaged-smoke.uPn9Ii/packaged-smoke.log
+  desktop_supporting_log_sha256:
+    dev_app_builder: 6fa186f14ba34d50c162e43f08db37b9c05e00d66a6ce91cde83e255b0229138
+    dev_clean: 7eabd2126554652205be5f55f9058228496594f4fa75296da522d1e7a8a7c01f
+    dev_local_apps: b04b8cd471e61b61178bcab4d2c60d9f907997d70bd5b5862b731aa9ea4371cd
+    computer_use_package: bb5b578129f9a450a7c7522348461c28c81e4281570d51cc375204a0dfe597b5
+    app_builder_package: 8d820a05950c6cf41c8c1112f6f9d7c8bda35c2a6715e73053aa24e8505e2498
+    standard_packaged_smoke_failure: 16b3c69307f5a7ae37f197363900c2bb464bbbdf5d99672ec412b86950507ea8
+  next_action: reconcile_independent_verifier_receipt_and_remaining_Desktop_smokes_then_final_review_before_PR221_update
+  auth_timing_diagnosis:
+    source_attribution: Codex_execute_test_execute_cli_process_utils_and_readiness_blobs_identical_to_Main38
+    observation: test_times_full_execute_setup_while_production_hard_deadline_starts_at_auth_detection
+    reproduction: focused_native_and_node_only_wall_clock_failures_under_concurrent_load_business_result_and_single_attempt_preserved
+    next: idle_rerun2_PASS_1580ms_and1223ms_no_threshold_or_source_change
+    final_log: /tmp/codex-rudder-lineage-auth-idle.log
+  publication: held_until_exact_integrated_candidate_verifier_PASS_and_final_reviewer_accept
+  previous_sections: historical_pre38_evidence_only_unless_explicitly_rebound
+next_name_authority_lane:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-branding-name-authority-20260923/rudder-oss
+  branch: codex/rudder-branding-name-authority-20260923
+  base_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  state: implementation_started_contract_coordination_pending
+  rust_owner: Epicurus
+  node_integration_owner: Volta
+  scope: organization_settings_DB_transaction_required_for_supported_mixed_name_patches_plus_both_Chat_approval_paths
+  boundary_correction: scalar_name_color_is_private_prerequisite_only_no_new_name_activation_until_mixed_settings_issuePrefix_alias_projection_and_logo_association_paths_preserved
+  first_source_delta: Rust_name_color_transaction_and_regressions_in_progress_not_accepted
+  Node_fence_checks: focused17_PASS_server_typecheck_PASS_diff_check_PASS
+  Node_fence_log: /tmp/codex-rudder-name-fence-17.log
+  pending_design: direct_SQLx_approval_effects_or_durable_intent_with_serialized_decision_writers_and_recoverable_downstream_effects
+  settings_command: independent_OrganizationSettingsCommand_preserve_old_branding_fingerprint_and_receipts
+  settings_design_review: Arendt_corrected_transaction_associated_settings_design_accept_not_implementation_acceptance
+  settings_transaction: all_supported_fields_issue_prefix_aliases_issue_identifier_projection_logo_DB_association_and_old_asset_row_deletion
+  schema_owner: Volta_packages_db_schema_and_next_unreleased_migration0175_intent_and_settings_kind
+  activation_dependency: wide_organization_owner_must_not_activate_until_cost_budget_issue_and_runtime_writers_are_safely_delegated_or_fenced_without_supported_feature_loss
+  implementation_boundary: private_command_and_recovery_preparation_only_until_dependency_closure
+  invariant: no_independent_name_commit_followed_by_unrecoverable_approval_or_message_effects
+  exclusions_from_completion_claim: logo_storage_and_import_remain_incomplete_until_equivalent_supported_delegation_exists
+  isolation: current_ceb08_acceptance_source_unchanged
+  next_action: implement_Node_name_fence_tests_and_agree_expanded_settings_command_then_approval_recovery_protocol
+parallel_analytics_lane:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-rust-analytics-collector-20260923/rudder-oss
+  branch: codex/rudder-rust-analytics-collector-20260923
+  base_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  owner: Peirce_as_implementer_for_new_disjoint_candidate_only
+  independent_gate: future_reviewer_and_verifier_must_be_other_agents
+  state: implementation_started_not_accepted
+  scope: standalone_Actix_SQLx_collector_consent_ingest_maintenance_report_role_scoped_migration_lifecycle
+  isolation: own_checkout_build_target_and_disposable_database_no_shared_or_production_deployment_changes
+  next_action: implement_reused_service_contracts_and_early_real_loopback_PostgreSQL_parity_tests
 latest_main_drift:
   sha: 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf
   previous: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
   pull_request: 223
   change: native_session_lineage_common_Run_schema_and_four_migrations0164_through0167
   impact: collides_with_unreleased_Rust_migration_journal_slots; existing_e80_acceptance_is_pre38_only
-  publication: held_until_isolated_reconciliation_and_affected_upgrade_runtime_revalidation
-  next_action: preserve_Main_migrations_and_renumber_only_unreleased_task_migrations_in_isolated_integration_worktree
-parallel_next_slice:
+  publication: reconciliation_and_rebuild_complete_held_for_independent_supplement_and_final_review
+  next_action: collect_independent_populated_lineage_supplement_and_finish_standard_packaged_smoke
+historical_member_directory_development_lane:
   id: member_directory_default_rust_read
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   branch: codex/rudder-member-directory-default-20260922
@@ -38,7 +188,7 @@ parallel_next_slice:
     focused_tests: worker_server59_and_Desktop_launch_options11_passed
     final_desktop_build: running_from_frozen2a247bc57_/tmp/codex-rudder-member-directory-desktop-build-final.log
   isolation: no_changes_to_current_frozen_v17_worktree
-active_work:
+historical_pre38_outbox_work:
   slice: branding_writer_negative_proof_and_outbox_recovery
   worktree: /Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss
   branch: codex/rudder-branding-outbox-recovery-20260922
@@ -143,7 +293,7 @@ strategy_correction:
     - no broad production database migration without target-specific authorization
     - no unrestricted production traffic switch or stable publication without its release gate
   integration_order: local_contract_and_review -> exact_candidate -> authorized_real_entry_probe -> next_slice
-main_adaptation:
+historical_v16_main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
   latest_observed_main_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
   commits_ahead_of_migration_base: 16
@@ -162,7 +312,7 @@ real_environment_lane:
   target_status: local_real_runtime_only
   production_target_status: blocked_target_specific_credentials_and_rollback_authority_not_present
   production_verified: false
-candidate:
+historical_v16_candidate:
   scope: previous_accepted_v16_Project_Goal_only_current_unaccepted_source_is_active_work
   source_ref: codex/rudder-full-rust-backend-completion-20260921
   source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
@@ -179,23 +329,45 @@ claims:
   implementation_complete: false
   release_ready: false
   production_verified: false
+candidate:
+  source_ref: codex/rudder-main-lineage-reconcile-20260923
+  source_sha: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  tree_sha: 5fea688abee9389723b307bbcbde1046fe7c3285
+  dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  dirty_fingerprint_scope: committed_product_and_test_source_only_delivery_metadata_excluded
+  identity_source_of_truth: current_main_reconciliation
+  acceptance_packet: doc/plans/2026-09-23-rudder-main-lineage-reconciliation-delivery-packet-v19.json
+  publication: not_pushed_independent_receipt_reconciliation_and_final_review_pending
+outside_server_inventory:
+  path: artifacts/2026-09-23-rudder-identity-analytics-managed-mcp-authority-inventory.md
+  scanned_sha: d3287434fd1632d57086f329c69b5b07efd32c2b
+  scope: first_party_Identity_service_local_bridge_analytics_collector_and_managed_MCP
+  status: source_inventory_complete_for_named_families_no_Rust_service_implementation_claim
+  rebind: d328_to_ceb08_only_two_Desktop_smoke_harnesses_changed_inventoried_sources_identical
+evidence:
+  candidate: ceb08be24dcbf71ae110e55b9907deca54d91a0f
+  author_checks: current_main_reconciliation.checks
+  reviewer: Arendt_stage_accept_v19
+  verifier: Peirce_PASS_v19_including_independent_exact_populated_lineage_supplement
+  final_review: pending
+  metadata_review: Archimedes_artifact_stage_accept_current_ceb08_identity_counts_history_and_inventory_mapping_no_blocker
 phase:
   current: 0
-  next_executable: finish v17 recovery and reconnect acceptance then publish qualified PR increment; continue isolated Phase1 default member-directory implementation while full semantic inventory remains open
+  next_executable: supplement_v19_populated_lineage_verification_and_finish_packaged_smoke_then_final_review_and_PR_update_while_settings_write_lane_proceeds
   gates:
     phase_0: in_progress
-    phase_1: not_started
+    phase_1: in_progress
     phase_2: not_started
-    phase_3: not_started
+    phase_3: in_progress
     phase_4: not_started
     phase_5: not_started
     phase_6: not_started
     phase_7: not_started
 slice:
-  current: branding_writer_negative_proof_and_outbox_recovery
-  next: member_directory_default_rust_read
-  status: b4793_stage_accepted_independent_product_verification_pending_final_test_only_repairs
-evidence:
+  current: Main38_reconciliation_outbox_reconnect_and_installed_member_default
+  next: organization_settings_transaction_and_Chat_approval_name_authority
+  status: ceb08_stage_accepted_independent_receipt_reconciliation_in_progress
+historical_v16_evidence:
   scope: following_v16_receipts_are_historical_current_evidence_is_in_active_work_and_v17_packet
   reviewer: accept_stage_verdict_Archimedes_01a0c913-8d45-72e3-ad30-d3ebe87839f3
   reviewer_receipt: current_v16_no_P0_or_P1_bounded_slice_blocker
@@ -211,7 +383,7 @@ blockers:
     owner: migration_implementation
     state: resolved
     detail: origin/main advanced from b4c2f46966d080a18b8ce8d9545e427aa5b50ced to d1f55c5c180901392804178aa44b3ba3f077a6cb. Desktop update/quit, child-launch, UI status/live-run, and E2E changes were reconciled in /private/tmp/rudder-rust-main-reconcile-20260922-v4; the clean fc733 candidate records the reconciled source tree and v15 receipts were rebound.
-    next_step: push v16 through the protected PR path, then refresh Main before the next slice.
+    next_step: historical_resolution_only_current_publication_is_v19_against_Main38
   - id: P0-node-writer-fence
     owner: migration_implementation
     state: open
@@ -247,7 +419,7 @@ blockers:
     state: open
     detail: Project-Goal MCP create/update now use direct HTTP and explicit missing-binary checks fail closed; general first-party MCP/native process paths still select bundled Node implementations in fallback modes.
     next_step: finish the manifest-wide static/runtime negative scan and migrate the next disjoint first-party tool slice.
-writer_audit:
+historical_writer_audit:
   candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   candidate_fingerprint_status: exact_project_goal_candidate_v10_clean_commit_after_main_drift_signed_idempotency_allowlist_and_complete_negative_real_probe_passed_final_handoff_accepted
   verdict: pending
@@ -290,7 +462,7 @@ writer_audit:
 missing_authority_or_environment:
   - production_credentials_and_authorization_for_production_verified
   - platform_signing_and_public_release_environment_for_release_ready
-completed_checks:
+historical_completed_checks_through_v16:
   - plan files added in isolated migration worktree
   - current source baseline read without resetting the original checkout
   - Main 0.7.24 reconciliation candidate passed release matrix/preflight tests 27/27; current 0.7.24 preflight resolves to 168 journal entries, 170 SQL files, and fingerprint 6c0ac651a7e6b4c23cbce94171bcf498ee5eabc413a97e46df2b108cc4c13259
@@ -320,19 +492,19 @@ completed_checks:
   - current-source-refresh, status, and ledger YAML parsed successfully; v16 packet and v10 artifact parse as JSON; delivery packet validator returned VALID: integration_pending before authorized PR integration
   - v16 candidate changed_paths array matches the reproducible 80-path source set exactly; clean source fingerprint is e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855; git diff --check passed
   - affected server, CLI, DB, and agent-runtime-utils typechecks passed; scripts/tsconfig.json does not exist and was not treated as a code failure
-pending_checks:
+historical_pending_checks_at_v16:
   - complete semantic authority, writer, lifecycle, and contract reconciliation including the current writer audit rows
   - complete the actor/state/fence/listener/audit contracts and extend the persisted fencing token to every competing writer before D1 activation
   - monitor PR #221 checks and protected-main integration for the exact accepted fc733/v16 candidate; do not claim delivery until the merged ref is known, then refresh origin/main before the next slice
   - continue semantic writer reconciliation, old-writer negative proof, and outbox publisher crash/retry recovery before any D1 owner activation
   - complete the signed actor/session contract and extend the writer fence before default-path owner activation
-receipts:
+historical_v16_receipts:
   scope: previous_accepted_v16_only_not_current_active_work
   reviewer: {agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3, verdict: accept, level: stage_verdict}
   verifier: {agent_id: 01a0c903-973c-77a0-8116-8867ff5f43e5, verdict: PASS, data_id: rust-project-goal-real-entry-16304, packet: v16}
   final_review: {agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3, verdict: accept, level: final_handoff_verdict}
 interrupt_resume:
-  last_durable_commit: e80deae94a441cc8cfa0411cf37a0a5949614285
-  prior_accepted_candidate: fc73374bb15933ef5bad7f3056336c87e455cee0
-  remaining_work: finish Desktop Library probe and remaining dev scenarios; reconcile independent3d222630 receipt and final review; qualified PR update; continue Desktop-default Rust member reads with query parity
-  next_command: collect Arendt stage verdict for e80deae94 then obtain Peirce whole-packet rebind and final reviewer before publication
+  last_durable_commit: 007b8d0ecc02e95586b8e17d75dcf19c98dd99b3
+  prior_accepted_candidate: e80deae94a441cc8cfa0411cf37a0a5949614285
+  remaining_work: account_gate_and_auto_update_probation_diagnosis_Main_e739_delta_reconciliation_final_review_PR_update_then_complete_settings_approval_and_analytics_slices
+  next_command: collect_v20_diagnostic_packaged_smokes_then_build_and_verify_e739_reconciled_candidate_with_compiled_identity_payload
