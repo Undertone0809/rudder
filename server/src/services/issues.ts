@@ -60,13 +60,13 @@ import {
   assertIssueReviewStateTransition,
   assertTransition,
   automationExecutionVisibleToUserCondition,
-  buildSearchSnippet,
+  buildIssueCreationValues, buildSearchSnippet,
   deriveIssueUserContext,
   escapeLikePattern,
   fieldSearchMatch,
   followedByUserCondition,
   isUniqueConstraintConflict,
-  participatedByAgentCondition,
+  participatedByAgentCondition, prepareIssueCancellationPatch,
   resolveIdempotentIssueOrigin,
   sameRunLock,
   touchedByUserCondition,
@@ -1251,9 +1251,6 @@ export function issueService(db: Db, storage?: StorageService) {
         if (values.status === "done") {
           values.completedAt = new Date();
         }
-        if (values.status === "cancelled") {
-          values.cancelledAt = new Date();
-        }
         if (values.boardOrder === undefined) {
           const statusForOrder = values.status ?? "backlog";
           const currentMax = await tx
@@ -1265,7 +1262,7 @@ export function issueService(db: Db, storage?: StorageService) {
         }
 
         const resolvedLabelIds = await resolveCreateLabelIds(orgId, issueData, inputLabelIds, tx);
-        const [issue] = await tx.insert(issues).values(values).returning();
+        const [issue] = await tx.insert(issues).values(buildIssueCreationValues(values)).returning();
         if (stagedDescriptionAssets && stagedDescriptionAssets.attachments.length > 0) {
           await tx.insert(issueAttachments).values(
             stagedDescriptionAssets.attachments.map((attachment) => ({
@@ -1634,9 +1631,10 @@ export function issueService(db: Db, storage?: StorageService) {
           }
         }
         patch.goalId = issueData.goalId !== undefined ? issueData.goalId ?? null : current.goalId;
+        const persistedPatch = await prepareIssueCancellationPatch(tx, current, issueData.status, patch);
         const updated = await tx
           .update(issues)
-          .set(patch)
+          .set(persistedPatch)
           .where(
             authorizationCondition
               ? and(eq(issues.id, id), authorizationCondition)
@@ -1789,9 +1787,10 @@ export function issueService(db: Db, storage?: StorageService) {
               }
             }
 
+            const persistedPatch = await prepareIssueCancellationPatch(tx, existing, input.targetStatus, patch);
             updatedIssue = await tx
               .update(issues)
-              .set(patch)
+              .set(persistedPatch)
               .where(and(eq(issues.id, row.id), eq(issues.orgId, orgId)))
               .returning()
               .then((rows) => rows[0] ?? null);
@@ -1811,6 +1810,7 @@ export function issueService(db: Db, storage?: StorageService) {
           issue: enriched,
           previousStatus: existing.status,
           previousBoardOrder: existing.boardOrder,
+          previousCheckoutRunId: existing.checkoutRunId, previousExecutionRunId: existing.executionRunId,
         };
       });
     },

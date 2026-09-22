@@ -95,9 +95,76 @@ export function applyStatusSideEffects(
     patch.completedAt = new Date();
   }
   if (status === "cancelled") {
-    patch.cancelledAt = new Date();
+    const now = new Date();
+    patch.cancelledAt = now;
+    patch.executionCancellationAt = now;
   }
   return patch;
+}
+
+function buildIssueCancellationPersistencePatch(
+  current: Pick<IssueRow, "status">,
+  nextStatus: string | undefined,
+  patch: Partial<typeof issues.$inferInsert>,
+) {
+  if (nextStatus !== "cancelled") return patch;
+  if (current.status === "cancelled") {
+    const { executionCancellationAt: _preservedFence, ...rest } = patch;
+    return rest;
+  }
+  return {
+    ...patch,
+    executionCancellationAt: sql<Date>`clock_timestamp()`,
+  };
+}
+
+async function backfillIssueIdOnLinkedRuns(
+  tx: any,
+  issue: Pick<typeof issues.$inferSelect, "id" | "orgId" | "executionRunId" | "checkoutRunId">,
+) {
+  const runIds = [...new Set([issue.executionRunId, issue.checkoutRunId].filter(
+    (runId): runId is string => Boolean(runId),
+  ))];
+  if (runIds.length === 0) return;
+
+  // The Issue row is already locked by the caller. Lock linked runs after it
+  // so cancellation and claim/recovery use the same Issue -> run order.
+  const linkedRuns = await tx
+    .select({ id: heartbeatRuns.id, contextSnapshot: heartbeatRuns.contextSnapshot })
+    .from(heartbeatRuns)
+    .where(and(eq(heartbeatRuns.orgId, issue.orgId), inArray(heartbeatRuns.id, runIds)))
+    .for("update");
+
+  for (const run of linkedRuns) {
+    const context = run.contextSnapshot && typeof run.contextSnapshot === "object" && !Array.isArray(run.contextSnapshot)
+      ? { ...(run.contextSnapshot as Record<string, unknown>) }
+      : {};
+    const existingIssueId = context.issueId;
+    if (typeof existingIssueId === "string" && existingIssueId.trim().length > 0) continue;
+
+    await tx
+      .update(heartbeatRuns)
+      .set({ contextSnapshot: { ...context, issueId: issue.id } })
+      .where(eq(heartbeatRuns.id, run.id));
+  }
+}
+
+export async function prepareIssueCancellationPatch(
+  tx: any,
+  current: Pick<IssueRow, "status" | "id" | "orgId" | "executionRunId" | "checkoutRunId">,
+  nextStatus: string | undefined,
+  patch: Partial<typeof issues.$inferInsert>,
+) {
+  if (nextStatus === "cancelled" && current.status !== "cancelled") {
+    await backfillIssueIdOnLinkedRuns(tx, current);
+  }
+  return buildIssueCancellationPersistencePatch(current, nextStatus, patch);
+}
+
+export function buildIssueCreationValues(values: typeof issues.$inferInsert) {
+  return values.status === "cancelled"
+    ? { ...values, cancelledAt: new Date(), executionCancellationAt: sql<Date>`clock_timestamp()` }
+    : values;
 }
 
 export interface IssueFilters {

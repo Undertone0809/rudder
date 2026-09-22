@@ -533,6 +533,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
+    if (result.previousStatus !== "cancelled" && result.issue.status === "cancelled") {
+      const linkedRunIds = [result.previousExecutionRunId, result.previousCheckoutRunId].filter(
+        (runId): runId is string => Boolean(runId),
+      );
+      if (linkedRunIds.length > 0) {
+        await heartbeat.cancelIssueRuns(result.issue.id, { linkedRunIds });
+      } else {
+        await heartbeat.cancelIssueRuns(result.issue.id);
+      }
+    }
     const actor = getActorInfo(req);
     await logActivity(db, {
       orgId: result.issue.orgId,

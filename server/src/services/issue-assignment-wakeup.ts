@@ -4,6 +4,12 @@ import { logger } from "../middleware/logger.js";
 type WakeupTriggerDetail = "manual" | "ping" | "callback" | "system";
 type WakeupSource = "timer" | "assignment" | "review" | "on_demand" | "automation";
 
+const ASSIGNEE_WAKEUP_ISSUE_STATUSES = new Set(["todo", "in_progress", "blocked"]);
+
+export function isIssueAssignmentWakeupStatus(status: string): boolean {
+  return ASSIGNEE_WAKEUP_ISSUE_STATUSES.has(status);
+}
+
 export interface IssueAssignmentWakeupDeps {
   wakeup: (
     agentId: string,
@@ -70,7 +76,7 @@ export function queueIssueAssignmentWakeup(input: {
   requestedByActorId?: string | null;
   rethrowOnError?: boolean;
 }) {
-  if (!input.issue.assigneeAgentId || input.issue.status === "backlog") return;
+  if (!input.issue.assigneeAgentId || !isIssueAssignmentWakeupStatus(input.issue.status)) return;
 
   return input.heartbeat
     .wakeup(input.issue.assigneeAgentId, {

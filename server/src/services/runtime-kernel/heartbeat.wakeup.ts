@@ -6,7 +6,7 @@ import {
   heartbeatRuns,
   issues
 } from "@rudderhq/db";
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { conflict, notFound } from "../../errors.js";
 import { publishLiveEvent } from "../live-events.js";
 
@@ -437,10 +437,12 @@ export function createHeartbeatWakeupHandlers(context: any) {
           .select({
             id: issues.id,
             orgId: issues.orgId,
+            status: issues.status,
             assigneeAgentId: issues.assigneeAgentId,
             reviewerAgentId: issues.reviewerAgentId,
             executionRunId: issues.executionRunId,
             executionAgentNameKey: issues.executionAgentNameKey,
+            executionCancellationAt: issues.executionCancellationAt,
           })
           .from(issues)
           .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
@@ -463,6 +465,61 @@ export function createHeartbeatWakeupHandlers(context: any) {
               source,
               triggerDetail,
               reason: "issue_execution_issue_not_found",
+              payload,
+              status: "skipped",
+              requestedByActorType: opts.requestedByActorType ?? null,
+              requestedByActorId: opts.requestedByActorId ?? null,
+              idempotencyKey: opts.idempotencyKey ?? null,
+              delegationIdempotencyKey: opts.delegationIdempotencyKey ?? null,
+              finishedAt: new Date(),
+            });
+          }
+          return { kind: "skipped" as const };
+        }
+
+        if (existingWakeupRequestId && issue.executionCancellationAt) {
+          const existingWakeup = await tx
+            .select({
+              requestedAt: agentWakeupRequests.requestedAt,
+              fenced: sql<boolean>`${agentWakeupRequests.requestedAt} <= ${issues.executionCancellationAt}`,
+            })
+            .from(agentWakeupRequests)
+            .innerJoin(issues, and(
+              eq(issues.id, issue.id),
+              eq(issues.orgId, issue.orgId),
+            ))
+            .where(eq(agentWakeupRequests.id, existingWakeupRequestId))
+            .then((rows) => rows[0] ?? null);
+          if (existingWakeup?.fenced === true) {
+            await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+              status: "cancelled",
+              reason: "issue_execution_cancelled_before_wakeup_resume",
+              runId: null,
+              claimedAt: null,
+              finishedAt: new Date(),
+              error: "Cancelled because the linked Issue was cancelled before this wake could resume",
+            });
+            return { kind: "skipped" as const };
+          }
+        }
+
+        if ((issue.status === "done" || issue.status === "cancelled") && !commentMentionWake) {
+          if (existingWakeupRequestId) {
+            await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
+              status: "skipped",
+              reason: "issue_execution_issue_not_actionable",
+              runId: null,
+              claimedAt: null,
+              finishedAt: new Date(),
+              error: null,
+            });
+          } else {
+            await insertWakeupRequestRecord(tx, {
+              orgId: agent.orgId,
+              agentId,
+              source,
+              triggerDetail,
+              reason: "issue_execution_issue_not_actionable",
               payload,
               status: "skipped",
               requestedByActorType: opts.requestedByActorType ?? null,
@@ -554,6 +611,9 @@ export function createHeartbeatWakeupHandlers(context: any) {
                   eq(heartbeatRuns.terminalEffectsPending, true),
                 ),
                 sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issue.id}`,
+                ...(issue.executionCancellationAt
+                  ? [gt(heartbeatRuns.createdAt, issue.executionCancellationAt)]
+                  : []),
                 ...(originTerminalRunId ? [sql`${heartbeatRuns.id} <> ${originTerminalRunId}`] : []),
               ),
             )
@@ -655,6 +715,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
             .then((rows) => rows[0] ?? null);
 
           if (existingDeferred) {
+            const coalescedRequestedAt = opts.notBefore ?? new Date();
             const mergedDeferredContext = mergeCoalescedContextSnapshot(
               readDeferredWakeContext(existingDeferred.payload),
               enrichedContextSnapshot,
@@ -672,6 +733,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               await updateWakeupRequestRecord(tx, existingDeferred.id, {
                 payload: mergedDeferredPayload,
                 coalescedCount: (existingDeferred.coalescedCount ?? 0) + 1,
+                requestedAt: coalescedRequestedAt,
               });
               await updateWakeupRequestRecord(tx, existingWakeupRequestId, {
                 status: "coalesced",
@@ -685,6 +747,7 @@ export function createHeartbeatWakeupHandlers(context: any) {
               await updateWakeupRequestRecord(tx, existingDeferred.id, {
                 payload: mergedDeferredPayload,
                 coalescedCount: (existingDeferred.coalescedCount ?? 0) + 1,
+                requestedAt: coalescedRequestedAt,
                 status: "deferred_issue_execution",
                 reason: "issue_execution_deferred",
                 runId: null,

@@ -327,7 +327,25 @@ export async function transitionHeartbeatRunToTerminal(
     expectedExecutionOwnerToken?: string | null;
   },
 ) {
-  return db.transaction(async (tx) => {
+  return db.transaction(async (tx) =>
+    transitionHeartbeatRunToTerminalInTransaction(tx as unknown as Db, input)
+  );
+}
+
+export async function transitionHeartbeatRunToTerminalInTransaction(
+  tx: Db,
+  input: {
+    runId: string;
+    status: "succeeded" | "failed" | "cancelled" | "timed_out";
+    patch: Partial<typeof heartbeatRuns.$inferInsert>;
+    expectedStatuses?: string[];
+    activityWatermark?: RunActivityWatermark;
+    terminalEffectsPending?: boolean;
+    terminalEffectsIntent?: TerminalEffectIntent | null;
+    processExitedAt?: Date | null;
+    expectedExecutionOwnerToken?: string | null;
+  },
+) {
     // Event append and terminal CAS share this lock, establishing one total
     // order between the activity watermark and the terminal transition.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.runId}))`);
@@ -460,8 +478,7 @@ export async function transitionHeartbeatRunToTerminal(
         eq(agentWakeupRequests.id, updated.wakeupRequestId),
         notInArray(agentWakeupRequests.status, TERMINAL_WAKEUP_STATUSES),
       ));
-    return updated;
-  });
+  return updated;
 }
 
 export async function markHeartbeatRunProcessExited(db: Db, runId: string, exitedAt = new Date()) {

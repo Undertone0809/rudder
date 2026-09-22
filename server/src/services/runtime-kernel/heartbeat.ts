@@ -62,7 +62,9 @@ const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBE
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 import { createHeartbeatExecuteHandlers } from "./heartbeat.execute.js";
+import { createHeartbeatIssueCancellationHandlers } from "./heartbeat.issue-cancellation.js";
 import { createHeartbeatMiscHandlers } from "./heartbeat.misc.js";
+import { claimAvailableQueuedRuns } from "./heartbeat.queue.js";
 import { createHeartbeatRecoveryHandlers } from "./heartbeat.recovery.js";
 import { createHeartbeatReleaseHandlers } from "./heartbeat.release.js";
 import {
@@ -1176,7 +1178,10 @@ export function heartbeatService(
     const issueId = readNonEmptyString(context.issueId);
     if (issueId) {
       const issue = await db
-        .select({ id: issues.id, status: issues.status })
+        .select({
+          id: issues.id,
+          status: issues.status,
+        })
         .from(issues)
         .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
         .then((rows) => rows[0] ?? null);
@@ -1201,6 +1206,22 @@ export function heartbeatService(
 
     const claimedAt = new Date();
     const claimed = await db.transaction(async (tx) => {
+      // Wakeup/release transactions lock the Issue before the run advisory
+      // lock. Keep the same order here so cancellation/release cannot form a
+      // wait cycle with queued-run claim.
+      const currentIssue = issueId
+        ? await tx
+            .select({
+              id: issues.id,
+              status: issues.status,
+              executionCancellationAt: issues.executionCancellationAt,
+            })
+            .from(issues)
+            .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
+            .for("update")
+            .then((rows) => rows[0] ?? null)
+        : null;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${run.id}))`);
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`agent-run-state:${run.agentId}`}))`);
       await tx.execute(sql`select id from agents where id = ${run.agentId} for update`);
       const currentAgent = await tx
@@ -1233,6 +1254,17 @@ export function heartbeatService(
       if (!currentRun || currentRun.status !== "queued") return null;
 
       const currentContext = parseObject(currentRun.contextSnapshot);
+      const issueCancellationReason = await issueCancellationHandlers.getQueuedIssueCancellationReason({
+        tx,
+        issueId,
+        currentIssue,
+        currentRun,
+        currentContext,
+        wakeup,
+      });
+      if (issueCancellationReason) {
+        return issueCancellationHandlers.cancelQueuedRunWithinClaimTransaction(tx, currentRun, issueCancellationReason);
+      }
       const goalContext = parseObject(currentContext.goal);
       const goalId = readNonEmptyString(currentContext.goalId) ?? readNonEmptyString(goalContext.id);
       const wakeReason = readNonEmptyString(currentContext.wakeReason) ?? readNonEmptyString(wakeup?.reason);
@@ -1390,14 +1422,8 @@ export function heartbeatService(
       return claimedRun;
     });
     if (!claimed) return null;
-    if (claimed.status === "cancelled" && claimed.errorCode === "goal.result_proposal_ready") {
-      await appendRunEvent(claimed, {
-        eventType: "lifecycle",
-        stream: "system",
-        level: "warn",
-        message: "run cancelled",
-      });
-      await completeTerminalControlEffects(claimed, { startNext: false });
+    if (claimed.status === "cancelled") {
+      await issueCancellationHandlers.finishClaimedRunCancellation(claimed);
       return null;
     }
 
@@ -2127,6 +2153,8 @@ export function heartbeatService(
     }
   }
 
+  const issueCancellationHandlers = createHeartbeatIssueCancellationHandlers({ db, agentIssueCreationSvc, appendRunEvent, completeTerminalControlEffects, publishRunStatus });
+
   async function startNextQueuedRunForAgent(agentId: string) {
     return withAgentStartLock(agentId, async () => {
       const agent = await getAgent(agentId);
@@ -2149,51 +2177,16 @@ export function heartbeatService(
       const availableSlots = Math.max(0, policy.maxConcurrentRuns - runningCount);
       if (availableSlots <= 0) return [];
 
-      const queuedRuns = await db
-        .select()
-        .from(heartbeatRuns)
-        .where(
-          and(
-            eq(heartbeatRuns.agentId, agentId),
-            eq(heartbeatRuns.status, "queued"),
-            sql`(
-              ${heartbeatRuns.wakeupRequestId} is null
-              or exists (
-                select 1
-                from ${agentWakeupRequests}
-                where ${agentWakeupRequests.id} = ${heartbeatRuns.wakeupRequestId}
-                  and ${agentWakeupRequests.requestedAt} <= now()
-              )
-            )`,
-          ),
-        )
-        .orderBy(asc(heartbeatRuns.createdAt))
-        .limit(availableSlots);
-      if (queuedRuns.length === 0) return [];
-
-      const claimedRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
-      for (const queuedRun of queuedRuns) {
-        if (activeRunExecutions.has(queuedRun.id)) continue;
-        activeRunExecutions.add(queuedRun.id);
-        runAbortControllers.set(queuedRun.id, new AbortController());
-        try {
-          await testHooks?.beforeRunClaim?.(queuedRun);
-          const claimed = await claimQueuedRun(queuedRun);
-          if (claimed) {
-            claimedRuns.push(claimed);
-            void executeRun(claimed.id, { executionReserved: true }).catch((err) => {
-              logger.error({ err, runId: claimed.id }, "queued heartbeat execution failed");
-            });
-          } else {
-            runAbortControllers.delete(queuedRun.id);
-            activeRunExecutions.delete(queuedRun.id);
-          }
-        } catch (error) {
-          runAbortControllers.delete(queuedRun.id);
-          activeRunExecutions.delete(queuedRun.id);
-          throw error;
-        }
-      }
+      const claimedRuns = await claimAvailableQueuedRuns({
+        db,
+        agentId,
+        availableSlots,
+        activeRunExecutions,
+        runAbortControllers,
+        claimQueuedRun,
+        executeRun,
+        beforeRunClaim: testHooks?.beforeRunClaim,
+      });
       if (claimedRuns.length === 0) return [];
       return claimedRuns;
     });
@@ -2228,7 +2221,7 @@ export function heartbeatService(
   const { enqueueWakeup } = wakeupHandlers;
   const { releaseIssueExecutionAndPromote } = releaseHandlers;
   const { executeRun } = executeHandlers;
-  const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
+  const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelIssueRunsInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
 
   async function recoverNetworkWaitingRunsLocked(opts?: { now?: Date }) {
     const now = opts?.now ?? new Date();
@@ -2781,6 +2774,11 @@ export function heartbeatService(
     },
 
     cancelRun: (runId: string) => cancelRunInternal(runId),
+
+    cancelIssueRuns: (
+      issueId: string,
+      opts?: { linkedRunIds?: string[]; reason?: string },
+    ) => cancelIssueRunsInternal(issueId, opts),
 
     cancelActiveForAgent: (agentId: string) => cancelActiveForAgentInternal(agentId),
 

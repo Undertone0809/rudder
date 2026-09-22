@@ -38,6 +38,7 @@ const mockAccessService = vi.hoisted(() => ({
 
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(),
+  cancelIssueRuns: vi.fn(),
   getActiveRunForAgent: vi.fn(),
   getRun: vi.fn(),
   reportRunActivity: vi.fn(async () => undefined),
@@ -180,7 +181,7 @@ function makeIssue(overrides?: Partial<{
   parentId: string | null;
   projectId: string | null;
   boardOrder: number;
-  status: "backlog" | "todo" | "in_progress" | "in_review" | "blocked" | "done";
+  status: "backlog" | "todo" | "in_progress" | "in_review" | "blocked" | "done" | "cancelled";
   title: string;
   description: string | null;
   priority: string;
@@ -637,6 +638,33 @@ describe("issue lifecycle routes", () => {
     );
   });
 
+  it("cancels linked runs when reorder moves an issue into cancelled", async () => {
+    const issue = makeIssue({
+      boardOrder: 2000,
+      status: "cancelled",
+    });
+    mockIssueService.reorder.mockResolvedValue({
+      issue,
+      previousStatus: "in_progress",
+      previousBoardOrder: 3000,
+      previousCheckoutRunId: "legacy-checkout-run",
+      previousExecutionRunId: "legacy-execution-run",
+    });
+
+    const res = await request(await createApp())
+      .post("/api/orgs/organization-1/issues/reorder")
+      .send({
+        issueId: issue.id,
+        targetStatus: "cancelled",
+        position: "end",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockHeartbeatService.cancelIssueRuns).toHaveBeenCalledWith(issue.id, {
+      linkedRunIds: ["legacy-execution-run", "legacy-checkout-run"],
+    });
+  });
+
   it("requires board access to reorder issue board lanes", async () => {
     const res = await request(await createApp(createAgentActor()))
       .post("/api/orgs/organization-1/issues/reorder")
@@ -754,6 +782,26 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("does not queue an assignment wakeup when a cancelled issue is created", async () => {
+    mockIssueService.create.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "cancelled",
+      }),
+    );
+
+    const res = await request(await createApp()).post("/api/orgs/organization-1/issues").send({
+      title: "Already cancelled issue",
+      status: "cancelled",
+      priority: "medium",
+      assigneeAgentId: ASSIGNEE_AGENT_ID,
+    });
+
+    expect(res.status).toBe(201);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("logs the Issue creation activity before settling the Agent request", async () => {
@@ -2183,6 +2231,85 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("does not wake the assignee when a backlog issue is cancelled", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "backlog",
+      }),
+    );
+    mockIssueService.update.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "cancelled",
+      }),
+    );
+
+    const res = await request(await createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ status: "cancelled" });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.cancelIssueRuns).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+    );
+  });
+
+  it.each(["todo", "in_progress"] as const)(
+    "does not wake the assignee when a %s issue is cancelled",
+    async (status) => {
+      mockIssueService.getById.mockResolvedValue(
+        makeIssue({
+          assigneeAgentId: ASSIGNEE_AGENT_ID,
+          status,
+        }),
+      );
+      mockIssueService.update.mockResolvedValue(
+        makeIssue({
+          assigneeAgentId: ASSIGNEE_AGENT_ID,
+          status: "cancelled",
+        }),
+      );
+
+      const res = await request(await createApp())
+        .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+        .send({ status: "cancelled" });
+
+      expect(res.status).toBe(200);
+      await flushAsyncWork();
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+      expect(mockHeartbeatService.cancelIssueRuns).toHaveBeenCalledWith(
+        "11111111-1111-4111-8111-111111111111",
+      );
+    },
+  );
+
+  it("does not wake an agent assigned to a cancelled issue", async () => {
+    mockIssueService.getById.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: null,
+        status: "cancelled",
+      }),
+    );
+    mockIssueService.update.mockResolvedValue(
+      makeIssue({
+        assigneeAgentId: ASSIGNEE_AGENT_ID,
+        status: "cancelled",
+      }),
+    );
+
+    const res = await request(await createApp())
+      .patch("/api/issues/11111111-1111-4111-8111-111111111111")
+      .send({ assigneeAgentId: ASSIGNEE_AGENT_ID });
+
+    expect(res.status).toBe(200);
+    await flushAsyncWork();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.cancelIssueRuns).not.toHaveBeenCalled();
   });
 
   it("coalesces assignee and mention wakeups into a single enqueue", async () => {
