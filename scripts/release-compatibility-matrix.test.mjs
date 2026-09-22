@@ -56,10 +56,28 @@ function manifest(tags, sqlByTag, label) {
 
 describe("release migration compatibility matrix", () => {
   it.each([
+    ["0.7.24", "stable"],
+    ["0.7.24-canary.0", "canary"],
+  ])("accepts %s with the current native-session migration fingerprint", (candidateVersion, channel) => {
+    const result = runCompatibilityPreflight({ candidateVersion, channel });
+    expect(result.candidateFingerprint).toBe(
+      "dc33441aed2b2ecf9b21969362fa4c8ed6fc7906c48103021c212468b6035e1a",
+    );
+    expect(result.candidateMigrations).toBe(168);
+    expect(result.candidateSqlFiles).toBe(170);
+    expect(result.fixtures[0].version).toBe("0.7.23");
+  }, 60_000);
+
+  it.each([
     ["0.7.23", "stable"],
     ["0.7.23-canary.0", "canary"],
-  ])("accepts %s with the current 0163 migration fingerprint", (candidateVersion, channel) => {
-    const result = runCompatibilityPreflight({ candidateVersion, channel });
+  ])("accepts the frozen %s with its published 0163 migration fingerprint", (candidateVersion, channel) => {
+    const result = validateCompatibilityMatrix({
+      candidateManifest: readFixtureManifest(repoRoot, { version: "0.7.23", ref: "v0.7.23" }),
+      candidateVersion,
+      channel,
+      loadFixture: (fixture) => readFixtureManifest(repoRoot, fixture),
+    });
 
     expect(result.candidateFingerprint).toBe(
       "dc8a093838a7ebfc29ec8330831de01598cfb970b4ba834406712192a2a53237",
