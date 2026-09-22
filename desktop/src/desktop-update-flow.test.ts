@@ -164,21 +164,198 @@ describe("desktop update flow", () => {
     }
   });
 
-  it("keeps the startup update hook recoverable when policy refresh rejects", async () => {
+  it("checks for a newer release and prompts immediately after startup", async () => {
     const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
-    const refreshSignedUpdatePolicy = vi.fn(async () => {
-      throw new Error("policy endpoint unavailable");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+      {
+        tag_name: "v0.3.4",
+        html_url: "https://example.test/releases/v0.3.4",
+        assets: completeReleaseAssets("0.3.4"),
+      },
+    ]), { status: 200, headers: { "content-type": "application/json" } }));
+    showMessageBoxMock.mockResolvedValue({ response: 1 });
+    try {
+      const { flow } = createFlow();
+
+      await expect(flow.maybeShowStartupUpdateNotice()).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(showMessageBoxMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          buttons: ["Update", "Later"],
+          message: "Rudder v0.3.4 is available.",
+        }),
+      );
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("reuses a durable staged candidate instead of starting a second installer", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    const artifactPath = path.join("/tmp/rudder-desktop-test", "startup-staged.zip");
+    const artifact = Buffer.from("startup staged payload\n", "utf8");
+    const digest = createHash("sha256").update(artifact).digest("hex");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(artifactPath, artifact, { mode: 0o600 });
+    writeDesktopAutoUpdateState(statePath, stageAutomaticCandidate(createInitialDesktopAutoUpdateState(), {
+      channel: "stable",
+      version: "0.3.4",
+      platform: "darwin",
+      arch: process.arch,
+      installId: path.resolve("/tmp/rudder-desktop-test"),
+      profile: "prod_local",
+      instanceId: "default",
+      sourceReleaseDigest: "startup-release-digest",
+      updateId: "startup-durable-candidate",
+      assetName: "Rudder-0.3.4-macos-arm64-portable.zip",
+      assetChecksum: digest,
+      stagedArtifactPath: artifactPath,
+      stagedArtifactDigest: digest,
+      stagedAt: new Date().toISOString(),
+      status: "staged",
+      generation: 1,
+    }));
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const requestQuitForUpdate = vi.fn();
+    showMessageBoxMock.mockResolvedValue({ response: 0 });
+    try {
+      const { flow } = createFlow({ requestQuitForUpdate });
+
+      await flow.maybeShowStartupUpdateNotice();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(showMessageBoxMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          buttons: ["Update", "Later"],
+          message: "Rudder v0.3.4 is available.",
+        }),
+      );
+      expect(requestQuitForUpdate).toHaveBeenCalledTimes(1);
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(readDesktopAutoUpdateState(statePath).candidate).toMatchObject({
+        updateId: "startup-durable-candidate",
+        status: "staged",
+      });
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(artifactPath, { force: true });
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("does not start a second lookup while automatic preparation is active", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      preparation: {
+        updateId: "startup-active-preparation",
+        channel: "stable",
+        version: "0.3.4",
+        ownerPid: process.pid,
+        startedAt: new Date().toISOString(),
+      },
     });
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    showMessageBoxMock.mockResolvedValue({ response: 0 });
+    try {
+      const { flow } = createFlow();
+
+      await flow.maybeShowStartupUpdateNotice();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(showMessageBoxMock).not.toHaveBeenCalled();
+      expect(spawnMock).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("reuses an in-flight release lookup when startup and silent checks overlap", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(Date.now() - 1).toISOString(),
+    });
+    const fetchDeferred = createDeferred<Response>();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => fetchDeferred.promise);
+    showMessageBoxMock.mockResolvedValue({ response: 1 });
     try {
       const { flow } = createFlow({
         hasExternalUpdateHelperCapability: () => true,
-        refreshSignedUpdatePolicy,
+        hasSignedUpdatePolicyCapability: () => true,
+      });
+      const automaticCheck = flow.runAutomaticUpdateCheck();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+      const startupNotice = flow.maybeShowStartupUpdateNotice();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      fetchDeferred.resolve(new Response(JSON.stringify([
+        {
+          tag_name: "v0.3.4",
+          html_url: "https://example.test/releases/v0.3.4",
+          assets: completeReleaseAssets("0.3.4"),
+        },
+      ]), { status: 200, headers: { "content-type": "application/json" } }));
+      await Promise.all([automaticCheck, startupNotice]);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(showMessageBoxMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ message: "Rudder v0.3.4 is available." }),
+      );
+    } finally {
+      fetchMock.mockRestore();
+      fs.rmSync(statePath, { force: true });
+    }
+  });
+
+  it("reserves the startup check before an overdue silent scheduler can run", async () => {
+    const statePath = resolveDesktopAutoUpdateStatePath("/tmp/rudder-desktop-test");
+    writeDesktopAutoUpdateState(statePath, {
+      ...createInitialDesktopAutoUpdateState(),
+      nextCheckAt: new Date(Date.now() - 1).toISOString(),
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+      {
+        tag_name: "v0.3.4",
+        html_url: "https://example.test/releases/v0.3.4",
+        assets: completeReleaseAssets("0.3.4"),
+      },
+    ]), { status: 200, headers: { "content-type": "application/json" } }));
+    showMessageBoxMock.mockResolvedValue({ response: 1 });
+    const previousSmokeMode = process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC;
+    const previousSmokeSkip = process.env.RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE;
+    delete process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC;
+    delete process.env.RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE;
+    try {
+      const { flow } = createFlow({
+        hasExternalUpdateHelperCapability: () => true,
+        hasSignedUpdatePolicyCapability: () => true,
       });
 
-      await expect(flow.maybeShowStartupUpdateNotice()).resolves.toBeUndefined();
-      expect(refreshSignedUpdatePolicy).toHaveBeenCalledTimes(1);
-      expect(readDesktopAutoUpdateState(statePath).nextCheckAt).toBeTruthy();
+      flow.scheduleAutomaticUpdateCheck();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      await flow.maybeShowStartupUpdateNotice();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(showMessageBoxMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ message: "Rudder v0.3.4 is available." }),
+      );
     } finally {
+      fetchMock.mockRestore();
+      if (previousSmokeMode === undefined) delete process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC;
+      else process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC = previousSmokeMode;
+      if (previousSmokeSkip === undefined) delete process.env.RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE;
+      else process.env.RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE = previousSmokeSkip;
       fs.rmSync(statePath, { force: true });
     }
   });

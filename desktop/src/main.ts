@@ -807,6 +807,7 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   formatUpdateRunDetail,
   promptForDeferredUpdate: promptRendererForDeferredUpdate,
   showMainWindow,
+  requestQuitForUpdate: requestQuit,
   getUpdateInstallPath: () => (
     app.getName().startsWith("Rudder-smoke-")
       ? process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_INSTALL_PATH?.trim()
@@ -2326,10 +2327,6 @@ async function startLocalRudder(): Promise<void> {
           apiUrl: baseUrl,
         },
       });
-      // Keep the bootstrap-anchored silent-update timer active after the local
-      // runtime is ready; policy/download work still runs through its durable
-      // slot and never races runtime ownership or migrations.
-      scheduleAutomaticUpdateCheck();
       if (desktopSkipAppLoad()) {
         if (desktopDebugEnabled()) {
           console.info("[rudder-desktop] startLocalRudder:skip-app-load", { baseUrl });
@@ -2350,6 +2347,10 @@ async function startLocalRudder(): Promise<void> {
       schedulePostUpdateRendererReloadIfNeeded();
       await captureDesktopWindowIfRequested();
       void maybeShowStartupUpdateNotice();
+      // maybeShowStartupUpdateNotice marks its startup ownership synchronously
+      // before the first await. Scheduling afterwards therefore cannot start a
+      // settled or in-flight silent check ahead of the user-facing prompt.
+      scheduleAutomaticUpdateCheck();
     } catch (error) {
       console.error("[rudder-desktop] managed local server startup failed", error);
       const failure = createDesktopStartupFailureView({

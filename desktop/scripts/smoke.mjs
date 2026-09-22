@@ -3312,6 +3312,7 @@ async function runPackagedRuntimeFallbackAutoUpdateScenario(mode, fixture) {
     ...resolveMacPackagedSmokeHomeEnv(),
     npm_config_offline: "true",
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+    RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE: "1",
     RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
     RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY: fixture.publicKeyDer,
     RUDDER_DESKTOP_UPDATE_POLICY_URL: fixture.policyUrl,
@@ -3374,6 +3375,7 @@ async function runPackagedPublicFullOnlyAutoUpdateScenario(mode, fixture) {
   const extraEnv = {
     ...resolveMacPackagedSmokeHomeEnv(),
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+    RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE: "1",
     RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
     RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY: fixture.publicKeyDer,
     RUDDER_DESKTOP_UPDATE_POLICY_URL: fixture.fullOnlyPolicyUrl,
@@ -3652,6 +3654,7 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
   const extraEnv = {
     ...resolveMacPackagedSmokeHomeEnv(),
     RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+    RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE: "1",
     RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
     RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY: publicKeyDer,
     RUDDER_DESKTOP_UPDATE_POLICY_URL: policyUrl,

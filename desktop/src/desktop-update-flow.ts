@@ -54,6 +54,7 @@ import {
 } from "./update-channel-preference.js";
 import {
   checkForRudderDesktopUpdates,
+  compareRudderVersions,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
 } from "./update-check.js";
@@ -120,6 +121,8 @@ export function createDesktopUpdateFlow(context: {
   isSignedUpdateVersionAuthorized?: (version: string) => boolean;
   /** Optional explicit helper attestation for tests or an embedding shell. */
   getExternalUpdateHelper?: () => HelperAttestation | null;
+  /** Starts the normal quit flow so a durable automatic candidate owns apply. */
+  requestQuitForUpdate?: () => void;
 }) {
   const platform = context.platform ?? process.platform;
   let latestDesktopUpdateProgress: DesktopUpdateProgressEvent | null = null;
@@ -146,9 +149,17 @@ export function createDesktopUpdateFlow(context: {
   function isLocalRuntimeReadyForUpdate(): boolean {
     return Boolean(context.getServerHandle()) && context.getBootState()?.stage === "ready";
   }
+
+  function startupUpdateNoticeSkippedForSmoke(): boolean {
+    return process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1"
+      && process.env.RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE === "1";
+  }
+
   let startupUpdateNoticeShown = false;
+  let startupUpdateNoticeActive = false;
   let automaticUpdateTimer: NodeJS.Timeout | null = null;
   let automaticCheckInFlight: Promise<void> | null = null;
+  let updateCheckInFlight: Promise<DesktopUpdateCheckResult> | null = null;
   let pendingAutomaticHelperHandoff: { requestPath: string; helperPath: string; transactionId: string } | null = null;
 
   function automaticRuntimeIdentity(): { profile: string | null; instanceId: string | null } {
@@ -195,6 +206,29 @@ export function createDesktopUpdateFlow(context: {
         return false;
       }
     });
+  }
+
+  type StartupDurableUpdateTransaction =
+    | { kind: "candidate"; candidate: DesktopAutoUpdateCandidate }
+    | { kind: "preparation"; version: string }
+    | { kind: "busy"; version: string }
+    | null;
+
+  function readStartupDurableUpdateTransaction(): StartupDurableUpdateTransaction {
+    const state = readAutomaticState();
+    const candidate = state.candidate;
+    if (candidate && ["staged", "claimed", "applying"].includes(candidate.status)) {
+      if (candidate.status === "staged"
+        && compareRudderVersions(candidate.version, resolveRudderAppVersion()) > 0
+        && hasExactStagedAutomaticArtifact(candidate)) {
+        return { kind: "candidate", candidate };
+      }
+      return { kind: "busy", version: candidate.version };
+    }
+    if (state.preparation && automaticPreparationIsActive(state.preparation)) {
+      return { kind: "preparation", version: state.preparation.version };
+    }
+    return null;
   }
 
   function autoUpdateStatePath(): string {
@@ -529,6 +563,12 @@ export function createDesktopUpdateFlow(context: {
 
   function scheduleAutomaticUpdateCheck(): void {
     clearAutomaticTimer();
+    if (startupUpdateNoticeActive) return;
+    // A ready local runtime gets one user-facing startup check before the
+    // silent scheduler is allowed to discover or prepare a second update.
+    // Smoke fixtures explicitly opt out because their purpose is to exercise
+    // the unattended helper handoff without a native dialog.
+    if (!startupUpdateNoticeShown && isLocalRuntimeReadyForUpdate() && !startupUpdateNoticeSkippedForSmoke()) return;
     if (
       !app.isPackaged
       || platform !== "darwin"
@@ -723,6 +763,7 @@ export function createDesktopUpdateFlow(context: {
   async function runAutomaticUpdateCheck(): Promise<void> {
     if (automaticCheckInFlight) return automaticCheckInFlight;
     automaticCheckInFlight = (async () => {
+      if (startupUpdateNoticeActive) return;
       if (!automaticUpdatePrerequisitesAvailable()) {
         deferAutomaticUpdateCheck();
         return;
@@ -785,6 +826,7 @@ export function createDesktopUpdateFlow(context: {
         scheduleAutomaticUpdateCheck();
         return;
       }
+      if (startupUpdateNoticeActive) return;
       if (!state.nextCheckAt) state = mutateAutomaticState((current) => scheduleNextAutomaticCheck(current, now));
       if (state.nextCheckAt && Date.parse(state.nextCheckAt) > now.getTime()) {
         scheduleAutomaticUpdateCheck();
@@ -792,7 +834,7 @@ export function createDesktopUpdateFlow(context: {
       }
       state = mutateAutomaticState((current) => markAutomaticCheckStarted(current, now));
       const result = await checkForUpdates();
-      if (result.status === "update-available" && result.latestVersion) {
+      if (!startupUpdateNoticeActive && result.status === "update-available" && result.latestVersion) {
         await prepareAutomaticUpdate(result.latestVersion, result.channel);
       }
       scheduleAutomaticUpdateCheck();
@@ -878,11 +920,12 @@ export function createDesktopUpdateFlow(context: {
   }
 
   async function checkForUpdates(): Promise<DesktopUpdateCheckResult> {
+    if (updateCheckInFlight) return updateCheckInFlight;
     const channel = readDesktopUpdateChannel(app.getPath("userData"));
     const smokeReleaseApiBaseUrl = process.env.RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC === "1"
       ? process.env.RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL?.trim()
       : undefined;
-    return checkForRudderDesktopUpdates({
+    const request = checkForRudderDesktopUpdates({
       currentVersion: resolveRudderAppVersion(),
       appName: app.getName(),
       repo: DESKTOP_GITHUB_REPO,
@@ -890,6 +933,11 @@ export function createDesktopUpdateFlow(context: {
       channel,
       ...(smokeReleaseApiBaseUrl ? { apiBaseUrl: smokeReleaseApiBaseUrl } : {}),
     });
+    const trackedRequest = request.finally(() => {
+      if (updateCheckInFlight === trackedRequest) updateCheckInFlight = null;
+    });
+    updateCheckInFlight = trackedRequest;
+    return trackedRequest;
   }
 
   function getDesktopUpdateChannel(): DesktopUpdateChannel {
@@ -1031,6 +1079,11 @@ export function createDesktopUpdateFlow(context: {
   function formatVersionForDisplay(version: string | null | undefined): string {
     if (!version) return "unknown";
     return version.startsWith("v") ? version : `v${version}`;
+  }
+
+  function releaseUrlForVersion(version: string, channel: DesktopUpdateChannel): string {
+    const tag = channel === "canary" ? `canary/v${version}` : `v${version}`;
+    return `${DESKTOP_RELEASES_URL}/tag/${tag}`;
   }
 
   function clearActiveDesktopUpdateAttempt(updateId: string): void {
@@ -1179,7 +1232,10 @@ export function createDesktopUpdateFlow(context: {
     return "cancel";
   }
 
-  async function promptToInstallAvailableUpdate(result: DesktopUpdateCheckResult): Promise<void> {
+  async function promptToInstallAvailableUpdate(
+    result: DesktopUpdateCheckResult,
+    options: { preparedAutomaticCandidate?: boolean } = {},
+  ): Promise<void> {
     if (result.status !== "update-available" || !result.latestVersion) return;
 
     const response = await showMessageBox({
@@ -1199,6 +1255,15 @@ export function createDesktopUpdateFlow(context: {
 
     if (response.response !== 0) return;
 
+    if (options.preparedAutomaticCandidate) {
+      if (context.requestQuitForUpdate) {
+        context.requestQuitForUpdate();
+      } else {
+        console.warn("[rudder-desktop] cannot start the quit flow for a prepared automatic candidate");
+      }
+      return;
+    }
+
     const installResult = await installUpdate(result.latestVersion);
     if (installResult.status === "started" || installResult.status === "waiting") return;
 
@@ -1206,35 +1271,75 @@ export function createDesktopUpdateFlow(context: {
   }
 
   async function maybeShowStartupUpdateNotice(): Promise<void> {
-    if (startupUpdateNoticeShown || !app.isPackaged || !isLocalRuntimeReadyForUpdate()) return;
-    if (context.hasExternalUpdateHelperCapability?.() !== true) {
-      // Automatic updates are a fully staged transaction: do not refresh
-      // release policy or touch the network when the destructive boundary is
-      // unavailable for this install.
-      scheduleAutomaticUpdateCheck();
-      return;
-    }
-    let policyRefreshSucceeded = true;
-    if (context.refreshSignedUpdatePolicy) {
-      try {
-        policyRefreshSucceeded = await context.refreshSignedUpdatePolicy();
-      } catch (error) {
-        policyRefreshSucceeded = false;
-        console.warn("[rudder-desktop] signed update policy refresh failed", error);
-      }
-    }
-    if (!policyRefreshSucceeded) {
-      // Keep the startup hook retryable. The hourly timer remains active and
-      // will refresh policy again when the network becomes available.
-      scheduleAutomaticUpdateCheck();
-      return;
-    }
+    if (
+      startupUpdateNoticeShown
+      || startupUpdateNoticeSkippedForSmoke()
+      || !app.isPackaged
+      || !isLocalRuntimeReadyForUpdate()
+    ) return;
     startupUpdateNoticeShown = true;
-    const state = readAutomaticState();
-    if (!state.nextCheckAt) {
-      mutateAutomaticState((current) => scheduleNextAutomaticCheck(current, new Date()));
+    startupUpdateNoticeActive = true;
+    clearAutomaticTimer();
+    try {
+      let durableTransaction = readStartupDurableUpdateTransaction();
+      if (durableTransaction?.kind === "preparation" || durableTransaction?.kind === "busy") {
+        console.info("[rudder-desktop] startup update notice deferred to the durable automatic transaction", {
+          kind: durableTransaction.kind,
+          version: durableTransaction.version,
+        });
+        return;
+      }
+
+      let preparedAutomaticCandidate = durableTransaction?.kind === "candidate"
+        ? durableTransaction.candidate
+        : null;
+      let result = preparedAutomaticCandidate
+        ? {
+          status: "update-available" as const,
+          channel: preparedAutomaticCandidate.channel,
+          currentVersion: resolveRudderAppVersion(),
+          latestVersion: preparedAutomaticCandidate.version,
+          releaseUrl: releaseUrlForVersion(preparedAutomaticCandidate.version, preparedAutomaticCandidate.channel),
+          checkedAt: new Date().toISOString(),
+        }
+        : await checkForUpdates();
+
+      // An automatic check that was already in flight can stage a candidate
+      // while the public lookup is awaiting its response. Reconcile again
+      // before offering a manual installer so the durable transaction wins.
+      if (!preparedAutomaticCandidate) {
+        durableTransaction = readStartupDurableUpdateTransaction();
+        if (durableTransaction?.kind === "preparation" || durableTransaction?.kind === "busy") return;
+        if (durableTransaction?.kind === "candidate") {
+          preparedAutomaticCandidate = durableTransaction.candidate;
+          result = {
+            status: "update-available" as const,
+            channel: preparedAutomaticCandidate.channel,
+            currentVersion: resolveRudderAppVersion(),
+            latestVersion: preparedAutomaticCandidate.version,
+            releaseUrl: releaseUrlForVersion(preparedAutomaticCandidate.version, preparedAutomaticCandidate.channel),
+            checkedAt: new Date().toISOString(),
+          };
+        }
+      }
+      if (result.status === "update-available") {
+        await promptToInstallAvailableUpdate(result, {
+          preparedAutomaticCandidate: Boolean(preparedAutomaticCandidate),
+        });
+      }
+    } catch (error) {
+      console.warn("[rudder-desktop] startup update notice failed", error);
+    } finally {
+      startupUpdateNoticeActive = false;
+      if (automaticUpdateScopeAllowed()) {
+        try {
+          mutateAutomaticState((current) => markAutomaticCheckStarted(current, new Date()));
+        } catch (error) {
+          console.warn("[rudder-desktop] failed to persist startup update check", error);
+        }
+      }
+      scheduleAutomaticUpdateCheck();
     }
-    scheduleAutomaticUpdateCheck();
   }
 
   async function showManualUpdateCheckDialog(): Promise<void> {

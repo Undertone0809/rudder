@@ -194,4 +194,29 @@ describe("desktop update checks", () => {
       warn.mockRestore();
     }
   });
+
+  it("bounds a hanging API and releases-page lookup", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("request aborted")), { once: true });
+    }));
+    try {
+      const resultPromise = checkForRudderDesktopUpdates({
+        currentVersion: "0.1.0",
+        appName: "Rudder",
+        repo: "example/rudder",
+        releasesUrl: "https://example.test/releases",
+        requiredAssetNamesForVersion: () => [],
+        fetchImpl: fetchMock,
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(resultPromise).resolves.toMatchObject({ status: "unavailable" });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });

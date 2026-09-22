@@ -1,6 +1,8 @@
 export type DesktopUpdateCheckStatus = "update-available" | "up-to-date" | "unavailable";
 export type DesktopUpdateChannel = "stable" | "canary";
 
+const DESKTOP_UPDATE_CHECK_TIMEOUT_MS = 15_000;
+
 export type DesktopUpdateCheckResult = {
   status: DesktopUpdateCheckStatus;
   channel: DesktopUpdateChannel;
@@ -228,13 +230,32 @@ async function fetchLatestReleaseWithFallback(options: {
     "User-Agent": `${appName}/${currentVersion}`,
   };
 
-  try {
-    const response = await fetchImpl(`${apiOrigin}/repos/${repo}/releases?per_page=30`, { headers });
-    if (!response.ok) {
-      throw new Error(`GitHub release lookup failed (${response.status})`);
+  const fetchWithTimeout = async <T>(
+    input: string,
+    init: RequestInit,
+    consume: (response: Response) => Promise<T>,
+  ): Promise<T> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DESKTOP_UPDATE_CHECK_TIMEOUT_MS);
+    try {
+      const response = await fetchImpl(input, { ...init, signal: controller.signal });
+      return await consume(response);
+    } finally {
+      clearTimeout(timeout);
     }
+  };
 
-    const payload = await response.json() as GitHubRelease[];
+  try {
+    const payload = await fetchWithTimeout(
+      `${apiOrigin}/repos/${repo}/releases?per_page=30`,
+      { headers },
+      async (response) => {
+        if (!response.ok) {
+          throw new Error(`GitHub release lookup failed (${response.status})`);
+        }
+        return await response.json() as GitHubRelease[];
+      },
+    );
     const latest = chooseLatestRelease(Array.isArray(payload) ? payload : [], channel, {
       requiredAssetNamesForVersion,
     });
@@ -243,17 +264,23 @@ async function fetchLatestReleaseWithFallback(options: {
     console.warn("[rudder-desktop] GitHub releases API update check failed", error);
   }
 
-  const response = await fetchImpl(releasesUrl, {
-    headers: {
-      Accept: "text/html",
-      "User-Agent": `${appName}/${currentVersion}`,
+  const html = await fetchWithTimeout(
+    releasesUrl,
+    {
+      headers: {
+        Accept: "text/html",
+        "User-Agent": `${appName}/${currentVersion}`,
+      },
     },
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub releases page lookup failed (${response.status})`);
-  }
+    async (response) => {
+      if (!response.ok) {
+        throw new Error(`GitHub releases page lookup failed (${response.status})`);
+      }
+      return await response.text();
+    },
+  );
 
-  return chooseLatestRelease(releasesPageToReleaseList(await response.text(), repo), channel, {
+  return chooseLatestRelease(releasesPageToReleaseList(html, repo), channel, {
     requiredAssetNamesForVersion,
   });
 }
