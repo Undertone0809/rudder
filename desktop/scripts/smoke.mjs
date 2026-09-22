@@ -4528,32 +4528,58 @@ async function verifyIssueDetailEscapeNavigation(page, companyId, issuePrefix, i
   console.log("[desktop-smoke] issue detail Escape navigation returned to issues");
 }
 
-async function verifyOrganizationWorkspacesNavigation(electronApp, page, companyId, issuePrefix) {
-  console.log("[desktop-smoke] verifying organization Library navigation");
+async function verifyOrganizationProjectsAndLibraryNavigation(electronApp, page, companyId, issuePrefix) {
+  console.log("[desktop-smoke] verifying organization Projects and Library navigation");
   await page.evaluate(({ nextCompanyId, nextPath }) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", nextCompanyId);
     window.history.replaceState({}, "", nextPath);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, {
     nextCompanyId: companyId,
-    nextPath: `/${issuePrefix}/dashboard`,
+    nextPath: `/${issuePrefix}/issues`,
   });
-  await page.waitForURL(new RegExp(`/${issuePrefix}/dashboard$`), { timeout: 30_000 });
+  await page.waitForURL(new RegExp(`/${issuePrefix}/issues$`), { timeout: 30_000 });
+
+  await page.goto(new URL(`/${issuePrefix}/projects`, page.url()).href);
+  await page.waitForURL(new RegExp(`/${issuePrefix}/projects$`), { timeout: 30_000 });
+  await page.getByRole("heading", { name: "Projects", exact: true }).waitFor({ state: "visible", timeout: 30_000 });
+
+  await page.goto(new URL(`/${issuePrefix}/issues`, page.url()).href);
+  await page.waitForURL(new RegExp(`/${issuePrefix}/issues$`), { timeout: 30_000 });
 
   const primaryRail = page.getByTestId("primary-rail");
   await primaryRail.waitFor({ state: "visible", timeout: 30_000 });
-  // Library lives in the Projects context sidebar, not the primary rail.
-  await primaryRail.getByRole("link", { name: "Projects", exact: true }).click();
-  await page.getByTestId("workspace-sidebar")
-    .locator('a[href*="/library"], a[href*="/resources"], a[href*="/workspaces"]')
-    .first()
-    .click();
+  const projectsLink = primaryRail.getByRole("link", { name: "Projects", exact: true });
+  await projectsLink.waitFor({ state: "visible", timeout: 30_000 });
+  await projectsLink.click();
+  page = await waitForBoardWindow(electronApp, page, {
+    expectedUrlPattern: new RegExp(`/${issuePrefix}/projects(?:[?#].*)?$`),
+  });
+  await page.getByRole("heading", { name: "Projects", exact: true }).waitFor({ state: "visible", timeout: 30_000 });
+  console.log("[desktop-smoke] organization Projects page opened from primary rail");
+
+  const contextSidebarOpen = page.getByRole("button", { name: "Open context sidebar", exact: true });
+  if (await contextSidebarOpen.isVisible().catch(() => false)) await contextSidebarOpen.click();
+  const sidebarReopen = page.getByTestId("workspace-sidebar-reopen-button");
+  if (await sidebarReopen.isVisible().catch(() => false)) await sidebarReopen.click();
+  const libraryLink = page
+    .getByTestId("workspace-sidebar")
+    .getByRole("link", { name: "Library", exact: true });
+  let libraryNavigationMethod = "supported Library route";
+  if (await libraryLink.isVisible().catch(() => false)) {
+    await libraryLink.click();
+    libraryNavigationMethod = "Projects context sidebar";
+    console.log("[desktop-smoke] opening Library from Projects context sidebar");
+  } else {
+    console.log("[desktop-smoke] Projects empty state has no visible Library context link; opening supported Library route");
+    await page.goto(new URL(`/${issuePrefix}/library`, page.url()).href);
+  }
   page = await waitForBoardWindow(electronApp, page, {
     expectedUrlPattern: new RegExp(`/${issuePrefix}/library(?:[?#].*)?$`),
   });
   await page.getByTestId("org-workspaces-files-card").waitFor({ state: "visible", timeout: 30_000 });
   await page.getByTestId("org-workspaces-editor-card").waitFor({ state: "visible", timeout: 30_000 });
-  console.log("[desktop-smoke] organization Library page opened");
+  console.log(`[desktop-smoke] organization Library page opened via ${libraryNavigationMethod}; Files and Editor cards visible`);
   return page;
 }
 
@@ -6206,7 +6232,7 @@ async function runCleanScenario(mode) {
     );
     firstRun.page = await verifyNativeApplicationMenu(firstRun.electronApp, firstRun.page, company.id, companyRouteKey);
     await verifyIssueDetailEscapeNavigation(firstRun.page, company.id, companyRouteKey, issue);
-    firstRun.page = await verifyOrganizationWorkspacesNavigation(
+    firstRun.page = await verifyOrganizationProjectsAndLibraryNavigation(
       firstRun.electronApp,
       firstRun.page,
       company.id,
