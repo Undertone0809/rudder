@@ -2,15 +2,15 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
 candidate:
-  source_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+  source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
   branch: codex/rudder-full-rust-backend-completion-20260921
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  tree_sha: fdbb1b03349290a8b41b050ccb63848575242dda
-  dirty_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
+  tree_sha: bcd68ce026354bb56af742ced22a76c50071a0f3
+  dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   source_path_count: 80
-  dirty_fingerprint_scope: sorted_current_worktree_diff_and_untracked_source_paths_excluding_durable_plan_records_packets_and_artifacts
-  dirty_fingerprint_status: exact_dirty_candidate_source_diff_with_main_d1f55c5_project_goal_real_entry_probe_v9_complete_negative_coverage
-  scan_status: current_counts_refreshed_after_main_0_7_24_reconciliation_and_project_goal_real_entry_probe_v9_semantic_reconciliation_blocked
+  dirty_fingerprint_scope: clean_committed_candidate_source_tree_excluding_durable_plan_records_packets_and_artifacts
+  dirty_fingerprint_status: exact_clean_commit_fc733_project_goal_real_entry_probe_v10_complete_negative_coverage
+  scan_status: current_counts_refreshed_after_main_0_7_24_reconciliation_and_project_goal_real_entry_probe_v10_semantic_reconciliation_blocked
   semantic_rows: partial_with_current_writer_audit
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
@@ -24,7 +24,7 @@ main_adaptation:
     isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v4
     operation: apply_origin_main_desktop_update_quit_changes_to_migration_snapshot_without_resetting_dirty_work
     previous_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
-    migration_checkpoint_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
+    migration_checkpoint_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
     resulting_snapshot_sha: ef71a1462a5c7998e361fe2193e585318a6a9f91
     resulting_snapshot_tree: fb968231c160d5ff75095cf89a336f43e035ef86
     changed_paths_rechecked: [desktop/src/desktop-quit-flow.test.ts, desktop/src/desktop-quit-flow.ts, desktop/src/desktop-update-flow.test.ts, desktop/src/desktop-update-flow.ts, desktop/src/desktop-update-launch.ts, tests/e2e/desktop-update-prompt.spec.ts, ui/src/components/DesktopUpdatePromptBridge.test.tsx, ui/src/components/DesktopUpdatePromptBridge.tsx, ui/src/components/DesktopUpdateStatusCard.test.tsx, ui/src/components/DesktopUpdateStatusCard.tsx, ui/src/components/LiveRunWidget.test.tsx, ui/src/components/LiveRunWidget.tsx]
@@ -127,7 +127,7 @@ semantic_scan_gaps:
   - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
   - the new goal-set route has a supported Node bridge and direct CLI/MCP real-entry evidence, but installed/default startup, full session/revocation authority, old-writer retirement, and sole-listener proof remain open
 current_writer_audit:
-  candidate_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
+  candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   verdict: needs_more_evidence
   activation: blocked
   fence_contract:
@@ -178,10 +178,10 @@ next_actions:
   - obtain independent stage review and verifier PASS for the exact Project-Goal candidate before default-path owner integration
 
 project_goal_real_entry_probe:
-  artifact: doc/plans/artifacts/2026-09-22-rudder-project-goal-real-entry-probe-v9.json
-  candidate_source_sha: 5873b34bc3522807248aa179da22aa7a9ab7ca9a
-  candidate_fingerprint: 8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b
-  dirty_candidate_tree_sha: fdbb1b03349290a8b41b050ccb63848575242dda
+  artifact: doc/plans/artifacts/2026-09-22-rudder-project-goal-real-entry-probe-v10.json
+  candidate_source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
+  candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  candidate_tree_sha: bcd68ce026354bb56af742ced22a76c50071a0f3
   build_artifacts:
     rudder_server_foundation_sha256: 322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306
     migration_preflight_sha256: f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0
@@ -193,10 +193,10 @@ project_goal_real_entry_probe:
     embedded_postgres: 18.1.0-beta.16
   target:
     kind: disposable_embedded_postgres_and_local_trusted_node
-    data_id: rust-project-goal-real-entry-68674
-    organization_id: a211760a-7012-4e70-b28e-89ccf4509090
-    api_port: 53521
-    embedded_postgres_port: 53522
+    data_id: rust-project-goal-real-entry-16304
+    organization_id: e47160b1-266f-4539-8d2e-5b0fcf9c6da6
+    api_port: 52017
+    embedded_postgres_port: 52018
   observations:
     migration_preflight: bootstrap_then_current; 170 journal entries; 172 SQL files; fingerprint ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812
     node_to_actix: supported Project API create/PATCH HTTP 201/200; create-with-goals compatibility returned 201; mixed project-plus-goal update returned 409; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null; signed_idempotency_header_substitution_rejected_before business write
