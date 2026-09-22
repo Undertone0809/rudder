@@ -71,6 +71,14 @@ describe("unified delivery workflows", () => {
     expect(releaseWorkflow).not.toContain("candidate_workflow_sha");
   });
 
+  it("keeps resumed stable releases behind the localized notes gate", () => {
+    const preflight = workflowJob(releaseWorkflow, "preflight");
+    expect(preflight).toContain("Verify localized stable notes on resume");
+    expect(preflight).toContain("if: steps.release.outputs.resume == 'true'");
+    expect(preflight).toContain("node scripts/verify-stable-changelog.mjs --version");
+    expect(preflight).toContain("node scripts/verify-desktop-release-notes.mjs --version");
+  });
+
   it("runs source, docs, platform, and fast packaged Desktop gates in Test", () => {
     const plan = workflowJob(testWorkflow, "plan");
     expect(plan).toContain("Verify canary migration compatibility declaration");

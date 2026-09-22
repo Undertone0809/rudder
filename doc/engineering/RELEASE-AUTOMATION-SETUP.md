@@ -39,8 +39,8 @@ Note:
 - release-specific preflight rejects stale versions and missing notes before
   package installation or build work
 - stable preflight also rejects a missing English or Chinese public changelog
-  entry, and an approved stable invokes Docs Release from the
-  immutable stable tag
+  entry or a missing localized Desktop release-note payload, and an approved
+  stable invokes Docs Release from the immutable stable tag
 
 ## 1. Merge the Repo Changes First
 
@@ -408,9 +408,9 @@ After at least one good canary exists:
 2. confirm the committed public package version on the source SHA is the stable
    version you want to ship
 3. when notes are missing, have a bounded release-notes subagent draft
-   `releases/v0.1.0.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx` in
-   parallel with read-only preflight; the primary release agent reviews and
-   integrates them
+   `releases/v0.1.0.md`, `releases/zh/v0.1.0.md`, `docs/releases.mdx`, and
+   `docs/zh/releases.mdx` in parallel with read-only preflight; the primary
+   release agent reviews and integrates them
 4. confirm the exact final source has successful main Test, stable preflight,
    package validation, and no conflicting npm version or tag
 5. if a same-base canary is only waiting for Desktop assets, record its npm/tag

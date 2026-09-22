@@ -116,8 +116,9 @@ exposing secrets, or expanding to another product/environment.
    release truth is temporally unstable.
 4. When release narratives are missing and subagents are available, start one
    bounded release-notes subagent in parallel with read-only preflight. Give it
-   the locked diff and require drafts for the GitHub notes plus both public
-   changelogs; the primary agent reviews and integrates the drafts.
+   the locked diff and require drafts for the GitHub notes, the English and
+   Chinese Desktop payloads, plus both public changelogs; the primary agent
+   reviews and integrates the drafts.
 5. State the selected version, locked source SHA, channel, active workflow run,
    last completed stage, and unresolved blockers in a progress update.
 6. Execute one stable publish path whose machine gates run before mutation; do

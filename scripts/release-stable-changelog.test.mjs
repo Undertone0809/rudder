@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { validateStableChangelog } from "./verify-stable-changelog.mjs";
+import { validateDesktopReleaseNotes, validateStableChangelog } from "./verify-stable-changelog.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const english = readFileSync(path.join(repoRoot, "docs", "releases.mdx"), "utf8");
@@ -75,6 +75,82 @@ describe("stable public changelog validation", () => {
     ).toEqual(
       expect.arrayContaining(["Chinese changelog is missing the exact heading ## v0.6.1."]),
     );
+  });
+
+  it("requires matching localized Desktop release notes", () => {
+    expect(validateDesktopReleaseNotes({
+      version: "9.9.9",
+      english: [
+        "A user-facing summary.",
+        "",
+        "## Improved",
+        "",
+        "- Improved one thing.",
+      ].join("\n"),
+      chinese: "",
+    })).toEqual([
+      "Chinese desktop release notes are missing for v9.9.9.",
+    ]);
+  });
+
+  it("rejects Desktop notes whose localized sections drift", () => {
+    expect(validateDesktopReleaseNotes({
+      version: "9.9.9",
+      english: [
+        "A user-facing summary.",
+        "",
+        "## New",
+        "",
+        "- Added one thing.",
+        "",
+        "## Fixed",
+        "",
+        "- Fixed one thing.",
+      ].join("\n"),
+      chinese: [
+        "面向用户的版本摘要。",
+        "",
+        "## 新功能",
+        "",
+        "- 增加了一项功能。",
+        "",
+        "## 改进",
+        "",
+        "- 改进了一项功能。",
+      ].join("\n"),
+    })).toEqual([
+      "Chinese desktop release notes must contain the same change sections as English desktop release notes.",
+    ]);
+  });
+
+  it("rejects Desktop notes with English-only Chinese bullets", () => {
+    expect(validateDesktopReleaseNotes({
+      version: "9.9.9",
+      english: [
+        "A user-facing summary.",
+        "",
+        "## Improved",
+        "",
+        "- Improved one thing.",
+      ].join("\n"),
+      chinese: [
+        "面向用户的版本摘要。",
+        "",
+        "## 改进",
+        "",
+        "- Improved one thing.",
+      ].join("\n"),
+    })).toEqual([
+      "Chinese desktop release notes section 改进 contains an item without Chinese-localized content.",
+    ]);
+  });
+
+  it("accepts the checked-in localized Desktop release notes", () => {
+    expect(validateDesktopReleaseNotes({
+      version: "0.7.23",
+      english: readFileSync(path.join(repoRoot, "releases", "v0.7.23.md"), "utf8"),
+      chinese: readFileSync(path.join(repoRoot, "releases", "zh", "v0.7.23.md"), "utf8"),
+    })).toEqual([]);
   });
 
   it("allows locale-specific sections and omits categories with no user-facing changes", () => {

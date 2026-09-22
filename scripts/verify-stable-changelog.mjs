@@ -7,6 +7,16 @@ const PUBLIC_DOC_SECTIONS = {
   Chinese: ["新功能", "改进", "问题修复", "升级说明", "版本状态"],
 };
 const GITHUB_RELEASE_SECTIONS = ["New", "Improved", "Fixed", "Status"];
+const DESKTOP_RELEASE_SECTIONS = {
+  English: ["New", "Improved", "Fixed", "Status"],
+  Chinese: ["新功能", "改进", "问题修复", "版本状态"],
+};
+const DESKTOP_RELEASE_SECTION_PAIRS = [
+  ["New", "新功能"],
+  ["Improved", "改进"],
+  ["Fixed", "问题修复"],
+  ["Status", "版本状态"],
+];
 const FORBIDDEN_INTERNAL_PATTERNS = [
   { label: "canonical repository", pattern: /\bcanonical repository\b/iu },
   { label: "CI / continuous integration", pattern: /\b(?:ci|continuous integration)\b/iu },
@@ -179,6 +189,108 @@ function validateReleaseNotes(releaseNotes) {
         `GitHub release notes contain internal release terminology: ${label}.`,
       );
     }
+  }
+
+  return errors;
+}
+
+function parseDesktopReleaseNotes(markdown) {
+  const headings = [...markdown.matchAll(/^##\s+(.+?)\s*$/gmu)];
+  const firstHeadingIndex = headings[0]?.index ?? markdown.length;
+  const summary = markdown.slice(0, firstHeadingIndex).trim();
+  const sections = headings.map((heading, index) => {
+    const bodyStart = heading.index + heading[0].length;
+    const bodyEnd = headings[index + 1]?.index ?? markdown.length;
+    const body = markdown.slice(bodyStart, bodyEnd);
+    return {
+      heading: heading[1],
+      items: [...body.matchAll(/^\s*-\s+(\S.*?)\s*$/gmu)].map((match) => match[1]),
+    };
+  });
+  return { summary, sections };
+}
+
+export function validateDesktopReleaseNotes({ english, chinese, version }) {
+  const errors = [];
+  if (typeof english !== "string" || english.trim().length === 0) {
+    errors.push(`English desktop release notes are missing for v${version}.`);
+    return errors;
+  }
+  if (typeof chinese !== "string" || chinese.trim().length === 0) {
+    errors.push(`Chinese desktop release notes are missing for v${version}.`);
+    return errors;
+  }
+
+  const parsed = {
+    English: parseDesktopReleaseNotes(english),
+    Chinese: parseDesktopReleaseNotes(chinese),
+  };
+  for (const locale of ["English", "Chinese"]) {
+    const document = parsed[locale];
+    const allowedSections = DESKTOP_RELEASE_SECTIONS[locale];
+    if (!document.summary) {
+      errors.push(`${locale} desktop release notes must include a user-facing summary.`);
+    }
+    if (document.sections.length === 0) {
+      errors.push(`${locale} desktop release notes must include at least one change section.`);
+    }
+    const unknownHeadings = document.sections
+      .map((section) => section.heading)
+      .filter((heading) => !allowedSections.includes(heading));
+    if (unknownHeadings.length > 0) {
+      errors.push(
+        `${locale} desktop release notes have unsupported sections: ${unknownHeadings.join(", ")}.`,
+      );
+    }
+    const presentIndexes = allowedSections
+      .filter((section) => document.sections.some((item) => item.heading === section))
+      .map((section) => document.sections.findIndex((item) => item.heading === section));
+    if (presentIndexes.some((index, position) => position > 0 && index < presentIndexes[position - 1])) {
+      errors.push(`${locale} desktop release notes sections are out of order.`);
+    }
+    for (const section of document.sections) {
+      if (allowedSections.includes(section.heading) && section.items.length === 0) {
+        errors.push(`${locale} desktop release notes section ${section.heading} must not be empty.`);
+      }
+    }
+  }
+
+  const englishSections = parsed.English.sections.map((section) => section.heading);
+  const chineseSections = parsed.Chinese.sections.map((section) => section.heading);
+  const expectedChineseSections = englishSections.map((heading) =>
+    DESKTOP_RELEASE_SECTION_PAIRS.find(([englishHeading]) => englishHeading === heading)?.[1],
+  );
+  if (
+    expectedChineseSections.length !== chineseSections.length
+    || expectedChineseSections.some((heading, index) => heading !== chineseSections[index])
+  ) {
+    errors.push("Chinese desktop release notes must contain the same change sections as English desktop release notes.");
+  }
+  if (parsed.English.sections.length === parsed.Chinese.sections.length) {
+    parsed.English.sections.forEach((section, index) => {
+      const chineseSection = parsed.Chinese.sections[index];
+      if (section.items.length !== chineseSection.items.length) {
+        errors.push(
+          `Chinese desktop release notes section ${chineseSection.heading} must contain the same number of items as English desktop release notes.`,
+        );
+      }
+    });
+  }
+  if (!/[\u3400-\u9fff]/u.test(parsed.Chinese.summary)) {
+    errors.push("Chinese desktop release notes summary must contain Chinese-localized content.");
+  }
+  parsed.Chinese.sections.forEach((section) => {
+    section.items.forEach((item) => {
+      if (!/[\u3400-\u9fff]/u.test(item)) {
+        errors.push(
+          `Chinese desktop release notes section ${section.heading} contains an item without Chinese-localized content.`,
+        );
+      }
+    });
+  });
+
+  if (!/[\u3400-\u9fff]/u.test(chineseSections.join("\n"))) {
+    errors.push("Chinese desktop release notes must contain Chinese-localized section headings.");
   }
 
   return errors;

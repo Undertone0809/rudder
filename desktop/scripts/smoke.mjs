@@ -3547,6 +3547,21 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     "## New Features\n\n- Installed by the silent update smoke candidate.\n",
     "utf8",
   );
+  await mkdir(path.join(candidateAppPath, "Contents", "Resources", "app", "releases", "zh"), { recursive: true });
+  await writeFile(
+    path.join(candidateAppPath, "Contents", "Resources", "app", "releases", "zh", `v${candidateVersion}.md`),
+    "## 新功能\n\n- 此版本由静默更新 Smoke 候选安装。\n",
+    "utf8",
+  );
+  // Keep a full packaged copy for the fallback assertion before stripping the
+  // candidate copy down to the shell asset below.
+  const fallbackScenarioRoot = path.join(tmpRoot, "auto-update-public-release-notes-fallback");
+  const fallbackAppPath = path.join(fallbackScenarioRoot, "release", "Rudder.app");
+  await clonePackagedAppForUpdateSmoke(candidateAppPath, fallbackAppPath);
+  await rm(
+    path.join(fallbackAppPath, "Contents", "Resources", "app", "releases", "zh", `v${candidateVersion}.md`),
+    { force: true },
+  );
   // This is still a real portable ZIP of the candidate bundle. Keep the
   // acceptance run bounded on developer machines by using a fast compression
   // level; release packaging continues to use the production default (9).
@@ -3743,24 +3758,60 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     try {
       assert.equal(await firstNotesRun.electronApp.evaluate(({ app }) => app.getVersion()), candidateVersion);
       const firstNotesPage = await waitForBoardWindow(firstNotesRun.electronApp, firstNotesRun.page);
-      const releaseNotesDialog = firstNotesPage.getByRole("dialog", { name: new RegExp(`What's new in Rudder ${candidateVersion}`) });
+      const localeResponse = await firstNotesPage.evaluate(async () => {
+        const response = await fetch("/api/instance/settings/general", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ locale: "zh-CN" }),
+        });
+        return { status: response.status, body: await response.json() };
+      });
+      assert.equal(localeResponse.status, 200, "Desktop release-note smoke should be able to select Chinese UI");
+      assert.equal(localeResponse.body.locale, "zh-CN", "Desktop release-note smoke should persist the Chinese UI locale");
+      await firstNotesPage.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+      await firstNotesPage.waitForLoadState("networkidle");
+      const releaseNotesDialog = firstNotesPage.getByRole("dialog", { name: new RegExp(`Rudder ${candidateVersion} 更新内容`) });
       await releaseNotesDialog.waitFor({ state: "visible", timeout: 30_000 });
       assert.equal(
-        await releaseNotesDialog.getByText("Installed by the silent update smoke candidate.").isVisible(),
+        await releaseNotesDialog.getByText("此版本由静默更新 Smoke 候选安装。").isVisible(),
         true,
-        "the first ordinary launch should expose release notes",
+        "the Chinese ordinary launch should expose localized release notes",
+      );
+      const releaseNotesScreenshotPath = path.join(scenarioRoot, "evidence", "release-notes-zh.png");
+      await mkdir(path.dirname(releaseNotesScreenshotPath), { recursive: true });
+      await releaseNotesDialog.screenshot({ path: releaseNotesScreenshotPath });
+      console.log(`[desktop-smoke] Chinese release notes screenshot: ${releaseNotesScreenshotPath}`);
+      assert.equal(
+        await releaseNotesDialog.getByText("Installed by the silent update smoke candidate.").count(),
+        0,
+        "the Chinese release-note dialog must not render the English item",
+      );
+      await firstNotesPage.evaluate(() => {
+        window.__rudderSmokeReleaseNotesWebLink = null;
+        window.desktopShell?.onOpenWebLink?.((request) => {
+          window.__rudderSmokeReleaseNotesWebLink = request;
+        });
+      });
+      await releaseNotesDialog.getByRole("button", { name: "文档" }).click();
+      const docsLink = await waitForSmokeCondition("Chinese release notes docs link", async () => (
+        firstNotesPage.evaluate(() => window.__rudderSmokeReleaseNotesWebLink)
+      ));
+      assert.deepEqual(
+        docsLink,
+        { url: "https://docs.rudderhq.dev/zh/releases", source: "link" },
+        "Chinese release notes should route to the official Chinese changelog",
       );
 
       await firstNotesPage.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
       await firstNotesPage.waitForLoadState("networkidle");
-      const releaseNotesAfterReload = firstNotesPage.getByRole("dialog", { name: new RegExp(`What's new in Rudder ${candidateVersion}`) });
+      const releaseNotesAfterReload = firstNotesPage.getByRole("dialog", { name: new RegExp(`Rudder ${candidateVersion} 更新内容`) });
       await releaseNotesAfterReload.waitFor({ state: "visible", timeout: 30_000 });
       assert.equal(
-        await releaseNotesAfterReload.getByText("Installed by the silent update smoke candidate.").isVisible(),
+        await releaseNotesAfterReload.getByText("此版本由静默更新 Smoke 候选安装。").isVisible(),
         true,
         "renderer reload must keep release notes available until acknowledgement",
       );
-      await releaseNotesAfterReload.getByRole("button", { name: "Continue" }).click();
+      await releaseNotesAfterReload.getByRole("button", { name: "继续" }).click();
       await releaseNotesAfterReload.waitFor({ state: "detached", timeout: 10_000 });
       const durableNotesState = JSON.parse(await readFile(path.join(paths.electronUserDataDir, "release-notes-state.json"), "utf8"));
       assert.equal(durableNotesState.lastKnownVersion, candidateVersion, "release notes durable state must record the installed Desktop version");
@@ -3784,6 +3835,59 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
       assert.equal(nextLaunchNotes.status, "already-shown", "a later launch must not repeat release notes");
     } finally {
       await closeDesktop(secondNotesRun.electronApp).catch(() => {});
+    }
+    const fallbackPaths = resolveInstancePaths(fallbackScenarioRoot);
+    await mkdir(fallbackPaths.electronUserDataDir, { recursive: true });
+    await writeFile(
+      path.join(fallbackPaths.electronUserDataDir, "release-notes-state.json"),
+      `${JSON.stringify({ lastKnownVersion: expectedReleaseVersion }, null, 2)}\n`,
+      "utf8",
+    );
+    const fallbackExecutable = path.join(fallbackAppPath, "Contents", "MacOS", "Rudder");
+    const fallbackRun = await launchDesktopWindow(
+      fallbackScenarioRoot,
+      mode,
+      await allocateSmokePorts(),
+      {
+        ...resolveMacPackagedSmokeHomeEnv(),
+        RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+      },
+      fallbackExecutable,
+    );
+    try {
+      const fallbackPage = await waitForBoardWindow(fallbackRun.electronApp, fallbackRun.page);
+      const fallbackLocaleResponse = await fallbackPage.evaluate(async () => {
+        const response = await fetch("/api/instance/settings/general", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ locale: "zh-CN" }),
+        });
+        return { status: response.status, body: await response.json() };
+      });
+      assert.equal(fallbackLocaleResponse.status, 200, "fallback smoke should be able to select Chinese UI");
+      await fallbackPage.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+      await fallbackPage.waitForLoadState("networkidle");
+      const fallbackDialog = fallbackPage.getByRole("dialog", { name: new RegExp(`What's new in Rudder ${candidateVersion}`) });
+      await fallbackDialog.waitFor({ state: "visible", timeout: 30_000 });
+      assert.equal(
+        await fallbackDialog.getByText("Installed by the silent update smoke candidate.").isVisible(),
+        true,
+        "Chinese UI should fall back to English release notes when the translation is absent",
+      );
+      assert.equal(
+        await fallbackDialog.getByText("此版本由静默更新 Smoke 候选安装。").count(),
+        0,
+        "fallback release-note dialog must not render the missing Chinese item",
+      );
+      assert.equal(
+        await fallbackDialog.getByRole("button", { name: "继续" }).isVisible(),
+        true,
+        "fallback release-note dialog should retain Chinese chrome copy",
+      );
+      await fallbackDialog.getByRole("button", { name: "继续" }).click();
+      await fallbackDialog.waitFor({ state: "detached", timeout: 10_000 });
+    } finally {
+      await closeDesktop(fallbackRun.electronApp).catch(() => {});
     }
     console.log("[desktop-smoke] public automatic update installed " + candidateVersion + ", left the app closed, and showed release notes exactly once across relaunch");
     console.log(`[desktop-smoke] public automatic update committed ${updateId}; update check, CLI download, state, request, journal, helper identity, and install read back`);
@@ -4170,14 +4274,14 @@ async function closeDesktop(electronApp, options) {
 }
 
 async function dismissReleaseNotesDialogIfVisible(page) {
-  const dialog = page.getByRole("dialog", { name: /What's new in Rudder/i });
+  const dialog = page.getByRole("dialog", { name: /What's new in Rudder|Rudder .* 更新内容/u });
   try {
     await dialog.waitFor({ state: "visible", timeout: 3_000 });
   } catch {
     return;
   }
 
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByRole("button", { name: /^(Continue|继续)$/u }).click();
   await dialog.waitFor({ state: "detached", timeout: 10_000 });
   console.log("[desktop-smoke] dismissed release notes dialog");
 }

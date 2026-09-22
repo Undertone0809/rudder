@@ -39,6 +39,10 @@ export const en = {
   "common.yourOrganizations": "Your organizations",
   "common.unknown": "unknown",
   "common.cancel": "Cancel",
+  "desktopReleaseNotes.defaultTitle": "What's new in Rudder",
+  "desktopReleaseNotes.description": "Updates installed with this version.",
+  "desktopReleaseNotes.docs": "Docs",
+  "desktopReleaseNotes.continue": "Continue",
   "comments.unmentionedConfirm.title": "No Agent mentioned",
   "comments.unmentionedConfirm.description":
     "You did not @ any Agent. Send this comment anyway? Comments without an @ mention will not wake an Agent and may not be handled promptly.",

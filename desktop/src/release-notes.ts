@@ -1,13 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export type DesktopReleaseNotes = {
+export type DesktopReleaseNotesLocale = "zh-CN";
+
+export type DesktopReleaseNotesContent = {
   version: string;
   title: string;
   sections: Array<{
     title: string;
     items: string[];
   }>;
+};
+
+export type DesktopReleaseNotes = DesktopReleaseNotesContent & {
+  translations?: Partial<Record<DesktopReleaseNotesLocale, DesktopReleaseNotesContent>>;
 };
 
 export function createReleaseNotesReservation(): {
@@ -44,18 +50,24 @@ export function resolveReleaseNotesPath(input: {
   moduleDir: string;
   packaged: boolean;
   version: string;
+  locale?: "en" | DesktopReleaseNotesLocale;
 }): string {
   const normalizedVersion = normalizeVersion(input.version);
   const releaseFileName = `v${normalizedVersion}.md`;
   const releaseRoot = input.packaged
     ? path.resolve(input.moduleDir, "..", "releases")
     : path.resolve(input.moduleDir, "..", "..", "releases");
-  return path.join(releaseRoot, releaseFileName);
+  const localeDirectory = input.locale === "zh-CN" ? "zh" : undefined;
+  return path.join(releaseRoot, ...(localeDirectory ? [localeDirectory] : []), releaseFileName);
 }
 
-export function parseReleaseNotesMarkdown(version: string, markdown: string): DesktopReleaseNotes | null {
-  const sections: DesktopReleaseNotes["sections"] = [];
-  let current: DesktopReleaseNotes["sections"][number] | null = null;
+export function parseReleaseNotesMarkdown(
+  version: string,
+  markdown: string,
+  locale: "en" | DesktopReleaseNotesLocale = "en",
+): DesktopReleaseNotesContent | null {
+  const sections: DesktopReleaseNotesContent["sections"] = [];
+  let current: DesktopReleaseNotesContent["sections"][number] | null = null;
 
   for (const line of markdown.split(/\r?\n/)) {
     const heading = /^##\s+(.+?)\s*$/.exec(line);
@@ -87,7 +99,9 @@ export function parseReleaseNotesMarkdown(version: string, markdown: string): De
 
   return {
     version: normalizeVersion(version),
-    title: `What's new in Rudder ${normalizeVersion(version)}`,
+    title: locale === "zh-CN"
+      ? `Rudder ${normalizeVersion(version)} 更新内容`
+      : `What's new in Rudder ${normalizeVersion(version)}`,
     sections: nonEmptySections,
   };
 }
@@ -95,14 +109,48 @@ export function parseReleaseNotesMarkdown(version: string, markdown: string): De
 export function readReleaseNotes(input: {
   releaseNotesPath: string;
   version: string;
-}): DesktopReleaseNotes | null {
+  locale?: "en" | DesktopReleaseNotesLocale;
+}): DesktopReleaseNotesContent | null {
   try {
-    return parseReleaseNotesMarkdown(input.version, fs.readFileSync(input.releaseNotesPath, "utf8"));
+    return parseReleaseNotesMarkdown(
+      input.version,
+      fs.readFileSync(input.releaseNotesPath, "utf8"),
+      input.locale,
+    );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | null)?.code;
     if (code === "ENOENT") return null;
     throw error;
   }
+}
+
+export function readReleaseNotesBundle(input: {
+  releaseNotesPath: string;
+  version: string;
+  localizedReleaseNotesPaths?: Partial<Record<DesktopReleaseNotesLocale, string>>;
+}): DesktopReleaseNotes | null {
+  const notes = readReleaseNotes({
+    releaseNotesPath: input.releaseNotesPath,
+    version: input.version,
+  });
+  if (!notes) return null;
+
+  const translations = Object.entries(input.localizedReleaseNotesPaths ?? {}).reduce<
+    Partial<Record<DesktopReleaseNotesLocale, DesktopReleaseNotesContent>>
+  >((resolved, [locale, releaseNotesPath]) => {
+    if (!releaseNotesPath) return resolved;
+    const localizedNotes = readReleaseNotes({
+      releaseNotesPath,
+      version: input.version,
+      locale: locale as DesktopReleaseNotesLocale,
+    });
+    if (localizedNotes) {
+      resolved[locale as DesktopReleaseNotesLocale] = localizedNotes;
+    }
+    return resolved;
+  }, {});
+
+  return Object.keys(translations).length > 0 ? { ...notes, translations } : notes;
 }
 
 export function resolveReleaseNotesStatePath(userDataPath: string): string {

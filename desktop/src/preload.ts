@@ -21,6 +21,7 @@ import type {
 } from "./local-apps-registry.js";
 import type { LocalAppRuntimeView } from "./local-apps-runtime.js";
 import type { DesktopLocalFilePreview } from "./local-file-preview.js";
+import type { DesktopReleaseNotes } from "./release-notes.js";
 import type { DesktopSystemPermissionId, DesktopSystemPermissions } from "./system-permissions.js";
 import { TERMINAL_IPC_CHANNELS } from "./terminal-ipc.js";
 
@@ -137,15 +138,6 @@ type DesktopDeferredUpdatePromptDecision = "wait" | "force" | "cancel";
 type OpenNotificationSettingsResult = {
   opened: boolean;
   platform: NodeJS.Platform;
-};
-
-type DesktopReleaseNotes = {
-  version: string;
-  title: string;
-  sections: Array<{
-    title: string;
-    items: string[];
-  }>;
 };
 
 type DesktopReleaseNotesResult =

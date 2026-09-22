@@ -116,9 +116,10 @@ Use this model for an explicit stable release:
 1. Freeze one immutable source SHA immediately. Do not extend the release window
    to absorb later unrelated `main` commits.
 2. If release narratives are missing, assign one bounded release-notes subagent
-   to draft `releases/vX.Y.Z.md`, `docs/releases.mdx`, and
-   `docs/zh/releases.mdx` from the locked diff while the primary agent runs
-   read-only preflight. The primary agent reviews and integrates the drafts.
+   to draft `releases/vX.Y.Z.md`, `releases/zh/vX.Y.Z.md`,
+   `docs/releases.mdx`, and `docs/zh/releases.mdx` from the locked diff while
+   the primary agent runs read-only preflight. The primary agent reviews and
+   integrates the drafts.
 3. Require successful exact-source Test, stable preflight, immutable npm/tag
    checks, and package validation before publication.
 4. Use `[skip release]` on release-only candidate repair commits after the
@@ -177,6 +178,8 @@ Canaries cover verification, npm, a traceability tag, and Desktop portable asset
 - stables publish from an explicitly chosen full commit SHA
 - tags point at the original source commit, not a generated release commit
 - stable notes are always `releases/vX.Y.Z.md`
+- localized Desktop notes are always `releases/zh/vX.Y.Z.md`; packaged Desktop
+  selects them when the UI locale is `zh-CN`
 - stable public changelog entries are always present in both `docs/releases.mdx`
   and `docs/zh/releases.mdx`
 - public changelog entries describe user-visible outcomes, omit empty
@@ -288,7 +291,8 @@ Before running stable:
    to ship
 3. if narratives are missing, start a bounded release-notes subagent in
    parallel with read-only preflight; review and commit
-   `releases/vX.Y.Z.md`, `docs/releases.mdx`, and `docs/zh/releases.mdx`
+   `releases/vX.Y.Z.md`, `releases/zh/vX.Y.Z.md`, `docs/releases.mdx`, and
+   `docs/zh/releases.mdx`
 4. confirm that exact final source commit has successful `Test`, stable preflight,
    package validation, and no existing immutable npm version/tag
 5. present the exact source ref, version, checks, targets, data impact, and
@@ -426,6 +430,7 @@ PUBLISH_REMOTE=public-gh ./scripts/create-github-release.sh 0.1.0
 Stable changelog files live at:
 
 - `releases/vX.Y.Z.md`
+- `releases/zh/vX.Y.Z.md` (the localized Desktop release-note payload)
 
 The public docs changelog must be updated in the same stable-release pass:
 
@@ -434,11 +439,13 @@ The public docs changelog must be updated in the same stable-release pass:
 
 Canaries do not get changelog files.
 
-`./scripts/release.sh stable --preflight` fails closed unless all three stable
-release narratives exist on the selected source: `releases/vX.Y.Z.md`, the
-English `## vX.Y.Z` entry, and the Chinese `## vX.Y.Z` entry. Each public entry
-must include the version's GitHub Release link, a one-sentence user-facing
-summary, and at least one non-empty change category.
+`./scripts/release.sh stable --preflight` fails closed unless the stable release
+notes, both public changelog entries, and both Desktop release-note payloads
+exist on the selected source. The Desktop validator requires matching English
+and Chinese section order and item counts so a release cannot silently ship an
+English-only or partially translated update dialog. Each public entry must
+include the version's GitHub Release link, a one-sentence user-facing summary,
+and at least one non-empty change category.
 
 Use this body shape for `releases/vX.Y.Z.md` because GitHub already renders the
 release title, tag, author, and publish date around the notes:
@@ -520,12 +527,13 @@ Put those details in engineering docs or the release closeout record.
 Recommended agent generation flow:
 
 1. Freeze the stable SHA and previous stable tag.
-2. Start one release-notes subagent with that exact diff and the three required
-   output paths. Ask it to draft only user-visible outcomes, localized
-   naturally, with no release plumbing.
+2. Start one release-notes subagent with that exact diff and the four required
+   output paths: `releases/vX.Y.Z.md`, `releases/zh/vX.Y.Z.md`,
+   `docs/releases.mdx`, and `docs/zh/releases.mdx`. Ask it to draft only
+   user-visible outcomes, localized naturally, with no release plumbing.
 3. In parallel, keep the primary agent on version/tag/npm preflight and CI
    evidence.
-4. Have the primary agent review factual coverage, integrate the three files,
+4. Have the primary agent review factual coverage, integrate the four files,
    and run stable preflight plus docs checks.
 
 The subagent drafts narratives but does not select or retarget the release
