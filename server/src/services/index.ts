@@ -84,10 +84,6 @@ export {
   handoffOrganizationBrandingAuthority,
   lockNodeOrganizationBrandingAuthority
 } from "./organization-branding-fence.js";
-export {
-  handoffProjectGoalMutationAuthority,
-  lockNodeProjectGoalMutationAuthority,
-} from "./project-goal-mutation-fence.js";
 export { organizationIntelligenceProfileService } from "./organization-intelligence-profiles.js";
 export { organizationIntelligenceRuntimeChainService } from "./organization-intelligence-runtime-chain.js";
 export { organizationMemberService } from "./organization-members.js";
@@ -111,6 +107,10 @@ export {
   type RecordProductAnalyticsEventInput
 } from "./product-analytics.js";
 export { productIntelligenceService } from "./product-intelligence.js";
+export {
+  handoffProjectGoalMutationAuthority,
+  lockNodeProjectGoalMutationAuthority
+} from "./project-goal-mutation-fence.js";
 export { projectService } from "./projects.js";
 export { blockerFingerprint, requestService } from "./requests.js";
 export { resourceCatalogService } from "./resource-catalog.js";

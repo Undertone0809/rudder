@@ -36,6 +36,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  callOrganizationProjectToolDirectly,
+  organizationProjectCliArgs,
+} from "./agent-v1-mcp-organization-project.js";
+import {
   throwInvalidMcpArgument,
   validateMcpToolArguments,
 } from "./agent-v1-mcp-validation.js";
@@ -64,7 +68,7 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-interface McpServerEnv {
+export interface McpServerEnv {
   RUDDER_API_URL?: string;
   RUDDER_API_KEY?: string;
   RUDDER_ORG_ID?: string;
@@ -640,64 +644,25 @@ async function callToolDirectlyIfSupported(
       : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
   );
 
+  const organizationProjectResult = await callOrganizationProjectToolDirectly({
+    capabilityId,
+    input,
+    env,
+    api,
+    success,
+    requiredRuntimeString,
+    requiredString,
+    optionalString,
+    appendOptionalQuery,
+    parsePositiveInteger,
+  });
+  if (organizationProjectResult) return organizationProjectResult;
+
   switch (capabilityId) {
     case "agent.me":
       return success(await api.get("/api/agents/me"));
     case "agent.inbox":
       return success(await api.get("/api/agents/me/inbox-lite"));
-    case "organization.members.list": {
-      const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
-      const params = new URLSearchParams();
-      appendOptionalQuery(params, "query", input.query);
-      appendOptionalQuery(params, "type", input.type ?? "all");
-      params.set("limit", String(parsePositiveInteger(input.limit, 50)));
-      appendOptionalQuery(params, "cursor", input.cursor);
-      return success(await api.get(`/api/orgs/${encodeURIComponent(orgId)}/members/directory?${params}`));
-    }
-    case "organization.brand_color.update": {
-      const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
-      return success(await api.patch(
-        `/api/orgs/${encodeURIComponent(orgId)}/branding`,
-        { brandColor: requiredString(input, "brandColor") },
-        { headers: {
-          "x-rudder-idempotency-key": requiredString(input, "idempotencyKey"),
-          "x-rudder-required-authority": "rust",
-        } },
-      ));
-    }
-    case "project.create": {
-      const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
-      const payload: Record<string, unknown> = {
-        name: requiredString(input, "name"),
-      };
-      for (const key of ["description", "status", "goalId", "goalIds", "leadAgentId", "targetDate", "color"]) {
-        if (input[key] !== undefined) payload[key] = input[key];
-      }
-      return success(await api.post(
-        `/api/orgs/${encodeURIComponent(orgId)}/projects`,
-        payload,
-      ));
-    }
-    case "project.update": {
-      const project = requiredString(input, "project");
-      const payload: Record<string, unknown> = {};
-      for (const key of ["name", "description", "status", "goalId", "goalIds", "leadAgentId", "targetDate", "color", "archivedAt"]) {
-        if (input[key] !== undefined) payload[key] = input[key];
-      }
-      const hasGoalMutation = input.goalIds !== undefined || input.goalId !== undefined;
-      const headers: Record<string, string> = {};
-      if (hasGoalMutation) {
-        headers["x-rudder-idempotency-key"] = requiredString(input, "idempotencyKey");
-        headers["x-rudder-required-authority"] = "rust";
-      }
-      const orgId = optionalString(env.RUDDER_ORG_ID);
-      const query = orgId ? `?orgId=${encodeURIComponent(orgId)}` : "";
-      return success(await api.patch(
-        `/api/projects/${encodeURIComponent(project)}${query}`,
-        payload,
-        Object.keys(headers).length > 0 ? { headers } : undefined,
-      ));
-    }
     case "goal.list": {
       const orgId = requiredRuntimeString(env, "RUDDER_ORG_ID");
       requiredRuntimeString(env, "RUDDER_AGENT_ID");
@@ -1175,6 +1140,16 @@ function cliArgsForCapability(
 ): string[] {
   getAgentCliCapabilityById(capabilityId);
 
+  const organizationProjectArgs = organizationProjectCliArgs({
+    capabilityId,
+    input,
+    env,
+    requiredString,
+    requiredAnyString,
+    pushOptional,
+  });
+  if (organizationProjectArgs) return organizationProjectArgs;
+
   switch (capabilityId) {
     case "agent.me":
       return ["agent", "me"];
@@ -1189,13 +1164,6 @@ function cliArgsForCapability(
       pushOptional(args, "--type", input.type ?? "all");
       pushOptional(args, "--limit", input.limit);
       pushOptional(args, "--cursor", input.cursor);
-      return args;
-    }
-    case "organization.brand_color.update": {
-      const args = ["org", "brand-color", "update"];
-      pushOptional(args, "--org-id", env.RUDDER_ORG_ID);
-      args.push("--brand-color", requiredString(input, "brandColor"));
-      args.push("--idempotency-key", requiredString(input, "idempotencyKey"));
       return args;
     }
     case "agent.update": {
@@ -1423,33 +1391,6 @@ function cliArgsForCapability(
       return ["project", "list"];
     case "project.get":
       return ["project", "get", requiredAnyString(input, ["project", "projectId"])];
-    case "project.create": {
-      const args = ["project", "create", "--name", requiredString(input, "name")];
-      pushOptional(args, "--description", input.description);
-      pushOptional(args, "--status", input.status);
-      pushOptional(args, "--goal-id", input.goalId);
-      pushOptional(args, "--goal-ids", input.goalIds);
-      pushOptional(args, "--lead-agent-id", input.leadAgentId);
-      pushOptional(args, "--target-date", input.targetDate);
-      pushOptional(args, "--color", input.color);
-      return args;
-    }
-    case "project.update": {
-      const args = ["project", "update", requiredAnyString(input, ["project", "projectId"])];
-      pushOptional(args, "--name", input.name);
-      pushOptional(args, "--description", input.description);
-      pushOptional(args, "--status", input.status);
-      pushOptional(args, "--goal-id", input.goalId);
-      pushCsvOptionPreservingEmpty(args, "--goal-ids", input.goalIds);
-      pushOptional(args, "--lead-agent-id", input.leadAgentId);
-      pushOptional(args, "--target-date", input.targetDate);
-      pushOptional(args, "--color", input.color);
-      pushOptional(args, "--archived-at", input.archivedAt);
-      if (input.goalIds !== undefined || input.goalId !== undefined) {
-        args.push("--idempotency-key", requiredString(input, "idempotencyKey"));
-      }
-      return args;
-    }
     case "user.activity": {
       const args = ["user", "activity"];
       pushOptional(args, "--user", input.user);
@@ -1904,15 +1845,6 @@ function optionalString(value: unknown): string | null {
 function pushOptional(args: string[], flag: string, value: unknown): void {
   const rendered = optionalString(renderCsv(value));
   if (rendered) args.push(flag, rendered);
-}
-
-function pushCsvOptionPreservingEmpty(args: string[], flag: string, value: unknown): void {
-  if (Array.isArray(value)) {
-    const items = value.map((entry) => optionalString(entry)).filter((entry): entry is string => Boolean(entry));
-    args.push(flag, items.join(","));
-    return;
-  }
-  pushOptional(args, flag, value);
 }
 
 function pushBoolean(args: string[], flag: string, value: unknown): void {

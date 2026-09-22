@@ -3,6 +3,7 @@ import {
   bigint,
   check,
   foreignKey,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -127,11 +128,14 @@ export const organizationMutationOutbox = pgTable(
     activityId: uuid("activity_id").notNull(),
     eventType: text("event_type").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
-    state: text("state").$type<"pending" | "published">().notNull().default("pending"),
+    state: text("state").$type<"pending" | "claimed" | "published">().notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    claimToken: uuid("claim_token"),
+    claimOwner: text("claim_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     lastError: text("last_error"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -140,6 +144,8 @@ export const organizationMutationOutbox = pgTable(
   },
   (table) => ({
     activityUnique: unique("organization_mutation_outbox_activity_uq").on(table.activityId),
+    claimIndex: index("organization_mutation_outbox_claim_idx").on(table.state, table.nextAttemptAt, table.createdAt),
+    leaseIndex: index("organization_mutation_outbox_lease_idx").on(table.state, table.leaseExpiresAt, table.nextAttemptAt, table.createdAt),
     activityFk: foreignKey({
       name: "organization_mutation_outbox_activity_fk",
       columns: [table.orgId, table.activityId],
@@ -147,7 +153,12 @@ export const organizationMutationOutbox = pgTable(
     }).onDelete("no action"),
     stateCheck: check(
       "organization_mutation_outbox_state_ck",
-      sql`${table.state} in ('pending', 'published') and ${table.attempts} >= 0`,
+      sql`${table.state} in ('pending', 'claimed', 'published') and ${table.attempts} >= 0`,
+    ),
+    claimCheck: check(
+      "organization_mutation_outbox_claim_ck",
+      sql`(${table.state} = 'claimed' and ${table.claimToken} is not null and ${table.claimOwner} is not null and ${table.leaseExpiresAt} is not null)
+        or (${table.state} <> 'claimed' and ${table.claimToken} is null and ${table.claimOwner} is null and ${table.leaseExpiresAt} is null)`,
     ),
     payloadCheck: check(
       "organization_mutation_outbox_payload_ck",

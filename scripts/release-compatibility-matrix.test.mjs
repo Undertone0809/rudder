@@ -58,14 +58,14 @@ describe("release migration compatibility matrix", () => {
   it.each([
     ["0.7.24", "stable"],
     ["0.7.24-canary.0", "canary"],
-  ])("accepts %s with the current 0169 migration fingerprint", (candidateVersion, channel) => {
+  ])("accepts %s with the current 0170 migration fingerprint", (candidateVersion, channel) => {
     const result = runCompatibilityPreflight({ candidateVersion, channel });
 
     expect(result.candidateFingerprint).toBe(
-      "ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812",
+      "10d3fa583204a4b7218e77adcd802bacd38aa2d22cd1253633a5d09b68e2d5ba",
     );
-    expect(result.candidateMigrations).toBe(170);
-    expect(result.candidateSqlFiles).toBe(172);
+    expect(result.candidateMigrations).toBe(171);
+    expect(result.candidateSqlFiles).toBe(173);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.23",
       "0.7.22",

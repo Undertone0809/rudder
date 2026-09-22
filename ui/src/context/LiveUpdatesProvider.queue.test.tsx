@@ -63,17 +63,28 @@ function QueueProbe() {
   return <output>{query.data?.activeGenerationId ?? "idle"}</output>;
 }
 
+let branding = "#111111";
+let goalId = "goal-old";
+const fetchOrganizations = vi.fn(async () => [{ id: "org-1", brandColor: branding }]);
+const fetchProject = vi.fn(async () => ({ id: "project-1", orgId: "org-1", goalIds: [goalId] }));
+const mountedProjectKey = [...queryKeys.projects.detail("project-1"), "org-1"];
+function PersistedModelsProbe() {
+  const organizations = useQuery({ queryKey: queryKeys.organizations.all, queryFn: fetchOrganizations });
+  const project = useQuery({ queryKey: mountedProjectKey, queryFn: fetchProject });
+  return <output data-testid="persisted-models">{organizations.data?.[0].brandColor}:{project.data?.goalIds.join(",")}</output>;
+}
+
 let client: QueryClient;
 let root: Root;
 let container: HTMLDivElement;
 async function advance(ms: number) {
   await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 }
-async function mount() {
+async function mount(includePersistedModels = false) {
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
-        <LiveUpdatesProvider><QueueProbe /></LiveUpdatesProvider>
+        <LiveUpdatesProvider><QueueProbe />{includePersistedModels && <PersistedModelsProbe />}</LiveUpdatesProvider>
       </QueryClientProvider>,
     );
   });
@@ -87,6 +98,10 @@ beforeEach(() => {
   SocketFixture.instances = [];
   snapshot = idle;
   fetchQueue.mockClear();
+  branding = "#111111";
+  goalId = "goal-old";
+  fetchOrganizations.mockClear();
+  fetchProject.mockClear();
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   client.setQueryData(queryKeys.chats.queue("org-1", "chat-1"), idle);
   client.setQueryData(queryKeys.chats.queue("org-1", "chat-2"), idle);
@@ -106,6 +121,66 @@ afterEach(async () => {
 });
 
 describe("LiveUpdatesProvider idle queue recovery", () => {
+  it("reconciles missed branding and goal-link hints on reconnect without refreshing another organization", async () => {
+    const readModelKeys = [queryKeys.activityRoot, queryKeys.dashboard, queryKeys.sidebarBadges];
+    for (const key of readModelKeys) {
+      client.setQueryData(key("org-1"), []);
+      client.setQueryData(key("org-2"), []);
+    }
+    client.setQueryData(queryKeys.organizations.all, [{ id: "org-1", brandColor: branding }]);
+    client.setQueryData(queryKeys.organizations.detail("org-1"), { id: "org-1", brandColor: branding });
+    client.setQueryData(queryKeys.organizations.detail("org-2"), { id: "org-2" });
+    client.setQueryData(mountedProjectKey, { id: "project-1", orgId: "org-1", goalIds: [goalId] });
+    client.setQueryData(queryKeys.projects.detail("inactive-own"), { id: "inactive-own", orgId: "org-1" });
+    client.setQueryData(queryKeys.projects.detail("other"), { id: "other", orgId: "org-2" });
+    client.setQueryData(queryKeys.projects.list("org-1"), []);
+    client.setQueryData(queryKeys.projects.list("org-2"), []);
+    await mount(true);
+    expect(fetchOrganizations).not.toHaveBeenCalled();
+    expect(fetchProject).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="persisted-models"]')?.textContent).toBe("#111111:goal-old");
+    await act(async () => { SocketFixture.instances[0].close(); });
+    branding = "#abcdef";
+    goalId = "goal-new";
+    await advance(1_000);
+    await act(async () => { SocketFixture.instances[1].onopen?.(); });
+    await advance(1);
+    expect(fetchOrganizations).toHaveBeenCalledTimes(1);
+    expect(fetchProject).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="persisted-models"]')?.textContent).toBe("#abcdef:goal-new");
+    expect(client.getQueryState(queryKeys.projects.detail("inactive-own"))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.projects.list("org-1"))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.organizations.detail("org-1"))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.projects.detail("other"))?.isInvalidated).toBe(false);
+    expect(client.getQueryState(queryKeys.projects.list("org-2"))?.isInvalidated).toBe(false);
+    expect(client.getQueryState(queryKeys.organizations.detail("org-2"))?.isInvalidated).toBe(false);
+    for (const key of readModelKeys) {
+      expect(client.getQueryState(key("org-1"))?.isInvalidated).toBe(true);
+      expect(client.getQueryState(key("org-2"))?.isInvalidated).toBe(false);
+    }
+  });
+
+  it("replaces a data-less pre-disconnect project read and ignores its late stale response", async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof fetchProject>>) => void;
+    fetchProject.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    const otherKey = [...queryKeys.projects.detail("other"), "org-2"];
+    client.setQueryData(otherKey, { orgId: "org-2", goalIds: ["other-goal"] });
+    await mount(true);
+    expect(fetchProject).toHaveBeenCalledTimes(1);
+    expect(client.getQueryData(mountedProjectKey)).toBeUndefined();
+    await act(async () => { SocketFixture.instances[0].close(); });
+    goalId = "goal-new";
+    await advance(1_000);
+    await act(async () => { SocketFixture.instances[1].onopen?.(); });
+    await advance(1);
+    expect(fetchProject).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-testid="persisted-models"]')?.textContent).toBe("#111111:goal-new");
+    await act(async () => { resolveOld({ id: "project-1", orgId: "org-1", goalIds: ["goal-old"] }); });
+    await advance(1);
+    expect(client.getQueryData(mountedProjectKey)).toMatchObject({ goalIds: ["goal-new"] });
+    expect(client.getQueryState(otherKey)?.isInvalidated).toBe(false);
+  });
+
   it.each(["activity", "reconnect"])("wakes an idle mounted queue on %s and stops after terminal convergence", async (wake) => {
     await mount();
     fetchQueue.mockClear();

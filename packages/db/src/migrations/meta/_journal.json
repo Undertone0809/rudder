@@ -1191,6 +1191,13 @@
       "when": 1790052409000,
       "tag": "0169_project_goal_mutation_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1790112000000,
+      "tag": "0170_organization_mutation_outbox_claims",
+      "breakpoints": true
     }
   ]
 }
