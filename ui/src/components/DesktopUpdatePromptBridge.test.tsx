@@ -178,4 +178,32 @@ describe("DesktopUpdatePromptBridge", () => {
 
     expect(harness.respondDeferredUpdatePrompt).toHaveBeenCalledWith("prompt-1", "force");
   });
+
+  it("keeps the selected action visibly pending until the desktop accepts it", async () => {
+    const harness = renderHarness();
+    let resolveResponse!: () => void;
+    harness.respondDeferredUpdatePrompt.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        resolveResponse = resolve;
+      }),
+    );
+    harness.emit(prompt);
+
+    const action = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Stop Runs and Update Now") as HTMLButtonElement;
+
+    await act(async () => {
+      action.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(action.disabled).toBe(true);
+    expect(action.getAttribute("aria-busy")).toBe("true");
+    expect(action.querySelector(".animate-spin")).toBeTruthy();
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => resolveResponse());
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
 });

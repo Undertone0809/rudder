@@ -1270,6 +1270,35 @@ describe("desktop update flow", () => {
     expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
+  it("ignores a buffered ready event after the apply handoff has started", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow, sentProgressEvents } = createFlow();
+
+    await flow.installUpdate("0.3.5-canary.8");
+    const readyEvent = JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    });
+    child.stdout.emit("data", `${readyEvent}\n`);
+
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function)));
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+    const eventCountAfterApply = sentProgressEvents.length;
+
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Late buffered ready event.",
+      percent: 100,
+    })}\n`);
+
+    expect(sentProgressEvents).toHaveLength(eventCountAfterApply);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+  });
+
   it("forces native mode for a SAC-on Windows normal update child", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
@@ -1550,6 +1579,17 @@ describe("desktop update flow", () => {
     });
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
     expect(child.stdin.write).toHaveBeenCalledTimes(2);
+
+    const eventCountAfterForceApply = sentProgressEvents.length;
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "waiting_for_active_runs",
+      message: "Late buffered waiting event.",
+      totalRuns: 1,
+    })}\n`);
+
+    expect(sentProgressEvents).toHaveLength(eventCountAfterForceApply);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
   it("keeps retrying blocker identity when final-guard inspection fails", async () => {
@@ -1730,6 +1770,46 @@ describe("desktop update flow", () => {
 
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
     expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--wait-for-active-runs");
+  });
+
+  it("keeps force-apply progress from regressing while the child finishes preparing", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate: vi.fn(async () => createRunSummary([
+        createBlocker("run-1"),
+      ])),
+      promptForDeferredUpdate: vi.fn(async () => "force"),
+    });
+
+    const installResult = await flow.installUpdate("0.3.5-canary.8");
+    expect(installResult).toMatchObject({ status: "started" });
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+    const eventCountAfterApply = sentProgressEvents.length;
+
+    child.stdout.emit("data", [
+      JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "downloading_asset",
+        message: "Downloading the Desktop asset.",
+        percent: 42,
+      }),
+      JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "verifying_checksum",
+        message: "Verifying the Desktop checksum.",
+        percent: 100,
+      }),
+      JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "ready_to_install",
+        message: "Desktop update is downloaded and verified.",
+        percent: 100,
+      }),
+    ].join("\n") + "\n");
+
+    expect(sentProgressEvents).toHaveLength(eventCountAfterApply);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
   it("forces native mode for a SAC-on Windows force update child", async () => {
