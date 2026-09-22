@@ -1,3 +1,4 @@
+import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_CWD = process.cwd();
 const ORIGINAL_ENV = { ...process.env };
+const ORIGINAL_RESOURCES_PATH = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -29,6 +31,14 @@ afterEach(() => {
   for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
+  }
+  if (ORIGINAL_RESOURCES_PATH === undefined) {
+    delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  } else {
+    Object.defineProperty(process, "resourcesPath", {
+      configurable: true,
+      value: ORIGINAL_RESOURCES_PATH,
+    });
   }
   vi.restoreAllMocks();
   vi.unmock("../config-file.js");
@@ -134,7 +144,7 @@ describe("server config env loading", () => {
     expect(config.databaseUrl).toBe("postgres://cwd-user:cwd-pass@db.example.com:5432/rudder");
   });
 
-  it("defaults the Rust member directory startup bridge to off", async () => {
+  it("defaults the standalone Rust member directory startup bridge to Node", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
     process.chdir(tempDir);
     writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
@@ -152,6 +162,28 @@ describe("server config env loading", () => {
     expect(config.rustProjectGoalSetMode).toBe("off");
     expect(config.rustFoundationBinaryPath).toBeUndefined();
     expect(config.rustFoundationActorEnvelopeKey).toBeUndefined();
+  });
+
+  it("does not infer standalone policy from staged Desktop resource presence", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    const target = resolveRudderNativeTarget();
+    expect(target).toBeTruthy();
+    if (!target) return;
+    const binaryName = process.platform === "win32"
+      ? "rudder-server-foundation.exe"
+      : "rudder-server-foundation";
+    const resourcesPath = path.join(tempDir, "Resources");
+    const binaryPath = path.join(resourcesPath, "native", target, binaryName);
+    fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+    fs.writeFileSync(binaryPath, "staged foundation fixture");
+    if (process.platform !== "win32") fs.chmodSync(binaryPath, 0o755);
+    Object.defineProperty(process, "resourcesPath", { configurable: true, value: resourcesPath });
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    delete process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE;
+
+    const loadConfig = await importLoadConfig();
+    expect(loadConfig().rustFoundationMode).toBe("off");
   });
 
   it("parses explicit Rust member directory startup bridge env config", async () => {

@@ -22,6 +22,7 @@ import {
   terminateProvenLocalAppProcessGroup,
 } from "./local-app-smoke-helpers.mjs";
 import { resolveNativeTarget } from "./native-target.mjs";
+import { runRustMemberDirectoryScenario } from "./rust-member-directory-smoke.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -8158,6 +8159,7 @@ function resolveScenarioList(mode, scenario) {
     || scenario === "upgrade"
     || scenario === "browser"
     || scenario === "terminal"
+    || scenario === "rust-member-directory"
     || scenario === "local-apps"
     || scenario === "agent-browser"
     || scenario === "app-builder") {
@@ -8173,7 +8175,14 @@ try {
   executedScenarios = resolveScenarioList(smokeMode, smokeScenario);
   for (const scenario of executedScenarios) {
     console.log(`[desktop-smoke] running ${scenario} scenario`);
-    if (scenario === "account-gate") {
+    if (scenario === "rust-member-directory") {
+      await runRustMemberDirectoryScenario(smokeMode, {
+        tmpRoot, allocateSmokePorts, preparePackagedExternalRuntimeFixture,
+        launchDesktop, launchDesktopWindow, closeDesktop, createCompany,
+        createCeo, createAgentApiKey, resolveInstancePaths, resolveServerLogPath,
+        waitForSmokeCondition, resolveNativeTarget,
+      });
+    } else if (scenario === "account-gate") {
       await runAccountGateScenario(smokeMode);
     } else if (scenario === "auto-update") {
       await runAutoUpdateScenario(smokeMode);

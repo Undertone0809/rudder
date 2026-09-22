@@ -149,11 +149,15 @@ function parsePositiveInt(rawValue: string | undefined): number | null {
   return parsed;
 }
 
-function parseRustFoundationMode(rawValue: string | undefined): RustFoundationMode {
-  const value = rawValue?.trim() || "off";
+function parseRustFoundationMode(
+  rawValue: string | undefined,
+  defaultMode: RustFoundationMode,
+  envName: string,
+): RustFoundationMode {
+  const value = rawValue?.trim() || defaultMode;
   if (value === "off" || value === "shadow" || value === "required") return value;
   throw new Error(
-    `RUDDER_RUST_MEMBER_DIRECTORY_MODE must be off, shadow, or required; received ${value}`,
+    `${envName} must be off, shadow, or required; received ${value}`,
   );
 }
 
@@ -360,9 +364,21 @@ export function loadConfig(): Config {
       : Number.isFinite(heartbeatRunInactivityTimeoutMsRaw)
         ? Math.max(0, heartbeatRunInactivityTimeoutMsRaw)
         : 0;
-  const rustFoundationMode = parseRustFoundationMode(process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE);
-  const rustOrganizationBrandingMode = parseRustFoundationMode(process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE);
-  const rustProjectGoalSetMode = parseRustFoundationMode(process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE);
+  const rustFoundationMode = parseRustFoundationMode(
+    process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE,
+    "off",
+    "RUDDER_RUST_MEMBER_DIRECTORY_MODE",
+  );
+  const rustOrganizationBrandingMode = parseRustFoundationMode(
+    process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE,
+    "off",
+    "RUDDER_RUST_ORGANIZATION_BRANDING_MODE",
+  );
+  const rustProjectGoalSetMode = parseRustFoundationMode(
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE,
+    "off",
+    "RUDDER_RUST_PROJECT_GOAL_SET_MODE",
+  );
   const rustFoundationBinaryPath = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim() || undefined;
   const rustFoundationActorEnvelopeKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim() || undefined;
   const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);

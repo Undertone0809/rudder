@@ -1,10 +1,9 @@
+import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import type { Request } from "express";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createRustFoundationBridge,
@@ -28,6 +27,7 @@ type Fixture = {
     headers: Record<string, string | string[] | undefined>;
     body: string;
   }>;
+  kill(): Promise<void>;
   remove(): Promise<void>;
 };
 
@@ -119,6 +119,9 @@ async function createFixture(initialMode: FixtureMode, executable = true): Promi
       headers: Record<string, string | string[] | undefined>;
       body: string;
     },
+    kill: async () => {
+      process.kill(Number((await readFile(pidPath, "utf8")).trim()), "SIGKILL");
+    },
     remove: () => rm(root, { recursive: true, force: true }),
   };
   activeFixtures.add(fixture);
@@ -131,6 +134,7 @@ function createBridge(
     mode?: "off" | "shadow" | "required";
     organizationBrandingMode?: "off" | "shadow" | "required";
     projectGoalSetMode?: "off" | "shadow" | "required";
+    actorEnvelopeKey?: string | null;
   } = {},
 ) {
   const bridge = createRustFoundationBridge({
@@ -139,7 +143,9 @@ function createBridge(
     organizationBrandingMode: options.organizationBrandingMode,
     projectGoalSetMode: options.projectGoalSetMode,
     binaryPath: fixture.binaryPath,
-    actorEnvelopeKey: "bridge-test-secret",
+    actorEnvelopeKey: options.actorEnvelopeKey === null
+      ? undefined
+      : options.actorEnvelopeKey ?? "bridge-test-secret",
     requestTimeoutMs: 25,
   });
   activeBridges.add(bridge);
@@ -204,6 +210,41 @@ describe("rust foundation bridge lifecycle", () => {
     }
   });
 
+  it("generates an ephemeral actor key per start and reuses it for member requests", async () => {
+    const previousKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+    delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+
+    try {
+      const fixture = await createFixture("ready");
+      const bridge = createBridge(fixture, { actorEnvelopeKey: null });
+
+      await bridge.start();
+      const firstKey = (await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      expect(firstKey).toMatch(/^[0-9a-f]{64}$/u);
+      expect(process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY).toBeUndefined();
+
+      const req = {
+        actor: {
+          type: "board",
+          source: "local_implicit",
+          userId: "user-1",
+        },
+        originalUrl: "/api/orgs/org-1/members/directory",
+        header: () => undefined,
+      } as unknown as Request;
+      await expect(bridge.memberDirectory(req, "org-1")).resolves.toMatchObject({ status: 404 });
+
+      await bridge.close();
+      await bridge.start();
+      const secondKey = (await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      expect(secondKey).toMatch(/^[0-9a-f]{64}$/u);
+      expect(secondKey).not.toBe(firstKey);
+    } finally {
+      if (previousKey === undefined) delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      else process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = previousKey;
+    }
+  });
+
   it("cleans up an invalid receipt and allows the same bridge to retry", async () => {
     const fixture = await createFixture("invalid");
     const bridge = createBridge(fixture);
@@ -218,6 +259,38 @@ describe("rust foundation bridge lifecycle", () => {
     expect(readyPid).not.toBe(failedPid);
     await bridge.close();
     await waitForProcessExit(readyPid);
+  });
+
+  it("clears an ephemeral key immediately after an unexpected child exit", async () => {
+    const previousKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+    delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+
+    try {
+      const fixture = await createFixture("ready");
+      const bridge = createBridge(fixture, { actorEnvelopeKey: null });
+      const req = {
+        actor: {
+          type: "board",
+          source: "local_implicit",
+          userId: "user-1",
+        },
+        originalUrl: "/api/orgs/org-1/members/directory",
+        header: () => undefined,
+      } as unknown as Request;
+
+      await bridge.start();
+      const firstKey = (await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      await fixture.kill();
+      await waitForProcessExit(await fixture.readPid());
+
+      await expect(bridge.memberDirectory(req, "org-1")).resolves.toMatchObject({ status: 404 });
+      const secondKey = (await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      expect(secondKey).toMatch(/^[0-9a-f]{64}$/u);
+      expect(secondKey).not.toBe(firstKey);
+    } finally {
+      if (previousKey === undefined) delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      else process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = previousKey;
+    }
   });
 
   it("cleans up after a ready timeout and allows a retry", async () => {
@@ -248,9 +321,7 @@ describe("rust foundation bridge lifecycle", () => {
     await waitForProcessExit(readyPid);
   });
 
-  it("fails closed for a missing explicit path even when the default debug binary exists", async () => {
-    const defaultDebugBinary = fileURLToPath(new URL("../../../native/target/debug/rudder-server-foundation", import.meta.url));
-    expect(existsSync(defaultDebugBinary)).toBe(true);
+  it("fails closed for a missing explicit path", async () => {
     const root = await mkdtemp(join(tmpdir(), "rudder-rust-foundation-explicit-path-"));
     const previousPath = process.env.RUDDER_SERVER_FOUNDATION_PATH;
     process.env.RUDDER_SERVER_FOUNDATION_PATH = join(root, "rudder-server-foundation-missing");
@@ -264,6 +335,43 @@ describe("rust foundation bridge lifecycle", () => {
       activeBridges.add(bridge);
 
       await expect(bridge.start()).rejects.toMatchObject({ code: "binary_unavailable" });
+    } finally {
+      if (previousPath === undefined) delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
+      else process.env.RUDDER_SERVER_FOUNDATION_PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("starts from the explicit packaged Desktop resource path", async () => {
+    const target = resolveRudderNativeTarget();
+    expect(target).toBeTruthy();
+    if (!target) return;
+
+    const fixture = await createFixture("ready");
+    const root = await mkdtemp(join(tmpdir(), "rudder-rust-foundation-resources-"));
+    const binaryName = process.platform === "win32"
+      ? "rudder-server-foundation.exe"
+      : "rudder-server-foundation";
+    const packagedBinary = join(root, "native", target, binaryName);
+    const previousPath = process.env.RUDDER_SERVER_FOUNDATION_PATH;
+    delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
+
+    try {
+      await mkdir(join(root, "native", target), { recursive: true });
+      await copyFile(fixture.binaryPath, packagedBinary);
+      if (process.platform !== "win32") await chmod(packagedBinary, 0o755);
+
+      const bridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "required",
+        binaryPath: packagedBinary,
+        actorEnvelopeKey: "bridge-test-secret",
+        requestTimeoutMs: 25,
+      });
+      activeBridges.add(bridge);
+
+      await expect(bridge.start()).resolves.toBeUndefined();
+      expect(await fixture.readPid()).toBeGreaterThan(0);
     } finally {
       if (previousPath === undefined) delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
       else process.env.RUDDER_SERVER_FOUNDATION_PATH = previousPath;

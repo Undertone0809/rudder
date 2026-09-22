@@ -94,6 +94,7 @@ import { feishuIntegrationRuntimeService } from "./services/integrations/feishu/
 import { startManagedMcpOAuthSessionGc } from "./services/mcp/oauth-session-gc.js";
 import { managedMcpOAuthService } from "./services/mcp/oauth.js";
 import { assertMigrationPreflightAgreement, runMigrationPreflightBeforeNodeInspection } from "./services/migration-preflight.js";
+import type { RustFoundationMode } from "./services/rust-foundation-bridge.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { serverVersion } from "./version.js";
@@ -154,6 +155,7 @@ export interface ServerRuntimeOverrides {
   port?: number;
   deploymentMode?: DeploymentMode;
   deploymentExposure?: DeploymentExposure;
+  rustFoundationMode?: RustFoundationMode;
   serveUi?: boolean;
   uiDevMiddleware?: boolean;
   heartbeatSchedulerEnabled?: boolean;
