@@ -1934,6 +1934,45 @@ describe("heartbeat orphaned process recovery", () => {
     });
   });
 
+  it("does not manually retry a run fenced by Issue cancellation", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      runStatus: "failed",
+      runErrorCode: "network_error",
+      runError: "Model connection dropped before cancellation",
+    });
+    const cancelledAt = new Date("2026-03-19T00:01:00.000Z");
+    await db
+      .update(issues)
+      .set({
+        status: "cancelled",
+        cancelledAt,
+        executionCancellationAt: cancelledAt,
+        updatedAt: cancelledAt,
+      })
+      .where(eq(issues.id, issueId));
+
+    const heartbeat = heartbeatService(db);
+    await expect(heartbeat.retryRun(runId, {
+      requestedByActorType: "user",
+      requestedByActorId: "local-board",
+      now: new Date("2026-03-19T00:05:00.000Z"),
+    })).rejects.toThrow("fenced by its linked Issue cancellation");
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: runId, status: "failed" });
+
+    const issue = await db
+      .select({ executionRunId: issues.executionRunId, checkoutRunId: issues.checkoutRunId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue).toEqual({ executionRunId: runId, checkoutRunId: runId });
+  });
+
   it.each(["executionRunId", "checkoutRunId"] as const)(
     "backfills Issue identity before clearing the %s pointer so cancellation cannot recover the old run",
     async (pointer) => {

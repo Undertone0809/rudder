@@ -296,15 +296,14 @@ export function createHeartbeatRecoveryHandlers(context: any) {
             .where(eq(heartbeatRuns.id, run.id))
             .then((rows) => rows[0]?.fenced === true)
         : false;
-      const automaticRecoveryFenced = Boolean(
+      const issueRecoveryFenced = Boolean(
         issueRow
-        && opts.recoveryTrigger === "automatic"
         && (
           (issueRow.status === "cancelled" && !issueRow.executionCancellationAt)
           || recoveryRunBeforeCancellation
         ),
       );
-      if (automaticRecoveryFenced) {
+      if (issueRecoveryFenced) {
         return { kind: "skipped" as const };
       }
 

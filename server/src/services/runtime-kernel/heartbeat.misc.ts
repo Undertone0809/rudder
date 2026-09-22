@@ -427,7 +427,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       });
     }
 
-    return enqueueRecoveryRun(run, agent, {
+    const recoveryRun = await enqueueRecoveryRun(run, agent, {
       recoveryTrigger: "manual",
       source: run.invocationSource === "delegation" ? "delegation" : "on_demand",
       triggerDetail: "manual",
@@ -436,6 +436,12 @@ export function createHeartbeatMiscHandlers(context: any) {
       requestedByActorId: opts?.requestedByActorId ?? null,
       now: opts?.now ?? new Date(),
     });
+    if (!recoveryRun) {
+      throw conflict("Cannot retry a run fenced by its linked Issue cancellation", {
+        issueId,
+      });
+    }
+    return recoveryRun;
   }
 
   async function buildSkillAnalytics(
