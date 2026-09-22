@@ -105,8 +105,10 @@ vi.mock("../services/index.js", () => ({
   }),
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
   organizationMemberService: () => mockOrganizationMemberService,
-  handoffOrganizationBrandingAuthority: mockHandoffOrganizationBrandingAuthority,
   logActivity: mockLogActivity,
+}));
+vi.mock("../services/organization-branding-fence.js", () => ({
+  handoffOrganizationBrandingAuthority: mockHandoffOrganizationBrandingAuthority,
 }));
 vi.mock("../services/organization-workspace-browser.js", () => ({
   organizationWorkspaceBrowserService: () => mockWorkspaceBrowser,

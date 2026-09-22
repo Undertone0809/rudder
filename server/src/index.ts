@@ -42,7 +42,6 @@ import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
-import { createRudderApp } from "./app.js";
 import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.js";
 import { getBoardClaimWarningUrl } from "./board-claim.js";
 import {
@@ -74,6 +73,7 @@ import { resolveRudderConfigPath, resolveRudderEnvPath } from "./paths.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { createHttpServerShutdown } from "./runtime/http-server-shutdown.js";
 import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
+import { createRudderAppForServerRuntime } from "./runtime/server-app-runtime.js";
 import {
   automationService,
   heartbeatService,
@@ -1060,57 +1060,36 @@ async function startServerRuntime(
     }
   }
   
-  const {
-    authReady,
-    betterAuthHandler,
-    resolveSession,
-    resolveSessionFromHeaders,
-    localAccountExchangePolicy,
-    localAccountSessionRevocation,
-  } = await createAuthRuntime({
+  const authRuntime = await createAuthRuntime({
     db: db as any,
     config,
     instanceId,
     localAccountAuth: options.localAccountAuth,
     ensureLocalTrustedBoardPrincipal: () => ensureLocalTrustedBoardPrincipal(db as any),
   });
+  const {
+    authReady,
+    resolveSessionFromHeaders,
+    localAccountSessionRevocation,
+  } = authRuntime;
   
   const listenPort = await detectPort(config.port);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
   const networkWaitingRunHandlers: Array<(run: any) => Promise<boolean>> = [];
-  const appHandle = await createRudderApp(db as any, {
-    uiMode,
-    serverPort: listenPort,
-    authPublicBaseUrl: config.authPublicBaseUrl ?? null,
+  const appHandle = await createRudderAppForServerRuntime({
+    db: db as any,
+    config,
+    listenPort,
     storageService,
-    deploymentMode: config.deploymentMode,
-    authRequirement: options.localAccountAuth ? "required" : undefined,
-    localRuntimeTrust: options.localAccountAuth ? "trusted" : undefined,
-    deploymentExposure: config.deploymentExposure,
-    allowedHostnames: config.allowedHostnames,
-    bindHost: config.host,
-    workspacePreviewOrigin: config.workspacePreviewOrigin,
-    authReady,
-    companyDeletionEnabled: config.companyDeletionEnabled,
-    databaseUrl: activeDatabaseConnectionString,
-    rustFoundationMode: config.rustFoundationMode,
-    rustOrganizationBrandingMode: config.rustOrganizationBrandingMode,
-    rustProjectGoalSetMode: config.rustProjectGoalSetMode,
-    rustFoundationBinaryPath: config.rustFoundationBinaryPath,
-    rustFoundationActorEnvelopeKey: config.rustFoundationActorEnvelopeKey,
-    mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
+    authRuntime,
+    localAccountAuth: Boolean(options.localAccountAuth),
+    activeDatabaseConnectionString,
     instanceId,
     localEnv,
     runtimeOwnerKind,
-    betterAuthHandler,
-    resolveSession,
-    localAccountExchangePolicy,
-    localAccountSessionRevocation,
-    registerNetworkWaitingRunHandler: (handler) => {
-      networkWaitingRunHandlers.push(handler);
-    },
+    registerNetworkWaitingRunHandler: (handler) => networkWaitingRunHandlers.push(handler),
   });
   supervisor.own("app", () => appHandle.close());
   const organizationMutationOutboxPublisher = startOrganizationMutationOutboxPublisher(db as any);

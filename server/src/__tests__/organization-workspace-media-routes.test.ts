@@ -1,8 +1,8 @@
 import express from "express";
 import { once } from "node:events";
-import { request as httpRequest } from "node:http";
 import fs from "node:fs/promises";
 import type { Server } from "node:http";
+import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";

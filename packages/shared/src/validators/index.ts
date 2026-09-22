@@ -31,7 +31,6 @@ export {
   createAgentIssueCreationRequestSchema,
   type CreateAgentIssueCreationRequest
 } from "./agent-issue-creation.js";
-export { organizationEntityReferenceSchema } from "./reference.js";
 export {
   aiSearchRequestSchema,
   aiSearchScopeSchema,
@@ -108,6 +107,7 @@ export {
   type CreateOrganizationWorkspaceFile, type CreateOrganizationWorkspaceWebPreviewSession, type MoveOrganizationWorkspaceEntry, type RenameOrganizationWorkspaceEntry, type UpdateOrganization,
   type UpdateOrganizationBranding, type UpdateOrganizationWorkspaceFile
 } from "./organization.js";
+export { organizationEntityReferenceSchema } from "./reference.js";
 export {
   createOrganizationResourceSchema, createProjectInlineResourceSchema, organizationResourceKindSchema,
   organizationResourceSourceTypeSchema, projectResourceAttachmentInputSchema, projectResourceAttachmentRoleSchema, updateOrganizationResourceSchema, updateProjectResourceAttachmentSchema, type CreateOrganizationResource, type CreateProjectInlineResource, type ProjectResourceAttachmentInputPayload, type UpdateOrganizationResource, type UpdateProjectResourceAttachment

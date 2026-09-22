@@ -50,7 +50,7 @@ function createDbStub(selectResults: SelectResult[]) {
     select,
     insert,
     update,
-    execute: vi.fn(async () => [{ owner: "node", mutation_version: "0", fence_epoch: "0" }]),
+    execute: vi.fn(async () => [{ owner: "node", mutation_version: "0", fence_epoch: "0", fence_token: "00000000-0000-4000-8000-000000000001" }]),
     transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(db)),
   };
 

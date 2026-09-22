@@ -16,6 +16,7 @@ import { useActivityCoordinator } from "./ActivityCoordinatorContext";
 import { useOrganization } from "./OrganizationContext";
 import type { ToastInput } from "./ToastContext";
 import { useToast } from "./ToastContext";
+import { reconcileLiveUpdatesAfterReconnect } from "./live-updates-reconnect";
 
 const TOAST_COOLDOWN_WINDOW_MS = 10_000;
 const TOAST_COOLDOWN_MAX = 3;
@@ -992,12 +993,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
       socket.onopen = () => {
         if (reconnectAttempt > 0) {
           gateRef.current.suppressUntil = Date.now() + RECONNECT_SUPPRESS_MS;
-          // Events missed while disconnected cannot wake an idle queue. Refetch
-          // mounted queues and mark other cached chats stale within this org.
-          void queryClient.invalidateQueries(
-            { queryKey: ["chats", selectedOrganizationId, "queue"] },
-            { cancelRefetch: false },
-          );
+          void reconcileLiveUpdatesAfterReconnect(queryClient, selectedOrganizationId);
         }
         reconnectAttempt = 0;
       };

@@ -66,8 +66,8 @@ export async function handoffOrganizationBrandingAuthorityInTransaction(
     WHERE owner NOT IN ('node', 'rust')
       ${organizationId ? sql`AND org_id = ${organizationId}::uuid` : sql``}
     LIMIT 1
-  `) as { rows?: Array<{ org_id: string }> };
-  if (invalid.rows?.[0]) {
+  `) as { rows?: Array<{ org_id: string }> } | Array<{ org_id: string }>;
+  if ((Array.isArray(invalid) ? invalid : invalid.rows)?.[0]) {
     throw conflict("Organization branding mutation authority has an invalid owner");
   }
   await tx.execute(sql`

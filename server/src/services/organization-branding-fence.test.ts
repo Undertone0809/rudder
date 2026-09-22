@@ -14,10 +14,9 @@ describe("organization branding authority handoff", () => {
     expect(updateQuery).toContain("owner = 'node'");
   });
 
-  it("rejects an invalid persisted owner before the handoff update", async () => {
-    const execute = vi.fn().mockResolvedValueOnce({
-      rows: [{ org_id: "00000000-0000-4000-8000-000000000001" }],
-    });
+  it.each(["rows", "array"])("rejects an invalid persisted owner from %s results before the handoff update", async (format) => {
+    const rows = [{ org_id: "00000000-0000-4000-8000-000000000001" }];
+    const execute = vi.fn().mockResolvedValueOnce(format === "array" ? rows : { rows });
 
     await expect(handoffOrganizationBrandingAuthorityInTransaction({ execute }))
       .rejects.toThrow("invalid owner");

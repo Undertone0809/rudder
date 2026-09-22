@@ -289,9 +289,9 @@ const MAX_MEMBER_DIRECTORY_LIMIT: i64 = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MemberDirectoryQueryError {
-    InvalidType,
-    InvalidLimit,
-    InvalidCursor,
+    Type,
+    Limit,
+    Cursor,
 }
 
 fn parse_member_directory_query(
@@ -303,7 +303,7 @@ fn parse_member_directory_query(
         .trim()
         .to_ascii_lowercase();
     if !matches!(member_type.as_str(), "all" | "human" | "agent") {
-        return Err(MemberDirectoryQueryError::InvalidType);
+        return Err(MemberDirectoryQueryError::Type);
     }
 
     let limit = match query.limit.as_deref().map(str::trim) {
@@ -312,7 +312,7 @@ fn parse_member_directory_query(
             let parsed = parse_member_directory_number(value)
                 .filter(|parsed| parsed.is_finite() && parsed.fract() == 0.0)
                 .filter(|parsed| (1.0..=MAX_MEMBER_DIRECTORY_LIMIT as f64).contains(parsed))
-                .ok_or(MemberDirectoryQueryError::InvalidLimit)?;
+                .ok_or(MemberDirectoryQueryError::Limit)?;
             parsed as i64
         }
     };
@@ -366,13 +366,13 @@ fn decode_member_cursor(value: &str) -> Result<MemberCursor, MemberDirectoryQuer
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(value)
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(value))
-        .map_err(|_| MemberDirectoryQueryError::InvalidCursor)?;
+        .map_err(|_| MemberDirectoryQueryError::Cursor)?;
     let cursor: MemberCursor =
-        serde_json::from_slice(&decoded).map_err(|_| MemberDirectoryQueryError::InvalidCursor)?;
+        serde_json::from_slice(&decoded).map_err(|_| MemberDirectoryQueryError::Cursor)?;
     if !matches!(cursor.member_type.as_str(), "human" | "agent")
         || cursor.principal_id.trim().is_empty()
     {
-        return Err(MemberDirectoryQueryError::InvalidCursor);
+        return Err(MemberDirectoryQueryError::Cursor);
     }
     Ok(cursor)
 }
@@ -1184,16 +1184,16 @@ impl AppState {
 
         let options = match parse_member_directory_query(query) {
             Ok(options) => options,
-            Err(MemberDirectoryQueryError::InvalidType) => {
+            Err(MemberDirectoryQueryError::Type) => {
                 return self.json_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "member_directory_invalid_type",
                 );
             }
-            Err(MemberDirectoryQueryError::InvalidLimit) => {
+            Err(MemberDirectoryQueryError::Limit) => {
                 return self.json_error(StatusCode::BAD_REQUEST, "member_directory_invalid_limit");
             }
-            Err(MemberDirectoryQueryError::InvalidCursor) => {
+            Err(MemberDirectoryQueryError::Cursor) => {
                 return self.json_error(StatusCode::BAD_REQUEST, "member_directory_invalid_cursor");
             }
         };

@@ -50,9 +50,7 @@ import type {
   GoalActivityTimelinePage,
   GoalCheckpointInput,
   GoalContractPatch,
-  GoalContractSnapshot,
   GoalDependencies,
-  GoalDependencyPreview,
   GoalEvaluationCandidate,
   GoalEvaluatorKind,
   GoalHistoryItem,
@@ -79,6 +77,14 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from 
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { createHash, randomUUID } from "node:crypto";
 import { badRequest, conflict, forbidden, notFound, unprocessable } from "../errors.js";
+import {
+  assertCanonicalActiveGoal,
+  assertGoalOwner,
+  countRows,
+  goalContractSnapshot,
+  normalizeContractPatch,
+  previewRows
+} from "./goals.contract-helpers.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { buildDeferredWakePayload, readDeferredWakePayload } from "./runtime-kernel/heartbeat.sessions.js";
 
@@ -113,7 +119,6 @@ type GoalAgent = Pick<
   "id" | "orgId" | "name" | "status" | "role" | "title" | "capabilities"
 >;
 
-const DEPENDENCY_PREVIEW_LIMIT = 5;
 const GOAL_HISTORY_DEFAULT_LIMIT = 50;
 const GOAL_HISTORY_MAX_LIMIT = 100;
 const TERMINAL_RUN_STATUSES = ["succeeded", "completed", "failed", "cancelled", "timed_out"] as const;
@@ -804,55 +809,6 @@ export function publicRunSummary(run: {
 
 function sameHashPayload(left: unknown, right: unknown) {
   return stableGoalHash(left) === stableGoalHash(right);
-}
-
-function toIsoString(value: Date | string | null | undefined) {
-  if (!value) return null;
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-}
-
-function goalContractSnapshot(goal: GoalRow): GoalContractSnapshot {
-  return {
-    contractRevision: goal.contractRevision,
-    outcomeStatement: goal.outcomeStatement ?? "",
-    objectiveMode: goal.objectiveMode as GoalContractSnapshot["objectiveMode"],
-    criteria: goal.criteria as GoalContractSnapshot["criteria"],
-    autonomyEnvelope: goal.autonomyEnvelope,
-    humanAuthorities: goal.humanAuthorities,
-    evaluationPolicy: goal.evaluationPolicy,
-    actionDeadline: toIsoString(goal.actionDeadline),
-    evaluationDeadline: toIsoString(goal.evaluationDeadline),
-  };
-}
-
-function normalizeContractPatch(patch: CreateGoalChangeProposal["afterContract"]): GoalContractPatch {
-  return {
-    ...patch,
-    ...(patch.actionDeadline !== undefined ? { actionDeadline: toIsoString(patch.actionDeadline) } : {}),
-    ...(patch.evaluationDeadline !== undefined ? { evaluationDeadline: toIsoString(patch.evaluationDeadline) } : {}),
-  } as GoalContractPatch;
-}
-
-function countRows(rows: Array<{ count: unknown }>) {
-  return Number(rows[0]?.count ?? 0);
-}
-
-function previewRows<T>(rows: T[], map: (row: T) => GoalDependencyPreview) {
-  return rows.slice(0, DEPENDENCY_PREVIEW_LIMIT).map(map);
-}
-
-function assertCanonicalActiveGoal(goal: Pick<GoalRow, "lifecycle" | "ownerAgentId" | "outcomeStatement" | "criteria" | "planRevision" | "continuationKind" | "continuationSummary">) {
-  if (goal.lifecycle !== "active") throw conflict("Only active Goals can receive this command");
-  if (!goal.ownerAgentId || !goal.outcomeStatement?.trim() || !Array.isArray(goal.criteria) || goal.criteria.length === 0
-    || goal.planRevision < 1 || !goal.continuationKind || !goal.continuationSummary?.trim()) {
-    throw conflict("Goal requires Contract activation before this command");
-  }
-}
-
-function assertGoalOwner(goal: Pick<GoalRow, "ownerAgentId">, actorAgentId: string | null) {
-  if (actorAgentId && actorAgentId !== goal.ownerAgentId) {
-    throw forbidden("Only the Goal Owner can perform this Agent command");
-  }
 }
 
 async function requireInvokableOwner(db: GoalReader, orgId: string, ownerAgentId: string) {
