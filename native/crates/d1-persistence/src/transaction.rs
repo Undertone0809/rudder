@@ -15,7 +15,7 @@ use sqlx::{PgPool, Postgres, Row, Transaction};
 pub(crate) type Tx<'a> = Transaction<'a, Postgres>;
 
 pub(crate) const MAX_RESULT_BYTES: usize = 1024 * 1024;
-const BRANDING_RECEIPT_FORMAT: i32 = 2;
+const BRANDING_RECEIPT_FORMAT: i32 = 1;
 const PROJECT_GOAL_RECEIPT_FORMAT: i32 = 2;
 const PROJECT_GOAL_SET_RECEIPT_FORMAT: i32 = 1;
 const MAX_COMMAND_BYTES: usize = MAX_RESULT_BYTES / 2;
@@ -62,6 +62,7 @@ pub(crate) struct Metadata {
     pub expected_version: u64,
     pub fence_epoch: u64,
     pub actor: ActorMetadata,
+    pub run_id: Option<String>,
     pub project_id: Option<String>,
     pub goal_id: Option<String>,
     pub link_identifier: Option<String>,
@@ -79,13 +80,20 @@ pub(crate) struct LockedScope {
 impl Metadata {
     pub fn branding(command: &OrganizationBrandingCommand) -> Result<Self, StoreError> {
         let view = command.as_integration_view()?;
+        // The first public Rust writer owns only the scalar brandColor slice.
+        // Names, descriptions, and logo storage remain on the fenced Node
+        // path until their own component handoffs are complete.
+        if view.name().is_some()
+            || view.description().is_some()
+            || view.logo_asset_id().is_some()
+            || view.brand_color().is_none()
+        {
+            return Err(StoreError::InvalidInput);
+        }
         let actor = actor_metadata(view.actor().kind(), view.actor().principal_id())?;
         let org = uuid(view.organization_id())?.to_owned();
         let key = bounded_text(view.idempotency_key(), false)?;
         let fingerprint = adapter_fingerprint(branding_kind(), &view.fingerprint()?, None)?;
-        if let Some(Some(asset_id)) = view.logo_asset_id() {
-            uuid(asset_id)?;
-        }
         let body = json!({
             "organization_id": org,
             "actor_kind": actor.kind,
@@ -93,10 +101,7 @@ impl Metadata {
             "idempotency_key": key,
             "expected_version": view.expected_version(),
             "fence_epoch": view.fence_epoch(),
-            "name": view.name(),
-            "description": view.description(),
             "brand_color": view.brand_color(),
-            "logo_asset_id": view.logo_asset_id(),
         });
         ensure_json_size(&body, MAX_COMMAND_BYTES)?;
         signed(view.expected_version())?;
@@ -109,14 +114,15 @@ impl Metadata {
             expected_version: view.expected_version(),
             fence_epoch: view.fence_epoch(),
             actor,
+            run_id: None,
             project_id: None,
             goal_id: None,
             link_identifier: None,
             expected_receipt: ExpectedReceipt::OrganizationBranding {
-                name: view.name().map(str::to_owned),
-                description: view.description().map(|value| value.map(str::to_owned)),
+                name: None,
+                description: None,
                 brand_color: view.brand_color().map(|value| value.map(str::to_owned)),
-                logo_asset_id: view.logo_asset_id().map(|value| value.map(str::to_owned)),
+                logo_asset_id: None,
             },
             receipt_format: BRANDING_RECEIPT_FORMAT,
         })
@@ -174,6 +180,7 @@ impl Metadata {
             expected_version: view.expected_version(),
             fence_epoch: view.fence_epoch(),
             actor,
+            run_id: None,
             project_id: Some(project_id),
             goal_id: Some(goal_id),
             link_identifier: Some(link_identifier.clone()),
@@ -204,6 +211,10 @@ impl Metadata {
         let key = bounded_text(view.idempotency_key(), false)?;
         let core_fingerprint = view.fingerprint()?;
         let fingerprint = adapter_fingerprint(project_goal_set_kind(), &core_fingerprint, None)?;
+        let run_id = view
+            .run_id()
+            .map(|value| uuid(value).map(str::to_owned))
+            .transpose()?;
         let body = json!({
             "organization_id": org,
             "actor_kind": actor.kind,
@@ -226,6 +237,7 @@ impl Metadata {
             expected_version: view.expected_version(),
             fence_epoch: view.fence_epoch(),
             actor,
+            run_id,
             project_id: Some(project_id.clone()),
             goal_id: None,
             link_identifier: None,
@@ -290,9 +302,109 @@ pub(crate) async fn lock_scope(
     tx: &mut Tx<'_>,
     metadata: &Metadata,
 ) -> Result<LockedScope, StoreError> {
-    let state = sqlx::query(
+    let organization_state = sqlx::query(
         "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
          FROM organization_mutation_state
+         WHERE org_id=$1::uuid
+         FOR UPDATE",
+    )
+    .bind(&metadata.org)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(_organization_state) = organization_state else {
+        let organization_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1::uuid)",
+        )
+        .bind(&metadata.org)
+        .fetch_one(&mut **tx)
+        .await?;
+        return Err(if organization_exists {
+            StoreError::NotOwned
+        } else {
+            StoreError::NotFound
+        });
+    };
+    let project_id = metadata
+        .project_id
+        .as_deref()
+        .ok_or(StoreError::InvalidInput)?;
+    let state = sqlx::query(
+        "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+         FROM project_goal_mutation_state
+         WHERE project_id=$1::uuid AND org_id=$2::uuid
+         FOR UPDATE",
+    )
+    .bind(project_id)
+    .bind(&metadata.org)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(state) = state else {
+        let project_organization =
+            sqlx::query_scalar::<_, String>("SELECT org_id::text FROM projects WHERE id=$1::uuid")
+                .bind(project_id)
+                .fetch_optional(&mut **tx)
+                .await?;
+        return Err(match project_organization {
+            None => StoreError::NotFound,
+            Some(organization) if organization != metadata.org => StoreError::NotFound,
+            Some(_) => StoreError::NotOwned,
+        });
+    };
+    if state.try_get::<String, _>("owner")? != "rust" {
+        return Err(StoreError::NotOwned);
+    }
+
+    // Legacy Node writers acquire this fence row before touching any business
+    // row. Keep Rust's lock order identical so an ownership handoff cannot
+    // deadlock on organizations versus organization_mutation_state.
+    let organization = sqlx::query("SELECT id FROM organizations WHERE id=$1::uuid FOR UPDATE")
+        .bind(&metadata.org)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if organization.is_none() {
+        return Err(StoreError::NotFound);
+    }
+
+    if metadata.actor.kind == "ceo_agent" || metadata.actor.kind == "agent" {
+        let agent = sqlx::query(
+            "SELECT role, status
+             FROM agents
+             WHERE id=$1::uuid AND org_id=$2::uuid
+             FOR UPDATE",
+        )
+        .bind(&metadata.actor.principal_id)
+        .bind(&metadata.org)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(StoreError::Unauthorized)?;
+        if agent.try_get::<String, _>("role")? != "ceo"
+            || matches!(
+                agent.try_get::<String, _>("status")?.as_str(),
+                "terminated" | "pending_approval"
+            )
+        {
+            return Err(StoreError::Unauthorized);
+        }
+    } else if metadata.actor.kind != "board" {
+        return Err(StoreError::Unauthorized);
+    }
+
+    let fence_token = state.try_get::<String, _>("fence_token")?;
+    uuid(&fence_token)?;
+    Ok(LockedScope {
+        version: unsigned(state.try_get::<i64, _>("mutation_version")?)?,
+        fence_epoch: unsigned(state.try_get::<i64, _>("fence_epoch")?)?,
+        fence_token,
+    })
+}
+
+pub(crate) async fn lock_branding_scope(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+) -> Result<LockedScope, StoreError> {
+    let state = sqlx::query(
+        "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+         FROM organization_branding_mutation_state
          WHERE org_id=$1::uuid
          FOR UPDATE",
     )
@@ -316,9 +428,9 @@ pub(crate) async fn lock_scope(
         return Err(StoreError::NotOwned);
     }
 
-    // Legacy Node writers acquire this fence row before touching any business
-    // row. Keep Rust's lock order identical so an ownership handoff cannot
-    // deadlock on organizations versus organization_mutation_state.
+    // Node branding writers lock this component before the organization-wide
+    // fence. Rust keeps the same component -> organization order so a handoff
+    // cannot leave a stale Node transaction able to write brandColor.
     let organization = sqlx::query("SELECT id FROM organizations WHERE id=$1::uuid FOR UPDATE")
         .bind(&metadata.org)
         .fetch_optional(&mut **tx)
@@ -420,6 +532,64 @@ pub(crate) async fn replay(
     }))
 }
 
+pub(crate) async fn branding_replay(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+) -> Result<Option<CommittedMutation>, StoreError> {
+    let row = sqlx::query(
+        "SELECT command_fingerprint, receipt_format, outcome,
+                resulting_version, fence_epoch, activity_id::text,
+                CASE WHEN octet_length(result::text) <= $3
+                     THEN result::text ELSE NULL END AS result_text
+         FROM organization_branding_mutation_receipts
+         WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(&metadata.org)
+    .bind(&metadata.key)
+    .bind(i64::try_from(MAX_RESULT_BYTES).expect("result bound fits BIGINT"))
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    if row.try_get::<String, _>("command_fingerprint")? != metadata.fingerprint {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    if row.try_get::<i32, _>("receipt_format")? != metadata.receipt_format {
+        return Err(StoreError::InvalidReceipt);
+    }
+    let result_text: Option<String> = row.try_get("result_text")?;
+    let Some(result_text) = result_text else {
+        return Err(StoreError::InvalidReceipt);
+    };
+    let stored_value: Value =
+        serde_json::from_str(&result_text).map_err(|_| StoreError::InvalidReceipt)?;
+    let receipt: Receipt =
+        serde_json::from_value(stored_value.clone()).map_err(|_| StoreError::InvalidReceipt)?;
+    let canonical_value = serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    if canonical_value != stored_value {
+        return Err(StoreError::InvalidReceipt);
+    }
+    let resulting_version = unsigned(row.try_get::<i64, _>("resulting_version")?)?;
+    let fence_epoch = unsigned(row.try_get::<i64, _>("fence_epoch")?)?;
+    let row_outcome = row.try_get::<String, _>("outcome")?;
+    if receipt.organization_id != metadata.org
+        || receipt.fingerprint != metadata.fingerprint
+        || receipt.version != resulting_version
+        || receipt.fence_epoch != fence_epoch
+        || receipt.activity_id != row.try_get::<String, _>("activity_id")?
+        || receipt.outcome.as_str() != row_outcome
+    {
+        return Err(StoreError::InvalidReceipt);
+    }
+    validate_receipt_result(metadata, &receipt)?;
+    Ok(Some(CommittedMutation {
+        replayed: true,
+        receipt,
+    }))
+}
+
 pub(crate) async fn persist(
     tx: &mut Tx<'_>,
     metadata: &Metadata,
@@ -449,24 +619,30 @@ pub(crate) async fn persist(
         serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
     ensure_json_size(&result_without_activity, MAX_RESULT_BYTES)?;
 
+    let project_id = metadata
+        .project_id
+        .as_deref()
+        .ok_or(StoreError::InvalidInput)?;
     let updated = sqlx::query(
-        "UPDATE organization_mutation_state
+        "UPDATE project_goal_mutation_state
          SET mutation_version=$2,
              fence_epoch=$3,
              fence_token=CASE WHEN $3 > $5 THEN gen_random_uuid() ELSE fence_token END,
              updated_at=now()
-         WHERE org_id=$1::uuid
+         WHERE project_id=$1::uuid
+           AND org_id=$7::uuid
            AND owner='rust'
            AND mutation_version=$4
            AND fence_epoch=$5
            AND fence_token=$6::uuid",
     )
-    .bind(&metadata.org)
+    .bind(project_id)
     .bind(signed(effect.version)?)
     .bind(signed(effect.fence_epoch)?)
     .bind(signed(metadata.expected_version)?)
     .bind(signed(metadata.fence_epoch)?)
     .bind(&scope.fence_token)
+    .bind(&metadata.org)
     .execute(&mut **tx)
     .await?;
     if updated.rows_affected() != 1 {
@@ -477,8 +653,8 @@ pub(crate) async fn persist(
     let activity_id: String = sqlx::query_scalar(
         "INSERT INTO activity_log
           (org_id, actor_type, actor_id, action, entity_type, entity_id,
-           agent_id, details, idempotency_key)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::jsonb, $9)
+           agent_id, run_id, details, idempotency_key)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::uuid, $9::jsonb, $10)
          RETURNING id::text",
     )
     .bind(&metadata.org)
@@ -500,6 +676,7 @@ pub(crate) async fn persist(
     })
     .bind(&effect.entity_id)
     .bind(metadata.actor.agent_id.as_deref())
+    .bind(metadata.run_id.as_deref())
     .bind(details)
     .bind(activity_idempotency_key(&metadata.key))
     .fetch_one(&mut **tx)
@@ -528,6 +705,162 @@ pub(crate) async fn persist(
     .bind(signed(receipt.fence_epoch)?)
     .bind(&receipt.activity_id)
     .bind(receipt_json)
+    .execute(&mut **tx)
+    .await?;
+
+    let actor_type = if metadata.actor.kind == "board" {
+        "user"
+    } else {
+        "agent"
+    };
+    let event_payload = json!({
+        "actorType": actor_type,
+        "actorId": metadata.actor.principal_id,
+        "action": "project.updated",
+        "entityType": "project",
+        "entityId": effect.entity_id,
+        "agentId": metadata.actor.agent_id,
+        "runId": metadata.run_id,
+        "details": effect.details,
+    });
+    ensure_json_size(&event_payload, MAX_RESULT_BYTES)?;
+    sqlx::query(
+        "INSERT INTO organization_mutation_outbox
+          (org_id, activity_id, event_type, payload)
+         VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb)",
+    )
+    .bind(&metadata.org)
+    .bind(&receipt.activity_id)
+    .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(CommittedMutation {
+        replayed: false,
+        receipt,
+    })
+}
+
+pub(crate) async fn persist_branding(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+    scope: &LockedScope,
+    effect: Effect,
+) -> Result<CommittedMutation, StoreError> {
+    signed(effect.version)?;
+    signed(effect.fence_epoch)?;
+    if effect.fence_epoch < scope.fence_epoch
+        || effect.fence_epoch > scope.fence_epoch.saturating_add(1)
+    {
+        return Err(StoreError::StaleFence);
+    }
+    ensure_json_size(&effect.details, MAX_RESULT_BYTES)?;
+    let receipt = Receipt {
+        organization_id: metadata.org.clone(),
+        version: effect.version,
+        fence_epoch: effect.fence_epoch,
+        fingerprint: metadata.fingerprint.clone(),
+        activity_id: String::new(),
+        outcome: effect.outcome,
+        result: effect.result,
+    };
+    validate_receipt_result(metadata, &receipt)?;
+    let result_without_activity =
+        serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    ensure_json_size(&result_without_activity, MAX_RESULT_BYTES)?;
+
+    let updated = sqlx::query(
+        "UPDATE organization_branding_mutation_state
+         SET mutation_version=$2,
+             fence_epoch=$3,
+             fence_token=CASE WHEN $3 > $5 THEN gen_random_uuid() ELSE fence_token END,
+             updated_at=now()
+         WHERE org_id=$1::uuid
+           AND owner='rust'
+           AND mutation_version=$4
+           AND fence_epoch=$5
+           AND fence_token=$6::uuid",
+    )
+    .bind(&metadata.org)
+    .bind(signed(effect.version)?)
+    .bind(signed(effect.fence_epoch)?)
+    .bind(signed(metadata.expected_version)?)
+    .bind(signed(metadata.fence_epoch)?)
+    .bind(&scope.fence_token)
+    .execute(&mut **tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(StoreError::StaleFence);
+    }
+
+    let details = serde_json::to_string(&effect.details).map_err(|_| StoreError::InvalidReceipt)?;
+    let actor_type = if metadata.actor.kind == "board" {
+        "user"
+    } else {
+        "agent"
+    };
+    let activity_id: String = sqlx::query_scalar(
+        "INSERT INTO activity_log
+          (org_id, actor_type, actor_id, action, entity_type, entity_id,
+           agent_id, run_id, details, idempotency_key)
+         VALUES ($1::uuid, $2, $3, 'organization.branding_updated',
+                 'organization', $4, $5::uuid, $6::uuid, $7::jsonb, $8)
+         RETURNING id::text",
+    )
+    .bind(&metadata.org)
+    .bind(actor_type)
+    .bind(&metadata.actor.principal_id)
+    .bind(&effect.entity_id)
+    .bind(metadata.actor.agent_id.as_deref())
+    .bind(metadata.run_id.as_deref())
+    .bind(&details)
+    .bind(activity_idempotency_key(&metadata.key))
+    .fetch_one(&mut **tx)
+    .await?;
+
+    let mut receipt = receipt;
+    receipt.activity_id = activity_id.clone();
+    let receipt_json = serde_json::to_string(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    if receipt_json.len() > MAX_RESULT_BYTES {
+        return Err(StoreError::InvalidInput);
+    }
+    sqlx::query(
+        "INSERT INTO organization_branding_mutation_receipts
+          (org_id, idempotency_key, command_fingerprint, receipt_format,
+           outcome, resulting_version, fence_epoch, activity_id, result)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8::uuid, $9::jsonb)",
+    )
+    .bind(&metadata.org)
+    .bind(&metadata.key)
+    .bind(&metadata.fingerprint)
+    .bind(metadata.receipt_format)
+    .bind(receipt.outcome.as_str())
+    .bind(signed(receipt.version)?)
+    .bind(signed(receipt.fence_epoch)?)
+    .bind(&receipt.activity_id)
+    .bind(&receipt_json)
+    .execute(&mut **tx)
+    .await?;
+
+    let event_payload = json!({
+        "actorType": actor_type,
+        "actorId": metadata.actor.principal_id,
+        "action": "organization.branding_updated",
+        "entityType": "organization",
+        "entityId": effect.entity_id,
+        "agentId": metadata.actor.agent_id,
+        "runId": metadata.run_id,
+        "details": effect.details,
+    });
+    ensure_json_size(&event_payload, MAX_RESULT_BYTES)?;
+    sqlx::query(
+        "INSERT INTO organization_mutation_outbox
+          (org_id, activity_id, event_type, payload)
+         VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb)",
+    )
+    .bind(&metadata.org)
+    .bind(&activity_id)
+    .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
     .execute(&mut **tx)
     .await?;
 

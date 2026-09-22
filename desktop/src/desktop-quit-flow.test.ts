@@ -576,6 +576,110 @@ describe("desktop quit flow update handoff", () => {
     }
   });
 
+  it("waits for a cancelled run to leave the live-run list before quitting", async () => {
+    const stopLocalRudder = vi.fn(async () => undefined);
+    const destroyResidentTray = vi.fn();
+    let liveRunReadsAfterCancel = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const pathName = new URL(url).pathname;
+      if (pathName === "/api/orgs") {
+        return jsonResponse([{ id: "org-1", name: "Z Studio" }]);
+      }
+      if (pathName === "/api/orgs/org-1/live-runs") {
+        const cancelRequested = fetchMock.mock.calls.some(([requestUrl, requestInit]) => (
+          new URL(String(requestUrl)).pathname === "/api/heartbeat-runs/run-1/cancel"
+          && requestInit?.method === "POST"
+        ));
+        if (cancelRequested) liveRunReadsAfterCancel += 1;
+        return jsonResponse(!cancelRequested || liveRunReadsAfterCancel < 2
+          ? [{ id: "run-1", status: "running", agentName: "Codex" }]
+          : []);
+      }
+      if (pathName === "/api/heartbeat-runs/run-1/cancel" && init?.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as never;
+    const responseDir = await mkdtemp(path.join(tmpdir(), "rudder-update-quit-settle-response."));
+    const responsePath = path.join(responseDir, "response.json");
+
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: globalThis.fetch,
+        stopLocalRudder,
+        destroyResidentTray,
+        quitRunSettleTimeoutMs: 100,
+        quitRunSettlePollIntervalMs: 1,
+      });
+
+      await quitFlow.handleUpdateQuitRequest(responsePath, { force: true });
+
+      expect(await readQuitResponse(responsePath)).toMatchObject({ ok: true, status: "quitting" });
+      expect(liveRunReadsAfterCancel).toBeGreaterThanOrEqual(2);
+      expect(stopLocalRudder).toHaveBeenCalledTimes(1);
+      expect(destroyResidentTray).toHaveBeenCalledTimes(1);
+      expect(appExitMock).toHaveBeenCalledWith(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await rm(responseDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replies before the CLI deadline when slow cancellation is followed by a hung inspection", async () => {
+    const responseDir = await mkdtemp(path.join(tmpdir(), "rudder-update-quit-deadline."));
+    const responsePath = path.join(responseDir, "response.json");
+    const stopLocalRudder = vi.fn();
+    let cancelled = false;
+    let inspectionSignal: AbortSignal | undefined;
+    let releaseInspection!: (response: Response) => void;
+    vi.useFakeTimers();
+    try {
+      const quitFlow = createDesktopQuitFlow({
+        appName: "Rudder",
+        getMainWindow: () => null,
+        setMainWindow: vi.fn(),
+        getServerHandle: () => ({ apiUrl: "http://127.0.0.1:3100", runtime: { mode: "owned" } }),
+        fetchApi: async (url, init) => {
+          const pathname = new URL(url).pathname;
+          if (pathname.endsWith("/cancel")) {
+            await new Promise((resolve) => setTimeout(resolve, 4_500));
+            cancelled = true;
+            return new Response(null, { status: 204 });
+          }
+          if (cancelled) {
+            inspectionSignal = init?.signal ?? undefined;
+            return new Promise<Response>((resolve) => { releaseInspection = resolve; });
+          }
+          return jsonResponse(pathname === "/api/orgs"
+            ? [{ id: "org-1", name: "Z Studio" }]
+            : [{ id: "run-1", status: "running", agentName: "Codex" }]);
+        },
+        stopLocalRudder,
+        destroyResidentTray: vi.fn(),
+      });
+      const request = quitFlow.handleUpdateQuitRequest(responsePath, { force: true });
+      await vi.advanceTimersByTimeAsync(7_000);
+      await request;
+      expect(await readQuitResponse(responsePath)).toMatchObject({ ok: false, status: "failed" });
+      expect(inspectionSignal?.aborted).toBe(true);
+      // A fetch implementation that ignores abort must not trigger a late quit.
+      releaseInspection(jsonResponse([]));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(stopLocalRudder).not.toHaveBeenCalled();
+      expect(appExitMock).not.toHaveBeenCalled();
+      expect(await readQuitResponse(responsePath)).toMatchObject({ ok: false, status: "failed" });
+    } finally {
+      vi.useRealTimers();
+      await rm(responseDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not quit when forced update cannot cancel an active run", async () => {
     const stopLocalRudder = vi.fn(async () => undefined);
     const destroyResidentTray = vi.fn();
@@ -694,6 +798,7 @@ describe("desktop quit flow update handoff", () => {
         fetchApi: globalThis.fetch,
         stopLocalRudder,
         destroyResidentTray,
+        quitRunSettleTimeoutMs: 0,
       });
 
       await quitFlow.handleUpdateQuitRequest(responsePath, { force: true });

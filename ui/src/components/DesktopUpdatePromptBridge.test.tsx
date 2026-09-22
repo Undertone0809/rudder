@@ -80,6 +80,28 @@ afterEach(() => {
 });
 
 describe("DesktopUpdatePromptBridge", () => {
+  it("does not let an old response close a newer prompt or clear its loading state", async () => {
+    const harness = renderHarness();
+    let finishFirst!: () => void;
+    let finishSecond!: () => void;
+    harness.respondDeferredUpdatePrompt
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishSecond = resolve; }));
+    const clickForce = () => Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === prompt.forceLabel)?.click();
+    harness.emit(prompt);
+    await act(async () => clickForce());
+    harness.emit({ ...prompt, promptId: "prompt-2", message: "New running work was detected." });
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute("aria-busy")).toBe("false");
+    await act(async () => clickForce());
+    await act(async () => finishFirst());
+    expect(document.body.textContent).toContain("New running work was detected.");
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute("aria-busy")).toBe("true");
+    await act(async () => finishSecond());
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(harness.respondDeferredUpdatePrompt).toHaveBeenLastCalledWith("prompt-2", "force");
+  });
+
   it("renders the deferred update prompt with Rudder dialog components", () => {
     const harness = renderHarness();
     harness.emit(prompt);
@@ -177,5 +199,33 @@ describe("DesktopUpdatePromptBridge", () => {
     });
 
     expect(harness.respondDeferredUpdatePrompt).toHaveBeenCalledWith("prompt-1", "force");
+  });
+
+  it("keeps the selected action visibly pending until the desktop accepts it", async () => {
+    const harness = renderHarness();
+    let resolveResponse!: () => void;
+    harness.respondDeferredUpdatePrompt.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        resolveResponse = resolve;
+      }),
+    );
+    harness.emit(prompt);
+
+    const action = Array.from(document.body.querySelectorAll("button"))
+      .find((button) => button.textContent === "Stop Runs and Update Now") as HTMLButtonElement;
+
+    await act(async () => {
+      action.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(action.disabled).toBe(true);
+    expect(action.getAttribute("aria-busy")).toBe("true");
+    expect(action.querySelector(".animate-spin")).toBeTruthy();
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => resolveResponse());
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 });

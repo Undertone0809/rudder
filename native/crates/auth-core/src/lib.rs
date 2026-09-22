@@ -61,6 +61,8 @@ pub enum AuthError {
     ActionMismatch,
     #[error("request id does not match the request")]
     RequestIdMismatch,
+    #[error("idempotency key does not match the request")]
+    IdempotencyKeyMismatch,
     #[error("request body hash does not match the envelope")]
     BodyHashMismatch,
     #[error("envelope timestamp range is invalid")]
@@ -123,6 +125,8 @@ pub struct UnsignedActorEnvelope {
     pub body_sha256: String,
     pub request_id: String,
     pub nonce: String,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
     pub issued_at: u64,
     pub expires_at: u64,
 }
@@ -146,6 +150,7 @@ impl UnsignedActorEnvelope {
             body_sha256: self.body_sha256,
             request_id: self.request_id,
             nonce: self.nonce,
+            idempotency_key: self.idempotency_key,
             issued_at: self.issued_at,
             expires_at: self.expires_at,
             signature,
@@ -177,9 +182,20 @@ impl UnsignedActorEnvelope {
             &self.body_sha256,
             &self.request_id,
             &self.nonce,
+            self.idempotency_key.as_deref().unwrap_or_default(),
             self.issued_at,
             self.expires_at,
         )
+    }
+
+    /// Bind a mutation's idempotency key into the actor envelope signature.
+    pub fn with_idempotency_key(
+        mut self,
+        idempotency_key: impl Into<String>,
+    ) -> Result<Self, AuthError> {
+        self.idempotency_key = Some(idempotency_key.into());
+        self.validate()?;
+        Ok(self)
     }
 
     fn validate(&self) -> Result<(), AuthError> {
@@ -198,7 +214,11 @@ impl UnsignedActorEnvelope {
             &self.nonce,
             self.issued_at,
             self.expires_at,
-        )
+        )?;
+        if let Some(idempotency_key) = self.idempotency_key.as_deref() {
+            validate_text(idempotency_key, "idempotencyKey")?;
+        }
+        Ok(())
     }
 }
 
@@ -219,6 +239,8 @@ pub struct ActorEnvelope {
     pub body_sha256: String,
     pub request_id: String,
     pub nonce: String,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
     pub issued_at: u64,
     pub expires_at: u64,
     pub signature: String,
@@ -255,6 +277,7 @@ impl ActorEnvelope {
             body_sha256: body_sha256(body),
             request_id: request_id.into(),
             nonce: nonce.into(),
+            idempotency_key: None,
             issued_at,
             expires_at,
         };
@@ -345,6 +368,7 @@ impl ActorEnvelope {
             &self.body_sha256,
             &self.request_id,
             &self.nonce,
+            self.idempotency_key.as_deref().unwrap_or_default(),
             self.issued_at,
             self.expires_at,
         )
@@ -367,6 +391,9 @@ impl ActorEnvelope {
             self.issued_at,
             self.expires_at,
         )?;
+        if let Some(idempotency_key) = self.idempotency_key.as_deref() {
+            validate_text(idempotency_key, "idempotencyKey")?;
+        }
         if self.signature.is_empty() {
             return Err(AuthError::InvalidSignature);
         }
@@ -395,6 +422,9 @@ impl ActorEnvelope {
         validate_path(request.path)?;
         validate_text(request.action, "action")?;
         validate_text(request.request_id, "requestId")?;
+        if let Some(idempotency_key) = request.idempotency_key {
+            validate_text(idempotency_key, "idempotencyKey")?;
+        }
 
         if self.actor != *request.actor {
             return Err(AuthError::ActorMismatch);
@@ -422,6 +452,9 @@ impl ActorEnvelope {
         }
         if self.request_id != request.request_id {
             return Err(AuthError::RequestIdMismatch);
+        }
+        if self.idempotency_key.as_deref() != request.idempotency_key {
+            return Err(AuthError::IdempotencyKeyMismatch);
         }
         if self.body_sha256 != body_sha256(request.body) {
             return Err(AuthError::BodyHashMismatch);
@@ -486,6 +519,7 @@ pub struct RequestContext<'a> {
     pub action: &'a str,
     pub body: &'a [u8],
     pub request_id: &'a str,
+    pub idempotency_key: Option<&'a str>,
     pub now: u64,
 }
 
@@ -515,8 +549,16 @@ impl<'a> RequestContext<'a> {
             action,
             body,
             request_id,
+            idempotency_key: None,
             now,
         }
+    }
+
+    /// Attach the current HTTP idempotency header to the trusted request
+    /// context so it must match the signed mutation claim.
+    pub fn with_idempotency_key(mut self, idempotency_key: &'a str) -> Self {
+        self.idempotency_key = Some(idempotency_key);
+        self
     }
 }
 
@@ -761,6 +803,7 @@ fn canonical_signing_bytes(
     body_hash: &str,
     request_id: &str,
     nonce: &str,
+    idempotency_key: &str,
     issued_at: u64,
     expires_at: u64,
 ) -> Vec<u8> {
@@ -785,6 +828,10 @@ fn canonical_signing_bytes(
     for field in fields {
         output.extend_from_slice(&(field.len() as u64).to_be_bytes());
         output.extend_from_slice(field);
+    }
+    if !idempotency_key.is_empty() {
+        output.extend_from_slice(&(idempotency_key.len() as u64).to_be_bytes());
+        output.extend_from_slice(idempotency_key.as_bytes());
     }
     output.extend_from_slice(&auth_epoch.to_be_bytes());
     output.extend_from_slice(&issued_at.to_be_bytes());

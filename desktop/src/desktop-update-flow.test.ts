@@ -95,6 +95,15 @@ function createRunSummary(blockers: ReturnType<typeof createBlocker>[] = []) {
   return { totalRuns: blockers.length, blockers };
 }
 
+function emitUpdateReady(child: ReturnType<typeof createMockUpdateChild>) {
+  child.stdout.emit("data", `${JSON.stringify({
+    source: "rudder-desktop-update",
+    phase: "ready_to_install",
+    message: "Desktop update is downloaded and verified.",
+    percent: 100,
+  })}\n`);
+}
+
 function createFlow(overrides: Partial<Parameters<typeof createDesktopUpdateFlow>[0]> = {}) {
   const sentProgressEvents: unknown[] = [];
   const mainWindow = {
@@ -1160,6 +1169,7 @@ describe("desktop update flow", () => {
     await expect(flow.applyUpdate(installResult.updateId)).resolves.toMatchObject({
       status: "started",
     });
+    emitUpdateReady(child);
     const markerPath = path.join("/tmp/rudder-desktop-test", "post-update-reload.json");
     expect(fs.existsSync(markerPath)).toBe(true);
 
@@ -1178,6 +1188,7 @@ describe("desktop update flow", () => {
 
     const installResult = await flow.installUpdate("0.3.4");
     await flow.applyUpdate(installResult.updateId);
+    emitUpdateReady(child);
     const markerPath = path.join("/tmp/rudder-desktop-test", "post-update-reload.json");
     expect(fs.existsSync(markerPath)).toBe(true);
 
@@ -1267,6 +1278,35 @@ describe("desktop update flow", () => {
       phase: "ready_to_install",
       automaticApply: true,
     }));
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+  });
+
+  it("ignores a buffered ready event after the apply handoff has started", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow, sentProgressEvents } = createFlow();
+
+    await flow.installUpdate("0.3.5-canary.8");
+    const readyEvent = JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Desktop update is downloaded and verified.",
+      percent: 100,
+    });
+    child.stdout.emit("data", `${readyEvent}\n`);
+
+    await vi.waitFor(() => expect(child.stdin.write).toHaveBeenCalledWith("apply\n", expect.any(Function)));
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+    const eventCountAfterApply = sentProgressEvents.length;
+
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "ready_to_install",
+      message: "Late buffered ready event.",
+      percent: 100,
+    })}\n`);
+
+    expect(sentProgressEvents).toHaveLength(eventCountAfterApply);
     expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
@@ -1550,6 +1590,17 @@ describe("desktop update flow", () => {
     });
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
     expect(child.stdin.write).toHaveBeenCalledTimes(2);
+
+    const eventCountAfterForceApply = sentProgressEvents.length;
+    child.stdout.emit("data", `${JSON.stringify({
+      source: "rudder-desktop-update",
+      phase: "waiting_for_active_runs",
+      message: "Late buffered waiting event.",
+      totalRuns: 1,
+    })}\n`);
+
+    expect(sentProgressEvents).toHaveLength(eventCountAfterForceApply);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
   it("keeps retrying blocker identity when final-guard inspection fails", async () => {
@@ -1669,6 +1720,8 @@ describe("desktop update flow", () => {
       version: "0.3.5-canary.8",
     });
 
+    expect(child.stdin.write).not.toHaveBeenCalled();
+    emitUpdateReady(child);
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
   });
 
@@ -1712,7 +1765,7 @@ describe("desktop update flow", () => {
     expect(flow.getDesktopUpdateProgress()).not.toHaveProperty("blockers");
   });
 
-  it("force-applies immediately when the deferred update prompt chooses quit and update now", async () => {
+  it("queues the force decision until the child is listening for apply signals", async () => {
     const child = createMockUpdateChild();
     spawnMock.mockReturnValue(child);
     const { flow } = createFlow({
@@ -1728,8 +1781,55 @@ describe("desktop update flow", () => {
       version: "0.3.5-canary.8",
     });
 
+    expect(child.stdin.write).not.toHaveBeenCalled();
+    emitUpdateReady(child);
+    emitUpdateReady(child);
+    expect(child.stdin.write).toHaveBeenCalledTimes(1);
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
     expect(spawnMock.mock.calls[0]?.[1]).not.toContain("--wait-for-active-runs");
+  });
+
+  it("keeps force-apply progress from regressing while the child finishes preparing", async () => {
+    const child = createMockUpdateChild();
+    spawnMock.mockReturnValue(child);
+    const { flow, sentProgressEvents } = createFlow({
+      listRunningRunsForUpdate: vi.fn(async () => createRunSummary([
+        createBlocker("run-1"),
+      ])),
+      promptForDeferredUpdate: vi.fn(async () => "force"),
+    });
+
+    const installResult = await flow.installUpdate("0.3.5-canary.8");
+    expect(installResult).toMatchObject({ status: "started" });
+    expect(child.stdin.write).not.toHaveBeenCalled();
+    emitUpdateReady(child);
+    await vi.waitFor(() => expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" }));
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
+    const eventCountAfterApply = sentProgressEvents.length;
+
+    child.stdout.emit("data", [
+      JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "downloading_asset",
+        message: "Downloading the Desktop asset.",
+        percent: 42,
+      }),
+      JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "verifying_checksum",
+        message: "Verifying the Desktop checksum.",
+        percent: 100,
+      }),
+      JSON.stringify({
+        source: "rudder-desktop-update",
+        phase: "ready_to_install",
+        message: "Desktop update is downloaded and verified.",
+        percent: 100,
+      }),
+    ].join("\n") + "\n");
+
+    expect(sentProgressEvents).toHaveLength(eventCountAfterApply);
+    expect(flow.getDesktopUpdateProgress()).toMatchObject({ phase: "preparing_restart" });
   });
 
   it("forces native mode for a SAC-on Windows force update child", async () => {
@@ -1753,6 +1853,8 @@ describe("desktop update flow", () => {
       "--desktop-mode",
       "native",
     ]));
+    expect(child.stdin.write).not.toHaveBeenCalled();
+    emitUpdateReady(child);
     expect(child.stdin.write).toHaveBeenCalledWith("force-apply\n", expect.any(Function));
   });
 

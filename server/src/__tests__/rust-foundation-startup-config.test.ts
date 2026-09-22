@@ -12,6 +12,8 @@ describe("Rust member directory supported startup wiring", () => {
     expect(appCallEnd).toBeGreaterThan(appCallStart);
     expect(appCallSource).toContain("databaseUrl: activeDatabaseConnectionString");
     expect(appCallSource).toContain("rustFoundationMode: config.rustFoundationMode");
+    expect(appCallSource).toContain("rustOrganizationBrandingMode: config.rustOrganizationBrandingMode");
+    expect(appCallSource).toContain("rustProjectGoalSetMode: config.rustProjectGoalSetMode");
     expect(appCallSource).toContain("rustFoundationBinaryPath: config.rustFoundationBinaryPath");
     expect(appCallSource).toContain("rustFoundationActorEnvelopeKey: config.rustFoundationActorEnvelopeKey");
   });

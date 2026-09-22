@@ -1,0 +1,160 @@
+{
+  "schema": "rudder.rust-backend-completion.project-goal-real-entry-probe/v1",
+  "supersedes": "2026-09-22-rudder-project-goal-real-entry-probe-v1.json",
+  "scope": "Project-Goal complete goal-set replacement through the supported Node HTTP entry, private Actix bridge, SQLx transaction, first-party CLI, first-party MCP, create-with-goals compatibility, deletion fence, and restart replay",
+  "recorded_at": "2026-09-22T15:25:40+08:00",
+  "authorization": {
+    "target": "disposable local embedded PostgreSQL and local-trusted startup",
+    "production": false,
+    "traffic_switch": false,
+    "production_database": false,
+    "stable_publication": false,
+    "real_user_data": false
+  },
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "source_tree_sha": "f972acbfc4807b20c9a2eece1f5a3f4f0a4d3e39",
+    "dirty_candidate_tree_sha": "e458d7612b460de88725515a0efec0ae5f3500c3",
+    "origin_main_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "migration_base_sha": "c54001819ca38079b627994557db0a18ed278fc0",
+    "dirty_fingerprint": "a55d066044d1c0eb14097a2aa8ef6dee5ea48c09e0929c07afd0478c2f8cae5c",
+    "dirty_fingerprint_scope": "sorted current worktree diff and untracked source paths excluding doc/plans durable records, delivery packets, and artifacts",
+    "changed_paths": [
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/client/http.ts",
+      "cli/src/commands/client/project.ts",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/db/src/migrations/0169_project_goal_mutation_authority.sql",
+      "packages/db/src/schema/project_goal_mutations.ts",
+      "scripts/smoke/rust-project-goal-real-entry.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/routes/projects.ts",
+      "server/src/services/project-goal-mutation-fence.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts"
+    ]
+  },
+  "build_artifacts": {
+    "rudder_server_foundation_sha256": "49e5915d66749c942378b7bca5878151bfe33df6e94ccf1f06a2ddeda88f17b9",
+    "migration_preflight_sha256": "8bf7fc7fed4916d151b9f03b83b3f4a064e13c812a9e5505a3f8367922999665"
+  },
+  "runtime": {
+    "node": "v22.23.1",
+    "package_manager": "pnpm 9.15.4",
+    "rust": "rustc 1.93.0",
+    "cargo": "cargo 1.93.0",
+    "embedded_postgres": "18.1.0-beta.16",
+    "api_url": "http://127.0.0.1:64730",
+    "api_port": 64730,
+    "embedded_postgres_port": 64731,
+    "server_listener": "Node Express supported local-trusted listener; Actix is a private route-scoped child"
+  },
+  "data": {
+    "instance_id": "rust-project-goal-real-entry-2686",
+    "organization_id": "e4d43fa7-805b-4337-b034-33aa1c6933cc",
+    "other_organization_id": "ee7fb2cd-5110-4593-a234-95a7b0b0afee",
+    "project_id": "889789e8-8b36-4f02-92df-afad0fbbb300",
+    "tooling_project_id": "defdf386-aab7-48ca-8701-e98bb35889f7",
+    "create_with_goals_project_id": "1da2e282-4ca8-432a-8f5e-a51237715cbb",
+    "goal_ids": [
+      "c63a49c9-8e9b-4d5e-912d-304273af24bc",
+      "4f2e0e1d-e014-4c8a-ae4e-1a90976355ab"
+    ],
+    "agent_id": "93efc852-1e25-4fe5-9aed-0080d1a00e69",
+    "lifecycle": "temporary organization, projects, goals, agent, API key, embedded database, and server were disposed after the probe"
+  },
+  "migration": {
+    "first_start": "bootstrap",
+    "restart": "current",
+    "journal_entries": 170,
+    "sql_files": 172,
+    "legacy_unjournaled_sql_files": [
+      "0055_illegal_sheva_callister.sql",
+      "0128_modern_jetstream.sql"
+    ],
+    "manifest_fingerprint": "ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812",
+    "latest_authority": "Node still applies migrations; Rust preflight is real-entry supporting evidence, not migration-authority retirement"
+  },
+  "checks": {
+    "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+    "health": "HTTP 200; status=ok",
+    "node_http_create": "organization, two goals, two projects, create-with-goals project, agent, and agent API key created through the supported HTTP API",
+    "create_with_goals": "HTTP 201; project_goal_mutation_state owner=rust, version=0, epoch=1; project_goals and projects.goal_id read back consistently",
+    "cli": {
+      "command": "project update <project> --goal-ids <goalA>,<goalB> --idempotency-key <key> --json --full-ids",
+      "exit_code": 0,
+      "terminal_effect": "tooling project goalIds read back as [goalA, goalB]"
+    },
+    "mcp": {
+      "transport": "stdio JSON-RPC tools/call",
+      "tool": "rudder_project_update",
+      "exit_code": 0,
+      "terminal_effect": "tooling project goalIds read back as []",
+      "missing_legacy_binary": "RUDDER_MCP_RUDDER_BIN pointed at a missing path; MCP completed through direct HTTP dispatch with no Node CLI fallback"
+    },
+    "http_rust_required": {
+      "route": "PATCH /api/projects/:id",
+      "mode": "RUDDER_RUST_PROJECT_GOAL_SET_MODE=required",
+      "status": 200,
+      "terminal_effect": "complete goal set [goalA, goalB] atomically replaced and primary projection set to goalA"
+    },
+    "database_readback": {
+      "owner": "rust",
+      "first_mutation_version": "1",
+      "first_fence_epoch": "1",
+      "project_primary_goal": "goalA",
+      "project_goal_links": "[goalA, goalB]",
+      "receipt": "project_goal_set_replacement/applied",
+      "activity": "one project.updated row",
+      "outbox": "one pending or published row"
+    },
+    "deletion_fence": {
+      "route": "DELETE /api/orgs/:orgId",
+      "status": 409,
+      "reason": "Rust-owned Project-Goal rows fail closed against organization deletion; Rust Project delete command is not yet implemented"
+    },
+    "negative_cases": {
+      "same_key_replay": "HTTP 200; one receipt, one activity, one outbox row",
+      "same_key_different_payload": "HTTP 409 mutation_idempotency_conflict",
+      "cross_organization_goal": "HTTP 422 project_goal_set_invalid; mutation version unchanged",
+      "empty_goal_set": "HTTP 200; primary projection null and links empty",
+      "mixed_project_and_goal_update": "HTTP 409; required mode demands separate requests",
+      "missing_rust_binary": "bridge tests return binary_unavailable for a missing or non-executable explicit path"
+    },
+    "restart_recovery": {
+      "action": "stop and dispose server, restart against the same embedded PostgreSQL data, replay empty-set idempotency key",
+      "status": 200,
+      "final_readback": "primary project receipts=4, activities=2, links=0, mutation_version=2; tooling project receipts=2, activities=2, links=0"
+    },
+    "supporting_checks": {
+      "vitest": "5 files / 131 tests PASS",
+      "d1_postgres": "25/25 PASS",
+      "actix_black_box": "10/10 PASS",
+      "project_goal_core": "33/33 PASS",
+      "typechecks": "server, CLI, DB, agent-runtime-utils PASS",
+      "contract_format_diff": "MCP contract, cargo fmt, git diff check PASS"
+    }
+  },
+  "claims": {
+    "project_goal_real_entry_connected": true,
+    "project_goal_default_path_verified": false,
+    "project_goal_old_authority_retired": false,
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "limits": [
+    "local disposable evidence only; no production credentials, traffic, database, or stable release was used",
+    "Node remains the supported HTTP listener and migration authority",
+    "the signed bridge is a transitional private bridge; full Rust identity/session authority is later work",
+    "unfenced Goal route/issue projection, worktree merge, Project delete, and other legacy writer families still block D1 owner activation",
+    "outbox row creation is verified; publisher crash/retry and consumer dedupe are not yet independently verified",
+    "independent stage review, exact-candidate product verifier PASS, and final reviewer accept are not yet recorded"
+  ],
+  "command": "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts"
+}

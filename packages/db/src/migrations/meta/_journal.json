@@ -1177,6 +1177,20 @@
       "when": 1790035200000,
       "tag": "0167_organization_mutation_fence_token",
       "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1790037019000,
+      "tag": "0168_organization_branding_mutation_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1790052409000,
+      "tag": "0169_project_goal_mutation_authority",
+      "breakpoints": true
     }
   ]
 }

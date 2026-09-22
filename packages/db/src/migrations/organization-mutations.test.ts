@@ -134,6 +134,10 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
       await db`SELECT owner, mutation_version::text, fence_epoch::text
         FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
     ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_branding_mutation_state WHERE org_id = ${originalOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
     await db`UPDATE organizations SET name = 'Node still writes' WHERE id = ${originalOrg}`;
     const org = await organization();
     const [row] =
@@ -159,6 +163,69 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     expect(state.fence_token).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_branding_mutation_state WHERE org_id = ${id}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+  });
+
+  it("keeps scalar branding ownership monotonic across handoff epochs", async () => {
+    const org = await organization();
+    await expect(
+      db`UPDATE organization_branding_mutation_state SET owner = 'rust' WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await db`UPDATE organization_branding_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
+    await db`UPDATE organization_branding_mutation_state
+      SET mutation_version = 2 WHERE org_id = ${org}`;
+    await expect(
+      db`UPDATE organization_branding_mutation_state
+        SET mutation_version = 1 WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_branding_mutation_state
+        SET fence_token = gen_random_uuid() WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_branding_mutation_state
+        SET fence_epoch = 2 WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await db`UPDATE organization_branding_mutation_state
+      SET fence_epoch = 2, fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
+  });
+
+  it("keeps branding receipts and live-event outbox rows bound to one activity", async () => {
+    const org = await organization();
+    const audit = await activity(org);
+    const result = { organization_id: org, version: 1, fence_epoch: 0 };
+    await db.unsafe(
+      `INSERT INTO organization_branding_mutation_receipts
+        (org_id, idempotency_key, command_fingerprint, outcome, resulting_version,
+         fence_epoch, activity_id, result)
+       VALUES ($1, 'branding-receipt', $2, 'applied', 1, 0, $3, $4::jsonb)`,
+      [org, "a".repeat(64), audit, JSON.stringify(result)],
+    );
+    await db.unsafe(
+      `INSERT INTO organization_mutation_outbox
+        (org_id, activity_id, event_type, payload)
+       VALUES ($1, $2, 'activity.logged', $3::jsonb)`,
+      [org, audit, JSON.stringify({ action: "organization.branding_updated" })],
+    );
+    expect(
+      await db`SELECT idempotency_key, resulting_version::text
+        FROM organization_branding_mutation_receipts WHERE org_id = ${org}`,
+    ).toEqual([{ idempotency_key: "branding-receipt", resulting_version: "1" }]);
+    expect(
+      await db`SELECT event_type, state, attempts
+        FROM organization_mutation_outbox WHERE org_id = ${org}`,
+    ).toEqual([{ event_type: "activity.logged", state: "pending", attempts: 0 }]);
+    await expect(
+      db`INSERT INTO organization_mutation_outbox
+        (org_id, activity_id, event_type, payload)
+        VALUES (${org}, ${randomUUID()}, 'activity.logged', '{}'::jsonb)`,
+    ).rejects.toMatchObject({ code: "23503" });
   });
 
   it("serializes a Node business transaction before a Rust ownership handoff", async () => {
@@ -266,8 +333,31 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
 
   it("preserves the old activity-first organization deletion transaction", async () => {
     const org = await organization();
-    await receipt(db, org, await activity(org));
+    const audit = await activity(org);
+    await receipt(db, org, audit);
+    await db.unsafe(
+      `INSERT INTO organization_branding_mutation_receipts
+        (org_id, idempotency_key, command_fingerprint, outcome, resulting_version,
+         fence_epoch, activity_id, result)
+       VALUES ($1, 'branding-delete', $2, 'applied', 1, 0, $3, $4::jsonb)`,
+      [
+        org,
+        "b".repeat(64),
+        audit,
+        JSON.stringify({ organization_id: org, version: 1, fence_epoch: 0 }),
+      ],
+    );
+    await db.unsafe(
+      `INSERT INTO organization_mutation_outbox
+        (org_id, activity_id, event_type, payload)
+       VALUES ($1, $2, 'activity.logged', '{}'::jsonb)`,
+      [org, audit],
+    );
     await db.begin(async (tx) => {
+      // The supported delete path removes activity before the organization.
+      // Organization-owned receipts and outbox rows cascade after the parent
+      // disappears, preserving the immutable-receipt guard while the deferred
+      // activity foreign keys remain valid until commit.
       await tx.unsafe("DELETE FROM activity_log WHERE org_id = $1", [org]);
       await tx.unsafe("DELETE FROM organizations WHERE id = $1", [org]);
     });
@@ -276,6 +366,9 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     ).toHaveLength(0);
     expect(
       await db`SELECT * FROM organization_mutation_state WHERE org_id = ${org}`,
+    ).toHaveLength(0);
+    expect(
+      await db`SELECT * FROM organization_branding_mutation_state WHERE org_id = ${org}`,
     ).toHaveLength(0);
   });
 

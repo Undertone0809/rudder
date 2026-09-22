@@ -4,7 +4,6 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, rmSync } from "node:fs";
 import path from "node:path";
-import { DESKTOP_CLI_FLAG } from "./cli-link.js";
 import {
   attachAutomaticPreparationChild,
   beginAutomaticPreparation,
@@ -42,6 +41,7 @@ import {
   type DesktopUpdateHelperRequest,
   type HelperAttestation,
 } from "./desktop-update-helper.js";
+import { resolveDesktopUpdateChildLaunch } from "./desktop-update-launch.js";
 import {
   clearPostUpdateReloadMarker,
   writePostUpdateReloadMarker,
@@ -59,45 +59,9 @@ import {
 } from "./update-check.js";
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
+export { DESKTOP_UPDATE_FORCE_ARG, DESKTOP_UPDATE_QUIT_ARG, resolveDesktopUpdateChildLaunch } from "./desktop-update-launch.js";
 export { DESKTOP_FEEDBACK_EMAIL };
-export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
-export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
-
-export function resolveDesktopUpdateChildLaunch(options: {
-  cliArgs: string[];
-  childEnv: NodeJS.ProcessEnv;
-  execPath?: string;
-  resourcesPath?: string;
-  platform?: NodeJS.Platform;
-}): {
-  command: string;
-  args: string[];
-  env: NodeJS.ProcessEnv;
-} {
-  const command = options.execPath ?? process.execPath;
-  if ((options.platform ?? process.platform) !== "darwin") {
-    return {
-      command,
-      args: [DESKTOP_CLI_FLAG, ...options.cliArgs],
-      env: options.childEnv,
-    };
-  }
-  const resourcesPathModule = path.posix;
-  const resourcesPath = options.resourcesPath
-    ?? resourcesPathModule.resolve(resourcesPathModule.dirname(command), "..", "Resources");
-  return {
-    command,
-    args: [
-      resourcesPathModule.join(resourcesPath, "server-package", "desktop-cli-runner.js"),
-      ...options.cliArgs,
-    ],
-    env: {
-      ...options.childEnv,
-      ELECTRON_RUN_AS_NODE: "1",
-    },
-  };
-}
 
 type DesktopUpdateBlocker = {
   runId: string;
@@ -164,6 +128,8 @@ export function createDesktopUpdateFlow(context: {
     stdin: NodeJS.WritableStream | null;
     blockers: DesktopUpdateBlocker[];
     automaticApply: boolean;
+    readyToInstall: boolean;
+    pendingApplyForce: boolean | null;
     applyStarted: boolean;
     finalGuardWaiting: boolean;
     forceEscalated: boolean;
@@ -882,6 +848,14 @@ export function createDesktopUpdateFlow(context: {
     at: string;
   };
 
+  const POST_APPLY_PROGRESS_PHASES = new Set<DesktopUpdateProgressPhase>([
+    "waiting_for_active_runs",
+    "preparing_restart",
+    "closing",
+    "complete",
+    "failed",
+  ]);
+
   type DesktopUpdateApplyOptions = {
     force?: boolean;
   };
@@ -1464,6 +1438,8 @@ export function createDesktopUpdateFlow(context: {
         stdin: child.stdin,
         blockers: activeRuns.blockers,
         automaticApply: !forceWhenApplying,
+        readyToInstall: false,
+        pendingApplyForce: forceWhenApplying ? true : null,
         applyStarted: false,
         finalGuardWaiting: false,
         forceEscalated: false,
@@ -1486,7 +1462,32 @@ export function createDesktopUpdateFlow(context: {
           const event = parseDesktopUpdateProgressLine(updateId, normalizedVersion, line.trim());
           if (event) {
             const session = activeDesktopUpdates.get(updateId);
-            if (event.phase === "ready_to_install" && session && !session.applyStarted) {
+            if (
+              session
+              && (session.applyStarted || session.forceEscalated)
+              && (
+                !POST_APPLY_PROGRESS_PHASES.has(event.phase)
+                || (session.forceEscalated && event.phase === "waiting_for_active_runs")
+              )
+            ) {
+              // The update child can flush progress that was emitted before the
+              // apply signal. Once the handoff starts, those events must not
+              // move the renderer back to a download or actionable state. A
+              // waiting event is also stale after force-apply has been sent.
+              continue;
+            }
+            if (event.phase === "ready_to_install" && session) {
+              // The updater can flush a buffered ready event after the apply
+              // signal has already advanced the handoff. Never let that stale
+              // event move the renderer back to an actionable state.
+              if (session.applyStarted || session.forceEscalated) continue;
+              session.readyToInstall = true;
+              if (session.pendingApplyForce !== null) {
+                // Earlier CLI startup can consume stdin. Send the queued force
+                // decision only once its apply-signal listener reports ready.
+                void applyUpdate(updateId, { force: session.pendingApplyForce });
+                continue;
+              }
               publishDesktopUpdateProgress({
                 ...event,
                 automaticApply: session.automaticApply,
@@ -1574,13 +1575,6 @@ export function createDesktopUpdateFlow(context: {
       });
       child.unref();
       if (forceWhenApplying) {
-        const applyResult = await applyUpdate(updateId, { force: true });
-        if (applyResult.status === "failed") {
-          return {
-            status: "failed",
-            message: applyResult.message,
-          };
-        }
         return { status: "started", version: normalizedVersion, updateId };
       }
       if (waitForActiveRuns) {
@@ -1637,6 +1631,11 @@ export function createDesktopUpdateFlow(context: {
         updateId: normalizedUpdateId,
         version: session.version,
       };
+    }
+
+    if (!session.readyToInstall) {
+      session.pendingApplyForce = session.pendingApplyForce === true || options.force === true;
+      return { status: "started", updateId: normalizedUpdateId, version: session.version };
     }
 
     try {

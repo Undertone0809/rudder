@@ -87,6 +87,11 @@ export { messengerCustomGroupEntries, messengerCustomGroups } from "./messenger_
 export { messengerSavedViewMutations, messengerSavedViews } from "./messenger_saved_views.js";
 export { messengerThreadUserStates } from "./messenger_thread_user_states.js";
 export { operatorProfiles } from "./operator_profiles.js";
+export {
+  organizationBrandingMutationReceipts,
+  organizationBrandingMutationState,
+  organizationMutationOutbox
+} from "./organization_branding_mutations.js";
 export { organizationIntelligenceProfiles } from "./organization_intelligence_profiles.js";
 export { organizationIssuePrefixAliases } from "./organization_issue_prefix_aliases.js";
 export { organizationLogos } from "./organization_logos.js";
@@ -121,6 +126,7 @@ export { productAnalyticsOutbox } from "./product_analytics_outbox.js";
 export { productAnalyticsWorkCycleRevisions } from "./product_analytics_work_cycle_revisions.js";
 export { productAnalyticsWorkCycles } from "./product_analytics_work_cycles.js";
 export { projectGoals } from "./project_goals.js";
+export { projectGoalMutationState } from "./project_goal_mutations.js";
 export { projectResourceAttachments } from "./project_resource_attachments.js";
 export { projectWorkspaces } from "./project_workspaces.js";
 export { projects } from "./projects.js";

@@ -20,6 +20,10 @@ type DesktopUpdateRunSummary = ActiveRunSummary & { blockers: DesktopUpdateBlock
 type DesktopApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const QUIT_RUN_CANCEL_TIMEOUT_MS = 5_000;
+// Reply before the updater's 8s deadline, including cancellation and settlement.
+const UPDATE_QUIT_INSPECTION_TIMEOUT_MS = 7_000;
+const QUIT_RUN_SETTLE_TIMEOUT_MS = 5_000;
+const QUIT_RUN_SETTLE_POLL_INTERVAL_MS = 200;
 const SAFE_API_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function createDesktopQuitFlow(context: {
@@ -38,6 +42,9 @@ export function createDesktopQuitFlow(context: {
   isSystemShutdown?: () => boolean;
   stopLocalRudder: () => Promise<void>;
   destroyResidentTray: () => void;
+  quitRunSettleTimeoutMs?: number;
+  quitRunSettlePollIntervalMs?: number;
+  updateQuitInspectionTimeoutMs?: number;
 }) {
   let quitInFlight: Promise<void> | null = null;
   let quitRequested = false;
@@ -79,7 +86,7 @@ export function createDesktopQuitFlow(context: {
     return response.json() as Promise<T>;
   }
 
-  async function listActiveRunsForQuit(): Promise<ActiveRunSummary> {
+  async function listActiveRunsForQuit(signal?: AbortSignal): Promise<ActiveRunSummary> {
     if (!context.getServerHandle()) {
       return {
         totalRuns: 0,
@@ -87,10 +94,11 @@ export function createDesktopQuitFlow(context: {
       };
     }
 
-    const organizations = await desktopApiRequest<DesktopOrganization[]>("/orgs");
+    const organizations = await desktopApiRequest<DesktopOrganization[]>("/orgs", { signal });
     const summaries = await Promise.all(organizations.map(async (organization) => {
       const runs = await desktopApiRequest<DesktopLiveRun[]>(
         `/orgs/${encodeURIComponent(organization.id)}/live-runs`,
+        { signal },
       );
       return {
         id: organization.id,
@@ -106,11 +114,11 @@ export function createDesktopQuitFlow(context: {
     };
   }
 
-  async function listRunningRunsForUpdate(): Promise<DesktopUpdateRunSummary> {
+  async function listRunningRunsForUpdate(signal?: AbortSignal): Promise<DesktopUpdateRunSummary> {
     if (!context.getServerHandle()) {
       throw new Error("Local Rudder runtime is not ready for update blocker inspection");
     }
-    const activeRuns = await listActiveRunsForQuit();
+    const activeRuns = await listActiveRunsForQuit(signal);
     const organizations = activeRuns.organizations.flatMap((organization) => {
       const runs = organization.runs.filter((run) => run.status === "running");
       return runs.length > 0 ? [{ ...organization, runs }] : [];
@@ -249,6 +257,23 @@ export function createDesktopQuitFlow(context: {
       );
       throw new Error(`Could not cancel ${failed.length}/${runIds.length} active run${runIds.length === 1 ? "" : "s"} before quitting.`);
     }
+  }
+
+  async function waitForActiveRunsToSettle(initial: DesktopUpdateRunSummary, signal?: AbortSignal): Promise<DesktopUpdateRunSummary> {
+    let activeRuns = initial;
+    const timeoutMs = Math.max(0, context.quitRunSettleTimeoutMs ?? QUIT_RUN_SETTLE_TIMEOUT_MS);
+    const pollIntervalMs = Math.max(1, context.quitRunSettlePollIntervalMs ?? QUIT_RUN_SETTLE_POLL_INTERVAL_MS);
+    const deadline = Date.now() + timeoutMs;
+
+    while (activeRuns.totalRuns > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())));
+      });
+      signal?.throwIfAborted();
+      activeRuns = await listRunningRunsForUpdate(signal);
+    }
+
+    return activeRuns;
   }
 
   function isThreadStreamWorkerExitError(error: unknown): boolean {
@@ -434,10 +459,31 @@ export function createDesktopQuitFlow(context: {
   }
 
   async function handleUpdateQuitRequest(responsePath: string, options: { force?: boolean } = {}): Promise<void> {
+    const controller = new AbortController();
+    let inspectionTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       let activeRuns: DesktopUpdateRunSummary = { totalRuns: 0, organizations: [], blockers: [] };
       try {
-        activeRuns = await listRunningRunsForUpdate();
+        const inspect = async () => {
+          let summary = await listRunningRunsForUpdate(controller.signal);
+          controller.signal.throwIfAborted();
+          if (summary.totalRuns > 0 && options.force) {
+            await cancelActiveRunsBeforeQuit(summary);
+            controller.signal.throwIfAborted();
+            summary = await waitForActiveRunsToSettle(summary, controller.signal);
+          }
+          return summary;
+        };
+        activeRuns = await Promise.race([
+          inspect(),
+          new Promise<never>((_, reject) => {
+            inspectionTimer = setTimeout(() => {
+              controller.abort();
+              reject(new Error("Timed out waiting for running work to stop. Please retry the update."));
+            }, context.updateQuitInspectionTimeoutMs ?? UPDATE_QUIT_INSPECTION_TIMEOUT_MS);
+          }),
+        ]);
+        clearTimeout(inspectionTimer);
       } catch (error) {
         console.warn("[rudder-desktop] failed to inspect running runs for update quit", error);
         writeUpdateQuitResponse(responsePath, {
@@ -446,11 +492,6 @@ export function createDesktopQuitFlow(context: {
           message: `Could not inspect running runs before update quit: ${error instanceof Error ? error.message : String(error)}`,
         });
         return;
-      }
-
-      if (activeRuns.totalRuns > 0 && options.force) {
-        await cancelActiveRunsBeforeQuit(activeRuns);
-        activeRuns = await listRunningRunsForUpdate();
       }
 
       if (activeRuns.totalRuns > 0) {
@@ -471,6 +512,8 @@ export function createDesktopQuitFlow(context: {
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      clearTimeout(inspectionTimer);
     }
   }
 

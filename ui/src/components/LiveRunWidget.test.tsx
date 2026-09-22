@@ -139,6 +139,8 @@ describe("LiveRunWidget", () => {
 
     expect(stopButton.textContent).toContain("Stopping");
     expect(stopButton.disabled).toBe(true);
+    expect(stopButton.getAttribute("aria-busy")).toBe("true");
+    expect(stopButton.querySelector(".animate-spin")).toBeTruthy();
 
     await act(async () => resolveCancel());
 

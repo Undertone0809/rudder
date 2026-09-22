@@ -15,6 +15,11 @@ import { logger } from "../middleware/logger.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";
 import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { llmRoutes } from "../routes/llms.js";
+import { handoffOrganizationBrandingAuthorityInTransaction } from "../services/organization-branding-fence.js";
+import {
+  configuredProjectGoalMutationProjectIds,
+  handoffProjectGoalMutationAuthorityInTransaction,
+} from "../services/project-goal-mutation-fence.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
 import { createRustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { workspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
@@ -48,6 +53,8 @@ export async function createHttpApp(
   const rustFoundationBridge = createRustFoundationBridge({
     databaseUrl: opts.databaseUrl ?? "",
     mode: opts.rustFoundationMode,
+    organizationBrandingMode: opts.rustOrganizationBrandingMode,
+    projectGoalSetMode: opts.rustProjectGoalSetMode,
     binaryPath: opts.rustFoundationBinaryPath,
     actorEnvelopeKey: opts.rustFoundationActorEnvelopeKey,
   });
@@ -79,7 +86,7 @@ export async function createHttpApp(
     }
     throw startupError;
   };
-  if (rustFoundationBridge.mode === "required") {
+  if (rustFoundationBridge.requiresStartup) {
     try {
       await rustFoundationBridge.start();
     } catch (error) {
@@ -237,6 +244,23 @@ export async function createHttpApp(
 
   try {
     app.use(errorHandler);
+    if (rustFoundationBridge.requiresStartup) {
+      // Keep ownership changes in one transaction after all other app startup
+      // work has succeeded. Re-running required startup is idempotent for
+      // already Rust-owned rows, and a failed handoff cannot leave a partial
+      // organization/component ownership transfer behind.
+      await db.transaction(async (tx) => {
+        if (rustFoundationBridge.organizationBrandingMode === "required") {
+          await handoffOrganizationBrandingAuthorityInTransaction(tx);
+        }
+        if (rustFoundationBridge.projectGoalSetMode === "required") {
+          await handoffProjectGoalMutationAuthorityInTransaction(
+            tx,
+            configuredProjectGoalMutationProjectIds(),
+          );
+        }
+      });
+    }
     return { app, close };
   } catch (error) {
     return rollbackStartup(error);

@@ -150,6 +150,59 @@
     },
     {
       "api": {
+        "method": "PATCH",
+        "pathTemplate": "/api/orgs/{orgId}/branding",
+        "transport": "direct"
+      },
+      "cli": {
+        "attachesRunIdWhenAvailable": true,
+        "category": "organization",
+        "command": "rudder org brand-color update --org-id <id> --brand-color <hex> --idempotency-key <key>",
+        "contract": "agent-v1",
+        "description": "Update the authenticated organization's brand color.",
+        "id": "organization.brand_color.update",
+        "mutating": true,
+        "requiresAgentId": false,
+        "requiresOrgId": true,
+        "requiresRunId": false
+      },
+      "id": "organization.brand_color.update",
+      "mcp": {
+        "annotations": {
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "readOnlyHint": false,
+          "title": "Update the authenticated organization's brand color"
+        },
+        "capabilityId": "organization.brand_color.update",
+        "description": "Update the authenticated organization's brand color. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "brandColor": {
+              "description": "Hex brand color, for example #123456.",
+              "maxLength": 7,
+              "minLength": 7,
+              "type": "string"
+            },
+            "idempotencyKey": {
+              "description": "Required stable key for safe replay.",
+              "maxLength": 255,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "brandColor",
+            "idempotencyKey"
+          ],
+          "type": "object"
+        },
+        "name": "rudder_organization_brand_color_update"
+      }
+    },
+    {
+      "api": {
         "transport": "cli-fallback"
       },
       "cli": {
@@ -2367,12 +2420,14 @@
     },
     {
       "api": {
-        "transport": "cli-fallback"
+        "method": "PATCH",
+        "pathTemplate": "/api/projects/{project}",
+        "transport": "direct"
       },
       "cli": {
         "attachesRunIdWhenAvailable": true,
         "category": "project",
-        "command": "rudder project update <project-id-or-shortname> [--org-id <id>]",
+        "command": "rudder project update <project-id-or-shortname> [--org-id <id>] [--idempotency-key <key>]",
         "contract": "agent-v1",
         "description": "Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt.",
         "id": "project.update",
@@ -2428,6 +2483,12 @@
               },
               "maxItems": 100,
               "type": "array"
+            },
+            "idempotencyKey": {
+              "description": "Stable key for safe Project-Goal replacement retry.",
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
             },
             "leadAgentId": {
               "description": "Lead agent id or reference.",

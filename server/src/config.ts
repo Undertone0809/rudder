@@ -111,6 +111,8 @@ export interface Config {
   databaseMode: DatabaseMode;
   databaseUrl: string | undefined;
   rustFoundationMode: RustFoundationMode;
+  rustOrganizationBrandingMode: RustFoundationMode;
+  rustProjectGoalSetMode: RustFoundationMode;
   rustFoundationBinaryPath: string | undefined;
   rustFoundationActorEnvelopeKey: string | undefined;
   embeddedPostgresDataDir: string;
@@ -359,6 +361,8 @@ export function loadConfig(): Config {
         ? Math.max(0, heartbeatRunInactivityTimeoutMsRaw)
         : 0;
   const rustFoundationMode = parseRustFoundationMode(process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE);
+  const rustOrganizationBrandingMode = parseRustFoundationMode(process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE);
+  const rustProjectGoalSetMode = parseRustFoundationMode(process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE);
   const rustFoundationBinaryPath = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim() || undefined;
   const rustFoundationActorEnvelopeKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim() || undefined;
   const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);
@@ -376,6 +380,8 @@ export function loadConfig(): Config {
     databaseMode: fileDatabaseMode,
     databaseUrl: process.env.DATABASE_URL ?? fileDbUrl,
     rustFoundationMode,
+    rustOrganizationBrandingMode,
+    rustProjectGoalSetMode,
     rustFoundationBinaryPath,
     rustFoundationActorEnvelopeKey,
     embeddedPostgresDataDir: resolveHomeAwarePath(

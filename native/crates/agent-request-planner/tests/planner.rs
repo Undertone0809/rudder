@@ -175,7 +175,7 @@ fn every_contract_direct_descriptor_has_a_complete_representative_plan() {
         .collect();
     assert_eq!(
         direct.len(),
-        49,
+        50,
         "new direct descriptors require parity coverage"
     );
     let managed_runtime = runtime(true);
@@ -412,6 +412,24 @@ fn representative_core_routes_queries_and_bodies_match_contract() {
         ],
         None,
     );
+    let PlanOutcome::Direct(branding) = plan_request(
+        "organization.brand_color.update",
+        json!({"brandColor": "#123456", "idempotencyKey": "branding-1"}),
+        &managed,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(branding.method, HttpMethod::Patch);
+    assert_eq!(branding.path, "/api/orgs/org%20%2F%E9%9B%AA/branding");
+    assert_eq!(
+        branding.headers,
+        vec![
+            ("x-rudder-idempotency-key".into(), "branding-1".into()),
+            ("x-rudder-required-authority".into(), "rust".into()),
+        ]
+    );
+    assert_eq!(branding.body, Some(json!({"brandColor": "#123456"})));
     assert_direct_shape(
         "goal.list",
         json!({

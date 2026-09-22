@@ -264,6 +264,8 @@ struct ProjectGoalSetRequest {
     goal_ids: Vec<String>,
     #[serde(default, alias = "primaryGoalAfter")]
     primary_goal_id: Option<String>,
+    #[serde(default)]
+    run_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1092,6 +1094,7 @@ impl AppState {
         request: &HttpRequest,
         org_id: &str,
         action: &str,
+        idempotency_key: Option<&str>,
         body: &[u8],
     ) -> Result<VerifiedActor, ActorEnvelopeVerificationError> {
         // The trusted Node bridge authorizes actor/org access before signing.
@@ -1133,6 +1136,10 @@ impl AppState {
             request_id,
             unix_time_seconds(),
         );
+        let context = match idempotency_key {
+            Some(key) => context.with_idempotency_key(key),
+            None => context,
+        };
         let mut replay = self
             .actor_envelope_replay
             .lock()
@@ -1148,7 +1155,7 @@ impl AppState {
         org_id: &str,
         body: &[u8],
     ) -> Result<(), ActorEnvelopeVerificationError> {
-        self.verify_actor_envelope(request, org_id, MEMBER_DIRECTORY_ACTION, body)
+        self.verify_actor_envelope(request, org_id, MEMBER_DIRECTORY_ACTION, None, body)
             .map(|_| ())
     }
 
@@ -1298,19 +1305,6 @@ impl AppState {
         org_id: &str,
         body: &[u8],
     ) -> HttpResponse {
-        let actor =
-            match self.verify_actor_envelope(request, org_id, ORGANIZATION_BRANDING_ACTION, body) {
-                Ok(actor) => actor,
-                Err(ActorEnvelopeVerificationError::Unconfigured) => {
-                    return self.json_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "actor_envelope_unconfigured",
-                    );
-                }
-                Err(ActorEnvelopeVerificationError::Invalid) => {
-                    return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
-                }
-            };
         let Some(idempotency_key) = request
             .headers()
             .get(IDEMPOTENCY_KEY_HEADER)
@@ -1320,15 +1314,43 @@ impl AppState {
         else {
             return self.json_error(StatusCode::BAD_REQUEST, "idempotency_key_required");
         };
+        let actor = match self.verify_actor_envelope(
+            request,
+            org_id,
+            ORGANIZATION_BRANDING_ACTION,
+            Some(idempotency_key),
+            body,
+        ) {
+            Ok(actor) => actor,
+            Err(ActorEnvelopeVerificationError::Unconfigured) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "actor_envelope_unconfigured",
+                );
+            }
+            Err(ActorEnvelopeVerificationError::Invalid) => {
+                return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+            }
+        };
         let patch = match serde_json::from_slice::<OrganizationBrandingPatch>(body) {
             Ok(patch) => patch,
             Err(_) => return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "branding_invalid"),
         };
+        if patch.name.is_some()
+            || patch.description.is_some()
+            || patch.logo_asset_id.is_some()
+            || patch.brand_color.is_none()
+        {
+            return self.json_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "branding_scalar_brand_color_required",
+            );
+        }
         let Some(store) = self.d1_mutations.as_ref() else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
         let scope = match store
-            .organization_scope_for_idempotency(org_id, idempotency_key)
+            .organization_branding_scope_for_idempotency(org_id, idempotency_key)
             .await
         {
             Ok(scope) => scope,
@@ -1375,8 +1397,22 @@ impl AppState {
         project_id: &str,
         body: &[u8],
     ) -> HttpResponse {
-        let actor = match self.verify_actor_envelope(request, org_id, PROJECT_GOAL_SET_ACTION, body)
-        {
+        let Some(idempotency_key) = request
+            .headers()
+            .get(IDEMPOTENCY_KEY_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return self.json_error(StatusCode::BAD_REQUEST, "idempotency_key_required");
+        };
+        let actor = match self.verify_actor_envelope(
+            request,
+            org_id,
+            PROJECT_GOAL_SET_ACTION,
+            Some(idempotency_key),
+            body,
+        ) {
             Ok(actor) => actor,
             Err(ActorEnvelopeVerificationError::Unconfigured) => {
                 return self.json_error(
@@ -1387,15 +1423,6 @@ impl AppState {
             Err(ActorEnvelopeVerificationError::Invalid) => {
                 return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
             }
-        };
-        let Some(idempotency_key) = request
-            .headers()
-            .get(IDEMPOTENCY_KEY_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return self.json_error(StatusCode::BAD_REQUEST, "idempotency_key_required");
         };
         let input = match serde_json::from_slice::<ProjectGoalSetRequest>(body) {
             Ok(input) => input,
@@ -1476,12 +1503,54 @@ impl AppState {
                     .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
             }
         };
+        let run_id = if let Some(run_id) = input.run_id.as_deref() {
+            let valid = if actor.actor().kind == "agent" {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM heartbeat_runs
+                       WHERE id=$1::uuid AND org_id=$2::uuid AND agent_id=$3::uuid
+                     )",
+                )
+                .bind(run_id)
+                .bind(org_id)
+                .bind(&actor.actor().id)
+                .fetch_one(pool)
+                .await
+            } else {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM heartbeat_runs
+                       WHERE id=$1::uuid AND org_id=$2::uuid
+                     )",
+                )
+                .bind(run_id)
+                .bind(org_id)
+                .fetch_one(pool)
+                .await
+            };
+            match valid {
+                Ok(true) => Some(run_id.to_owned()),
+                Ok(false) | Err(_) => {
+                    return self
+                        .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
+                }
+            }
+        } else {
+            None
+        };
         let command = ProjectGoalSetReplacementCommand::from_validated_context(
             context,
             scope.version,
             scope.fence_epoch,
             idempotency_key.to_owned(),
         );
+        let command = match command.with_run_id(run_id) {
+            Ok(command) => command,
+            Err(_) => {
+                return self
+                    .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
+            }
+        };
         match store.project_goal_set(command).await {
             Ok(committed) => bounded_json(
                 StatusCode::OK,

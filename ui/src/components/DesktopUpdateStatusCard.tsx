@@ -4,8 +4,8 @@ import { useI18n } from "@/context/I18nContext";
 import type { TranslationKey } from "@/i18n/locales/en";
 import { readDesktopShell, type DesktopUpdateProgressPhase } from "@/lib/desktop-shell";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, CheckCircle2, Download, X } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, CheckCircle2, Download, LoaderCircle, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
 const RELEASES_URL = "https://github.com/Undertone0809/rudder/releases";
 const PHASE_LABEL_KEYS: Record<DesktopUpdateProgressPhase, TranslationKey> = {
@@ -45,7 +45,13 @@ export function DesktopUpdateStatusCard() {
   const { progress, dismissProgress } = useDesktopUpdateProgress();
   const { t } = useI18n();
   const [actionError, setActionError] = useState<string | null>(null);
-  const [applyPending, setApplyPending] = useState(false);
+  const [pendingApplyUpdateId, setPendingApplyUpdateId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!progress || ["preparing_restart", "closing", "complete", "failed"].includes(progress.phase)) {
+      setPendingApplyUpdateId(null);
+    }
+  }, [progress?.phase, progress?.updateId]);
 
   if (!progress) return null;
   const currentProgress = progress;
@@ -64,7 +70,11 @@ export function DesktopUpdateStatusCard() {
         ? `${transferred} / ${total}`
         : transferred
       : null;
-  const showIndeterminateProgress = tone === "active" && !hasMeasuredProgress;
+  const applyPending = pendingApplyUpdateId === currentProgress.updateId;
+  const isApplying = currentProgress.phase !== "failed"
+    && currentProgress.phase !== "complete"
+    && (applyPending || currentProgress.phase === "preparing_restart" || currentProgress.phase === "closing");
+  const showIndeterminateProgress = (tone === "active" || isApplying) && !hasMeasuredProgress;
   const blockers = currentProgress.blockers ?? [];
   const waitingForRunningWork = currentProgress.phase === "waiting_for_active_runs" && blockers.length > 0;
 
@@ -83,16 +93,16 @@ export function DesktopUpdateStatusCard() {
       return;
     }
 
-    setApplyPending(true);
+    setPendingApplyUpdateId(currentProgress.updateId);
     try {
       const result = await desktopShell.applyUpdate(currentProgress.updateId, options.force ? { force: true } : undefined);
       if (result.status !== "started") {
         setActionError(result.message || t("about.updates.installFailed"));
+        setPendingApplyUpdateId(null);
       }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : t("about.updates.installFailed"));
-    } finally {
-      setApplyPending(false);
+      setPendingApplyUpdateId(null);
     }
   }
 
@@ -108,8 +118,10 @@ export function DesktopUpdateStatusCard() {
   return (
     <aside
       aria-live="polite"
+      aria-busy={isApplying}
       className="pointer-events-none fixed bottom-[calc(1rem+5.75rem)] right-4 z-[1001] w-[min(calc(100vw-2rem),20rem)] md:bottom-4"
       data-testid="desktop-update-status-card"
+      data-update-applying={isApplying ? "true" : "false"}
       data-update-phase={currentProgress.phase}
     >
       <div
@@ -126,7 +138,13 @@ export function DesktopUpdateStatusCard() {
               tone === "ready" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
             )}
           >
-            {tone === "failed" ? <AlertTriangle className="h-4 w-4" /> : tone === "ready" ? <CheckCircle2 className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+            {tone === "failed"
+              ? <AlertTriangle className="h-4 w-4" />
+              : isApplying
+                ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                : tone === "ready"
+                  ? <CheckCircle2 className="h-4 w-4" />
+                  : <Download className="h-4 w-4" />}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
@@ -202,17 +220,19 @@ export function DesktopUpdateStatusCard() {
             ) : null}
             {currentProgress.phase === "ready_to_install" && currentProgress.automaticApply !== true ? (
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} onClick={() => void applyUpdate()}>
-                  {applyPending
+                <Button type="button" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} aria-busy={applyPending} onClick={() => void applyUpdate()}>
+                  {applyPending ? <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                  <span>{applyPending
                     ? t("about.updates.installing")
-                    : t("about.updates.progress.restartToUpdate")}
+                    : t("about.updates.progress.restartToUpdate")}</span>
                 </Button>
               </div>
             ) : null}
             {waitingForRunningWork ? (
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} onClick={() => void applyUpdate({ force: true })}>
-                  {applyPending ? t("about.updates.installing") : t("about.updates.progress.forceRestartToUpdate")}
+                <Button type="button" variant="outline" size="sm" className="h-8 px-3 text-xs" disabled={applyPending} aria-busy={applyPending} onClick={() => void applyUpdate({ force: true })}>
+                  {applyPending ? <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                  <span>{applyPending ? t("about.updates.installing") : t("about.updates.progress.forceRestartToUpdate")}</span>
                 </Button>
               </div>
             ) : null}

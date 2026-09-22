@@ -175,6 +175,39 @@ impl MutationStore {
         })
     }
 
+    pub async fn organization_branding_scope(
+        &self,
+        organization_id: &str,
+    ) -> Result<MutationScope, StoreError> {
+        let organization_id = transaction::uuid(organization_id)?.to_owned();
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1::uuid)",
+        )
+        .bind(&organization_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if !exists {
+            return Err(StoreError::NotFound);
+        }
+
+        let row = sqlx::query(
+            "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+             FROM organization_branding_mutation_state
+             WHERE org_id=$1::uuid",
+        )
+        .bind(&organization_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotOwned)?;
+        Ok(MutationScope {
+            organization_id,
+            owner: row.try_get("owner")?,
+            version: transaction::unsigned(row.try_get("mutation_version")?)?,
+            fence_epoch: transaction::unsigned(row.try_get("fence_epoch")?)?,
+            fence_token: transaction::uuid(&row.try_get::<String, _>("fence_token")?)?.to_owned(),
+        })
+    }
+
     /// Return the server-owned optimistic context for one mutation key.
     ///
     /// A replay must reconstruct the original command fingerprint, including
@@ -206,6 +239,31 @@ impl MutationStore {
         Ok(scope)
     }
 
+    pub async fn organization_branding_scope_for_idempotency(
+        &self,
+        organization_id: &str,
+        idempotency_key: &str,
+    ) -> Result<MutationScope, StoreError> {
+        let mut scope = self.organization_branding_scope(organization_id).await?;
+        let row = sqlx::query(
+            "SELECT resulting_version, fence_epoch
+             FROM organization_branding_mutation_receipts
+             WHERE org_id=$1::uuid AND idempotency_key=$2",
+        )
+        .bind(&scope.organization_id)
+        .bind(idempotency_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(row) = row {
+            let resulting_version: i64 = row.try_get("resulting_version")?;
+            scope.version = transaction::unsigned(resulting_version)?
+                .checked_sub(1)
+                .ok_or(StoreError::InvalidReceipt)?;
+            scope.fence_epoch = transaction::unsigned(row.try_get("fence_epoch")?)?;
+        }
+        Ok(scope)
+    }
+
     pub async fn project_scope(&self, project_id: &str) -> Result<MutationScope, StoreError> {
         let project_id = transaction::uuid(project_id)?.to_owned();
         let organization_id =
@@ -214,7 +272,23 @@ impl MutationStore {
                 .fetch_optional(&self.pool)
                 .await?
                 .ok_or(StoreError::NotFound)?;
-        self.organization_scope(&organization_id).await
+        let row = sqlx::query(
+            "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
+             FROM project_goal_mutation_state
+             WHERE project_id=$1::uuid AND org_id=$2::uuid",
+        )
+        .bind(&project_id)
+        .bind(&organization_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(StoreError::NotOwned)?;
+        Ok(MutationScope {
+            organization_id,
+            owner: row.try_get("owner")?,
+            version: transaction::unsigned(row.try_get("mutation_version")?)?,
+            fence_epoch: transaction::unsigned(row.try_get("fence_epoch")?)?,
+            fence_token: transaction::uuid(&row.try_get::<String, _>("fence_token")?)?.to_owned(),
+        })
     }
 
     /// Return the server-owned optimistic context for a Project mutation key.
@@ -228,14 +302,26 @@ impl MutationStore {
         idempotency_key: &str,
     ) -> Result<MutationScope, StoreError> {
         let project_id = transaction::uuid(project_id)?.to_owned();
-        let organization_id =
-            sqlx::query_scalar::<_, String>("SELECT org_id::text FROM projects WHERE id=$1::uuid")
-                .bind(&project_id)
-                .fetch_optional(&self.pool)
-                .await?
-                .ok_or(StoreError::NotFound)?;
-        self.organization_scope_for_idempotency(&organization_id, idempotency_key)
-            .await
+        let mut scope = self.project_scope(&project_id).await?;
+        let row = sqlx::query(
+            "SELECT resulting_version, fence_epoch
+             FROM organization_mutation_receipts
+             WHERE org_id=$1::uuid
+               AND idempotency_key=$2
+               AND command_kind IN ('project_goal_link', 'project_goal_set_replacement')",
+        )
+        .bind(&scope.organization_id)
+        .bind(idempotency_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(row) = row {
+            let resulting_version: i64 = row.try_get("resulting_version")?;
+            scope.version = transaction::unsigned(resulting_version)?
+                .checked_sub(1)
+                .ok_or(StoreError::InvalidReceipt)?;
+            scope.fence_epoch = transaction::unsigned(row.try_get("fence_epoch")?)?;
+        }
+        Ok(scope)
     }
 
     /// Apply an already validated organization branding command privately.
