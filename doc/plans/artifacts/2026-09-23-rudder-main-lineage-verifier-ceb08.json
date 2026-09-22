@@ -1,0 +1,510 @@
+{
+  "schema_version": 1,
+  "verdict": "PASS",
+  "verdict_scope": "Independent v19 integrated real workflow acceptance only; no production, release, signing, other-platform, or full-migration claim.",
+  "verification_lease": {
+    "cwd": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss",
+    "branch": "codex/rudder-main-lineage-reconcile-20260923",
+    "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+    "source_tree": "5fea688abee9389723b307bbcbde1046fe7c3285",
+    "source_status": [
+      " M doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml",
+      " M doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+      " M doc/plans/2026-09-21-rudder-full-rust-backend-completion-plan.md",
+      " M doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml",
+      "?? doc/plans/2026-09-23-rudder-main-lineage-reconciliation-delivery-packet-v19.json",
+      "?? doc/plans/artifacts/2026-09-23-rudder-full-branding-next-slice-boundaries.md",
+      "?? doc/plans/artifacts/2026-09-23-rudder-identity-analytics-managed-mcp-authority-inventory.md",
+      "?? doc/plans/artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json",
+      "?? doc/plans/artifacts/2026-09-23-rudder-maintenance-authority-inventory.md"
+    ],
+    "source_only_dirty_paths": [],
+    "source_only_dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "packet_path": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss/doc/plans/2026-09-23-rudder-main-lineage-reconciliation-delivery-packet-v19.json",
+    "packet_sha256": "a1456c1ca4130950dbf481e00d2ffa424b314159dc0e398ec48d5845daf0c111",
+    "packet_version": "19",
+    "criteria_hash_computed": "16fb93f88b9c0e2bd447e9238d5984f4070433886dfb3a37c1fb500a5ffb969d",
+    "criteria_hash_packet": "16fb93f88b9c0e2bd447e9238d5984f4070433886dfb3a37c1fb500a5ffb969d",
+    "manifest_path": "/tmp/codex-rudder-lineage-build-manifest.json",
+    "manifest_sha256": "23f76462b3e3d45c5ad5960b0f2d23fd315717c4df8cb673b3a10dd0e9cdb14b",
+    "manifest_source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+    "manifest_built_from_source_sha": "d3287434fd1632d57086f329c69b5b07efd32c2b",
+    "product_input_equivalence": "git diff d3287434..ceb08be24 changes only desktop/scripts/smoke.mjs and rust-member-directory-smoke.mjs test harnesses; packaged product inputs and artifact bytes are unchanged",
+    "latest_observation_started_at_utc": "2026-09-22T18:05:49.396Z",
+    "latest_observation_completed_at_utc": "2026-09-22T18:05:54.799Z",
+    "lease_rechecked_at_utc": "2026-09-22T18:06:56.414Z"
+  },
+  "artifacts": {
+    "packaged": {
+      "executable": {
+        "path": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss/desktop/release/mac-arm64/Rudder.app/Contents/MacOS/Rudder",
+        "sha256": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
+        "expected": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
+        "matches": true
+      },
+      "desktop": {
+        "path": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss/desktop/release/mac-arm64/Rudder.app/Contents/Resources/app/dist/main.js",
+        "sha256": "26d69d45237e6962131c8d4e92685c05ea578251336ebda52cef6a4bc0245348",
+        "expected": "26d69d45237e6962131c8d4e92685c05ea578251336ebda52cef6a4bc0245348",
+        "matches": true
+      },
+      "server": {
+        "path": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss/desktop/release/mac-arm64/Rudder.app/Contents/Resources/server-package/dist/index.js",
+        "sha256": "f59b3e9e5de038632399640a2bcbb8d5e6414f52171231ecd71bf38c2b8e4209",
+        "expected": "f59b3e9e5de038632399640a2bcbb8d5e6414f52171231ecd71bf38c2b8e4209",
+        "matches": true
+      },
+      "foundation": {
+        "path": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-server-foundation",
+        "sha256": "11570bbb0eb262d39ecb9cb222099c25ef2081ab40852f3426ac62115e2d58ff",
+        "expected": "11570bbb0eb262d39ecb9cb222099c25ef2081ab40852f3426ac62115e2d58ff",
+        "matches": true
+      }
+    },
+    "public_debug_binaries": {
+      "foundation": {
+        "path": "/Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss/native/target/debug/rudder-server-foundation",
+        "sha256": "1d5d2ed69757e657e2d88e7a187f904f3985c581caa222a7140a6720c52dacfc"
+      },
+      "migration_preflight": {
+        "path": "/Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss/native/target/debug/migration-preflight",
+        "sha256": "6dfbd2c3b35ae5dfd7571fd517c9e6842914d74e8d723dde60e8c100bda4c622"
+      }
+    }
+  },
+  "criterion_to_proof": {
+    "1_main_prefix_populated_upgrade": {
+      "verdict": "PASS",
+      "commands": [
+        "env TMPDIR=/tmp/codex-rudder-v19-ceb08-independent.LO2GzN/migrations pnpm exec vitest run --root packages/db --config vitest.config.ts src/migrations/organization-mutations.test.ts",
+        "env TMPDIR=/tmp/codex-rudder-v19-ceb08-independent.LO2GzN/migration-runtime node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/release-compatibility-runtime.ts",
+        "node /tmp/codex-rudder-v19-populated.BejhXZ/run-populated-lineage.mjs /tmp/codex-rudder-v19-populated2.bV4Qc2 /tmp/codex-rudder-v19-populated2.bV4Qc2/runtime-tmp"
+      ],
+      "evidence": {
+        "mutation_schema": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent.LO2GzN/migration-prefix.log",
+          "sha256": "39bda69c9764ba350a5f7a0ff7991b8cdc391da297757198a4f7a85124219447",
+          "bytes": 363
+        },
+        "compatibility_runtime": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent/../codex-rudder-v19-ceb08-independent.LO2GzN/migration-runtime/compatibility-runtime.log",
+          "sha256": "6ca6909e38f1e585d8ecad25b1becd8e12993566eb3f01f7c9f0d780dc994b0e",
+          "bytes": 1950
+        },
+        "populated_client_lineage": {
+          "wrapper_command": "node /tmp/codex-rudder-v19-populated.BejhXZ/run-populated-lineage.mjs /tmp/codex-rudder-v19-populated2.bV4Qc2 /tmp/codex-rudder-v19-populated2.bV4Qc2/runtime-tmp",
+          "executed_command": "env TMPDIR=/tmp/codex-rudder-v19-populated2.bV4Qc2/runtime-tmp pnpm \"exec\" \"vitest\" \"run\" \"--root\" \"packages/db\" \"--config\" \"vitest.config.ts\" \"src/client.test.ts\" \"--testNamePattern\" \"preserves (populated 0167 runtime lineage through 0174 outbox claims|a populated 0163 baseline across 0164-0167 and through 0174)\"",
+          "selected_tests": [
+            "populated native lineage upgrades > preserves populated 0167 runtime lineage through 0174 outbox claims",
+            "populated native lineage upgrades > preserves a populated 0163 baseline across 0164-0167 and through 0174"
+          ],
+          "path": "/tmp/codex-rudder-v19-populated2.bV4Qc2/client-populated-lineage.log",
+          "runner_receipt_path": "/tmp/codex-rudder-v19-populated2.bV4Qc2/client-populated-lineage.json",
+          "sha256": "800a81df4c4186dc8f8ee2a1ef19808e0a3474e807c3e8aa8165104a8f16ddb0",
+          "runner_receipt_sha256": "f7add8987b869368e65c642e20a678ac366a33559228075dafe078e68a88a0ab",
+          "bytes": 601,
+          "started_at_utc": "2026-09-22T18:05:49.396Z",
+          "ended_at_utc": "2026-09-22T18:05:54.799Z",
+          "wrapper_pid": 59768,
+          "vitest_child_pid": 59777,
+          "vitest_process_pid": 59777,
+          "cwd": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss",
+          "tmpdir": "/tmp/codex-rudder-v19-populated2.bV4Qc2/runtime-tmp",
+          "exit_code": 0,
+          "tests_passed": 2,
+          "tests_skipped_by_name_filter": 22
+        }
+      },
+      "observation": "The focused disposable PostgreSQL fixture passed 14/14 tests from the pre-0163 journal through candidate migrations; the populated compatibility runtime passed v0.7.1, v0.7.0, and v0.6.5 fixtures with 10 shaped rows each, post-migration invariants, and restart persistence. The exact populated client lineage selection independently passed both required cases: 0167 through 0174 outbox claims, and populated 0163 through 0164-0167 and 0174; the other 22 client.test.ts cases were skipped by the explicit name filter."
+    },
+    "2_public_branding_project_goal": {
+      "verdict": "PASS",
+      "commands": [
+        "env TMPDIR=/tmp/codex-rudder-v19-ceb08-independent/branding RUDDER_SERVER_FOUNDATION_PATH=/Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss/native/target/debug/rudder-server-foundation RUDDER_NATIVE_MIGRATION_PREFLIGHT_PATH=/Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss/native/target/debug/migration-preflight node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/smoke/rust-branding-real-entry.ts",
+        "env TMPDIR=/tmp/codex-rudder-v19-ceb08-independent/project-goal RUDDER_SERVER_FOUNDATION_PATH=/Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss/native/target/debug/rudder-server-foundation RUDDER_NATIVE_MIGRATION_PREFLIGHT_PATH=/Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss/native/target/debug/migration-preflight node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/smoke/rust-project-goal-real-entry.ts"
+      ],
+      "evidence": {
+        "branding": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent/branding/branding-real-entry.log",
+          "sha256": "9e1c1793857608e3580b435ac77fc5c78e02b0d97d30d072ff47031701d876fd",
+          "bytes": 14206
+        },
+        "project_goal": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent/project-goal/project-goal-real-entry.log",
+          "sha256": "1e1b0229423cb54db8bc70c19f831980b1dff14797271932bef5a81b74ebbea8",
+          "bytes": 15765
+        }
+      },
+      "runtime": {
+        "branding": {
+          "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+          "instanceId": "rust-branding-real-entry-85017",
+          "apiPort": 52617,
+          "databasePort": 52618,
+          "organizationId": "342d9d34-35fa-4824-9b82-bc75617167bf",
+          "firstPatchStatus": 200,
+          "foreignOrganizationId": "3503fd6d-0bc9-4f79-9b6d-8505b5efb2bb",
+          "crossOrganizationStatuses": [
+            403,
+            403
+          ],
+          "foreignStateUnchanged": true,
+          "cliExitCode": 0,
+          "cliBrandColor": "#123456",
+          "mcpExitCode": 0,
+          "mcpBrandColor": "#445566",
+          "cliReplayStatus": 200,
+          "idempotencyConflictStatus": 409,
+          "mixedUpdateStatus": 409,
+          "genericScalarStatus": 200,
+          "clearStatus": 200,
+          "restartHealthStatus": 200,
+          "replayStatus": 200,
+          "legacyUpdateRejected": true,
+          "finalHttpBrandColor": null,
+          "finalSqlBrandColor": null,
+          "state": {
+            "owner": "rust",
+            "mutation_version": "5",
+            "fence_epoch": "1"
+          },
+          "receipts": [
+            {
+              "idempotency_key": "real-branding-initial-342d9d34-35fa-4824-9b82-bc75617167bf",
+              "outcome": "applied",
+              "resulting_version": "1",
+              "fence_epoch": "1"
+            },
+            {
+              "idempotency_key": "real-branding-cli-342d9d34-35fa-4824-9b82-bc75617167bf",
+              "outcome": "applied",
+              "resulting_version": "2",
+              "fence_epoch": "1"
+            },
+            {
+              "idempotency_key": "real-branding-mcp-342d9d34-35fa-4824-9b82-bc75617167bf",
+              "outcome": "applied",
+              "resulting_version": "3",
+              "fence_epoch": "1"
+            },
+            {
+              "idempotency_key": "real-branding-generic-342d9d34-35fa-4824-9b82-bc75617167bf",
+              "outcome": "applied",
+              "resulting_version": "4",
+              "fence_epoch": "1"
+            },
+            {
+              "idempotency_key": "real-branding-clear-342d9d34-35fa-4824-9b82-bc75617167bf",
+              "outcome": "applied",
+              "resulting_version": "5",
+              "fence_epoch": "1"
+            }
+          ],
+          "activityCount": 5,
+          "outbox": [
+            {
+              "state": "published",
+              "attempts": 1
+            },
+            {
+              "state": "published",
+              "attempts": 1
+            },
+            {
+              "state": "published",
+              "attempts": 1
+            },
+            {
+              "state": "published",
+              "attempts": 1
+            },
+            {
+              "state": "published",
+              "attempts": 1
+            }
+          ]
+        },
+        "project_goal": {
+          "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+          "instanceId": "rust-project-goal-real-entry-85018",
+          "apiPort": 52603,
+          "databasePort": 52604,
+          "organizationId": "6a7bef32-24e3-498d-a61f-159d4dea6e1c",
+          "otherOrganizationId": "e4c04f8a-02f1-4272-8f7b-a7668ac7e11a",
+          "projectId": "968c6680-db42-42e6-8a8e-e448cca650fe",
+          "createWithGoalsProjectId": "5f5c0541-2f2c-4a31-a7f9-b0529c5799b1",
+          "goalIds": [
+            "d5730fb5-859e-4dbd-81a1-59cd833adad9",
+            "1e118842-29d7-4be2-bbbf-9d26ad5c295b"
+          ],
+          "toolingProjectId": "12e2513e-23f2-4911-b69d-dcf0e182c766",
+          "agentId": "92d28e9f-d091-4423-96f7-e3f868c282df",
+          "cliStatus": 0,
+          "mcpStatus": 0,
+          "createWithGoalsStatus": 201,
+          "mixedUpdateStatus": 409,
+          "signedIdempotencySubstitutionStatus": 401,
+          "rustOwnedOrganizationDeleteStatus": 409,
+          "allowlistStartupRejected": true,
+          "allowlistProjectIds": [
+            "968c6680-db42-42e6-8a8e-e448cca650fe",
+            "12e2513e-23f2-4911-b69d-dcf0e182c766"
+          ],
+          "sameConfigRestartHealthStatus": 200,
+          "unlistedProjectId": "bc428380-df35-4f48-b3c8-83a8c744b271",
+          "unlistedProjectStatus": 409,
+          "toolingCounts": {
+            "receipts": "2",
+            "activities": "2",
+            "links": "0"
+          },
+          "firstStatus": 200,
+          "replayStatus": 200,
+          "idempotencyConflictStatus": 409,
+          "crossOrganizationStatus": 422,
+          "emptyStatus": 200,
+          "replayAfterRestartStatus": 200,
+          "finalCounts": {
+            "receipts": "4",
+            "activities": "2",
+            "links": "0",
+            "version": "2"
+          }
+        }
+      }
+    },
+    "3_outbox_recovery": {
+      "verdict": "PASS",
+      "command": "env TMPDIR=/tmp/codex-rudder-v19-ceb08-independent.LO2GzN/outbox pnpm exec vitest run --root packages/db --config vitest.config.ts src/migrations/organization-outbox-recovery.test.ts",
+      "evidence": {
+        "path": "/tmp/codex-rudder-v19-ceb08-independent.LO2GzN/outbox-recovery.log",
+        "sha256": "e6a7f98b2722930808685c5cfbbbc8426486ccd92b381eaad45799249afbf3a9",
+        "bytes": 792
+      },
+      "observation": "1 test file, 5/5 tests passed: 0173 pending event after 0174, killed claim recovery, stale worker suppression, crash-before-ACK stable delivery key, and failed-publication backoff recovery."
+    },
+    "4_ui_reconnect": {
+      "verdict": "PASS",
+      "commands": [
+        "env TMPDIR=/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/fixture node --import cli/node_modules/tsx/dist/loader.mjs /tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/rust-reconnect-ui-fixture.mts",
+        "ego-browser nodejs < /tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/rust-reconnect-browser.mjs"
+      ],
+      "evidence": {
+        "fixture": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/fixture.log",
+          "sha256": "eeda73956b1ffd48eba6f15b2216063f7da0240928699a552be4fdd2f916d1b6",
+          "bytes": 15216
+        },
+        "browser": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/browser.log",
+          "sha256": "c3e73d2838ef941a69226d2b3f6a21dbeb3504dcf3a8c12568a74cc7df3ef97d",
+          "bytes": 273
+        },
+        "before": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/reconnect-before.png",
+          "sha256": "ee2be8acc24ea2b197fa2a5777148560654a970d09af1ac33397e613500c58aa",
+          "bytes": 79062
+        },
+        "after": {
+          "path": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/reconnect-after.png",
+          "sha256": "f514634e83717c32839ef65d27d9c55cb5b6f3452a6cb3548f17ce1344e8fc65",
+          "bytes": 79065
+        }
+      },
+      "task_space_id": 3,
+      "fixture_runtime": {
+        "marker": "RUST_RECONNECT_UI_READY",
+        "apiUrl": "http://127.0.0.1:53992",
+        "fixtureRoot": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/fixture/codex-rust-reconnect-ui-1YnD0p",
+        "pid": 31719,
+        "org": {
+          "id": "a9d73a92-74b4-406a-a2e7-43ee50d2e6a0",
+          "urlKey": "rust-reconnect-acceptance",
+          "name": "Rust reconnect acceptance",
+          "description": null,
+          "status": "active",
+          "pauseReason": null,
+          "pausedAt": null,
+          "issuePrefix": "RCU",
+          "issueCounter": 0,
+          "budgetMonthlyCents": 0,
+          "spentMonthlyCents": 0,
+          "requireBoardApprovalForNewAgents": true,
+          "defaultChatIssueCreationMode": "manual_approval",
+          "brandColor": null,
+          "logoAssetId": null,
+          "createdAt": "2026-09-22T17:48:40.498Z",
+          "updatedAt": "2026-09-22T17:48:40.498Z",
+          "issuePrefixAliases": [],
+          "workspace": null,
+          "logoUrl": null
+        },
+        "project": {
+          "id": "b10f702d-6e86-434e-acd7-628167077c65",
+          "orgId": "a9d73a92-74b4-406a-a2e7-43ee50d2e6a0",
+          "goalId": "080d4c20-c8ad-4f48-842e-35356ae31fd6",
+          "name": "Reconnect goal project",
+          "description": null,
+          "status": "backlog",
+          "leadAgentId": null,
+          "targetDate": null,
+          "color": "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+          "icon": "folder",
+          "pauseReason": null,
+          "pausedAt": null,
+          "executionWorkspacePolicy": null,
+          "archivedAt": null,
+          "createdAt": "2026-09-22T17:48:40.601Z",
+          "updatedAt": "2026-09-22T17:48:40.601Z",
+          "shortRef": "prj_b10f702d",
+          "urlKey": "reconnect-goal-project",
+          "goalIds": [
+            "080d4c20-c8ad-4f48-842e-35356ae31fd6"
+          ],
+          "goals": [
+            {
+              "id": "080d4c20-c8ad-4f48-842e-35356ae31fd6",
+              "shortRef": "gol_080d4c20",
+              "title": "Original persisted goal"
+            }
+          ],
+          "codebase": {
+            "configured": true,
+            "scope": "organization",
+            "workspaceId": null,
+            "repoUrl": null,
+            "repoRef": null,
+            "defaultRef": null,
+            "repoName": null,
+            "localFolder": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/fixture/codex-rust-reconnect-ui-1YnD0p/instances/rust-reconnect-ui-31719/organizations/a9d73a9274b4/workspaces",
+            "managedFolder": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/fixture/codex-rust-reconnect-ui-1YnD0p/instances/rust-reconnect-ui-31719/organizations/a9d73a9274b4/workspaces",
+            "effectiveLocalFolder": "/tmp/codex-rudder-v19-ceb08-independent/ui-reconnect/fixture/codex-rust-reconnect-ui-1YnD0p/instances/rust-reconnect-ui-31719/organizations/a9d73a9274b4/workspaces",
+            "origin": "local_folder"
+          },
+          "resources": [],
+          "workspaces": [],
+          "primaryWorkspace": null
+        },
+        "goalA": {
+          "id": "080d4c20-c8ad-4f48-842e-35356ae31fd6",
+          "shortRef": "gol_080d4c20",
+          "orgId": "a9d73a92-74b4-406a-a2e7-43ee50d2e6a0",
+          "title": "Original persisted goal",
+          "description": null,
+          "lifecycle": "draft",
+          "status": "planned",
+          "outcomeStatement": null,
+          "criteria": [],
+          "ownerAgentId": null,
+          "ownerAgentRuntimeOverrides": null,
+          "focus": false,
+          "evaluationResult": null,
+          "evaluationDeadline": null,
+          "actionDeadline": null,
+          "continuationSummary": null,
+          "wakeCondition": null,
+          "alignmentQuestion": null,
+          "closeReason": null,
+          "createdAt": "2026-09-22T17:48:40.577Z",
+          "updatedAt": "2026-09-22T17:48:40.577Z"
+        },
+        "goalB": {
+          "id": "59d9884d-9a92-4a46-a348-c1489aabc8b5",
+          "shortRef": "gol_59d9884d",
+          "orgId": "a9d73a92-74b4-406a-a2e7-43ee50d2e6a0",
+          "title": "Reconnected persisted goal",
+          "description": null,
+          "lifecycle": "draft",
+          "status": "planned",
+          "outcomeStatement": null,
+          "criteria": [],
+          "ownerAgentId": null,
+          "ownerAgentRuntimeOverrides": null,
+          "focus": false,
+          "evaluationResult": null,
+          "evaluationDeadline": null,
+          "actionDeadline": null,
+          "continuationSummary": null,
+          "wakeCondition": null,
+          "alignmentQuestion": null,
+          "closeReason": null,
+          "createdAt": "2026-09-22T17:48:40.590Z",
+          "updatedAt": "2026-09-22T17:48:40.590Z"
+        }
+      },
+      "observation": "Browser marker RUST_WEBSOCKET_RECONNECT_PASS; HTTP remained online while liveSockets=0, projectReads=1, unchangedImage=true, then reconnect refreshed branding/icon and mounted project goalIds.",
+      "harness_note": "Temporary fixture copy only bound absolute imports and the user-mandated debug foundation/preflight paths because the repository helper hardcodes an absent integrated native/target/debug path; repository helper and product files were not changed."
+    },
+    "5_installed_member_default": {
+      "verdict": "PASS",
+      "command": "env -u RUDDER_RUST_MEMBER_DIRECTORY_MODE -u RUDDER_SERVER_FOUNDATION_PATH -u RUDDER_NATIVE_ACTOR_ENVELOPE_KEY TMPDIR=/tmp/codex-rudder-v19-ceb08-independent/installed RUDDER_DESKTOP_SMOKE_BUILD_MANIFEST=/tmp/codex-rudder-lineage-build-manifest.json node desktop/scripts/smoke.mjs --mode=packaged --scenario=rust-member-directory",
+      "evidence": {
+        "path": "/tmp/codex-rudder-v19-ceb08-independent/installed/installed-member-default.log",
+        "sha256": "c3738d50af248008d17d242750e0a626b1e307295afee2bb863cf32d07c9e593",
+        "bytes": 1865
+      },
+      "app_path": "/Users/zeeland/.codex/worktrees/rudder-main-lineage-reconcile-20260923/rudder-oss/desktop/release/mac-arm64/Rudder.app",
+      "runtime": {
+        "orgId": "0e550dfc-22d6-40c7-8295-3c5f35cae76e",
+        "foreignOrgId": "4c703d80-4686-471b-8ba9-22e1524b9467",
+        "agentId": "c6773e97-4024-48f6-bb24-90d262025773",
+        "apiPort": 54711,
+        "databasePort": 54712,
+        "receipts": 4,
+        "sourceSha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+        "artifactHashes": {
+          "executable": "b901c246042d1eb71ab0d098ca0331726b41eec8339ccc3ba8a0a46f9040577b",
+          "desktop": "26d69d45237e6962131c8d4e92685c05ea578251336ebda52cef6a4bc0245348",
+          "server": "f59b3e9e5de038632399640a2bcbb8d5e6414f52171231ecd71bf38c2b8e4209",
+          "foundation": "11570bbb0eb262d39ecb9cb222099c25ef2081ab40852f3426ac62115e2d58ff"
+        },
+        "childRecovery": {
+          "status": "passed",
+          "oldChild": 71017,
+          "replacementChild": 71064,
+          "serverPid": 70597
+        },
+        "runtimeDescriptor": {
+          "instanceId": "default",
+          "localEnv": "prod_local",
+          "pid": 71069,
+          "listenPort": 54711,
+          "apiUrl": "http://127.0.0.1:54711",
+          "version": "0.7.24",
+          "ownerKind": "desktop",
+          "startedAt": "2026-09-22T17:50:39.830Z",
+          "postgresBinDir": "/tmp/codex-rudder-v19-ceb08-independent/installed/rudder-desktop-smoke-76gufZ/rust-member-directory/rudder-home/runtime-payloads/postgres-18.4/darwin-arm64/bin",
+          "postgresRuntimeKey": "postgres-18.4/darwin-arm64"
+        }
+      },
+      "observation": "RUST_MEMBER_DIRECTORY_INSTALLED_DEFAULT_PASS; own-org pagination, foreign-org 403, invalid limit, Rust-only receipt, child recovery with same server owner, full Desktop restart persistence, and missing-foundation fail-closed all passed."
+    },
+    "6_identity_and_accounting": {
+      "verdict": "PASS",
+      "observation": "All independent runtime/data identities above are disposable and loopback/private; packaged artifacts match the manifest programmatically. Parent/author baseline lanes are recorded as supporting only: dev scenarios PASS, computer-use package PASS, packaged App Builder PASS; standard packaged account-gate smoke timed out in electron.launch and is omitted from this bounded member-directory verdict."
+    },
+    "7_claim_boundary": {
+      "verdict": "PASS",
+      "observation": "No production, signing, release, other-platform, full-migration, main merge, or push action was performed or claimed."
+    }
+  },
+  "limitations": [
+    "The independent migration tests clean their embedded PostgreSQL roots and do not emit internal random organization UUIDs or child PIDs; the test-owned private TMPDIR and exact commands/log hashes are retained.",
+    "The standard packaged account-gate smoke is an author-side electron.launch timeout under separate diagnosis; it is not the installed Rust member-directory scenario and is not promoted to a failure of this bounded slice.",
+    "Public-entry debug binaries are explicitly bound and hashed separately from the packaged foundation artifact; both identities are recorded above."
+  ],
+  "lease_recheck": {
+    "source_sha": "ceb08be24dcbf71ae110e55b9907deca54d91a0f",
+    "source_tree": "5fea688abee9389723b307bbcbde1046fe7c3285",
+    "source_only_dirty_paths": [],
+    "packaged_artifact_matches": {
+      "executable": true,
+      "desktop": true,
+      "server": true,
+      "foundation": true
+    },
+    "criteria_hash": "16fb93f88b9c0e2bd447e9238d5984f4070433886dfb3a37c1fb500a5ffb969d",
+    "rechecked_at_utc": "2026-09-22T18:06:56.414Z",
+    "current": true
+  }
+}
