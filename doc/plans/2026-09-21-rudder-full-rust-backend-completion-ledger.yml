@@ -1,6 +1,75 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
+new_main_integration_gate:
+  main_sha: 38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf
+  delta: PR223_native_session_lineage_common_Run_and_migrations0164_through0167
+  state: pending_isolated_reconciliation
+  rule: preserve_Main_migration_identity; renumber_unreleased_task_migrations; rebuild_manifest_and_retest_upgrade_before_publication
+  old_receipts: e80_pre38_baseline_only_no_new_Main_upgrade_claim
+active_slice:
+  id: branding_writer_negative_proof_and_outbox_recovery
+  base_sha: 6e37a563523db92b63589557be18d12e65593101
+  branch: codex/rudder-branding-outbox-recovery-20260922
+  state: verifier_PASS_final_reviewer_accept_qualified_for_PR_publication
+  checkpoint_sha: e80deae94a441cc8cfa0411cf37a0a5949614285
+  checkpoint_tree: e453569dd7d89dd800662c13550ece19ad0759ec
+  previous_checkpoint: b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
+  source_equivalence: three_test_files_only_changed_from_b4793_product_and_packaged_artifacts_unchanged
+  startup_recovery_fix: standalone_marker_blocks_without_start_lock_9_tests_passed_independent_stage_accept
+  generator_review: independent_stage_accept_119_capabilities_108_descriptors_semantic_order_hash_and_literal_type_parity
+  packaged_evidence: desktop_dist_and_packaged_account_gate_auto_update_recovery_passed
+  desktop_remaining: all_applicable_dev_scenarios_passed_clean_includes_Projects_rail_and_Library_deep_link_not_sidebar_click; final_rebind_pending
+  prior_receipt_scope: source_and_stage_review_and_verifier_below_describe_only_the_previous_v16_Project_Goal_slice
+  latest_main_observation:
+    sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
+    previous_observed_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
+    delta_from_previous: docs/ga.js_only
+    backend_compatibility: unchanged_contracts_no_runtime_receipt_invalidation
+  current_inventory:
+    scanned_sha: 17c9613e3df39e2c67c07d455206312b7ac33a75
+    current_sha: 3d22263016324bff63c36be0ce332ff1f09ebdad
+    equivalence: startup_lock_and_test_only_changes_no_route_transaction_migration_or_tool_descriptor_count_change
+    evidence: /tmp/codex-rudder-v17-inventory.md
+    scan_method: immutable_git_grep_and_git_show_descriptor_chunks_not_aggregate_import_file
+    route_source_files: 48
+    route_declaration_hits: 513
+    transaction_source_files: 67
+    transaction_hits: 225
+    production_transaction_source_files: 56
+    production_transaction_hits: 204
+    cli_capabilities: 119
+    cli_agent_v1_entries: 108
+    cli_compat_entries: 11
+    mcp_descriptors: 108
+    authority_delta: no_public_listener_auth_publisher_CLI_MCP_or_migration_authority_transfer
+    broader_semantic_inventory: incomplete_remaining_writer_families_still_open
+  outbox_recovery:
+    current_authority: transitional_node_publisher
+    rust_authority_retired_node: false
+    author_checks: real_PostgreSQL_upgrade_and_four_subprocess_fault_scenarios_passed_5_of_5
+    coverage: [stopped_0169_pending_event_upgrade_to_0170, claim_crash_reclaim, stale_worker_no_emit_after_reclaim, broadcast_before_ack_crash_stable_key, retry_backoff_process_replacement]
+    delivery_semantics: at_least_once_to_process_local_bus_not_durable_consumer_ack
+    acceptance_scope: single_local_runtime_with_old_publisher_stopped_before_upgrade
+    unresolved: [mixed_version_overlap_unsafe, no_cross_process_ws_fanout, frozen_candidate_managed_local_and_browser_independent_verification, synchronous_listener_can_delay_row_unlock]
+    independent_verifier: PASS_e80deae94_v17_artifacts/2026-09-23-rudder-branding-verifier-e80-final.json
+  reconnect:
+    implementation: selected_org_branding_project_activity_dashboard_badges_plus_pending_read_cancellation
+    author_probe: artifacts/2026-09-22-rudder-branding-reconnect-author-probe-v1.json
+    ui_stage_review: accept_Archimedes_bounded_helper_review_not_final_handoff
+  branding_scope:
+    rust_mutation: scalar_brandColor_only
+    retained_node_authority: [organization_name, logo_relation, asset_upload, storage_cleanup]
+    full_branding_retirement: false
+    audit_followup: logo_storage_and_chat_logo_approval_require_a_separate_complete_authority_slice_without_disabling_existing_features
+  active_schema_counts:
+    sql_migration_files: 173
+    migration_journal_entries: 171
+  previous_pr:
+    number: 221
+    head_sha: 6e37a563523db92b63589557be18d12e65593101
+    state: open_CI_failed_not_merged
+    failures: [architecture_ratchet, verify_ubuntu, native_foundations_all_four_targets]
 integration_policy:
   name: staged_narrowest_authorized_real_entry
   correction_date: 2026-09-22
@@ -9,8 +78,8 @@ integration_policy:
   constraints: [no_production_dual_write, no_silent_node_fallback, no_unrestricted_traffic_switch, no_stable_publication_without_release_gate]
 main_adaptation:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
-  latest_observed_main_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
-  commits_ahead_of_migration_base: 15
+  latest_observed_main_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
+  commits_ahead_of_migration_base: 16
   state: synced_and_reconciled_current_candidate
   changed_path_classes: [desktop_update_quit_handoff, desktop_update_child_launcher, desktop_update_ui_status_live_run, desktop_update_e2e]
   changed_path_assessment: desktop_update_and_quit_contracts_reconciled; exact Project-Goal candidate runtime and packet evidence rebound after current Main drift
@@ -25,6 +94,7 @@ main_adaptation:
     compatibility_decision: desktop_update_and_quit_behavior_preserved; Rust server foundation and migration-preflight staging remains an explicit migration-owned addition; rebuild_exact_candidate_and_rebind_real_entry_receipts
     old_receipts: invalidated
 source:
+  scope: previous_accepted_v16_inventory_current_source_is_active_slice
   candidate_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
   candidate_tree: bcd68ce026354bb56af742ced22a76c50071a0f3
   dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
@@ -211,7 +281,7 @@ authority_rows:
     authority_kind: rust_product_runtime
     current_authority: node_drizzle
     rust_asset: native/crates/d1-persistence/src/branding.rs and native/crates/server-foundation/src/lib.rs
-    public_entrypoint: private Actix PATCH /api/orgs/{org_id}/branding; supported API/CLI/MCP entry remains unconnected
+    public_entrypoint: supported Node API scalar brandColor PATCH -> private Actix PATCH /api/orgs/{org_id}/branding; CLI/MCP parity verification in progress
     auth_scope: board or permitted agent, organization and logo asset scope
     transaction_boundary: branding, mutation state, receipt, activity atomically
     audit_side_effects: organization.branding_updated activity

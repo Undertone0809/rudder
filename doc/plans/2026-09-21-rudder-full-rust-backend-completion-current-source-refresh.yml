@@ -2,25 +2,31 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-22
 candidate:
-  source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
-  branch: codex/rudder-full-rust-backend-completion-20260921
-  worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
-  tree_sha: bcd68ce026354bb56af742ced22a76c50071a0f3
+  source_sha: 3d22263016324bff63c36be0ce332ff1f09ebdad
+  branch: codex/rudder-branding-outbox-recovery-20260922
+  worktree: /Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss
+  tree_sha: 94386cc163f8289986017a2efbdf314aabaa73db
   dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  source_path_count: 80
-  dirty_fingerprint_scope: clean_committed_candidate_source_tree_excluding_durable_plan_records_packets_and_artifacts
-  dirty_fingerprint_status: exact_clean_commit_fc733_project_goal_real_entry_probe_v10_complete_negative_coverage
-  scan_status: current_counts_refreshed_after_main_0_7_24_reconciliation_and_project_goal_real_entry_probe_v10_semantic_reconciliation_blocked
-  semantic_rows: partial_with_current_writer_audit
+  source_path_count: 69
+  source_path_count_basis: git_diff_6e37a563_to_e80deae94_excluding_doc_plans_incremental_PR_update_only
+  latest_test_only_checkpoint: e80deae94a441cc8cfa0411cf37a0a5949614285
+  latest_test_only_delta: desktop/scripts/smoke.mjs_navigation_and_method_log; inventory_count_classes_unchanged
+  dirty_fingerprint_scope: immutable_committed_candidate_source_content_excluding_durable_plan_records_packets_and_artifacts
+  dirty_fingerprint_status: exact_immutable_commit_3d222_source_content_rebound_from_b4793; worktree_metadata_remains_parent_owned
+  scan_status: current_bounded_counts_rebound_to_3d222_from_17c_immutable_scans; no_full_semantic_audit
+  semantic_rows: partial_with_current_writer_audit; authority_handoff_not_claimed
 main_adaptation:
-  migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
-  latest_observed_main_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
-  commits_ahead_of_migration_base: 15
-  changed_path_classes: [desktop_update_quit_handoff, desktop_update_child_launcher, desktop_update_ui_status_live_run, desktop_update_e2e]
-  changed_path_assessment: desktop_update_and_quit_contracts_reconciled; no_direct_rust_route_overlap_but_desktop_runtime_and_packaging_receipts_affect_exact_candidate_runtime_evidence
-  reconciliation_status: isolated_snapshot_reconciled_affected_desktop_checks_and_project_goal_real_probe_rerun
-  receipt_policy: affected_review_and_verifier_receipts_are_invalid_until_rebound
+  migration_base_sha: 6e37a563523db92b63589557be18d12e65593101
+  latest_observed_main_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
+  latest_increment_base_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
+  main_commits_not_in_previous_pr_head: 5
+  commit_count_basis: git_rev_list_count_6e37a563_to_origin_main; graph_count_not_source_equivalence
+  changed_path_classes: [docs_ga_js]
+  changed_path_assessment: docs_ga_js_only_increment_from_d1f55c5c_to_5ef9b547; not_full_migration_candidate_or_source_equivalence
+  reconciliation_status: latest_main_docs_only_increment_recorded; no_full_migration_vs_main_equivalence
+  receipt_policy: receipts_remain_bound_to_exact_candidate_3d222; main_comparison_does_not_upgrade_authority_or_verifier_evidence
   reconciliation_receipt:
+    status: historical_v16_desktop_reconciliation_not_current_candidate
     isolated_worktree: /private/tmp/rudder-rust-main-reconcile-20260922-v4
     operation: apply_origin_main_desktop_update_quit_changes_to_migration_snapshot_without_resetting_dirty_work
     previous_main_sha: b4c2f46966d080a18b8ce8d9545e427aa5b50ced
@@ -29,28 +35,79 @@ main_adaptation:
     resulting_snapshot_tree: fb968231c160d5ff75095cf89a336f43e035ef86
     changed_paths_rechecked: [desktop/src/desktop-quit-flow.test.ts, desktop/src/desktop-quit-flow.ts, desktop/src/desktop-update-flow.test.ts, desktop/src/desktop-update-flow.ts, desktop/src/desktop-update-launch.ts, tests/e2e/desktop-update-prompt.spec.ts, ui/src/components/DesktopUpdatePromptBridge.test.tsx, ui/src/components/DesktopUpdatePromptBridge.tsx, ui/src/components/DesktopUpdateStatusCard.test.tsx, ui/src/components/DesktopUpdateStatusCard.tsx, ui/src/components/LiveRunWidget.test.tsx, ui/src/components/LiveRunWidget.tsx]
     compatibility_decision: desktop_update_and_quit_behavior_preserved; Rust server foundation and migration-preflight staging remains an explicit migration-owned addition; rebuild_exact_candidate_and_rebind_real_entry_receipts
-    old_receipts: invalidated
+    old_receipts: historical_only_invalidated_for_current_candidate
+  latest_main_increment:
+    status: current_increment_only
+    base_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
+    resulting_sha: 5ef9b5475787dd662b2c8ec04b64158387d9dcb7
+    changed_paths: [docs/ga.js]
+    assessment: docs_only_latest_main_increment; no_full_migration_branch_equivalence
 scan_commands:
-  route_declaration_scan: "rg -o 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' server/src/routes -g '*.ts'"
-  transaction_scan: "rg -o '\\.transaction\\s*\\(' server/src -g '*.ts'"
-  migration_file_scan: "find packages/db/src/migrations -maxdepth 1 -type f -name '*.sql'"
-  migration_journal_scan: "JSON.parse(packages/db/src/migrations/meta/_journal.json).entries.length"
-  cli_capability_scan: "rg -o '\"id\": \"[^\"]+\"' cli/src/agent-v1-capabilities.generated.ts"
-  mcp_descriptor_scan: "rg -o '\"capabilityId\": \"[^\"]+\"' packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts"
+  route_declaration_scan: "git grep -o -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/routes/*.ts' | wc -l"
+  route_source_file_scan: "git grep -l -E 'router\\.(get|post|patch|put|delete|head|options|use)\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/routes/*.ts' | wc -l"
+  transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
+  transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' | wc -l"
+  production_transaction_scan: "git grep -o -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
+  production_transaction_source_file_scan: "git grep -l -E '\\.transaction\\s*\\(' 3d22263016324bff63c36be0ce332ff1f09ebdad -- 'server/src/*.ts' 'server/src/**/*.ts' ':!*.test.ts' | wc -l"
+  migration_file_scan: "git ls-tree -r --name-only 3d22263016324bff63c36be0ce332ff1f09ebdad packages/db/src/migrations | rg '\\.sql$' | wc -l"
+  migration_journal_scan: >-
+    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:packages/db/src/migrations/meta/_journal.json |
+    node -e "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).entries.length))"
+  cli_capability_scan: >-
+    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:cli/src/agent-v1-capabilities.generated.ts |
+    rg -o '"id": "[^"]+"' | wc -l
+  cli_agent_v1_scan: >-
+    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:cli/src/agent-v1-capabilities.generated.ts |
+    rg -o '"contract": "agent-v1"' | wc -l
+  cli_compat_scan: >-
+    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:cli/src/agent-v1-capabilities.generated.ts |
+    rg -o '"contract": "compat"' | wc -l
+  mcp_descriptor_scan: >-
+    for f in $(git ls-tree -r --name-only 3d22263016324bff63c36be0ce332ff1f09ebdad packages/agent-runtime-utils/src |
+    rg 'rudder-mcp-tool-descriptors.generated.descriptors-[0-9]+\\.ts$'); do
+    git show 3d22263016324bff63c36be0ce332ff1f09ebdad:$f; done |
+    rg -o '"capabilityId": "[^"]+"' | wc -l
 counts:
-  route_source_files_with_declarations: 47
+  route_source_files_with_declarations: 48
   route_declaration_scan_hits: 513
-  transaction_source_files: 62
-  transaction_scan_hits: 221
-  production_transaction_source_files: 51
-  production_transaction_scan_hits: 200
-  sql_migration_files: 172
-  migration_journal_entries: 170
+  transaction_source_files: 67
+  transaction_scan_hits: 225
+  production_transaction_source_files: 56
+  production_transaction_scan_hits: 204
+  sql_migration_files: 173
+  migration_journal_entries: 171
   product_analytics_route_files_with_declarations: 3
-  cli_capability_entries: 118
-  cli_agent_v1_entries: 107
+  cli_capability_entries: 119
+  cli_agent_v1_entries: 108
   cli_compat_entries: 11
-  mcp_descriptor_entries: 107
+  mcp_descriptor_entries: 108
+counts_basis:
+  current_candidate: 3d22263016324bff63c36be0ce332ff1f09ebdad
+  immutable_scan_basis: 17c9613e3df39e2c67c07d455206312b7ac33a75
+  bounded_rebind_basis: b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
+  scope: route_declaration_transaction_migration_journal_cli_and_mcp_count_classes_only
+  assessment: current_3d222_counts_rebound_from_immutable_17c_scan; bounded_count_equivalence_only
+  limitation: not_full_source_equivalence_semantic_audit_authority_handoff_or_release_evidence
+historical_receipts:
+  v16_current_source_refresh:
+    status: historical_not_current
+    source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
+    tree_sha: bcd68ce026354bb56af742ced22a76c50071a0f3
+    dirty_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    counts:
+      route_source_files_with_declarations: 47
+      route_declaration_scan_hits: 513
+      transaction_source_files: 62
+      transaction_scan_hits: 221
+      production_transaction_source_files: 51
+      production_transaction_scan_hits: 200
+      sql_migration_files: 172
+      migration_journal_entries: 170
+      cli_capability_entries: 118
+      cli_agent_v1_entries: 107
+      cli_compat_entries: 11
+      mcp_descriptor_entries: 107
+    note: retained_for_receipt_history_only; not_current_counts
 observed_runtime_roots:
   - path: server/src/index.ts
     authority: node
@@ -178,6 +235,8 @@ next_actions:
   - obtain independent stage review and verifier PASS for the exact Project-Goal candidate before default-path owner integration
 
 project_goal_real_entry_probe:
+  evidence_status: historical_receipt_not_current_3d222_candidate
+  receipt_scope: historical_fc733_project_goal_real_entry_probe_v10
   artifact: doc/plans/artifacts/2026-09-22-rudder-project-goal-real-entry-probe-v10.json
   candidate_source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
   candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
@@ -215,6 +274,8 @@ project_goal_real_entry_probe:
   claims: local_real_entry_only; project_goal_real_entry_connected=true; default_path_verified=false; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false
 
 supporting_branding_real_entry_historical:
+  evidence_status: historical_receipt_not_current_3d222_candidate
+  receipt_scope: historical_branding_real_entry_probe_v2
   artifact: doc/plans/artifacts/2026-09-22-rudder-branding-real-entry-probe-v2.json
   candidate_fingerprint: 5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91
   build_artifacts:

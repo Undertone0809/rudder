@@ -1,0 +1,422 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-rust-branding-outbox-recovery-v17",
+  "status": "invalidated",
+  "owner": {
+    "root_id": "rudder-full-rust-backend-completion-2026-09-21",
+    "agent_id": "codex-parent"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。\n\n最终目标不是 Node orchestration + Rust sidecar，而是：\nActix Web 接管核心 HTTP/WebSocket 服务；SQLx 接管 PostgreSQL 查询、\n事务和迁移；第一方业务服务、鉴权/session、调度器、workers、\nAgent Run、Chat/Side Chat、Automation、provider adapters、常用后端\n组件、CLI 和 MCP 均由 Rust 实现，对应 Node 后端退出运行时。\n\n同时纳入第一方 identity、analytics collector、managed MCP、\n嵌入式 PostgreSQL 生命周期，以及拥有产品状态的维护和更新恢复工具。\n不能因为它们不在 server 目录，就把它们排除。\n\n保留 React、前端工具、Electron shell，以及用户选择的外部\nprovider CLI、MCP、Local App 和插件组件。允许短生命周期安装入口，\n但不能用这些例外保留第一方 Node 业务、迁移、调度或常驻工具运行时。\n\n先读取当前 AGENTS.md、完整计划、原始迁移方案和实际实现/测试。\n保护已有未提交工作，使用独立迁移 worktree，不把当前代码 reset\n回计划中的旧 SHA。复用已有 Rust 实现，不无审查合并历史大 PR。\n\n刷新完整能力与 authority 清单，区分：\n已实现、私有验证、真实入口接入、默认路径验证、旧实现退出。\n持续维护计划指定的 ledger 和 status 文件，不沿用聊天中的估算百分比。\n\n按 Phase 0–7 连续推进，优先接通已有 Actix/read 能力；\n第一个完整写入切片优先完成现有 D1 组织 branding 与 Project–Goal link。\n每个切片都包括真实入口、鉴权、事务、审计、副作用、恢复、\n相关 CLI/MCP 和旧 writer 的退出，而不是只迁移文件或新增 crate。\n\n保持现有功能和行为，尤其保留 Side Chat 临时/过期/转永久、\n消息历史、stream/cancel/reconnect 和受支持的会话连续性。\n不要强迫 Chat 依赖 Issue，不要借迁移删功能或进行未授权产品重设计。\n\n禁止生产双写、陈旧 writer 继续写入、静默 Node fallback、\n用 Node 子进程包装旧实现，以及把后端业务转移进 Electron/bootstrap。\n迁移事务关联单元前，必须确保所有旧 writer 也遵守 ownership/fence。\n\n每个切片按当前仓库规则完成测试、reviewer、精确候选冻结、\n独立真实工作流 verifier 和最终 reviewer 验收。\n通过后提交合格增量并继续下一切片，不等我再次说“继续”。\n\n最终必须证明：移除旧第一方 Node 后端资产后，安装后的\nUI/API/CLI/MCP、数据库升级、调度、执行、恢复和支持平台仍通过验收。\n私有 Rust 测试通过、Actix 能启动或单个 PR 合并，都不代表总目标完成。\n\n你被授权在隔离本地环境、测试数据库和正常开发/CI 范围实施、\n测试、制作候选产物，并按仓库规则提交和更新 PR。\n未经额外授权，不删除真实用户数据、不迁移生产数据库、\n不发布 stable、不切换生产流量、不购买服务。\n\n缺少凭证、签名、平台环境或生产授权时，只阻塞受影响步骤，\n继续其他可执行工作，并明确记录缺口。\n分别报告 implementation_complete、release_ready 和 production_verified；\n没有实际生产证据，不得声称已上线完成。\n\n如因上下文、额度或环境中断，持久化精确提交、已通过检查、\n剩余任务、阻塞和下一条可执行步骤，保持未完成状态以便恢复。\n不要因为完成一个小切片或一个 PR 就结束整个目标。",
+    "corrections": [
+      "对了，记得先把这个 plan 写进 doc/plans",
+      "我觉得你的开发节奏可以再快一点。\n\n比如你现在生产环境好多地方都还没真实接入，其实完全可以现在就逐步接进去，不需要一口气全部接完。很多部分完全可以一边接一边测试，并不影响的。\n\n建议你调整一下策略，让开发更快一点：很多真实环境可以先迁移进来，因为单纯离线测试和真正切进来测试完全是不一样的。你可以持续地、一点一点把这些功能先接入到生产环境里，逐步替换掉",
+      "需要说明的是，重构的过程中 Main 分支时不时会有新功能或者修改进来，你的 rust 也要对应去做好适配。这个你自己调度分析就好。"
+    ],
+    "slice": "Scalar brandColor public-entry negative proof, transitional outbox recovery, managed-local startup exclusivity, and UI reconnect reconciliation; preserve existing logo behavior and pending full Rust migration scope.",
+    "delivery_contract": "The Node publisher remains transitional. Events are at-least-once refresh hints; persisted readback is authoritative. dedupeKey is connection-local duplicate suppression, not durable consumer deduplication.",
+    "authorization": "isolated local implementation, disposable data, development/CI, qualified working-branch commits and PR updates",
+    "non_goals": [
+      "production writes or traffic switch",
+      "stable publication",
+      "full branding/logo/storage retirement",
+      "Rust CLI/MCP or WebSocket ownership claims",
+      "mixed-version rolling publisher deployment",
+      "multi-server fanout",
+      "exactly-once delivery"
+    ]
+  },
+  "candidate": {
+    "branch": "codex/rudder-branding-outbox-recovery-20260922",
+    "source_ref": "codex/rudder-branding-outbox-recovery-20260922",
+    "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+    "source_tree": "e453569dd7d89dd800662c13550ece19ad0759ec",
+    "content_equivalence": {
+      "prior_source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+      "changed_paths": [
+        "desktop/scripts/smoke.mjs",
+        "scripts/smoke/rust-branding-real-entry.ts",
+        "server/src/__tests__/rust-foundation-startup-config.test.ts"
+      ],
+      "scope": "Only tests and smoke probes changed; all product content and recorded build artifacts are identical. Independent rebind receipt supplies exact hashes and scope. Desktop Library probe follow-up remains unaccepted until frozen separately.",
+      "final_checkpoint_delta": {
+        "prior_source_sha": "3d22263016324bff63c36be0ce332ff1f09ebdad",
+        "changed_paths": [
+          "desktop/scripts/smoke.mjs"
+        ],
+        "scope": "Test navigation only; final logging change does not affect assertions or product."
+      }
+    },
+    "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "dirty_scope": "Tracked and untracked source excluding doc/plans; source clean. Documentation edits do not represent source acceptance.",
+    "build": {
+      "id": "v17-b4793-build-rebound-to-e80deae94",
+      "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+      "original_build_source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+      "equivalence": "Product and packaged build inputs remain identical to b4793.3d222630 changed three tests/harnesses; e80deae94 changes only Desktop smoke navigation. Actual clean scenario passed; final additional change records whether Library was opened by link or supported deep link.",
+      "artifact_sha256": {
+        "native/target/debug/rudder-server-foundation": "597e740084129bae5be8d8f4e03bb8b9401a503dc7493ed08c659192c8c689a0",
+        "native/target/debug/migration-preflight": "634133066d7c046b2caec9c7c0d910872c674955b91c09cf4e1f45f905ccc469",
+        "ui/dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294",
+        "server/ui-dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294"
+      }
+    },
+    "packaged_build": {
+      "source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+      "platform": "darwin-arm64",
+      "server_local_runtime_sha256": "26822efac72592ef15c17a127c87df21f4ffb7c1ad7706c8e2e9935293917ffa",
+      "desktop_main_sha256": "c434de3938422f34434f9b3a7072635a60052efd45af31402c32b8d46ec834a1",
+      "build_log": "/tmp/codex-rudder-v17-evidence.LWLCU0/desktop-dist-b4793.log",
+      "smoke_log": "/tmp/codex-rudder-v17-evidence.LWLCU0/packaged-smoke-b4793.log",
+      "passed": [
+        "account-gate",
+        "auto-update-public",
+        "Computer Use package",
+        "App Builder package"
+      ],
+      "excluded": "No platform signing or production/release claim. Development clean/local-apps/agent-browser/upgrade passed; immutable-candidate rebind remains pending."
+    },
+    "runtime": {
+      "id": "rust-branding-real-entry-11179",
+      "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+      "observed_source_sha": "3d22263016324bff63c36be0ce332ff1f09ebdad",
+      "equivalence_status": "Independent verifier rebound unchanged product inputs and issued PASS for e80deae94.",
+      "api_port": 54908,
+      "database_port": 54909,
+      "other_workflows": "See independent receipts for each distinct managed-local and browser runtime; no single runtime is claimed for all criteria."
+    },
+    "organization_data": {
+      "data_id": "c6981585-09f5-49eb-a657-f8bd082295fd",
+      "foreign_organization_id": "7727405e-d76d-40da-9bcb-a473b63fbf04"
+    },
+    "acceptance_packet": {
+      "version": "17",
+      "fingerprint": "dc5f7eaac591732b0aebd8df5f52ecf223b1d732cb7b8923082c8602c5b4cad5",
+      "criteria": [
+        "Actual HTTP, Node CLI and MCP branding writes select Rust SQLx, preserve authentication and organization scope, bind idempotency, replay without duplicate activity and reject conflicts/mixed patches and legacy scalar writers.",
+        "A stopped 0169 publisher's pending data upgrades to 0170 and is published; committed-claim death, stale-worker resumption, emit-before-ACK death and failed-publication backoff recover on real PostgreSQL with stable delivery keys.",
+        "Two real managed-local starter processes cannot steal a live startup lock after sixty seconds; replacement waits for old PID exit, keeps instance/database identity and does not overlap publishers.",
+        "An unreadable or partial start.lock and an abandoned .recovery lock fail closed: the competing startup times out without invoking its runtime callback or altering the lock. Automatic recovery is not claimed; an operator must verify the instance and owners before recovering those files.",
+        "The actual built UI keeps HTTP online while WebSocket reconnect is withheld; Rust branding and Project-Goal mutations occur while disconnected, then reconnect changes the organization icon and rereads the mounted project's new goalIds.",
+        "Mounted-provider regressions cover exact production four-segment Project keys, data-less pending reads, stale late responses, current-org activity/dashboard/badges and untouched other-org caches; existing chat queue non-cancelling semantics remain.",
+        "No default-authority, Rust transport retirement, logo retirement, production, or full-migration claim is inferred from this transitional proof.",
+        "Applicable lint, typecheck, contract generation, architecture ratchet, focused/full baseline evidence and packaged Desktop checks are reconciled for the exact candidate; omissions remain explicit blockers to their affected claims."
+      ],
+      "state_inventory": [
+        {
+          "state": "connected",
+          "decision": "use existing project configuration",
+          "controls": "existing project and navigation controls",
+          "safety_context": "selected organization and persisted project",
+          "continuity": "no new dialog, draft reset, or navigation redesign"
+        },
+        {
+          "state": "socket_disconnected_http_online",
+          "decision": "continue existing UI workflow",
+          "controls": "unchanged",
+          "safety_context": "cached values may be stale until reconnect",
+          "continuity": "preserve page and draft state"
+        },
+        {
+          "state": "socket_reconnected",
+          "decision": "continue with refreshed persisted state",
+          "controls": "unchanged",
+          "safety_context": "selected-org refresh and cancellation of pre-disconnect pending reads",
+          "continuity": "Back, Close, Reopen and chat behavior remain existing product behavior"
+        }
+      ]
+    },
+    "changed_paths": [
+      "cli/src/agent-v1-mcp-organization-project.ts",
+      "cli/src/agent-v1-mcp-server.ts",
+      "cli/src/commands/client/company-organization-commands.ts",
+      "cli/src/commands/client/company.ts",
+      "cli/src/commands/start.ts",
+      "desktop/scripts/smoke.mjs",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-0.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-1.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-2.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-3.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-4.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-5.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-6.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.capabilities-7.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.test.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-0.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-1.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-2.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-3.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-4.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.descriptors-5.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "packages/db/src/client.test.ts",
+      "packages/db/src/migrations/0170_organization_mutation_outbox_claims.sql",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-outbox-recovery.test.ts",
+      "packages/db/src/schema/index.ts",
+      "packages/db/src/schema/organization_branding_mutations.ts",
+      "packages/shared/src/validators/chat.ts",
+      "packages/shared/src/validators/index.ts",
+      "scripts/architecture-audit-baseline.json",
+      "scripts/generate-rudder-mcp-tool-descriptors.ts",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "scripts/smoke/organization-outbox-recovery-worker.ts",
+      "scripts/smoke/rust-branding-real-entry.ts",
+      "scripts/smoke/rust-project-goal-real-entry.ts",
+      "scripts/smoke/rust-reconnect-browser.mjs",
+      "scripts/smoke/rust-reconnect-ui-fixture.ts",
+      "server/src/__tests__/budgets-service.test.ts",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/local-runtime.test.ts",
+      "server/src/__tests__/organization-workspace-browser.test.ts",
+      "server/src/__tests__/organization-workspace-media-routes.test.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "server/src/index.ts",
+      "server/src/local-runtime.ts",
+      "server/src/routes/issues.mutations.ts",
+      "server/src/routes/orgs-rust-foundation.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/runtime/server-app-runtime.ts",
+      "server/src/services/chats.mutation-helpers.ts",
+      "server/src/services/chats.ts",
+      "server/src/services/goals.contract-helpers.ts",
+      "server/src/services/goals.ts",
+      "server/src/services/index.ts",
+      "server/src/services/issues.description-assets.ts",
+      "server/src/services/issues.ts",
+      "server/src/services/organization-branding-fence.test.ts",
+      "server/src/services/organization-branding-fence.ts",
+      "server/src/services/organization-mutation-outbox.test.ts",
+      "server/src/services/organization-mutation-outbox.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "ui/src/context/LiveUpdatesProvider.queue.test.tsx",
+      "ui/src/context/LiveUpdatesProvider.tsx",
+      "ui/src/context/live-updates-reconnect.ts"
+    ],
+    "changed_paths_basis": "Increment from existing PR head6e37a563 to frozen e80deae94, excluding durable doc/plans records",
+    "workload_fixture": "Independent disposable branding, publisher recovery, managed-local takeover and browser fixtures listed in issued receipts",
+    "budget_lease": {
+      "id": "not_applicable",
+      "fingerprint": "no_explicit_budget_or_deadline",
+      "expires_at": "not_applicable"
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "agent_id": "01a0c92c-a981-7170-8c24-7ae2a98dfe52",
+      "verdict": "accept",
+      "level": "stage",
+      "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+      "packet_version": "17",
+      "scope": "Final test-only smoke delta and packet accepted. Actual Library observation used supported deep link; old log wording is superseded by explicit method correction. Final verifier and final review remain required.",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "build_id": "v17-b4793-build-rebound-to-e80deae94",
+      "runtime_id": "rust-branding-real-entry-11179",
+      "data_id": "c6981585-09f5-49eb-a657-f8bd082295fd"
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "agent_id": "01a0c921-5f77-7c73-8f7e-0ae752bcf450",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+      "build_id": "v17-b4793-build-rebound-to-e80deae94",
+      "runtime_id": "rust-branding-real-entry-11179",
+      "data_id": "c6981585-09f5-49eb-a657-f8bd082295fd",
+      "packet_version": "17",
+      "evidence": "artifacts/2026-09-23-rudder-branding-verifier-e80-final.json",
+      "scope": "Bounded v17 only. Issuer corrected two digest transcription errors; parent verified18 path-linked hashes. Library proof is Projects rail plus supported deep-link Files/Editor, not sidebar click."
+    },
+    "final_review": {
+      "verdict": "accept",
+      "level": "final_handoff_verdict",
+      "agent_id": "01a0c92c-a981-7170-8c24-7ae2a98dfe52",
+      "candidate_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+      "build_id": "v17-b4793-build-rebound-to-e80deae94",
+      "runtime_id": "rust-branding-real-entry-11179",
+      "data_id": "c6981585-09f5-49eb-a657-f8bd082295fd",
+      "packet_version": "17",
+      "scope": "Qualified v17 PR increment only; reviewer reconciled exact source, verifier PASS, actual artifacts/log hashes and rendered evidence. No remaining blockers. Documentation closeout may preserve product-content equivalence without workflow replay.",
+      "boundaries": "Projects rail plus Library supported deep link; screenshots establish rendered state and goalIds use mounted HTTP readback. Transitional Node publisher and broader Rust/production/release work remain incomplete."
+    }
+  },
+  "pending_candidate_delta": {
+    "status": "frozen",
+    "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+    "path": "desktop/scripts/smoke.mjs",
+    "remaining": "Qualified PR publication and CI; main merge is not authorized"
+  },
+  "latest_baseline_reconciliation": {
+    "architecture_ratchet": "PASS final Library test delta; /tmp/codex-rudder-v17-evidence.LWLCU0/architecture-library-final.log",
+    "startup_forwarding": "1/1 PASS",
+    "mounted_provider": "Independent8/8 PASS",
+    "cross_org": "Independent403/403 and unchanged foreign state",
+    "aggregate": "No single clean aggregate run: mention-edit timeout rerun95/95; remaining138 server suites1479 pass plus corrected startup forwarding1/1; scripts187 pass plus benchmark rerun8/8 after packaging restored node_modules",
+    "desktop_terminal": "PASS after test readiness wait; product unchanged",
+    "desktop_local_apps": "PASS real dev workflow; /tmp/codex-rudder-v17-evidence.LWLCU0/desktop-local-apps-final.log",
+    "desktop_clean": "PASS /tmp/codex-rudder-clean-fixed.vcsXYw/desktop-clean-projects-library-final.log; actual Projects rail and supported Library deep link with Files and Editor visible; no sidebar-click claim. Last subsequent delta only records actual method in console output.",
+    "packaged": "b4793 rebuilt packaged account/update/recovery Computer Use and App Builder PASS; test-only3d222630 does not alter product artifacts",
+    "desktop_agent_browser": "PASS /tmp/codex-rudder-v17-evidence.LWLCU0/desktop-agent-browser-final.log",
+    "desktop_upgrade": "PASS /tmp/codex-rudder-v17-evidence.LWLCU0/desktop-upgrade-final.log"
+  },
+  "stage_review": {
+    "agent_id": "01a0c92c-a981-7170-8c24-7ae2a98dfe52",
+    "verdict": "accept",
+    "level": "stage",
+    "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+    "packet_version": "17",
+    "scope": "Final test-only smoke delta and packet accepted. Actual Library observation used supported deep link; old log wording is superseded by explicit method correction. Final verifier and final review remain required."
+  },
+  "supporting_evidence": [
+    "artifacts/2026-09-22-rudder-branding-reconnect-author-probe-v1.json",
+    "status active_work validation and /tmp log paths; none substitutes for independent frozen-candidate receipts",
+    "artifacts/2026-09-22-rudder-branding-verifier-3d222-rebind.json",
+    "artifacts/2026-09-23-rudder-branding-verifier-e80-final.json"
+  ],
+  "planned_evidence": {
+    "root": "/tmp/codex-rudder-v17-evidence.LWLCU0",
+    "root_policy": "Each execution uses a per-task /tmp/codex-* root and records its exact path; no default-temp rudder-* fixture may be swept by another suite.",
+    "binding": "Each receipt records frozen source SHA/content fingerprint, relevant artifact hashes, runtime/process IDs, instance/database/organization identity, command, exit status, and criterion observations.",
+    "slots": [
+      {
+        "id": "branding_entrypoints",
+        "criteria": [
+          1,
+          7
+        ],
+        "command": "node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/smoke/rust-branding-real-entry.ts",
+        "output": "branding-entrypoints.log and receipt.json",
+        "state": "planned"
+      },
+      {
+        "id": "postgres_upgrade_recovery",
+        "criteria": [
+          2
+        ],
+        "command": "pnpm exec vitest run --root packages/db --config vitest.config.ts src/migrations/organization-outbox-recovery.test.ts",
+        "output": "postgres-recovery.log and receipt.json",
+        "state": "planned"
+      },
+      {
+        "id": "managed_dual_process",
+        "command": "independent verifier managed-local probe",
+        "output": "managed-startup.json with old/new PID timeline and persisted sentinel",
+        "state": "preparation"
+      },
+      {
+        "id": "unreadable_abandoned_locks",
+        "command": "local-runtime regressions and managed verifier negative cases",
+        "output": "startup-fail-closed.json",
+        "state": "planned"
+      },
+      {
+        "id": "browser_ws_only",
+        "command": "rust-reconnect-ui-fixture.ts plus rust-reconnect-browser.mjs via ego-browser",
+        "output": "browser-reconnect.log, screenshots and receipt.json",
+        "state": "planned"
+      },
+      {
+        "id": "mounted_provider",
+        "criteria": [
+          6
+        ],
+        "command": "pnpm exec vitest run --root ui --config vitest.config.ts src/context/LiveUpdatesProvider.queue.test.tsx src/context/LiveUpdatesProvider.invalidation.test.ts",
+        "output": "mounted-provider.log",
+        "state": "planned"
+      },
+      {
+        "id": "baseline",
+        "command": "lint, typecheck, contract generation, architecture ratchet, applicable tests/build and desktop verification",
+        "output": "per-command logs with source equivalence and explicit omitted/failed gates",
+        "state": "in_progress"
+      }
+    ]
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "isolated_risk",
+    "target_ref": "refs/heads/main",
+    "base_sha": "6e37a563523db92b63589557be18d12e65593101",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+    "patch_tree_sha": "e453569dd7d89dd800662c13550ece19ad0759ec",
+    "expected_old_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+    "index_update_mode": "none",
+    "cas": {
+      "attempted": false,
+      "succeeded": false
+    },
+    "note": "PR publication is authorized after gates; merging main, stable release and production deployment are not authorized by this packet."
+  },
+  "preservation": {
+    "checked": true,
+    "note": "All product writes and staging occurred in isolated task worktrees. Original7b2a checkout was accessed read-only; prepublication diff/index/untracked snapshots recorded and rechecked before push.",
+    "current_observation": {
+      "worktree": "/Users/zeeland/.codex/worktrees/7b2a/rudder-oss",
+      "tracked_diff_sha256": "a805bb0666c88f91f610b56bcc241a2acc04a88c0c4174bf639dbf256c3a54e0",
+      "index_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untracked_file": "cli/src/__tests__/organization-brand-color.test.ts",
+      "untracked_sha256": "ebbfae2e69258d770a8ad9d435ab61e3c5f3fd4ecb3c4b1f533a3753e05a1f80",
+      "scope": "Read-only prepublication snapshot; original checkout has not been mutated by this lane."
+    }
+  },
+  "claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "stage_review_history": [
+    {
+      "agent_id": "01a0c92c-a981-7170-8c24-7ae2a98dfe52",
+      "verdict": "accept",
+      "level": "stage",
+      "source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+      "packet_version": "17",
+      "scope": "Implementation and proposed criteria only; reviewer independently reran9/9 local-runtime tests. Runtime/data identities and final verifier remain pending.",
+      "resolved_finding": "Standalone abandoned recovery marker now refuses startup even without start.lock; incorrect missing invalidation-test filename finding withdrawn.",
+      "remaining_final_gates": [
+        "frozen managed automatic takeover",
+        "frozen browser reconnect",
+        "baseline reconciliation",
+        "development Terminal diagnosis",
+        "updated packaged startup evidence",
+        "independent verifier",
+        "final reviewer"
+      ]
+    }
+  ],
+  "publication_plan": {
+    "authorized": true,
+    "pr": 221,
+    "remote_ref": "refs/heads/codex/rudder-full-rust-backend-completion-20260921",
+    "expected_old_sha": "6e37a563523db92b63589557be18d12e65593101",
+    "state": "held_for_main_schema_reconciliation",
+    "main_merge_authorized": false
+  },
+  "verifier_history": [
+    {
+      "path": "artifacts/2026-09-22-rudder-branding-verifier-3d222-rebind.json",
+      "verdict": "QUESTION",
+      "passed_scope": "Criteria1-6 with explicit unchanged-product rebind; criterion7 boundary recorded",
+      "remaining": "Criterion8 Desktop clean Library navigation and baseline reconciliation; final reviewer follows verifier PASS"
+    }
+  ],
+  "drift": {
+    "active": true,
+    "events": [
+      {
+        "previous_main_sha": "5ef9b5475787dd662b2c8ec04b64158387d9dcb7",
+        "current_main_sha": "38acc6fbe5c21c38c05a74cea19fbfe5123ea4cf",
+        "reason": "Main#223 adds native-session/common-Run schema and migrations0164-0167 that collide with unreleased migration-branch journal slots. Qualified publication against new Main requires isolated reconciliation and affected upgrade/runtime revalidation."
+      }
+    ],
+    "invalidated_receipts": [
+      "new_main_integration_and_upgrade_applicability"
+    ]
+  },
+  "acceptance_boundary": "Stage/verifier/final-review receipts remain truthful for immutable e80 on the pre38acc Main baseline. They do not qualify a reconciled Main schema or renamed migrations; affected new-candidate proof must be renewed."
+}
