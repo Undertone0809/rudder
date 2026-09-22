@@ -10,7 +10,7 @@ use rudder_project_goal_link_core::{
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use support::{
-    ASSET, CEO, Database, FOREIGN_ASSET, FOREIGN_GOAL, FOREIGN_PROJECT, GOAL, GOAL_TWO, ORG, OTHER,
+    CEO, Database, FOREIGN_ASSET, FOREIGN_GOAL, FOREIGN_PROJECT, GOAL, GOAL_TWO, ORG, OTHER,
     PROJECT,
 };
 
@@ -205,7 +205,12 @@ fn branding(key: &str, version: u64) -> OrganizationBrandingCommand {
 
 fn branding_at(key: &str, version: u64, fence_epoch: u64) -> OrganizationBrandingCommand {
     OrganizationBrandingCommand::board(ORG, "board-user", key, version, fence_epoch)
-        .with_name(Some(format!("Name {key}")))
+        .with_brand_color(Some(branding_color(key)))
+}
+
+fn branding_color(key: &str) -> String {
+    let digest = Sha256::digest(key.as_bytes());
+    format!("#{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2])
 }
 
 fn adapter_fingerprint(core_fingerprint: &str, primary_goal_after: Option<&str>) -> String {
@@ -235,7 +240,10 @@ async fn branding_applies_state_activity_and_immutable_receipt_atomically() {
     assert_eq!(committed.receipt.organization_id, ORG);
     assert_eq!(committed.receipt.version, 1);
     assert_eq!(committed.receipt.fence_epoch, 7);
-    assert_eq!(database.name().await, "Name branding-applied");
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-applied"))
+    );
     assert_eq!(database.counts().await, (1, 1, 1));
 }
 
@@ -250,7 +258,10 @@ async fn branding_replay_returns_original_receipt_after_a_later_mutation() {
 
     assert!(replay.replayed);
     assert_eq!(replay.receipt, first.receipt);
-    assert_eq!(database.name().await, "Name branding-later");
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-later"))
+    );
     assert_eq!(database.counts().await, (2, 2, 2));
 }
 
@@ -262,14 +273,14 @@ async fn branding_replay_rejects_a_semantically_tampered_snapshot() {
     store.branding(command.clone()).await.unwrap();
     database
         .sql(
-            "ALTER TABLE organization_mutation_receipts
-             DISABLE TRIGGER organization_mutation_receipts_guard;
-             UPDATE organization_mutation_receipts
+            "ALTER TABLE organization_branding_mutation_receipts
+             DISABLE TRIGGER organization_branding_mutation_receipts_guard;
+             UPDATE organization_branding_mutation_receipts
              SET result=jsonb_set(result, '{result,state,name}', to_jsonb('Tampered'::text))
              WHERE org_id='10000000-0000-4000-8000-000000000001'
                AND idempotency_key='branding-tamper';
-             ALTER TABLE organization_mutation_receipts
-             ENABLE TRIGGER organization_mutation_receipts_guard;",
+             ALTER TABLE organization_branding_mutation_receipts
+             ENABLE TRIGGER organization_branding_mutation_receipts_guard;",
         )
         .await;
 
@@ -277,7 +288,10 @@ async fn branding_replay_rejects_a_semantically_tampered_snapshot() {
         store.branding(command).await,
         Err(StoreError::InvalidReceipt)
     ));
-    assert_eq!(database.name().await, "Name branding-tamper");
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-tamper"))
+    );
     assert_eq!(database.counts().await, (1, 1, 1));
 }
 
@@ -289,14 +303,14 @@ async fn branding_replay_rejects_a_tampered_omitted_field() {
     store.branding(command.clone()).await.unwrap();
     database
         .sql(
-            "ALTER TABLE organization_mutation_receipts
-             DISABLE TRIGGER organization_mutation_receipts_guard;
-             UPDATE organization_mutation_receipts
+            "ALTER TABLE organization_branding_mutation_receipts
+             DISABLE TRIGGER organization_branding_mutation_receipts_guard;
+             UPDATE organization_branding_mutation_receipts
              SET result=jsonb_set(result, '{result,state,description}', to_jsonb('Tampered'::text))
              WHERE org_id='10000000-0000-4000-8000-000000000001'
                AND idempotency_key='branding-omitted-field-tamper';
-             ALTER TABLE organization_mutation_receipts
-             ENABLE TRIGGER organization_mutation_receipts_guard;",
+             ALTER TABLE organization_branding_mutation_receipts
+             ENABLE TRIGGER organization_branding_mutation_receipts_guard;",
         )
         .await;
 
@@ -304,7 +318,10 @@ async fn branding_replay_rejects_a_tampered_omitted_field() {
         store.branding(command).await,
         Err(StoreError::InvalidReceipt)
     ));
-    assert_eq!(database.name().await, "Name branding-omitted-field-tamper");
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-omitted-field-tamper"))
+    );
     assert_eq!(database.counts().await, (1, 1, 1));
 }
 
@@ -354,10 +371,13 @@ async fn branding_conflicting_key_is_rejected_without_overwriting_original_evide
         .unwrap_err();
 
     assert!(matches!(error, StoreError::IdempotencyConflict));
-    assert_eq!(database.name().await, "Name branding-conflict");
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("branding-conflict"))
+    );
     assert_eq!(database.counts().await, (1, 1, 1));
     let stored_fingerprint: String = sqlx::query_scalar(
-        "SELECT command_fingerprint FROM organization_mutation_receipts
+        "SELECT command_fingerprint FROM organization_branding_mutation_receipts
          WHERE org_id=$1::uuid AND idempotency_key=$2",
     )
     .bind(ORG)
@@ -374,14 +394,14 @@ async fn branding_checks_owner_scope_freshness_and_bigint_boundaries() {
     let store = MutationStore::new(database.pool.clone());
 
     database
-        .sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=8, fence_token='60000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_branding_mutation_state SET owner='node', fence_epoch=8, fence_token='60000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store.branding(branding("node-owned", 0)).await,
         Err(StoreError::NotOwned)
     ));
     database
-        .sql("UPDATE organization_mutation_state SET owner='rust', fence_epoch=9, fence_token='70000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_branding_mutation_state SET owner='rust', fence_epoch=9, fence_token='70000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
 
     assert!(matches!(
@@ -395,7 +415,7 @@ async fn branding_checks_owner_scope_freshness_and_bigint_boundaries() {
     ));
 
     database
-        .sql("UPDATE organization_mutation_state SET mutation_version=9223372036854775807 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE organization_branding_mutation_state SET mutation_version=9223372036854775807 WHERE org_id='10000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store
@@ -424,7 +444,7 @@ async fn branding_rejects_missing_and_cross_organization_resources() {
         0,
         7,
     )
-    .with_name(Some("missing".to_owned()));
+    .with_brand_color(Some("#123456".to_owned()));
     assert!(matches!(
         store.branding(missing_org).await,
         Err(StoreError::NotFound)
@@ -433,20 +453,19 @@ async fn branding_rejects_missing_and_cross_organization_resources() {
     let foreign_asset = branding("foreign-asset", 0).with_logo_asset_id(Some(FOREIGN_ASSET.into()));
     assert!(matches!(
         store.branding(foreign_asset).await,
-        Err(StoreError::NotFound)
+        Err(StoreError::InvalidInput)
     ));
     assert_eq!(database.name().await, "Original");
     assert_eq!(database.counts().await, (0, 0, 0));
 
-    let local_asset = branding("local-asset", 0).with_logo_asset_id(Some(ASSET.into()));
-    store.branding(local_asset).await.unwrap();
-    let logo: String =
-        sqlx::query_scalar("SELECT asset_id::text FROM organization_logos WHERE org_id=$1::uuid")
-            .bind(ORG)
-            .fetch_one(&database.pool)
-            .await
-            .unwrap();
-    assert_eq!(logo, ASSET);
+    store
+        .branding(branding("local-brand-color", 0))
+        .await
+        .unwrap();
+    assert_eq!(
+        database.brand_color().await,
+        Some(branding_color("local-brand-color"))
+    );
     assert_ne!(OTHER, ORG);
     assert_ne!(CEO, "board-user");
 }
@@ -487,7 +506,7 @@ async fn branding_rejects_inactive_ceo_before_replay_and_preserves_scope() {
     let database = Database::start().await;
     let store = MutationStore::new(database.pool.clone());
     let command = OrganizationBrandingCommand::ceo_agent(ORG, CEO, "inactive-ceo", 0, 7)
-        .with_name(Some("inactive".to_owned()));
+        .with_brand_color(Some("#123456".to_owned()));
     database
         .sql(
             "UPDATE agents SET status='terminated' WHERE id='50000000-0000-4000-8000-000000000001'",
@@ -981,7 +1000,7 @@ async fn project_goal_cancel_is_durable_terminal_and_replays_after_scope_advance
     }
 
     store
-        .branding(branding_at("after-cancel-branding", 2, 8))
+        .branding(branding_at("after-cancel-branding", 0, 7))
         .await
         .unwrap();
     let replay = store
@@ -998,9 +1017,9 @@ async fn project_goal_cancel_is_durable_terminal_and_replays_after_scope_advance
     let error = store
         .project_goal(
             project_goal_command_from_state(
-                cancelled_state.rebase_scope(3, 8).unwrap(),
+                cancelled_state.rebase_scope(2, 8).unwrap(),
                 Operation::Attach,
-                3,
+                2,
                 8,
                 "cancel-new-key",
             ),
@@ -1012,7 +1031,10 @@ async fn project_goal_cancel_is_durable_terminal_and_replays_after_scope_advance
         error,
         StoreError::Link(rudder_project_goal_link_core::LinkMutationError::Cancelled)
     ));
-    assert_eq!(database.counts().await, (3, 3, 3));
+    // Branding and project-goal mutations now own independent version rows;
+    // this workflow has two project receipts, three activities, and three
+    // total receipts after the independent branding mutation.
+    assert_eq!(database.counts().await, (2, 3, 3));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1078,7 +1100,7 @@ async fn project_goal_respects_owner_fence_and_ceo_authority_before_mutation() {
     let store = MutationStore::new(database.pool.clone());
 
     database
-        .sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=8, fence_token='60000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE project_goal_mutation_state SET owner='node', fence_epoch=8, fence_token='60000000-0000-4000-8000-000000000001' WHERE project_id='20000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store
@@ -1091,7 +1113,7 @@ async fn project_goal_respects_owner_fence_and_ceo_authority_before_mutation() {
     ));
 
     database
-        .sql("UPDATE organization_mutation_state SET owner='rust', fence_epoch=9, fence_token='70000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE project_goal_mutation_state SET owner='rust', fence_epoch=9, fence_token='70000000-0000-4000-8000-000000000001' WHERE project_id='20000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store
@@ -1136,7 +1158,7 @@ async fn project_goal_rejects_stale_version_and_bigint_overflow_without_partial_
         let store = MutationStore::new(database.pool.clone());
 
         database
-            .sql("UPDATE organization_mutation_state SET mutation_version=1 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+            .sql("UPDATE project_goal_mutation_state SET mutation_version=1 WHERE project_id='20000000-0000-4000-8000-000000000001'")
             .await;
         assert!(matches!(
             store
@@ -1155,7 +1177,7 @@ async fn project_goal_rejects_stale_version_and_bigint_overflow_without_partial_
         ));
 
         database
-            .sql("UPDATE organization_mutation_state SET mutation_version=9223372036854775807, fence_epoch=7 WHERE org_id='10000000-0000-4000-8000-000000000001'")
+            .sql("UPDATE project_goal_mutation_state SET mutation_version=9223372036854775807, fence_epoch=7 WHERE project_id='20000000-0000-4000-8000-000000000001'")
             .await;
         assert!(matches!(
             store
@@ -1178,7 +1200,7 @@ async fn project_goal_rejects_stale_version_and_bigint_overflow_without_partial_
     let database = Database::start().await;
     let store = MutationStore::new(database.pool.clone());
     database
-        .sql("UPDATE organization_mutation_state SET fence_epoch=9223372036854775807, fence_token='80000000-0000-4000-8000-000000000001' WHERE org_id='10000000-0000-4000-8000-000000000001'")
+        .sql("UPDATE project_goal_mutation_state SET fence_epoch=9223372036854775807, fence_token='80000000-0000-4000-8000-000000000001' WHERE project_id='20000000-0000-4000-8000-000000000001'")
         .await;
     assert!(matches!(
         store

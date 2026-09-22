@@ -139,6 +139,8 @@ describe("server config env loading", () => {
     process.chdir(tempDir);
     writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
     delete process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE;
+    delete process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE;
+    delete process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE;
     delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
     delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
 
@@ -146,6 +148,8 @@ describe("server config env loading", () => {
     const config = loadConfig();
 
     expect(config.rustFoundationMode).toBe("off");
+    expect(config.rustOrganizationBrandingMode).toBe("off");
+    expect(config.rustProjectGoalSetMode).toBe("off");
     expect(config.rustFoundationBinaryPath).toBeUndefined();
     expect(config.rustFoundationActorEnvelopeKey).toBeUndefined();
   });
@@ -155,6 +159,8 @@ describe("server config env loading", () => {
     process.chdir(tempDir);
     writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
     process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE = " required ";
+    process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE = " required ";
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = " required ";
     process.env.RUDDER_SERVER_FOUNDATION_PATH = " /tmp/rudder-server-foundation ";
     process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = " startup-actor-key ";
 
@@ -162,6 +168,8 @@ describe("server config env loading", () => {
     const config = loadConfig();
 
     expect(config.rustFoundationMode).toBe("required");
+    expect(config.rustOrganizationBrandingMode).toBe("required");
+    expect(config.rustProjectGoalSetMode).toBe("required");
     expect(config.rustFoundationBinaryPath).toBe("/tmp/rudder-server-foundation");
     expect(config.rustFoundationActorEnvelopeKey).toBe("startup-actor-key");
   });

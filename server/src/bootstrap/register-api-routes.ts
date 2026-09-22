@@ -91,7 +91,7 @@ export function registerApiRoutes(
   api.use(agentRoutes(db, opts.storageService));
   api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
-  api.use(projectRoutes(db));
+  api.use(projectRoutes(db, rustFoundationBridge));
   api.use(appBuilderRoutes(db, {
     onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId),
   }));

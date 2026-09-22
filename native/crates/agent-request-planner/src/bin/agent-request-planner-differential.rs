@@ -148,6 +148,7 @@ fn direct_request_json(request: &DirectRequest) -> Value {
         "method": method_name(request.method),
         "path": request.path,
         "query": request.query,
+        "headers": request.headers,
         "body": request.body,
         "context": {
             "organization": request.context.organization,

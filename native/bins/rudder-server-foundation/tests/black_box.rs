@@ -253,7 +253,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
     ]);
     let route = format!("/api/orgs/{ORG}/branding");
-    let body = br##"{"name":"Rust branding","description":"private D1","brandColor":"#336699"}"##;
+    let body = br##"{"brandColor":"#336699"}"##;
 
     let missing_key = signed_patch_request(
         bound_addr,
@@ -284,8 +284,29 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     assert!(first.starts_with("HTTP/1.1 200"), "{first}");
     let first_json = response_json(&first);
     assert_eq!(first_json["version"], 1);
-    assert_eq!(first_json["result"]["state"]["name"], "Rust branding");
+    assert_eq!(first_json["result"]["state"]["brand_color"], "#336699");
     let activity_id = first_json["activity_id"].as_str().expect("activity id");
+
+    let mismatched_idempotency = signed_patch_request_with_action_and_signed_key(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "branding-idempotency-mismatch",
+        "branding-header-key",
+        Some("branding-signed-key"),
+        ORGANIZATION_BRANDING_ACTION,
+        body,
+        true,
+    );
+    assert!(
+        mismatched_idempotency.starts_with("HTTP/1.1 401"),
+        "{mismatched_idempotency}"
+    );
+    assert!(
+        mismatched_idempotency.contains("actor_envelope_invalid"),
+        "{mismatched_idempotency}"
+    );
 
     let replay = signed_patch_request(
         bound_addr,
@@ -300,7 +321,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     assert!(replay.starts_with("HTTP/1.1 200"), "{replay}");
     assert_eq!(response_json(&replay), first_json);
 
-    let conflict_body = br#"{"name":"Conflicting branding"}"#;
+    let conflict_body = br##"{"brandColor":"#663399"}"##;
     let conflict = signed_patch_request(
         bound_addr,
         &route,
@@ -326,7 +347,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     .execute(&pool)
     .await
     .expect("install branding audit failure");
-    let rollback_body = br#"{"name":"Should roll back"}"#;
+    let rollback_body = br##"{"brandColor":"#112233"}"##;
     let rollback = signed_patch_request(
         bound_addr,
         &route,
@@ -338,13 +359,13 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         true,
     );
     assert!(rollback.starts_with("HTTP/1.1 500"), "{rollback}");
-    let persisted_name: String =
-        sqlx::query_scalar("SELECT name FROM organizations WHERE id=$1::uuid")
+    let persisted_color: Option<String> =
+        sqlx::query_scalar("SELECT brand_color FROM organizations WHERE id=$1::uuid")
             .bind(ORG)
             .fetch_one(&pool)
             .await
             .expect("read rolled-back branding");
-    assert_eq!(persisted_name, "Rust branding");
+    assert_eq!(persisted_color, Some("#336699".to_owned()));
     sqlx::raw_sql(
         "DROP TRIGGER fail_branding_activity_trigger ON activity_log;
          DROP FUNCTION fail_branding_activity();",
@@ -354,7 +375,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     .expect("remove branding audit failure");
 
     sqlx::query(
-        "UPDATE organization_mutation_state SET owner='node', fence_epoch=2, fence_token=gen_random_uuid() WHERE org_id=$1::uuid",
+        "UPDATE organization_branding_mutation_state SET owner='node', fence_epoch=2, fence_token=gen_random_uuid() WHERE org_id=$1::uuid",
     )
     .bind(ORG)
     .execute(&pool)
@@ -367,7 +388,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         SECRET,
         "branding-node-owned",
         "branding-node-owned",
-        br#"{"name":"Must not write"}"#,
+        br##"{"brandColor":"#445566"}"##,
         true,
     );
     assert!(node_owned.starts_with("HTTP/1.1 409"), "{node_owned}");
@@ -470,6 +491,27 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     );
     assert_eq!(first_json["result"]["state"]["primaryGoalAfter"], GOAL_TWO);
 
+    let mismatched_idempotency = signed_patch_request_with_action_and_signed_key(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "goal-set-idempotency-mismatch",
+        "goal-set-header-key",
+        Some("goal-set-signed-key"),
+        PROJECT_GOAL_SET_ACTION,
+        first_body,
+        true,
+    );
+    assert!(
+        mismatched_idempotency.starts_with("HTTP/1.1 401"),
+        "{mismatched_idempotency}"
+    );
+    assert!(
+        mismatched_idempotency.contains("actor_envelope_invalid"),
+        "{mismatched_idempotency}"
+    );
+
     let attached: Vec<String> = sqlx::query_scalar(
         "SELECT goal_id::text FROM project_goals WHERE project_id=$1::uuid ORDER BY goal_id",
     )
@@ -556,9 +598,9 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     );
     assert!(rollback.starts_with("HTTP/1.1 500"), "{rollback}");
     let version: i64 = sqlx::query_scalar(
-        "SELECT mutation_version FROM organization_mutation_state WHERE org_id=$1::uuid",
+        "SELECT mutation_version FROM project_goal_mutation_state WHERE project_id=$1::uuid",
     )
-    .bind(ORG)
+    .bind(PROJECT)
     .fetch_one(&pool)
     .await
     .expect("read rolled-back goal-set version");
@@ -627,9 +669,9 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     assert!(foreign_org.starts_with("HTTP/1.1 401"), "{foreign_org}");
 
     sqlx::query(
-        "UPDATE organization_mutation_state SET owner='node', fence_epoch=8, fence_token=gen_random_uuid() WHERE org_id=$1::uuid",
+        "UPDATE project_goal_mutation_state SET owner='node', fence_epoch=8, fence_token=gen_random_uuid() WHERE project_id=$1::uuid",
     )
-    .bind(ORG)
+    .bind(PROJECT)
     .execute(&pool)
     .await
     .expect("move goal-set fixture to node owner");
@@ -707,12 +749,42 @@ fn signed_patch_request_with_action(
     body: &[u8],
     include_idempotency_key: bool,
 ) -> String {
+    signed_patch_request_with_action_and_signed_key(
+        addr,
+        route,
+        claimed_org_id,
+        secret,
+        nonce,
+        idempotency_key,
+        if include_idempotency_key {
+            Some(idempotency_key)
+        } else {
+            None
+        },
+        action,
+        body,
+        include_idempotency_key,
+    )
+}
+
+fn signed_patch_request_with_action_and_signed_key(
+    addr: SocketAddr,
+    route: &str,
+    claimed_org_id: &str,
+    secret: &str,
+    nonce: &str,
+    idempotency_key: &str,
+    signed_idempotency_key: Option<&str>,
+    action: &str,
+    body: &[u8],
+    include_idempotency_key: bool,
+) -> String {
     let request_id = format!("request-{nonce}");
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock after Unix epoch")
         .as_secs();
-    let envelope = ActorEnvelope::new(
+    let unsigned = ActorEnvelope::new(
         ActorIdentity::new("user", "board-user").expect("test actor"),
         claimed_org_id,
         "session-branding",
@@ -727,9 +799,17 @@ fn signed_patch_request_with_action(
         now.saturating_sub(1),
         now + 120,
     )
-    .expect("mutation envelope")
-    .sign(secret.as_bytes())
-    .expect("sign mutation envelope");
+    .expect("mutation envelope");
+    let unsigned = if let Some(signed_idempotency_key) = signed_idempotency_key {
+        unsigned
+            .with_idempotency_key(signed_idempotency_key)
+            .expect("idempotency key")
+    } else {
+        unsigned
+    };
+    let envelope = unsigned
+        .sign(secret.as_bytes())
+        .expect("sign mutation envelope");
     let envelope_text = serde_json::to_string(&envelope).expect("serialize mutation envelope");
     let mut headers = vec![
         (ACTOR_ENVELOPE_HEADER, envelope_text),
@@ -2330,6 +2410,15 @@ CREATE TABLE projects (
   goal_id uuid,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE project_goal_mutation_state (
+  project_id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  mutation_version bigint NOT NULL DEFAULT 0,
+  fence_epoch bigint NOT NULL DEFAULT 0,
+  fence_token uuid NOT NULL DEFAULT gen_random_uuid(),
+  owner text NOT NULL DEFAULT 'node',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE goals (
   id uuid PRIMARY KEY,
   org_id uuid NOT NULL,
@@ -2350,10 +2439,12 @@ CREATE TABLE activity_log (
   entity_type text NOT NULL,
   entity_id text NOT NULL,
   agent_id uuid,
+  run_id uuid,
   details jsonb,
   idempotency_key text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX activity_log_org_id_id_uq ON activity_log (org_id, id);
 CREATE TABLE organization_mutation_receipts (
   org_id uuid NOT NULL,
   idempotency_key text NOT NULL,
@@ -2367,15 +2458,54 @@ CREATE TABLE organization_mutation_receipts (
   result jsonb NOT NULL,
   PRIMARY KEY (org_id, idempotency_key)
 );
+CREATE TABLE organization_branding_mutation_state (
+  org_id uuid PRIMARY KEY,
+  mutation_version bigint NOT NULL DEFAULT 0,
+  fence_epoch bigint NOT NULL DEFAULT 0,
+  fence_token uuid NOT NULL DEFAULT gen_random_uuid(),
+  owner text NOT NULL DEFAULT 'node',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE organization_branding_mutation_receipts (
+  org_id uuid NOT NULL,
+  idempotency_key text NOT NULL,
+  command_fingerprint text NOT NULL,
+  receipt_format integer NOT NULL,
+  outcome text NOT NULL,
+  resulting_version bigint NOT NULL,
+  fence_epoch bigint NOT NULL,
+  activity_id uuid NOT NULL,
+  result jsonb NOT NULL,
+  PRIMARY KEY (org_id, idempotency_key)
+);
+CREATE TABLE organization_mutation_outbox (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  activity_id uuid NOT NULL,
+  event_type text NOT NULL,
+  payload jsonb NOT NULL,
+  state text NOT NULL DEFAULT 'pending',
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  published_at timestamptz,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 INSERT INTO organizations (id, name) VALUES
   ('00000000-0000-0000-0000-000000000001', 'Original'),
   ('00000000-0000-0000-0000-000000000002', 'Other');
 INSERT INTO organization_mutation_state (org_id, owner, fence_epoch) VALUES
   ('00000000-0000-0000-0000-000000000001', 'rust', 7),
   ('00000000-0000-0000-0000-000000000002', 'rust', 7);
+INSERT INTO organization_branding_mutation_state (org_id, owner, fence_epoch) VALUES
+  ('00000000-0000-0000-0000-000000000001', 'rust', 7),
+  ('00000000-0000-0000-0000-000000000002', 'rust', 7);
 INSERT INTO projects (id, org_id, goal_id) VALUES
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001'),
   ('10000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003');
+INSERT INTO project_goal_mutation_state (project_id, org_id, owner, fence_epoch) VALUES
+  ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'rust', 7),
+  ('10000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', 'rust', 7);
 INSERT INTO goals (id, org_id, name) VALUES
   ('20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Goal One'),
   ('20000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Goal Two'),

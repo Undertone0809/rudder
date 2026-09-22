@@ -94,6 +94,44 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     }
   },
   {
+    "capabilityId": "organization.brand_color.update",
+    "name": "rudder_organization_brand_color_update",
+    "description": "Update the authenticated organization's brand color.",
+    "semanticDescription": "Update the authenticated organization's brand color. Mutating: yes. Runtime identity and authorization are injected by the Rudder-managed MCP server and are not accepted as tool input. Org context: required from runtime env. Agent context: runtime env when available. Run attribution: attached from runtime env when available.",
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "readOnlyHint": false,
+      "title": "Update the authenticated organization's brand color"
+    },
+    "mutating": true,
+    "requiresOrgId": true,
+    "requiresAgentId": false,
+    "attachesRunIdWhenAvailable": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "brandColor": {
+          "description": "Hex brand color, for example #123456.",
+          "maxLength": 7,
+          "minLength": 7,
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "description": "Required stable key for safe replay.",
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "brandColor",
+        "idempotencyKey"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "capabilityId": "agent.capabilities",
     "name": "rudder_agent_capabilities",
     "description": "List the stable Rudder agent command contract.",
@@ -1833,6 +1871,12 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
           },
           "maxItems": 100,
           "type": "array"
+        },
+        "idempotencyKey": {
+          "description": "Stable key for safe Project-Goal replacement retry.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
         },
         "leadAgentId": {
           "description": "Lead agent id or reference.",
@@ -6866,6 +6910,6 @@ export const RUDDER_MCP_TOOL_DESCRIPTORS = [
     }
   }
 ] as const;
-export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "457869e72e5cd04a54f036324e167365ff4c13aa396a74ec3ed11676f7c70e67";
+export const GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH = "d2a7bbf1ed2154309ed550bb6fb80125db35d2a390261ffb1dfe02800a3e7b37";
 export const GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH = "640c060df9ef9ae3c649d973d123fdcfc0d1456217cbe1ec48dbba337de75923";
-export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = "c97d1031e16cde221a04bbc7e14bef57835e76c4a6d637f2c4cd77ef346bce14";
+export const GENERATED_RUDDER_AGENT_CONTRACT_HASH = "c90ac61bb8a56a5ef8026762f899b2f9c5e4618de5b6f6c40480a1cc5de60500";
