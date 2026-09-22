@@ -16,7 +16,8 @@ import {
   goals,
   heartbeatRuns,
   issues,
-  projects
+  projects,
+  runtimeBindings,
 } from "@rudderhq/db";
 import {
   resolveAgentRunScene,
@@ -28,7 +29,12 @@ import type {
   AgentRuntimeInvocationMeta,
   UsageSummary
 } from "../../agent-runtimes/index.js";
-import { findServerAdapter, getServerAdapter } from "../../agent-runtimes/index.js";
+import {
+  createProfileBoundRuntimeProviderCapabilityResolverFromConfig,
+  findServerAdapter,
+  getRuntimeDriver,
+  getServerAdapter,
+} from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import {
   resolveDefaultAgentWorkspaceDir,
@@ -71,6 +77,11 @@ import {
   type HeartbeatAttemptRef,
 } from "./heartbeat-attempt-ledger.js";
 import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
+import {
+  retainNativeHeartbeatResultJson,
+  resolveHeartbeatTranscriptRetention,
+  transcriptForHeartbeatRetention,
+} from "./heartbeat-transcript-retention.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -81,6 +92,28 @@ const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUs
 
 function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
   return sanitizeStartupContextContextForPersistence(context) ?? {};
+}
+
+const MAX_NATIVE_TRANSCRIPT_MEMORY_ENTRIES = 128;
+const MAX_NATIVE_TRANSCRIPT_MEMORY_BYTES = 128 * 1024;
+
+/** Keep execution decisions bounded after the native provider becomes the transcript source. */
+function boundNativeTranscriptMemory(transcript: TranscriptEntry[]) {
+  while (transcript.length > MAX_NATIVE_TRANSCRIPT_MEMORY_ENTRIES) transcript.shift();
+  let bytes = 0;
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const entry = transcript[index];
+    let entryBytes = 0;
+    try {
+      entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+    } catch {
+      entryBytes = MAX_NATIVE_TRANSCRIPT_MEMORY_BYTES;
+    }
+    bytes += entryBytes;
+    if (bytes <= MAX_NATIVE_TRANSCRIPT_MEMORY_BYTES) continue;
+    transcript.splice(0, index + 1);
+    break;
+  }
 }
 
 const EXECUTOR_OWNED_CONTEXT_KEYS = [
@@ -111,7 +144,7 @@ function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
 }
 
 export function createHeartbeatExecuteHandlers(context: any) {
-    const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, beforeAssignmentRecoveryEnqueue } = context;
+    const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, beforeAssignmentRecoveryEnqueue, ensureCommonRunExecutionBoundary, syncCommonRunOwnerAfterRecovery, resolveHeartbeatNativeResources } = context;
 
   async function persistRunningExecutionContext(
     runId: string,
@@ -181,6 +214,11 @@ export function createHeartbeatExecuteHandlers(context: any) {
       return;
     }
 
+    // A queued run is claimed by startNextQueuedRunForAgent before this
+    // reserved execution starts. That claim is not recovery: no native span
+    // exists yet and this worker is the current owner. Only an unreserved
+    // running run represents a handoff from a previous owner.
+    const runWasRunningAtEntry = run.status === "running" && !executionReserved;
     if (executionReserved) {
       if (!activeRunExecutions.has(run.id)) return;
     } else {
@@ -231,6 +269,21 @@ export function createHeartbeatExecuteHandlers(context: any) {
           .catch(() => undefined);
       }, 60_000);
       executionLeaseTimer.unref?.();
+
+      let commonAttemptEpoch = 1;
+      if (runWasRunningAtEntry) {
+        const recovered = await syncCommonRunOwnerAfterRecovery({ run, ownerToken: executionOwnerToken });
+        run = recovered.run;
+        executionOwnerToken = recovered.ownerToken;
+        commonAttemptEpoch = recovered.attemptEpoch ?? commonAttemptEpoch;
+      }
+      const commonBoundary = await ensureCommonRunExecutionBoundary(
+        db,
+        run,
+        executionOwnerToken,
+        commonAttemptEpoch,
+      );
+      if (commonBoundary) activeAttemptRef = commonBoundary.attemptRef;
     }
 
     const agent = await getAgent(run.agentId);
@@ -254,6 +307,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     }
 
     const executionTranscript: TranscriptEntry[] = [];
+    let transcriptRetention = resolveHeartbeatTranscriptRetention({ hasBinding: false });
     let stdoutTranscriptBuffer = "";
     let stderrTranscriptBuffer = "";
     let stdoutTranscriptParser: ((line: string, ts: string) => TranscriptEntry[]) | null = null;
@@ -788,23 +842,67 @@ export function createHeartbeatExecuteHandlers(context: any) {
         level: "info",
         message: "run started",
       });
-      handle = await runLogStore.begin({
+      const adapter = getServerAdapter(agent.agentRuntimeType);
+      try {
+        const nativeResources = await resolveHeartbeatNativeResources(db, {
+          run,
+          runtimeType: agent.agentRuntimeType,
+        });
+        if (nativeResources) {
+          let capabilityStatus: "supported" | "unsupported" | "unknown" = "unknown";
+          try {
+            const driver = getRuntimeDriver(agent.agentRuntimeType, {
+              adapter,
+              providerCapabilityResolver: createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+                runtimeType: agent.agentRuntimeType,
+                runtimeConfig,
+                cwd: executionWorkspace.cwd,
+                resolutionMode: "live",
+              }),
+              providerBinding: {
+                id: nativeResources.binding.id,
+                orgId: nativeResources.binding.orgId,
+                hostId: nativeResources.binding.hostId,
+                profileId: nativeResources.binding.profileId,
+                workspaceBindingId: nativeResources.binding.workspaceBindingId,
+                capabilityRevision: nativeResources.binding.capabilityRevision,
+              },
+            });
+            capabilityStatus = nativeResources.segment.nativeSessionId
+              ? driver.capabilities.transcriptRange.status
+              : "unknown";
+          } catch (error) {
+            logger.warn({ err: error, runId: run.id }, "native transcript retention capability could not be resolved");
+          }
+          transcriptRetention = resolveHeartbeatTranscriptRetention({
+            hasBinding: true,
+            bindingContinuity: nativeResources.binding.continuity,
+            capabilityStatus,
+          });
+        }
+      } catch (error) {
+        logger.warn({ err: error, runId: run.id }, "native transcript retention identity could not be resolved");
+      }
+
+      handle = transcriptRetention.persistRawLog
+        ? await runLogStore.begin({
         orgId: run.orgId,
         agentId: run.agentId,
         runId,
         append: Boolean(run.logRef),
-      });
+          })
+        : null;
 
-      await db
-        .update(heartbeatRuns)
-        .set({
-          logStore: handle.store,
-          logRef: handle.logRef,
-          updatedAt: new Date(),
-        })
-        .where(eq(heartbeatRuns.id, runId));
-
-      const adapter = getServerAdapter(agent.agentRuntimeType);
+      if (handle) {
+        await db
+          .update(heartbeatRuns)
+          .set({
+            logStore: handle.store,
+            logRef: handle.logRef,
+            updatedAt: new Date(),
+          })
+          .where(eq(heartbeatRuns.id, runId));
+      }
       stdoutTranscriptParser = adapter.parseStdoutLine ?? null;
       const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
       const onLog = async (stream: "stdout" | "stderr", chunk: string) => {
@@ -813,7 +911,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         if (stream === "stderr") stderrExcerpt = appendExcerpt(stderrExcerpt, sanitizedChunk);
         const ts = new Date().toISOString();
 
-        if (handle) {
+        if (handle && transcriptRetention.persistRawLog) {
           await runLogStore.append(handle, {
             stream,
             chunk: sanitizedChunk,
@@ -855,6 +953,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             parser: stdoutTranscriptParser,
             kind: "stdout",
           });
+          if (!transcriptRetention.persistRawTranscript) boundNativeTranscriptMemory(executionTranscript);
           const checkpoint = assignmentFailureBudget?.observe(executionTranscript) ?? null;
           if (checkpoint && !assignmentGuardrailCheckpoint) {
             const completedWorkSummary = [...executionTranscript]
@@ -887,6 +986,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           transcript: executionTranscript,
           kind: "stderr",
         });
+        if (!transcriptRetention.persistRawTranscript) boundNativeTranscriptMemory(executionTranscript);
       };
       for (const warning of runtimeWorkspaceWarnings) {
         const logEntry = formatRuntimeWorkspaceWarningLog(warning);
@@ -1293,9 +1393,18 @@ export function createHeartbeatExecuteHandlers(context: any) {
             : outcome === "timed_out"
             ? "timed_out"
               : "failed";
+      const persistedResultJson = transcriptRetention.persistRawResult
+        ? adapterResult.resultJson ?? null
+        : retainNativeHeartbeatResultJson(adapterResult.resultJson);
+      const persistedAdapterResult = transcriptRetention.persistRawResult
+        ? adapterResult
+        : {
+            ...adapterResult,
+            resultJson: persistedResultJson,
+          };
       const adapterResultSummary = summarizeHeartbeatRunResultJson(adapterResult.resultJson);
       const persistedResultSummary = summarizeHeartbeatRunResultJson({
-        ...(adapterResult.resultJson ?? {}),
+        ...(persistedResultJson ?? {}),
         ...(readNonEmptyString(adapterResult.summary) ? { summary: adapterResult.summary } : {}),
       });
       transcriptFallbackResult = {
@@ -1366,7 +1475,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         exitCode: adapterResult.exitCode,
         signal: adapterResult.signal,
         usageJson,
-        resultJson: adapterResult.resultJson ?? null,
+        resultJson: persistedResultJson,
         resultSummaryJson: persistedResultSummary,
         sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
         sessionParamsAfterJson: adapterResult.clearSession ? {} : nextSessionState.params,
@@ -1378,13 +1487,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
       };
       const automationTerminalEffect = {
         output: transcriptFallbackResult?.output ?? terminalEvidence.error,
-        transcript: executionTranscript,
+        transcript: transcriptForHeartbeatRetention(transcriptRetention, executionTranscript),
       };
       const terminalEffectsIntent = {
         version: 1 as const,
         automation: automationTerminalEffect,
         runtime: {
-          adapterResult: adapterResult as unknown as Record<string, unknown>,
+          adapterResult: persistedAdapterResult as unknown as Record<string, unknown>,
           legacySessionId: nextSessionState.legacySessionId,
           normalizedUsage: normalizedUsage as unknown as Record<string, number> | null,
           ownsTerminal: true,
@@ -1439,7 +1548,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           version: 1,
           automation: terminalEffectsIntent.automation,
           runtime: {
-            adapterResult: adapterResult as unknown as Record<string, unknown>,
+            adapterResult: persistedAdapterResult as unknown as Record<string, unknown>,
             legacySessionId: null,
             normalizedUsage: normalizedUsage as unknown as Record<string, number> | null,
             ownsTerminal: false,

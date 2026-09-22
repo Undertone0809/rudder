@@ -62,6 +62,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readOpenCodeLoadedMcpServers } from "./mcp-evidence.js";
 import { validateOpenCodeModelConfig } from "./models.js";
+import {
+  executeOpenCodeNativeChat,
+  OpenCodeNativeCapabilityError,
+} from "./native-protocol.js";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl, parseOpenCodeJsonlLine } from "./parse.js";
 import { resolveManagedOpenCodeHomeDir } from "./skills.js";
 
@@ -98,6 +102,24 @@ const OPENCODE_PROMPT_FILE_MESSAGE = "Follow the attached Rudder runtime prompt 
 const CHAT_MODE_DEFAULT_TIMEOUT_SEC = 60;
 const DEFAULT_STARTUP_IDLE_TIMEOUT_SEC = 90;
 const DEFAULT_TOOL_LOOP_IDLE_TIMEOUT_SEC = 90;
+const MAX_NATIVE_DIAGNOSTIC_CHARS = 2_000;
+const NATIVE_TRANSCRIPT_RESULT_KEYS = new Set([
+  "stdout",
+  "stderr",
+  "response",
+  "events",
+  "rawjsonl",
+  "rawstdout",
+  "rawstderr",
+  "transcript",
+  "nativetranscript",
+  "providerresponse",
+  "providerevents",
+  "messages",
+  "parts",
+  "entries",
+  "items",
+]);
 const SAFE_OPENCODE_STRING_CONFIG_KEYS = [
   "$schema",
   "model",
@@ -144,6 +166,36 @@ function resolveOpenCodeBiller(env: Record<string, string>, provider: string | n
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function providerProfileIdentity(config: Record<string, unknown>) {
+  return {
+    hostId: asString(config.providerHostId ?? config.hostId ?? config.runtimeHostId, "local").trim() || "local",
+    profileId: asString(config.providerProfileId ?? config.profileId ?? config.profile ?? config.authProfile, "default").trim() || "default",
+    capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
+  };
+}
+
+function boundedNativeDiagnostic(value: unknown): string {
+  const text = value instanceof Error ? value.message : String(value);
+  const compact = text.replace(/\s+/gu, " ").trim();
+  return compact.length > MAX_NATIVE_DIAGNOSTIC_CHARS
+    ? `${compact.slice(0, MAX_NATIVE_DIAGNOSTIC_CHARS)}... [truncated]`
+    : compact;
+}
+
+function sanitizeNativeResultJson(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value ?? {}).filter(([key]) => !NATIVE_TRANSCRIPT_RESULT_KEYS.has(key.toLowerCase())),
+  );
+}
+
+function nativeChatLog(onLog: AgentRuntimeExecutionContext["onLog"]): AgentRuntimeExecutionContext["onLog"] {
+  return async (stream, chunk) => {
+    const text = typeof chunk === "string" ? chunk.trim() : "";
+    if (!/^\[rudder\] OpenCode native chat (?:completed|failed)\b/u.test(text)) return;
+    await onLog(stream, `${boundedNativeDiagnostic(text)}\n`);
+  };
 }
 
 async function pathExists(candidate: string): Promise<boolean> {
@@ -496,6 +548,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const workspaceId = asString(workspaceContext.workspaceId, "");
   const workspaceRepoUrl = asString(workspaceContext.repoUrl, "");
   const workspaceRepoRef = asString(workspaceContext.repoRef, "");
+  const workspaceBindingId = asString(workspaceContext.workspaceBindingId, "");
   const agentHome = asString(workspaceContext.agentHome, "");
   const agentInstructionsDir = asString(workspaceContext.instructionsDir, "");
   const agentMemoryDir = asString(workspaceContext.memoryDir, "");
@@ -717,11 +770,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
+  const failClosedOnMissingResume = context.chatMode === true;
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const canResumeSession =
     runtimeSessionId.length > 0 &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionId = canResumeSession ? runtimeSessionId : null;
+  const sessionId = canResumeSession || failClosedOnMissingResume ? runtimeSessionId : null;
+  const profileIdentity = providerProfileIdentity(config);
+  const nativeSessionId = context.chatMode === true && sessionId !== null ? sessionId : null;
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
@@ -852,6 +908,103 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         `Applied ${CHAT_MODE_DEFAULT_TIMEOUT_SEC}s default timeout for OpenCode chat mode because timeoutSec was unset.`,
       ]
     : commandNotes;
+
+  if (context.chatMode === true) {
+    const nativeSessionParams: Record<string, unknown> = {
+      ...(nativeSessionId ? runtimeSessionParams : {}),
+      ...(nativeSessionId ? { sessionId: nativeSessionId } : {}),
+      hostId: profileIdentity.hostId,
+      profileId: profileIdentity.profileId,
+      ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+    };
+    if (onMeta) {
+      await onMeta({
+        agentRuntimeType: "opencode_local",
+        command,
+        cwd,
+        commandNotes: [
+          ...effectiveCommandNotes,
+          "Using the OpenCode managed server/session/export native transport for chat mode.",
+          "OpenCode server plugins, MCP, and skills remain enabled through the adapter-managed config.",
+        ],
+        commandArgs: ["serve", "--hostname", "127.0.0.1", "--port", "0"],
+        env: redactEnvForLogs(runtimeEnv),
+        prompt,
+        agentInstructionStack: prompt,
+        promptMetrics,
+        ...(loadedMcpServers ? { loadedMcpServers } : {}),
+        loadedSkills,
+        realizedSkills: loadedSkills,
+        promptInjectedSkills: loadedSkills,
+        rudderMcp: rudderMcpRuntimeMetadata({ browserEnabled, preflight: rudderMcpPreflight }),
+        browserMcp: rudderBrowserMcpRuntimeMetadata({
+          available: browserEnabled,
+          preflight: browserMcpPreflight,
+        }),
+        context,
+      });
+    }
+    try {
+      const nativeResult = await executeOpenCodeNativeChat({
+        command,
+        cwd,
+        env: runtimeEnv,
+        prompt,
+        model,
+        variant,
+        session: {
+          ...nativeSessionParams,
+          ...(nativeSessionId ? { sessionId: nativeSessionId } : {}),
+        },
+        binding: profileIdentity,
+        workspace: {
+          workspaceId: workspaceId || null,
+          repoUrl: workspaceRepoUrl || null,
+          repoRef: workspaceRepoRef || null,
+          workspaceBindingId: workspaceBindingId || null,
+        },
+        timeoutSec,
+        signal: ctx.abortSignal,
+        onSpawn,
+        onLog: nativeChatLog(onLog),
+      });
+      return {
+        ...nativeResult,
+        biller: resolveOpenCodeBiller(runtimeEnv, nativeResult.provider ?? parseModelProvider(model)),
+        resultJson: {
+          ...sanitizeNativeResultJson(nativeResult.resultJson),
+          nativeSession: true,
+          profileId: profileIdentity.profileId,
+          hostId: profileIdentity.hostId,
+        },
+      };
+    } catch (error) {
+      const message = boundedNativeDiagnostic(error);
+      const status = error instanceof OpenCodeNativeCapabilityError ? error.status : "unknown";
+      await onLog("stderr", `[rudder] OpenCode native chat failed (${status}): ${message}\n`);
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorMessage: message,
+        errorCode: `opencode_native_${status}`,
+        sessionId: nativeSessionId,
+        sessionParams: nativeSessionId ? nativeSessionParams : null,
+        sessionDisplayId: nativeSessionId,
+        provider: parseModelProvider(model),
+        biller: resolveOpenCodeBiller(runtimeEnv, parseModelProvider(model)),
+        model: model || null,
+        billingType: "unknown",
+        resultJson: {
+          transport: "opencode_server",
+          nativeSession: true,
+          profileId: profileIdentity.profileId,
+          hostId: profileIdentity.hostId,
+        },
+        summary: "",
+      };
+    }
+  }
 
   const buildArgs = (resumeSessionId: string | null, redactPromptFile: boolean) => {
     const args = ["run", "--pure", "--format", "json", "--dir", cwd];
@@ -1106,6 +1259,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     !initial.proc.timedOut && ((initial.proc.exitCode ?? 0) !== 0 || Boolean(initial.parsed.errorMessage));
   if (
     sessionId &&
+    !failClosedOnMissingResume &&
     initialFailed &&
     isOpenCodeUnknownSessionError(initial.proc.stdout, initial.rawStderr)
   ) {

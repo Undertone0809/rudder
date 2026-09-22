@@ -1,4 +1,11 @@
 import { isAgentRuntimeNetworkSuspension, type TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import {
+  chatMessages,
+  heartbeatRuns,
+  nativeSegments,
+  runRuntimeSpans,
+  runtimeBindings,
+} from "@rudderhq/db";
 import type { Db } from "@rudderhq/db";
 import type {
   AgentRuntimeType,
@@ -11,14 +18,20 @@ import {
   shortRefFor,
   stripRudderInlineVisualPlacements,
 } from "@rudderhq/shared";
+import { and, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
-import { discoverAgentRuntimeModels, findServerAdapter } from "../agent-runtimes/index.js";
+import {
+  createProfileBoundRuntimeProviderCapabilityResolverFromConfig,
+  discoverAgentRuntimeModels,
+  findServerAdapter,
+  getRuntimeDriver,
+} from "../agent-runtimes/index.js";
 import type { StorageService } from "../storage/types.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asRecord, asString, buildConversationPrompt, buildMissingResultSentinelRepairPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedGoalIdForChat, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asRecord, asString, buildConversationPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedGoalIdForChat, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { userImageContentPathsFromMessages } from "./chat-assistant.proposal-validation.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import {
@@ -28,8 +41,17 @@ import {
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import {
   executeAdapterWithModelFallbacks,
-  projectPrimaryRuntimeConfig,
 } from "./runtime-kernel/model-fallback.js";
+import {
+  currentNativeSession,
+  ensureRuntimeBinding,
+  revisionForRuntimeConfig,
+} from "./runtime-kernel/native-session.js";
+import {
+  admitSideChatRuntimeFork,
+  type SideChatForkSource,
+  type SideChatRuntimeAdmission,
+} from "./side-chat-runtime-admission.js";
 export * from "./chat-assistant.helpers.js";
 export * from "./chat-assistant.runtime-overrides.js";
 
@@ -92,19 +114,89 @@ function chatRuntimeAvailabilityStreamError(errorMessage?: string | null) {
   );
 }
 
-function combineChatUsage(
-  primary: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
-  repair: { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | null | undefined,
-) {
-  if (!primary && !repair) return null;
-  if (!repair) return primary ? { ...primary } : null;
-  if (!primary) return { ...repair };
+async function loadSideChatForkSource(
+  db: Db,
+  conversation: Pick<ChatConversation, "orgId" | "forkedFromConversationId" | "forkedFromMessageId">,
+): Promise<SideChatForkSource> {
+  const sourceConversationId = conversation.forkedFromConversationId?.trim() || null;
+  const sourceMessageId = conversation.forkedFromMessageId?.trim() || null;
+  const sourceMessage = sourceConversationId && sourceMessageId
+    ? await db
+      .select({ runId: chatMessages.runId })
+      .from(chatMessages)
+      .where(and(
+        eq(chatMessages.orgId, conversation.orgId),
+        eq(chatMessages.conversationId, sourceConversationId),
+        eq(chatMessages.id, sourceMessageId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
+    : null;
+  const sourceRun = sourceMessage?.runId
+    ? await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.orgId, conversation.orgId),
+        eq(heartbeatRuns.id, sourceMessage.runId),
+        eq(heartbeatRuns.status, "succeeded"),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
+    : null;
+  const sourceSpan = sourceRun
+    ? await db
+      .select({
+        id: runRuntimeSpans.id,
+        nativeExecutionRef: runRuntimeSpans.nativeExecutionRef,
+        segmentId: runRuntimeSpans.segmentId,
+      })
+      .from(runRuntimeSpans)
+      .where(and(
+        eq(runRuntimeSpans.orgId, conversation.orgId),
+        eq(runRuntimeSpans.runId, sourceRun.id),
+        eq(runRuntimeSpans.state, "sealed"),
+        eq(runRuntimeSpans.completeness, "complete"),
+      ))
+      .orderBy(desc(runRuntimeSpans.ordinal), desc(runRuntimeSpans.closedAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
+    : null;
+  const sourceSegment = sourceSpan
+    ? await db
+      .select({
+        nativeSessionId: nativeSegments.nativeSessionId,
+        providerStateJson: nativeSegments.providerStateJson,
+        leafId: nativeSegments.leafId,
+        sourceBoundaryRef: nativeSegments.sourceBoundaryRef,
+      })
+      .from(nativeSegments)
+      .where(and(
+        eq(nativeSegments.orgId, conversation.orgId),
+        eq(nativeSegments.id, sourceSpan.segmentId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null)
+    : null;
+  const sessionId = sourceSegment?.nativeSessionId?.trim() || null;
+  const sourceBoundaryRef = sourceSpan?.nativeExecutionRef?.trim()
+    || sourceSegment?.leafId?.trim()
+    || sourceSegment?.sourceBoundaryRef?.trim()
+    || null;
+
   return {
-    inputTokens: primary.inputTokens + repair.inputTokens,
-    outputTokens: primary.outputTokens + repair.outputTokens,
-    cachedInputTokens: (primary.cachedInputTokens ?? 0) + (repair.cachedInputTokens ?? 0),
-    primary: { ...primary },
-    repair: { ...repair },
+    sourceConversationId,
+    sourceMessageId,
+    sourceRunId: sourceRun?.id ?? null,
+    sourceBoundaryRef,
+    sourceSpanId: sourceSpan?.id ?? null,
+    session: sessionId
+      ? {
+        sessionId,
+        sessionParams: sourceSegment?.providerStateJson ?? { sessionId },
+        sessionDisplayId: sessionId,
+      }
+      : null,
   };
 }
 
@@ -510,6 +602,130 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const runtimeAgentType = runtimeSource.agentRuntimeType;
     const runtimeAgentId = runtimeSource.descriptor.runtimeAgentId;
     const resultSentinel = `${CHAT_RESULT_SENTINEL_PREFIX}${randomUUID()}__`;
+    const workspace = asRecord(sceneContext.rudderWorkspace);
+    const existingRuntimeBinding = await db
+      .select()
+      .from(runtimeBindings)
+      .where(and(
+        eq(runtimeBindings.orgId, input.conversation.orgId),
+        eq(runtimeBindings.conversationId, input.conversation.id),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    const parentRuntimeBinding = input.conversation.forkedFromConversationId
+      ? await db
+        .select()
+        .from(runtimeBindings)
+        .where(and(
+          eq(runtimeBindings.orgId, input.conversation.orgId),
+          eq(runtimeBindings.conversationId, input.conversation.forkedFromConversationId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null)
+      : null;
+    const sideChatFirstSend = input.conversation.conversationKind === "side_chat"
+      && !existingRuntimeBinding;
+    const principalScopeRef = input.principalScopeRef
+      ?? asString(input.runContext?.principalScopeRef)
+      ?? `org:${input.conversation.orgId}`;
+    const hostId = asString(config.hostId ?? config.runtimeHostId) || "local";
+    const profileId = asString(config.profileId ?? config.profile ?? config.authProfile) || "default";
+    const workspaceBindingId = asString(workspace?.workspaceId ?? workspace?.id ?? workspace?.cwd) || null;
+    const providerProfileCwd = asString(workspace?.executionWorkspaceCwd ?? workspace?.cwd ?? workspace?.worktreePath);
+    const capabilityRevision = revisionForRuntimeConfig({
+      runtimeType: runtimeAgentType,
+      planMode: input.conversation.planMode,
+      skills: runtimeSource.runtimeSkills.map((skill) => skill.key),
+    });
+    const providerBinding = {
+      orgId: input.conversation.orgId,
+      hostId,
+      profileId,
+      workspaceBindingId,
+      capabilityRevision,
+    };
+    const providerCapabilityResolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+      runtimeType: runtimeAgentType,
+      runtimeConfig: config,
+      cwd: providerProfileCwd,
+    });
+    const runtimeDriver = getRuntimeDriver(runtimeAgentType, {
+      adapter,
+      providerCapabilityResolver,
+      providerBinding,
+    });
+    const sideChatRuntimeAdmission: SideChatRuntimeAdmission | null = sideChatFirstSend
+      ? await admitSideChatRuntimeFork({
+        driver: runtimeDriver,
+        source: await loadSideChatForkSource(db, input.conversation),
+        targetBinding: providerBinding,
+        signal: input.abortSignal,
+      })
+      : null;
+    const currentUserMessageId = input.userMessageId
+      ?? [...input.messages].reverse().find((message) => message.role === "user")?.id
+      ?? null;
+    const handoffItems = input.conversation.conversationKind === "side_chat"
+      ? input.messages
+        .filter((message) => message.id !== currentUserMessageId)
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .map((message) => ({
+          role: message.role,
+          kind: message.kind,
+          body: message.body,
+          sourceId: message.id,
+        }))
+      : [];
+    const derivedNativeContextHandoff = (
+      sideChatRuntimeAdmission?.continuity === "context_handoff"
+      || existingRuntimeBinding?.continuity === "context_handoff"
+    )
+      && handoffItems.length > 0
+      ? {
+        sourceConversationId: sideChatRuntimeAdmission?.sourceConversationId
+          ?? input.conversation.forkedFromConversationId
+          ?? input.conversation.id,
+        sourceMessageId: sideChatRuntimeAdmission?.sourceMessageId
+          ?? input.conversation.forkedFromMessageId
+          ?? handoffItems.at(-1)!.sourceId,
+        items: handoffItems,
+      }
+      : null;
+    const nativeContextHandoff = input.nativeContextHandoff ?? derivedNativeContextHandoff;
+    const runtimeContinuity = sideChatRuntimeAdmission?.continuity
+      ?? (input.conversation.conversationKind === "side_chat" ? "context_handoff" : "native");
+    const runtimeBinding = await ensureRuntimeBinding(db, {
+      orgId: input.conversation.orgId,
+      conversationId: input.conversation.id,
+      principalScopeRef,
+      agentId: runtimeAgentId,
+      runtimeType: runtimeAgentType,
+      hostId,
+      profileId,
+      workspaceBindingId,
+      instructionsRevision: revisionForRuntimeConfig(config, ["apiKey", "authToken", "token", "password"]),
+      capabilityRevision,
+      continuity: runtimeContinuity,
+      parentBindingId: parentRuntimeBinding?.id ?? null,
+      sourceBoundaryRef: sideChatRuntimeAdmission
+        ? sideChatRuntimeAdmission.sourceBoundaryRef
+        : input.conversation.forkedFromMessageId ?? null,
+    });
+    const nativeSession = await currentNativeSession(db, runtimeBinding);
+    const admittedSession = sideChatRuntimeAdmission?.continuity === "native"
+      ? sideChatRuntimeAdmission.session
+      : null;
+    const initialSession = admittedSession ?? nativeSession;
+    const sessionIntent = sideChatRuntimeAdmission?.sessionIntent
+      ?? (nativeSession.sessionId
+        ? {
+          kind: "resume" as const,
+          reuseScope: "explicit" as const,
+          sourceRunId: null,
+          sessionId: nativeSession.sessionId,
+          sessionParams: nativeSession.sessionParams,
+        }
+        : { kind: "fresh" as const });
     const recoveredChatRun = input.resumeRunId
       ? await chatRunsSvc.adoptRecoveredRun(
           input.resumeRunId,
@@ -531,11 +747,48 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...(input.runContext ?? {}),
             managedMcpPolicySnapshot: config.managedExternalMcpBindings ?? [],
           },
+          sourceMetadata: sideChatRuntimeAdmission
+            ? {
+              sideChatRuntimeAdmission: {
+                continuity: sideChatRuntimeAdmission.continuity,
+                sourceConversationId: sideChatRuntimeAdmission.sourceConversationId,
+                sourceMessageId: sideChatRuntimeAdmission.sourceMessageId,
+                sourceRunId: sideChatRuntimeAdmission.sourceRunId,
+                sourceBoundaryRef: sideChatRuntimeAdmission.sourceBoundaryRef,
+                sourceSpanId: sideChatRuntimeAdmission.sourceSpanId,
+                span: {
+                  id: sideChatRuntimeAdmission.sourceSpanId,
+                  runId: sideChatRuntimeAdmission.sourceRunId,
+                },
+                providerCapability: sideChatRuntimeAdmission.providerCapability,
+                downgradeReason: sideChatRuntimeAdmission.downgradeReason,
+                sessionIntent: sideChatRuntimeAdmission.sessionIntent,
+              },
+            }
+            : null,
+          runtimeBinding,
+          runtimeSegment: nativeSession.segment,
+          nativeSessionId: initialSession.sessionId,
+          nativeSessionParams: initialSession.sessionParams,
+          runtimeModel: runtimeSource.descriptor.model,
+          runtimeResumeSource: sideChatRuntimeAdmission
+            ? sideChatRuntimeAdmission.continuity === "native" ? "same_session" : "fresh"
+            : nativeSession.sessionId ? "same_session" : "fresh",
+          inputCorrelationRef: input.userMessageId ?? input.chatTurnId ?? null,
+          scene: input.conversation.conversationKind === "side_chat" ? "side_chat" : "chat",
+          idempotencyKey: input.userMessageId ?? input.chatTurnId ?? null,
+          sessionIntent,
         });
     if (!chatRun) {
       throw new Error("The waiting Chat run could not be reattached");
     }
     const runId = chatRun.id;
+    const transcriptDelivery = {
+      source: runtimeBinding.continuity === "native" ? "native" as const : "legacy" as const,
+      persistRaw: runtimeBinding.continuity !== "native",
+      runId,
+      spanId: chatRun.runtimeSpanId ?? null,
+    };
     await input.onRunCreated?.(runId);
     let runFinalized = false;
     const finalizeChatRun = async (
@@ -566,6 +819,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       });
     };
     const assistantTextAccumulator = createAssistantTextAccumulator();
+    const finalAssistantTextAccumulator = createAssistantTextAccumulator();
+    let hasNativeFinalMessage = false;
+    let hasRuntimeOutputEvidence = false;
     const sentinelStream = createSentinelStream(resultSentinel);
     const inlineVisualStream = createRudderInlineVisualStreamSuppressor();
     const commentaryInlineVisualStream = createRudderInlineVisualStreamSuppressor();
@@ -576,7 +832,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const freezeStopCutoff = () => {
       if (stopCutoffPartialBody !== null) return;
       stopCutoffPartialBody = redactRudderInlineVisualSources(
-        partialBodyFromRawAssistantText(assistantTextAccumulator.fullText, resultSentinel)
+        partialBodyFromRawAssistantText(
+          hasNativeFinalMessage ? finalAssistantTextAccumulator.fullText : "",
+          resultSentinel,
+        )
         || (safeTrim(sentinelStream.visibleText) ?? ""),
       );
     };
@@ -647,16 +906,62 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         lifeDir: asString(rudderWorkspace.lifeDir),
         skillsDir: asString(rudderWorkspace.agentSkillsDir),
       }));
+      const currentMessage = input.userMessageId
+        ? input.messages.find((message) => message.id === input.userMessageId) ?? null
+        : [...input.messages].reverse().find((message) => message.role === "user") ?? null;
+      const currentMessageIndex = currentMessage
+        ? input.messages.findIndex((message) => message.id === currentMessage.id)
+        : -1;
+      const previousMessage = currentMessageIndex > 0
+        ? input.messages[currentMessageIndex - 1] ?? null
+        : null;
+      const currentAutomationRun = asRecord(currentMessage?.structuredPayload?.automationChatRun);
+      const previousAskUserRun = asRecord(previousMessage?.structuredPayload?.automationChatRun);
+      const automationRunId = typeof currentAutomationRun?.runId === "string"
+        ? currentAutomationRun.runId
+        : previousMessage?.role === "assistant" && previousMessage.kind === "ask_user"
+          && typeof previousAskUserRun?.runId === "string"
+          ? previousAskUserRun.runId
+          : null;
+      const continuationMessages = automationRunId
+        ? input.messages.filter((message) => {
+          if (message.id === currentMessage?.id) return false;
+          const run = asRecord(message.structuredPayload?.automationChatRun);
+          return run?.runId === automationRunId;
+        }).slice(-3)
+        : [];
+      const historicalImageMessages = input.messages
+        .slice(-12)
+        .filter((message) => message.id !== currentMessage?.id)
+        .filter((message) => message.role === "user")
+        .filter((message) => message.attachments.some((attachment) =>
+          attachment.contentType.toLowerCase().startsWith("image/")
+          && Boolean(attachment.contentPath),
+        ));
+      const promptMessages = [
+        ...historicalImageMessages,
+        ...continuationMessages.filter((message) => message.id !== currentMessage?.id),
+        ...(currentMessage ? [currentMessage] : []),
+      ].filter((message, index, messages) =>
+        messages.findIndex((candidate) => candidate.id === message.id) === index,
+      );
+      const usesNativeRuntimeInput = Boolean(runtimeDriver);
+      const promptInput = {
+        ...input,
+        messages: usesNativeRuntimeInput
+          ? promptMessages.length > 0 ? promptMessages : input.messages.slice(-1)
+          : input.messages.slice(-12),
+        nativeContextHandoff,
+      };
       const preparedAttachments = await guardActiveRun(() => prepareChatAttachmentReferences({
         runtimeType: runtimeAgentType,
-        messages: input.messages,
+        messages: promptInput.messages,
         storage,
         runId,
       }));
       cleanupPreparedAttachments = preparedAttachments.cleanup;
       durableTranscriptImages = new Map(
-        input.messages
-          .slice(-12)
+        promptInput.messages
           .flatMap((message) => message.attachments)
           .flatMap((attachment) => {
             const localPath = preparedAttachments.references.get(attachment.id)?.localPath;
@@ -669,16 +974,18 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           }),
       );
       const prompt = await guardActiveRun(() => buildConversationPrompt(
-        input,
+        promptInput,
         runtimeSource,
         resultSentinel,
         typeof rudderWorkspace.orgResourcesPrompt === "string" ? rudderWorkspace.orgResourcesPrompt : "",
         preparedAttachments.references,
+        { nativeContinuation: usesNativeRuntimeInput },
       ));
 
       const processTranscriptEntries = async (entries: TranscriptEntry[]) => {
         for (const entry of entries) {
           if (isStopped()) return;
+          if (entry.kind !== "init") hasRuntimeOutputEvidence = true;
           if (entry.kind === "tool_call") {
             await maybeEmitAssistantState(input.onAssistantState, "tool_busy");
             if (isStopped()) return;
@@ -700,14 +1007,20 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 phase: "commentary",
                 ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
               };
-              await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, commentaryEntry);
+              await input.onObservedTranscriptEntry?.(commentaryEntry, transcriptDelivery);
               if (isStopped()) return;
-              await maybeEmitTranscriptEntry(input.onTranscriptEntry, commentaryEntry);
+              await input.onTranscriptEntry?.(commentaryEntry, transcriptDelivery);
               if (isStopped()) return;
-              await chatRunsSvc.appendTranscriptEntry(chatRun, commentaryEntry);
+              await chatRunsSvc.appendTranscriptEntry(chatRun, commentaryEntry, transcriptDelivery);
               continue;
             }
+            if (entry.phase === "final_answer") {
+              hasNativeFinalMessage = true;
+            }
             const delta = assistantTextAccumulator.push(entry.text, entry.delta === true);
+            if (entry.phase === "final_answer") {
+              finalAssistantTextAccumulator.push(entry.text, entry.delta === true);
+            }
             if (!delta) continue;
             const visibleDelta = inlineVisualStream.push(sentinelStream.push(delta));
             const textBlock = parseAssistantTextBlock(assistantTextAccumulator.fullText);
@@ -718,11 +1031,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 text: visibleDelta,
                 delta: true,
               };
-              await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, assistantTranscriptEntry);
+              await input.onObservedTranscriptEntry?.(assistantTranscriptEntry, transcriptDelivery);
               if (isStopped()) return;
-              await maybeEmitTranscriptEntry(input.onTranscriptEntry, assistantTranscriptEntry);
+              await input.onTranscriptEntry?.(assistantTranscriptEntry, transcriptDelivery);
               if (isStopped()) return;
-              await chatRunsSvc.appendTranscriptEntry(chatRun, assistantTranscriptEntry);
+              await chatRunsSvc.appendTranscriptEntry(chatRun, assistantTranscriptEntry, transcriptDelivery);
             }
             continue;
           }
@@ -902,10 +1215,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             const safeResultEntry = safeEntry.kind === "result" ? safeEntry : null;
             const observedText = partialBodyFromRawAssistantText(safeResultEntry?.text ?? "", resultSentinel);
             if (observedText) {
-              await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, {
+              await input.onObservedTranscriptEntry?.({
                 ...safeResultEntry!,
                 text: observedText,
-              });
+              }, transcriptDelivery);
             }
           } else if (
             !(entry.kind === "stdout" && entry.text.includes(resultSentinel))
@@ -914,7 +1227,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
             )
           ) {
-            await maybeEmitObservedTranscriptEntry(input.onObservedTranscriptEntry, safeEntry);
+            await input.onObservedTranscriptEntry?.(safeEntry, transcriptDelivery);
           }
           if (isStopped()) return;
           const suppressVisibleEntry = shouldSuppressChatTranscriptEntry(entry, resultSentinel)
@@ -923,9 +1236,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
             );
           if (!suppressVisibleEntry) {
-            await maybeEmitTranscriptEntry(input.onTranscriptEntry, safeEntry);
+            await input.onTranscriptEntry?.(safeEntry, transcriptDelivery);
             if (isStopped()) return;
-            await chatRunsSvc.appendTranscriptEntry(chatRun, safeEntry);
+            await chatRunsSvc.appendTranscriptEntry(chatRun, safeEntry, transcriptDelivery);
           }
           if (entry.kind === "tool_result") {
             await maybeEmitAssistantState(input.onAssistantState, "streaming");
@@ -960,19 +1273,25 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (isStopped()) return finalizeStoppedReply();
 
       const { chatAttachments, media } = await guardActiveRun(() => {
-        const chatAttachments = input.messages
-          .slice(-12)
+        const submittedAttachmentIds = usesNativeRuntimeInput && !nativeContextHandoff
+          ? new Set(currentMessage?.attachments.map((attachment) => attachment.id) ?? [])
+          : null;
+        const chatAttachments = promptInput.messages
           .flatMap((message) => message.attachments)
           .map((attachment) => {
             const reference = preparedAttachments.references.get(attachment.id);
-            return reference ? { attachmentId: attachment.id, ...reference } : null;
+            return reference && (!submittedAttachmentIds || submittedAttachmentIds.has(attachment.id))
+              ? { attachmentId: attachment.id, ...reference }
+              : null;
           })
           .filter((attachment): attachment is { attachmentId: string } & ChatAttachmentPromptReference =>
             attachment !== null,
           );
         return {
           chatAttachments,
-          media: preparedAttachments.media,
+          media: preparedAttachments.media.filter((attachment) =>
+            !submittedAttachmentIds || submittedAttachmentIds.has(attachment.attachmentId),
+          ),
         };
       });
 
@@ -983,9 +1302,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             sessionDisplayId: chatRun.sessionIdBefore ?? null,
           }
         : {
-            sessionId: null,
-            sessionParams: null,
-            sessionDisplayId: null,
+            sessionId: initialSession.sessionId,
+            sessionParams: initialSession.sessionParams,
+            sessionDisplayId: initialSession.sessionDisplayId,
           };
 
       const executeChatAdapter = async (chatPrompt: string) => {
@@ -1015,6 +1334,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             rudderWorkspaces,
             rudderStartupContext,
             rudderStartupContextMetrics,
+            ...(nativeContextHandoff ? { rudderNativeContextHandoff: nativeContextHandoff } : {}),
             ...(chatAttachments.length > 0 ? { chatAttachments } : {}),
             ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
             ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
@@ -1058,6 +1378,23 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           },
         }, {
           resolveAdapter: findServerAdapter,
+          resolveDriver: (agentRuntimeType, attemptAdapter, attemptContext) => getRuntimeDriver(agentRuntimeType, {
+            adapter: attemptAdapter,
+            providerCapabilityResolver: createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+              runtimeType: agentRuntimeType,
+              runtimeConfig: asRecord(attemptContext.config) ?? {},
+              cwd: providerProfileCwd,
+            }),
+            providerBinding: {
+              id: runtimeBinding.id,
+              orgId: runtimeBinding.orgId,
+              hostId: runtimeBinding.hostId,
+              profileId: runtimeBinding.profileId,
+              workspaceBindingId: runtimeBinding.workspaceBindingId,
+              capabilityRevision: runtimeBinding.capabilityRevision,
+            },
+          }),
+          submitInputThroughDriver: true,
           createAuthToken: (agentRuntimeType) =>
             createLocalAgentJwt(
               runtimeAgentId,
@@ -1065,89 +1402,90 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               agentRuntimeType,
               runId,
             ) ?? undefined,
-          onAttemptStart: (_attempt, attemptAdapter) => {
+          onAttemptStart: async (attempt, attemptAdapter) => {
             parser = attemptAdapter.parseStdoutLine;
+            const attemptRef = await chatRunsSvc.beginRuntimeAttempt(chatRun, {
+              attemptIndex: attempt.index,
+              fallbackIndex: attempt.fallbackIndex,
+              runtimeType: attempt.agentRuntimeType ?? runtimeAgentType,
+              model: attempt.model,
+              isFallback: attempt.isFallback,
+              resumeSource: resumeSession.sessionId ? "same_session" : "fresh",
+            });
+            chatRun.runtimeAttemptRef = attemptRef;
           },
-        });
-      };
-
-      const executeChatRepairAdapter = async (chatPrompt: string) => {
-        parser = adapter.parseStdoutLine;
-        const repairConfig = projectPrimaryRuntimeConfig(config, runtimeAgentType);
-        return adapter.execute({
-          runId,
-          agent: stubAgent({
-            orgId: input.conversation.orgId,
-            agentRuntimeType: runtimeAgentType,
-            agentRuntimeConfig: repairConfig,
-            sourceLabel: runtimeSource.descriptor.sourceLabel,
-            sourceId: runtimeAgentId,
-          }),
-          runtime: {
-            sessionId: null,
-            sessionParams: null,
-            sessionDisplayId: null,
-            taskKey: null,
-          },
-          config: repairConfig,
-          context: {
-            chatPrompt,
-            chatConversationId: input.conversation.id,
-            chatMode: true,
-            rudderChatResultRepair: true,
-            rudderChatInlineVisualProtocolVersion: 1,
-            rudderScene,
-            rudderWorkspace,
-            rudderWorkspaces,
-            rudderStartupContext,
-            rudderStartupContextMetrics,
-            ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
-            ...(linkedProjectId ? { projectId: linkedProjectId } : {}),
-            ...(linkedGoalId ? { goalId: linkedGoalId } : {}),
-            ...(linkedIssueIds[0] ? { issueId: linkedIssueIds[0] } : {}),
-            ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
-          },
-          onMeta: async (meta) => {
-            if (isStopped()) return;
-            await chatRunsSvc.appendAdapterInvoke(chatRun, {
-              ...meta,
-              commandNotes: [...(meta.commandNotes ?? []), "internal chat result sentinel repair"],
-              context: {
-                ...(meta.context ?? {}),
-                rudderChatResultRepair: true,
-              },
-            }, runtimeSource.runtimeSkills);
-          },
-          authToken: adapter.supportsLocalAgentJwt
-            ? createLocalAgentJwt(
-              runtimeAgentId,
-              input.conversation.orgId,
-              runtimeAgentType,
-              runId,
-            ) ?? undefined
-            : undefined,
-          abortSignal: input.abortSignal,
-          onLog: async () => undefined,
         });
       };
 
       const result = await guardActiveRun(() => executeChatAdapter(prompt));
-
-      if (isStopped()) return finalizeStoppedReply();
-      await guardActiveRun(() => flushStdoutChunk("", true));
-      if (isStopped()) return finalizeStoppedReply();
-
       const networkSuspension = isAgentRuntimeNetworkSuspension(result.networkSuspension)
         ? result.networkSuspension
         : isAgentRuntimeNetworkSuspension(result.suspension)
           ? result.suspension
           : null;
+      await guardActiveRun(() => chatRunsSvc.recordNativeExecutionResult(runId, result, {
+        orgId: chatRun.orgId,
+        spanId: chatRun.runtimeSpanId ?? null,
+        ownerToken: chatRun.runtimeSpanOwnerToken,
+        attemptEpoch: chatRun.runtimeSpanAttemptEpoch,
+        suspended: Boolean(networkSuspension),
+      }));
+      const resultPayload = asRecord(result.resultJson);
+      const providerThreadId = asString(
+        result.sessionDisplayId
+        ?? result.sessionId
+        ?? resultPayload?.providerSessionId
+        ?? resultPayload?.sessionId
+        ?? resultPayload?.threadId,
+      );
+      const providerTurnId = asString(
+        resultPayload?.providerTurnId
+        ?? resultPayload?.turnId
+        ?? resultPayload?.executionId
+        ?? resultPayload?.messageId,
+      );
+      if (networkSuspension) {
+        await guardActiveRun(() => chatRunsSvc.markRuntimeAttemptWaiting(chatRun, {
+          submissionPhase: "indeterminate",
+          providerThreadId,
+          providerTurnId,
+          sessionDisplayId: result.sessionDisplayId ?? result.sessionId ?? null,
+          sessionParamsJson: result.sessionParams,
+          errorCode: result.errorCode ?? null,
+          error: result.errorMessage ?? null,
+        }));
+      } else {
+        await guardActiveRun(() => chatRunsSvc.finishRuntimeAttempt(chatRun, {
+          status: result.timedOut
+            ? "timed_out"
+            : (result.exitCode ?? 0) !== 0 || result.errorMessage
+              ? "failed"
+              : "succeeded",
+          submissionPhase: "accepted",
+          providerThreadId,
+          providerTurnId,
+          sessionDisplayId: result.sessionDisplayId ?? result.sessionId ?? null,
+          sessionParamsJson: result.sessionParams,
+          usageDeltaJson: result.usage as unknown as Record<string, unknown> | null,
+          costUsd: result.costUsd,
+          errorCode: result.errorCode ?? null,
+          error: result.errorMessage ?? null,
+        }));
+      }
+
+      if (isStopped()) return finalizeStoppedReply();
+      await guardActiveRun(() => flushStdoutChunk("", true));
+      if (isStopped()) return finalizeStoppedReply();
+
       if (networkSuspension) {
         const partialBody = redactRudderInlineVisualSources(
-          partialBodyFromRawAssistantText(assistantTextAccumulator.fullText, resultSentinel)
+          partialBodyFromRawAssistantText(
+            hasNativeFinalMessage ? finalAssistantTextAccumulator.fullText : "",
+            resultSentinel,
+          )
           || (safeTrim(sentinelStream.visibleText) ?? ""),
         );
-        await chatRunsSvc.markWaitingForNetwork(chatRun, networkSuspension);
+        await chatRunsSvc.markWaitingForNetwork(chatRun, networkSuspension, chatRun.runtimeSpanOwnerToken);
         await input.onWaitingForNetwork?.(networkSuspension);
         return {
           outcome: "waiting_for_network",
@@ -1161,17 +1499,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (isStopped()) return finalizeStoppedReply();
 
       const rawResultText = resultText(result);
-      const rawAssistantText = assistantTextAccumulator.fullText;
+      const finalAssistantText = hasNativeFinalMessage ? finalAssistantTextAccumulator.fullText : "";
       const partialBody =
         redactRudderInlineVisualSources(partialBodyFromRawAssistantText(
-          rawAssistantText,
+          finalAssistantText,
           resultSentinel,
         )) ||
         (safeTrim(inlineVisualStream.visibleText) ?? "");
       const finalPartialBody =
         redactRudderInlineVisualSources(
           finalBodyFromRawAssistantText(rawResultText, resultSentinel)
-          || finalBodyFromRawAssistantText(rawAssistantText, resultSentinel),
+          || finalBodyFromRawAssistantText(finalAssistantText, resultSentinel),
         );
 
       if (isStopped()) return finalizeStoppedReply();
@@ -1204,7 +1542,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           finalPartialBody
           || partialBody
           || rawResultText
-          || rawAssistantText,
+          || finalAssistantText
+          || hasRuntimeOutputEvidence,
         );
         const rawProviderFailure = asRecord(result.resultJson?.providerFailure);
         const authProviderFailure = result.errorCode === "codex_provider_auth_required"
@@ -1270,7 +1609,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       await guardActiveRun(() => maybeEmitAssistantState(input.onAssistantState, "finalizing"));
       if (isStopped()) return finalizeStoppedReply();
 
-      const raw = resultText(result) || assistantTextAccumulator.fullText;
+      const raw = rawResultText || finalAssistantText;
       const generatedAttachments = extractGeneratedAttachments(result);
       const inlineVisualArtifacts = extractCodexInlineVisualArtifacts(result);
       generatedAttachments.push(...inlineVisualArtifacts.attachments);
@@ -1283,105 +1622,39 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         forbiddenAttachmentLocalPaths,
       };
       let reply: ChatAssistantResult | null = null;
-      let sentinelRepairAttempted = false;
-      let sentinelRepairSucceeded = false;
-      let repairResultUsage = null as typeof result.usage | null | undefined;
       try {
         reply = parseCompletedAssistantReply(raw, resultSentinel, {
-          requireSentinel: true,
+          // Native runtimes already delimit the final assistant message. The
+          // Rudder sentinel remains only for structured result payloads.
+          requireSentinel: false,
           ...proposalValidationOptions,
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Chat adapter returned an invalid final reply";
-        const errorCode: ChatRecoverableFailureCode = errorMessage.includes("without the required Rudder result sentinel")
-          ? "chat_result_missing_sentinel"
-          : "chat_result_malformed_json";
-        if (errorCode === "chat_result_missing_sentinel" && !input.abortSignal?.aborted) {
-          const priorText = resultText(result);
-          if (priorText) {
-            sentinelRepairAttempted = true;
-            const repairPrompt = buildMissingResultSentinelRepairPrompt({
-              resultSentinel,
-              priorText,
-            });
-            const repairResult = await guardActiveRun(() => executeChatRepairAdapter(repairPrompt));
-            if (isStopped()) return finalizeStoppedReply();
-            repairResultUsage = repairResult.usage;
-            if (!repairResult.timedOut && (repairResult.exitCode ?? 0) === 0 && !repairResult.errorMessage) {
-              try {
-                const repairedReply = parseCompletedAssistantReply(resultText(repairResult), resultSentinel, {
-                  requireSentinel: true,
-                  ...proposalValidationOptions,
-                });
-                if (
-                  repairedReply.body.includes(resultSentinel)
-                  || repairedReply.body.includes("Rudder internal repair request:")
-                ) {
-                  throw new Error("Repair response leaked internal result protocol text");
-                }
-                reply = repairedReply;
-                sentinelRepairSucceeded = true;
-              } catch {
-                reply = null;
-              }
-            } else {
-              reply = null;
-            }
-          }
-        }
-
-        if (
-          !sentinelRepairSucceeded
-          && errorCode === "chat_result_missing_sentinel"
-          && safeTrim(resultText(result))
-        ) {
-          const fallbackBody = safeTrim(resultText(result)) ?? "";
-          if (
-            !fallbackBody.includes(resultSentinel)
-            && !fallbackBody.includes("Rudder internal repair request:")
-          ) {
-            reply = {
-              kind: "message",
-              body: fallbackBody,
-              structuredPayload: null,
-            };
-          }
-        }
-
-        if (!reply && !sentinelRepairSucceeded) {
-          const repairErrorMessage = sentinelRepairAttempted
-            ? "Chat adapter did not produce the required Rudder result sentinel after internal repair"
-            : errorMessage;
-          await finalizeChatRun({
-            status: "failed",
-            error: repairErrorMessage,
+        const errorCode: ChatRecoverableFailureCode = "chat_result_malformed_json";
+        await finalizeChatRun({
+          status: "failed",
+          error: errorMessage,
+          errorCode,
+          resultJson: {
+            outcome: "failed",
+            recoverable: true,
+            fallbackEnvelope: true,
             errorCode,
-            resultJson: {
-              outcome: "failed",
-              recoverable: true,
-              fallbackEnvelope: true,
-              errorCode,
-              userMessage: recoverableFailureMessage(errorCode),
-              partialBody: finalPartialBody,
-              ...(sentinelRepairAttempted
-                ? {
-                  sentinelRepairAttempted: true,
-                  sentinelRepairSucceeded: false,
-                }
-                : {}),
-            },
-          });
-          throw new ChatAssistantStreamError(
-            repairErrorMessage,
-            finalPartialBody,
-            generatedAttachments,
-            {
-              errorCode,
-              partialBodyUserVisible: Boolean(finalPartialBody),
-              userMessage: recoverableFailureMessage(errorCode),
-            },
-          );
-        }
+            userMessage: recoverableFailureMessage(errorCode),
+            partialBody: finalPartialBody,
+          },
+        });
+        throw new ChatAssistantStreamError(
+          errorMessage,
+          finalPartialBody,
+          generatedAttachments,
+          {
+            errorCode,
+            partialBodyUserVisible: Boolean(finalPartialBody),
+            userMessage: recoverableFailureMessage(errorCode),
+          },
+        );
       }
       if (!reply) {
         throw new Error("Chat adapter returned an invalid final reply");
@@ -1410,7 +1683,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       }
 
       const streamedBody = safeTrim(inlineVisualStream.visibleText) ?? "";
-      if (!sentinelRepairSucceeded && finalBody && finalBody !== streamedBody) {
+      if (finalBody && finalBody !== streamedBody) {
         if (isStopped()) return finalizeStoppedReply();
         await guardActiveRun(() => maybeEmitAssistantDelta(
           input.onAssistantDelta,
@@ -1427,15 +1700,8 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           kind: reply.kind,
           body: finalBody,
           generatedAttachmentCount: generatedAttachments.length,
-          ...(sentinelRepairAttempted
-            ? {
-              sentinelRepairAttempted: true,
-              sentinelRepairSucceeded,
-              repairReason: "missing_result_sentinel",
-            }
-            : {}),
         },
-        usageJson: combineChatUsage(result.usage, repairResultUsage),
+        usageJson: result.usage ? { ...result.usage } : null,
       });
 
       if (isStopped()) return finalizeStoppedReply();

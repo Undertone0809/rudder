@@ -19,6 +19,12 @@ import {
   DraftResponseAnnotationsPopover,
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
+import {
+  chatTranscriptEntriesForMessage,
+  isAgentRunTranscriptActiveStatus,
+  useLegacyChatTranscripts,
+  useAgentRunTranscripts,
+} from "@/components/transcript/useAgentRunTranscripts";
 import { useToast } from "@/context/ToastContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
@@ -131,8 +137,12 @@ function messageBody(message: ChatMessage) {
   return message.body?.trim() || (message.role === "user" ? "Annotation-only feedback" : "");
 }
 
-function transcriptEntries(message: ChatMessage) {
-  return (message.transcript ?? []) as TranscriptEntry[];
+function transcriptEntries(
+  message: ChatMessage,
+  legacyTranscriptByMessageId: Readonly<Record<string, TranscriptEntry[]>>,
+  transcriptByRun: ReadonlyMap<string, TranscriptEntry[]>,
+) {
+  return chatTranscriptEntriesForMessage(message, legacyTranscriptByMessageId, transcriptByRun);
 }
 
 function noop() {}
@@ -335,7 +345,7 @@ export function RunFeedbackChatPanel({
   });
   const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(organizationId, target.conversationId ?? "__run-feedback-draft__"),
-    queryFn: () => chatsApi.listMessages(organizationId, target.conversationId!, { includeTranscript: true }),
+    queryFn: () => chatsApi.listMessages(organizationId, target.conversationId!, { includeTranscript: false }),
     enabled: Boolean(target.conversationId),
   });
   const queueQuery = useQuery({
@@ -936,6 +946,14 @@ export function RunFeedbackChatPanel({
   }, [agentsQuery.isPending, autoSend, selectedAgent, target.clientMutationId, target.kind]);
 
   const visibleMessages = messages;
+  const agentRunTranscriptTargets = useMemo(
+    () => visibleMessages.flatMap((message) => message.runId
+      ? [{ runId: message.runId, active: isAgentRunTranscriptActiveStatus(message.status) }]
+      : []),
+    [visibleMessages],
+  );
+  const { transcriptByRun } = useAgentRunTranscripts(agentRunTranscriptTargets);
+  const legacyTranscriptByMessageId = useLegacyChatTranscripts(target.conversationId, visibleMessages);
   const recoveredDebugStreamCanBeStopped = Boolean(
     isDebug
     && sending
@@ -985,7 +1003,7 @@ export function RunFeedbackChatPanel({
             </div>
           ) : null}
           {conversation ? visibleMessages.map((message) => {
-            const transcript = transcriptEntries(message);
+            const transcript = transcriptEntries(message, Object.fromEntries(legacyTranscriptByMessageId), transcriptByRun);
             return (
               <div key={message.id} data-testid="run-feedback-chat-message">
                 {message.role === "assistant" && transcript.length > 0 ? (

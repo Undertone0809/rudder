@@ -11,6 +11,7 @@ import {
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
+  runtimeBindings,
   issueComments,
   issues,
   organizationSkills,
@@ -146,6 +147,7 @@ describe("heartbeat passive issue closeout", () => {
         await db.delete(issues);
         await db.delete(heartbeatRunEvents);
         await db.delete(heartbeatRuns);
+        await db.delete(runtimeBindings);
         await db.delete(agentTaskSessions);
         await db.delete(agentRuntimeState);
         await db.delete(agentWakeupRequests);

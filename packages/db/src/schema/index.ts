@@ -11,6 +11,8 @@ export { agentIntegrationUserBindings } from "./agent_integration_user_bindings.
 export { agentIntegrations } from "./agent_integrations.js";
 export { agentIssueCreationRequests } from "./agent_issue_creation_requests.js";
 export { agentRuntimeState } from "./agent_runtime_state.js";
+export { nativeSegments, runRuntimeSpans, runtimeBindings, type RuntimeBindingTargetType } from "./runtime_bindings.js";
+export { runtimeRetentionClaims, runtimeSourceAliases } from "./runtime_retention.js";
 export { agentTaskSessions } from "./agent_task_sessions.js";
 export { agentWakeupRequests } from "./agent_wakeup_requests.js";
 export { agents } from "./agents.js";

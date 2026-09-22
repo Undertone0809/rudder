@@ -21,6 +21,12 @@ import {
   ResponseAnnotationEditor,
 } from "@/components/chat/ResponseAnnotations";
 import {
+  chatTranscriptEntriesForMessage,
+  isAgentRunTranscriptActiveStatus,
+  useLegacyChatTranscripts,
+  useAgentRunTranscripts,
+} from "@/components/transcript/useAgentRunTranscripts";
+import {
   ChatGenerationCloseSupersededError,
   useChatGenerationActions,
   useChatGenerations,
@@ -106,8 +112,12 @@ function expiryLabel(expiresAt: Date | string | null | undefined, now: Date) {
   return `${hours}h ${minutes % 60}m left`;
 }
 
-function transcriptEntries(message: ChatMessage) {
-  return (message.transcript ?? []) as TranscriptEntry[];
+function transcriptEntries(
+  message: ChatMessage,
+  legacyTranscriptByMessageId: Readonly<Record<string, TranscriptEntry[]>>,
+  transcriptByRun: ReadonlyMap<string, TranscriptEntry[]>,
+) {
+  return chatTranscriptEntriesForMessage(message, legacyTranscriptByMessageId, transcriptByRun);
 }
 
 function noop() {}
@@ -298,7 +308,7 @@ export function SideChatPanelView({
     queryFn: () => chatsApi.listMessages(
       organizationId,
       target.conversationId!,
-      { includeTranscript: true },
+      { includeTranscript: false },
     ),
     enabled: Boolean(target.conversationId),
   });
@@ -386,6 +396,14 @@ export function SideChatPanelView({
         || message.generationId !== displayedStream.generationId
       ))
     : messages;
+  const agentRunTranscriptTargets = useMemo(
+    () => visibleMessages.flatMap((message) => message.runId
+      ? [{ runId: message.runId, active: isAgentRunTranscriptActiveStatus(message.status) }]
+      : []),
+    [visibleMessages],
+  );
+  const { transcriptByRun } = useAgentRunTranscripts(agentRunTranscriptTargets);
+  const legacyTranscriptByMessageId = useLegacyChatTranscripts(target.conversationId, visibleMessages);
   const showOptimisticUserMessage = Boolean(
     displayedStream && (
       !displayedStream.userMessageId
@@ -790,7 +808,7 @@ export function SideChatPanelView({
 
           <div className="flex min-h-[12rem] flex-col gap-5" data-testid="side-chat-messages">
             {displayConversation ? visibleMessages.map((message) => {
-              const transcript = transcriptEntries(message);
+              const transcript = transcriptEntries(message, Object.fromEntries(legacyTranscriptByMessageId), transcriptByRun);
               return (
                 <div key={message.id}>
                   {message.role === "assistant" && transcript.length > 0 ? (

@@ -9,6 +9,12 @@ import {
   ChatComposerSurface,
   ChatComposerToolbar,
 } from "@/components/chat/ChatComposer";
+import {
+  chatTranscriptEntriesForMessage,
+  isAgentRunTranscriptActiveStatus,
+  useLegacyChatTranscripts,
+  useAgentRunTranscripts,
+} from "@/components/transcript/useAgentRunTranscripts";
 import { Button } from "@/components/ui/button";
 import { chatErrorMessage } from "@/lib/chat-errors";
 import {
@@ -35,8 +41,12 @@ function messageBody(message: ChatMessage) {
   return message.body?.trim() || message.kind;
 }
 
-function transcriptEntries(message: ChatMessage) {
-  return (message.transcript ?? []) as TranscriptEntry[];
+function transcriptEntries(
+  message: ChatMessage,
+  legacyTranscriptByMessageId: Readonly<Record<string, TranscriptEntry[]>>,
+  transcriptByRun: ReadonlyMap<string, TranscriptEntry[]>,
+) {
+  return chatTranscriptEntriesForMessage(message, legacyTranscriptByMessageId, transcriptByRun);
 }
 
 function noop() {}
@@ -87,7 +97,7 @@ export function GoalChatPanel({
   });
   const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(target.organizationId, target.conversationId ?? "__goal-chat-draft__"),
-    queryFn: () => chatsApi.listMessages(target.organizationId, target.conversationId!, { includeTranscript: true }),
+    queryFn: () => chatsApi.listMessages(target.organizationId, target.conversationId!, { includeTranscript: false }),
     enabled: Boolean(target.conversationId),
   });
   const queueQuery = useQuery({
@@ -104,6 +114,14 @@ export function GoalChatPanel({
   const ownerUnavailable = Boolean(!agentsQuery.isPending && !selectedAgent);
   const conversation = conversationQuery.data as ChatConversation | undefined;
   const loadError = conversationQuery.error ?? messagesQuery.error;
+  const agentRunTranscriptTargets = useMemo(
+    () => messages.flatMap((message) => message.runId
+      ? [{ runId: message.runId, active: isAgentRunTranscriptActiveStatus(message.status) }]
+      : []),
+    [messages],
+  );
+  const { transcriptByRun } = useAgentRunTranscripts(agentRunTranscriptTargets);
+  const legacyTranscriptByMessageId = useLegacyChatTranscripts(target.conversationId, messages);
 
   useEffect(() => {
     if (messagesQuery.data && !sendInFlightRef.current) setMessages(messagesQuery.data);
@@ -401,7 +419,7 @@ export function GoalChatPanel({
           ) : null}
 
           {conversation ? messages.map((message) => {
-            const transcript = transcriptEntries(message);
+            const transcript = transcriptEntries(message, Object.fromEntries(legacyTranscriptByMessageId), transcriptByRun);
             return (
               <div key={message.id} data-testid="goal-chat-message">
                 {message.role === "assistant" && transcript.length > 0 ? (
