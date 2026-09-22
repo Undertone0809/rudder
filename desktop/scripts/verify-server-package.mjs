@@ -12,6 +12,7 @@ import {
   packageHasTypeMetadata,
 } from "./optimize-server-package.mjs";
 import { verifyBrowserBundle } from "./verify-browser-bundle.mjs";
+import { verifyShellIdentityDependency } from "./verify-shell-identity-dependency.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
@@ -616,6 +617,12 @@ async function main() {
   }
 
   await verifyServerPackage(serverPackageDir);
+  try {
+    await verifyShellIdentityDependency(path.join(path.dirname(serverPackageDir), "app"));
+    ok("Desktop identity dependency is compiled and contained in the app payload");
+  } catch (cause) {
+    error(`Desktop identity dependency verification failed: ${cause.message}`);
+  }
 
   if (errors.length > 0) {
     console.error(`\n[verify-server-package] FAILED: ${errors.length} error(s)\n`);
