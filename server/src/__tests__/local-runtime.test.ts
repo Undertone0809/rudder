@@ -99,19 +99,20 @@ describe("local runtime helpers", () => {
     }
   });
 
-  it("does not remove an abandoned recovery lock or enter a second runtime", async () => {
+  it.each([true, false])("preserves abandoned recovery and refuses entry when start.lock exists=%s", async (hasStartLock) => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-startup-lock-"));
     process.env.RUDDER_HOME = tempHome;
     const { runtimeDir, lockPath } = resolveLocalRuntimePaths("abandoned-recovery");
     fs.mkdirSync(runtimeDir, { recursive: true });
     const deadOwner = JSON.stringify({ pid: 2_147_483_647, ownerKind: "server", createdAt: new Date().toISOString() });
-    fs.writeFileSync(lockPath, deadOwner);
+    if (hasStartLock) fs.writeFileSync(lockPath, deadOwner);
     fs.writeFileSync(`${lockPath}.recovery`, deadOwner);
     try {
       await expect(withRuntimeStartLock({ instanceId: "abandoned-recovery", timeoutMs: 0 }, async () => {
         throw new Error("must not enter");
       })).rejects.toThrow("Timed out waiting");
-      expect(fs.readFileSync(lockPath, "utf8")).toBe(deadOwner);
+      if (hasStartLock) expect(fs.readFileSync(lockPath, "utf8")).toBe(deadOwner);
+      else expect(fs.existsSync(lockPath)).toBe(false);
       expect(fs.readFileSync(`${lockPath}.recovery`, "utf8")).toBe(deadOwner);
     } finally {
       fs.rmSync(tempHome, { recursive: true, force: true });
