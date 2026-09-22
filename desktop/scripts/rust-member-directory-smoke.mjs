@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 // Uses the installed application and its ordinary HTTP surface. The fixture
 // owns only disposable data; no direct database query supplies the read result.
@@ -50,19 +54,34 @@ export async function runRustMemberDirectoryScenario(mode, helpers) {
     const org = await createCompany(run.baseUrl, "RMD");
     const foreignOrg = await createCompany(run.baseUrl, "RMF");
     const agent = await createCeo(run.baseUrl, org.id);
+    const secondAgent = await createCeo(run.baseUrl, org.id);
+    const agentIds = new Set([agent.id, secondAgent.id]);
     const key = await createAgentApiKey(run.baseUrl, agent.id);
     assert.equal(typeof key.token, "string");
     const headers = { Authorization: `Bearer ${key.token}` };
     const directoryPath = `/api/orgs/${org.id}/members/directory?type=agent&fullIds=true&limit=1`;
     const readDirectory = async () => {
-      const response = await fetch(`${run.baseUrl}${directoryPath}`, { headers });
+      const response = await fetch(`${run.baseUrl}${directoryPath}`, { headers, signal: AbortSignal.timeout(5_000) });
       assert.equal(response.status, 200, await response.clone().text());
       const body = await response.json();
-      assert.ok(body.items.some((item) => item.ref === agent.id && item.name === agent.name));
-      assert.equal(body.total, 1);
+      assert.equal(body.items.length, 1);
+      assert.ok(agentIds.has(body.items[0].ref));
+      assert.equal(body.items[0].name, agent.name);
+      assert.equal(body.total, 2);
+      assert.equal(body.hasMore, true);
+      assert.equal(typeof body.nextCursor, "string");
       return body;
     };
     const initial = await readDirectory();
+    const nextResponse = await fetch(`${run.baseUrl}${directoryPath}&cursor=${encodeURIComponent(initial.nextCursor)}`, { headers });
+    assert.equal(nextResponse.status, 200);
+    const nextPage = await nextResponse.json();
+    assert.equal(nextPage.total, 2);
+    assert.equal(nextPage.items.length, 1);
+    assert.notEqual(nextPage.items[0].ref, initial.items[0].ref);
+    assert.deepEqual(new Set([initial.items[0].ref, nextPage.items[0].ref]), agentIds);
+    assert.equal(nextPage.hasMore, false);
+    assert.equal(nextPage.nextCursor, null);
     const foreign = await fetch(`${run.baseUrl}/api/orgs/${foreignOrg.id}/members/directory`, { headers });
     assert.equal(foreign.status, 403, "a valid agent cannot read a foreign organization");
     const invalidLimit = await fetch(`${run.baseUrl}/api/orgs/${org.id}/members/directory?limit=0`, { headers });
@@ -87,6 +106,32 @@ export async function runRustMemberDirectoryScenario(mode, helpers) {
       const receipts = await readReceipts();
       return receipts.find(isRustRead);
     });
+
+    let childRecovery = { status: "not_exercised", reason: "POSIX process enumeration unavailable on this platform" };
+    if (process.platform !== "win32") {
+      const descriptor = JSON.parse(await readFile(paths.runtimeDescriptorPath, "utf8"));
+      const findFoundationChildren = async () => {
+        const { stdout } = await execFileAsync("/bin/ps", ["-ww", "-axo", "pid=,ppid=,command="]);
+        return stdout.split("\n").flatMap((line) => {
+          const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line);
+          return match && Number(match[2]) === descriptor.pid && match[3] === artifactPaths.foundation
+            ? [Number(match[1])] : [];
+        });
+      };
+      const children = await findFoundationChildren();
+      assert.equal(children.length, 1, "exactly one fixture-owned foundation child must serve the read");
+      const oldChild = children[0];
+      process.kill(oldChild, "SIGKILL");
+      await waitForSmokeCondition("fixture foundation child exit", async () => !(await findFoundationChildren()).includes(oldChild));
+      const recovered = await waitForSmokeCondition("default read after foundation child interruption", readDirectory);
+      assert.deepEqual(recovered, initial);
+      const replacementChildren = await findFoundationChildren();
+      assert.equal(replacementChildren.length, 1);
+      assert.notEqual(replacementChildren[0], oldChild);
+      assert.equal(JSON.parse(await readFile(paths.runtimeDescriptorPath, "utf8")).pid, descriptor.pid,
+        "child recovery must preserve the installed server owner");
+      childRecovery = { status: "passed", oldChild, replacementChild: replacementChildren[0], serverPid: descriptor.pid };
+    }
     await closeDesktop(run.electronApp);
     run = null;
     const beforeRestartCount = (await readReceipts()).filter(isRustRead).length;
@@ -101,6 +146,7 @@ export async function runRustMemberDirectoryScenario(mode, helpers) {
       orgId: org.id, foreignOrgId: foreignOrg.id, agentId: agent.id,
       apiPort: ports.appPort, databasePort: ports.dbPort, receipts: receipts.length,
       sourceSha: expectedBuild.sourceSha, artifactHashes,
+      childRecovery,
       runtimeDescriptor: JSON.parse(await readFile(paths.runtimeDescriptorPath, "utf8")),
     }));
     await closeDesktop(run.electronApp);
