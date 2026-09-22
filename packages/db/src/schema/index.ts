@@ -132,6 +132,8 @@ export {
   pluginPackages,
   pluginSources
 } from "./rudder_plugins.js";
+export { nativeSegments, runRuntimeSpans, runtimeBindings, type RuntimeBindingTargetType } from "./runtime_bindings.js";
+export { runtimeRetentionClaims, runtimeSourceAliases } from "./runtime_retention.js";
 export { workspaceBackups } from "./workspace_backups.js";
 export { workspaceOperations } from "./workspace_operations.js";
 export { workspaceRuntimeServices } from "./workspace_runtime_services.js";

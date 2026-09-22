@@ -38,6 +38,7 @@ export const chatConversations = pgTable(
   },
   (table) => ({
     orgUpdatedIdx: index("chat_conversations_org_updated_idx").on(table.orgId, table.updatedAt),
+    orgIdUnique: uniqueIndex("chat_conversations_org_id_uq").on(table.orgId, table.id),
     orgStatusUpdatedIdx: index("chat_conversations_org_status_updated_idx").on(
       table.orgId,
       table.status,

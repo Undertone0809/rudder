@@ -2,7 +2,8 @@ import type {
   HeartbeatRunAttemptResumeSource,
   HeartbeatRunAttemptStatus,
 } from "@rudderhq/shared";
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { agents } from "./agents.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { organizations } from "./organizations.js";
@@ -25,6 +26,9 @@ export const heartbeatRunAttempts = pgTable(
     isFallback: boolean("is_fallback").notNull().default(false),
     resumeSource: text("resume_source").$type<HeartbeatRunAttemptResumeSource>().notNull().default("fresh"),
     status: text("status").$type<HeartbeatRunAttemptStatus>().notNull().default("started"),
+    /** Owner identity captured by the worker that admitted this attempt. */
+    ownerToken: text("owner_token"),
+    attemptEpoch: integer("attempt_epoch"),
     submissionPhase: text("submission_phase").$type<"pre_submission" | "accepted" | "indeterminate">(),
     providerThreadId: text("provider_thread_id"),
     providerTurnId: text("provider_turn_id"),
@@ -41,11 +45,21 @@ export const heartbeatRunAttempts = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    orgIdUnique: uniqueIndex("heartbeat_run_attempts_org_id_uq").on(table.orgId, table.id),
+    orgRunIdUnique: uniqueIndex("heartbeat_run_attempts_org_run_id_uq").on(table.orgId, table.runId, table.id),
     runAttemptUniqueIdx: uniqueIndex("heartbeat_run_attempts_run_attempt_uq").on(
       table.runId,
       table.attemptIndex,
     ),
     orgRunIdx: index("heartbeat_run_attempts_org_run_idx").on(table.orgId, table.runId, table.attemptIndex),
     agentCreatedIdx: index("heartbeat_run_attempts_agent_created_idx").on(table.agentId, table.createdAt),
+    ownerFenceShapeCheck: check(
+      "heartbeat_run_attempts_owner_fence_shape_check",
+      sql`(
+        (${table.ownerToken} is null and ${table.attemptEpoch} is null)
+        or
+        (${table.ownerToken} is not null and btrim(${table.ownerToken}) <> '' and ${table.attemptEpoch} is not null and ${table.attemptEpoch} > 0)
+      )`,
+    ),
   }),
 );

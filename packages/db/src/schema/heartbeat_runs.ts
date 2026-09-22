@@ -86,10 +86,17 @@ export const heartbeatRuns = pgTable(
     }),
     processLossRetryCount: integer("process_loss_retry_count").notNull().default(0),
     contextSnapshot: jsonb("context_snapshot").$type<Record<string, unknown>>(),
+    /** Durable common-run admission identity; legacy rows leave these nullable. */
+    scene: text("scene"),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    idempotencyKey: text("idempotency_key"),
+    sessionIntentJson: jsonb("session_intent_json").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    orgIdUnique: uniqueIndex("heartbeat_runs_org_id_uq").on(table.orgId, table.id),
     orgCreatedIdIdx: index("heartbeat_runs_org_created_id_idx").on(
       table.orgId,
       table.createdAt,
@@ -140,9 +147,94 @@ export const heartbeatRuns = pgTable(
     activeChatConversationUniqueIdx: uniqueIndex("heartbeat_runs_active_chat_conversation_uq")
       .on(table.orgId, table.chatConversationId)
       .where(sql`${table.chatConversationId} is not null and (${table.status} in ('queued', 'running') or ${table.terminalEffectsPending} = true)`),
+    orgIdempotencyKeyUniqueIdx: uniqueIndex("heartbeat_runs_org_idempotency_key_uq")
+      .on(table.orgId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} is not null`),
     sessionReuseScopeCheck: check(
       "heartbeat_runs_session_reuse_scope_check",
       sql`${table.sessionReuseScope} in ('explicit', 'task', 'none', 'unknown')`,
+    ),
+    commonRunIdentityCheck: check(
+      "heartbeat_runs_common_run_identity_check",
+      sql`(
+        (${table.scene} is null and ${table.targetType} is null and ${table.targetId} is null
+          and ${table.idempotencyKey} is null and ${table.sessionIntentJson} is null)
+        or
+        (${table.scene} is not null and ${table.targetType} is not null and ${table.targetId} is not null
+          and ${table.idempotencyKey} is not null and ${table.sessionIntentJson} is not null)
+      )`,
+    ),
+    sceneCheck: check(
+      "heartbeat_runs_scene_check",
+      sql`${table.scene} is null or ${table.scene} in ('chat', 'side_chat', 'issue', 'review', 'automation', 'heartbeat', 'delegation')`,
+    ),
+    targetCheck: check(
+      "heartbeat_runs_target_check",
+      sql`(
+        (${table.targetType} is null and ${table.targetId} is null)
+        or
+        (${table.targetType} in ('issue', 'chat_conversation', 'chat_message', 'automation_run', 'wakeup_request', 'manual', 'review')
+          and ${table.targetId} is not null and ${table.targetId} = btrim(${table.targetId}) and btrim(${table.targetId}) <> '')
+      )`,
+    ),
+    idempotencyKeyCheck: check(
+      "heartbeat_runs_idempotency_key_check",
+      sql`${table.idempotencyKey} is null or (${table.idempotencyKey} = btrim(${table.idempotencyKey}) and octet_length(${table.idempotencyKey}) between 1 and 512)`,
+    ),
+    sessionIntentShapeCheck: check(
+      "heartbeat_runs_session_intent_shape_check",
+      sql`(
+        ${table.sessionIntentJson} is null
+        or (
+          jsonb_typeof(${table.sessionIntentJson}) = 'object'
+          and ${table.sessionIntentJson} ?& array['kind', 'reuseScope', 'sourceRunId', 'sessionId', 'sessionParams']
+          and jsonb_typeof(${table.sessionIntentJson}->'kind') = 'string'
+          and jsonb_typeof(${table.sessionIntentJson}->'reuseScope') = 'string'
+          and ${table.sessionIntentJson}->>'kind' in ('fresh', 'resume', 'fork')
+          and (
+            (
+              ${table.sessionIntentJson}->>'kind' = 'fresh'
+              and ${table.sessionIntentJson}->>'reuseScope' = 'none'
+              and jsonb_typeof(${table.sessionIntentJson}->'sourceRunId') = 'null'
+              and jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'null'
+              and jsonb_typeof(${table.sessionIntentJson}->'sessionParams') = 'null'
+              and not (${table.sessionIntentJson} ? 'sourceBoundaryRef')
+            )
+            or
+            (
+              ${table.sessionIntentJson}->>'kind' = 'resume'
+              and ${table.sessionIntentJson}->>'reuseScope' in ('explicit', 'task')
+              and (
+                jsonb_typeof(${table.sessionIntentJson}->'sourceRunId') = 'null'
+                or (jsonb_typeof(${table.sessionIntentJson}->'sourceRunId') = 'string' and ${table.sessionIntentJson}->>'sourceRunId' = btrim(${table.sessionIntentJson}->>'sourceRunId') and btrim(${table.sessionIntentJson}->>'sourceRunId') <> '')
+              )
+              and (
+                jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'null'
+                or (jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'string' and ${table.sessionIntentJson}->>'sessionId' = btrim(${table.sessionIntentJson}->>'sessionId') and btrim(${table.sessionIntentJson}->>'sessionId') <> '')
+              )
+              and jsonb_typeof(${table.sessionIntentJson}->'sessionParams') in ('null', 'object')
+              and not (${table.sessionIntentJson} ? 'sourceBoundaryRef')
+            )
+            or
+            (
+              ${table.sessionIntentJson}->>'kind' = 'fork'
+              and ${table.sessionIntentJson}->>'reuseScope' = 'explicit'
+              and jsonb_typeof(${table.sessionIntentJson}->'sourceRunId') = 'string'
+              and ${table.sessionIntentJson}->>'sourceRunId' = btrim(${table.sessionIntentJson}->>'sourceRunId')
+              and btrim(${table.sessionIntentJson}->>'sourceRunId') <> ''
+              and ${table.sessionIntentJson} ? 'sourceBoundaryRef'
+              and jsonb_typeof(${table.sessionIntentJson}->'sourceBoundaryRef') = 'string'
+              and ${table.sessionIntentJson}->>'sourceBoundaryRef' = btrim(${table.sessionIntentJson}->>'sourceBoundaryRef')
+              and btrim(${table.sessionIntentJson}->>'sourceBoundaryRef') <> ''
+              and (
+                jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'null'
+                or (jsonb_typeof(${table.sessionIntentJson}->'sessionId') = 'string' and ${table.sessionIntentJson}->>'sessionId' = btrim(${table.sessionIntentJson}->>'sessionId') and btrim(${table.sessionIntentJson}->>'sessionId') <> '')
+              )
+              and jsonb_typeof(${table.sessionIntentJson}->'sessionParams') in ('null', 'object')
+            )
+          )
+        )
+      )`,
     ),
   }),
 );
