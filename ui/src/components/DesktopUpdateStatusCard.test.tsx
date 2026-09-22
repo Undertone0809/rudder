@@ -203,6 +203,22 @@ describe("DesktopUpdateStatusCard", () => {
     });
 
     expect(harness.applyUpdate).toHaveBeenCalledWith("update-3", undefined);
+    expect(action?.textContent).toContain("Updating...");
+    expect((action as HTMLButtonElement).disabled).toBe(true);
+    expect(action?.getAttribute("aria-busy")).toBe("true");
+    expect(action?.querySelector(".animate-spin")).toBeTruthy();
+
+    harness.emit({
+      updateId: "update-3",
+      version: "0.2.3",
+      phase: "preparing_restart",
+      message: "Applying the Desktop update.",
+      percent: 100,
+      at: new Date().toISOString(),
+    });
+
+    expect(document.body.textContent).not.toContain("Quit and update");
+    expect(document.body.querySelector('[data-testid="desktop-update-status-card"]')?.getAttribute("aria-busy")).toBe("true");
   });
 
   it("does not ask for a second confirmation when ready will apply automatically", async () => {
@@ -263,6 +279,10 @@ describe("DesktopUpdateStatusCard", () => {
     });
 
     expect(harness.applyUpdate).toHaveBeenCalledWith("update-force-ready", { force: true });
+    expect(forceAction?.textContent).toContain("Updating...");
+    expect((forceAction as HTMLButtonElement).disabled).toBe(true);
+    expect(forceAction?.getAttribute("aria-busy")).toBe("true");
+    expect(forceAction?.querySelector(".animate-spin")).toBeTruthy();
   });
 
   it("shows an apply error when the update session is no longer available", async () => {

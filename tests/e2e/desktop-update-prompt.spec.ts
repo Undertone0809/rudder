@@ -22,7 +22,7 @@ type DeferredUpdatePrompt = {
 type DesktopUpdateProgress = {
   updateId: string;
   version: string;
-  phase: "waiting_for_active_runs" | "ready_to_install";
+  phase: "waiting_for_active_runs" | "ready_to_install" | "preparing_restart";
   message: string;
   percent: number;
   blockers?: DeferredUpdatePrompt["blockers"];
@@ -35,6 +35,11 @@ async function installDesktopPromptStub(page: Page) {
   await page.addInitScript(() => {
     let promptListener: ((prompt: DeferredUpdatePrompt) => void) | null = null;
     let progressListener: ((progress: DesktopUpdateProgress) => void) | null = null;
+    let resolveApply: ((result: {
+      status: "started";
+      updateId: string;
+      version: string;
+    }) => void) | null = null;
     Object.defineProperty(window, "desktopShell", {
       configurable: true,
       value: {
@@ -57,10 +62,8 @@ async function installDesktopPromptStub(page: Page) {
             promptListener = null;
           };
         },
-        applyUpdate: async () => ({
-          status: "started",
-          updateId: "update-e2e",
-          version: "0.3.7-canary.1",
+        applyUpdate: () => new Promise((resolve) => {
+          resolveApply = resolve;
         }),
         respondDeferredUpdatePrompt: async () => undefined,
       },
@@ -75,6 +78,16 @@ async function installDesktopPromptStub(page: Page) {
       configurable: true,
       value: (progress: DesktopUpdateProgress) => {
         progressListener?.(progress);
+      },
+    });
+    Object.defineProperty(window, "__resolveDesktopUpdateApply", {
+      configurable: true,
+      value: () => {
+        resolveApply?.({
+          status: "started",
+          updateId: "update-e2e",
+          version: "0.3.7-canary.1",
+        });
       },
     });
   });
@@ -267,4 +280,45 @@ test("desktop update progress replaces live blockers and needs no second automat
     path: testInfo.outputPath("desktop-update-automatic-ready.png"),
     fullPage: true,
   });
+});
+
+test("desktop update action shows loading until the apply handoff settles", async ({ page }) => {
+  await installDesktopPromptStub(page);
+  const organization = await createOrganization(page);
+  await page.goto("/" + organization.issuePrefix + "/workspaces/backups");
+
+  await emitDesktopUpdateProgress(page, {
+    updateId: "update-e2e",
+    version: "0.3.7-canary.1",
+    phase: "ready_to_install",
+    message: "Desktop update is downloaded and verified.",
+    percent: 100,
+    automaticApply: false,
+    at: new Date().toISOString(),
+  });
+
+  const action = page.getByRole("button", { name: "Quit and update" });
+  await action.click();
+
+  const pendingAction = page.getByTestId("desktop-update-status-card").getByRole("button", { name: "Updating..." });
+  await expect(pendingAction).toHaveText("Updating...");
+  await expect(pendingAction).toBeDisabled();
+  await expect(pendingAction).toHaveAttribute("aria-busy", "true");
+  await expect(page.getByTestId("desktop-update-status-card")).toHaveAttribute("aria-busy", "true");
+
+  await page.evaluate(() => {
+    const resolveApply = (window as typeof window & {
+      __resolveDesktopUpdateApply?: () => void;
+    }).__resolveDesktopUpdateApply;
+    resolveApply?.();
+  });
+  await emitDesktopUpdateProgress(page, {
+    updateId: "update-e2e",
+    version: "0.3.7-canary.1",
+    phase: "preparing_restart",
+    message: "Applying the Desktop update.",
+    percent: 100,
+    at: new Date().toISOString(),
+  });
+  await expect(page.getByTestId("desktop-update-status-card").getByRole("button", { name: "Quit and update" })).toHaveCount(0);
 });

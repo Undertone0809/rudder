@@ -882,6 +882,14 @@ export function createDesktopUpdateFlow(context: {
     at: string;
   };
 
+  const POST_APPLY_PROGRESS_PHASES = new Set<DesktopUpdateProgressPhase>([
+    "waiting_for_active_runs",
+    "preparing_restart",
+    "closing",
+    "complete",
+    "failed",
+  ]);
+
   type DesktopUpdateApplyOptions = {
     force?: boolean;
   };
@@ -1486,7 +1494,25 @@ export function createDesktopUpdateFlow(context: {
           const event = parseDesktopUpdateProgressLine(updateId, normalizedVersion, line.trim());
           if (event) {
             const session = activeDesktopUpdates.get(updateId);
-            if (event.phase === "ready_to_install" && session && !session.applyStarted) {
+            if (
+              session
+              && (session.applyStarted || session.forceEscalated)
+              && (
+                !POST_APPLY_PROGRESS_PHASES.has(event.phase)
+                || (session.forceEscalated && event.phase === "waiting_for_active_runs")
+              )
+            ) {
+              // The update child can flush progress that was emitted before the
+              // apply signal. Once the handoff starts, those events must not
+              // move the renderer back to a download or actionable state. A
+              // waiting event is also stale after force-apply has been sent.
+              continue;
+            }
+            if (event.phase === "ready_to_install" && session) {
+              // The updater can flush a buffered ready event after the apply
+              // signal has already advanced the handoff. Never let that stale
+              // event move the renderer back to an actionable state.
+              if (session.applyStarted || session.forceEscalated) continue;
               publishDesktopUpdateProgress({
                 ...event,
                 automaticApply: session.automaticApply,

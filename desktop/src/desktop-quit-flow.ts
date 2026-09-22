@@ -20,6 +20,8 @@ type DesktopUpdateRunSummary = ActiveRunSummary & { blockers: DesktopUpdateBlock
 type DesktopApiFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 const QUIT_RUN_CANCEL_TIMEOUT_MS = 5_000;
+const QUIT_RUN_SETTLE_TIMEOUT_MS = 5_000;
+const QUIT_RUN_SETTLE_POLL_INTERVAL_MS = 200;
 const SAFE_API_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function createDesktopQuitFlow(context: {
@@ -38,6 +40,8 @@ export function createDesktopQuitFlow(context: {
   isSystemShutdown?: () => boolean;
   stopLocalRudder: () => Promise<void>;
   destroyResidentTray: () => void;
+  quitRunSettleTimeoutMs?: number;
+  quitRunSettlePollIntervalMs?: number;
 }) {
   let quitInFlight: Promise<void> | null = null;
   let quitRequested = false;
@@ -251,6 +255,22 @@ export function createDesktopQuitFlow(context: {
     }
   }
 
+  async function waitForActiveRunsToSettle(initial: DesktopUpdateRunSummary): Promise<DesktopUpdateRunSummary> {
+    let activeRuns = initial;
+    const timeoutMs = Math.max(0, context.quitRunSettleTimeoutMs ?? QUIT_RUN_SETTLE_TIMEOUT_MS);
+    const pollIntervalMs = Math.max(1, context.quitRunSettlePollIntervalMs ?? QUIT_RUN_SETTLE_POLL_INTERVAL_MS);
+    const deadline = Date.now() + timeoutMs;
+
+    while (activeRuns.totalRuns > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())));
+      });
+      activeRuns = await listRunningRunsForUpdate();
+    }
+
+    return activeRuns;
+  }
+
   function isThreadStreamWorkerExitError(error: unknown): boolean {
     if (!(error instanceof Error)) return false;
     const text = `${error.message}\n${error.stack ?? ""}`.toLowerCase();
@@ -450,7 +470,7 @@ export function createDesktopQuitFlow(context: {
 
       if (activeRuns.totalRuns > 0 && options.force) {
         await cancelActiveRunsBeforeQuit(activeRuns);
-        activeRuns = await listRunningRunsForUpdate();
+        activeRuns = await waitForActiveRunsToSettle(await listRunningRunsForUpdate());
       }
 
       if (activeRuns.totalRuns > 0) {

@@ -12,7 +12,7 @@ import {
   type DesktopDeferredUpdatePrompt,
   type DesktopDeferredUpdatePromptDecision,
 } from "@/lib/desktop-shell";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 function splitPromptDetail(detail: string) {
@@ -26,6 +26,7 @@ function splitPromptDetail(detail: string) {
 export function DesktopUpdatePromptBridge() {
   const [prompt, setPrompt] = useState<DesktopDeferredUpdatePrompt | null>(null);
   const [responding, setResponding] = useState(false);
+  const [respondingDecision, setRespondingDecision] = useState<DesktopDeferredUpdatePromptDecision | null>(null);
   const promptRef = useRef<DesktopDeferredUpdatePrompt | null>(null);
 
   useEffect(() => {
@@ -52,12 +53,23 @@ export function DesktopUpdatePromptBridge() {
     const desktopShell = readDesktopShell();
     promptRef.current = null;
     setResponding(true);
-    setPrompt(null);
-    await desktopShell?.respondDeferredUpdatePrompt?.(current.promptId, decision).catch(() => undefined);
-    setResponding(false);
+    setRespondingDecision(decision);
+    try {
+      await desktopShell?.respondDeferredUpdatePrompt?.(current.promptId, decision).catch(() => undefined);
+    } finally {
+      setPrompt(null);
+      setResponding(false);
+      setRespondingDecision(null);
+    }
   }
 
   const { body, runDetail } = splitPromptDetail(prompt?.detail ?? "");
+  const renderAction = (decision: DesktopDeferredUpdatePromptDecision, label: string) => (
+    <>
+      {respondingDecision === decision ? <LoaderCircle className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+      <span>{label}</span>
+    </>
+  );
 
   return (
     <Dialog
@@ -66,7 +78,7 @@ export function DesktopUpdatePromptBridge() {
         if (!open) void settle("cancel");
       }}
     >
-      <DialogContent className="gap-0 p-0 sm:max-w-[34rem]" showCloseButton={false}>
+      <DialogContent aria-busy={responding} className="gap-0 p-0 sm:max-w-[34rem]" showCloseButton={false}>
         <div className="flex items-start gap-3 px-5 pb-4 pt-5">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/12 text-amber-600 dark:text-amber-300">
             <AlertTriangle className="h-5 w-5" />
@@ -95,26 +107,29 @@ export function DesktopUpdatePromptBridge() {
             variant="outline"
             className="h-auto min-h-10 min-w-0 whitespace-normal leading-5"
             disabled={responding}
+            aria-busy={respondingDecision === "cancel"}
             onClick={() => void settle("cancel")}
           >
-            {prompt?.cancelLabel ?? "Cancel"}
+            {renderAction("cancel", prompt?.cancelLabel ?? "Cancel")}
           </Button>
           <Button
             type="button"
             variant="outline"
             className="h-auto min-h-10 min-w-0 whitespace-normal leading-5"
             disabled={responding}
+            aria-busy={respondingDecision === "force"}
             onClick={() => void settle("force")}
           >
-            {prompt?.forceLabel ?? "Stop Runs and Update Now"}
+            {renderAction("force", prompt?.forceLabel ?? "Stop Runs and Update Now")}
           </Button>
           <Button
             type="button"
             className="h-auto min-h-10 min-w-0 whitespace-normal leading-5 sm:col-span-2"
             disabled={responding}
+            aria-busy={respondingDecision === "wait"}
             onClick={() => void settle("wait")}
           >
-            {prompt?.confirmLabel ?? "Download and Update When Idle"}
+            {renderAction("wait", prompt?.confirmLabel ?? "Download and Update When Idle")}
           </Button>
         </DialogFooter>
       </DialogContent>

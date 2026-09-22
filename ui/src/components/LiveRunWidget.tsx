@@ -1,7 +1,7 @@
 import { Link } from "@/lib/router";
 import { shortRefFor } from "@rudderhq/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Square } from "lucide-react";
+import { ExternalLink, LoaderCircle, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
 import { agentsApi } from "../api/agents";
@@ -177,9 +177,12 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
                     <button
                       onClick={() => handleCancelRun(run.id)}
                       disabled={cancellingRunIds.has(run.id)}
+                      aria-busy={cancellingRunIds.has(run.id)}
                       className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/[0.06] px-2.5 py-1 text-[11px] font-medium text-red-700 transition-colors hover:bg-red-500/[0.12] dark:text-red-300 disabled:opacity-50"
                     >
-                      <Square className="h-2.5 w-2.5" fill="currentColor" />
+                      {cancellingRunIds.has(run.id)
+                        ? <LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />
+                        : <Square className="h-2.5 w-2.5" fill="currentColor" />}
                       {cancellingRunIds.has(run.id) ? "Stopping…" : "Stop"}
                     </button>
                   )}
