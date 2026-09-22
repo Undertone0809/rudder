@@ -28,6 +28,7 @@ export function DesktopUpdatePromptBridge() {
   const [responding, setResponding] = useState(false);
   const [respondingDecision, setRespondingDecision] = useState<DesktopDeferredUpdatePromptDecision | null>(null);
   const promptRef = useRef<DesktopDeferredUpdatePrompt | null>(null);
+  const promptGeneration = useRef(0);
 
   useEffect(() => {
     const desktopShell = readDesktopShell();
@@ -35,9 +36,11 @@ export function DesktopUpdatePromptBridge() {
 
     void desktopShell.setDeferredUpdatePromptReady?.(true);
     return desktopShell.onDeferredUpdatePrompt((nextPrompt) => {
+      promptGeneration.current += 1;
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       setResponding(false);
+      setRespondingDecision(null);
     });
   }, []);
 
@@ -50,6 +53,7 @@ export function DesktopUpdatePromptBridge() {
   async function settle(decision: DesktopDeferredUpdatePromptDecision) {
     const current = promptRef.current;
     if (!current) return;
+    const generation = promptGeneration.current;
     const desktopShell = readDesktopShell();
     promptRef.current = null;
     setResponding(true);
@@ -57,9 +61,12 @@ export function DesktopUpdatePromptBridge() {
     try {
       await desktopShell?.respondDeferredUpdatePrompt?.(current.promptId, decision).catch(() => undefined);
     } finally {
-      setPrompt(null);
-      setResponding(false);
-      setRespondingDecision(null);
+      // A new prompt may arrive before this response IPC completes.
+      if (promptGeneration.current === generation) {
+        setPrompt(null);
+        setResponding(false);
+        setRespondingDecision(null);
+      }
     }
   }
 
