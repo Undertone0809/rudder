@@ -206,6 +206,39 @@ async function main() {
     const agentApiKey = String((keyResponse.body as { token?: string }).token);
     assert.match(agentApiKey, /^pcp_[a-f0-9]{48}$/u);
 
+    const foreignOrganization = await readResponse(await fetch(`${current.apiUrl}/api/orgs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Foreign branding boundary", issuePrefix: "FBR" }),
+    }));
+    assert.equal(foreignOrganization.status, 201);
+    const foreignOrganizationId = String((foreignOrganization.body as { id?: string }).id);
+    assert.match(foreignOrganizationId, /^[0-9a-f-]{36}$/u);
+    const boundarySnapshotSql = "SELECT o.brand_color, s.owner, s.mutation_version::text AS mutation_version, "
+      + "(SELECT count(*)::text FROM organization_branding_mutation_receipts WHERE org_id = o.id) AS receipts, "
+      + "(SELECT count(*)::text FROM activity_log WHERE org_id = o.id AND action = 'organization.branding_updated') AS activities, "
+      + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id = o.id) AS outbox "
+      + "FROM organizations o LEFT JOIN organization_branding_mutation_state s ON s.org_id = o.id WHERE o.id = $1";
+    const foreignBefore = await sql.unsafe(boundarySnapshotSql, [foreignOrganizationId]);
+    const crossOrganizationStatuses: number[] = [];
+    for (const suffix of ["/branding", ""]) {
+      const rejected = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${foreignOrganizationId}${suffix}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${agentApiKey}`,
+          "x-rudder-agent-id": agentId,
+          "x-rudder-idempotency-key": `foreign-branding-${suffix || "generic"}-${organizationId}`,
+          "x-rudder-required-authority": "rust",
+        },
+        body: JSON.stringify({ brandColor: "#ff0000" }),
+      }));
+      assert.equal(rejected.status, 403);
+      crossOrganizationStatuses.push(rejected.status);
+    }
+    const foreignAfter = await sql.unsafe(boundarySnapshotSql, [foreignOrganizationId]);
+    assert.deepEqual(Array.from(foreignAfter), Array.from(foreignBefore));
+
     const cliRuntimeEnv = {
       RUDDER_API_URL: current.apiUrl,
       RUDDER_API_KEY: agentApiKey,
@@ -458,6 +491,9 @@ async function main() {
       databasePort,
       organizationId,
       firstPatchStatus: patch.status,
+      foreignOrganizationId,
+      crossOrganizationStatuses,
+      foreignStateUnchanged: true,
       cliExitCode: cliResult.exitCode,
       cliBrandColor: cliBody.brandColor,
       mcpExitCode: mcpResult.exitCode,
