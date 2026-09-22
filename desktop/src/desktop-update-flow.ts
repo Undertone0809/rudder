@@ -4,7 +4,6 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, rmSync } from "node:fs";
 import path from "node:path";
-import { DESKTOP_CLI_FLAG } from "./cli-link.js";
 import {
   attachAutomaticPreparationChild,
   beginAutomaticPreparation,
@@ -42,6 +41,7 @@ import {
   type DesktopUpdateHelperRequest,
   type HelperAttestation,
 } from "./desktop-update-helper.js";
+import { resolveDesktopUpdateChildLaunch } from "./desktop-update-launch.js";
 import {
   clearPostUpdateReloadMarker,
   writePostUpdateReloadMarker,
@@ -59,45 +59,9 @@ import {
 } from "./update-check.js";
 export const DESKTOP_GITHUB_REPO = "Undertone0809/rudder";
 const DESKTOP_RELEASES_URL = `https://github.com/${DESKTOP_GITHUB_REPO}/releases`;
+export { DESKTOP_UPDATE_FORCE_ARG, DESKTOP_UPDATE_QUIT_ARG, resolveDesktopUpdateChildLaunch } from "./desktop-update-launch.js";
 export { DESKTOP_FEEDBACK_EMAIL };
-export const DESKTOP_UPDATE_QUIT_ARG = "--rudder-update-quit";
-export const DESKTOP_UPDATE_FORCE_ARG = "--rudder-update-force";
 export const INSTANCE_SETTINGS_GENERAL_PATH = "/instance/settings/general";
-
-export function resolveDesktopUpdateChildLaunch(options: {
-  cliArgs: string[];
-  childEnv: NodeJS.ProcessEnv;
-  execPath?: string;
-  resourcesPath?: string;
-  platform?: NodeJS.Platform;
-}): {
-  command: string;
-  args: string[];
-  env: NodeJS.ProcessEnv;
-} {
-  const command = options.execPath ?? process.execPath;
-  if ((options.platform ?? process.platform) !== "darwin") {
-    return {
-      command,
-      args: [DESKTOP_CLI_FLAG, ...options.cliArgs],
-      env: options.childEnv,
-    };
-  }
-  const resourcesPathModule = path.posix;
-  const resourcesPath = options.resourcesPath
-    ?? resourcesPathModule.resolve(resourcesPathModule.dirname(command), "..", "Resources");
-  return {
-    command,
-    args: [
-      resourcesPathModule.join(resourcesPath, "server-package", "desktop-cli-runner.js"),
-      ...options.cliArgs,
-    ],
-    env: {
-      ...options.childEnv,
-      ELECTRON_RUN_AS_NODE: "1",
-    },
-  };
-}
 
 type DesktopUpdateBlocker = {
   runId: string;
