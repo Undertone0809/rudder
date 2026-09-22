@@ -49,6 +49,7 @@ function createReleaseRepo() {
     "release-lib.sh",
     "release-package-map.mjs",
     "verify-stable-changelog.mjs",
+    "verify-desktop-release-notes.mjs",
   ]) {
     cpSync(join(scriptsDir, fileName), join(repo, "scripts", fileName));
   }
@@ -237,12 +238,16 @@ describe("release fast preflight", () => {
 
   it("rejects an already published stable before dependency installation or build", () => {
     const { repo } = createReleaseRepo();
-    mkdirSync(join(repo, "releases"), { recursive: true });
+    mkdirSync(join(repo, "releases", "zh"), { recursive: true });
     writeFileSync(
       join(repo, "releases", "v0.2.2.md"),
       "This release improves installation.\n\n## Improved\n\n- Improved installation.\n",
     );
-    exec("git", ["add", "releases/v0.2.2.md"], { cwd: repo });
+    writeFileSync(
+      join(repo, "releases", "zh", "v0.2.2.md"),
+      "这个版本改善安装体验。\n\n## 改进\n\n- 改善安装体验。\n",
+    );
+    exec("git", ["add", "releases"], { cwd: repo });
     exec("git", ["commit", "-m", "notes"], { cwd: repo });
     exec("git", ["push", "origin", "main"], { cwd: repo });
     exec("git", ["tag", "v0.2.2"], { cwd: repo });
