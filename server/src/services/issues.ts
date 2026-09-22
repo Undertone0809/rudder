@@ -572,6 +572,37 @@ export function issueService(db: Db, storage?: StorageService) {
     );
   }
 
+  async function backfillIssueIdOnLinkedRuns(
+    tx: any,
+    issue: Pick<typeof issues.$inferSelect, "id" | "orgId" | "executionRunId" | "checkoutRunId">,
+  ) {
+    const runIds = [...new Set([issue.executionRunId, issue.checkoutRunId].filter(
+      (runId): runId is string => Boolean(runId),
+    ))];
+    if (runIds.length === 0) return;
+
+    // The Issue row is already locked by the caller. Lock linked runs after it
+    // so cancellation and claim/recovery use the same Issue -> run order.
+    const linkedRuns = await tx
+      .select({ id: heartbeatRuns.id, contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.orgId, issue.orgId), inArray(heartbeatRuns.id, runIds)))
+      .for("update");
+
+    for (const run of linkedRuns) {
+      const context = run.contextSnapshot && typeof run.contextSnapshot === "object" && !Array.isArray(run.contextSnapshot)
+        ? { ...(run.contextSnapshot as Record<string, unknown>) }
+        : {};
+      const existingIssueId = context.issueId;
+      if (typeof existingIssueId === "string" && existingIssueId.trim().length > 0) continue;
+
+      await tx
+        .update(heartbeatRuns)
+        .set({ contextSnapshot: { ...context, issueId: issue.id } })
+        .where(eq(heartbeatRuns.id, run.id));
+    }
+  }
+
   async function adoptStaleCheckoutRun(input: {
     issueId: string;
     actorAgentId: string;
@@ -1252,7 +1283,8 @@ export function issueService(db: Db, storage?: StorageService) {
           values.completedAt = new Date();
         }
         if (values.status === "cancelled") {
-          values.cancelledAt = new Date();
+          const now = new Date();
+          values.cancelledAt = now;
         }
         if (values.boardOrder === undefined) {
           const statusForOrder = values.status ?? "backlog";
@@ -1265,7 +1297,12 @@ export function issueService(db: Db, storage?: StorageService) {
         }
 
         const resolvedLabelIds = await resolveCreateLabelIds(orgId, issueData, inputLabelIds, tx);
-        const [issue] = await tx.insert(issues).values(values).returning();
+        const [issue] = await tx
+          .insert(issues)
+          .values(values.status === "cancelled"
+            ? { ...values, executionCancellationAt: sql<Date>`clock_timestamp()` }
+            : values)
+          .returning();
         if (stagedDescriptionAssets && stagedDescriptionAssets.attachments.length > 0) {
           await tx.insert(issueAttachments).values(
             stagedDescriptionAssets.attachments.map((attachment) => ({
@@ -1634,9 +1671,25 @@ export function issueService(db: Db, storage?: StorageService) {
           }
         }
         patch.goalId = issueData.goalId !== undefined ? issueData.goalId ?? null : current.goalId;
+        if (issueData.status === "cancelled" && current.status !== "cancelled") {
+          await backfillIssueIdOnLinkedRuns(tx, current);
+        }
+        const persistedPatch = issueData.status === "cancelled"
+          ? current.status === "cancelled"
+            ? (() => {
+                const { executionCancellationAt: _preservedFence, ...rest } = patch;
+                return rest;
+              })()
+            : {
+                // Evaluate the fence after the Issue row lock is acquired so
+                // runs that commit while this update waits are still fenced.
+                ...patch,
+                executionCancellationAt: sql<Date>`clock_timestamp()`,
+              }
+          : patch;
         const updated = await tx
           .update(issues)
-          .set(patch)
+          .set(persistedPatch)
           .where(
             authorizationCondition
               ? and(eq(issues.id, id), authorizationCondition)
@@ -1789,9 +1842,21 @@ export function issueService(db: Db, storage?: StorageService) {
               }
             }
 
+            if (input.targetStatus === "cancelled" && existing.status !== "cancelled") {
+              await backfillIssueIdOnLinkedRuns(tx, existing);
+            }
+
+            const persistedPatch = input.targetStatus === "cancelled" && existing.status !== "cancelled"
+              ? {
+                  // The row is already locked by this transaction; use the
+                  // database clock at statement execution as the fence point.
+                  ...patch,
+                  executionCancellationAt: sql<Date>`clock_timestamp()`,
+                }
+              : patch;
             updatedIssue = await tx
               .update(issues)
-              .set(patch)
+              .set(persistedPatch)
               .where(and(eq(issues.id, row.id), eq(issues.orgId, orgId)))
               .returning()
               .then((rows) => rows[0] ?? null);
@@ -1811,6 +1876,8 @@ export function issueService(db: Db, storage?: StorageService) {
           issue: enriched,
           previousStatus: existing.status,
           previousBoardOrder: existing.boardOrder,
+          previousCheckoutRunId: existing.checkoutRunId,
+          previousExecutionRunId: existing.executionRunId,
         };
       });
     },

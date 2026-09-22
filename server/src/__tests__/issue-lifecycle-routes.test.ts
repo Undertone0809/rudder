@@ -38,6 +38,7 @@ const mockAccessService = vi.hoisted(() => ({
 
 const mockHeartbeatService = vi.hoisted(() => ({
   cancelRun: vi.fn(),
+  cancelIssueRuns: vi.fn(),
   getActiveRunForAgent: vi.fn(),
   getRun: vi.fn(),
   reportRunActivity: vi.fn(async () => undefined),
@@ -635,6 +636,33 @@ describe("issue lifecycle routes", () => {
         }),
       }),
     );
+  });
+
+  it("cancels linked runs when reorder moves an issue into cancelled", async () => {
+    const issue = makeIssue({
+      boardOrder: 2000,
+      status: "cancelled",
+    });
+    mockIssueService.reorder.mockResolvedValue({
+      issue,
+      previousStatus: "in_progress",
+      previousBoardOrder: 3000,
+      previousCheckoutRunId: "legacy-checkout-run",
+      previousExecutionRunId: "legacy-execution-run",
+    });
+
+    const res = await request(await createApp())
+      .post("/api/orgs/organization-1/issues/reorder")
+      .send({
+        issueId: issue.id,
+        targetStatus: "cancelled",
+        position: "end",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockHeartbeatService.cancelIssueRuns).toHaveBeenCalledWith(issue.id, {
+      linkedRunIds: ["legacy-execution-run", "legacy-checkout-run"],
+    });
   });
 
   it("requires board access to reorder issue board lanes", async () => {
@@ -2226,6 +2254,9 @@ describe("issue lifecycle routes", () => {
     expect(res.status).toBe(200);
     await flushAsyncWork();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.cancelIssueRuns).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+    );
   });
 
   it.each(["todo", "in_progress"] as const)(
@@ -2251,6 +2282,9 @@ describe("issue lifecycle routes", () => {
       expect(res.status).toBe(200);
       await flushAsyncWork();
       expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+      expect(mockHeartbeatService.cancelIssueRuns).toHaveBeenCalledWith(
+        "11111111-1111-4111-8111-111111111111",
+      );
     },
   );
 
@@ -2275,6 +2309,7 @@ describe("issue lifecycle routes", () => {
     expect(res.status).toBe(200);
     await flushAsyncWork();
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.cancelIssueRuns).not.toHaveBeenCalled();
   });
 
   it("coalesces assignee and mention wakeups into a single enqueue", async () => {

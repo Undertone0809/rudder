@@ -697,6 +697,16 @@ export function registerIssueMutationRoutes(ctx: IssueMutationRouteContext) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
+    if (existing.status !== "cancelled" && issue.status === "cancelled") {
+      const linkedRunIds = [existing.executionRunId, existing.checkoutRunId].filter(
+        (runId): runId is string => Boolean(runId),
+      );
+      if (linkedRunIds.length > 0) {
+        await heartbeat.cancelIssueRuns(issue.id, { linkedRunIds });
+      } else {
+        await heartbeat.cancelIssueRuns(issue.id);
+      }
+    }
     await automationsSvc.syncRunStatusForIssue(issue.id);
 
     if (actor.runId) {

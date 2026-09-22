@@ -1177,6 +1177,13 @@
       "when": 1790073483029,
       "tag": "0167_delegation_run_scene",
       "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1790101097300,
+      "tag": "0168_issue_execution_cancellation_fence",
+      "breakpoints": true
     }
   ]
 }

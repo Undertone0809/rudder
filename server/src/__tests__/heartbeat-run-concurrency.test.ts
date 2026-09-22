@@ -231,7 +231,7 @@ describe("heartbeat run concurrency", () => {
     await waitForCondition(async () => (await countPostgresLockWaiters()) >= minimum);
   }
 
-  async function holdRowLock(table: "heartbeat_runs" | "agent_wakeup_requests", id: string) {
+  async function holdRowLock(table: "heartbeat_runs" | "agent_wakeup_requests" | "issues", id: string) {
     let release!: () => void;
     let acquired!: () => void;
     let rejectAcquired!: (error: unknown) => void;
@@ -244,8 +244,10 @@ describe("heartbeat run concurrency", () => {
     const transaction = db.transaction(async (tx) => {
       if (table === "heartbeat_runs") {
         await tx.execute(sql`select id from heartbeat_runs where id = ${id} for update`);
-      } else {
+      } else if (table === "agent_wakeup_requests") {
         await tx.execute(sql`select id from agent_wakeup_requests where id = ${id} for update`);
+      } else {
+        await tx.execute(sql`select id from issues where id = ${id} for update`);
       }
       acquired();
       await releasedPromise;
@@ -1135,6 +1137,360 @@ describe("heartbeat run concurrency", () => {
     expect(new Set(mockRuntimeAdapter.calls.map((call) => call.taskKey))).toEqual(new Set(["issue:a", "issue:b"]));
   });
 
+  it("does not claim an issue run after cancellation wins the issue lock", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      createdAt: new Date("2026-04-27T00:30:00.000Z"),
+    });
+    let claimStarted!: () => void;
+    const claimStartedPromise = new Promise<void>((resolve) => { claimStarted = resolve; });
+    const heartbeat = heartbeatService(db, {
+      beforeRunClaim: (candidate) => {
+        if (candidate.id === runId) claimStarted();
+      },
+    });
+    const issueLock = await holdRowLock("issues", issueId);
+    const baselineWaiters = await countPostgresLockWaiters();
+    const cancellation = issueService(db).update(issueId, { status: "cancelled" });
+    let resume: Promise<unknown> | null = null;
+
+    try {
+      await waitForPostgresLockWaiters(baselineWaiters + 1);
+      resume = heartbeat.resumeQueuedRuns();
+      await claimStartedPromise;
+      await waitForPostgresLockWaiters(baselineWaiters + 2);
+      issueLock.release();
+      await issueLock.transaction;
+      await Promise.all([cancellation, resume]);
+
+      expect(mockRuntimeAdapter.calls).toHaveLength(0);
+      await waitForCondition(async () => (await heartbeat.getRun(runId))?.status === "cancelled");
+      const [wakeup] = await db
+        .select({ status: agentWakeupRequests.status })
+        .from(agentWakeupRequests)
+        .innerJoin(heartbeatRuns, eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId))
+        .where(eq(heartbeatRuns.id, runId));
+      expect(wakeup?.status).toBe("cancelled");
+    } finally {
+      issueLock.release();
+      await Promise.allSettled([
+        cancellation,
+        ...(resume ? [resume] : []),
+        issueLock.transaction,
+      ]);
+    }
+  });
+
+  it("cancels an issue run after it is claimed without admitting a replacement", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      createdAt: new Date("2026-04-27T00:32:00.000Z"),
+    });
+    const heartbeat = heartbeatService(db);
+    const resume = heartbeat.resumeQueuedRuns();
+
+    try {
+      await waitForCondition(async () => {
+        const run = await heartbeat.getRun(runId);
+        return run?.status === "running" && mockRuntimeAdapter.calls.some((call) => call.runId === runId);
+      });
+
+      await issueService(db).update(issueId, { status: "cancelled" });
+      await expect(heartbeat.cancelIssueRuns(issueId)).resolves.toBe(1);
+
+      expect(mockRuntimeAdapter.calls.map((call) => call.runId)).toEqual([runId]);
+      expect(await heartbeat.getRun(runId)).toMatchObject({
+        status: "cancelled",
+        errorCode: "cancelled",
+      });
+      expect(await listWakeupRequestsForAgent(agentId)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ status: "cancelled" }),
+      ]));
+    } finally {
+      await resume;
+    }
+  });
+
+  it("cancels a directly linked legacy run without issue context", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy-checkout",
+      createdAt: new Date("2026-04-27T00:33:00.000Z"),
+    });
+    await db
+      .update(issues)
+      .set({ executionRunId: runId, checkoutRunId: runId })
+      .where(eq(issues.id, issueId));
+
+    const heartbeat = heartbeatService(db);
+    await issueService(db).update(issueId, { status: "cancelled" });
+    await expect(heartbeat.cancelIssueRuns(issueId, { linkedRunIds: [runId] })).resolves.toBe(1);
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await heartbeat.getRun(runId)).toMatchObject({
+      status: "cancelled",
+      errorCode: "cancelled",
+    });
+  });
+
+  it("fences a queued issue run across cancellation and reopen", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      createdAt: new Date("2026-04-27T00:30:00.000Z"),
+    });
+    const issueSvc = issueService(db);
+
+    await issueSvc.update(issueId, { status: "cancelled" });
+    await issueSvc.update(issueId, { status: "todo" });
+
+    const reopenedIssue = await db
+      .select({ status: issues.status, executionCancellationAt: issues.executionCancellationAt })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0]);
+    expect(reopenedIssue).toMatchObject({ status: "todo" });
+    expect(reopenedIssue?.executionCancellationAt).toBeInstanceOf(Date);
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.resumeQueuedRuns();
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await heartbeat.getRun(runId)).toMatchObject({
+      status: "cancelled",
+      errorCode: "cancelled",
+    });
+  });
+
+  it("fences a run written while cancellation waits for the issue lock", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const issueSvc = issueService(db);
+    const issueLock = await holdRowLock("issues", issueId);
+    const baselineWaiters = await countPostgresLockWaiters();
+    const cancellation = issueSvc.update(issueId, { status: "cancelled" });
+    let runId: string | null = null;
+
+    try {
+      await waitForPostgresLockWaiters(baselineWaiters + 1);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      runId = await seedQueuedRun({
+        orgId,
+        agentId,
+        taskKey: `issue:${issueId}`,
+        issueId,
+        createdAt: new Date(),
+      });
+      issueLock.release();
+      await issueLock.transaction;
+      await cancellation;
+      await issueSvc.update(issueId, { status: "todo" });
+
+      const heartbeat = heartbeatService(db);
+      await heartbeat.resumeQueuedRuns();
+
+      expect(mockRuntimeAdapter.calls).toHaveLength(0);
+      expect(await heartbeat.getRun(runId)).toMatchObject({
+        status: "cancelled",
+        errorCode: "cancelled",
+      });
+    } finally {
+      issueLock.release();
+      await Promise.allSettled([cancellation, issueLock.transaction]);
+    }
+  });
+
+  it("does not reuse a fenced queued run when a cancelled issue is reopened", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const oldRunId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      createdAt: new Date("2026-04-27T00:35:00.000Z"),
+    });
+    const issueSvc = issueService(db);
+
+    await issueSvc.update(issueId, { status: "cancelled" });
+    await issueSvc.update(issueId, { status: "todo" });
+
+    const heartbeat = heartbeatService(db);
+    const reopenedRun = await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_reopened",
+      payload: { issueId, mutation: "reopen" },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        taskKey: `issue:${issueId}`,
+        wakeSource: "assignment",
+        wakeReason: "issue_reopened",
+      },
+      startImmediately: false,
+    });
+
+    expect(reopenedRun?.id).toBeTruthy();
+    expect(reopenedRun?.id).not.toBe(oldRunId);
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () => mockRuntimeAdapter.calls.some((call) => call.runId === reopenedRun?.id));
+
+    expect(await heartbeat.getRun(oldRunId)).toMatchObject({
+      status: "cancelled",
+      errorCode: "cancelled",
+    });
+    expect(await heartbeat.getRun(reopenedRun!.id)).toMatchObject({ status: "running" });
+    expect(mockRuntimeAdapter.calls.map((call) => call.runId)).toEqual([reopenedRun!.id]);
+  });
+
+  it("preserves an explicit comment mention wake after cancellation fences an old run", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const oldRunId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      reason: "issue_assigned",
+      wakeReason: "issue_assigned",
+      createdAt: new Date("2026-04-27T00:45:00.000Z"),
+    });
+    const issueSvc = issueService(db);
+    const heartbeat = heartbeatService(db);
+
+    await issueSvc.update(issueId, { status: "cancelled" });
+    await issueSvc.update(issueId, { status: "todo" });
+
+    const wakeCommentId = randomUUID();
+    const mentionRun = await heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_mentioned",
+      payload: { issueId, commentId: wakeCommentId, mutation: "comment_create" },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        wakeCommentId,
+        commentId: wakeCommentId,
+      },
+      startImmediately: false,
+    });
+
+    expect(mentionRun?.id).toBeTruthy();
+    expect(mentionRun?.id).not.toBe(oldRunId);
+    await expect(heartbeat.cancelIssueRuns(issueId)).resolves.toBe(1);
+    expect(await heartbeat.getRun(mentionRun!.id)).not.toMatchObject({ status: "cancelled" });
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForCondition(async () => mockRuntimeAdapter.calls.some((call) => call.runId === mentionRun?.id));
+
+    expect(await heartbeat.getRun(oldRunId)).toMatchObject({
+      status: "cancelled",
+      errorCode: "cancelled",
+    });
+    expect(await heartbeat.getRun(mentionRun!.id)).toMatchObject({ status: "running" });
+    expect(mockRuntimeAdapter.calls.map((call) => call.runId)).toEqual([mentionRun!.id]);
+  });
+
+  it("cancels queued issue runs immediately after the issue is cancelled", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "todo" });
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: `issue:${issueId}`,
+      issueId,
+      createdAt: new Date("2026-04-27T00:40:00.000Z"),
+    });
+    const heartbeat = heartbeatService(db);
+
+    await issueService(db).update(issueId, { status: "cancelled" });
+    await expect(heartbeat.cancelIssueRuns(issueId)).resolves.toBe(1);
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    expect(await heartbeat.getRun(runId)).toMatchObject({
+      status: "cancelled",
+      errorCode: "cancelled",
+    });
+    const [wakeup] = await db
+      .select({ status: agentWakeupRequests.status })
+      .from(agentWakeupRequests)
+      .innerJoin(heartbeatRuns, eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId))
+      .where(eq(heartbeatRuns.id, runId));
+    expect(wakeup?.status).toBe("cancelled");
+  });
+
+  it("cancels deferred issue wakes when the issue is cancelled", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    await seedLiveIssueExecution({ orgId, agentId, issueId, status: "running" });
+    const heartbeat = heartbeatService(db);
+    const wakeCommentId = randomUUID();
+
+    await heartbeat.wakeup(agentId, {
+      source: "automation",
+      triggerDetail: "system",
+      reason: "issue_comment_mentioned",
+      payload: { issueId, commentId: wakeCommentId },
+      contextSnapshot: {
+        issueId,
+        taskId: issueId,
+        wakeReason: "issue_comment_mentioned",
+        wakeSource: "comment.mention",
+        wakeCommentId,
+        commentId: wakeCommentId,
+      },
+      startImmediately: false,
+    });
+
+    const deferredWake = await db
+      .select({ id: agentWakeupRequests.id, status: agentWakeupRequests.status })
+      .from(agentWakeupRequests)
+      .where(and(
+        eq(agentWakeupRequests.agentId, agentId),
+        eq(agentWakeupRequests.status, "deferred_issue_execution"),
+      ))
+      .then((rows) => rows[0]);
+    expect(deferredWake).toMatchObject({ status: "deferred_issue_execution" });
+
+    await issueService(db).update(issueId, { status: "cancelled" });
+    await expect(heartbeat.cancelIssueRuns(issueId)).resolves.toBe(1);
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    const issueRuns = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`);
+    expect(issueRuns).toHaveLength(1);
+    expect(issueRuns[0]?.status).toBe("cancelled");
+    expect(await db
+      .select({ status: agentWakeupRequests.status })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, deferredWake!.id))
+      .then((rows) => rows[0]?.status)).toBe("cancelled");
+  });
+
   it("registers execution ownership before a queued run becomes visible to recovery", async () => {
     const { orgId, agentId } = await seedAgentFixture(1);
     const runId = await seedQueuedRun({
@@ -1470,6 +1826,69 @@ describe("heartbeat run concurrency", () => {
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId));
     expect(issueRuns).toHaveLength(1);
+  });
+
+  it("does not promote a deferred Issue wake fenced by cancellation after reopen", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const issueId = await seedIssueFixture({ orgId, agentId, status: "in_progress" });
+    const terminalRunId = await seedLiveIssueExecution({
+      orgId,
+      agentId,
+      issueId,
+      status: "timed_out",
+      terminalEffectsPending: true,
+    });
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.wakeup(agentId, {
+      source: "assignment",
+      triggerDetail: "system",
+      reason: "issue_assigned",
+      payload: { issueId },
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+      startImmediately: false,
+    });
+    const deferredWakeup = (await listWakeupRequestsForAgent(agentId)).find(
+      (wakeup) => wakeup.status === "deferred_issue_execution",
+    );
+    expect(deferredWakeup?.id).toBeTruthy();
+
+    const cancellationAt = new Date(Date.now() + 1);
+    await db
+      .update(issues)
+      .set({
+        status: "cancelled",
+        cancelledAt: cancellationAt,
+        executionCancellationAt: cancellationAt,
+        updatedAt: cancellationAt,
+      })
+      .where(eq(issues.id, issueId));
+    await db
+      .update(issues)
+      .set({
+        status: "todo",
+        cancelledAt: null,
+        updatedAt: new Date(cancellationAt.getTime() + 1),
+      })
+      .where(eq(issues.id, issueId));
+    await db
+      .update(heartbeatRuns)
+      .set({ processExitedAt: new Date() })
+      .where(eq(heartbeatRuns.id, terminalRunId));
+
+    await heartbeat.reapOrphanedRuns();
+
+    expect(mockRuntimeAdapter.calls).toHaveLength(0);
+    const issueRuns = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`);
+    expect(issueRuns).toEqual([{ id: terminalRunId, status: "timed_out" }]);
+    expect(await db
+      .select({ status: agentWakeupRequests.status })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, deferredWakeup!.id))
+      .then((rows) => rows[0]?.status)).toBe("cancelled");
   });
 
   it("keeps an active issue run attached across reassignment and defers the new assignee wake", async () => {

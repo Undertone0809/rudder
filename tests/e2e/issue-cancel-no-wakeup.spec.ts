@@ -39,6 +39,18 @@ async function listIssueWakeRecords(orgId: string, agentId: string, issueId: str
   };
 }
 
+async function waitForIssueRunStatus(
+  orgId: string,
+  agentId: string,
+  issueId: string,
+  status: "queued" | "running" | "cancelled",
+) {
+  await expect.poll(async () => {
+    const records = await listIssueWakeRecords(orgId, agentId, issueId);
+    return records.runs[0]?.status ?? null;
+  }, { timeout: 20_000 }).toBe(status);
+}
+
 test.describe("Issue cancellation routing", () => {
   test("cancelling a backlog issue does not enqueue an agent run", async ({ page }) => {
     test.setTimeout(120_000);
@@ -104,5 +116,81 @@ test.describe("Issue cancellation routing", () => {
     const refreshedIssueResponse = await page.request.get(`/api/issues/${issue.id}`);
     expect(refreshedIssueResponse.ok(), await refreshedIssueResponse.text()).toBe(true);
     expect((await refreshedIssueResponse.json()).status).toBe("cancelled");
+  });
+
+  test("cancelling an assigned issue cancels its existing run without replacing it", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const organizationResponse = await page.request.post("/api/orgs", {
+      data: { name: `Issue-Cancel-Existing-Run-${Date.now()}` },
+    });
+    expect(organizationResponse.ok(), await organizationResponse.text()).toBe(true);
+    const organization = await organizationResponse.json() as { id: string; issuePrefix: string };
+
+    const agentResponse = await page.request.post(`/api/orgs/${organization.id}/agents`, {
+      data: {
+        name: "Cancellation existing run agent",
+        role: "engineer",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {
+          command: process.execPath,
+          args: ["-e", "setTimeout(() => {}, 60000)"],
+        },
+      },
+    });
+    expect(agentResponse.ok(), await agentResponse.text()).toBe(true);
+    const agent = await agentResponse.json() as { id: string };
+
+    const issueResponse = await page.request.post(`/api/orgs/${organization.id}/issues`, {
+      data: {
+        title: "Cancel must stop the existing Agent Run",
+        description: "The cancellation should not enqueue a compensating run.",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agent.id,
+      },
+    });
+    expect(issueResponse.ok(), await issueResponse.text()).toBe(true);
+    const issue = await issueResponse.json() as { id: string; identifier: string | null };
+
+    await expect.poll(async () => (await listIssueWakeRecords(
+      organization.id,
+      agent.id,
+      issue.id,
+    )).runs.length, { timeout: 20_000 }).toBe(1);
+    await waitForIssueRunStatus(organization.id, agent.id, issue.id, "running");
+
+    await page.goto(`/issues/${issue.identifier ?? issue.id}`);
+    const properties = page.getByRole("region", { name: "Issue properties" });
+    const statusTrigger = properties.getByRole("button", { name: "Todo", exact: true });
+    await expect(statusTrigger).toBeVisible({ timeout: 20_000 });
+    await statusTrigger.click();
+
+    const statusMenu = page.getByRole("menu", { name: "Issue status" });
+    await expect(statusMenu).toBeVisible();
+    const statusResponse = page.waitForResponse((response) =>
+      (response.url().endsWith(`/api/issues/${issue.id}`)
+        || (issue.identifier !== null && response.url().endsWith(`/api/issues/${issue.identifier}`))) &&
+      response.request().method() === "PATCH" &&
+      response.ok(),
+    );
+    await statusMenu.getByRole("menuitemradio", { name: "Cancelled", exact: true }).click();
+    await statusResponse;
+
+    await expect(properties.getByRole("button", { name: "Cancelled", exact: true })).toBeVisible();
+    await waitForIssueRunStatus(organization.id, agent.id, issue.id, "cancelled");
+    const cancelledRecords = await listIssueWakeRecords(organization.id, agent.id, issue.id);
+    expect(cancelledRecords.runs).toHaveLength(1);
+    expect(cancelledRecords.wakeups).toHaveLength(1);
+    expect(cancelledRecords.wakeups[0]?.status).toBe("cancelled");
+
+    await page.reload();
+    const refreshedProperties = page.getByRole("region", { name: "Issue properties" });
+    await expect(refreshedProperties.getByRole("button", { name: "Cancelled", exact: true })).toBeVisible();
+    await expect.poll(async () => (await listIssueWakeRecords(
+      organization.id,
+      agent.id,
+      issue.id,
+    )).runs.length, { timeout: 5_000 }).toBe(1);
   });
 });

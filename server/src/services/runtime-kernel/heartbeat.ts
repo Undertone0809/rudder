@@ -19,7 +19,7 @@ import {
   summarizeTokenUsage,
   toHeartbeatRun
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionResult
@@ -82,6 +82,7 @@ import {
   setWakeupStatusMonotonic,
   terminalEffectNames,
   transitionHeartbeatRunToTerminal,
+  transitionHeartbeatRunToTerminalInTransaction,
   type RunActivityWatermark,
   type TerminalEffectIntent,
   type TerminalEffectName,
@@ -1164,6 +1165,52 @@ export function heartbeatService(
       return null;
     }
 
+    async function cancelQueuedRunWithinClaimTransaction(tx: any, currentRun: typeof heartbeatRuns.$inferSelect, reason: string) {
+      const contextRequestId = getAgentIssueCreationRequestIdFromRunContext(currentRun.contextSnapshot);
+      const agentIssueCreationSettlement = contextRequestId
+        ? {
+            orgId: currentRun.orgId,
+            agentId: currentRun.agentId,
+            runId: currentRun.id,
+            requestId: contextRequestId,
+          } satisfies NonNullable<TerminalEffectIntent["agentIssueCreationSettlement"]>
+        : await agentIssueCreationSvc
+            .getSettlementIntentForRun(currentRun.orgId, currentRun.agentId, currentRun.id)
+            .catch((error) => {
+              logger.warn(
+                { err: error, runId: currentRun.id },
+                "failed to resolve Agent Issue creation settlement terminal effect",
+              );
+              return null;
+            });
+      const agentIssueCreationNotification = await agentIssueCreationSvc
+        .getNotificationIntentForRun(currentRun.orgId, currentRun.agentId, currentRun.id)
+        .catch((error) => {
+          logger.warn(
+            { err: error, runId: currentRun.id },
+            "failed to resolve Agent Issue creation notification terminal effect",
+          );
+          return null;
+        });
+
+      return transitionHeartbeatRunToTerminalInTransaction(tx as unknown as Db, {
+        runId: currentRun.id,
+        status: "cancelled",
+        patch: {
+          finishedAt: new Date(),
+          error: reason,
+          errorCode: "cancelled",
+          processExitedAt: new Date(),
+        },
+        expectedStatuses: ["queued"],
+        terminalEffectsIntent: {
+          version: 1,
+          ...(agentIssueCreationSettlement ? { agentIssueCreationSettlement } : {}),
+          ...(agentIssueCreationNotification ? { agentIssueCreationNotification } : {}),
+        },
+      });
+    }
+
     const agent = await getAgent(run.agentId);
     if (!agent) {
       return await cancelQueuedRunDuringClaim("Cancelled because the agent no longer exists");
@@ -1176,7 +1223,11 @@ export function heartbeatService(
     const issueId = readNonEmptyString(context.issueId);
     if (issueId) {
       const issue = await db
-        .select({ id: issues.id, status: issues.status })
+        .select({
+          id: issues.id,
+          status: issues.status,
+          executionCancellationAt: issues.executionCancellationAt,
+        })
         .from(issues)
         .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
         .then((rows) => rows[0] ?? null);
@@ -1201,6 +1252,22 @@ export function heartbeatService(
 
     const claimedAt = new Date();
     const claimed = await db.transaction(async (tx) => {
+      // Wakeup/release transactions lock the Issue before the run advisory
+      // lock. Keep the same order here so cancellation/release cannot form a
+      // wait cycle with queued-run claim.
+      const currentIssue = issueId
+        ? await tx
+            .select({
+              id: issues.id,
+              status: issues.status,
+              executionCancellationAt: issues.executionCancellationAt,
+            })
+            .from(issues)
+            .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
+            .for("update")
+            .then((rows) => rows[0] ?? null)
+        : null;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${run.id}))`);
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`agent-run-state:${run.agentId}`}))`);
       await tx.execute(sql`select id from agents where id = ${run.agentId} for update`);
       const currentAgent = await tx
@@ -1233,6 +1300,38 @@ export function heartbeatService(
       if (!currentRun || currentRun.status !== "queued") return null;
 
       const currentContext = parseObject(currentRun.contextSnapshot);
+      const currentCommentMentionWake = isIssueCommentMentionWake({
+        reason: readNonEmptyString(currentContext.wakeReason) ?? readNonEmptyString(wakeup?.reason),
+        contextSnapshot: currentContext,
+        payload: wakeup?.payload,
+      });
+      const queuedBeforeIssueCancellation = currentIssue?.executionCancellationAt
+        ? await tx
+            .select({
+              fenced: sql<boolean>`${heartbeatRuns.createdAt} <= ${issues.executionCancellationAt}`,
+            })
+            .from(heartbeatRuns)
+            .innerJoin(issues, and(
+              eq(issues.id, currentIssue.id),
+              eq(issues.orgId, run.orgId),
+            ))
+            .where(eq(heartbeatRuns.id, currentRun.id))
+            .then((rows) => rows[0]?.fenced === true)
+        : false;
+      if (
+        issueId
+        && (
+          !currentIssue
+          || queuedBeforeIssueCancellation
+          || ((currentIssue.status === "done" || currentIssue.status === "cancelled") && !currentCommentMentionWake)
+        )
+      ) {
+        return cancelQueuedRunWithinClaimTransaction(
+          tx,
+          currentRun,
+          currentIssue ? "Cancelled because the linked issue is no longer actionable" : "Cancelled because the linked issue no longer exists",
+        );
+      }
       const goalContext = parseObject(currentContext.goal);
       const goalId = readNonEmptyString(currentContext.goalId) ?? readNonEmptyString(goalContext.id);
       const wakeReason = readNonEmptyString(currentContext.wakeReason) ?? readNonEmptyString(wakeup?.reason);
@@ -1390,7 +1489,21 @@ export function heartbeatService(
       return claimedRun;
     });
     if (!claimed) return null;
-    if (claimed.status === "cancelled" && claimed.errorCode === "goal.result_proposal_ready") {
+    if (claimed.status === "cancelled") {
+      publishRunStatus(claimed);
+      await finishLatestHeartbeatRunAttempt(db, claimed.id, {
+        status: "cancelled",
+        usageDeltaJson: claimed.usageJson,
+        costUsd: claimed.usageJson?.costUsd,
+        sessionDisplayId: claimed.sessionIdAfter,
+        sessionParamsJson: claimed.sessionParamsAfterJson,
+        errorCode: claimed.errorCode,
+        error: claimed.error,
+        finishedAt: claimed.finishedAt ?? new Date(),
+      }).catch((error) => {
+        logger.warn({ err: error, runId: claimed.id }, "failed to persist heartbeat attempt terminal state");
+        return null;
+      });
       await appendRunEvent(claimed, {
         eventType: "lifecycle",
         stream: "system",
@@ -2149,50 +2262,67 @@ export function heartbeatService(
       const availableSlots = Math.max(0, policy.maxConcurrentRuns - runningCount);
       if (availableSlots <= 0) return [];
 
-      const queuedRuns = await db
-        .select()
-        .from(heartbeatRuns)
-        .where(
-          and(
-            eq(heartbeatRuns.agentId, agentId),
-            eq(heartbeatRuns.status, "queued"),
-            sql`(
-              ${heartbeatRuns.wakeupRequestId} is null
-              or exists (
-                select 1
-                from ${agentWakeupRequests}
-                where ${agentWakeupRequests.id} = ${heartbeatRuns.wakeupRequestId}
-                  and ${agentWakeupRequests.requestedAt} <= now()
-              )
-            )`,
-          ),
-        )
-        .orderBy(asc(heartbeatRuns.createdAt))
-        .limit(availableSlots);
-      if (queuedRuns.length === 0) return [];
-
       const claimedRuns: Array<typeof heartbeatRuns.$inferSelect> = [];
-      for (const queuedRun of queuedRuns) {
-        if (activeRunExecutions.has(queuedRun.id)) continue;
-        activeRunExecutions.add(queuedRun.id);
-        runAbortControllers.set(queuedRun.id, new AbortController());
-        try {
-          await testHooks?.beforeRunClaim?.(queuedRun);
-          const claimed = await claimQueuedRun(queuedRun);
-          if (claimed) {
-            claimedRuns.push(claimed);
-            void executeRun(claimed.id, { executionReserved: true }).catch((err) => {
-              logger.error({ err, runId: claimed.id }, "queued heartbeat execution failed");
-            });
-          } else {
+      const attemptedRunIds = new Set<string>();
+      let remainingSlots = availableSlots;
+      while (remainingSlots > 0) {
+        const queuedRuns = await db
+          .select()
+          .from(heartbeatRuns)
+          .where(
+            and(
+              eq(heartbeatRuns.agentId, agentId),
+              eq(heartbeatRuns.status, "queued"),
+              sql`(
+                ${heartbeatRuns.wakeupRequestId} is null
+                or exists (
+                  select 1
+                  from ${agentWakeupRequests}
+                  where ${agentWakeupRequests.id} = ${heartbeatRuns.wakeupRequestId}
+                    and ${agentWakeupRequests.requestedAt} <= now()
+                )
+              )`,
+              ...(attemptedRunIds.size > 0 ? [notInArray(heartbeatRuns.id, [...attemptedRunIds])] : []),
+            ),
+          )
+          .orderBy(asc(heartbeatRuns.createdAt))
+          .limit(remainingSlots);
+        if (queuedRuns.length === 0) break;
+
+        let madeProgress = false;
+        for (const queuedRun of queuedRuns) {
+          attemptedRunIds.add(queuedRun.id);
+          if (activeRunExecutions.has(queuedRun.id)) continue;
+          activeRunExecutions.add(queuedRun.id);
+          runAbortControllers.set(queuedRun.id, new AbortController());
+          try {
+            await testHooks?.beforeRunClaim?.(queuedRun);
+            const claimed = await claimQueuedRun(queuedRun);
+            if (claimed) {
+              claimedRuns.push(claimed);
+              remainingSlots -= 1;
+              madeProgress = true;
+              void executeRun(claimed.id, { executionReserved: true }).catch((err) => {
+                logger.error({ err, runId: claimed.id }, "queued heartbeat execution failed");
+              });
+            } else {
+              runAbortControllers.delete(queuedRun.id);
+              activeRunExecutions.delete(queuedRun.id);
+              const stillQueued = await db
+                .select({ status: heartbeatRuns.status })
+                .from(heartbeatRuns)
+                .where(eq(heartbeatRuns.id, queuedRun.id))
+                .then((rows) => rows[0]?.status === "queued");
+              madeProgress = madeProgress || !stillQueued;
+              if (stillQueued) break;
+            }
+          } catch (error) {
             runAbortControllers.delete(queuedRun.id);
             activeRunExecutions.delete(queuedRun.id);
+            throw error;
           }
-        } catch (error) {
-          runAbortControllers.delete(queuedRun.id);
-          activeRunExecutions.delete(queuedRun.id);
-          throw error;
         }
+        if (!madeProgress) break;
       }
       if (claimedRuns.length === 0) return [];
       return claimedRuns;
@@ -2228,7 +2358,7 @@ export function heartbeatService(
   const { enqueueWakeup } = wakeupHandlers;
   const { releaseIssueExecutionAndPromote } = releaseHandlers;
   const { executeRun } = executeHandlers;
-  const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
+  const { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelIssueRunsInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics } = miscHandlers;
 
   async function recoverNetworkWaitingRunsLocked(opts?: { now?: Date }) {
     const now = opts?.now ?? new Date();
@@ -2781,6 +2911,11 @@ export function heartbeatService(
     },
 
     cancelRun: (runId: string) => cancelRunInternal(runId),
+
+    cancelIssueRuns: (
+      issueId: string,
+      opts?: { linkedRunIds?: string[]; reason?: string },
+    ) => cancelIssueRunsInternal(issueId, opts),
 
     cancelActiveForAgent: (agentId: string) => cancelActiveForAgentInternal(agentId),
 

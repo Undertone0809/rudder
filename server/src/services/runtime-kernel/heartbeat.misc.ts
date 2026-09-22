@@ -12,7 +12,7 @@ import type {
   AgentSkillTelemetryEvidence,
   AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { getServerAdapter } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
@@ -197,7 +197,11 @@ export function createHeartbeatMiscHandlers(context: any) {
     return wakeupIds.length;
   }
 
-  async function cancelRunInternal(runId: string, reason = "Cancelled by Rudder") {
+  async function cancelRunInternal(
+    runId: string,
+    reason = "Cancelled by Rudder",
+    opts?: { startNext?: boolean },
+  ) {
     const run = await getRun(runId);
     if (!run) throw notFound("Heartbeat run not found");
     if (run.status !== "running" && run.status !== "queued") return run;
@@ -229,11 +233,80 @@ export function createHeartbeatMiscHandlers(context: any) {
         || await terminateRunProcessAndWait(cancelled, agent?.agentRuntimeType ?? "");
       if (exited && !activeRunExecutions.has(cancelled.id)) {
         await acknowledgeRunProcessExit(cancelled.id);
-        await completeTerminalControlEffects(cancelled);
+        await completeTerminalControlEffects(cancelled, { startNext: opts?.startNext });
       }
     }
 
     return cancelled;
+  }
+
+  async function cancelIssueRunsInternal(
+    issueId: string,
+    opts?: {
+      linkedRunIds?: string[];
+      reason?: string;
+    },
+  ) {
+    const reason = opts?.reason ?? "Cancelled because the linked Issue was cancelled";
+    const linkedRunIds = [...new Set((opts?.linkedRunIds ?? []).filter(Boolean))];
+    const issue = await db
+      .select({ executionCancellationAt: issues.executionCancellationAt })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows: Array<{ executionCancellationAt: Date | null }>) => rows[0] ?? null);
+    if (issue?.executionCancellationAt) {
+      const now = new Date();
+      await db
+        .update(agentWakeupRequests)
+        .set({
+          status: "cancelled",
+          finishedAt: now,
+          error: reason,
+          updatedAt: now,
+        })
+        .where(and(
+          sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
+          inArray(agentWakeupRequests.status, [
+            "queued",
+            "claimed",
+            "deferred_issue_execution",
+            "deferred_agent_paused",
+            "deferred_goal_focus",
+            "deferred_goal_blocked",
+          ]),
+          sql`${agentWakeupRequests.requestedAt} <= (
+            select ${issues.executionCancellationAt}
+            from ${issues}
+            where ${issues.id} = ${issueId}
+          )`,
+        ));
+    }
+    const runs = await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .where(and(
+        inArray(heartbeatRuns.status, ["queued", "running"]),
+        or(
+          sql`${heartbeatRuns.contextSnapshot} ->> 'issueId' = ${issueId}`,
+          ...(linkedRunIds.length > 0 ? [inArray(heartbeatRuns.id, linkedRunIds)] : []),
+        ),
+        ...(issue?.executionCancellationAt
+          ? [sql`${heartbeatRuns.createdAt} <= (
+              select ${issues.executionCancellationAt}
+              from ${issues}
+              where ${issues.id} = ${issueId}
+            )`]
+          : []),
+      ))
+      .orderBy(asc(heartbeatRuns.createdAt));
+
+    let cancelledCount = 0;
+    for (const run of runs) {
+      const cancelled = await cancelRunInternal(run.id, reason, { startNext: false });
+      if (cancelled?.status === "cancelled") cancelledCount += 1;
+    }
+    if (cancelledCount > 0) await resumeQueuedRuns();
+    return cancelledCount;
   }
 
   async function cancelActiveForAgentInternal(agentId: string, reason = "Cancelled due to agent pause") {
@@ -661,5 +734,5 @@ export function createHeartbeatMiscHandlers(context: any) {
     };
   }
 
-  return { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics };
+  return { resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelIssueRunsInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics };
 }

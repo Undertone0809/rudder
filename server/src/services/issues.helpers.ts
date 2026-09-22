@@ -95,7 +95,9 @@ export function applyStatusSideEffects(
     patch.completedAt = new Date();
   }
   if (status === "cancelled") {
-    patch.cancelledAt = new Date();
+    const now = new Date();
+    patch.cancelledAt = now;
+    patch.executionCancellationAt = now;
   }
   return patch;
 }

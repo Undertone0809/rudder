@@ -959,6 +959,7 @@ describe("applyPendingMigrations", () => {
           "0165_heartbeat_attempt_owner_fencing.sql",
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
+          "0168_issue_execution_cancellation_fence.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1147,6 +1148,7 @@ describe("applyPendingMigrations", () => {
           "0165_heartbeat_attempt_owner_fencing.sql",
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
+          "0168_issue_execution_cancellation_fence.sql",
         ],
         reason: "pending-migrations",
       });

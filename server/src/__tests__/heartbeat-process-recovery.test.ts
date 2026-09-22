@@ -28,6 +28,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runningProcesses } from "../agent-runtimes/index.ts";
 import { agentIssueCreationService } from "../services/agent-issue-creation.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { issueService } from "../services/issues.ts";
 import { appendHeartbeatRunEvent } from "../services/run-events.ts";
 import { NETWORK_WAIT_MAX_ATTEMPTS } from "../services/runtime-kernel/heartbeat.core.ts";
 import {
@@ -1891,6 +1892,121 @@ describe("heartbeat orphaned process recovery", () => {
     expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
     expect(issue?.checkoutRunId).toBe(runId);
   });
+
+  it("does not queue an automatic process-loss retry after the Issue is cancelled", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      processPid: 999_999_999,
+    });
+    const cancelledAt = new Date("2026-03-19T00:01:00.000Z");
+    await db
+      .update(issues)
+      .set({
+        status: "cancelled",
+        cancelledAt,
+        executionCancellationAt: cancelledAt,
+        updatedAt: cancelledAt,
+      })
+      .where(eq(issues.id, issueId));
+
+    const result = await heartbeatService(db).reapOrphanedRuns();
+    expect(result).toEqual({ reaped: 1, runIds: [runId] });
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      id: runId,
+      status: "failed",
+      errorCode: "process_lost",
+    });
+
+    const issue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(issue).toMatchObject({
+      status: "cancelled",
+      executionRunId: null,
+      executionCancellationAt: cancelledAt,
+    });
+  });
+
+  it.each(["executionRunId", "checkoutRunId"] as const)(
+    "backfills Issue identity before clearing the %s pointer so cancellation cannot recover the old run",
+    async (pointer) => {
+      const { agentId, runId, issueId } = await seedRunFixture({
+        processPid: 999_999_999,
+        contextSnapshot: {},
+      });
+      await db
+        .update(issues)
+        .set(pointer === "executionRunId"
+          ? { executionRunId: runId, checkoutRunId: null }
+          : { executionRunId: null, checkoutRunId: runId })
+        .where(eq(issues.id, issueId));
+
+      await issueService(db).update(issueId, { status: "cancelled" });
+
+      const sourceRun = await db
+        .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId))
+        .then((rows) => rows[0] ?? null);
+      expect(sourceRun?.contextSnapshot).toMatchObject({ issueId });
+
+      const issueAfterCancel = await db
+        .select({ executionRunId: issues.executionRunId, checkoutRunId: issues.checkoutRunId })
+        .from(issues)
+        .where(eq(issues.id, issueId))
+        .then((rows) => rows[0] ?? null);
+      expect(issueAfterCancel).toEqual({ executionRunId: null, checkoutRunId: null });
+
+      const result = await heartbeatService(db).reapOrphanedRuns();
+      expect(result).toEqual({ reaped: 1, runIds: [runId] });
+
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ id: runId, status: "failed", errorCode: "process_lost" });
+    },
+  );
+
+  it.each(["executionRunId", "checkoutRunId"] as const)(
+    "uses a legacy %s pointer to fence automatic recovery when run context has no Issue id",
+    async (pointer) => {
+      const { agentId, runId, issueId } = await seedRunFixture({
+        processPid: 999_999_999,
+        contextSnapshot: {},
+      });
+      const cancelledAt = new Date("2026-03-19T00:01:00.000Z");
+      await db
+        .update(issues)
+        .set({
+          status: "cancelled",
+          cancelledAt,
+          executionCancellationAt: cancelledAt,
+          executionRunId: pointer === "executionRunId" ? runId : null,
+          checkoutRunId: pointer === "checkoutRunId" ? runId : null,
+          updatedAt: cancelledAt,
+        })
+        .where(eq(issues.id, issueId));
+
+      const result = await heartbeatService(db).reapOrphanedRuns();
+      expect(result).toEqual({ reaped: 1, runIds: [runId] });
+
+      const runs = await db
+        .select()
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.agentId, agentId));
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ id: runId, status: "failed", errorCode: "process_lost" });
+    },
+  );
 
   it("manual retry clones full recovery context instead of rebuilding a lossy wakeup", async () => {
     const { agentId, runId, issueId } = await seedRunFixture({

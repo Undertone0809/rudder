@@ -167,7 +167,15 @@ export function createHeartbeatRecoveryHandlers(context: any) {
       triggerDetail: opts.triggerDetail,
     });
     Object.assign(recoveryContextSnapshot, opts.contextPatch ?? {});
-    const issueId = readNonEmptyString(recoveryContextSnapshot.issueId);
+    let issueId = readNonEmptyString(recoveryContextSnapshot.issueId);
+    if (!issueId) {
+      const sourceRunId = readNonEmptyString(run.sourceRunId) ?? readNonEmptyString(recoveryContextSnapshot.sourceRunId);
+      if (sourceRunId && sourceRunId !== run.id) {
+        const sourceRun = await getRun(sourceRunId);
+        issueId = readNonEmptyString(parseObject(sourceRun?.contextSnapshot).issueId);
+        if (issueId) recoveryContextSnapshot.issueId = issueId;
+      }
+    }
     const taskKey = deriveTaskKey(recoveryContextSnapshot, null);
     const inheritedSessionSuppression = heartbeatSessions.readSessionReuseSuppression(recoveryContextSnapshot);
     delete recoveryContextSnapshot.resumeFromRunId;
@@ -213,7 +221,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     };
 
     const outcome = await db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-retry:${run.id}`}))`);
       const suppressSourceAutomationOutput = async (required: boolean) => {
         const source = await tx
           .select({ terminalEffectsPending: heartbeatRuns.terminalEffectsPending })
@@ -237,6 +244,70 @@ export function createHeartbeatRecoveryHandlers(context: any) {
             eq(heartbeatRuns.terminalEffectsPending, true),
           ));
       };
+      let issueRow:
+        | {
+          id: string;
+          orgId: string;
+          status: string;
+          executionCancellationAt: Date | null;
+          executionRunId: string | null;
+          executionAgentNameKey: string | null;
+        }
+        | null = null;
+
+      const issueCondition = issueId
+        ? eq(issues.id, issueId)
+        : or(eq(issues.executionRunId, run.id), eq(issues.checkoutRunId, run.id));
+      issueRow = await tx
+        .select({
+          id: issues.id,
+          orgId: issues.orgId,
+          status: issues.status,
+          executionCancellationAt: issues.executionCancellationAt,
+          executionRunId: issues.executionRunId,
+          executionAgentNameKey: issues.executionAgentNameKey,
+        })
+        .from(issues)
+        .where(and(eq(issues.orgId, run.orgId), issueCondition))
+        .limit(1)
+        .for("update")
+        .then((rows) => rows[0] ?? null);
+
+      if (issueRow && !issueId) {
+        issueId = issueRow.id;
+        recoveryContextSnapshot.issueId = issueId;
+        requestPayload.issueId = issueId;
+      }
+
+      // Recovery locks the Issue before the retry advisory lock, matching
+      // queued-run claim and Issue release/cancellation transactions.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`heartbeat-run-retry:${run.id}`}))`);
+
+      const recoveryRunBeforeCancellation = issueRow?.executionCancellationAt
+        ? await tx
+            .select({
+              fenced: sql<boolean>`${heartbeatRuns.createdAt} <= ${issues.executionCancellationAt}`,
+            })
+            .from(heartbeatRuns)
+            .innerJoin(issues, and(
+              eq(issues.id, issueRow.id),
+              eq(issues.orgId, run.orgId),
+            ))
+            .where(eq(heartbeatRuns.id, run.id))
+            .then((rows) => rows[0]?.fenced === true)
+        : false;
+      const automaticRecoveryFenced = Boolean(
+        issueRow
+        && opts.recoveryTrigger === "automatic"
+        && (
+          (issueRow.status === "cancelled" && !issueRow.executionCancellationAt)
+          || recoveryRunBeforeCancellation
+        ),
+      );
+      if (automaticRecoveryFenced) {
+        return { kind: "skipped" as const };
+      }
+
       const existingRetry = await tx
         .select()
         .from(heartbeatRuns)
@@ -270,31 +341,6 @@ export function createHeartbeatRecoveryHandlers(context: any) {
           await suppressSourceAutomationOutput(false);
         }
         return { kind: "existing" as const, run: existingRetry };
-      }
-
-      let issueRow:
-        | {
-          id: string;
-          orgId: string;
-          executionRunId: string | null;
-          executionAgentNameKey: string | null;
-        }
-        | null = null;
-
-      if (issueId) {
-        await tx.execute(
-          sql`select id from issues where id = ${issueId} and org_id = ${run.orgId} for update`,
-        );
-        issueRow = await tx
-          .select({
-            id: issues.id,
-            orgId: issues.orgId,
-            executionRunId: issues.executionRunId,
-            executionAgentNameKey: issues.executionAgentNameKey,
-          })
-          .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.orgId, run.orgId)))
-          .then((rows) => rows[0] ?? null);
       }
 
       if (issueRow?.executionRunId) {
@@ -467,6 +513,7 @@ export function createHeartbeatRecoveryHandlers(context: any) {
     });
 
     if (outcome.kind === "existing") return outcome.run;
+    if (outcome.kind === "skipped") return null;
 
     const recoveryRun = outcome.run;
     await appendRunEvent(recoveryRun, {
