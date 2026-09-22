@@ -12,7 +12,21 @@ describe("Rudder agent contract", () => {
   it("projects complete CLI, MCP, and current direct API descriptor sets", () => {
     expect(RUDDER_AGENT_CONTRACT.capabilities).toHaveLength(119);
     expect(RUDDER_AGENT_CONTRACT.capabilities.filter((capability) => capability.mcp)).toHaveLength(108);
-    expect(RUDDER_AGENT_CONTRACT.capabilities.filter((capability) => capability.api.transport === "direct")).toHaveLength(50);
+    expect(RUDDER_AGENT_CONTRACT.capabilities.filter((capability) => capability.api.transport === "direct")).toHaveLength(51);
+    expect(RUDDER_AGENT_CONTRACT.capabilities.find((capability) => capability.id === "organization.brand_color.update")).toMatchObject({
+      api: {
+        method: "PATCH",
+        pathTemplate: "/api/orgs/{orgId}/branding",
+        transport: "direct",
+      },
+      cli: {
+        command: "rudder org brand-color update --org-id <id> --brand-color <hex> --idempotency-key <key>",
+      },
+      mcp: {
+        capabilityId: "organization.brand_color.update",
+        name: "rudder_organization_brand_color_update",
+      },
+    });
     expect(RUDDER_AGENT_CONTRACT.capabilities.find((capability) => capability.id === "issue.checkout")?.api).toEqual({
       method: "POST",
       pathTemplate: "/api/issues/{issue}/checkout",

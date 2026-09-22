@@ -125,8 +125,8 @@ export { productAnalyticsInstallations } from "./product_analytics_installations
 export { productAnalyticsOutbox } from "./product_analytics_outbox.js";
 export { productAnalyticsWorkCycleRevisions } from "./product_analytics_work_cycle_revisions.js";
 export { productAnalyticsWorkCycles } from "./product_analytics_work_cycles.js";
-export { projectGoals } from "./project_goals.js";
 export { projectGoalMutationState } from "./project_goal_mutations.js";
+export { projectGoals } from "./project_goals.js";
 export { projectResourceAttachments } from "./project_resource_attachments.js";
 export { projectWorkspaces } from "./project_workspaces.js";
 export { projects } from "./projects.js";

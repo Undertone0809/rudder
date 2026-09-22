@@ -2489,6 +2489,14 @@ CREATE TABLE organization_mutation_outbox (
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
   published_at timestamptz,
   last_error text,
+  claim_token uuid,
+  claim_owner text,
+  lease_expires_at timestamptz,
+  CONSTRAINT organization_mutation_outbox_state_ck CHECK (state IN ('pending', 'claimed', 'published') AND attempts >= 0),
+  CONSTRAINT organization_mutation_outbox_claim_ck CHECK (
+    (state = 'claimed' AND claim_token IS NOT NULL AND claim_owner IS NOT NULL AND lease_expires_at IS NOT NULL)
+    OR (state <> 'claimed' AND claim_token IS NULL AND claim_owner IS NULL AND lease_expires_at IS NULL)
+  ),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO organizations (id, name) VALUES

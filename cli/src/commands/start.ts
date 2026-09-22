@@ -47,8 +47,8 @@ import {
   writeDesktopProgress,
   type DesktopUpdateProgressPhase,
 } from "./desktop-update-progress.js";
-export { createDesktopApplySignalController } from "./desktop-update-progress.js";
 import { buildWindowsZipExtractCommand, powershellQuote } from "./start-windows.js";
+export { createDesktopApplySignalController } from "./desktop-update-progress.js";
 
 export { parseChecksumFile } from "../checksum-manifest.js";
 export {

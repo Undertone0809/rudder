@@ -49,7 +49,6 @@ export type LocalRuntimeProbe =
       versionMatches: boolean;
     };
 
-const START_LOCK_STALE_MS = 30_000;
 const START_LOCK_POLL_MS = 250;
 
 function normalizeString(value: string | null | undefined): string | null {
@@ -237,17 +236,33 @@ export async function withRuntimeStartLock<T>(
       if (err?.code !== "EEXIST") throw error;
 
       const existing = await readStartLock(lockPath);
-      const lockAgeMs = existing ? Date.now() - Date.parse(existing.createdAt) : Number.POSITIVE_INFINITY;
-      const stale = !existing || !isPidRunning(existing.pid) || lockAgeMs > START_LOCK_STALE_MS;
-      if (stale) {
-        await rm(lockPath, { force: true });
-        continue;
+      if (existing && !isPidRunning(existing.pid)) {
+        // Serialize stale-owner recovery and re-read after acquiring it. Two
+        // starters must not unlink the replacement lock based on the same
+        // stale observation. An abandoned recovery lock fails closed.
+        const recoveryPath = `${lockPath}.recovery`;
+        let recovering = false;
+        try {
+          await writeFile(recoveryPath, `${JSON.stringify(payload)}\n`, { encoding: "utf8", flag: "wx" });
+          recovering = true;
+          const current = await readStartLock(lockPath);
+          if (current && !isPidRunning(current.pid)) await rm(lockPath, { force: true });
+        } catch (recoveryError) {
+          if ((recoveryError as NodeJS.ErrnoException).code !== "EEXIST") throw recoveryError;
+        } finally {
+          if (recovering) await rm(recoveryPath, { force: true });
+        }
       }
+      // A live owner may legitimately spend minutes migrating. An unreadable
+      // lock may still be in the middle of its initial write; never steal it.
+      if (!existsSync(lockPath)) continue;
 
       if (Date.now() - startedAt >= timeoutMs) {
         throw new Error(
           `Timed out waiting for local runtime startup lock for instance '${instanceId}'. ` +
-            `Held by pid ${existing.pid}${existing.ownerKind ? ` (${existing.ownerKind})` : ""}.`,
+            (existing
+              ? `Held by pid ${existing.pid}${existing.ownerKind ? ` (${existing.ownerKind})` : ""}.`
+              : "The existing lock has no readable owner; refusing to start a second runtime."),
         );
       }
       await delay(START_LOCK_POLL_MS);

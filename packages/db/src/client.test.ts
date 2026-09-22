@@ -963,6 +963,9 @@ describe("applyPendingMigrations", () => {
           "0165_project_goal_set_receipt_kind.sql",
           "0166_organization_mutation_state_provisioning.sql",
           "0167_organization_mutation_fence_token.sql",
+          "0168_organization_branding_mutation_authority.sql",
+          "0169_project_goal_mutation_authority.sql",
+          "0170_organization_mutation_outbox_claims.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1155,6 +1158,9 @@ describe("applyPendingMigrations", () => {
           "0165_project_goal_set_receipt_kind.sql",
           "0166_organization_mutation_state_provisioning.sql",
           "0167_organization_mutation_fence_token.sql",
+          "0168_organization_branding_mutation_authority.sql",
+          "0169_project_goal_mutation_authority.sql",
+          "0170_organization_mutation_outbox_claims.sql",
         ],
         reason: "pending-migrations",
       });

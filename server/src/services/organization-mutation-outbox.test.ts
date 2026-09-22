@@ -15,14 +15,19 @@ const ROW = {
   event_type: "activity.logged",
   payload: { action: "organization.branding_updated" },
   attempts: 1,
+  claim_token: "00000000-0000-4000-8000-000000000003",
+  claim_owner: "worker-1",
+  lease_expires_at: "2099-01-01T00:00:00.000Z",
 };
 
 function createDb(rows: unknown[], resultShape: "rows" | "array" = "rows") {
   const execute = vi.fn()
     .mockResolvedValueOnce(resultShape === "rows" ? { rows } : rows)
+    .mockResolvedValueOnce(resultShape === "rows" ? { rows } : rows)
     .mockResolvedValue({ rows: [] });
+  const transaction = vi.fn(async (callback) => callback({ execute }));
   return {
-    db: { execute } as unknown as Db,
+    db: { execute, transaction } as unknown as Db,
     execute,
   };
 }
@@ -45,7 +50,7 @@ describe("organization mutation outbox publisher", () => {
       payload: ROW.payload,
       dedupeKey: `organization-mutation-outbox:${ROW.id}`,
     });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
   });
 
   it("accepts the array result returned by the postgres-js Drizzle driver", async () => {
@@ -61,7 +66,7 @@ describe("organization mutation outbox publisher", () => {
       payload: ROW.payload,
       dedupeKey: `organization-mutation-outbox:${ROW.id}`,
     });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(3);
   });
 
   it("keeps a failed or unknown event retryable and records the failure", async () => {
@@ -74,10 +79,12 @@ describe("organization mutation outbox publisher", () => {
     await publisher.close();
 
     expect(publishLiveEvent).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalledTimes(2);
-    const retryQuery = JSON.stringify(execute.mock.calls[1]?.[0]);
+    expect(execute).toHaveBeenCalledTimes(3);
+    const retryQuery = JSON.stringify(execute.mock.calls[2]?.[0]);
     expect(retryQuery).toContain("power");
     expect(retryQuery).toContain("last_error");
+    expect(retryQuery).toContain("claim_token");
+    expect(retryQuery).toContain("state = 'claimed'");
   });
 
   it("records a publication exception without acknowledging the row", async () => {
@@ -90,9 +97,45 @@ describe("organization mutation outbox publisher", () => {
     await publisher.drain();
     await publisher.close();
 
-    expect(execute).toHaveBeenCalledTimes(2);
-    const retryQuery = JSON.stringify(execute.mock.calls[1]?.[0]);
+    expect(execute).toHaveBeenCalledTimes(3);
+    const retryQuery = JSON.stringify(execute.mock.calls[2]?.[0]);
     expect(retryQuery).toContain("last_error");
     expect(retryQuery).not.toContain("published_at");
+  });
+
+  it("claims only pending or expired leases and binds acknowledgement to the claim owner", async () => {
+    const { db, execute } = createDb([ROW]);
+    const publisher = startOrganizationMutationOutboxPublisher(db, {
+      intervalMs: 60_000,
+      leaseMs: 5_000,
+      workerId: "worker-lease-test",
+    });
+
+    await publisher.drain();
+    await publisher.close();
+
+    const claimQuery = JSON.stringify(execute.mock.calls[0]?.[0]);
+    const ownershipQuery = JSON.stringify(execute.mock.calls[1]?.[0]);
+    const ackQuery = JSON.stringify(execute.mock.calls[2]?.[0]);
+    expect(claimQuery).toContain("state = 'claimed'");
+    expect(claimQuery).toContain("lease_expires_at");
+    expect(claimQuery).toContain("gen_random_uuid()");
+    expect(claimQuery).toContain("worker-lease-test");
+    expect(ackQuery).toContain("claim_token");
+    expect(ackQuery).toContain("claim_owner");
+    expect(ownershipQuery).toContain("lease_expires_at > clock_timestamp()");
+    expect(ownershipQuery).toContain("FOR UPDATE");
+  });
+
+  it("does not publish or acknowledge a claim that another worker reclaimed", async () => {
+    const { db, execute } = createDb([ROW]);
+    execute.mockReset()
+      .mockResolvedValueOnce([ROW])
+      .mockResolvedValue([]);
+    const publisher = startOrganizationMutationOutboxPublisher(db, { intervalMs: 60_000 });
+    await publisher.drain();
+    await publisher.close();
+    expect(publishLiveEvent).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 });
