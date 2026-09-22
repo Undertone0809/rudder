@@ -58,13 +58,13 @@ describe("release migration compatibility matrix", () => {
   it.each([
     ["0.7.24", "stable"],
     ["0.7.24-canary.0", "canary"],
-  ])("accepts %s with the current 0170 migration fingerprint", (candidateVersion, channel) => {
+  ])("accepts %s with the current 0174 migration fingerprint", (candidateVersion, channel) => {
     const result = runCompatibilityPreflight({ candidateVersion, channel });
     expect(result.candidateFingerprint).toBe(
-      "10d3fa583204a4b7218e77adcd802bacd38aa2d22cd1253633a5d09b68e2d5ba",
+      "48588b72335d9d3f9a7b6c1e70e25e60dd9ce3dc133b0b45648ed7c68a42ed7f",
     );
-    expect(result.candidateMigrations).toBe(171);
-    expect(result.candidateSqlFiles).toBe(173);
+    expect(result.candidateMigrations).toBe(175);
+    expect(result.candidateSqlFiles).toBe(177);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.23",
       "0.7.22",
@@ -89,10 +89,10 @@ describe("release migration compatibility matrix", () => {
     });
 
     expect(result.candidateFingerprint).toBe(
-      "a33c791346eea558ac8cfcf8a35fea7ed0a46986c8ee3e48b8f7fcd5a2c7d6a2",
+      "dc8a093838a7ebfc29ec8330831de01598cfb970b4ba834406712192a2a53237",
     );
-    expect(result.candidateMigrations).toBe(166);
-    expect(result.candidateSqlFiles).toBe(168);
+    expect(result.candidateMigrations).toBe(164);
+    expect(result.candidateSqlFiles).toBe(166);
     expect(result.fixtures.map((fixture) => fixture.version)).toEqual([
       "0.7.22",
       "0.7.21",
