@@ -161,7 +161,9 @@ export async function runRustMemberDirectoryScenario(mode, helpers) {
     await run.page.waitForFunction(() => document.body.dataset.bootView === "failed", null, { timeout: 60_000 });
     const failure = await run.page.evaluate(() => window.rudderBoot.getState());
     const failureLog = await readFile(await resolveServerLogPath(paths.logsDir), "utf8");
-    assert.match(`${JSON.stringify(failure)}\n${failureLog}`, /rudder-server-foundation binary is unavailable/u,
+    // Startup errors before the server logger is ready are emitted by the
+    // Desktop process; the recovery view intentionally shows sanitized copy.
+    assert.match(`${JSON.stringify(failure)}\n${failureLog}\n${run.getStartupOutput()}`, /rudder-server-foundation binary is unavailable/u,
       "boot must fail specifically because the configured foundation asset is missing");
     const response = await fetch(`http://127.0.0.1:${ports.appPort}${directoryPath}`, { headers }).catch(() => null);
     assert.ok(!response || response.status >= 500, "missing Rust asset cannot serve a successful Node read");

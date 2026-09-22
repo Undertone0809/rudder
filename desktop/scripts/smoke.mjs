@@ -2780,7 +2780,11 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
     );
   }
   await assertFreshDesktopWindowSize(electronApp, "a fresh Desktop profile");
-  return { electronApp, page };
+  return {
+    electronApp,
+    page,
+    getStartupOutput: () => [startupStdout.trim(), startupStderr.trim()].filter(Boolean).join("\n"),
+  };
 }
 
 async function runAccountGateScenario(mode) {
