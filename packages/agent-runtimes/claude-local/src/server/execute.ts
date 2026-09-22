@@ -69,6 +69,7 @@ import {
   isClaudeUnknownSessionError,
   parseClaudeStreamJson,
 } from "./parse.js";
+import { resolveClaudeSessionFilePath } from "./native-capabilities.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -114,6 +115,86 @@ async function buildSkillsDir(
 
 function nonEmpty(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function providerProfileIdentity(config: Record<string, unknown>, orgId: string) {
+  const profileBindingId = asString(config.providerBindingId ?? config.bindingId, "").trim();
+  const profileOrgId = asString(config.providerOrgId ?? config.orgId ?? orgId, "").trim() || orgId;
+  const workspaceBindingId = asString(
+    config.providerWorkspaceBindingId ?? config.workspaceBindingId,
+    "",
+  ).trim();
+  return {
+    hostId: asString(config.providerHostId ?? config.hostId, "local").trim() || "local",
+    profileId: asString(config.providerProfileId ?? config.profileId, "default").trim() || "default",
+    ...(profileBindingId ? { profileBindingId } : {}),
+    ...(profileOrgId ? { profileOrgId } : {}),
+    ...(workspaceBindingId ? { workspaceBindingId } : {}),
+    capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
+  };
+}
+
+function storedSessionString(params: Record<string, unknown>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = asString(params[key], "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+export function validateClaudeResumeSession(input: {
+  sessionId: string;
+  sessionParams: Record<string, unknown>;
+  cwd: string;
+  configDir: string;
+  workspaceId?: string | null;
+  repoUrl?: string | null;
+  repoRef?: string | null;
+  profile: Record<string, unknown>;
+}): string | null {
+  const params = input.sessionParams;
+  const storedSessionId = storedSessionString(params, ["sessionId", "session_id"]);
+  if (storedSessionId && storedSessionId !== input.sessionId) {
+    return "Claude persisted session identity does not match the requested session.";
+  }
+  const storedCwd = storedSessionString(params, ["cwd", "workdir", "folder"]);
+  if (storedCwd && path.resolve(storedCwd) !== path.resolve(input.cwd)) {
+    return `Claude session cwd "${storedCwd}" does not match the requested workspace cwd "${input.cwd}".`;
+  }
+  const storedConfigDir = storedSessionString(params, ["claudeConfigDir", "configDir"]);
+  if (storedConfigDir && path.resolve(storedConfigDir) !== path.resolve(input.configDir)) {
+    return "Claude session profile transport config directory does not match the requested profile.";
+  }
+  const identityFields: Array<[string, readonly string[], string]> = [
+    ["host", ["profileHostId", "providerHostId", "hostId"], asString(input.profile.hostId, "").trim()],
+    ["profile", ["profileId", "providerProfileId"], asString(input.profile.profileId, "").trim()],
+    ["binding", ["profileBindingId", "providerBindingId", "bindingId"], asString(input.profile.profileBindingId, "").trim()],
+    ["organization", ["profileOrgId", "providerOrgId", "orgId"], asString(input.profile.profileOrgId, "").trim()],
+    ["workspace binding", ["workspaceBindingId", "providerWorkspaceBindingId"], asString(input.profile.workspaceBindingId, "").trim()],
+    ["capability revision", ["capabilityRevision"], asString(input.profile.capabilityRevision, "").trim()],
+  ];
+  for (const [label, keys, expected] of identityFields) {
+    const stored = storedSessionString(params, keys);
+    if (stored && stored !== expected) {
+      return `Claude session ${label} identity does not match the requested provider binding.`;
+    }
+  }
+  const storedTransport = storedSessionString(params, ["transport", "claudeTransport"]);
+  if (storedTransport && storedTransport !== "claude_cli") {
+    return `Claude session transport ${storedTransport} does not match claude_cli.`;
+  }
+  const workspaceFields: Array<[string, readonly string[], string]> = [
+    ["workspace", ["workspaceId", "workspace_id"], input.workspaceId ?? ""],
+    ["repository URL", ["repoUrl", "repo_url"], input.repoUrl ?? ""],
+    ["repository ref", ["repoRef", "repo_ref"], input.repoRef ?? ""],
+  ];
+  for (const [label, keys, expected] of workspaceFields) {
+    const stored = storedSessionString(params, keys);
+    if (stored && stored !== expected) {
+      return `Claude session ${label} identity does not match the requested workspace.`;
+    }
+  }
+  return null;
 }
 
 function runtimeImagePaths(media: AgentRuntimeExecutionContext["media"]): string[] {
@@ -865,17 +946,40 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   })();
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
-  const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
-  const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
-  const canResumeSession =
-    runtimeSessionId.length > 0 &&
-    (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionId = canResumeSession ? runtimeSessionId : null;
-  if (runtimeSessionId && !canResumeSession) {
-    await onLog(
-      "stdout",
-      `[rudder] Claude session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
-    );
+  const persistedSessionId = asString(runtimeSessionParams.sessionId, "").trim();
+  const runtimeSessionId = persistedSessionId || asString(runtime.sessionId, "").trim();
+  const sessionId = runtimeSessionId;
+  const profileIdentity = providerProfileIdentity(config, agent.orgId);
+  if (runtimeSessionId) {
+    const resumeRejection = validateClaudeResumeSession({
+      sessionId: runtimeSessionId,
+      sessionParams: runtimeSessionParams,
+      cwd,
+      configDir: asString(env.CLAUDE_CONFIG_DIR, ""),
+      workspaceId,
+      repoUrl: workspaceRepoUrl,
+      repoRef: workspaceRepoRef,
+      profile: profileIdentity,
+    });
+    if (resumeRejection) {
+      await onLog("stderr", `[rudder] Claude resume rejected: ${resumeRejection}\n`);
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorMessage: `Claude resume rejected: ${resumeRejection}`,
+        errorCode: "claude_resume_rejected",
+        sessionId: runtimeSessionId,
+        sessionParams: runtimeSessionParams,
+        sessionDisplayId: runtimeSessionId,
+        provider: "anthropic",
+        biller: "anthropic",
+        model,
+        billingType,
+        resultJson: { resume: { status: "rejected", reason: resumeRejection } },
+        clearSession: false,
+      };
+    }
   }
   /**
    * Final prompt assembly order is intentional and shared across runtimes:
@@ -1016,6 +1120,34 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     return { proc, parsedStream, parsed };
   };
 
+  const sessionParamsFor = (resolvedSessionId: string | null): Record<string, unknown> | null => {
+    if (!resolvedSessionId) return null;
+    let sessionFilePath: string | null = null;
+    try {
+      sessionFilePath = resolveClaudeSessionFilePath(
+        env.CLAUDE_CONFIG_DIR ?? "",
+        cwd,
+        resolvedSessionId,
+      );
+    } catch {
+      // The provider will reject an invalid ID; do not manufacture a path.
+    }
+    return {
+      sessionId: resolvedSessionId,
+      cwd,
+      claudeConfigDir: env.CLAUDE_CONFIG_DIR,
+      ...(sessionFilePath ? { sessionFilePath } : {}),
+      profileHostId: profileIdentity.hostId,
+      profileId: profileIdentity.profileId,
+      ...(profileIdentity.profileBindingId ? { profileBindingId: profileIdentity.profileBindingId } : {}),
+      ...(profileIdentity.profileOrgId ? { profileOrgId: profileIdentity.profileOrgId } : {}),
+      ...(profileIdentity.workspaceBindingId ? { workspaceBindingId: profileIdentity.workspaceBindingId } : {}),
+      ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+      transport: "claude_cli",
+      ...(env.RUDDER_OPERATOR_HOME ? { operatorHome: env.RUDDER_OPERATOR_HOME } : {}),
+    };
+  };
+
   const toAdapterResult = (
     attempt: {
       proc: RunProcessResult;
@@ -1027,9 +1159,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const { proc, parsedStream, parsed } = attempt;
     const loginMeta = detectClaudeLoginRequired({
       parsed,
-      stdout: proc.stdout,
-      stderr: proc.stderr,
-    });
+        stdout: proc.stdout,
+        stderr: proc.stderr,
+      });
     const errorMeta =
       loginMeta.loginUrl != null
         ? {
@@ -1059,7 +1191,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         provider: "anthropic",
         model,
         sessionId: opts.fallbackSessionId,
-        sessionParams: opts.fallbackSessionId ? { sessionId: opts.fallbackSessionId, cwd } : null,
+        sessionParams: sessionParamsFor(opts.fallbackSessionId),
       });
       return {
         exitCode: proc.exitCode,
@@ -1095,8 +1227,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       (asString(parsed.session_id, opts.fallbackSessionId ?? "") || opts.fallbackSessionId);
     const resolvedSessionParams = resolvedSessionId
       ? ({
-        sessionId: resolvedSessionId,
-        cwd,
+        ...(sessionParamsFor(resolvedSessionId) ?? {}),
         ...(workspaceId ? { workspaceId } : {}),
         ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
         ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
@@ -1137,7 +1268,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       model: resolvedModel,
       billingType,
       costUsd: parsedStream.costUsd ?? asNumber(parsed.total_cost_usd, 0),
-      resultJson: parsed,
+      resultJson: {
+        ...parsed,
+        ...(parsedStream.lastUuid ? { providerTurnId: parsedStream.lastUuid } : {}),
+      },
       summary: parsedStream.summary || asString(parsed.result, ""),
       ...(networkSuspension ? { networkSuspension } : {}),
       clearSession: clearSessionForMaxTurns || Boolean(opts.clearSessionOnMissingSession && !resolvedSessionId),
@@ -1154,11 +1288,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       isClaudeUnknownSessionError(initial.parsed)
     ) {
       await onLog(
-        "stdout",
-        `[rudder] Claude resume session "${sessionId}" is unavailable; retrying with a fresh session.\n`,
+        "stderr",
+        `[rudder] Claude resume session "${sessionId}" was rejected; a fresh session is not allowed.\n`,
       );
-      const retry = await runAttempt(null);
-      return toAdapterResult(retry, { fallbackSessionId: null, clearSessionOnMissingSession: true });
+      const rejected = toAdapterResult(initial, { fallbackSessionId: sessionId });
+      return {
+        ...rejected,
+        errorCode: "claude_resume_rejected",
+        errorMessage: rejected.errorMessage || `Claude resume session "${sessionId}" was rejected.`,
+        clearSession: false,
+        resultJson: {
+          ...(rejected.resultJson ?? {}),
+          resume: { status: "rejected", reason: "provider_unknown_session" },
+        },
+      };
     }
 
     return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });

@@ -1,4 +1,24 @@
+import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
+
 export { execute, runClaudeLogin } from "./execute.js";
+export { runtimeProviderCapabilities } from "./native-capabilities.js";
+export {
+  createClaudeLocalProviderCapabilities,
+  createClaudeLocalProviderCapabilityResolver,
+  resolveClaudeLocalProviderCapabilities,
+  parseClaudeSessionJsonl,
+  resolveClaudeSessionFilePath,
+} from "./native-capabilities.js";
+export type {
+  ClaudeCapabilityEvidence,
+  ClaudeLocalProfileTransport,
+  ClaudeLocalProfileTransportResolver,
+  ClaudeNativeTranscriptReadRequest,
+  ClaudeNativeTranscriptReadResult,
+  ClaudeProviderBindingRef,
+  ClaudeProviderSessionRef,
+  ClaudeRuntimeProviderCapabilityAdapter,
+} from "./native-capabilities.js";
 export {
   describeClaudeFailure,
   isClaudeMaxTurnsResult,
@@ -10,10 +30,30 @@ export {
 } from "./quota.js";
 export { listClaudeSkills, syncClaudeSkills } from "./skills.js";
 export { testEnvironment } from "./test.js";
-import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+const PROVIDER_SESSION_FIELDS = [
+  "profileHostId",
+  "profileId",
+  "profileBindingId",
+  "profileOrgId",
+  "workspaceBindingId",
+  "capabilityRevision",
+  "transport",
+  "claudeConfigDir",
+  "sessionFilePath",
+] as const;
+
+function readProviderSessionFields(record: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    PROVIDER_SESSION_FIELDS.flatMap((key) => {
+      const value = readNonEmptyString(record[key]);
+      return value ? [[key, value]] : [];
+    }),
+  );
 }
 
 export const sessionCodec: AgentRuntimeSessionCodec = {
@@ -35,6 +75,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       ...(workspaceId ? { workspaceId } : {}),
       ...(repoUrl ? { repoUrl } : {}),
       ...(repoRef ? { repoRef } : {}),
+      ...readProviderSessionFields(record),
     };
   },
   serialize(params: Record<string, unknown> | null) {
@@ -54,6 +95,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       ...(workspaceId ? { workspaceId } : {}),
       ...(repoUrl ? { repoUrl } : {}),
       ...(repoRef ? { repoRef } : {}),
+      ...readProviderSessionFields(params),
     };
   },
   getDisplayId(params: Record<string, unknown> | null) {

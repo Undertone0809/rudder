@@ -9,10 +9,14 @@ import {
   agentWakeupRequests,
   goalResultProposals,
   goals,
+  heartbeatRunAttempts,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
-  organizations
+  nativeSegments,
+  organizations,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import {
@@ -50,7 +54,22 @@ import { recordProductAnalyticsEvent } from "../product-analytics.js";
 import { appendHeartbeatRunEvent } from "../run-events.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
-import { finishLatestHeartbeatRunAttempt } from "./heartbeat-attempt-ledger.js";
+import {
+  beginHeartbeatRunAttempt,
+  finishHeartbeatRunAttempt,
+  finishLatestHeartbeatRunAttempt,
+  type HeartbeatAttemptOwnerFence,
+  type HeartbeatAttemptRef,
+} from "./heartbeat-attempt-ledger.js";
+import {
+  bindRunRuntimeSpanAttempt,
+  claimOpenRunRuntimeSpan,
+  currentNativeSession,
+  ensureRuntimeBinding,
+  finishRunRuntimeSpan,
+  startRunRuntimeSpanInTransaction,
+} from "./native-session.js";
+import type { RuntimeBindingTargetType } from "@rudderhq/db";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
@@ -91,6 +110,170 @@ import { createHeartbeatWakeupHandlers } from "./heartbeat.wakeup.js";
 const DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS = 0;
 const DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS = 0;
 const TERMINAL_EFFECT_CLAIM_RENEW_INTERVAL_MS = 60_000;
+const UNIFIED_ADMISSION_CONTEXT_KEY = "unifiedAgentRun";
+
+function nonEmptyAdmissionString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function admissionObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function admissionSessionIntent(input: {
+  sessionReuseScope?: string | null;
+  sessionId?: string | null;
+  sessionParams?: Record<string, unknown> | null;
+  sourceRunId?: string | null;
+}) {
+  const reuseScope = input.sessionReuseScope === "task" ? "task"
+    : input.sessionReuseScope === "explicit" ? "explicit"
+      : "none";
+  const sourceRunId = nonEmptyAdmissionString(input.sourceRunId);
+  const sessionId = nonEmptyAdmissionString(input.sessionId);
+  const sessionParams = admissionObject(input.sessionParams);
+  const isFresh = reuseScope === "none" && !sourceRunId && !sessionId && !sessionParams;
+  return isFresh
+    ? {
+        kind: "fresh" as const,
+        reuseScope: "none" as const,
+        sourceRunId: null,
+        sessionId: null,
+        sessionParams: null,
+      }
+    : {
+        kind: "resume" as const,
+        reuseScope: reuseScope === "task" ? "task" as const : "explicit" as const,
+        sourceRunId,
+        sessionId,
+        sessionParams,
+      };
+}
+
+/**
+ * Build the compatibility projection used by the common Agent Run boundary.
+ * Queueing, issue locks, and budget checks remain owned by heartbeat; this
+ * helper only makes every newly admitted row carry the same identity.
+ */
+export function buildHeartbeatRunAdmissionFields(input: {
+  agent: { orgId: string; agentRuntimeType: string };
+  scene?: "chat" | "side_chat" | "issue" | "review" | "automation" | "heartbeat" | null;
+  targetType?: RuntimeBindingTargetType | null;
+  source?: string | null;
+  targetId?: string | null;
+  requestId: string;
+  idempotencyKey?: string | null;
+  contextSnapshot?: Record<string, unknown> | null;
+  payload?: Record<string, unknown> | null;
+  sourceRunId?: string | null;
+  sessionReuseScope?: string | null;
+  sessionId?: string | null;
+  sessionParams?: Record<string, unknown> | null;
+  runtimeBindingId?: string | null;
+  runtimeSegmentId?: string | null;
+  ownerFence?: Partial<{
+    ownerFenceId: string | null;
+    lastOwnerToken: string | null;
+    attemptEpoch: number | null;
+    lastLeaseExpiresAt: string | null;
+  }>;
+}) {
+  const source = nonEmptyAdmissionString(input.source) ?? "on_demand";
+  const context = { ...(input.contextSnapshot ?? {}) };
+  const payload = input.payload ?? null;
+  const storedContextAdmission = admissionObject(context[UNIFIED_ADMISSION_CONTEXT_KEY]);
+  const issueId = nonEmptyAdmissionString(context.issueId) ?? nonEmptyAdmissionString(payload?.issueId);
+  const automationRunId = nonEmptyAdmissionString(context.automationRunId)
+    ?? nonEmptyAdmissionString(payload?.automationRunId);
+  const targetId = nonEmptyAdmissionString(input.targetId)
+    ?? nonEmptyAdmissionString(storedContextAdmission?.targetId)
+    ?? automationRunId
+    ?? issueId
+    ?? input.requestId;
+  const derivedScene = source === "review"
+    ? "review"
+    : automationRunId
+      ? "automation"
+      : issueId
+        ? "issue"
+        : "heartbeat";
+  const storedScene = storedContextAdmission?.scene;
+  const scene = input.scene
+    ?? (storedScene === "chat" || storedScene === "side_chat" || storedScene === "issue"
+      || storedScene === "review" || storedScene === "automation" || storedScene === "heartbeat"
+      ? storedScene
+      : derivedScene);
+  const targetType = input.targetType
+    ?? (nonEmptyAdmissionString(storedContextAdmission?.targetType) as RuntimeBindingTargetType | null)
+    ?? (scene === "review"
+    ? "review"
+    : scene === "automation"
+      ? "automation_run"
+      : scene === "issue"
+        ? "issue"
+        : scene === "chat" || scene === "side_chat"
+          ? "chat_conversation"
+          : "wakeup_request");
+  const idempotencyKey = nonEmptyAdmissionString(input.idempotencyKey)
+    ?? `heartbeat:${input.requestId}`;
+  const sessionIntent = admissionSessionIntent({
+    sessionReuseScope: input.sessionReuseScope,
+    sessionId: input.sessionId,
+    sessionParams: input.sessionParams,
+    sourceRunId: input.sourceRunId,
+  });
+  const fingerprint = JSON.stringify({
+    scene,
+    target: { type: targetType, id: targetId },
+    runtimeType: input.agent.agentRuntimeType,
+    model: null,
+    sessionIntent,
+  });
+  const unifiedAgentRun = {
+    version: 1,
+    scene,
+    targetType,
+    targetId,
+    idempotencyKey,
+    runtimeType: input.agent.agentRuntimeType,
+    model: null,
+    sessionIntent,
+    runtimeBindingId: nonEmptyAdmissionString(input.runtimeBindingId),
+    runtimeSegmentId: nonEmptyAdmissionString(input.runtimeSegmentId),
+    fingerprint,
+    ...input.ownerFence,
+  };
+  const nextContext = {
+    ...context,
+    scene,
+    targetType,
+    targetId,
+    ...(nonEmptyAdmissionString(input.runtimeBindingId)
+      ? { runtimeBindingId: input.runtimeBindingId }
+      : {}),
+    ...(nonEmptyAdmissionString(input.runtimeSegmentId)
+      ? { runtimeSegmentId: input.runtimeSegmentId }
+      : {}),
+    [UNIFIED_ADMISSION_CONTEXT_KEY]: unifiedAgentRun,
+  };
+  return {
+    scene,
+    targetType,
+    targetId,
+    idempotencyKey,
+    sessionIntentJson: sessionIntent,
+    contextSnapshot: nextContext,
+  };
+}
+
+class HeartbeatCommonRunBoundaryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HeartbeatCommonRunBoundaryError";
+  }
+}
 
 // heartbeatService is instantiated by routes and the scheduler. Execution
 // ownership must therefore be shared across every service instance in this
@@ -203,6 +386,410 @@ export function heartbeatService(
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
+  }
+
+  function readCommonRunAdmission(run: typeof heartbeatRuns.$inferSelect) {
+    const context = admissionObject(run.contextSnapshot);
+    const stored = admissionObject(context?.[UNIFIED_ADMISSION_CONTEXT_KEY]);
+    if (
+      !nonEmptyAdmissionString(run.scene)
+      || !nonEmptyAdmissionString(run.targetType)
+      || !nonEmptyAdmissionString(run.targetId)
+      || !nonEmptyAdmissionString(run.idempotencyKey)
+      || !admissionObject(run.sessionIntentJson)
+      || !stored
+      || stored.version !== 1
+    ) {
+      return null;
+    }
+    return {
+      scene: run.scene,
+      targetType: run.targetType,
+      targetId: run.targetId,
+      idempotencyKey: run.idempotencyKey,
+      runtimeType: nonEmptyAdmissionString(stored.runtimeType) ?? "",
+      sessionIntent: admissionObject(run.sessionIntentJson) as Record<string, unknown>,
+      stored,
+    };
+  }
+
+  async function resolveHeartbeatNativeResources(
+    database: Db,
+    input: {
+      run: typeof heartbeatRuns.$inferSelect;
+      runtimeType: string;
+    },
+  ) {
+    const admission = readCommonRunAdmission(input.run);
+    if (!admission) return null;
+    const context = admissionObject(input.run.contextSnapshot) ?? {};
+    const intent = admission.sessionIntent;
+    const sourceRunId = nonEmptyAdmissionString(input.run.sourceRunId)
+      ?? nonEmptyAdmissionString(intent.sourceRunId)
+      ?? nonEmptyAdmissionString(context.sourceRunId);
+    const sourceSpan = sourceRunId
+      ? await database
+          .select()
+          .from(runRuntimeSpans)
+          .where(and(
+            eq(runRuntimeSpans.orgId, input.run.orgId),
+            eq(runRuntimeSpans.runId, sourceRunId),
+          ))
+          .orderBy(desc(runRuntimeSpans.ordinal))
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+      : null;
+    const bindingId = nonEmptyAdmissionString(context.nativeBindingId)
+      ?? nonEmptyAdmissionString(context.runtimeBindingId)
+      ?? sourceSpan?.bindingId
+      ?? null;
+    const segmentId = nonEmptyAdmissionString(context.nativeSegmentId)
+      ?? nonEmptyAdmissionString(context.runtimeSegmentId)
+      ?? sourceSpan?.segmentId
+      ?? null;
+    if (!bindingId || !segmentId) return null;
+
+    const binding = await database
+      .select()
+      .from(runtimeBindings)
+      .where(and(
+        eq(runtimeBindings.id, bindingId),
+        eq(runtimeBindings.orgId, input.run.orgId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    const segment = await database
+      .select()
+      .from(nativeSegments)
+      .where(and(
+        eq(nativeSegments.id, segmentId),
+        eq(nativeSegments.orgId, input.run.orgId),
+        eq(nativeSegments.bindingId, bindingId),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!binding || !segment) return null;
+    if (
+      binding.agentId !== input.run.agentId
+      || binding.runtimeType !== input.runtimeType
+      || binding.targetType !== input.run.targetType
+      || binding.targetId !== input.run.targetId
+      || segment.orgId !== input.run.orgId
+      || segment.bindingId !== binding.id
+      || segment.runtimeType !== input.runtimeType
+      || segment.state === "sealed"
+      || segment.state === "superseded"
+    ) {
+      throw new HeartbeatCommonRunBoundaryError(
+        `native binding/segment identity is not safe for heartbeat run ${input.run.id}`,
+      );
+    }
+    // A non-Chat row may only reuse a binding/segment that is already present
+    // in a real source run or was explicitly supplied by a trusted server
+    // context. No provider session or span is invented here.
+    if (!sourceSpan && !nonEmptyAdmissionString(context.nativeBindingId) && !nonEmptyAdmissionString(context.runtimeBindingId)) {
+      return null;
+    }
+    return {
+      binding,
+      segment,
+      inputCorrelationRef: admission.idempotencyKey,
+    };
+  }
+
+  /**
+   * Materialize the native identity before a non-Chat heartbeat row is
+   * inserted. The existing heartbeat scheduler still owns queueing and issue
+   * locking; this only supplies the common Run admission anchor.
+   */
+  async function ensureHeartbeatRunAdmission(database: any, input: {
+    agent: typeof agents.$inferSelect;
+    scene?: "chat" | "side_chat" | "issue" | "review" | "automation" | "heartbeat" | null;
+    targetType?: RuntimeBindingTargetType | null;
+    source?: string | null;
+    requestId: string;
+    targetId?: string | null;
+    idempotencyKey?: string | null;
+    contextSnapshot?: Record<string, unknown> | null;
+    payload?: Record<string, unknown> | null;
+    sourceRunId?: string | null;
+    sessionReuseScope?: string | null;
+    sessionId?: string | null;
+    sessionParams?: Record<string, unknown> | null;
+  }) {
+    const initial = buildHeartbeatRunAdmissionFields(input);
+    if (initial.scene === "chat" || initial.scene === "side_chat") return initial;
+
+    const targetType = initial.targetType as RuntimeBindingTargetType;
+    const binding = await ensureRuntimeBinding(database, {
+      orgId: input.agent.orgId,
+      agentId: input.agent.id,
+      runtimeType: input.agent.agentRuntimeType,
+      target: { type: targetType, id: initial.targetId },
+      conversationId: null,
+      continuity: input.sourceRunId ? "context_handoff" : "native",
+      sourceBoundaryRef: input.sourceRunId ?? null,
+    });
+    const nativeSession = await currentNativeSession(database, binding);
+    return buildHeartbeatRunAdmissionFields({
+      ...input,
+      runtimeBindingId: binding.id,
+      runtimeSegmentId: nativeSession.segment.id,
+    });
+  }
+
+  async function currentCommonRunFence(runId: string): Promise<HeartbeatAttemptOwnerFence | null> {
+    const run = await getRun(runId);
+    if (!run || !readCommonRunAdmission(run)) return null;
+    const attempt = await db
+      .select({
+        ownerToken: heartbeatRunAttempts.ownerToken,
+        attemptEpoch: heartbeatRunAttempts.attemptEpoch,
+      })
+      .from(heartbeatRunAttempts)
+      .where(and(
+        eq(heartbeatRunAttempts.orgId, run.orgId),
+        eq(heartbeatRunAttempts.runId, run.id),
+      ))
+      .orderBy(desc(heartbeatRunAttempts.attemptIndex))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!attempt?.ownerToken || !attempt.attemptEpoch) return null;
+    return { ownerToken: attempt.ownerToken, attemptEpoch: attempt.attemptEpoch };
+  }
+
+  async function ensureCommonRunExecutionBoundary(
+    database: Db,
+    run: typeof heartbeatRuns.$inferSelect,
+    ownerToken: string,
+    attemptEpoch = 1,
+    options: {
+      attemptIndex?: number;
+      fallbackIndex?: number | null;
+      runtimeType?: string | null;
+      model?: string | null;
+      isFallback?: boolean;
+      resumeSource?: "fresh" | "same_session" | "pristine_replay";
+    } = {},
+  ): Promise<{ attemptRef: HeartbeatAttemptRef; spanId: string; ownerToken: string; attemptEpoch: number } | null> {
+    const admission = readCommonRunAdmission(run);
+    if (!admission || admission.scene === "chat" || admission.scene === "side_chat") return null;
+    if (!ownerToken) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} has no execution owner token`);
+
+    const existingAttempt = await database
+      .select()
+      .from(heartbeatRunAttempts)
+      .where(and(
+        eq(heartbeatRunAttempts.orgId, run.orgId),
+        eq(heartbeatRunAttempts.runId, run.id),
+      ))
+      .orderBy(desc(heartbeatRunAttempts.attemptIndex))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    const attemptIndex = options.attemptIndex ?? existingAttempt?.attemptIndex ?? 0;
+    const attemptRef = await beginHeartbeatRunAttempt(database, {
+      orgId: run.orgId,
+      runId: run.id,
+      agentId: run.agentId,
+      attemptIndex,
+      fallbackIndex: options.fallbackIndex ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.fallbackIndex : null) ?? null,
+      runtimeType: options.runtimeType ?? admission.runtimeType,
+      model: options.model ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.model : null) ?? null,
+      isFallback: options.isFallback ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.isFallback : false) ?? false,
+      resumeSource: options.resumeSource ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.resumeSource : "fresh") ?? "fresh",
+      ownerToken,
+      attemptEpoch,
+    });
+    if (!attemptRef) {
+      throw new HeartbeatCommonRunBoundaryError(
+        `heartbeat run ${run.id} attempt ${attemptIndex} owner fence is stale`,
+      );
+    }
+    const attempt = await database
+      .select()
+      .from(heartbeatRunAttempts)
+      .where(and(
+        eq(heartbeatRunAttempts.id, attemptRef.id),
+        eq(heartbeatRunAttempts.orgId, run.orgId),
+        eq(heartbeatRunAttempts.runId, run.id),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!attempt) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} attempt readback failed`);
+
+    let span = await database
+      .select()
+      .from(runRuntimeSpans)
+      .where(and(
+        eq(runRuntimeSpans.orgId, run.orgId),
+        eq(runRuntimeSpans.runId, run.id),
+        eq(runRuntimeSpans.state, "open"),
+      ))
+      .orderBy(desc(runRuntimeSpans.ordinal))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (span) {
+      if (span.ownerToken !== ownerToken || span.attemptEpoch !== attemptEpoch) {
+        throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} native span owner fence is stale`);
+      }
+      if (span.attemptId !== attempt.id) {
+        const rebound = await bindRunRuntimeSpanAttempt(database, {
+          orgId: run.orgId,
+          runId: run.id,
+          spanId: span.id,
+          ownerToken,
+          runtimeType: admission.runtimeType,
+          attemptEpoch,
+          attemptId: attempt.id,
+        });
+        if (!rebound) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} native span attempt bind failed`);
+        span = rebound;
+      }
+    } else {
+      const native = await resolveHeartbeatNativeResources(database, {
+        run,
+      runtimeType: admission.runtimeType,
+      });
+      if (!native) {
+        throw new HeartbeatCommonRunBoundaryError(
+          `no durable native binding/segment is available for ${admission.scene}/${admission.targetType}; heartbeat admission is fail-closed`,
+        );
+      }
+      span = await startRunRuntimeSpanInTransaction(database, {
+        orgId: run.orgId,
+        runId: run.id,
+        binding: native.binding,
+        segment: native.segment,
+          runtimeType: options.runtimeType ?? admission.runtimeType,
+        attemptRef: `${admission.idempotencyKey}:attempt:${attempt.attemptIndex}`,
+        attemptId: attempt.id,
+        attemptEpoch,
+        ownerToken,
+        inputCorrelationRef: native.inputCorrelationRef,
+      });
+    }
+
+    const existingCheckpoint = admissionObject(attempt.checkpointJson) ?? {};
+    const submissionKey = `${admission.idempotencyKey}:attempt:${attempt.attemptIndex}`;
+    await database
+      .update(heartbeatRunAttempts)
+      .set({
+        checkpointJson: {
+          ...existingCheckpoint,
+          unifiedSubmission: {
+            key: submissionKey,
+            state: "pending",
+            phase: "pre_submission",
+            retry: "allowed",
+            providerThreadId: null,
+            providerTurnId: null,
+            reason: null,
+          },
+        },
+        submissionPhase: "pre_submission",
+      })
+      .where(and(
+        eq(heartbeatRunAttempts.id, attempt.id),
+        eq(heartbeatRunAttempts.orgId, run.orgId),
+        eq(heartbeatRunAttempts.runId, run.id),
+        eq(heartbeatRunAttempts.ownerToken, ownerToken),
+        eq(heartbeatRunAttempts.attemptEpoch, attemptEpoch),
+      ));
+
+    const nextContext = {
+      ...(admissionObject(run.contextSnapshot) ?? {}),
+      [UNIFIED_ADMISSION_CONTEXT_KEY]: {
+        ...admission.stored,
+        ownerFenceId: span.id,
+        lastOwnerToken: ownerToken,
+        attemptEpoch,
+        lastLeaseExpiresAt: run.executionLeaseExpiresAt?.toISOString() ?? null,
+      },
+    };
+    await database
+      .update(heartbeatRuns)
+      .set({ contextSnapshot: nextContext, updatedAt: new Date() })
+      .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.orgId, run.orgId)));
+    return {
+      attemptRef: {
+        id: attempt.id,
+        attemptIndex: attempt.attemptIndex,
+        ownerToken,
+        attemptEpoch,
+      },
+      spanId: span.id,
+      ownerToken,
+      attemptEpoch,
+    };
+  }
+
+  async function syncCommonRunOwnerAfterRecovery(
+    claim: { run: typeof heartbeatRuns.$inferSelect; ownerToken: string },
+  ) {
+    const admission = readCommonRunAdmission(claim.run);
+    if (!admission) return claim;
+    const previousSpan = await db
+      .select()
+      .from(runRuntimeSpans)
+      .where(and(
+        eq(runRuntimeSpans.orgId, claim.run.orgId),
+        eq(runRuntimeSpans.runId, claim.run.id),
+        eq(runRuntimeSpans.state, "open"),
+      ))
+      .orderBy(desc(runRuntimeSpans.ordinal))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!previousSpan) {
+      throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} has no open native span during recovery`);
+    }
+    const fencedSpan = await claimOpenRunRuntimeSpan(db, {
+      orgId: claim.run.orgId,
+      runId: claim.run.id,
+      ownerToken: claim.ownerToken,
+      runtimeType: admission.runtimeType,
+      attemptEpoch: previousSpan.attemptEpoch + 1,
+    });
+    if (!fencedSpan || !fencedSpan.attemptId) {
+      throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} native span recovery fence failed`);
+    }
+    const [fencedAttempt] = await db
+      .update(heartbeatRunAttempts)
+      .set({ ownerToken: claim.ownerToken, attemptEpoch: fencedSpan.attemptEpoch })
+      .where(and(
+        eq(heartbeatRunAttempts.id, fencedSpan.attemptId),
+        eq(heartbeatRunAttempts.orgId, claim.run.orgId),
+        eq(heartbeatRunAttempts.runId, claim.run.id),
+        eq(heartbeatRunAttempts.ownerToken, previousSpan.ownerToken),
+        eq(heartbeatRunAttempts.attemptEpoch, previousSpan.attemptEpoch),
+      ))
+      .returning();
+    if (!fencedAttempt) {
+      throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} attempt recovery fence failed`);
+    }
+    const refreshed = await getRun(claim.run.id);
+    if (!refreshed) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} disappeared during recovery`);
+    const context = admissionObject(refreshed.contextSnapshot) ?? {};
+    await db
+      .update(heartbeatRuns)
+      .set({
+        contextSnapshot: {
+          ...context,
+          [UNIFIED_ADMISSION_CONTEXT_KEY]: {
+            ...admission.stored,
+            ownerFenceId: fencedSpan.id,
+            lastOwnerToken: claim.ownerToken,
+            attemptEpoch: fencedSpan.attemptEpoch,
+            lastLeaseExpiresAt: refreshed.executionLeaseExpiresAt?.toISOString() ?? null,
+          },
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(heartbeatRuns.id, refreshed.id));
+    return {
+      ...claim,
+      run: { ...refreshed, executionOwnerToken: claim.ownerToken },
+      attemptEpoch: fencedSpan.attemptEpoch,
+    };
   }
 
   async function getRuntimeState(agentId: string) {
@@ -697,6 +1284,13 @@ export function heartbeatService(
     },
   ) {
     const runBeforeTerminal = await getRun(runId);
+    const commonAdmission = runBeforeTerminal && runBeforeTerminal.status === "running"
+      ? readCommonRunAdmission(runBeforeTerminal)
+      : null;
+    const commonOwnerFence = commonAdmission
+      ? await currentCommonRunFence(runId)
+      : null;
+    const commonExpectedOwnerToken = opts?.expectedExecutionOwnerToken ?? runBeforeTerminal?.executionOwnerToken ?? null;
     const agentIssueCreationSettlement = runBeforeTerminal
       ? await (async () => {
           const contextRequestId = getAgentIssueCreationRequestIdFromRunContext(runBeforeTerminal.contextSnapshot);
@@ -734,6 +1328,30 @@ export function heartbeatService(
         ? { agentIssueCreationNotification }
         : {}),
     };
+    if (commonAdmission && commonOwnerFence && runBeforeTerminal && commonExpectedOwnerToken === commonOwnerFence.ownerToken) {
+      const spanResult = {
+        resultJson: patch.resultJson ?? runBeforeTerminal.resultJson ?? null,
+        sessionId: patch.sessionIdAfter ?? runBeforeTerminal.sessionIdAfter ?? null,
+        sessionDisplayId: patch.sessionIdAfter ?? runBeforeTerminal.sessionIdAfter ?? null,
+        sessionParams: patch.sessionParamsAfterJson ?? runBeforeTerminal.sessionParamsAfterJson ?? null,
+        errorMessage: patch.error ?? runBeforeTerminal.error ?? null,
+        timedOut: status === "timed_out",
+        exitCode: patch.exitCode ?? runBeforeTerminal.exitCode ?? (status === "succeeded" ? 0 : 1),
+        signal: patch.signal ?? runBeforeTerminal.signal ?? null,
+      } as unknown as AgentRuntimeExecutionResult;
+      const sealedSpan = await finishRunRuntimeSpan(db, {
+        orgId: runBeforeTerminal.orgId,
+        runId: runBeforeTerminal.id,
+        ownerToken: commonOwnerFence.ownerToken,
+        runtimeType: commonAdmission.runtimeType,
+        attemptEpoch: commonOwnerFence.attemptEpoch,
+        result: spanResult,
+        error: status !== "succeeded",
+      });
+      if (!sealedSpan) {
+        throw new Error(`common native span could not be sealed for heartbeat run ${runId}`);
+      }
+    }
     const updated = await transitionHeartbeatRunToTerminal(db, {
       runId,
       status,
@@ -756,7 +1374,7 @@ export function heartbeatService(
         errorCode: updated.errorCode,
         error: updated.error,
         finishedAt: updated.finishedAt ?? new Date(),
-      }).catch((error) => {
+      }, commonOwnerFence ?? undefined).catch((error) => {
         logger.warn({ err: error, runId: updated.id }, "failed to persist heartbeat attempt terminal state");
         return null;
       });
@@ -2200,7 +2818,7 @@ export function heartbeatService(
   }
   const baseContext = {
     db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, withHeartbeatRecoveryLock, formatDurationMs,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatRunAdmissionFields, ensureHeartbeatRunAdmission, resolveHeartbeatNativeResources, ensureCommonRunExecutionBoundary, syncCommonRunOwnerAfterRecovery, currentCommonRunFence, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, withHeartbeatRecoveryLock, formatDurationMs,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { agentIconSchema } from "./agent.js";
+import { organizationIssueKeySchema } from "./organization.js";
 import { organizationEntityReferenceSchema } from "./reference.js";
 import {
   AUTOMATION_CATCH_UP_POLICIES,
@@ -475,7 +477,7 @@ export const updateChatConversationSchema = chatDraftSchema
 export const forkChatConversationSchema = z.object({
   sourceMessageId: z.string().uuid().optional().nullable(),
   title: z.string().trim().min(1).max(200).optional(),
-});
+}).strict();
 
 export const createSideChatSchema = z.object({
   sourceMessageId: z.string().uuid(),
@@ -799,6 +801,25 @@ export function sanitizeChatStructuredPayload(payload: Record<string, unknown> |
   } else {
     delete next.automationCreate;
   }
+  const operationProposal = chatOperationProposalFromStructuredPayload(payload);
+  const hasNestedOperationProposal = Object.hasOwn(payload, "operationProposal");
+  const looksLikeOperationProposal = hasNestedOperationProposal
+    || ["targetType", "targetId", "patch"].some((key) => Object.hasOwn(payload, key));
+  if (operationProposal) {
+    next.operationProposal = operationProposal;
+    if (!hasNestedOperationProposal) {
+      delete next.targetType;
+      delete next.targetId;
+      delete next.patch;
+    }
+  } else if (looksLikeOperationProposal) {
+    delete next.operationProposal;
+    if (!hasNestedOperationProposal) {
+      delete next.targetType;
+      delete next.targetId;
+      delete next.patch;
+    }
+  }
   return Object.keys(next).length > 0 ? next : null;
 }
 
@@ -855,17 +876,60 @@ export function chatIssueProposalFromStructuredPayload(payload: unknown) {
   return parsed.success ? parsed.data : null;
 }
 
-export const chatOperationProposalSchema = z.object({
-  targetType: z.enum(["organization", "agent"]),
-  targetId: z.string().min(1),
-  summary: z.string().trim().min(1).max(500),
-  patch: z.record(z.unknown()),
+const chatOperationProposalTargetIdSchema = z.string().trim().min(1).max(200);
+const chatOperationProposalSummarySchema = z.string().trim().min(1).max(500);
+
+const chatOperationOrganizationPatchSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  issuePrefix: organizationIssueKeySchema.optional(),
+  description: z.string().trim().max(20_000).nullable().optional(),
+  defaultChatIssueCreationMode: z.enum(CHAT_ISSUE_CREATION_MODES).optional(),
+  brandColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+  logoAssetId: z.string().uuid().nullable().optional(),
+  requireBoardApprovalForNewAgents: z.boolean().optional(),
+}).strict().refine((patch) => Object.keys(patch).length > 0, {
+  message: "Operation proposals must include at least one organization field",
 });
+
+const chatOperationAgentPatchSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  title: z.string().trim().max(500).nullable().optional(),
+  icon: agentIconSchema.optional(),
+  capabilities: z.string().trim().max(20_000).nullable().optional(),
+}).strict().refine((patch) => Object.keys(patch).length > 0, {
+  message: "Operation proposals must include at least one agent field",
+});
+
+export const chatOperationProposalSchema = z.discriminatedUnion("targetType", [
+  z.object({
+    targetType: z.literal("organization"),
+    targetId: chatOperationProposalTargetIdSchema,
+    summary: chatOperationProposalSummarySchema,
+    patch: chatOperationOrganizationPatchSchema,
+  }).strict(),
+  z.object({
+    targetType: z.literal("agent"),
+    targetId: chatOperationProposalTargetIdSchema,
+    summary: chatOperationProposalSummarySchema,
+    patch: chatOperationAgentPatchSchema,
+  }).strict(),
+]);
+
+export function chatOperationProposalFromStructuredPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const root = payload as Record<string, unknown>;
+  const rawProposal =
+    root.operationProposal && typeof root.operationProposal === "object" && !Array.isArray(root.operationProposal)
+      ? root.operationProposal
+      : root;
+  const parsed = chatOperationProposalSchema.safeParse(rawProposal);
+  return parsed.success ? parsed.data : null;
+}
 
 export const resolveChatOperationProposalSchema = z.object({
   action: z.enum(["approve", "reject", "requestRevision"]),
   decisionNote: z.string().trim().max(5000).optional().nullable(),
-});
+}).strict();
 
 export const updateChatConversationUserStateSchema = z.object({
   pinned: z.boolean().optional(),
