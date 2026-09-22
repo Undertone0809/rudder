@@ -1,8 +1,12 @@
 import type { Db } from "@rudderhq/db";
 import { Router, type Request, type Response } from "express";
-import { badRequest, forbidden, unprocessable } from "../errors.js";
+import { badRequest, forbidden } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { handoffOrganizationBrandingAuthority } from "../services/organization-branding-fence.js";
+import {
+  normalizeOrganizationMemberDirectoryQuery,
+  type OrganizationMemberDirectoryQuery,
+} from "../services/organization-members.js";
 import {
   RustFoundationBridgeError,
   type RustFoundationBridge,
@@ -35,14 +39,7 @@ type OrganizationRustServices = {
     getById(agentId: string): Promise<{ orgId: string; role: string } | null>;
   };
   members: {
-    list(input: {
-      orgId: string;
-      query?: string | null;
-      type?: "human" | "agent" | "all" | null;
-      limit?: number;
-      cursor?: string | null;
-      fullIds?: boolean;
-    }): Promise<unknown>;
+    list(input: OrganizationMemberDirectoryQuery & { orgId: string }): Promise<unknown>;
   };
 };
 
@@ -120,6 +117,35 @@ export function createOrganizationRustFoundationHandlers(
       if (message) return { error: message };
     }
     return { error: `Rust ${resource} request failed` };
+  }
+
+  function nodeMemberDirectoryErrorFromRustResponse(response: RustFoundationResponse) {
+    const body = jsonBody(response);
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+      const record = body as Record<string, unknown>;
+      const reason = typeof record.reason === "string" ? record.reason : null;
+      if (reason === "member_directory_invalid_limit") {
+        return { error: "'limit' must be between 1 and 100" };
+      }
+      if (reason === "member_directory_invalid_cursor") {
+        return { error: "Invalid organization member cursor." };
+      }
+      if (reason === "member_directory_invalid_type") {
+        return { error: "Member directory type must be all, human, or agent." };
+      }
+    }
+    return nodeErrorFromRustResponse(response);
+  }
+
+  function memberDirectoryRequestPath(req: Request, query: OrganizationMemberDirectoryQuery) {
+    const path = req.originalUrl.split("?", 1)[0] ?? req.originalUrl;
+    const params = new URLSearchParams();
+    params.set("type", query.type);
+    if (query.query !== null) params.set("query", query.query);
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.cursor) params.set("cursor", query.cursor);
+    if (query.fullIds) params.set("fullIds", "true");
+    return `${path}?${params.toString()}`;
   }
 
   async function applyRustBranding(req: Request, orgId: string, requestPath = req.originalUrl) {
@@ -201,122 +227,138 @@ export function createOrganizationRustFoundationHandlers(
     }
   }
 
+  async function serveMemberDirectory(
+    req: Request,
+    res: Response,
+    orgId: string,
+    query: OrganizationMemberDirectoryQuery,
+  ) {
+    const requestPath = memberDirectoryRequestPath(req, query);
+    const mode = rustFoundationBridge?.mode;
+    if (!rustFoundationBridge) {
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "required",
+        rustInvoked: false,
+        responseAuthority: "none",
+        fallbackReason: "required_bridge_missing",
+        oldAuthority: null,
+        oldAuthorityInvoked: false,
+        status: null,
+      }, req, "member directory");
+      res.status(503).json({
+        error: "Rust member directory is unavailable",
+        code: "rust_foundation_member_directory_unavailable",
+      });
+      return;
+    }
+
+    if (mode === "required") {
+      try {
+        const rustResponse = await rustFoundationBridge.memberDirectory(req, orgId, requestPath);
+        emitRustFoundationProbeReceipt({
+          orgId,
+          probeMode: "required",
+          rustInvoked: true,
+          responseAuthority: "rust",
+          fallbackReason: null,
+          oldAuthority: null,
+          oldAuthorityInvoked: false,
+          status: rustResponse.status,
+        }, req, "member directory");
+        if (rustResponse.status >= 200 && rustResponse.status < 300) {
+          sendRustResponse(res, rustResponse);
+        } else {
+          res.status(rustResponse.status).json(nodeMemberDirectoryErrorFromRustResponse(rustResponse));
+        }
+      } catch (error) {
+        const code = error instanceof RustFoundationBridgeError ? error.code : "request_failed";
+        logger.error({ err: error, code, orgId }, "required Rust member directory bridge failed");
+        emitRustFoundationProbeReceipt({
+          orgId,
+          probeMode: "required",
+          rustInvoked: true,
+          responseAuthority: "none",
+          fallbackReason: `required_bridge_${code}`,
+          oldAuthority: null,
+          oldAuthorityInvoked: false,
+          status: null,
+        }, req, "member directory");
+        res.status(503).json({
+          error: "Rust member directory is unavailable",
+          code: "rust_foundation_member_directory_unavailable",
+        });
+      }
+      return;
+    }
+
+    let shadowResponse: RustFoundationResponse | null = null;
+    if (mode === "shadow") {
+      try {
+        shadowResponse = await rustFoundationBridge.memberDirectory(req, orgId, requestPath);
+      } catch (error) {
+        const code = error instanceof RustFoundationBridgeError ? error.code : "request_failed";
+        logger.warn({ err: error, code, orgId }, "Rust member directory shadow request failed; serving Node result");
+      }
+    }
+
+    const page = await members.list({ orgId, ...query });
+    if (mode === "off") {
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "off",
+        rustInvoked: false,
+        responseAuthority: "node",
+        fallbackReason: "mode_off",
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: 200,
+      }, req, "member directory");
+    } else if (shadowResponse) {
+      const matches = shadowResponse.status === 200
+        && JSON.stringify(jsonBody(shadowResponse)) === JSON.stringify(canonicalizeJson(page));
+      const shadowFallbackReason = shadowResponse.status < 200 || shadowResponse.status >= 300
+        ? "shadow_non_success_response"
+        : matches
+          ? "shadow_probe_only"
+          : "shadow_response_mismatch";
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "shadow",
+        rustInvoked: true,
+        responseAuthority: "node",
+        fallbackReason: shadowFallbackReason,
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: shadowResponse.status,
+      }, req, "member directory");
+      if (!matches) {
+        logger.warn(
+          { orgId, status: shadowResponse.status, bodyBytes: shadowResponse.body.byteLength },
+          "Rust member directory shadow response differed from Node result",
+        );
+      }
+    } else if (mode === "shadow") {
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "shadow",
+        rustInvoked: true,
+        responseAuthority: "node",
+        fallbackReason: "shadow_bridge_error",
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: 200,
+      }, req, "member directory");
+    }
+    res.json(page);
+  }
+
   function registerMemberDirectoryRoute(router: Router) {
     router.get("/:orgId/members/directory", async (req, res) => {
       const orgId = req.params.orgId as string;
       assertCompanyAccess(req, orgId);
-      const rawType = typeof req.query.type === "string" ? req.query.type.trim().toLowerCase() : "all";
-      if (rawType !== "all" && rawType !== "human" && rawType !== "agent") {
-        throw unprocessable("Member directory type must be all, human, or agent.");
-      }
-      const rawLimit = typeof req.query.limit === "string" && req.query.limit.trim()
-        ? Number(req.query.limit)
-        : undefined;
-
-      let shadowResponse: RustFoundationResponse | null = null;
-      if (rustFoundationBridge?.mode === "required") {
-        try {
-          const rustResponse = await rustFoundationBridge.memberDirectory(req, orgId);
-          emitRustFoundationProbeReceipt({
-            orgId,
-            probeMode: "required",
-            rustInvoked: true,
-            responseAuthority: "rust",
-            fallbackReason: null,
-            oldAuthority: null,
-            oldAuthorityInvoked: false,
-            status: rustResponse.status,
-          }, req, "member directory");
-          if (rustResponse.status >= 200 && rustResponse.status < 300) {
-            sendRustResponse(res, rustResponse);
-          } else {
-            res.status(rustResponse.status).json(nodeErrorFromRustResponse(rustResponse));
-          }
-        } catch (error) {
-          const code = error instanceof RustFoundationBridgeError ? error.code : "request_failed";
-          logger.error({ err: error, code, orgId }, "required Rust member directory bridge failed");
-          emitRustFoundationProbeReceipt({
-            orgId,
-            probeMode: "required",
-            rustInvoked: true,
-            responseAuthority: "none",
-            fallbackReason: `required_bridge_${code}`,
-            oldAuthority: null,
-            oldAuthorityInvoked: false,
-            status: null,
-          }, req, "member directory");
-          res.status(503).json({
-            error: "Rust member directory is unavailable",
-            code: "rust_foundation_member_directory_unavailable",
-          });
-        }
-        return;
-      }
-      if (rustFoundationBridge?.mode === "shadow") {
-        try {
-          shadowResponse = await rustFoundationBridge.memberDirectory(req, orgId);
-        } catch (error) {
-          const code = error instanceof RustFoundationBridgeError ? error.code : "request_failed";
-          logger.warn({ err: error, code, orgId }, "Rust member directory shadow request failed; serving Node result");
-        }
-      }
-
-      const page = await members.list({
-        orgId,
-        query: typeof req.query.query === "string" ? req.query.query : null,
-        type: rawType,
-        limit: rawLimit,
-        cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
-        fullIds: req.query.fullIds === "true" || req.query.fullIds === "1",
-      });
-      if (rustFoundationBridge?.mode === "off") {
-        emitRustFoundationProbeReceipt({
-          orgId,
-          probeMode: "off",
-          rustInvoked: false,
-          responseAuthority: "node",
-          fallbackReason: "mode_off",
-          oldAuthority: "node",
-          oldAuthorityInvoked: true,
-          status: 200,
-        }, req, "member directory");
-      } else if (shadowResponse) {
-        const matches = shadowResponse.status === 200
-          && JSON.stringify(jsonBody(shadowResponse)) === JSON.stringify(canonicalizeJson(page));
-        const shadowFallbackReason = shadowResponse.status < 200 || shadowResponse.status >= 300
-          ? "shadow_non_success_response"
-          : matches
-            ? "shadow_probe_only"
-            : "shadow_response_mismatch";
-        emitRustFoundationProbeReceipt({
-          orgId,
-          probeMode: "shadow",
-          rustInvoked: true,
-          responseAuthority: "node",
-          fallbackReason: shadowFallbackReason,
-          oldAuthority: "node",
-          oldAuthorityInvoked: true,
-          status: shadowResponse.status,
-        }, req, "member directory");
-        if (!matches) {
-          logger.warn(
-            { orgId, status: shadowResponse.status, bodyBytes: shadowResponse.body.byteLength },
-            "Rust member directory shadow response differed from Node result",
-          );
-        }
-      } else if (rustFoundationBridge?.mode === "shadow") {
-        emitRustFoundationProbeReceipt({
-          orgId,
-          probeMode: "shadow",
-          rustInvoked: true,
-          responseAuthority: "node",
-          fallbackReason: "shadow_bridge_error",
-          oldAuthority: "node",
-          oldAuthorityInvoked: true,
-          status: 200,
-        }, req, "member directory");
-      }
-      res.json(page);
+      const query = normalizeOrganizationMemberDirectoryQuery(req.query as Record<string, unknown>);
+      await serveMemberDirectory(req, res, orgId, query);
     });
   }
 

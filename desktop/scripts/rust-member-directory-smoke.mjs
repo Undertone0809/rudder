@@ -1,0 +1,126 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+// Uses the installed application and its ordinary HTTP surface. The fixture
+// owns only disposable data; no direct database query supplies the read result.
+export async function runRustMemberDirectoryScenario(mode, helpers) {
+  assert.equal(mode, "packaged", "default Rust read acceptance requires the installed package");
+  for (const name of [
+    "RUDDER_RUST_MEMBER_DIRECTORY_MODE",
+    "RUDDER_SERVER_FOUNDATION_PATH",
+    "RUDDER_NATIVE_ACTOR_ENVELOPE_KEY",
+  ]) {
+    assert.equal(process.env[name], undefined, `unset ${name} to exercise installed defaults`);
+  }
+  const {
+    tmpRoot, allocateSmokePorts, preparePackagedExternalRuntimeFixture,
+    launchDesktop, launchDesktopWindow, closeDesktop, createCompany,
+    createCeo, createAgentApiKey, resolveInstancePaths, resolveServerLogPath,
+    waitForSmokeCondition,
+  } = helpers;
+  const root = path.join(tmpRoot, "rust-member-directory");
+  const ports = await allocateSmokePorts();
+  const fixture = await preparePackagedExternalRuntimeFixture(root, { authBypass: true });
+  const launchEnv = { ...fixture.env, RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1" };
+  const manifestPath = process.env.RUDDER_DESKTOP_SMOKE_BUILD_MANIFEST;
+  assert.ok(manifestPath, "set RUDDER_DESKTOP_SMOKE_BUILD_MANIFEST to the exact candidate build receipt");
+  const expectedBuild = JSON.parse(await readFile(manifestPath, "utf8"));
+  assert.match(expectedBuild.sourceSha, /^[a-f0-9]{40}$/u);
+  const resources = path.dirname(path.dirname(fixture.cliEntry));
+  const serverManifest = JSON.parse(await readFile(path.join(resources, "server-package", "package.json"), "utf8"));
+  const nativeTarget = helpers.resolveNativeTarget(process.platform, process.arch);
+  assert.ok(nativeTarget);
+  const artifactPaths = {
+    executable: fixture.executablePath,
+    desktop: path.join(resources, "app", "dist", "main.js"),
+    server: path.resolve(resources, "server-package", serverManifest.main ?? "dist/index.js"),
+    foundation: path.join(resources, "native", nativeTarget, process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation"),
+  };
+  const artifactHashes = {};
+  for (const [name, artifactPath] of Object.entries(artifactPaths)) {
+    artifactHashes[name] = createHash("sha256").update(await readFile(artifactPath)).digest("hex");
+    assert.equal(artifactHashes[name], expectedBuild.artifactSha256?.[name], `${name} must match the frozen candidate build`);
+  }
+  const paths = resolveInstancePaths(root);
+  let run;
+  try {
+    run = await launchDesktop(root, mode, ports, launchEnv);
+    const org = await createCompany(run.baseUrl, "RMD");
+    const foreignOrg = await createCompany(run.baseUrl, "RMF");
+    const agent = await createCeo(run.baseUrl, org.id);
+    const key = await createAgentApiKey(run.baseUrl, agent.id);
+    assert.equal(typeof key.token, "string");
+    const headers = { Authorization: `Bearer ${key.token}` };
+    const directoryPath = `/api/orgs/${org.id}/members/directory?type=agent&fullIds=true&limit=1`;
+    const readDirectory = async () => {
+      const response = await fetch(`${run.baseUrl}${directoryPath}`, { headers });
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = await response.json();
+      assert.ok(body.items.some((item) => item.ref === agent.id && item.name === agent.name));
+      assert.equal(body.total, 1);
+      return body;
+    };
+    const initial = await readDirectory();
+    const foreign = await fetch(`${run.baseUrl}/api/orgs/${foreignOrg.id}/members/directory`, { headers });
+    assert.equal(foreign.status, 403, "a valid agent cannot read a foreign organization");
+    const invalidLimit = await fetch(`${run.baseUrl}/api/orgs/${org.id}/members/directory?limit=0`, { headers });
+    assert.equal(invalidLimit.status, 400);
+    assert.deepEqual(await invalidLimit.json(), { error: "'limit' must be between 1 and 100" });
+
+    const readReceipts = async () => {
+      const content = await readFile(await resolveServerLogPath(paths.logsDir), "utf8");
+      return content.split("\n")
+        .filter((line) => line.includes("Rust member directory bridge receipt"))
+        .flatMap((line) => {
+          // File logging uses pino-pretty singleLine: the structured fields
+          // follow the timestamp/level/message prefix.
+          const fieldsStart = line.indexOf("{");
+          try { return fieldsStart < 0 ? [] : [JSON.parse(line.slice(fieldsStart))]; } catch { return []; }
+        }).filter((entry) => entry.orgId === org.id);
+    };
+    const isRustRead = (entry) => entry.status === 200
+      && entry.probe_mode === "required" && entry.response_authority === "rust"
+      && entry.rust_invoked === true && entry.old_authority_invoked === false;
+    await waitForSmokeCondition("default installed Rust read receipt", async () => {
+      const receipts = await readReceipts();
+      return receipts.find(isRustRead);
+    });
+    await closeDesktop(run.electronApp);
+    run = null;
+    const beforeRestartCount = (await readReceipts()).filter(isRustRead).length;
+    run = await launchDesktop(root, mode, ports, launchEnv);
+    assert.deepEqual(await readDirectory(), initial, "installed restart preserves directory data and authorization");
+    const receipts = await waitForSmokeCondition("restarted installed Rust read receipt", async () => {
+      const entries = await readReceipts();
+      return entries.filter(isRustRead).length > beforeRestartCount ? entries : null;
+    });
+    assert.ok(receipts.every((entry) => entry.old_authority_invoked === false), "default requests must never invoke the Node reader");
+    console.log("[desktop-smoke] installed Rust member directory evidence", JSON.stringify({
+      orgId: org.id, foreignOrgId: foreignOrg.id, agentId: agent.id,
+      apiPort: ports.appPort, databasePort: ports.dbPort, receipts: receipts.length,
+      sourceSha: expectedBuild.sourceSha, artifactHashes,
+      runtimeDescriptor: JSON.parse(await readFile(paths.runtimeDescriptorPath, "utf8")),
+    }));
+    await closeDesktop(run.electronApp);
+    run = null;
+
+    // An explicitly unavailable asset must not silently restore the Node read
+    // path. This changes only this disposable launch, never packaged files.
+    run = await launchDesktopWindow(root, mode, ports, {
+      ...launchEnv,
+      RUDDER_SERVER_FOUNDATION_PATH: path.join(root, "missing-foundation"),
+    });
+    await run.page.waitForFunction(() => document.body.dataset.bootView === "failed", null, { timeout: 60_000 });
+    const failure = await run.page.evaluate(() => window.rudderBoot.getState());
+    const failureLog = await readFile(await resolveServerLogPath(paths.logsDir), "utf8");
+    assert.match(`${JSON.stringify(failure)}\n${failureLog}`, /rudder-server-foundation binary is unavailable/u,
+      "boot must fail specifically because the configured foundation asset is missing");
+    const response = await fetch(`http://127.0.0.1:${ports.appPort}${directoryPath}`, { headers }).catch(() => null);
+    assert.ok(!response || response.status >= 500, "missing Rust asset cannot serve a successful Node read");
+    console.log("RUST_MEMBER_DIRECTORY_INSTALLED_DEFAULT_PASS");
+  } finally {
+    if (run) await closeDesktop(run.electronApp);
+  }
+}

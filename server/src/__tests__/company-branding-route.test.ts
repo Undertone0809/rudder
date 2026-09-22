@@ -293,7 +293,7 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
   });
 
   function bridge(
-    mode: "shadow" | "required",
+    mode: "off" | "shadow" | "required",
     response: unknown,
     organizationBrandingMode: "off" | "shadow" | "required" = "off",
   ): RustFoundationBridge {
@@ -338,6 +338,7 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
     expect(rustBridge.memberDirectory).toHaveBeenCalledWith(
       expect.objectContaining({ originalUrl: "/api/orgs/organization-1/members/directory?type=all&limit=1" }),
       "organization-1",
+      "/api/orgs/organization-1/members/directory?type=all&limit=1",
     );
     expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
     expect(receipts).toEqual([expect.objectContaining({
@@ -380,10 +381,38 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
     })]);
   });
 
+  it("fails closed when the member-directory bridge is not wired", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, undefined, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory");
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      error: "Rust member directory is unavailable",
+      code: "rust_foundation_member_directory_unavailable",
+    });
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "required",
+      rustInvoked: false,
+      responseAuthority: "none",
+      fallbackReason: "required_bridge_missing",
+      oldAuthority: null,
+      oldAuthorityInvoked: false,
+      status: null,
+    })]);
+  });
+
   it("maps a required Rust error into the Node error response shape", async () => {
     const receipts: RustFoundationProbeReceipt[] = [];
     const rustBridge = bridge("required", {
-      status: 422,
+      status: 400,
       contentType: "application/json",
       body: Buffer.from(JSON.stringify({
         schema: "rudder.native.server.error.v1",
@@ -398,21 +427,21 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
     }, rustBridge, (receipt) => receipts.push(receipt));
 
     const res = await request(app)
-      .get("/api/orgs/organization-1/members/directory?limit=bad");
+      .get("/api/orgs/organization-1/members/directory?limit=1");
 
-    expect(res.status).toBe(422);
-    expect(res.body).toEqual({ error: "member_directory_invalid_limit" });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "'limit' must be between 1 and 100" });
     expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
     expect(receipts).toEqual([expect.objectContaining({
       probeMode: "required",
       responseAuthority: "rust",
       fallbackReason: null,
       oldAuthorityInvoked: false,
-      status: 422,
+      status: 400,
     })]);
   });
 
-  it("keeps the Node result as an explicit shadow fallback while comparing Rust output", async () => {
+  it("keeps Node as the response authority in legacy shadow mode", async () => {
     const receipts: RustFoundationProbeReceipt[] = [];
     mockOrganizationMemberService.list.mockResolvedValueOnce(page);
     const rustBridge = bridge("shadow", {
@@ -432,7 +461,14 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual(page);
     expect(rustBridge.memberDirectory).toHaveBeenCalledOnce();
-    expect(mockOrganizationMemberService.list).toHaveBeenCalledOnce();
+    expect(mockOrganizationMemberService.list).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      query: null,
+      type: "all",
+      limit: undefined,
+      cursor: null,
+      fullIds: false,
+    });
     expect(receipts).toEqual([expect.objectContaining({
       probeMode: "shadow",
       rustInvoked: true,
@@ -442,6 +478,125 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
       oldAuthorityInvoked: true,
       status: 200,
     })]);
+  });
+
+  it("keeps Node as the response authority when the bridge is explicitly off", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    mockOrganizationMemberService.list.mockResolvedValueOnce(page);
+    const rustBridge = bridge("off", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(page);
+    expect(rustBridge.memberDirectory).not.toHaveBeenCalled();
+    expect(mockOrganizationMemberService.list).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      query: null,
+      type: "all",
+      limit: undefined,
+      cursor: null,
+      fullIds: false,
+    });
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "off",
+      rustInvoked: false,
+      responseAuthority: "node",
+      fallbackReason: "mode_off",
+      oldAuthority: "node",
+      oldAuthorityInvoked: true,
+      status: 200,
+    })]);
+  });
+
+  it("normalizes duplicate query parameters before Rust while preserving Node filters", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    mockOrganizationMemberService.list.mockResolvedValueOnce(page);
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory?type=human&type=agent&query=Operator&query=Other&limit=01&fullIds=true&fullIds=false");
+
+    expect(res.status).toBe(200);
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(rustBridge.memberDirectory).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      "/api/orgs/organization-1/members/directory?type=all&limit=1",
+    );
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "required",
+      responseAuthority: "rust",
+      oldAuthorityInvoked: false,
+    })]);
+  });
+
+  it("preserves Express malformed query decoding when normalizing the Rust request", async () => {
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory?query=%E0%A4%A");
+
+    expect(res.status).toBe(200);
+    expect(rustBridge.memberDirectory).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      "/api/orgs/organization-1/members/directory?type=all&query=%EF%BF%BD%25A",
+    );
+  });
+
+  it("canonicalizes Node-accepted padded cursors before forwarding to Rust", async () => {
+    const cursorPayload = { name: "Agent", type: "agent", principalId: "agent-1" };
+    const canonicalCursor = Buffer.from(JSON.stringify(cursorPayload), "utf8").toString("base64url");
+    const paddedCursor = `${canonicalCursor}=`;
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .get(`/api/orgs/organization-1/members/directory?cursor=${encodeURIComponent(paddedCursor)}`);
+
+    expect(res.status).toBe(200);
+    expect(rustBridge.memberDirectory).toHaveBeenCalledWith(
+      expect.anything(),
+      "organization-1",
+      `/api/orgs/organization-1/members/directory?type=all&cursor=${encodeURIComponent(canonicalCursor)}`,
+    );
   });
 
   it("routes dedicated branding writes to Rust and does not invoke the Node writer", async () => {

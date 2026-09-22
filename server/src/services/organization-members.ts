@@ -17,7 +17,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { badRequest } from "../errors.js";
+import { badRequest, unprocessable } from "../errors.js";
 
 export type OrganizationMemberType = "human" | "agent";
 
@@ -28,6 +28,14 @@ export type OrganizationMemberDirectoryFilters = {
   limit?: number;
   cursor?: string | null;
   fullIds?: boolean;
+};
+
+export type OrganizationMemberDirectoryQuery = {
+  query: string | null;
+  type: "human" | "agent" | "all";
+  limit?: number;
+  cursor: string | null;
+  fullIds: boolean;
 };
 
 export type OrganizationMemberDirectoryItem = {
@@ -85,6 +93,31 @@ function decodeCursor(value: string | null | undefined): MemberCursor | null {
   } catch {
     throw badRequest("Invalid organization member cursor.");
   }
+}
+
+export function normalizeOrganizationMemberDirectoryQuery(
+  query: Record<string, unknown>,
+): OrganizationMemberDirectoryQuery {
+  const rawType = typeof query.type === "string" ? query.type.trim().toLowerCase() : "all";
+  if (rawType !== "all" && rawType !== "human" && rawType !== "agent") {
+    throw unprocessable("Member directory type must be all, human, or agent.");
+  }
+
+  const rawLimit = typeof query.limit === "string" && query.limit.trim()
+    ? Number(query.limit)
+    : undefined;
+  if (rawLimit !== undefined) normalizeLimit(rawLimit);
+
+  const cursor = typeof query.cursor === "string" ? query.cursor : null;
+  const decodedCursor = decodeCursor(cursor);
+
+  return {
+    query: typeof query.query === "string" ? query.query : null,
+    type: rawType,
+    limit: rawLimit,
+    cursor: decodedCursor ? encodeCursor(decodedCursor) : null,
+    fullIds: query.fullIds === "true" || query.fullIds === "1",
+  };
 }
 
 function safeMemberRef(type: OrganizationMemberType, principalId: string, fullIds = false) {

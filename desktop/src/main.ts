@@ -165,6 +165,10 @@ import {
   resolveExternalRuntimeServerEntrypoint,
   resolveSharedRudderHomeDir,
 } from "./runtime-cache.js";
+import {
+  createDesktopServerRuntimeOptions,
+  type DesktopBootStateUpdate,
+} from "./runtime-options.js";
 import { resolveProtectedDesktopShortcutRoute } from "./side-panel-close-shortcut.js";
 import {
   isDesktopSystemPermissionId,
@@ -2148,32 +2152,12 @@ function requestQuit(): void {
 }
 
 function serverRuntimeOptions(): StartServerOptions {
-  return {
-    printBanner: false,
-    openOnListen: false,
-    runtimeOverrides: {
-      host: "127.0.0.1",
-      deploymentMode: "local_trusted",
-      deploymentExposure: "private",
-      serveUi: true,
-      uiDevMiddleware: false,
-    },
-    onEvent: (event) => {
-      updateBootState({
-        stage: event.stage,
-        message: event.message,
-        detail: event.stage === "database"
-          ? "Preparing the embedded database."
-          : event.stage === "app"
-            ? "Booting the shared board UI and API."
-            : event.stage === "listening"
-              ? "Opening the shared local board."
-              : event.stage === "shutdown"
-                ? "Stopping the owned local runtime."
-                : "Preparing the embedded database and board UI.",
-      });
-    },
-  };
+  return createDesktopServerRuntimeOptions({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    env: process.env,
+    onEvent: (event: DesktopBootStateUpdate) => updateBootState(event),
+  });
 }
 
 async function startLocalRudder(): Promise<void> {
