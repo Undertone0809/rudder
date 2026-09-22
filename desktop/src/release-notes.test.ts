@@ -8,6 +8,7 @@ import {
   parseReleaseNotesMarkdown,
   readReleaseNotes,
   readReleaseNotesBundle,
+  readReleaseNotesBundleFromModule,
   resolveReleaseNotesPath,
   resolveReleaseNotesStatePath,
   shouldShowReleaseNotes,
@@ -168,6 +169,23 @@ describe("desktop release notes", () => {
         },
       },
     });
+  });
+
+  it("loads localized release notes from the development module layout", async () => {
+    const root = await makeTempDir("rudder-release-notes-module-");
+    cleanupDirs.add(root);
+    await fs.mkdir(path.join(root, "desktop", "dist"), { recursive: true });
+    await fs.mkdir(path.join(root, "releases", "zh"), { recursive: true });
+    await fs.writeFile(path.join(root, "releases", "v0.7.23.md"), "## Improved\n\n- Improved one thing.\n", "utf8");
+    await fs.writeFile(path.join(root, "releases", "zh", "v0.7.23.md"), "## 改进\n\n- 改进了一项功能。\n", "utf8");
+
+    expect(readReleaseNotesBundleFromModule({
+      moduleDir: path.join(root, "desktop", "dist"),
+      packaged: false,
+      version: "0.7.23",
+    })?.translations?.["zh-CN"]?.sections).toEqual([
+      { title: "改进", items: ["改进了一项功能。"] },
+    ]);
   });
 
   it("returns null when the release note file is missing", async () => {
