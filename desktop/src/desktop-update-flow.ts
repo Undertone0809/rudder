@@ -164,6 +164,8 @@ export function createDesktopUpdateFlow(context: {
     stdin: NodeJS.WritableStream | null;
     blockers: DesktopUpdateBlocker[];
     automaticApply: boolean;
+    readyToInstall: boolean;
+    pendingApplyForce: boolean | null;
     applyStarted: boolean;
     finalGuardWaiting: boolean;
     forceEscalated: boolean;
@@ -1472,6 +1474,8 @@ export function createDesktopUpdateFlow(context: {
         stdin: child.stdin,
         blockers: activeRuns.blockers,
         automaticApply: !forceWhenApplying,
+        readyToInstall: false,
+        pendingApplyForce: forceWhenApplying ? true : null,
         applyStarted: false,
         finalGuardWaiting: false,
         forceEscalated: false,
@@ -1513,6 +1517,13 @@ export function createDesktopUpdateFlow(context: {
               // signal has already advanced the handoff. Never let that stale
               // event move the renderer back to an actionable state.
               if (session.applyStarted || session.forceEscalated) continue;
+              session.readyToInstall = true;
+              if (session.pendingApplyForce !== null) {
+                // Earlier CLI startup can consume stdin. Send the queued force
+                // decision only once its apply-signal listener reports ready.
+                void applyUpdate(updateId, { force: session.pendingApplyForce });
+                continue;
+              }
               publishDesktopUpdateProgress({
                 ...event,
                 automaticApply: session.automaticApply,
@@ -1600,13 +1611,6 @@ export function createDesktopUpdateFlow(context: {
       });
       child.unref();
       if (forceWhenApplying) {
-        const applyResult = await applyUpdate(updateId, { force: true });
-        if (applyResult.status === "failed") {
-          return {
-            status: "failed",
-            message: applyResult.message,
-          };
-        }
         return { status: "started", version: normalizedVersion, updateId };
       }
       if (waitForActiveRuns) {
@@ -1663,6 +1667,11 @@ export function createDesktopUpdateFlow(context: {
         updateId: normalizedUpdateId,
         version: session.version,
       };
+    }
+
+    if (!session.readyToInstall) {
+      session.pendingApplyForce = session.pendingApplyForce === true || options.force === true;
+      return { status: "started", updateId: normalizedUpdateId, version: session.version };
     }
 
     try {
