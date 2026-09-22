@@ -32,7 +32,7 @@
   },
   "candidate": {
     "branch": "codex/rudder-full-rust-backend-completion-20260921",
-    "source_ref": "refs/heads/codex/rudder-full-rust-backend-completion-20260921 (HEAD fc73374bb15933ef5bad7f3056336c87e455cee0; clean committed candidate)",
+    "source_ref": "refs/heads/codex/rudder-full-rust-backend-completion-20260921@fc73374bb15933ef5bad7f3056336c87e455cee0 (implementation candidate; PR/evidence tip 8d7b2a55998bb6ced89c897fe3117790712f9044)",
     "source_sha": "fc73374bb15933ef5bad7f3056336c87e455cee0",
     "dirty_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "fingerprint_method": "Union git diff --name-only -z HEAD with git ls-files --others --exclude-standard -z, sort -zu, exclude the four current durable plan records, delivery packets, and artifacts, emit each path followed by NUL and its git hash-object content hash followed by newline, then hash the stream with SHA-256",
@@ -258,13 +258,14 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "d1f55c5c180901392804178aa44b3ba3f077a6cb",
     "branch_refs": [
-      "refs/heads/codex/rudder-full-rust-backend-completion-20260921@fc73374bb15933ef5bad7f3056336c87e455cee0",
+      "refs/heads/codex/rudder-full-rust-backend-completion-20260921@8d7b2a55998bb6ced89c897fe3117790712f9044",
+      "refs/remotes/origin/codex/rudder-full-rust-backend-completion-20260921@8d7b2a55998bb6ced89c897fe3117790712f9044",
       "refs/heads/main@b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
       "refs/remotes/origin/main@d1f55c5c180901392804178aa44b3ba3f077a6cb"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss",
-    "patch_tree_sha": "bcd68ce026354bb56af742ced22a76c50071a0f3",
+    "patch_tree_sha": "0abbac892cc3a19335b8b3f810e4f0e50e521e8e",
     "expected_old_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
     "cas": {
       "attempted": false,
@@ -272,7 +273,11 @@
       "observed_old_sha": null,
       "delivered_sha": null
     },
-    "index_update_mode": "none"
+    "index_update_mode": "none",
+    "remote_branch_ref": "refs/remotes/origin/codex/rudder-full-rust-backend-completion-20260921",
+    "remote_branch_sha": "8d7b2a55998bb6ced89c897fe3117790712f9044",
+    "pull_request_url": "https://github.com/Undertone0809/rudder/pull/221",
+    "pull_request_state": "OPEN; required checks and protected-main integration pending"
   },
   "preservation": {
     "checked": true,
@@ -287,7 +292,8 @@
     "evidence": [
       "No reset, checkout, or live-index replacement was used on the original dirty checkout.",
       "The migration worktree live index remained at the committed tree; the dirty candidate tree was computed through an alternate index.",
-      "The disposable Project-Goal probe home, embedded PostgreSQL, Node server, Actix child, ports, and API key were disposed after the run."
+      "The disposable Project-Goal probe home, embedded PostgreSQL, Node server, Actix child, ports, and API key were disposed after the run.",
+      "Branch pushed to origin/codex/rudder-full-rust-backend-completion-20260921 at 8d7b2a55998bb6ced89c897fe3117790712f9044; PR #221 is open against origin/main d1f55c5c180901392804178aa44b3ba3f077a6cb; no main ref update or merge was attempted."
     ]
   },
   "terminal": {

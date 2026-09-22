@@ -191,7 +191,7 @@ completed_checks:
 pending_checks:
   - complete semantic authority, writer, lifecycle, and contract reconciliation including the current writer audit rows
   - complete the actor/state/fence/listener/audit contracts and extend the persisted fencing token to every competing writer before D1 activation
-  - push the exact accepted fc733/v16 candidate through the protected PR path, preserving the original dirty checkout and live index; refresh origin/main before the next slice
+  - monitor PR #221 checks and protected-main integration for the exact accepted fc733/v16 candidate; do not claim delivery until the merged ref is known, then refresh origin/main before the next slice
   - continue semantic writer reconciliation, old-writer negative proof, and outbox publisher crash/retry recovery before any D1 owner activation
   - complete the signed actor/session contract and extend the writer fence before default-path owner activation
 receipts:
@@ -201,4 +201,4 @@ receipts:
 interrupt_resume:
   last_durable_commit: fc73374bb15933ef5bad7f3056336c87e455cee0
   remaining_work: bridge hardening, semantic inventory and packet, signed actor/session authority, complete writer/token fencing, then supported listener integration and D1 verification
-  next_command: commit packet v16 and ledger rebind, push the protected PR, refresh Main, then begin the next non-overlapping branding writer-fence and outbox crash/retry slice; keep D1 owner activation blocked
+  next_command: monitor PR #221 checks/integration, refresh Main after the current remote ref is stable, then begin the next non-overlapping branding writer-fence and outbox crash/retry slice; keep D1 owner activation blocked
