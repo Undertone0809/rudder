@@ -14,8 +14,8 @@ export const runtimeRetentionClaims = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    bindingId: uuid("binding_id").references(() => runtimeBindings.id, { onDelete: "cascade" }),
-    segmentId: uuid("segment_id").references(() => nativeSegments.id, { onDelete: "cascade" }),
+    bindingId: uuid("binding_id").references(() => runtimeBindings.id, { onDelete: "no action" }),
+    segmentId: uuid("segment_id").references(() => nativeSegments.id, { onDelete: "no action" }),
     resourceRef: text("resource_ref").notNull(),
     purpose: text("purpose").notNull(),
     principalScopeRef: text("principal_scope_ref").notNull(),
@@ -58,12 +58,12 @@ export const runtimeRetentionClaims = pgTable(
       name: "runtime_retention_claims_org_binding_fk",
       columns: [table.orgId, table.bindingId],
       foreignColumns: [runtimeBindings.orgId, runtimeBindings.id],
-    }).onDelete("cascade"),
+    }).onDelete("no action"),
     orgSegmentFk: foreignKey({
       name: "runtime_retention_claims_org_segment_fk",
       columns: [table.orgId, table.segmentId],
       foreignColumns: [nativeSegments.orgId, nativeSegments.id],
-    }).onDelete("cascade"),
+    }).onDelete("no action"),
   }),
 );
 
@@ -77,10 +77,10 @@ export const runtimeSourceAliases = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    conversationId: uuid("conversation_id").references(() => chatConversations.id, { onDelete: "cascade" }),
-    runId: uuid("run_id").references(() => heartbeatRuns.id, { onDelete: "cascade" }),
-    bindingId: uuid("binding_id").references(() => runtimeBindings.id, { onDelete: "cascade" }),
-    segmentId: uuid("segment_id").references(() => nativeSegments.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id").references(() => chatConversations.id, { onDelete: "no action" }),
+    runId: uuid("run_id").references(() => heartbeatRuns.id, { onDelete: "no action" }),
+    bindingId: uuid("binding_id").references(() => runtimeBindings.id, { onDelete: "no action" }),
+    segmentId: uuid("segment_id").references(() => nativeSegments.id, { onDelete: "no action" }),
     sourceKind: text("source_kind").notNull(),
     sourceRef: text("source_ref").notNull(),
     sourceRangeJson: jsonb("source_range_json").$type<Record<string, unknown>>().notNull().default({}),
@@ -118,21 +118,21 @@ export const runtimeSourceAliases = pgTable(
       name: "runtime_source_aliases_org_conversation_fk",
       columns: [table.orgId, table.conversationId],
       foreignColumns: [chatConversations.orgId, chatConversations.id],
-    }).onDelete("cascade"),
+    }).onDelete("no action"),
     orgRunFk: foreignKey({
       name: "runtime_source_aliases_org_run_fk",
       columns: [table.orgId, table.runId],
       foreignColumns: [heartbeatRuns.orgId, heartbeatRuns.id],
-    }).onDelete("cascade"),
+    }).onDelete("no action"),
     orgBindingFk: foreignKey({
       name: "runtime_source_aliases_org_binding_fk",
       columns: [table.orgId, table.bindingId],
       foreignColumns: [runtimeBindings.orgId, runtimeBindings.id],
-    }).onDelete("cascade"),
+    }).onDelete("no action"),
     orgSegmentFk: foreignKey({
       name: "runtime_source_aliases_org_segment_fk",
       columns: [table.orgId, table.segmentId],
       foreignColumns: [nativeSegments.orgId, nativeSegments.id],
-    }).onDelete("cascade"),
+    }).onDelete("no action"),
   }),
 );

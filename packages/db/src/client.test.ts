@@ -1977,6 +1977,59 @@ describe("applyPendingMigrations", () => {
   );
 
   it(
+    "preserves retention claims and source aliases against parent deletion",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Retention regression', 'retention-regression', 'RETAIN') RETURNING id
+        `;
+        const [agent] = await sql`
+          INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Retention agent') RETURNING id
+        `;
+        const [chat] = await sql`
+          INSERT INTO chat_conversations (org_id) VALUES (${org!.id}) RETURNING id
+        `;
+        const [binding] = await sql`
+          INSERT INTO runtime_bindings (org_id, agent_id, conversation_id, principal_scope_ref, runtime_type)
+          VALUES (${org!.id}, ${agent!.id}, ${chat!.id}, 'test:owner', 'codex_local') RETURNING id
+        `;
+        const [segment] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type)
+          VALUES (${org!.id}, ${binding!.id}, 'codex_local') RETURNING id
+        `;
+        await sql`
+          INSERT INTO runtime_retention_claims (org_id, binding_id, segment_id, resource_ref, purpose, principal_scope_ref)
+          VALUES (${org!.id}, ${binding!.id}, ${segment!.id}, 'native:test', 'descendant-history', 'test:owner')
+        `;
+        await sql`
+          INSERT INTO runtime_source_aliases (org_id, conversation_id, binding_id, segment_id, source_kind, source_ref, principal_scope_ref)
+          VALUES (${org!.id}, ${chat!.id}, ${binding!.id}, ${segment!.id}, 'native', 'native:test', 'test:owner')
+        `;
+        await expect(sql`DELETE FROM native_segments WHERE id = ${segment!.id}`).rejects.toMatchObject({ code: '23503' });
+        await expect(sql`DELETE FROM runtime_bindings WHERE id = ${binding!.id}`).rejects.toMatchObject({ code: '23503' });
+        await expect(sql`DELETE FROM chat_conversations WHERE id = ${chat!.id}`).rejects.toMatchObject({ code: '23503' });
+        expect(await sql`SELECT id FROM runtime_retention_claims WHERE org_id = ${org!.id}`).toHaveLength(1);
+        expect(await sql`SELECT id FROM runtime_source_aliases WHERE org_id = ${org!.id}`).toHaveLength(1);
+        // Authorized cleanup must explicitly release and remove its references;
+        // a parent DELETE cannot silently do that work on its behalf.
+        await sql`UPDATE runtime_retention_claims SET status = 'released', released_at = now() WHERE org_id = ${org!.id}`;
+        await sql`UPDATE runtime_source_aliases SET released_at = now() WHERE org_id = ${org!.id}`;
+        await sql`DELETE FROM runtime_source_aliases WHERE org_id = ${org!.id}`;
+        await sql`DELETE FROM runtime_retention_claims WHERE org_id = ${org!.id}`;
+        await sql`DELETE FROM chat_conversations WHERE id = ${chat!.id}`;
+        expect(await sql`SELECT id FROM runtime_bindings WHERE org_id = ${org!.id}`).toHaveLength(0);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
     "rejects incomplete binding targets and cross-organization lineage after migration",
     async () => {
       const connectionString = await createTempDatabase();

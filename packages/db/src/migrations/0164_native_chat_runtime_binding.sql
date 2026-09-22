@@ -24,7 +24,7 @@ ALTER TABLE "heartbeat_runs" ADD CONSTRAINT "heartbeat_runs_target_check"
 	CHECK (
 		("target_type" IS NULL AND "target_id" IS NULL)
 		OR
-		("target_type" IN ('issue', 'chat_conversation', 'chat_message', 'automation_run', 'wakeup_request', 'manual', 'review')
+		("target_type" IS NOT NULL AND "target_type" IN ('issue', 'chat_conversation', 'chat_message', 'automation_run', 'wakeup_request', 'manual', 'review')
 			AND "target_id" IS NOT NULL AND "target_id" = btrim("target_id") AND btrim("target_id") <> '')
 	);
 --> statement-breakpoint
@@ -302,8 +302,8 @@ CREATE TABLE "runtime_retention_claims" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "runtime_retention_claims_org_id_organizations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action,
-	CONSTRAINT "runtime_retention_claims_binding_id_runtime_bindings_id_fk" FOREIGN KEY ("binding_id") REFERENCES "public"."runtime_bindings"("id") ON DELETE cascade ON UPDATE no action,
-	CONSTRAINT "runtime_retention_claims_segment_id_native_segments_id_fk" FOREIGN KEY ("segment_id") REFERENCES "public"."native_segments"("id") ON DELETE cascade ON UPDATE no action,
+	CONSTRAINT "runtime_retention_claims_binding_id_runtime_bindings_id_fk" FOREIGN KEY ("binding_id") REFERENCES "public"."runtime_bindings"("id") ON DELETE no action ON UPDATE no action,
+	CONSTRAINT "runtime_retention_claims_segment_id_native_segments_id_fk" FOREIGN KEY ("segment_id") REFERENCES "public"."native_segments"("id") ON DELETE no action ON UPDATE no action,
 	CONSTRAINT "runtime_retention_claims_status_check" CHECK ("status" in ('active', 'released', 'expired'))
 );
 --> statement-breakpoint
@@ -330,10 +330,10 @@ ALTER TABLE "runtime_retention_claims" ADD CONSTRAINT "runtime_retention_claims_
 	);
 --> statement-breakpoint
 ALTER TABLE "runtime_retention_claims" ADD CONSTRAINT "runtime_retention_claims_org_binding_fk"
-	FOREIGN KEY ("org_id", "binding_id") REFERENCES "public"."runtime_bindings"("org_id", "id") ON DELETE cascade ON UPDATE no action;
+	FOREIGN KEY ("org_id", "binding_id") REFERENCES "public"."runtime_bindings"("org_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "runtime_retention_claims" ADD CONSTRAINT "runtime_retention_claims_org_segment_fk"
-	FOREIGN KEY ("org_id", "segment_id") REFERENCES "public"."native_segments"("org_id", "id") ON DELETE cascade ON UPDATE no action;
+	FOREIGN KEY ("org_id", "segment_id") REFERENCES "public"."native_segments"("org_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 CREATE TABLE "runtime_source_aliases" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -355,10 +355,10 @@ CREATE TABLE "runtime_source_aliases" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "runtime_source_aliases_org_id_organizations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action,
-	CONSTRAINT "runtime_source_aliases_conversation_id_chat_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."chat_conversations"("id") ON DELETE cascade ON UPDATE no action,
-	CONSTRAINT "runtime_source_aliases_run_id_heartbeat_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."heartbeat_runs"("id") ON DELETE cascade ON UPDATE no action,
-	CONSTRAINT "runtime_source_aliases_binding_id_runtime_bindings_id_fk" FOREIGN KEY ("binding_id") REFERENCES "public"."runtime_bindings"("id") ON DELETE cascade ON UPDATE no action,
-	CONSTRAINT "runtime_source_aliases_segment_id_native_segments_id_fk" FOREIGN KEY ("segment_id") REFERENCES "public"."native_segments"("id") ON DELETE cascade ON UPDATE no action
+	CONSTRAINT "runtime_source_aliases_conversation_id_chat_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."chat_conversations"("id") ON DELETE no action ON UPDATE no action,
+	CONSTRAINT "runtime_source_aliases_run_id_heartbeat_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."heartbeat_runs"("id") ON DELETE no action ON UPDATE no action,
+	CONSTRAINT "runtime_source_aliases_binding_id_runtime_bindings_id_fk" FOREIGN KEY ("binding_id") REFERENCES "public"."runtime_bindings"("id") ON DELETE no action ON UPDATE no action,
+	CONSTRAINT "runtime_source_aliases_segment_id_native_segments_id_fk" FOREIGN KEY ("segment_id") REFERENCES "public"."native_segments"("id") ON DELETE no action ON UPDATE no action
 );
 --> statement-breakpoint
 CREATE INDEX "runtime_source_aliases_org_source_idx" ON "runtime_source_aliases" USING btree ("org_id","source_kind","source_ref");
@@ -382,13 +382,13 @@ ALTER TABLE "runtime_source_aliases" ADD CONSTRAINT "runtime_source_aliases_read
 	CHECK ("read_only" = true);
 --> statement-breakpoint
 ALTER TABLE "runtime_source_aliases" ADD CONSTRAINT "runtime_source_aliases_org_conversation_fk"
-	FOREIGN KEY ("org_id", "conversation_id") REFERENCES "public"."chat_conversations"("org_id", "id") ON DELETE cascade ON UPDATE no action;
+	FOREIGN KEY ("org_id", "conversation_id") REFERENCES "public"."chat_conversations"("org_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "runtime_source_aliases" ADD CONSTRAINT "runtime_source_aliases_org_run_fk"
-	FOREIGN KEY ("org_id", "run_id") REFERENCES "public"."heartbeat_runs"("org_id", "id") ON DELETE cascade ON UPDATE no action;
+	FOREIGN KEY ("org_id", "run_id") REFERENCES "public"."heartbeat_runs"("org_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "runtime_source_aliases" ADD CONSTRAINT "runtime_source_aliases_org_binding_fk"
-	FOREIGN KEY ("org_id", "binding_id") REFERENCES "public"."runtime_bindings"("org_id", "id") ON DELETE cascade ON UPDATE no action;
+	FOREIGN KEY ("org_id", "binding_id") REFERENCES "public"."runtime_bindings"("org_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "runtime_source_aliases" ADD CONSTRAINT "runtime_source_aliases_org_segment_fk"
-	FOREIGN KEY ("org_id", "segment_id") REFERENCES "public"."native_segments"("org_id", "id") ON DELETE cascade ON UPDATE no action;
+	FOREIGN KEY ("org_id", "segment_id") REFERENCES "public"."native_segments"("org_id", "id") ON DELETE no action ON UPDATE no action;

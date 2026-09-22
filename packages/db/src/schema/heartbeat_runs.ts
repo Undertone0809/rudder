@@ -173,7 +173,7 @@ export const heartbeatRuns = pgTable(
       sql`(
         (${table.targetType} is null and ${table.targetId} is null)
         or
-        (${table.targetType} in ('issue', 'chat_conversation', 'chat_message', 'automation_run', 'wakeup_request', 'manual', 'review')
+        (${table.targetType} is not null and ${table.targetType} in ('issue', 'chat_conversation', 'chat_message', 'automation_run', 'wakeup_request', 'manual', 'review')
           and ${table.targetId} is not null and ${table.targetId} = btrim(${table.targetId}) and btrim(${table.targetId}) <> '')
       )`,
     ),
