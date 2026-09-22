@@ -1,0 +1,146 @@
+{
+  "kind": "independent_acceptance_rebind_receipt",
+  "date": "2026-09-22",
+  "status": "scoped_pass_baseline_pending",
+  "verdict": "QUESTION",
+  "verdict_scope": "The new cross-organization branding proof and mounted-provider tests pass. The unchanged b4793 browser, outbox, managed takeover, 60-second lock, and recovery-marker evidence is rebound by explicit product-content equivalence. Whole-packet PASS remains pending parent devclean/localapps and final baseline reconciliation.",
+  "lease": {
+    "branch": "codex/rudder-branding-outbox-recovery-20260922",
+    "source_sha": "3d22263016324bff63c36be0ce332ff1f09ebdad",
+    "source_tree": "94386cc163f8289986017a2efbdf314aabaa73db",
+    "prior_source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+    "prior_source_tree": "7810f1c619f1a206f75e33b53a7c7d1664bf9b3d",
+    "source_fingerprint_excluding_doc_plans": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "packet_version": 17,
+    "packet_digest": "dc5f7eaac591732b0aebd8df5f52ecf223b1d732cb7b8923082c8602c5b4cad5",
+    "captured_at": "2026-09-22T15:48:00Z"
+  },
+  "product_content_equivalence": {
+    "tracked_name_diff_exact": [
+      "desktop/scripts/smoke.mjs",
+      "scripts/smoke/rust-branding-real-entry.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts"
+    ],
+    "non_test_harness_product_diff_check": {
+      "command": "git diff --quiet b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d..3d22263016324bff63c36be0ce332ff1f09ebdad -- . :(exclude)desktop/scripts/smoke.mjs :(exclude)scripts/smoke/rust-branding-real-entry.ts :(exclude)server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "exit_code": 0,
+      "meaning": "All tracked content outside the three TEST-only/harness paths is byte-identical between candidates."
+    },
+    "changed_test_harness_hashes": {
+      "desktop/scripts/smoke.mjs": "9d642d98edb214a4be5579e6d073777a9f5a63bf53a9352991d3c86dc65de491",
+      "scripts/smoke/rust-branding-real-entry.ts": "9f274809ebd0eb2642f08f0fd11e20a72cb90e4d4071777f05b78360d672bf55",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts": "0c9229dda9fdd5d2d06e7e3d966fbf9a8f4deda8a1d11abee6721a54eaf911a7"
+    },
+    "artifact_hashes": {
+      "native/target/debug/rudder-server-foundation": "597e740084129bae5be8d8f4e03bb8b9401a503dc7493ed08c659192c8c689a0",
+      "native/target/debug/migration-preflight": "634133066d7c046b2caec9c7c0d910872c674955b91c09cf4e1f45f905ccc469",
+      "ui/dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294",
+      "server/ui-dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294",
+      "desktop/dist/main.js": "c434de3938422f34434f9b3a7072635a60052efd45af31402c32b8d46ec834a1",
+      "packaged_server_local_runtime": "26822efac72592ef15c17a127c87df21f4ffb7c1ad7706c8e2e9935293917ffa"
+    }
+  },
+  "criteria": [
+    {
+      "id": 1,
+      "status": "PASS",
+      "scope": "Scalar brandColor HTTP, authenticated agent HTTP, Node CLI, MCP, and organization boundary",
+      "observed": "The real entry probe exercised Rust owner/version/fence/receipt/activity/outbox, replay/conflict, mixed patch rejection, legacy scalar writer rejection, restart persistence, CLI, and MCP. A valid agent key attempting both PATCH /orgs/:foreignId/branding and generic PATCH /orgs/:foreignId received [403,403]; the foreign target brandColor, owner/version, receipts, activity, and outbox snapshot stayed unchanged.",
+      "command": "env TMPDIR=/tmp/codex-branding-rebind.rOQzui node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/smoke/rust-branding-real-entry.ts",
+      "log": "/tmp/codex-branding-rebind.rOQzui/branding-real-entry-3d222.log",
+      "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+      "runtime": {
+        "instance_id": "rust-branding-real-entry-11179",
+        "api_port": 54908,
+        "database_port": 54909,
+        "organization_id": "c6981585-09f5-49eb-a657-f8bd082295fd",
+        "foreign_organization_id": "7727405e-d76d-40da-9bcb-a473b63fbf04",
+        "cross_organization_statuses": [403, 403],
+        "foreign_state_unchanged": true,
+        "state": {"owner": "rust", "mutation_version": "5", "fence_epoch": "1"},
+        "activity_count": 5,
+        "outbox": "5 published rows, attempts=1"
+      }
+    },
+    {
+      "id": 2,
+      "status": "PASS_REBOUND",
+      "scope": "PostgreSQL 0169 to 0170 and publisher recovery",
+      "observed": "The b4793 frozen real PostgreSQL recovery evidence remains applicable because all product source and native/database artifacts are byte-identical; no rerun was performed.",
+      "evidence": "/tmp/codex-outbox-recovery.ZetVi1/organization-outbox-recovery.log",
+      "equivalence_basis": "Tracked product-content diff is empty outside the three TEST-only/harness paths; native and migration-preflight hashes match."
+    },
+    {
+      "id": 3,
+      "status": "PASS_REBOUND",
+      "scope": "Managed-local live-owner takeover and startup exclusivity",
+      "evidence": "/tmp/codex-branding-final-takeover.uJh8Se/managed-local-takeover.log",
+      "equivalence_basis": "desktop/scripts/smoke.mjs, branding probe, and startup-config test do not change managed-local runtime behavior; all other tracked product content is byte-identical. No alternate orchestrator or rerun was used."
+    },
+    {
+      "id": 4,
+      "status": "PASS_REBOUND",
+      "scope": "Partial/unreadable start.lock, standalone .recovery, and real 60-second held-startup guard",
+      "evidence": [
+        "/tmp/codex-branding-final-lock-negative.VgfMVV/startup-lock-negative.log",
+        "/tmp/codex-branding-final-recovery.1ATKiT/managed-local-recovery.log"
+      ],
+      "equivalence_basis": "The changed paths do not touch local-runtime implementation or its product artifacts. The 60-second claim is bound to the real managed-local probe, not the timestamp-age unit test."
+    },
+    {
+      "id": 5,
+      "status": "PASS_REBOUND",
+      "scope": "WS-only UI reconnect workflow",
+      "evidence": {
+        "log": "/tmp/codex-branding-final-browser.NiRQO9/reconnect-browser.log",
+        "marker": "RUST_WEBSOCKET_RECONNECT_PASS",
+        "screenshots": [
+          "/tmp/codex-branding-final-browser-evidence/ws-reconnect-before.png",
+          "/tmp/codex-branding-final-browser-evidence/ws-reconnect-after.png"
+        ],
+        "task_space": 133
+      },
+      "equivalence_basis": "UI source and ui/dist/server/ui-dist hashes are identical; the changed desktop smoke helper has no effect on this UI workflow. No browser rerun was performed."
+    },
+    {
+      "id": 6,
+      "status": "PASS",
+      "scope": "Mounted-provider queue and invalidation regressions",
+      "command": "env TMPDIR=/tmp/codex-branding-rebind.rOQzui pnpm exec vitest run --root ui --config vitest.config.ts src/context/LiveUpdatesProvider.queue.test.tsx src/context/LiveUpdatesProvider.invalidation.test.ts",
+      "log": "/tmp/codex-branding-rebind.rOQzui/mounted-provider.log",
+      "result": "2 files passed, 8 tests passed"
+    },
+    {
+      "id": 7,
+      "status": "BOUNDARY_RECORDED",
+      "scope": "Transitional migration boundary",
+      "observed": "No default-authority, Rust transport retirement, logo/storage retirement, production, or full-migration claim is inferred."
+    },
+    {
+      "id": 8,
+      "status": "QUESTION_BASELINE_PENDING",
+      "scope": "Baseline, architecture ratchet, and packaged Desktop reconciliation",
+      "observed": "TEST-only startup-config helper forwarding, Desktop smoke ready wait, and the new focused probes are covered. Parent devclean/localapps runs and final baseline reconciliation are still in progress; no new product defect was observed.",
+      "remaining": [
+        "Parent devclean/localapps run completion",
+        "Final baseline and artifact/content-equivalence recheck after those runs",
+        "Final reviewer reconciliation for the exact 3d222 candidate"
+      ],
+      "owner": "parent"
+    }
+  ],
+  "unchanged_frozen_evidence": {
+    "browser": "/tmp/codex-branding-final-browser.NiRQO9/reconnect-browser.log",
+    "outbox": "/tmp/codex-outbox-recovery.ZetVi1/organization-outbox-recovery.log",
+    "managed_takeover": "/tmp/codex-branding-final-takeover.uJh8Se/managed-local-takeover.log",
+    "managed_60s_lock": "/tmp/codex-branding-final-recovery.1ATKiT/managed-local-recovery.log",
+    "lock_negative": "/tmp/codex-branding-final-lock-negative.VgfMVV/startup-lock-negative.log"
+  },
+  "mutation_ledger": {
+    "product_source": "none",
+    "product_artifacts": "unchanged",
+    "new_repo_file": "doc/plans/artifacts/2026-09-22-rudder-branding-verifier-3d222-rebind.json",
+    "git_commit": "none",
+    "probe_scripts": "/tmp only"
+  }
+}

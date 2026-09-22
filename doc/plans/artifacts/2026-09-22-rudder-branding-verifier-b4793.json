@@ -1,0 +1,141 @@
+{
+  "kind": "independent_acceptance_receipt",
+  "date": "2026-09-22",
+  "status": "scoped_observed_pass_packet_question",
+  "verdict": "QUESTION",
+  "verdict_scope": "The observed scalar branding, outbox recovery, startup-lock, and prior frozen browser criteria are supported. The whole packet remains QUESTION until criterion 8 and the parent-owned mounted-provider/Desktop/baseline gates are reconciled.",
+  "lease": {
+    "branch": "codex/rudder-branding-outbox-recovery-20260922",
+    "source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+    "source_tree": "7810f1c619f1a206f75e33b53a7c7d1664bf9b3d",
+    "source_fingerprint_excluding_doc_plans": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "packet_version": 17,
+    "packet_digest": "dc5f7eaac591732b0aebd8df5f52ecf223b1d732cb7b8923082c8602c5b4cad5",
+    "captured_at": "2026-09-22T15:37:04Z",
+    "source_status": "Product source is unchanged. Existing dirty paths are doc/plans records only."
+  },
+  "artifact_hashes": {
+    "native/target/debug/rudder-server-foundation": "597e740084129bae5be8d8f4e03bb8b9401a503dc7493ed08c659192c8c689a0",
+    "native/target/debug/migration-preflight": "634133066d7c046b2caec9c7c0d910872c674955b91c09cf4e1f45f905ccc469",
+    "ui/dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294",
+    "server/ui-dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294",
+    "packaged_server_local_runtime": {
+      "sha256": "26822efac72592ef15c17a127c87df21f4ffb7c1ad7706c8e2e9935293917ffa",
+      "source": "packet v17 packaged build record; not rebuilt by this round"
+    },
+    "packaged_desktop_main": {
+      "sha256": "c434de3938422f34434f9b3a7072635a60052efd45af31402c32b8d46ec834a1",
+      "source": "packet v17 packaged build record; not rebuilt by this round"
+    }
+  },
+  "criteria": [
+    {
+      "id": 1,
+      "status": "PASS_SCOPED",
+      "scope": "Scalar brandColor public HTTP, authenticated agent HTTP, Node CLI, and MCP dispatch",
+      "observed": "Rust SQLx owner/version/fence/receipt/activity/outbox state; replay and idempotency conflict; mixed patch rejection; legacy scalar writer rejection; restart persistence. Target organization and agent authentication were exercised.",
+      "missing": "No independent cross-organization negative HTTP attempt in this round; do not extend this to a full organization-boundary claim.",
+      "command": "node --import ./cli/node_modules/tsx/dist/loader.mjs scripts/smoke/rust-branding-real-entry.ts",
+      "log": "/tmp/codex-branding-entry.vfNYYl/branding-real-entry.log",
+      "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+      "runtime": {
+        "instance_id": "rust-branding-real-entry-83704",
+        "api_port": 51766,
+        "database_port": 51767,
+        "organization_id": "1e015c69-93ae-46e5-afc8-e5deab2fbc34"
+      }
+    },
+    {
+      "id": 2,
+      "status": "PASS",
+      "scope": "PostgreSQL 0169 to 0170 and publisher recovery",
+      "observed": "All five real embedded-PostgreSQL recovery cases passed: pending upgrade, committed-claim death, stale-worker resumption, emit-before-ACK retry with stable delivery key, and failed-publication backoff.",
+      "command": "pnpm exec vitest run --root packages/db --config vitest.config.ts src/migrations/organization-outbox-recovery.test.ts",
+      "log": "/tmp/codex-outbox-recovery.ZetVi1/organization-outbox-recovery.log",
+      "result": "1 file, 5 tests passed"
+    },
+    {
+      "id": 3,
+      "status": "PASS",
+      "scope": "Frozen automatic preferred-owner takeover and startup exclusivity",
+      "observed": "Prior frozen candidate evidence records replacement entry while old PID was alive, graceful old-PID exit before replacement ready/listener/publisher claim, same instance/API/DB identity, and new-process publish attempts=1.",
+      "log": "/tmp/codex-branding-final-takeover.uJh8Se/managed-local-takeover.log",
+      "marker": "FROZEN_CANDIDATE_TAKEOVER_PASS",
+      "fresh_attempt": {
+        "status": "INCONCLUSIVE_PROBE_SETUP",
+        "log": "/tmp/codex-branding-verifier.eASZ0P/managed/managed-automatic-takeover.log",
+        "worker_log": "/tmp/codex-branding-verifier.eASZ0P/managed/old-worker.log",
+        "events": "/tmp/codex-branding-verifier.eASZ0P/managed/events.jsonl",
+        "reason": "The temporary orchestrator stopped after its pre-replacement process.kill(oldPid, 0) assertion observed the old worker as not alive; no replacement process was started and no product conclusion is drawn. The old worker had emitted READY before the temporary cleanup signal."
+      }
+    },
+    {
+      "id": 4,
+      "status": "PASS",
+      "scope": "Unreadable/partial start.lock and standalone .recovery fail closed",
+      "observed": "Prior frozen process-level negative proof showed no ready/listener and byte-preserved lock/recovery files for partial lock, standalone recovery, and both markers. The real managed-local held-startup/live-owner probe covered the 60-second overlap guard; its evidence is recorded separately from the local-runtime unit regression, which only exercises the lock logic without waiting 60 seconds.",
+      "frozen_log": "/tmp/codex-branding-final-lock-negative.VgfMVV/startup-lock-negative.log",
+      "frozen_managed_lock_log": "/tmp/codex-branding-final-recovery.1ATKiT/managed-local-recovery.log",
+      "frozen_managed_lock_marker": "FROZEN_CANDIDATE_VERIFIER_PASS",
+      "fresh_command": "pnpm exec vitest run --root server --config vitest.config.ts src/__tests__/local-runtime.test.ts",
+      "fresh_log": "/tmp/codex-startup-lock.XrXhdv/local-runtime.log",
+      "fresh_result": "1 file, 9 tests passed"
+    },
+    {
+      "id": 5,
+      "status": "PASS_FROZEN",
+      "scope": "WS-only UI reconnect workflow",
+      "observed": "Prior frozen ego-browser run kept HTTP online while WS reconnect was withheld, then observed branding icon refresh and mounted Project goalIds refresh after reconnect.",
+      "log": "/tmp/codex-branding-final-browser.NiRQO9/reconnect-browser.log",
+      "marker": "RUST_WEBSOCKET_RECONNECT_PASS",
+      "task_space": 133,
+      "screenshots": [
+        "/tmp/codex-branding-final-browser-evidence/ws-reconnect-before.png",
+        "/tmp/codex-branding-final-browser-evidence/ws-reconnect-after.png"
+      ],
+      "fresh_fixture_note": "A new disposable fixture reached RUST_RECONNECT_UI_READY but the browser action was not rerun before the bounded closeout requested by the parent. Fixture PID 98272 was stopped with SIGTERM; log /tmp/codex-browser-fixture.hOfSo4/reconnect-ui-fixture.log; fixture root /tmp/codex-browser-fixture.hOfSo4/codex-rust-reconnect-ui-F7pyEl; API 127.0.0.1:52049; database 127.0.0.1:52050.",
+      "browser_copy": "/tmp/codex-branding-verifier.eASZ0P/browser/rust-reconnect-browser.mjs",
+      "browser_copy_scope": "Only screenshot output paths were changed; author fixed /tmp screenshots were not touched."
+    },
+    {
+      "id": 6,
+      "status": "QUESTION",
+      "scope": "Mounted-provider regressions",
+      "observed": "Not independently run in this round.",
+      "required_command": "pnpm exec vitest run --root ui --config vitest.config.ts src/context/LiveUpdatesProvider.queue.test.tsx src/context/LiveUpdatesProvider.invalidation.test.ts",
+      "owner": "parent"
+    },
+    {
+      "id": 7,
+      "status": "BOUNDARY_RECORDED",
+      "scope": "Transitional scope",
+      "observed": "No default-authority, Rust transport retirement, logo retirement, production, or full-migration claim is made. logo/name/storage remain an explicitly incomplete next authority slice."
+    },
+    {
+      "id": 8,
+      "status": "QUESTION",
+      "scope": "Baseline, architecture ratchet, and packaged Desktop reconciliation",
+      "observed": "Parent reports one stale source-text assertion after helper extraction and a Desktop smoke Starting-terminal wait race; two TEST-ONLY repairs are pending. Volta A/B real dev Terminal PASS is harness evidence, not a product-source fix.",
+      "remaining": [
+        "Parent test-only repair and metadata/content-equivalence rebind",
+        "Parent baseline/full test and smoke reconciliation",
+        "Parent mounted-provider and packaged Desktop gates",
+        "No production or mounted-provider claim from this receipt"
+      ],
+      "owner": "parent"
+    }
+  ],
+  "fresh_probe_roots": [
+    "/tmp/codex-branding-entry.vfNYYl",
+    "/tmp/codex-outbox-recovery.ZetVi1",
+    "/tmp/codex-startup-lock.XrXhdv",
+    "/tmp/codex-browser-fixture.hOfSo4",
+    "/tmp/codex-branding-verifier.eASZ0P"
+  ],
+  "mutation_ledger": {
+    "product_source": "none",
+    "git_commit": "none",
+    "browser_author_screenshots": "preserved",
+    "temporary_probe_scripts": "/tmp only"
+  }
+}

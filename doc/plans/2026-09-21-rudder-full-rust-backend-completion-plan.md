@@ -34,6 +34,8 @@ related_code:
   - desktop
 commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
+  - 17c9613e3df39e2c67c07d455206312b7ac33a75
+  - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
 updated_at: 2026-09-22
 ---
 
@@ -180,7 +182,7 @@ each slice candidate, not only at final integration.
   compatibility decision, re-run checks, and invalidated receipts. The next
   executable step must name the exact slice that resumes after reconciliation.
 
-The latest observed Main ref at this update is
+The previous reconciled Main ref for packet v16 was
 `d1f55c5c180901392804178aa44b3ba3f077a6cb`, fifteen commits after the migration
 base `c54001819ca38079b627994557db0a18ed278fc0`. Since the previous
 `b4c2f46966d080a18b8ce8d9545e427aa5b50ced` observation, Main changed the
@@ -194,6 +196,13 @@ candidate is rebound to that reconciled content; the clean committed candidate
 is `fc73374bb15933ef5bad7f3056336c87e455cee0` and packet v16 is the durable
 source of truth. This observation is not a merge or a completion claim; it is
 the synchronization input for the v16 exact-candidate receipts.
+
+For the next v17 slice, Main was refreshed to
+`5ef9b5475787dd662b2c8ec04b64158387d9dcb7`. The only additional path is
+`docs/ga.js`; its documentation-site analytics change does not alter backend,
+database, auth, CLI/MCP or startup contracts. Preserve it during subsequent
+integration. The migration branch has not yet rebased onto this additional
+commit; observation and compatibility assessment do not imply integration.
 
 ## Current checkpoint (2026-09-22)
 
@@ -227,11 +236,56 @@ the receipt or activity. The exact evidence is recorded in
 This changes the capability ledger for organization branding to
 `real_entry_connected`; it does not make branding the default installed
 authority, retire every legacy writer, or activate the broader D1 owner. The
-Project-Goal route remains private until its competing-writer fence, default
-listener decision, and old-writer retirement gates are complete. Its signer,
-CLI/MCP parity, and independent verifier gates now have exact local evidence. The migration
+Project-Goal route also has an explicitly selected real Node entry through the
+private Actix bridge, as recorded by packet v16 below. Default Rust listener
+authority and complete old-runtime retirement remain unverified. Its signer,
+CLI/MCP parity, and independent verifier gates have exact local evidence. The migration
 continues to refresh `origin/main` before each candidate and keeps
 `implementation_complete`, `release_ready`, and `production_verified` false.
+
+The next candidate is locally checkpointed as
+`17c9613e3df39e2c67c07d455206312b7ac33a75` (tree
+`62dfdaee0a14c0072ca970b423a6b6af01fc6cdc`) in
+`codex/rudder-branding-outbox-recovery-20260922` from `6e37a563523db92b63589557be18d12e65593101`.
+It extends branding CLI/MCP and rejected-writer evidence and repairs the
+transitional outbox's persisted claim/recovery protocol. Five disposable
+PostgreSQL scenarios currently pass, including upgrading a stopped 0169
+publisher's pending event to 0170, claim-owner process death, stale claimant
+rejection, death after broadcast before ACK, and persisted retry backoff.
+These are author checks, not a new independent acceptance receipt.
+
+This candidate's recovery claim is limited to one local server with the old
+publisher stopped before schema upgrade. It does not establish mixed-version
+rolling deployment, multi-server WebSocket fanout, exactly-once consumer
+delivery, or Rust event-transport ownership. The new UI reconnect helper now
+reconciles branding/Project-Goal read models and selected-organization activity
+queries, including data-less in-flight reads. Mounted regressions and an author
+probe using the real UI, WebSocket, HTTP, Actix and PostgreSQL passed after
+correcting a stale served UI build. The durable author receipt is
+`artifacts/2026-09-22-rudder-branding-reconnect-author-probe-v1.json`; it is not
+an independent frozen-candidate acceptance receipt. Managed-local process
+handoff and final independent browser verification remain open.
+
+Packaged account-gate, automatic-update recovery, Computer Use runtime and
+App Builder checks passed for this local build. Development-shell Terminal
+restart output still timed out and is under instrumented diagnosis; the
+packaged checks do not exercise that same branch and cannot close it. The
+checkpoint remains unpublished and has no final independent acceptance.
+
+Independent stage review then exposed a recovery-marker-only startup bypass.
+Checkpoint `b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d` fixes that bypass
+without narrowing the fail-closed criterion. Nine startup-lock regressions,
+server typecheck and changed-file lint pass. Packet v17 now names this source;
+managed startup and affected packaged evidence require fresh binding. The
+Rust and UI inputs are unchanged from the previous checkpoint.
+
+Managed startup safety also requires that a live startup-lock PID never loses
+ownership just because a migration exceeds thirty seconds. The new guard
+waits for that PID and serializes dead-owner reclamation. An unreadable partial
+lock or an abandoned `.recovery` lock fails closed; it is not evidence of an
+automatically recoverable startup. Operators must inspect the named instance,
+lock owner and runtime descriptor before recovering those files. This plan
+does not authorize deleting instance data to repair startup.
 
 The v10 Project-Goal probe was rerun on clean committed `fc73374bb` after the
 latest Main reconciliation using fresh Rust foundation and migration-preflight
@@ -436,6 +490,24 @@ that it is yet the sole public listener. The read workflow, CLI/MCP contract
 probe, limits, shutdown/restart, organization negative cases, and private
 bridge failure behavior pass on an immutable candidate. Node remains the
 explicit authority for all un-migrated writes.
+
+### First default-read increment (2026-09-22)
+
+Start with the installed Desktop member-directory entry because its package
+already stages the foundation binary. Select the required mode from the
+installed-runtime configuration, never from whether the binary happens to
+exist: a missing or unusable asset must fail closed. Electron supplies launch
+configuration only; it must not acquire backend query or authorization logic.
+Standalone server and CLI defaults remain unchanged until their native-asset
+installation slice is complete. Explicit off and shadow retain their existing
+meaning and are recorded as remaining Node read paths, not retired authority.
+
+Before acceptance, reconcile query normalization, duplicate/array parameters,
+limits, cursors, fullIds and error bodies against the existing public contract.
+Generate a fresh bridge key per process spawn unless an explicit static-key
+configuration was selected; invalidate ephemeral keys on child exit. Installed
+acceptance must prove the default read, organization isolation, missing-binary
+failure, child restart and process/listener identity on the frozen candidate.
 
 ## Phase 2: native data and read surfaces
 

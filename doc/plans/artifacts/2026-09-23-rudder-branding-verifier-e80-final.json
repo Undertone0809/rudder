@@ -1,0 +1,284 @@
+{
+  "schema_version": 1,
+  "kind": "product-acceptance-verifier",
+  "created_at": "2026-09-22T16:25:13Z",
+  "status": "terminal",
+  "verdict": "PASS",
+  "verdict_scope": "Bounded v17 scalar-branding, fence/outbox recovery, managed-local, mounted-provider, WS reconnect, and reconciled Desktop acceptance only.",
+  "lease": {
+    "branch": "codex/rudder-branding-outbox-recovery-20260922",
+    "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+    "source_tree": "e453569dd7d89dd800662c13550ece19ad0759ec",
+    "prior_source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+    "prior_source_tree": "7810f1c619f1a206f75e33b53a7c7d1664bf9b3d",
+    "source_fingerprint_excluding_doc_plans": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "source_status": "No tracked or untracked source changes outside doc/plans; existing doc/plans records were preserved.",
+    "packet_version": 17,
+    "packet_digest": "dc5f7eaac591732b0aebd8df5f52ecf223b1d732cb7b8923082c8602c5b4cad5",
+    "packet_path": "doc/plans/2026-09-21-rudder-full-rust-backend-completion-delivery-packet-v17.json",
+    "packet_status_observed": "acceptance_pending",
+    "rechecked_at": "2026-09-22T16:25:13Z"
+  },
+  "candidate_rebind": {
+    "final_checkpoint_delta": {
+      "from": "3d22263016324bff63c36be0ce332ff1f09ebdad",
+      "paths": [
+        "desktop/scripts/smoke.mjs"
+      ],
+      "meaning": "Test logging/navigation evidence only; no product source or packaged artifact behavior changed."
+    },
+    "product_content_equivalence": {
+      "basis": "The current source fingerprint is empty outside doc/plans. e80deae changes only the Desktop smoke harness relative to 3d222; the three 3d222 test/probe paths remain test-only or harness-only.",
+      "runtime_extraction_worker_source": [
+        "server/src/runtime/server-app-runtime.ts",
+        "server/src/routes/orgs-rust-foundation.ts",
+        "server/src/services/chats.mutation-helpers.ts",
+        "server/src/services/goals.contract-helpers.ts",
+        "server/src/services/issues.description-assets.ts"
+      ]
+    },
+    "artifact_sha256": {
+      "native/target/debug/rudder-server-foundation": "597e740084129bae5be8d8f4e03bb8b9401a503dc7493ed08c659192c8c689a0",
+      "native/target/debug/migration-preflight": "634133066d7c046b2caec9c7c0d910872c674955b91c09cf4e1f45f905ccc469",
+      "ui/dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294",
+      "server/ui-dist/index.html": "72f1c373a833f8354791dabb1c9603c13024c20f663fa7916994da1239144294",
+      "desktop/dist/main.js": "c434de3938422f34434f9b3a7072635a60052efd45af31402c32b8d46ec834a1"
+    },
+    "packaged_build": {
+      "built_from_source_sha": "b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d",
+      "current_product_equivalent": true,
+      "server_local_runtime_sha256": "26822efac72592ef15c17a127c87df21f4ffb7c1ad7706c8e2e9935293917ffa",
+      "desktop_main_sha256": "c434de3938422f34434f9b3a7072635a60052efd45af31402c32b8d46ec834a1",
+      "build_log": "/tmp/codex-rudder-v17-evidence.LWLCU0/desktop-dist-b4793.log",
+      "build_log_sha256": "76f274644f4370833c7ad1d41d02cb88bba05525109da00694ef74ea61f7aba3",
+      "smoke_log": "/tmp/codex-rudder-v17-evidence.LWLCU0/packaged-smoke-b4793.log",
+      "smoke_log_sha256": "a23a0f8fa4a55a7b112f2f98fb9aeb0ee77a29fb733e97611976dfcf34d6f5bd"
+    }
+  },
+  "organization_data": {
+    "branding_fixture": "c6981585-09f5-49eb-a657-f8bd082295fd",
+    "foreign_organization": "7727405e-d76d-40da-9bcb-a473b63fbf04",
+    "branding_runtime_instance": "rust-branding-real-entry-11179",
+    "branding_api_port": 54908,
+    "branding_database_port": 54909
+  },
+  "criteria": [
+    {
+      "id": 1,
+      "status": "PASS",
+      "scope": "Scalar brandColor HTTP, authenticated agent HTTP, Node CLI, MCP, organization boundary, idempotency, and legacy scalar-writer fence",
+      "observed": "The real entry probe ended RUST_BRANDING_REAL_ENTRY_PASS. Rust owned the state at version 5/fence epoch 1; HTTP, CLI, and MCP writes completed; replay/conflict and mixed-patch rejection passed; legacy scalar writing was rejected; five activity and five published outbox rows had attempts=1. A valid foreign-org agent received 403 from both branding and generic organization PATCH routes, with foreignStateUnchanged=true.",
+      "evidence": [
+        {
+          "path": "/tmp/codex-branding-rebind.rOQzui/branding-real-entry-3d222.log",
+          "sha256": "855f5d0f08bc7b2feb214f6241cb27f0944f801c3351333e47901f7346df5059",
+          "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+          "cross_org_statuses": [403, 403]
+        },
+        {
+          "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/branding-cross-org.log",
+          "sha256": "bbc29685cf94d6a2167a1aaa43de79e9074e8dcebc7c96e9daf245e83b0a429f",
+          "support": "Both real organization routes and Rust bridge receipts were observed in a fresh disposable fixture."
+        }
+      ],
+      "binding": "Rebound from 3d222 to e80 because the only final delta is Desktop smoke harness code and the branding probe source is unchanged."
+    },
+    {
+      "id": 2,
+      "status": "PASS",
+      "scope": "Real PostgreSQL 0169-to-0170 outbox upgrade and publisher recovery",
+      "observed": "All five embedded-PostgreSQL recovery cases passed: stopped 0169 pending delivery, committed-claim death, stale-worker resumption, emit-before-ACK retry with stable key, and failed-publication backoff/recovery.",
+      "evidence": {
+        "path": "/tmp/codex-outbox-recovery.ZetVi1/organization-outbox-recovery.log",
+        "sha256": "5b1d4b7f68a62bcf3eea3f9934c34be3b922ebe9fcef3306dbea32c56a588b25",
+        "result": "1 file passed, 5 tests passed"
+      },
+      "binding": "Native and migration-preflight hashes are unchanged; no replay was needed."
+    },
+    {
+      "id": 3,
+      "status": "PASS",
+      "scope": "Automatic preferred-owner takeover while the old PID is alive",
+      "observed": "The replacement entered with oldPidRunning=true. The old PID exited at 1790090330424 before replacement ready at 1790090331059 and before the new process published at 1790090332151. The replacement retained API port 59229, PostgreSQL port 59230, instance ID, database directory, and published the seeded event with attempts=1.",
+      "evidence": {
+        "path": "/tmp/codex-branding-final-takeover.uJh8Se/managed-local-takeover.log",
+        "sha256": "31c162f6b5668733782fed352271d572eb9e931ddda7b80874c2d47e39aa9668",
+        "marker": "FROZEN_CANDIDATE_TAKEOVER_PASS",
+        "old_pid": 62109,
+        "replacement_pid": 62739,
+        "old_pid_running_at_entry": true,
+        "same_instance_and_database": true,
+        "new_process_published_attempts": 1
+      },
+      "binding": "The managed-local implementation and artifacts are product-equivalent between the b4793 evidence and e80; no alternate orchestrator was introduced."
+    },
+    {
+      "id": 4,
+      "status": "PASS",
+      "scope": "Held startup lock, partial/unreadable start.lock, standalone .recovery, and recovery publication",
+      "observed": "The real held-startup probe held the lock for 60000ms and blocked a competing starter without listener/runtime entry. The process negative probe preserved partial start.lock and standalone .recovery, timed out, opened no listener, and did not invoke the runtime callback. The separate recovery fixture observed old exit before first claim and finalpublished with attempts=2.",
+      "evidence": [
+        {
+          "path": "/tmp/codex-branding-final-recovery.1ATKiT/managed-local-recovery.log",
+          "sha256": "5fb5dd05ff8c621cdf4111d91846b0fc592160a0959771af85182acff45814b3",
+          "marker": "FROZEN_CANDIDATE_VERIFIER_PASS",
+          "hold_ms": 60000,
+          "old_exited_before_first_claim": true,
+          "final_marker": "finalpublished"
+        },
+        {
+          "path": "/tmp/codex-branding-final-lock-negative.VgfMVV/startup-lock-negative.log",
+          "sha256": "03705fbca4d8241892abd00d82785903a3046dcc5e12d80f9d24bae9f053a7aa",
+          "marker": "STARTUP_LOCK_NEGATIVE_PROCESS_PASS",
+          "cases": ["partial-start-lock", "standalone-recovery", "recovery-with-start-lock"]
+        }
+      ],
+      "method_note": "The 60-second statement is bound to the real managed-local hold log, not to a timestamp-age unit test."
+    },
+    {
+      "id": 5,
+      "status": "PASS",
+      "scope": "WS-only browser reconnect with HTTP online",
+      "observed": "The browser probe ended RUST_WEBSOCKET_RECONNECT_PASS with HTTP online, liveSockets=0 while disconnected, unchanged icon before reconnect, and refreshed branding/project goalIds after reconnect.",
+      "evidence": {
+        "log": "/tmp/codex-branding-final-browser.NiRQO9/reconnect-browser.log",
+        "log_sha256": "150210c5fd90ca95763cdd0ccac299ab2db65e32d3826b45c11dfbb44ce4f949",
+        "screenshots": [
+          {
+            "path": "/tmp/codex-branding-final-browser-evidence/ws-reconnect-before.png",
+            "sha256": "e3274801de69cd1f05d4d14e8faa812beaf326afc728758994886cc0eb405564"
+          },
+          {
+            "path": "/tmp/codex-branding-final-browser-evidence/ws-reconnect-after.png",
+            "sha256": "bb9f728adcc51dc6810f06b5b1cd71cfaea450f49fbc7493c3fcbf21d9709601"
+          }
+        ]
+      },
+      "binding": "UI source and ui/dist/server/ui-dist hashes are unchanged; the e80 delta is Desktop smoke only."
+    },
+    {
+      "id": 6,
+      "status": "PASS",
+      "scope": "Mounted-provider queue and invalidation regressions",
+      "observed": "The independent mounted-provider run passed both files and all eight tests.",
+      "evidence": {
+        "command": "env TMPDIR=/tmp/codex-branding-rebind.rOQzui pnpm exec vitest run --root ui --config vitest.config.ts src/context/LiveUpdatesProvider.queue.test.tsx src/context/LiveUpdatesProvider.invalidation.test.ts",
+        "path": "/tmp/codex-branding-rebind.rOQzui/mounted-provider.log",
+        "sha256": "4076763d1c85a849c52c2a3d0955ec9d972552a7c583467b46576a33e566a551",
+        "result": "2 files passed, 8 tests passed"
+      }
+    },
+    {
+      "id": 7,
+      "status": "PASS_BOUNDARY",
+      "scope": "Transitional authority boundary",
+      "observed": "This receipt makes no default-authority, Rust transport retirement, logo/name/storage retirement, production, or full-migration claim. The current Rust authority is scalar brandColor; logo/name/storage remain an incomplete next authority slice by design."
+    },
+    {
+      "id": 8,
+      "status": "PASS",
+      "scope": "Exact-candidate baseline, architecture ratchet, and Desktop reconciliation",
+      "observed": "The final clean Desktop run passed, local-apps, agent-browser, and upgrade passed, architecture comparison exited 0 with no regressions, lint and typecheck passed, corrected targeted baseline reruns passed, and packaged checks passed against unchanged product inputs.",
+      "desktop_clean": {
+        "path": "/tmp/codex-rudder-clean-fixed.vcsXYw/desktop-clean-projects-library-final.log",
+        "sha256": "98a75396f41d38174097e6a8c1cdebadfc20bf2ffb69beec973043f31375941f",
+        "terminal": "Desktop smoke test passed (dev; clean).",
+        "navigation": "Projects primary rail -> supported Library deep link; Files and Editor cards were asserted visible. No sidebar-click claim.",
+        "line_evidence": {
+          "projects_primary_rail": 27,
+          "supported_library_deep_link": 28,
+          "stale_excluded_wording": 29,
+          "files_editor_assertions": "desktop/scripts/smoke.mjs:4476-4477"
+        },
+        "method_correction": "Line 29 is stale pre-e80 wording and is explicitly excluded. The receipt binds line 28 plus the current smoke assertions; it does not claim a sidebar action."
+      },
+      "desktop_other": [
+        {
+          "scenario": "local-apps",
+          "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/desktop-local-apps-final.log",
+          "sha256": "6bdee5fea740d0516153628219300178e241f702e01f1e7e84567dc9cf677c3f",
+          "result": "Desktop smoke test passed (dev; local-apps)."
+        },
+        {
+          "scenario": "agent-browser",
+          "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/desktop-agent-browser-final.log",
+          "sha256": "86b27c02f5096290cb5dace4840764cf92eefc8b088e7c45f44e520b4cc20155",
+          "result": "Desktop smoke test passed (dev; agent-browser)."
+        },
+        {
+          "scenario": "upgrade",
+          "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/desktop-upgrade-final.log",
+          "sha256": "adc8d97765ae0c051ac211cd69d90d3d5e962ecbf479359b3e5486fc82ebeba7",
+          "result": "Desktop smoke test passed (dev; upgrade)."
+        }
+      ],
+      "architecture": {
+        "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/architecture-library-final.log",
+        "sha256": "edac0ddf583a0ba0ef16b437ae9ca19fa61c24c85012b17773c36d32745a5d9c",
+        "result": "Comparison regressions: none; debt exception governance: valid; exit status: 0."
+      },
+      "baseline_reconciliation": {
+        "lint": {
+          "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/lint.log",
+          "sha256": "436fba8e922837e0a9ca47ff5b0001154bfa271e7c49e3f5e962249b8ab8d151",
+          "result": "2979 files checked; imports organized"
+        },
+        "typecheck": {
+          "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/typecheck.log",
+          "sha256": "edabd26b05ffca91be61deb83888b9c9c4b00aeccda273fd215ebd0a2f51f06b",
+          "result": "All recorded workspace package typechecks completed"
+        },
+        "targeted_reruns": [
+          {
+            "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/issue-lifecycle-rerun.log",
+            "sha256": "fc03fe387f2b1ed618e09e7838197da1391966fdc803f731da411bf0aaaeed74",
+            "result": "1 file passed, 95 tests passed"
+          },
+          {
+            "path": "/tmp/codex-rudder-v17-evidence.LWLCU0/scripts-perf-rerun.log",
+            "sha256": "be9ad82c915be76d82074122a9b4e4762463f757982a965d64a979802228d6f3",
+            "result": "1 file passed, 8 tests passed"
+          }
+        ],
+        "aggregate_honesty": "No single clean aggregate run is claimed. The packet records the initial 95-test timeout, the pre-repair startup-config assertion, and transient scripts EISDIR failure; targeted reruns pass 95/95 and 8/8, the remaining server suites are recorded as 1479 passed plus corrected startup forwarding 1/1, and the scripts aggregate is recorded as 187 plus the 8/8 benchmark rerun."
+      },
+      "packaged": "Packaged build and smoke logs passed against b4793 product inputs whose native/UI/desktop hashes are identical to the e80 product inputs; no production or signing claim is made."
+    }
+  ],
+  "ui_state_matrix": {
+    "exercised": [
+      "Desktop clean normal workflow and restart continuity",
+      "Projects primary rail navigation",
+      "Supported Library deep-link fallback",
+      "Rendered Files and Editor card visibility assertions",
+      "Desktop local-apps, agent-browser, and upgrade scenarios"
+    ],
+    "omitted": "Mobile browser and production/release verification are outside this bounded v17 packet and are not claimed."
+  },
+  "adjacent_risk_checked": [
+    "organization boundary and agent authorization",
+    "idempotency/conflict and mixed-patch rejection",
+    "outbox claim/recovery and failed publication",
+    "live-owner replacement ordering",
+    "unreadable/standalone recovery markers",
+    "WS disconnected HTTP-online continuity",
+    "mounted-provider stale response/cache isolation",
+    "Desktop restart, local-app, agent-browser, upgrade, and architecture regression"
+  ],
+  "missing_or_blocked": [],
+  "non_goals": [
+    "No production deployment or release-readiness claim",
+    "No full Rust backend migration claim",
+    "No Rust transport retirement claim",
+    "No logo/name/storage authority retirement claim",
+    "No replacement of the parent final reviewer/publication gate"
+  ],
+  "lease_recheck": {
+    "status": "current",
+    "source_sha": "e80deae94a441cc8cfa0411cf37a0a5949614285",
+    "source_tree": "e453569dd7d89dd800662c13550ece19ad0759ec",
+    "source_fingerprint_excluding_doc_plans": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "product_artifacts_match_recorded_hashes": true,
+    "rechecked_at": "2026-09-22T16:25:13Z"
+  }
+}

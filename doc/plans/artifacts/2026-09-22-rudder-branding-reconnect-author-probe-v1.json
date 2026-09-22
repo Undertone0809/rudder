@@ -1,0 +1,43 @@
+{
+  "kind": "author_probe_not_independent_acceptance",
+  "date": "2026-09-22",
+  "base_sha": "6e37a563523db92b63589557be18d12e65593101",
+  "candidate_state": "dirty_unfrozen_parallel_implementation",
+  "worktree": "/Users/zeeland/.codex/worktrees/rudder-branding-outbox-recovery-20260922/rudder-oss",
+  "artifacts": {
+    "ui_index_sha256": "61223c1c000bdda59f9c06861a97bd223d2e0e645a581203e436c6fe894a0285",
+    "foundation_sha256": "f3c3a07490c320cea30f1aa4b04bb6631dacf2aee2ea314b0fc355c3f3e747ab",
+    "migration_preflight_sha256": "634133066d7c046b2caec9c7c0d910872c674955b91c09cf4e1f45f905ccc469"
+  },
+  "runtime": {
+    "api_url": "http://127.0.0.1:51413",
+    "pid": 94380,
+    "organization_id": "de18e974-3715-47d4-b1ba-650002ccc2fe",
+    "project_id": "2a23d138-8b0f-4255-9f72-26881c2d6322",
+    "before_goal_id": "11a6bdbd-a0d4-4ecc-b109-7b69517029bb",
+    "after_goal_id": "cc9c2c9c-46ea-4f4b-b0d2-31c71fef6013",
+    "topology": "disposable Node public UI/API/WS plus private Actix SQLx bridge",
+    "cleanup": "owned runtime stopped with SIGTERM; fixture removed its disposable data; browser space 131 finished"
+  },
+  "workflow": {
+    "method": "ego-browser; instrument actual WebSocket constructor to hold reconnect attempts on an unreachable local socket while leaving browser HTTP connectivity online; observe DOM and real fetch responses",
+    "mutation_statuses": [200, 200],
+    "required_authority": "rust",
+    "branding_value": "#22bb66",
+    "disconnected": {"navigator_online": true, "live_sockets": 0, "organization_image_unchanged": true, "project_reads": 1},
+    "reconnected": {"navigator_online": true, "live_sockets": 1, "organization_image_changed": true, "project_reads": 2, "new_goal_readback": true},
+    "before_screenshot": "/tmp/rudder-branding-ws-reconnect-before.png",
+    "after_screenshot": "/tmp/rudder-branding-ws-reconnect-after.png"
+  },
+  "invalidated_attempts": [
+    "The first fixture used the rudder-* temp prefix and was stopped by Vitest's PostgreSQL sweeper; failed mutations are not acceptance evidence.",
+    "Browser-wide offline/online refetch could mask missing WebSocket reconciliation and is not the final method.",
+    "An earlier runtime served stale server/ui-dist despite a fresh ui/dist build; its reconnect failed. The final fixture checked identical UI indexes before starting."
+  ],
+  "limits": [
+    "This is author evidence on unfrozen sources, not verifier PASS or final reviewer accept.",
+    "The visible Project configuration has no goal field; Project-Goal recovery is observed through the real mounted page's HTTP response, not a claimed rendered goal label.",
+    "Cross-organization cache isolation and late-response cancellation have mounted-provider automated regression evidence, not independent browser evidence in this probe.",
+    "No default Rust listener, Node retirement, production deployment, or stable release is claimed."
+  ]
+}
