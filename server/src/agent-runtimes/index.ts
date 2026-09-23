@@ -1,10 +1,10 @@
-import path from "node:path";
 import {
   createClaudeLocalProviderCapabilityResolver,
   type ClaudeLocalProfileTransport,
   type ClaudeLocalProfileTransportResolver,
 } from "@rudderhq/agent-runtime-claude-local/server";
 import {
+  buildCodexProfileEnvironment,
   createCodexLocalProviderCapabilityResolver,
   type CodexAppServerProfileTransport,
   type CodexAppServerProfileTransportResolver,
@@ -15,7 +15,9 @@ import {
   type CursorLocalProfileTransportResolver,
 } from "@rudderhq/agent-runtime-cursor-local/server";
 import {
+  createHermesAcpProviderCapabilityResolver,
   createHermesGatewayProviderCapabilityResolver,
+  type HermesAcpProfileTransport,
   type HermesGatewayProfileTransport,
   type HermesGatewayProfileTransportResolver,
 } from "@rudderhq/agent-runtime-hermes-gateway/server";
@@ -29,6 +31,7 @@ import {
   type PiLocalProfileTransport,
   type PiLocalProfileTransportResolver,
 } from "@rudderhq/agent-runtime-pi-local/server";
+import path from "node:path";
 import {
   createProfileBoundRuntimeProviderCapabilityResolver as createProfileBoundRuntimeProviderCapabilityResolverFromMap,
   type RuntimeProviderAdapterResolver,
@@ -44,6 +47,14 @@ export type {
   AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta, AgentRuntimeLoadedMcpServerMeta, AgentRuntimeLoadedSkillMeta, AgentRuntimeSessionCodec, AgentRuntimeState, ServerAgentRuntimeModule, UsageSummary
 } from "@rudderhq/agent-runtime-utils";
 export {
+  composeRuntimeProviderCapabilityResolvers, createProfileBoundRuntimeProviderCapabilityResolver, type RuntimeProviderAdapterResolver,
+  type RuntimeProviderBindingRef,
+  type RuntimeProviderCapabilityAdapter,
+  type RuntimeProviderCapabilityResolution,
+  type RuntimeProviderCapabilityResolver,
+  type RuntimeProviderCapabilityResolverContext
+} from "../services/runtime-kernel/provider-capabilities.js";
+export {
   discoverAgentRuntimeModels,
   findServerAdapter,
   getServerAdapter,
@@ -51,16 +62,6 @@ export {
   listServerAdapters
 } from "./registry.js";
 export { runningProcesses } from "./utils.js";
-export {
-  createProfileBoundRuntimeProviderCapabilityResolver,
-  composeRuntimeProviderCapabilityResolvers,
-  type RuntimeProviderAdapterResolver,
-  type RuntimeProviderBindingRef,
-  type RuntimeProviderCapabilityAdapter,
-  type RuntimeProviderCapabilityResolution,
-  type RuntimeProviderCapabilityResolver,
-  type RuntimeProviderCapabilityResolverContext,
-} from "../services/runtime-kernel/provider-capabilities.js";
 
 /** Host-owned profile lookup functions used by tests and external profile stores. */
 export interface ProfileBoundRuntimeProviderCapabilityResolverCallbacks {
@@ -248,7 +249,9 @@ function profileResolvers(config: RuntimeProviderProfileConfig): Record<string, 
       command: firstString(runtimeConfig.command) ?? "codex",
       args: readStringArray(runtimeConfig.extraArgs ?? runtimeConfig.args) ?? undefined,
       cwd: profileCwd(config),
-      env: { ...env, ...(codexHome ? { CODEX_HOME: path.resolve(codexHome) } : {}) },
+      // Match execute's host environment (PATH/HOME/auth helpers) while the
+      // explicitly resolved managed home remains the history authority.
+      env: buildCodexProfileEnvironment({ configured: env, codexHome: codexHome ? path.resolve(codexHome) : null }),
       providerVersion: providerVersion(config),
       methods,
     };
@@ -268,8 +271,29 @@ function profileResolvers(config: RuntimeProviderProfileConfig): Record<string, 
     return createClaudeLocalProviderCapabilityResolver(() => profile)(_runtimeType, binding);
   };
 
-  const hermes: RuntimeProviderAdapterResolver = (_runtimeType, binding) => {
+  const hermes: RuntimeProviderAdapterResolver = (_runtimeType, binding, context) => {
     if (!binding) return null;
+    const transport = firstString(context?.session?.sessionParams?.transport);
+    // Historical HTTP sessions retain their original reader. New Chat bindings
+    // resolve the same ACP profile that execute uses, without an opt-in flag.
+    if (transport === "hermes-acp-stdio" || (!transport && !historical)) {
+      const configuredMcp = runtimeConfig.hermesAcpMcpServers ?? runtimeConfig.mcpServers;
+      const profile: HermesAcpProfileTransport = {
+        binding: providerBinding(binding),
+        command: firstString(runtimeConfig.hermesAcpCommand, runtimeConfig.acpCommand, runtimeConfig.command) ?? "hermes",
+        args: readStringArray(runtimeConfig.hermesAcpArgs ?? runtimeConfig.acpArgs ?? runtimeConfig.args) ?? ["acp"],
+        cwd: profileCwd(config),
+        env,
+        hermesPythonCommand: firstString(runtimeConfig.hermesPythonCommand, runtimeConfig.hermesHistoryPythonCommand),
+        hermesSourcePath: firstString(runtimeConfig.hermesSourcePath, runtimeConfig.hermesHistorySourcePath),
+        hermesHome: firstString(runtimeConfig.hermesHome, env.HERMES_HOME),
+        providerVersion: providerVersion(config),
+        protocolVersion: typeof runtimeConfig.hermesAcpProtocolVersion === "number" ? runtimeConfig.hermesAcpProtocolVersion : 1,
+        authMethodId: firstString(runtimeConfig.hermesAcpAuthMethodId, runtimeConfig.authMethodId),
+        mcpServers: Array.isArray(configuredMcp) ? configuredMcp.filter((value) => value && typeof value === "object" && !Array.isArray(value)) : [],
+      };
+      return createHermesAcpProviderCapabilityResolver(() => profile)(_runtimeType, binding);
+    }
     const headers = readStringMap(runtimeConfig.headers);
     const apiKey = firstString(
       runtimeConfig.apiKey,
@@ -279,7 +303,12 @@ function profileResolvers(config: RuntimeProviderProfileConfig): Record<string, 
     );
     const profile: HermesGatewayProfileTransport = {
       binding: providerBinding(binding),
-      baseUrl: firstString(runtimeConfig.hermesBaseUrl, runtimeConfig.gatewayUrl) ?? "",
+      baseUrl: firstString(
+        runtimeConfig.url,
+        runtimeConfig.baseUrl,
+        runtimeConfig.hermesBaseUrl,
+        runtimeConfig.gatewayUrl,
+      ) ?? "",
       providerVersion: providerVersion(config) ?? "",
       ...(apiKey ? { apiKey } : {}),
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
@@ -427,5 +456,5 @@ export {
   type RuntimeDriverResumeInput,
   type RuntimeDriverSession,
   type RuntimeDriverSubmitInput,
-  type RuntimeDriverTranscriptRangeRequest,
+  type RuntimeDriverTranscriptRangeRequest
 } from "../services/runtime-kernel/runtime-driver.js";
