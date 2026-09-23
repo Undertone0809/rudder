@@ -639,12 +639,16 @@ export function organizationWorkspaceBrowserService(
       assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
       signal?.throwIfAborted();
       const canonicalDirectoryPath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
-      const targetIsAlias = path.resolve(canonicalRoot) !== path.resolve(resolvedRoot)
-        || canonicalDirectoryPath !== normalizedPath;
-      const [initialRootIdentity, initialTargetIdentity] = await Promise.all([
+      const [resolvedRootIdentity, initialRootIdentity, initialTargetIdentity] = await Promise.all([
+        fs.stat(resolvedRoot).then(directoryIdentity),
         fs.stat(canonicalRoot).then(directoryIdentity),
         fs.stat(canonicalTarget).then(directoryIdentity),
       ]);
+      // On macOS `/var` is a symlink to `/private/var`; compare the physical
+      // directory identity so that platform aliases are not confused with a
+      // user-requested alias inside the organization workspace.
+      const targetIsAlias = !sameDirectoryIdentity(resolvedRootIdentity, initialRootIdentity)
+        || canonicalDirectoryPath !== normalizedPath;
 
       const policy = resolveRudderNativeCapability({
         capability: "workspace-files",
