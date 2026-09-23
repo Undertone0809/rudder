@@ -207,7 +207,7 @@ function ManifestRow({
       <button
         type="button"
         data-target-type={item.targetType}
-        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-sm)] px-0 py-1.5 text-left transition-colors hover:bg-[color:var(--surface-active)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
         onClick={onOpen}
         title={item.title}
         aria-describedby={issueStatus ? issueStatusDescriptionId : undefined}
@@ -279,7 +279,7 @@ function ManifestSection({
           reserveActionSpace={reserveActionSpace}
         />
       )}
-      <div id={sectionId} className="space-y-0.5 px-2.5 pb-2 pt-1.5" role="list">
+      <div id={sectionId} className="space-y-0.5 px-3.5 pb-2 pt-1.5" role="list">
         {visibleItems.map((item) => (
           <div key={item.id} role="listitem">
             <ManifestRow
@@ -328,7 +328,7 @@ function ManifestSectionHeader({
       className="flex min-h-10 shrink-0 items-center gap-2 border-b border-border/55 bg-muted/20 px-3.5 text-xs font-semibold text-muted-foreground"
       data-testid={`chat-work-manifest-section-header-${stableTestIdLabel}`}
     >
-      <span className="grid size-5 shrink-0 place-items-center text-muted-foreground/90" aria-hidden="true">{icon}</span>
+      <span className="grid size-7 shrink-0 place-items-center text-muted-foreground/90" aria-hidden="true">{icon}</span>
       <span className="text-foreground/80">{label}</span>
       <span
         className="ml-auto tabular-nums"
@@ -579,7 +579,7 @@ export function ChatWorkManifest(props: ChatWorkManifestProps) {
       {compactOpen ? (
         <div
           id="chat-work-manifest-compact-panel"
-          className="pointer-events-auto absolute right-[-7rem] top-10 flex max-h-[min(32rem,calc(100dvh-6rem))] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-border/70 bg-[color:var(--surface-overlay)] shadow-[var(--shadow-lg)] xl:hidden"
+          className="pointer-events-auto absolute right-[-7rem] top-10 flex max-h-[min(32rem,calc(100dvh-6rem))] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-border/70 bg-[color:var(--surface-overlay)] shadow-[var(--shadow-lg)] md:right-0 xl:hidden"
           data-testid="chat-work-manifest-compact-panel"
           role="complementary"
           aria-label={localizeText("Conversation files and links")}
