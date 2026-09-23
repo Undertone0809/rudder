@@ -61,6 +61,7 @@ import {
   resolveSidePanelDragWidth,
   shouldAutoCollapseContextSidebar,
   shouldAutoExpandSidePanel,
+  shouldShowContextSidebar,
   useAutoCollapseWorkspaceWidth,
   useViewportResizeTransition,
   widthRatio,
@@ -91,8 +92,7 @@ export {
   resolveProportionalSidePanelWidth,
   resolveSidePanelCollapseWidth,
   resolveSidePanelDragWidth,
-  shouldAutoCollapseContextSidebar,
-  shouldAutoExpandSidePanel
+  shouldAutoCollapseContextSidebar, shouldAutoExpandSidePanel, shouldShowContextSidebar
 } from "../lib/workspace-shell-layout";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
@@ -876,7 +876,15 @@ function CollapsedWorkspaceSidebarReveal({
 export function Layout() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
+  const {
+    sidebarOpen,
+    setSidebarOpen,
+    contextSidebarExpandedByUser,
+    setContextSidebarExpandedByUser,
+    openSidebarByUser,
+    toggleSidebar,
+    isMobile,
+  } = useSidebar();
   const {
     openNewIssue,
     openOnboarding,
@@ -997,21 +1005,33 @@ export function Layout() {
     relativePath: relativeBoardPath,
     sidePanelOpen,
     sidePanelContextReady,
+    viewportWidth,
   });
   const autoCollapseContextSidebarOnOpen = shouldAutoCollapseContextSidebar({
     isMobile,
     relativePath: relativeBoardPath,
     sidePanelOpen: true,
     sidePanelContextReady,
+    viewportWidth,
   });
   const autoCollapseContextSidebarKey = autoCollapseContextSidebarOnOpen
     ? `${relativeBoardPath}:${displayedSidePanelContext.contextKey}`
     : null;
-  const contextSidebarVisible = sidebarOpen && !autoCollapseContextSidebar;
+  const contextSidebarVisible = shouldShowContextSidebar({
+    sidebarOpen,
+    autoCollapseContextSidebar,
+    expandedByUser: contextSidebarExpandedByUser,
+  });
   const openWorkspaceSidebar = useCallback(() => {
-    if (autoCollapseContextSidebar) hidePanel();
-    setSidebarOpen(true);
-  }, [autoCollapseContextSidebar, hidePanel, setSidebarOpen]);
+    if (autoCollapseContextSidebar && isMessengerRoute) {
+      openSidebarByUser();
+    } else if (autoCollapseContextSidebar) {
+      hidePanel();
+      setSidebarOpen(true);
+    } else {
+      setSidebarOpen(true);
+    }
+  }, [autoCollapseContextSidebar, hidePanel, isMessengerRoute, openSidebarByUser, setSidebarOpen]);
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1137,6 +1157,10 @@ export function Layout() {
   useLayoutEffect(() => {
     if (!sidePanelOpen) setDesktopSidePanelExpanded(false);
   }, [sidePanelOpen]);
+
+  useEffect(() => {
+    setContextSidebarExpandedByUser(false);
+  }, [relativeBoardPath, sidePanelOpen]);
 
   useEffect(() => {
     rememberPrimaryRailPath(matchedOrganization?.id, relativeBoardUrl);
@@ -1627,7 +1651,7 @@ export function Layout() {
                       <>
                         <div
                           data-testid="workspace-context-card"
-                          data-auto-collapsed={autoCollapseContextSidebar || undefined}
+                          data-auto-collapsed={autoCollapseContextSidebar && !contextSidebarVisible || undefined}
                           aria-hidden={!contextSidebarVisible}
                           inert={contextSidebarVisible ? undefined : true}
                           className={cn(
@@ -1667,7 +1691,7 @@ export function Layout() {
                       </>
                     ) : null}
                     {showIntegratedShellSidebar
-                      && (!sidebarOpen || autoCollapseContextSidebar)
+                      && !contextSidebarVisible
                       && useFramelessWorkspaceMain
                       && !hasActiveChatConversation ? (
                       <CollapsedWorkspaceSidebarReveal

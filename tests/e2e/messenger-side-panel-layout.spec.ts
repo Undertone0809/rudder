@@ -1,12 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { createE2EChatAgent } from "./support/chat-agent";
 
-test("collapses the Messenger List with Side Panel and restores it after close", async ({ page }, testInfo) => {
+test("collapses the Messenger List on a laptop and keeps the Side Panel when the list is reopened", async ({ page }, testInfo) => {
   test.setTimeout(90_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1366, height: 900 });
 
   const organizationResponse = await page.request.post("/api/orgs", {
     data: { name: `Messenger-Side-Panel-Layout-${Date.now()}` },
@@ -53,7 +53,7 @@ test("collapses the Messenger List with Side Panel and restores it after close",
   await expect.poll(async () => {
     const box = await sidePanel.boundingBox();
     return box ? box.x + box.width : 0;
-  }).toBeLessThanOrEqual(1440);
+  }).toBeLessThanOrEqual(1366);
   await expect.poll(async () => page.evaluate(() => {
     const card = document.querySelector<HTMLElement>("[data-testid='workspace-context-card']");
     if (!card) return null;
@@ -62,13 +62,21 @@ test("collapses the Messenger List with Side Panel and restores it after close",
   })).toBe("0px:0px");
 
   await manualRestoreButton.click();
-  await expect(sidePanel).toBeHidden();
+  await expect(sidePanel).toBeVisible();
   await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
+  await expect(manualRestoreButton).toHaveCount(0);
+  await expect.poll(async () => (await page.getByTestId("workspace-main-card").boundingBox())?.width ?? 0)
+    .toBeGreaterThan(200);
+  await page.screenshot({
+    path: testInfo.outputPath("messenger-laptop-manual-three-panel-layout.png"),
+    fullPage: true,
+  });
 
+  await page.getByTestId("chat-side-panel-collapse").click();
+  await expect(sidePanel).toBeHidden();
   await page.getByTestId("side-panel-hover-edge").hover();
   await page.getByTestId("global-side-panel-trigger").click();
-  await expect(sidePanel).toBeVisible();
   await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 
@@ -91,12 +99,12 @@ test("collapses the Messenger List with Side Panel and restores it after close",
   expect(pageErrors).toEqual([]);
 });
 
-test("restores the Messenger List from the active chat header", async ({ page }, testInfo) => {
+test("reopens the Messenger List from the active chat header without closing the Side Panel", async ({ page }, testInfo) => {
   test.setTimeout(90_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1366, height: 900 });
 
   const organizationResponse = await page.request.post("/api/orgs", {
     data: { name: `Messenger-Active-Chat-Side-Panel-${Date.now()}` },
@@ -227,7 +235,7 @@ test("restores the Messenger List from the active chat header", async ({ page },
   await expect(contextCard).toHaveAttribute("data-auto-collapsed", "true");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 
-  for (const viewportWidth of [1280, 1024, 900, 1120, 1024, 1440]) {
+  for (const viewportWidth of [1280, 1024, 900, 1120, 1024, 1366]) {
     await page.setViewportSize({ width: viewportWidth, height: 900 });
     const immediateGeometry = await page.evaluate(() => {
       const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']")?.getBoundingClientRect();
@@ -255,7 +263,7 @@ test("restores the Messenger List from the active chat header", async ({ page },
     })).toBe(true);
   }
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1366, height: 900 });
   await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeGreaterThan(300);
   await expect.poll(async () => page.evaluate(() => {
     const main = document.querySelector<HTMLElement>("[data-testid='workspace-main-card']");
@@ -265,10 +273,22 @@ test("restores the Messenger List from the active chat header", async ({ page },
   })).toBeLessThanOrEqual(2);
 
   await reopenButton.click();
-  await expect(sidePanel).toBeHidden();
+  await expect(sidePanel).toBeVisible();
   await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
   await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
   await expect(reopenButton).toHaveCount(0);
+  await expect.poll(async () => {
+    const panel = await sidePanel.boundingBox();
+    const main = await page.getByTestId("workspace-main-card").boundingBox();
+    return Boolean(panel && main
+      && panel.width > 300
+      && main.width > 200
+      && panel.x + panel.width <= 1367);
+  }).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("messenger-active-chat-manual-three-panel-layout.png"),
+    fullPage: true,
+  });
 
   expect(pageErrors).toEqual([]);
 });
@@ -278,7 +298,7 @@ test("keeps Side Panel geometry when entering Messenger from an open panel", asy
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1366, height: 900 });
 
   const organizationResponse = await page.request.post("/api/orgs", {
     data: { name: `Messenger-Open-Panel-Route-Continuity-${Date.now()}` },
@@ -358,4 +378,35 @@ test("keeps Side Panel geometry when entering Messenger from an open panel", asy
   });
 
   expect(pageErrors).toEqual([]);
+});
+
+test("keeps the Messenger List visible when the Side Panel opens on a wide display", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1800, height: 1000 });
+
+  const organizationResponse = await page.request.post("/api/orgs", {
+    data: { name: `Messenger-Wide-Side-Panel-${Date.now()}` },
+  });
+  expect(organizationResponse.ok()).toBe(true);
+  const organization = await organizationResponse.json() as { id: string; urlKey: string };
+
+  await page.goto(`/${organization.urlKey}/messenger/chat`);
+  const contextCard = page.getByTestId("workspace-context-card");
+  const messengerList = page.getByTestId("workspace-sidebar");
+  await expect(messengerList).toBeVisible({ timeout: 20_000 });
+
+  await page.getByTestId("side-panel-hover-edge").hover();
+  await page.getByTestId("global-side-panel-trigger").click();
+
+  const sidePanel = page.getByTestId("chat-side-panel");
+  await expect(sidePanel).toBeVisible();
+  await expect(contextCard).not.toHaveAttribute("data-auto-collapsed");
+  await expect.poll(async () => (await messengerList.boundingBox())?.width ?? 0).toBeGreaterThan(120);
+  await expect.poll(async () => (await sidePanel.boundingBox())?.width ?? 0).toBeGreaterThan(300);
+  await expect.poll(async () => (await page.getByTestId("workspace-main-card").boundingBox())?.width ?? 0)
+    .toBeGreaterThan(300);
+
+  await page.screenshot({
+    path: testInfo.outputPath("messenger-wide-three-panel-layout.png"),
+    fullPage: true,
+  });
 });

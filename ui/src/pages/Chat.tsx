@@ -177,6 +177,7 @@ import { latestSideChatAnchor } from "@/lib/side-chat";
 import { chatGenerationScopeKey, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { resolveTranscriptSkillSidePanelTarget } from "@/lib/transcript-skill-targets";
 import { cn } from "@/lib/utils";
+import { MESSENGER_THREE_PANEL_MIN_VIEWPORT_WIDTH } from "@/lib/workspace-shell-layout";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   type ChatConversation,
@@ -323,9 +324,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const organizationRouteMatchesSelection = Boolean(
     viewedOrganizationId && viewedOrganizationId === selectedOrganizationId,
   );
-  const { hidePanel } = useSidePanel();
-  const showChatSidebarOpener = !isMobile && (!sidebarOpen || (isMessengerChatRoute && sidePanelOpen));
-  const openChatWorkspaceSidebar = useCallback(() => { if (isMessengerChatRoute && sidePanelOpen) hidePanel(); setSidebarOpen(true); }, [hidePanel, isMessengerChatRoute, setSidebarOpen, sidePanelOpen]);
+  const { contextSidebarExpandedByUser, openSidebarByUser, viewportWidth } = useSidebar();
+  const showChatSidebarOpener = !isMobile && (
+    !sidebarOpen
+    || (isMessengerChatRoute && sidePanelOpen
+      && viewportWidth < MESSENGER_THREE_PANEL_MIN_VIEWPORT_WIDTH
+      && !contextSidebarExpandedByUser)
+  );
+  const openChatWorkspaceSidebar = useCallback(() => { openSidebarByUser(); }, [openSidebarByUser]);
   const checkpointDispatcherRef = useRef<ReturnType<typeof createChatClientCheckpointDispatcher> | null>(null);
   if (!checkpointDispatcherRef.current) {
     checkpointDispatcherRef.current = createChatClientCheckpointDispatcher((checkpoint) => {
