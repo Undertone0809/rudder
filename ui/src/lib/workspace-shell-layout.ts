@@ -8,6 +8,7 @@ const SIDE_PANEL_COLLAPSE_WIDTH = 292;
 const SIDE_PANEL_COLLAPSE_GAP = SIDE_PANEL_MIN_WIDTH - SIDE_PANEL_COLLAPSE_WIDTH;
 export const SIDE_PANEL_RESIZER_WIDTH = 4;
 export const SIDE_PANEL_RESIZER_HIT_WIDTH = 10;
+export const MESSENGER_THREE_PANEL_MIN_VIEWPORT_WIDTH = 1440;
 
 export function getCurrentViewportWidth(): number | null {
   if (typeof window === "undefined") return null;
@@ -24,16 +25,35 @@ export function shouldAutoCollapseContextSidebar({
   relativePath,
   sidePanelOpen,
   sidePanelContextReady,
+  viewportWidth = null,
 }: {
   isMobile: boolean;
   relativePath: string;
   sidePanelOpen: boolean;
   sidePanelContextReady: boolean;
+  viewportWidth?: number | null;
 }): boolean {
+  const isAgentRunRoute = /^\/agents\/[^/]+(?:\/|$)/.test(relativePath);
+  const isMessengerRoute = /^\/messenger(?:\/|$)/.test(relativePath);
+  const messengerNeedsSpace = viewportWidth === null
+    || viewportWidth < MESSENGER_THREE_PANEL_MIN_VIEWPORT_WIDTH;
+
   return !isMobile
     && sidePanelOpen
     && sidePanelContextReady
-    && (/^\/agents\/[^/]+(?:\/|$)/.test(relativePath) || /^\/messenger(?:\/|$)/.test(relativePath));
+    && (isAgentRunRoute || (isMessengerRoute && messengerNeedsSpace));
+}
+
+export function shouldShowContextSidebar({
+  sidebarOpen,
+  autoCollapseContextSidebar,
+  expandedByUser,
+}: {
+  sidebarOpen: boolean;
+  autoCollapseContextSidebar: boolean;
+  expandedByUser: boolean;
+}): boolean {
+  return sidebarOpen && (!autoCollapseContextSidebar || expandedByUser);
 }
 
 function getSidePanelGeometry(workspaceWidth: number) {

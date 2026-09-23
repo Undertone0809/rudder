@@ -13,6 +13,7 @@ import {
   resolveSidePanelRouteContextKey,
   shouldAutoCollapseContextSidebar,
   shouldAutoExpandSidePanel,
+  shouldShowContextSidebar,
   shouldUseFramelessWorkspaceMain,
 } from "./Layout";
 
@@ -116,7 +117,29 @@ describe("side panel route context", () => {
       relativePath: "/messenger/chat/chat-1",
       sidePanelOpen: true,
       sidePanelContextReady: true,
+      viewportWidth: 1366,
     })).toBe(true);
+    expect(shouldAutoCollapseContextSidebar({
+      isMobile: false,
+      relativePath: "/messenger/chat/chat-1",
+      sidePanelOpen: true,
+      sidePanelContextReady: true,
+      viewportWidth: 1439,
+    })).toBe(true);
+    expect(shouldAutoCollapseContextSidebar({
+      isMobile: false,
+      relativePath: "/messenger/chat/chat-1",
+      sidePanelOpen: true,
+      sidePanelContextReady: true,
+      viewportWidth: 1440,
+    })).toBe(false);
+    expect(shouldAutoCollapseContextSidebar({
+      isMobile: false,
+      relativePath: "/messenger/chat/chat-1",
+      sidePanelOpen: true,
+      sidePanelContextReady: true,
+      viewportWidth: 1600,
+    })).toBe(false);
     expect(shouldAutoCollapseContextSidebar({
       isMobile: false,
       relativePath: "/agents",
@@ -140,7 +163,26 @@ describe("side panel route context", () => {
       relativePath: "/messenger/chat/chat-1",
       sidePanelOpen: true,
       sidePanelContextReady: true,
+      viewportWidth: 390,
     })).toBe(false);
+  });
+
+  it("lets an explicit Messenger list reveal override automatic collapse", () => {
+    expect(shouldShowContextSidebar({
+      sidebarOpen: true,
+      autoCollapseContextSidebar: true,
+      expandedByUser: false,
+    })).toBe(false);
+    expect(shouldShowContextSidebar({
+      sidebarOpen: true,
+      autoCollapseContextSidebar: true,
+      expandedByUser: true,
+    })).toBe(true);
+    expect(shouldShowContextSidebar({
+      sidebarOpen: true,
+      autoCollapseContextSidebar: false,
+      expandedByUser: false,
+    })).toBe(true);
   });
 
   it("scopes side panel state to Messenger chats and issues", () => {
