@@ -36,15 +36,15 @@ current_checkout_override:
 active_candidate:
   worktree: /private/tmp/rudder-rust-mainline-probe-20260923
   branch: codex/rudder-rust-mainline-probe-20260923
-  source_sha: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
-  source_tree: 15c813eb7aff94e87f406e552b8d406e4512a5cd
+  source_sha: 8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c
+  source_tree: d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3
   dirty_fingerprint: ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161
-  dirty_fingerprint_scope: 105_source_paths_nul_safe_sha256_excluding_all_doc_plans_records
+  dirty_fingerprint_scope: 105_source_paths_committed_blob_sha256_excluding_all_doc_plans_records_content_equivalent_to_precommit
   origin_main: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
   migration_manifest: {journal_entries: 175, sql_files: 177, fingerprint: bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7}
   real_entry_artifact: doc/plans/artifacts/2026-09-23-rudder-rust-d1-real-entry-probe-v22.json
   acceptance_packet: doc/plans/2026-09-23-rudder-full-rust-backend-completion-delivery-packet-v22.json
-  status: real_entry_connected_recovery_evidence_stage_review_pending
+  status: committed_content_equivalent_receipts_pending_rebind
   initial_failure: missing_migration_preflight_binary_fail_closed_without_product_mutation
   rerun: branding_and_project_goal_and_recovery_pass_after_local_binary_build
   recovery_evidence: {audit_failure_rollback: PASS, outbox_interrupted_claim_restart_retry: PASS, branding_log_sha256: 9de84789a079b32b6912baacbcaa382a8c5e1558094da22dff82294745221946, project_goal_log_sha256: 852d78bc2c79eb4cb7531e01e1ddc31cf726a39fef15bdb17d4141159075b343}
@@ -366,8 +366,8 @@ claims:
   production_verified: false
 candidate:
   source_ref: codex/rudder-rust-mainline-probe-20260923
-  source_sha: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
-  tree_sha: 15c813eb7aff94e87f406e552b8d406e4512a5cd
+  source_sha: 8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c
+  tree_sha: d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3
   dirty_fingerprint: ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161
   dirty_fingerprint_scope: 105_source_paths_nul_safe_sha256_excluding_all_doc_plans_records
   identity_source_of_truth: current_checkout_override
@@ -394,12 +394,12 @@ current_v22_evidence:
   dirty_fingerprint: ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161
   author_checks: packet_and_artifact_json_valid_yaml_valid_delivery_packet_valid_git_diff_check_pass_fingerprint_recomputed
   real_entry: {branding: PASS, project_goal: PASS, audit_failure_rollback: PASS, outbox_interrupted_claim_restart_retry: PASS, cli: PASS, mcp: PASS}
-  reviewer: Boyle_stage_accept_01a0cba6_2026-09-23T00:28:51Z_rebound_concrete_data_tuple
-  verifier: Hegel_PASS_01a0cb8d_2026-09-23T00:08:36Z_logs_287db1d_207ad992_rebound_fixture_lease_current
-  final_review: Jason_accept_01a0cb9b_2026-09-23T00:32:30Z_same_rebound_tuple_no_findings
+  reviewer: Boyle_accept_01a0cba6_2026-09-23T00:48:31Z_committed_content_equivalence
+  verifier: Hegel_PASS_01a0cb8d_2026-09-23T00:42:29Z_committed_content_equivalence_lease_current
+  final_review: Jason_accept_01a0cb9b_2026-09-23T00:54:16Z_committed_same_tuple_no_findings
 phase:
   current: 0
-  next_executable: scoped_commit_push_branch_open_pr_then_rebind_after_main_drift
+  next_executable: push_committed_branch_open_pr_then_record_remote_identity
   gates:
     phase_0: in_progress
     phase_1: in_progress
@@ -412,7 +412,7 @@ phase:
 slice:
   current: organization_member_directory_branding_project_goal_actor_cli_mcp_and_desktop_receipt_reconciliation
   next: organization_settings_transaction_and_Chat_approval_name_authority_after_current_slice_acceptance
-  status: mainline_adapted_v22_stage_accept_verifier_PASS_final_review_accept_integration_pending
+  status: mainline_adapted_v22_committed_reviewer_verifier_final_accept_integration_pending
 historical_v16_evidence:
   scope: following_v16_receipts_are_historical_current_evidence_is_in_active_work_and_v17_packet
   reviewer: accept_stage_verdict_Archimedes_01a0c913-8d45-72e3-ad30-d3ebe87839f3

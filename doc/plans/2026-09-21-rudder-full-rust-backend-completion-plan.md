@@ -869,3 +869,13 @@ verifier's concrete organization/data tuple. Boyle reissued the stage review
 as `accept` on that rebound tuple. The final review returned `accept` with no
 findings on the rebound tuple. The bounded slice is ready for a scoped commit
 and PR; it is still not a claim that the overall migration is complete.
+
+The reviewed slice was then committed as `8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c`
+with tree `d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3`. A committed-blob hash
+stream over the same 105 source paths is exactly the prior fingerprint
+`ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161`, so the
+behavioral candidate is content-equivalent. The three precommit receipts are
+nevertheless invalidated until their issuing agents rebind them to the new
+commit identity. Hegel then returned committed-candidate `PASS`, Boyle
+reissued stage `accept`, and Jason reissued final `accept` with no findings on
+the committed tuple. The next gate is the protected-branch PR handoff.

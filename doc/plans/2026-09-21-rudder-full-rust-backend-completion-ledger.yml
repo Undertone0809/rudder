@@ -28,10 +28,10 @@ current_checkout:
 active_candidate:
   worktree: /private/tmp/rudder-rust-mainline-probe-20260923
   branch: codex/rudder-rust-mainline-probe-20260923
-  source_sha: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
-  source_tree: 15c813eb7aff94e87f406e552b8d406e4512a5cd
+  source_sha: 8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c
+  source_tree: d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3
   dirty_fingerprint: ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161
-  main_reconciliation: origin_main_cf131_current_candidate_from_isolated_worktree
+  main_reconciliation: origin_main_cf131_current_candidate_committed_8e5b3fff_content_equivalent_to_precommit
   manifest: {journal_entries: 175, sql_files: 177, fingerprint: bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7}
   real_entry: {branding: PASS, project_goal: PASS, cli: PASS, mcp: PASS, audit_failure_rollback: PASS, outbox_restart_retry: PASS, default_path: false, old_authority_retired: false}
   artifact: doc/plans/artifacts/2026-09-23-rudder-rust-d1-real-entry-probe-v22.json
@@ -39,10 +39,10 @@ active_candidate:
   first_attempt: migration_preflight_binary_missing_fail_closed
   rerun: migration_preflight_built_then_both_real_entry_markers_and_recovery_markers_PASS
   logs: {branding: /tmp/rudder-rust-branding-v25.log, project_goal: /tmp/rudder-rust-project-goal-v25.log, branding_sha256: 9de84789a079b32b6912baacbcaa382a8c5e1558094da22dff82294745221946, project_goal_sha256: 852d78bc2c79eb4cb7531e01e1ddc31cf726a39fef15bdb17d4141159075b343}
-  reviewer: {agent_id: 01a0cba6-9d65-79c0-8d84-472a00b51ab5, verdict: accept, level: stage_verdict, reviewed_at: "2026-09-23T00:28:51Z", status: rebound_concrete_data_identity}
-  verifier: {agent_id: 01a0cb8d-0c38-7471-9085-e162e9414a74, verdict: PASS, verified_at: "2026-09-23T00:08:36Z", data_id: "rust-branding-real-entry-9655;rust-project-goal-real-entry-12056", logs: ["/tmp/rudder-v22-independent-branding.log", "/tmp/rudder-v22-independent-project-goal.log"], lease: current}
-  final_review: {agent_id: 01a0cb9b-6f37-7472-b20c-000c1f618e05, verdict: accept, level: final_handoff_verdict, reviewed_at: "2026-09-23T00:32:30Z", findings: none, tuple: rebound_concrete_data_identity}
-  next: scoped_commit_push_branch_open_pr_then_reconcile_new_origin_main_before_next_slice
+  reviewer: {agent_id: 01a0cba6-9d65-79c0-8d84-472a00b51ab5, verdict: accept, reviewed_at: "2026-09-23T00:48:31Z", tuple: committed_content_equivalence}
+  verifier: {agent_id: 01a0cb8d-0c38-7471-9085-e162e9414a74, verdict: PASS, verified_at: "2026-09-23T00:42:29Z", tuple: committed_content_equivalence, lease: current}
+  final_review: {agent_id: 01a0cb9b-6f37-7472-b20c-000c1f618e05, verdict: accept, reviewed_at: "2026-09-23T00:54:16Z", findings: none, tuple: committed_content_equivalence}
+  next: push_committed_branch_open_pr_then_record_remote_identity
 new_main_integration_gate:
   main_sha: e73976f0fa0662b1605838e92232b2b27cdc0faa
   state: rebase_complete_source007b8_full_build_typecheck_lint_package_validation_and64_affected_tests_PASS

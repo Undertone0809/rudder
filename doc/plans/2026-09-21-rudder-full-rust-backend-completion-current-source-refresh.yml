@@ -2,13 +2,13 @@ schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-23
 current_rebind:
-  source_sha: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
+  source_sha: 8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c
   branch: codex/rudder-rust-mainline-probe-20260923
   worktree: /private/tmp/rudder-rust-mainline-probe-20260923
-  tree_sha: 15c813eb7aff94e87f406e552b8d406e4512a5cd
+  tree_sha: d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3
   dirty_fingerprint: ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161
   source_path_count: 105
-  dirty_fingerprint_scope: 105_source_paths_nul_safe_sha256_excluding_all_doc_plans_records
+  dirty_fingerprint_scope: 105_source_paths_committed_blob_sha256_excluding_all_doc_plans_records_content_equivalent_to_precommit
   migration_manifest: {journal_entries: 175, sql_files: 177, fingerprint: bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7}
   scan_counts: {route_source_files: 47, route_declaration_hits: 513, transaction_source_files: 65, transaction_hits: 224, sql_migration_files: 177, migration_journal_entries: 175, cli_capability_entries: 119, mcp_descriptor_entries: 108}
   real_entry: {branding: PASS, project_goal: PASS, cli: PASS, mcp: PASS, audit_failure_rollback: PASS, outbox_restart_retry: PASS}
@@ -16,7 +16,7 @@ current_rebind:
   packet: doc/plans/2026-09-23-rudder-full-rust-backend-completion-delivery-packet-v22.json
   logs: {branding: /tmp/rudder-rust-branding-v25.log, project_goal: /tmp/rudder-rust-project-goal-v25.log, branding_sha256: 9de84789a079b32b6912baacbcaa382a8c5e1558094da22dff82294745221946, project_goal_sha256: 852d78bc2c79eb4cb7531e01e1ddc31cf726a39fef15bdb17d4141159075b343}
   authority: {default_rust_listener: false, first_party_node_writers_retired: false, full_rust_migration: false}
-  next: scoped_commit_push_pr_then_reconcile_new_origin_main_before_next_slice
+  next: push_committed_branch_open_pr_then_reconcile_new_origin_main_before_next_slice
 candidate:
   source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
   branch: codex/rudder-full-rust-backend-completion-20260921
