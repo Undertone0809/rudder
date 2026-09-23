@@ -238,6 +238,70 @@ fn body_binding_rejects_substitution_without_consuming_nonce() {
 }
 
 #[test]
+fn idempotency_key_binding_rejects_header_substitution_without_consuming_nonce() {
+    let envelope = ActorEnvelope::new(
+        actor(),
+        "org-1",
+        "session-1",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-idempotency-binding",
+        "nonce-idempotency-binding",
+        1_000,
+        1_010,
+    )
+    .expect("unsigned envelope")
+    .with_idempotency_key("idempotency-signed")
+    .expect("idempotency key")
+    .sign(SECRET)
+    .expect("signed envelope");
+    let request_actor = actor();
+    let mut replay = NonceReplayGuard::new();
+
+    let substituted = RequestContext::new(
+        &request_actor,
+        "org-1",
+        "session-1",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-idempotency-binding",
+        1_005,
+    )
+    .with_idempotency_key("idempotency-header");
+    assert_eq!(
+        envelope.verify(SECRET, &substituted, &mut replay),
+        Err(rudder_auth_core::AuthError::IdempotencyKeyMismatch)
+    );
+    assert!(replay.is_empty());
+
+    let matching = RequestContext::new(
+        &request_actor,
+        "org-1",
+        "session-1",
+        7,
+        "rudder-node",
+        "POST",
+        "/api/agent-actions",
+        "agent.execute",
+        BODY,
+        "request-idempotency-binding",
+        1_005,
+    )
+    .with_idempotency_key("idempotency-signed");
+    envelope
+        .verify(SECRET, &matching, &mut replay)
+        .expect("matching idempotency key");
+}
+
+#[test]
 fn cross_organization_actor_and_audience_bindings_are_rejected() {
     let envelope = ActorEnvelope::new(
         actor(),

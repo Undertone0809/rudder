@@ -39,6 +39,63 @@ import type {
   WorktreeMergeHistoryOptions,
 } from "./worktree-types.js";
 
+type MutationFenceRow = {
+  owner: string;
+  mutation_version: string | number | bigint;
+  fence_epoch: string | number | bigint;
+  fence_token: string;
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function firstMutationFenceRow(result: unknown): MutationFenceRow | undefined {
+  if (Array.isArray(result)) return result[0] as MutationFenceRow | undefined;
+  return (result as { rows?: MutationFenceRow[] }).rows?.[0];
+}
+
+async function lockCliNodeOrganizationMutationAuthority(
+  tx: { execute(query: unknown): Promise<unknown> },
+  organizationId: string,
+) {
+  const result = await tx.execute(sql`
+    SELECT owner, mutation_version, fence_epoch, fence_token
+    FROM organization_mutation_state
+    WHERE org_id = ${organizationId}::uuid
+    FOR UPDATE
+  `);
+  const row = firstMutationFenceRow(result);
+  if (!row) throw new Error("Organization mutation authority is not provisioned");
+  if (row.owner !== "node") throw new Error("Organization mutation authority is owned by Rust");
+  if (BigInt(row.mutation_version) < 0n || BigInt(row.fence_epoch) < 0n) {
+    throw new Error("Organization mutation fence counters are invalid");
+  }
+  if (!UUID_PATTERN.test(row.fence_token)) {
+    throw new Error("Organization mutation fencing token is invalid");
+  }
+}
+
+async function lockCliNodeProjectGoalMutationAuthority(
+  tx: { execute(query: unknown): Promise<unknown> },
+  organizationId: string,
+  projectId: string,
+) {
+  const result = await tx.execute(sql`
+    SELECT owner, mutation_version, fence_epoch, fence_token
+    FROM project_goal_mutation_state
+    WHERE project_id = ${projectId}::uuid AND org_id = ${organizationId}::uuid
+    FOR UPDATE
+  `);
+  const row = firstMutationFenceRow(result);
+  if (!row) throw new Error("Project goal mutation authority is not provisioned");
+  if (row.owner !== "node") throw new Error("Project goal mutation authority is owned by Rust");
+  if (BigInt(row.mutation_version) < 0n || BigInt(row.fence_epoch) < 0n) {
+    throw new Error("Project goal mutation fence counters are invalid");
+  }
+  if (!UUID_PATTERN.test(row.fence_token)) {
+    throw new Error("Project goal mutation fencing token is invalid");
+  }
+}
+
 export async function resolveMergeCompany(input: {
   sourceDb: ClosableDb;
   targetDb: ClosableDb;
@@ -639,6 +696,10 @@ export async function applyMergePlan(input: {
   const orgId = input.company.id;
 
   return await input.targetDb.transaction(async (tx) => {
+    // Worktree merge is a first-party writer. It must serialize with the
+    // same owner rows as the API before inserting projects, issues, or their
+    // legacy goal projection.
+    await lockCliNodeOrganizationMutationAuthority(tx, orgId);
     const importedProjectIds = input.plan.projectImports.map((project) => project.source.id);
     const existingImportedProjectIds = importedProjectIds.length > 0
       ? new Set(
@@ -667,7 +728,9 @@ export async function applyMergePlan(input: {
       await tx.insert(projects).values({
         id: project.source.id,
         orgId,
-        goalId: project.targetGoalId,
+        // Provision the component row first; the goal projection is written
+        // only after its owner row has been locked in this transaction.
+        goalId: null,
         name: project.source.name,
         description: project.source.description,
         status: project.source.status,
@@ -681,6 +744,13 @@ export async function applyMergePlan(input: {
         createdAt: project.source.createdAt,
         updatedAt: project.source.updatedAt,
       });
+      if (project.targetGoalId) {
+        await lockCliNodeProjectGoalMutationAuthority(tx, orgId, project.source.id);
+        await tx
+          .update(projects)
+          .set({ goalId: project.targetGoalId })
+          .where(and(eq(projects.id, project.source.id), eq(projects.orgId, orgId)));
+      }
       insertedProjects += 1;
 
       for (const workspace of project.workspaces) {

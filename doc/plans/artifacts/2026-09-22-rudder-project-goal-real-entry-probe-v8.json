@@ -1,0 +1,126 @@
+{
+  "schema": "rudder.rust-backend-completion.project-goal-real-entry-probe/v1",
+  "supersedes": "2026-09-22-rudder-project-goal-real-entry-probe-v7.json",
+  "scope": "Project-Goal real entry after signed idempotency-key binding repair",
+  "recorded_at": "2026-09-22T19:27:52+08:00",
+  "authorization": {
+    "target": "disposable local embedded PostgreSQL and local-trusted startup",
+    "production": false,
+    "traffic_switch": false,
+    "production_database": false,
+    "stable_publication": false,
+    "real_user_data": false
+  },
+  "main_adaptation": {
+    "origin_main_sha": "d1f55c5c180901392804178aa44b3ba3f077a6cb",
+    "isolated_snapshot": "ef71a1462a5c7998e361fe2193e585318a6a9f91",
+    "snapshot_tree": "fb968231c160d5ff75095cf89a336f43e035ef86",
+    "decision": "Desktop update/quit contracts remain compatible; current receipts are bound to the reconciled source"
+  },
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "source_tree_sha": "f972acbfc4807b20c9a2eece1f5a3f4f0a4d3e39",
+    "dirty_candidate_tree_sha": "58baa296f61a01ecff470431b822793e2c761f40",
+    "origin_main_sha": "d1f55c5c180901392804178aa44b3ba3f077a6cb",
+    "migration_base_sha": "c54001819ca38079b627994557db0a18ed278fc0",
+    "dirty_fingerprint": "3959124de512c9c1faa85f3b9817bc24074adbc0b9740a4ae98eaf83b544a8ce",
+    "dirty_fingerprint_scope": "sorted current worktree diff and untracked source paths excluding doc/plans durable records, delivery packets, and artifacts; 80 source paths",
+    "scope_repair": {
+      "idempotency_binding": "organization branding and Project-Goal mutation envelopes sign the idempotency key; Actix compares the signed claim with the request header before any mutation lookup or business write",
+      "compatibility": "read envelopes keep the prior canonical bytes when the optional claim is absent; mutation callers must supply the signed claim",
+      "negative_proof": "Rust auth protocol, bridge forwarding, and Actix PostgreSQL black-box tests reject signed/header substitution without consuming a nonce or mutating state"
+    },
+    "changed_paths_in_repair": [
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/auth-core/src/lib.rs",
+      "native/crates/auth-core/tests/protocol.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts"
+    ],
+    "source_path_count": 80
+  },
+  "build_artifacts": {
+    "rudder_server_foundation_sha256": "322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306",
+    "migration_preflight_sha256": "f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0"
+  },
+  "runtime": {
+    "node": "v22.23.1",
+    "package_manager": "pnpm 9.15.4",
+    "rust": "rustc 1.93.0",
+    "cargo": "cargo 1.93.0",
+    "embedded_postgres": "18.1.0-beta.16",
+    "api_url": "http://127.0.0.1:57795",
+    "api_port": 57795,
+    "embedded_postgres_port": 57796,
+    "server_listener": "Node Express supported local-trusted listener; Actix is a private route-scoped child"
+  },
+  "data": {
+    "instance_id": "rust-project-goal-real-entry-22706",
+    "organization_id": "7407d97f-f987-4696-919a-e97febf292ca",
+    "other_organization_id": "53b3ac04-d8e5-4057-9d33-b715a48ce93a",
+    "project_id": "0feb6c47-b3bd-4b0f-a3c4-e478545f3430",
+    "tooling_project_id": "d11159e5-c9d7-4484-88d4-a2969301ced3",
+    "unlisted_project_id": "84926418-ed1e-4714-b2cf-2ab5d3825a06",
+    "agent_id": "7bd23666-01b3-476d-9776-e0cd5eaadbf0",
+    "lifecycle": "temporary organizations, projects, goals, agent, API key, embedded database, and server were disposed after the probe"
+  },
+  "migration": {
+    "first_start": "bootstrap",
+    "restart": "current across invalid allowlist, valid allowlist, same-config allowlist restart, and replay restart",
+    "journal_entries": 170,
+    "sql_files": 172,
+    "manifest_fingerprint": "ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812",
+    "latest_authority": "Node still applies migrations; Rust preflight is real-entry supporting evidence, not migration-authority retirement"
+  },
+  "checks": {
+    "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+    "health": "HTTP 200 on initial startup, valid allowlist startup, same-config allowlist restart, and replay restart",
+    "explicit_allowlist": "missing UUID startup rejected before handoff; valid allowlist handed off exactly two existing projects; unlisted project remained owner=node",
+    "same_config_restart": "same required allowlist restarted after handoff and returned HTTP 200 without re-fencing Rust-owned rows",
+    "node_create_with_goals": "existing Node create-with-goals behavior remains available but stays Node-owned and is excluded from Rust authority claims",
+    "cli": "exit 0; tooling project goalIds read back through the Rust-owned HTTP authority",
+    "mcp": "exit 0; missing legacy binary path completed through direct HTTP dispatch with no Node CLI fallback",
+    "http_rust_required": "supported Project API PATCH returned 200 through the private Actix transaction",
+    "database_readback": "owner=rust; mutation receipt/activity/outbox and project_goals/projects.goal_id projections read back consistently",
+    "deletion_fence": "DELETE /api/orgs/:orgId returned 409 while Rust-owned Project-Goal rows existed",
+    "negative_cases": {
+      "same_key_replay": 200,
+      "same_key_different_payload": 409,
+      "cross_organization_goal": 422,
+      "empty_goal_set": 200,
+      "mixed_project_and_goal_update": 409,
+      "missing_rust_binary": "binary_unavailable fail-closed tests pass",
+      "batch_handoff_missing_target": "real startup rejects before any owner update",
+      "batch_handoff_invalid_owner": "focused fence test rejects before update",
+      "signed_idempotency_substitution": "Actix black-box branding and Project-Goal requests return 401 before business writes"
+    },
+    "restart_recovery": "same data identity and empty-set idempotency replay returned 200; final receipts=4, activities=2, links=0, mutation_version=2",
+    "supporting_checks": {
+      "auth_core": "12 protocol tests PASS",
+      "bridge": "10 tests PASS",
+      "actix_foundation_black_box": "10 tests PASS",
+      "server_foundation_check": "PASS",
+      "project_goal_real_entry": "PASS",
+      "git_diff_check": "PASS"
+    }
+  },
+  "claims": {
+    "project_goal_real_entry_connected": true,
+    "project_goal_default_path_verified": false,
+    "project_goal_old_authority_retired": false,
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "limits": [
+    "local disposable evidence only; no production credentials, traffic, database, or stable release was used",
+    "Node remains the supported HTTP listener and migration authority",
+    "explicit pre-existing Project allowlist is the only Rust ownership handoff; create-with-goals and other legacy writers remain Node-owned",
+    "unfenced Goal route/issue projection, worktree merge, Project delete, auth/session revocation, and other legacy writer families still block D1 owner activation",
+    "outbox row creation/retryable state is verified; publisher crash/retry and consumer dedupe are not independently verified",
+    "independent stage review, exact-candidate product verifier PASS, and final reviewer accept are not yet recorded"
+  ],
+  "command": "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts"
+}

@@ -1,0 +1,261 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-full-rust-backend-completion-v15-project-goal",
+  "status": "acceptance_pending",
+  "owner": {
+    "root_id": "rudder-full-rust-backend-completion-2026-09-21",
+    "agent_id": "codex-implementation-agent"
+  },
+  "intent": {
+    "raw_request": "Complete Rudder's first-party backend and Agent tooling migration to Rust: Actix Web owns core HTTP/WebSocket, SQLx owns PostgreSQL queries, transactions, and migrations, and first-party business services, auth/session, scheduling, workers, Agent Run, Chat/Side Chat, Automation, provider adapters, common backend components, CLI, and MCP are implemented in Rust while the Node backend runtime exits. Include identity, analytics collector, managed MCP, embedded PostgreSQL lifecycle, and product-state maintenance/update recovery tools. Preserve React, frontend tools, Electron shell, and user-selected external provider CLI/MCP/Local App/plugin components. Progress continuously through Phases 0-7 with real entry, auth, transaction, audit, side effects, recovery, CLI/MCP, and old-writer retirement per slice.",
+    "corrections": [
+      "plan must be persisted under doc/plans",
+      "connect each safe slice to the narrowest authorized real environment incrementally while continuing independent slices",
+      "refresh and reconcile origin/main before each candidate; invalidate affected receipts when Main changes",
+      "this packet is only the Project-Goal real-entry slice and is not full migration, release readiness, or production verification",
+      "the actor envelope must bind the idempotency key used by every Rust-owned mutation",
+      "preserve existing create-with-goals behavior and do not claim Node retirement from a private Rust bridge"
+    ],
+    "non_goals": [
+      "full backend completion, release-ready, and production-verified claims",
+      "production traffic switch, production database migration, stable publication, or real-user data deletion",
+      "treating a private bridge, direct CLI/MCP dispatch, or a Rust-owned delete conflict as Node retirement",
+      "claiming outbox publisher recovery, session/revocation authority, sole listener, or every legacy writer in this slice"
+    ],
+    "authorization": "isolated local and CI implementation plus disposable real-entry verification; no production deployment, stable publication, production database migration, or traffic switch"
+  },
+  "predecessor": {
+    "packet": "2026-09-21-rudder-full-rust-backend-completion-delivery-packet-v14.json",
+    "reviewer": "accept / stage_verdict",
+    "verifier": "QUESTION because the old probe omitted create-with-goals, mixed update, and signed/header substitution",
+    "replacement_reason": "v9 reran the exact public Node, Actix, CLI, and MCP entrypoints and observed all three previously missing criteria"
+  },
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_ref": "refs/heads/codex/rudder-full-rust-backend-completion-20260921 (HEAD 5873b34bc3522807248aa179da22aa7a9ab7ca9a; scoped dirty candidate)",
+    "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "dirty_fingerprint": "8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+    "fingerprint_method": "Union git diff --name-only -z HEAD with git ls-files --others --exclude-standard -z, sort -zu, exclude the four current durable plan records, delivery packets, and artifacts, emit each path followed by NUL and its git hash-object content hash followed by newline, then hash the stream with SHA-256",
+    "changed_paths_scope": "80 source paths; v15 changes the real-entry probe evidence only and preserves the implementation candidate",
+    "changed_paths": [
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/__tests__/agent-v1-registry.test.ts",
+      "cli/src/__tests__/http.test.ts",
+      "cli/src/agent-v1-capabilities.generated.ts",
+      "cli/src/agent-v1-mcp-server.ts",
+      "cli/src/client/http.ts",
+      "cli/src/commands/client/company.ts",
+      "cli/src/commands/client/project.ts",
+      "cli/src/commands/worktree-merge.ts",
+      "contracts/rudder-agent-contract/v1.json",
+      "desktop/src/desktop-quit-flow.test.ts",
+      "desktop/src/desktop-quit-flow.ts",
+      "desktop/src/desktop-update-flow.test.ts",
+      "desktop/src/desktop-update-flow.ts",
+      "desktop/src/desktop-update-launch.ts",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/agent-contract-core/src/contract.generated.json",
+      "native/crates/agent-contract-core/src/lib.rs",
+      "native/crates/agent-request-planner/src/bin/agent-request-planner-differential.rs",
+      "native/crates/agent-request-planner/src/lib.rs",
+      "native/crates/agent-request-planner/tests/planner.rs",
+      "native/crates/auth-core/src/lib.rs",
+      "native/crates/auth-core/tests/protocol.rs",
+      "native/crates/d1-persistence/src/branding.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/d1-persistence/tests/support/mod.rs",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.test.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "packages/db/src/migrations/0168_organization_branding_mutation_authority.sql",
+      "packages/db/src/migrations/0169_project_goal_mutation_authority.sql",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/schema/index.ts",
+      "packages/db/src/schema/organization_branding_mutations.ts",
+      "packages/db/src/schema/project_goal_mutations.ts",
+      "packages/shared/src/constants.ts",
+      "packages/shared/src/types/live.ts",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "scripts/smoke/rust-branding-real-entry.ts",
+      "scripts/smoke/rust-project-goal-real-entry.ts",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/config-env-loading.test.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "server/src/bootstrap/create-http-app.ts",
+      "server/src/bootstrap/register-api-routes.ts",
+      "server/src/bootstrap/types.ts",
+      "server/src/config.ts",
+      "server/src/index.ts",
+      "server/src/realtime/live-events-ws.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/routes/projects.ts",
+      "server/src/services/index.ts",
+      "server/src/services/knowledge-portability/organization-portability.import.ts",
+      "server/src/services/knowledge-portability/organization-portability.ts",
+      "server/src/services/live-events.ts",
+      "server/src/services/organization-branding-fence.test.ts",
+      "server/src/services/organization-branding-fence.ts",
+      "server/src/services/organization-mutation-outbox.test.ts",
+      "server/src/services/organization-mutation-outbox.ts",
+      "server/src/services/orgs.ts",
+      "server/src/services/project-goal-mutation-fence.test.ts",
+      "server/src/services/project-goal-mutation-fence.ts",
+      "server/src/services/projects.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "tests/e2e/desktop-update-prompt.spec.ts",
+      "ui/src/components/DesktopUpdatePromptBridge.test.tsx",
+      "ui/src/components/DesktopUpdatePromptBridge.tsx",
+      "ui/src/components/DesktopUpdateStatusCard.test.tsx",
+      "ui/src/components/DesktopUpdateStatusCard.tsx",
+      "ui/src/components/LiveRunWidget.test.tsx",
+      "ui/src/components/LiveRunWidget.tsx"
+    ],
+    "build": {
+      "id": "rudder-server-foundation-debug-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "artifact_hash": "322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306"
+    },
+    "runtime": {
+      "id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a"
+    },
+    "organization_data": {
+      "organization_id": "a211760a-7012-4e70-b28e-89ccf4509090",
+      "data_id": "rust-project-goal-real-entry-68674"
+    },
+    "workload_fixture": "Node supported local-trusted startup with Rust preflight over 170 journal entries and 172 SQL files; explicit Project allowlist handoff, same-config restart, Node-owned create-with-goals compatibility, Project-Goal HTTP/CLI/MCP, replay/conflict/cross-organization/clear-all/deletion-fence recovery, mixed-update rejection, and signed idempotency-key substitution rejection",
+    "budget_lease": {
+      "id": "current-local-run",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "v15",
+      "fingerprint": "d1-project-goal-v15-signed-idempotency-real-entry-complete-negative-probe",
+      "criteria": [
+        "The exact candidate starts the supported Node local-trusted server with disposable embedded PostgreSQL and Rust migration preflight without touching user data.",
+        "An explicit Project allowlist hands off only existing selected projects; a missing UUID fails before partial ownership changes and the same allowlist restart is idempotent.",
+        "Existing create-with-goals behavior returns 201 through the Node transaction and remains Node-owned; unlisted projects remain Node-owned and fail closed under Rust required mode.",
+        "A supported Project goal-set request reaches the private Actix bridge and SQLx transaction with actor/org checks, signed idempotency key/header binding, projection, receipt, activity, outbox, and existing response shape.",
+        "CLI and MCP use the same HTTP authority; missing legacy CLI binary does not cause a Node fallback.",
+        "Replay, changed-payload conflict, cross-organization target, clear-all, mixed update, deletion fence, signed substitution rejection, and same-data restart recovery are observed through real entrypoints.",
+        "implementation_complete, release_ready, and production_verified remain false for this local-only slice."
+      ],
+      "state_inventory": [
+        "Startup: health 200, embedded PostgreSQL ready, migration preflight bootstrap/current, and private Actix bridge ready.",
+        "Handoff: invalid allowlist fails closed; valid allowlist owns two projects; same-config restart preserves Rust ownership without a second epoch transition.",
+        "Create: create-with-goals returns 201 with the existing Node transaction and remains Node-owned/deferred.",
+        "Write/auth: complete goal-set replacement returns 200; signed/header idempotency substitution returns 401 before business writes and mixed update returns 409.",
+        "Failure/recovery: idempotency conflict 409, cross-organization 422, clear-all 200, organization delete 409, unlisted required write 409, restart replay 200.",
+        "Tooling: CLI exit 0 and MCP stdio exit 0 via direct HTTP with missing legacy binary; public Actix listener, migration authority, session revocation, all-writer retirement, publisher crash recovery, and production evidence remain deferred."
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "level": "stage_verdict",
+      "candidate_fingerprint": "8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "build_id": "rudder-server-foundation-debug-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "data_id": "rust-project-goal-real-entry-68674",
+      "packet_version": "v15",
+      "agent_id": "01a0c913-8d45-72e3-ad30-d3ebe87839f3",
+      "finding": "No P0/P1 blocker for the bounded Project-Goal slice; public/default listener, Node migration authority, full session/revocation, remaining writer retirement, and outbox publisher crash recovery remain explicitly deferred residual risks."
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "candidate_fingerprint": "8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "build_id": "rudder-server-foundation-debug-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "data_id": "rust-project-goal-real-entry-68674",
+      "packet_version": "v15",
+      "agent_id": "01a0c903-973c-77a0-8116-8867ff5f43e5",
+      "terminal_marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+      "evidence": "Fresh independent node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts exited 0 against disposable embedded PostgreSQL; all v15 criteria had terminal proof and lease recheck was current. No production/shared target was used."
+    },
+    "final_review": {
+      "verdict": "accept",
+      "level": "final_handoff_verdict",
+      "candidate_fingerprint": "8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "build_id": "rudder-server-foundation-debug-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug-foundation-322589b4686d8a82af3fda2cf735ac541432428687d5c84a2eb3262c8bfa5306-preflight-f82d0440078dd87a519cb1bb141ca39a0667d816dee271ff62a5dac699966ae0-source-5873b34bc3522807248aa179da22aa7a9ab7ca9a-dirty-8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+      "data_id": "rust-project-goal-real-entry-68674",
+      "packet_version": "v15",
+      "agent_id": "01a0c913-8d45-72e3-ad30-d3ebe87839f3",
+      "finding": "Final handoff accept: no blocking finding for the exact bounded Project-Goal increment; full migration residual risks remain explicitly open."
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      {
+        "from_packet": "v14",
+        "from_fingerprint": "3959124de512c9c1faa85f3b9817bc24074adbc0b9740a4ae98eaf83b544a8ce",
+        "to_fingerprint": "8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+        "reason": "real-entry probe script added create-with-goals, mixed-update, and signed/header substitution observations",
+        "affected_receipts": ["v14.reviewer", "v14.verifier", "v14.final_review"]
+      }
+    ],
+    "invalidated_receipts": ["v14.reviewer", "v14.verifier", "v14.final_review"]
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "d1f55c5c180901392804178aa44b3ba3f077a6cb",
+    "branch_refs": [
+      "refs/heads/codex/rudder-full-rust-backend-completion-20260921@5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+      "refs/heads/main@b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+      "refs/remotes/origin/main@d1f55c5c180901392804178aa44b3ba3f077a6cb"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss",
+    "patch_tree_sha": "fdbb1b03349290a8b41b050ccb63848575242dda",
+    "expected_old_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "The original /Users/zeeland/.codex/worktrees/7b2a/rudder-oss checkout retained its pre-existing staged and unstaged changes; migration edits remain in this isolated worktree."
+    ],
+    "index_fingerprint_before": "881083a4898e8d71012cb22190e546d28373d85912d01ad4077b8a4fe42519e3",
+    "index_fingerprint_after": "881083a4898e8d71012cb22190e546d28373d85912d01ad4077b8a4fe42519e3",
+    "worktree_fingerprint_after": "8a19e2c85f52d76e18e7541836010a051e659f330a5c0376090335ad31d6441b",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "No reset, checkout, or live-index replacement was used on the original dirty checkout.",
+      "The migration worktree live index remained at the committed tree; the dirty candidate tree was computed through an alternate index.",
+      "The disposable Project-Goal probe home, embedded PostgreSQL, Node server, Actix child, ports, and API key were disposed after the run."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

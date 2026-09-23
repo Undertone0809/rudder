@@ -81,6 +81,7 @@ import {
   reconcilePersistedRuntimeServicesOnStartup,
   reconcileWorkspaceBackupArtifactStorage,
   reconcileWorkspaceRestoreReceipts,
+  startOrganizationMutationOutboxPublisher,
   WORKSPACE_BACKUP_OFFLINE_INTERVAL_MS,
   WORKSPACE_BACKUP_RUNNING_INTERVAL_MS,
   workspaceBackupService,
@@ -1093,6 +1094,12 @@ async function startServerRuntime(
     workspacePreviewOrigin: config.workspacePreviewOrigin,
     authReady,
     companyDeletionEnabled: config.companyDeletionEnabled,
+    databaseUrl: activeDatabaseConnectionString,
+    rustFoundationMode: config.rustFoundationMode,
+    rustOrganizationBrandingMode: config.rustOrganizationBrandingMode,
+    rustProjectGoalSetMode: config.rustProjectGoalSetMode,
+    rustFoundationBinaryPath: config.rustFoundationBinaryPath,
+    rustFoundationActorEnvelopeKey: config.rustFoundationActorEnvelopeKey,
     mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
     instanceId,
     localEnv,
@@ -1106,6 +1113,8 @@ async function startServerRuntime(
     },
   });
   supervisor.own("app", () => appHandle.close());
+  const organizationMutationOutboxPublisher = startOrganizationMutationOutboxPublisher(db as any);
+  supervisor.own("organization-mutation-outbox", () => organizationMutationOutboxPublisher.close());
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
   const beginHttpClose = createHttpServerShutdown(server, {
     onCloseError: (err) => {

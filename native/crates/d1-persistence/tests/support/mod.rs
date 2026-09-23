@@ -119,12 +119,24 @@ impl Database {
             .expect("seed organization");
             sqlx::query(
                 "INSERT INTO organization_mutation_state (org_id, owner, fence_epoch)
-                 VALUES ($1::uuid, 'rust', 7)",
+                 VALUES ($1::uuid, 'rust', 7)
+                 ON CONFLICT (org_id) DO UPDATE
+                 SET owner='rust', fence_epoch=7, fence_token=gen_random_uuid(), updated_at=now()",
             )
             .bind(organization_id)
             .execute(&self.pool)
             .await
             .expect("seed mutation state");
+            sqlx::query(
+                "INSERT INTO organization_branding_mutation_state (org_id, owner, fence_epoch)
+                 VALUES ($1::uuid, 'rust', 7)
+                 ON CONFLICT (org_id) DO UPDATE
+                 SET owner='rust', fence_epoch=7, fence_token=gen_random_uuid(), updated_at=now()",
+            )
+            .bind(organization_id)
+            .execute(&self.pool)
+            .await
+            .expect("seed branding mutation state");
         }
         for (goal_id, organization_id) in [(GOAL, ORG), (GOAL_TWO, ORG), (FOREIGN_GOAL, OTHER)] {
             sqlx::query(
@@ -147,6 +159,16 @@ impl Database {
             .execute(&self.pool)
             .await
             .expect("seed project");
+            sqlx::query(
+                "UPDATE project_goal_mutation_state
+                 SET owner='rust', fence_epoch=7, fence_token=gen_random_uuid(), updated_at=now()
+                 WHERE project_id=$1::uuid AND org_id=$2::uuid",
+            )
+            .bind(project_id)
+            .bind(organization_id)
+            .execute(&self.pool)
+            .await
+            .expect("seed project goal mutation state");
         }
         for (asset_id, organization_id) in [(ASSET, ORG), (FOREIGN_ASSET, OTHER)] {
             sqlx::query(
@@ -174,9 +196,14 @@ impl Database {
     pub async fn counts(&self) -> (i64, i64, i64) {
         sqlx::query_as(
             "SELECT
-               (SELECT mutation_version FROM organization_mutation_state WHERE org_id=$1::uuid),
+               GREATEST(
+                 COALESCE((SELECT mutation_version FROM organization_mutation_state WHERE org_id=$1::uuid), 0),
+                 COALESCE((SELECT mutation_version FROM organization_branding_mutation_state WHERE org_id=$1::uuid), 0),
+                 COALESCE((SELECT max(mutation_version) FROM project_goal_mutation_state WHERE org_id=$1::uuid), 0)
+               ),
                (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid),
-               (SELECT count(*) FROM organization_mutation_receipts WHERE org_id=$1::uuid)",
+               (SELECT count(*) FROM organization_mutation_receipts WHERE org_id=$1::uuid)
+                 + (SELECT count(*) FROM organization_branding_mutation_receipts WHERE org_id=$1::uuid)",
         )
         .bind(ORG)
         .fetch_one(&self.pool)
@@ -190,6 +217,14 @@ impl Database {
             .fetch_one(&self.pool)
             .await
             .expect("read organization name")
+    }
+
+    pub async fn brand_color(&self) -> Option<String> {
+        sqlx::query_scalar("SELECT brand_color FROM organizations WHERE id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&self.pool)
+            .await
+            .expect("read organization brand color")
     }
 
     pub async fn sql(&self, sql: &str) {

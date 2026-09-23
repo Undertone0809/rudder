@@ -28,13 +28,20 @@ pub(crate) async fn apply(
     primary_goal_after: Option<String>,
     metadata: &transaction::Metadata,
 ) -> Result<CommittedMutation, StoreError> {
-    let (version, fence_epoch) = transaction::lock_scope(tx, metadata).await?;
+    let scope = transaction::lock_scope(tx, metadata).await?;
     if let Some(receipt) = transaction::replay(tx, metadata).await? {
-        validate_project_goal_replay(tx, metadata, version, fence_epoch, &command, &receipt)
-            .await?;
+        validate_project_goal_replay(
+            tx,
+            metadata,
+            scope.version,
+            scope.fence_epoch,
+            &command,
+            &receipt,
+        )
+        .await?;
         return Ok(receipt);
     }
-    metadata.check_fresh(version, fence_epoch)?;
+    metadata.check_fresh(scope.version, scope.fence_epoch)?;
 
     let view = command.as_integration_view()?;
     let context = view.context();
@@ -87,8 +94,14 @@ pub(crate) async fn apply(
     let mut goals: BTreeSet<String> = goal_ids.into_iter().collect();
     validate_primary_projection(&goals, primary_before.as_deref())?;
 
-    let persisted =
-        load_link_state(tx, metadata, version, fence_epoch, goals.contains(goal_id)).await?;
+    let persisted = load_link_state(
+        tx,
+        metadata,
+        scope.version,
+        scope.fence_epoch,
+        goals.contains(goal_id),
+    )
+    .await?;
     if context.linked() != persisted.linked
         || context.cancelled() != persisted.cancelled
         || context.state_integrity() != persisted.state_integrity()
@@ -197,6 +210,7 @@ pub(crate) async fn apply(
     transaction::persist(
         tx,
         metadata,
+        &scope,
         transaction::Effect {
             version: resulting_state.version,
             fence_epoch: resulting_state.fence_epoch,

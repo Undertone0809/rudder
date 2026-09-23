@@ -27,9 +27,10 @@ import type {
   BudgetThresholdType,
   BudgetWindowKind,
 } from "@rudderhq/shared";
-import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, ne, sql, type SQL } from "drizzle-orm";
 import { notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 
 type ScopeRecord = {
   orgId: string;
@@ -50,6 +51,21 @@ export type BudgetEnforcementScope = {
 export type BudgetServiceHooks = {
   cancelWorkForScope?: (scope: BudgetEnforcementScope) => Promise<void>;
 };
+
+async function updateOrganizationWithNodeFence(
+  database: Db,
+  orgId: string,
+  patch: Partial<typeof organizations.$inferInsert>,
+  condition?: SQL,
+) {
+  return database.transaction(async (tx) => {
+    await lockNodeMutationAuthority(tx, orgId);
+    return tx
+      .update(organizations)
+      .set(patch)
+      .where(condition ? and(eq(organizations.id, orgId), condition) : eq(organizations.id, orgId));
+  });
+}
 
 function currentUtcMonthWindow(now = new Date()) {
   const year = now.getUTCFullYear();
@@ -211,15 +227,12 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       return;
     }
 
-    await db
-      .update(organizations)
-      .set({
-        status: "paused",
-        pauseReason: "budget",
-        pausedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(organizations.id, policy.scopeId));
+    await updateOrganizationWithNodeFence(db, policy.scopeId, {
+      status: "paused",
+      pauseReason: "budget",
+      pausedAt: now,
+      updatedAt: now,
+    });
   }
 
   async function pauseAndCancelScopeForBudget(policy: PolicyRow) {
@@ -246,15 +259,12 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       return;
     }
 
-    await database
-      .update(organizations)
-      .set({
-        status: "active",
-        pauseReason: null,
-        pausedAt: null,
-        updatedAt: now,
-      })
-      .where(and(eq(organizations.id, policy.scopeId), eq(organizations.pauseReason, "budget")));
+    await updateOrganizationWithNodeFence(database, policy.scopeId, {
+      status: "active",
+      pauseReason: null,
+      pausedAt: null,
+      updatedAt: now,
+    }, eq(organizations.pauseReason, "budget"));
   }
 
   async function getPolicyRow(policyId: string, database: Db = db) {
@@ -534,13 +544,10 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
           .then((rows) => rows[0]);
 
       if (input.scopeType === "organization" && windowKind === "calendar_month_utc") {
-        await db
-          .update(organizations)
-          .set({
-            budgetMonthlyCents: amount,
-            updatedAt: now,
-          })
-          .where(eq(organizations.id, input.scopeId));
+        await updateOrganizationWithNodeFence(db, input.scopeId, {
+          budgetMonthlyCents: amount,
+          updatedAt: now,
+        });
       }
 
       if (input.scopeType === "agent" && windowKind === "calendar_month_utc") {
@@ -607,6 +614,8 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         ) {
           throw notFound("Budget policy not found");
         }
+
+        await lockNodeMutationAuthority(tx, orgId);
 
         const now = new Date();
         const updatedPolicy = await tx
@@ -910,10 +919,10 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
           .where(eq(budgetPolicies.id, policy.id));
 
         if (policy.scopeType === "organization" && policy.windowKind === "calendar_month_utc") {
-          await db
-            .update(organizations)
-            .set({ budgetMonthlyCents: nextAmount, updatedAt: now })
-            .where(eq(organizations.id, policy.scopeId));
+          await updateOrganizationWithNodeFence(db, policy.scopeId, {
+            budgetMonthlyCents: nextAmount,
+            updatedAt: now,
+          });
         }
 
         if (policy.scopeType === "agent" && policy.windowKind === "calendar_month_utc") {

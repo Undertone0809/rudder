@@ -23,6 +23,7 @@ import {
   writeDesktopAutoUpdateState,
   type DesktopAutoUpdateCandidate,
 } from "./desktop-auto-update-state.js";
+import { resolveDesktopOwnedPorts, type LocalEnvProfile } from "./desktop-local-env.js";
 import { createDesktopSupportMailtoUrl, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import {
   appendBoundedDesktopUpdateOutput,
@@ -35,10 +36,12 @@ import {
   readDesktopUpdateHelperRequest,
   readDesktopUpdateJournal,
   requestMatchesAutomaticCandidate,
+  resolveDesktopUpdateRuntimeReceipt,
   resolveDesktopUpdateTransactionPaths,
   spawnDesktopUpdateHelper,
   writeDesktopUpdateHelperRequest,
   type DesktopUpdateHelperRequest,
+  type DesktopUpdateRuntimeReceipt,
   type HelperAttestation,
 } from "./desktop-update-helper.js";
 import { resolveDesktopUpdateChildLaunch } from "./desktop-update-launch.js";
@@ -47,6 +50,7 @@ import {
   writePostUpdateReloadMarker,
 } from "./post-update-reload.js";
 import { createDesktopUpdateChildEnvironment } from "./postgres-runtime.js";
+import { resolveSharedRudderHomeDir } from "./runtime-cache.js";
 import {
   normalizeDesktopUpdateChannel,
   readDesktopUpdateChannel,
@@ -99,6 +103,7 @@ export function createDesktopUpdateFlow(context: {
   showMainWindow: () => void;
   getUserDataPath?: () => string;
   getUpdateInstallPath?: () => string | undefined;
+  getRuntimeReceipt?: () => DesktopUpdateRuntimeReceipt;
   isAutomaticUpdateAllowed?: () => boolean;
   /** True only when the stable, externally installed updater is attested. */
   hasExternalUpdateHelperCapability?: () => boolean;
@@ -161,6 +166,27 @@ export function createDesktopUpdateFlow(context: {
         ? runtime.instanceId
         : (process.env.RUDDER_INSTANCE_ID?.trim() || null),
     };
+  }
+
+  function automaticRuntimeReceipt(): DesktopUpdateRuntimeReceipt | null {
+    if (context.getRuntimeReceipt) return context.getRuntimeReceipt();
+    const identity = automaticRuntimeIdentity();
+    if (identity.profile !== "prod_local" || identity.instanceId !== "default") return null;
+    const profile: LocalEnvProfile = {
+      name: "prod_local",
+      instanceId: "default",
+      port: "3200",
+      embeddedPostgresPort: "54339",
+    };
+    const ports = resolveDesktopOwnedPorts(profile);
+    const instanceRoot = context.getBootState()?.paths?.instanceRoot
+      ?? path.join(resolveSharedRudderHomeDir(), "instances", profile.instanceId);
+    return resolveDesktopUpdateRuntimeReceipt({
+      instanceRoot,
+      instanceId: profile.instanceId,
+      apiPort: Number(ports.port),
+      postgresPort: Number(ports.embeddedPostgresPort),
+    });
   }
 
   function automaticUpdateScopeAllowed(): boolean {
@@ -270,6 +296,11 @@ export function createDesktopUpdateFlow(context: {
       execPath: process.execPath,
       installPath: context.getUpdateInstallPath?.(),
     });
+    const runtimeReceipt = automaticRuntimeReceipt();
+    if (!runtimeReceipt) {
+      trace({ blocked: "runtime_receipt" });
+      return "continue";
+    }
     const existingRequestPath = `${transactionPaths.journalPath}.request.json`;
     if (candidate.status === "claimed" && !journal) {
       // A claimed transaction may already be owned by a detached helper. Never
@@ -289,6 +320,7 @@ export function createDesktopUpdateFlow(context: {
             statePath: autoUpdateStatePath(),
             paths: transactionPaths,
             helper: currentHelper ?? undefined,
+            runtimeReceipt,
           })) return "continue";
           quarantineDesktopUpdateRequest(existingRequestPath);
           mutateAutomaticState((current) => ({
@@ -419,6 +451,7 @@ export function createDesktopUpdateFlow(context: {
         databaseRevision,
         migrationCompatible: runtime.migrationCompatible !== false && bootState.migrationCompatible !== false,
       },
+      runtimeReceipt,
       helper: effectiveHelper,
       probation: {
         executable: path.join(transactionPaths.installPath, "Contents", "MacOS", "Rudder"),

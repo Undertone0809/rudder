@@ -7,12 +7,13 @@ import {
   updateProjectSchema,
 } from "@rudderhq/shared";
 import { Router, type Request } from "express";
-import { conflict } from "../errors.js";
+import { badRequest, conflict } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, projectService, resourceCatalogService } from "../services/index.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function projectRoutes(db: Db) {
+export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = projectService(db);
   const resources = resourceCatalogService(db);
@@ -119,6 +120,67 @@ export function projectRoutes(db: Db) {
     }
     assertCompanyAccess(req, existing.orgId);
     const body = { ...req.body };
+    const hasGoalMutation = Object.prototype.hasOwnProperty.call(body, "goalIds")
+      || Object.prototype.hasOwnProperty.call(body, "goalId");
+    const nonGoalKeys = Object.keys(body).filter((key) => key !== "goalIds" && key !== "goalId");
+    const goalSetOnly = hasGoalMutation && nonGoalKeys.length === 0;
+    const rustRequiredForRequest = rustFoundationBridge?.projectGoalSetMode === "required"
+      || req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+
+    if (rustRequiredForRequest && hasGoalMutation && !goalSetOnly) {
+      throw conflict("Project-Goal replacement and other Project fields must use separate requests while Rust Project-Goal authority is enabled");
+    }
+
+    if (goalSetOnly && rustRequiredForRequest) {
+      if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+        res.status(503).json({
+          error: "Rust Project-Goal authority is not enabled",
+          code: "rust_foundation_project_goal_set_disabled",
+        });
+        return;
+      }
+      if (!req.header("x-rudder-idempotency-key")?.trim()) {
+        throw badRequest("x-rudder-idempotency-key is required for Rust Project-Goal replacement");
+      }
+      const goalIds = body.goalIds !== undefined
+        ? body.goalIds
+        : body.goalId
+          ? [body.goalId]
+          : [];
+      const rustBody = {
+        goalIds,
+        primaryGoalId: goalIds[0] ?? null,
+        runId: req.actor.runId ?? null,
+      };
+      const requestPath = `/api/orgs/${encodeURIComponent(existing.orgId)}/projects/${encodeURIComponent(id)}/goal-set`;
+      let response;
+      try {
+        response = await rustFoundationBridge.projectGoalSet(
+          req,
+          existing.orgId,
+          id,
+          Buffer.from(JSON.stringify(rustBody), "utf8"),
+          requestPath,
+        );
+      } catch (error) {
+        res.status(503).json({
+          error: "Rust Project-Goal authority is unavailable",
+          code: `rust_foundation_project_goal_set_${error instanceof Error ? "request_failed" : "unavailable"}`,
+        });
+        return;
+      }
+      if (response.status < 200 || response.status >= 300) {
+        res.status(response.status).set("content-type", response.contentType).send(response.body);
+        return;
+      }
+      const project = await svc.getById(id);
+      if (!project) {
+        res.status(404).json({ error: "Project not found" });
+        return;
+      }
+      res.json(project);
+      return;
+    }
     if (typeof body.archivedAt === "string") {
       body.archivedAt = new Date(body.archivedAt);
     }

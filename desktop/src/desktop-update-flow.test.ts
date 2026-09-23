@@ -868,6 +868,13 @@ describe("desktop update flow", () => {
         checkpointPath: expect.stringContaining(`${candidate.updateId}.checkpoint.json`),
         admission: { closed: true, activeRuns: 0, drainToken: expect.any(String) },
         checkpoint: { instanceId: "default", databaseRevision: expect.any(String), migrationCompatible: true },
+        runtimeReceipt: {
+          descriptorPath: expect.stringContaining("instances/default/runtime/server.json"),
+          instanceId: "default",
+          apiPort: 3200,
+          postgresDataDir: expect.stringContaining("instances/default/db"),
+          postgresPort: 54339,
+        },
       });
       expect(JSON.stringify(request)).not.toContain("sourceReleaseDigest");
       expect(authorizeSignedUpdateRelease).toHaveBeenCalledWith({
