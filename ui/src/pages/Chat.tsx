@@ -53,7 +53,7 @@ import { VirtualizedActivityTimeline } from "@/components/VirtualizedActivityTim
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
-import { firstChatTurnOwner, useFirstChatTurnStore } from "@/context/FirstChatTurnContext";
+import { firstChatTurnOwner, preserveFirstChatTurnOwnerState, useFirstChatTurnStore } from "@/context/FirstChatTurnContext";
 import { useI18n } from "@/context/I18nContext";
 import { useImagePreview } from "@/context/ImagePreviewContext";
 import { useOrganization } from "@/context/OrganizationContext";
@@ -243,7 +243,7 @@ export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm, openNewProject } = useDialog();
   const firstTurnStore = useFirstChatTurnStore();
-  const firstTurnOwner = firstChatTurnOwner(selectedOrganizationId, location.key);
+  const firstTurnOwner = firstTurnStore.getOwner() ?? firstChatTurnOwner(selectedOrganizationId, location.key);
   const firstTurnState = useSyncExternalStore(firstTurnStore.subscribe, firstTurnStore.getSnapshot);
   const pendingFirstTurn = firstTurnState.pending;
   const newConversationSendInFlight = Boolean(pendingFirstTurn);
@@ -553,7 +553,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       nextSearch.delete("projectId"); }
     navigate( {
         pathname: conversationId ? chatConversationPath(conversationId) : chatRootPath,
-        search: nextSearch.toString() ? `?${nextSearch.toString()}` : "", }, { replace: true }, );
+        search: nextSearch.toString() ? `?${nextSearch.toString()}` : "", }, { replace: true, state: preserveFirstChatTurnOwnerState(location) }, );
   }, [
     agents,
     chatConversationPath,
