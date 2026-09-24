@@ -1,0 +1,17 @@
+[package]
+name = "rudder-product-analytics-collector"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rudder-product-analytics-collector-core = { path = "../../crates/product-analytics-collector-core" }
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "signal"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
+tempfile = "3"
+time = { version = "0.3", features = ["formatting", "parsing"] }
