@@ -18,6 +18,7 @@ export class FirstChatTurnStore {
   private snapshot: { pending: PendingFirstChatTurn | null; recovery: number; recoveredTurn: PendingFirstChatTurn | null } = { pending: null, recovery: 0, recoveredTurn: null };
   private listeners = new Set<() => void>();
   getSnapshot = () => this.snapshot;
+  getOwner = () => this.owner;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };

@@ -1,3 +1,8 @@
+import {
+  firstChatTurnOwner,
+  preserveFirstChatTurnOwnerState,
+  shouldPreserveFirstChatTurnOwner,
+} from "@/context/FirstChatTurnContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readChatDraft, saveChatDraft } from "./chat-draft-storage";
 import { FirstChatTurnStore } from "./chat-first-turn-store";
@@ -13,6 +18,52 @@ afterEach(() => vi.unstubAllGlobals());
 const turn = { streamKey: "one", body: "keep my draft", files: [] as File[], createdAt: new Date() };
 
 describe("first chat operation lifetime", () => {
+  it("preserves ownership for prefill cleanup but revokes it on a same-path navigation", () => {
+    const store = new FirstChatTurnStore();
+    const prefilledLocation = {
+      key: "prefilled-entry",
+      pathname: "/org-a/messenger/chat",
+      search: "?agentId=agent-1",
+      state: null,
+    };
+    const cleanedLocation = {
+      ...prefilledLocation,
+      key: "cleaned-entry",
+      search: "",
+      state: preserveFirstChatTurnOwnerState(prefilledLocation),
+    };
+    const owner = firstChatTurnOwner("org-a", prefilledLocation.key);
+    store.setOwner(owner);
+    expect(store.begin(owner, turn)).toBe(true);
+
+    const previousRoute = { key: prefilledLocation.key, pathname: prefilledLocation.pathname, orgId: "org-a" };
+    const preservePrefillOwner = shouldPreserveFirstChatTurnOwner(
+      previousRoute,
+      { ...cleanedLocation, orgId: "org-a" },
+      "REPLACE",
+    );
+    expect(preservePrefillOwner).toBe(true);
+    const cleanedOwner = preservePrefillOwner
+      ? store.getOwner()!
+      : firstChatTurnOwner("org-a", cleanedLocation.key);
+    store.setOwner(cleanedOwner);
+    expect(store.getSnapshot().pending?.streamKey).toBe("one");
+    expect(store.owns(cleanedOwner, "one")).toBe(true);
+
+    const newChatLocation = { ...cleanedLocation, key: "new-chat-entry", state: null };
+    const cleanedRoute = { key: cleanedLocation.key, pathname: cleanedLocation.pathname, orgId: "org-a" };
+    expect(shouldPreserveFirstChatTurnOwner(
+      cleanedRoute,
+      { ...newChatLocation, orgId: "org-a" },
+      "PUSH",
+    )).toBe(false);
+    const newChatOwner = firstChatTurnOwner("org-a", newChatLocation.key);
+    expect(newChatOwner).not.toBe(cleanedOwner);
+    store.setOwner(newChatOwner);
+    expect(store.getSnapshot().pending).toBeNull();
+    expect(store.owns(owner, "one")).toBe(false);
+  });
+
   it("does not restore over a newer submitted turn whose source was cleared", () => {
     const store = new FirstChatTurnStore();
     store.setOwner("org-a:route-1");
