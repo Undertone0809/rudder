@@ -215,6 +215,12 @@ describe("ChatWorkManifest", () => {
     expect(outputsHeader?.className).toBe(referencesHeader?.className);
     expect(outputsHeader?.querySelector("svg")).not.toBeNull();
     expect(referencesHeader?.querySelector("svg")).not.toBeNull();
+    expect(outputsHeader?.querySelector("span.grid")?.className).toContain("size-7");
+    expect(container.querySelector("#chat-work-manifest-wide-outputs")?.className).toContain("px-3.5");
+    expect(container.querySelector("#chat-work-manifest-wide-outputs [data-target-type='library_file']")?.className)
+      .toEqual(expect.stringContaining("gap-2"));
+    expect(container.querySelector("#chat-work-manifest-wide-outputs [data-target-type='library_file']")?.className)
+      .toEqual(expect.stringContaining("px-0"));
     const shelf = container.querySelector("[data-testid='chat-work-manifest-wide-panel']");
     const scrollRegion = container.querySelector("[data-testid='chat-work-manifest-scroll-region']");
     expect(shelf?.className).toContain("max-h-[min(32rem,calc(100dvh-8rem))]");
@@ -507,6 +513,7 @@ describe("ChatWorkManifest", () => {
     expect(compactPanel?.id).toBe("chat-work-manifest-compact-panel");
     expect(compactPanel?.textContent).toContain("Report.md");
     expect(compactPanel?.className).toContain("max-h-[min(32rem,calc(100dvh-6rem))]");
+    expect(compactPanel?.className).toContain("md:right-0");
     expect(compactPanel?.querySelectorAll("[data-testid='chat-work-manifest-panel-header']")).toHaveLength(0);
     const compactOutputsHeader = compactPanel?.querySelector("[data-testid='chat-work-manifest-section-header-outputs']");
     const compactReferencesHeader = compactPanel?.querySelector("[data-testid='chat-work-manifest-section-header-references']");
