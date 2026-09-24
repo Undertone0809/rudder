@@ -7,11 +7,15 @@ import {
   chatAutomationCreateFromStructuredPayload,
   chatControlDispositionSchema,
   chatDraftSchema,
+  forkChatConversationSchema,
   chatIssueProposalFromStructuredPayload,
+  chatOperationProposalFromStructuredPayload,
+  chatOperationProposalSchema,
   chatQueuedMessageStatusSchema,
   chatRichReferencesFromStructuredPayload,
   convertChatToIssueSchema,
   createSideChatSchema,
+  resolveChatOperationProposalSchema,
   sanitizeChatStructuredPayload,
   steerChatQueuedMessageSchema,
   stopChatGenerationSchema,
@@ -59,6 +63,26 @@ describe("Side Chat runtime admission", () => {
       effortOverride: "high",
     });
     expect(message.success).toBe(true);
+  });
+});
+
+describe("native chat control payloads", () => {
+  it("rejects unknown fork fields while preserving the optional source boundary", () => {
+    expect(forkChatConversationSchema.parse({ sourceMessageId: null, title: "Side chat" })).toEqual({
+      sourceMessageId: null,
+      title: "Side chat",
+    });
+    expect(forkChatConversationSchema.safeParse({ sourceMessageId: generationId, sourceMessageIdOverride: controlActionId }).success).toBe(false);
+    expect(forkChatConversationSchema.safeParse({ title: "Side chat", latestHead: true }).success).toBe(false);
+  });
+
+  it("rejects unknown approval fields and invalid action discriminants", () => {
+    expect(resolveChatOperationProposalSchema.parse({ action: "approve", decisionNote: null })).toEqual({
+      action: "approve",
+      decisionNote: null,
+    });
+    expect(resolveChatOperationProposalSchema.safeParse({ action: "approve", approvalId: controlActionId }).success).toBe(false);
+    expect(resolveChatOperationProposalSchema.safeParse({ action: "approved" }).success).toBe(false);
   });
 });
 
@@ -407,6 +431,74 @@ describe("chat issue proposals", () => {
     })).toMatchObject({
       success: true,
     });
+  });
+});
+
+describe("chat operation proposals", () => {
+  const organizationProposal = {
+    targetType: "organization" as const,
+    targetId: "organization-1",
+    summary: "Rename organization",
+    patch: { name: "Rudder Ops" },
+  };
+
+  it("accepts only target-specific, non-empty patches and canonicalizes nested payloads", () => {
+    expect(chatOperationProposalSchema.parse(organizationProposal)).toEqual(organizationProposal);
+    expect(chatOperationProposalFromStructuredPayload({
+      operationProposal: organizationProposal,
+      operationProposalState: { status: "pending" },
+    })).toEqual(organizationProposal);
+    expect(sanitizeChatStructuredPayload({
+      operationProposal: organizationProposal,
+      operationProposalState: { status: "pending" },
+    })).toEqual({
+      operationProposal: organizationProposal,
+      operationProposalState: { status: "pending" },
+    });
+  });
+
+  it("rejects arbitrary or cross-target patch fields", () => {
+    expect(chatOperationProposalSchema.safeParse({
+      ...organizationProposal,
+      patch: { name: "Rudder Ops", agentRuntimeConfig: { token: "raw" } },
+    }).success).toBe(false);
+    expect(chatOperationProposalSchema.safeParse({
+      ...organizationProposal,
+      patch: { status: "archived" },
+    }).success).toBe(false);
+    expect(chatOperationProposalSchema.safeParse({
+      ...organizationProposal,
+      patch: {},
+    }).success).toBe(false);
+    expect(chatOperationProposalSchema.safeParse({
+      ...organizationProposal,
+      extra: "must be rejected",
+    }).success).toBe(false);
+    expect(chatOperationProposalSchema.safeParse({
+      ...organizationProposal,
+      targetType: "workspace",
+    }).success).toBe(false);
+    expect(sanitizeChatStructuredPayload({
+      operationProposal: {
+        ...organizationProposal,
+        patch: { name: "Rudder Ops", unknown: true },
+      },
+      keep: "safe metadata",
+    })).toEqual({ keep: "safe metadata" });
+  });
+
+  it("validates the agent target with its own patch schema", () => {
+    const proposal = {
+      targetType: "agent" as const,
+      targetId: "agent-1",
+      summary: "Rename agent",
+      patch: { name: "Builder" },
+    };
+    expect(chatOperationProposalFromStructuredPayload(proposal)).toEqual(proposal);
+    expect(chatOperationProposalSchema.safeParse({
+      ...proposal,
+      patch: { name: "Builder", requireBoardApprovalForNewAgents: true },
+    }).success).toBe(false);
   });
 });
 

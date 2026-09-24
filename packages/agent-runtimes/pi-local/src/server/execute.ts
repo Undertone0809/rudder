@@ -63,6 +63,7 @@ import {
 } from "./managed-external-mcp.js";
 import { readPiLoadedMcpServers } from "./mcp-evidence.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
+import { executePiNativeChat, PiNativeCapabilityError } from "./native-protocol.js";
 import {
   ensurePiOpenCodeAnonymousModelsConfig,
   parsePiModelId,
@@ -74,6 +75,24 @@ import { prepareManagedPiHome } from "./skills.js";
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const MAX_PI_LOG_TEXT_CHARS = 4_000;
 const MAX_PI_RESULT_STDOUT_BYTES = 64 * 1024;
+const MAX_NATIVE_DIAGNOSTIC_CHARS = 2_000;
+const NATIVE_TRANSCRIPT_RESULT_KEYS = new Set([
+  "stdout",
+  "stderr",
+  "response",
+  "events",
+  "rawjsonl",
+  "rawstdout",
+  "rawstderr",
+  "transcript",
+  "nativetranscript",
+  "providerresponse",
+  "providerevents",
+  "messages",
+  "parts",
+  "entries",
+  "items",
+]);
 const PI_MANAGED_EXTERNAL_MCP_EXTENSION_NAME = "rudder-managed-external-mcp";
 const PI_AUTH_REQUIRED_RE =
   /(?:auth(?:entication)?\s+required|api[-_\s]*key|invalid\s*api[-_\s]*key|x[-_\s]*api[-_\s]*key|not\s+logged\s+in|free\s+usage\s+exceeded|membership\s+benefits|membership\s+is\s+active|\b401\b.*status\s+code|\b401\b.*unauthorized)/i;
@@ -85,6 +104,36 @@ function firstNonEmptyLine(text: string): string {
       .map((line) => line.trim())
       .find(Boolean) ?? ""
   );
+}
+
+function providerProfileIdentity(config: Record<string, unknown>) {
+  return {
+    hostId: asString(config.providerHostId ?? config.hostId ?? config.runtimeHostId, "local").trim() || "local",
+    profileId: asString(config.providerProfileId ?? config.profileId ?? config.profile ?? config.authProfile, "default").trim() || "default",
+    capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
+  };
+}
+
+function boundedNativeDiagnostic(value: unknown): string {
+  const text = value instanceof Error ? value.message : String(value);
+  const compact = text.replace(/\s+/gu, " ").trim();
+  return compact.length > MAX_NATIVE_DIAGNOSTIC_CHARS
+    ? `${compact.slice(0, MAX_NATIVE_DIAGNOSTIC_CHARS)}... [truncated]`
+    : compact;
+}
+
+function sanitizeNativeResultJson(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value ?? {}).filter(([key]) => !NATIVE_TRANSCRIPT_RESULT_KEYS.has(key.toLowerCase())),
+  );
+}
+
+function nativeChatLog(onLog: AgentRuntimeExecutionContext["onLog"]): AgentRuntimeExecutionContext["onLog"] {
+  return async (stream, chunk) => {
+    const text = typeof chunk === "string" ? chunk.trim() : "";
+    if (!/^\[rudder\] Pi native chat (?:completed|failed)\b/u.test(text)) return;
+    await onLog(stream, `${boundedNativeDiagnostic(text)}\n`);
+  };
 }
 
 function isPiAuthRequiredEvidence(...parts: Array<string | null | undefined>): boolean {
@@ -572,7 +621,7 @@ function buildSessionPath(sessionsDir: string, agentId: string, timestamp: strin
 }
 
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
-  const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
+  const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken, controlAttempt } = ctx;
 
   const configuredPromptTemplate = asString(config.promptTemplate, "");
   const hasConfiguredPromptTemplate = configuredPromptTemplate.trim().length > 0;
@@ -861,23 +910,31 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   // Handle session
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId = asString(runtimeSessionParams.sessionId, runtime.sessionId ?? "");
+  const failClosedOnMissingResume = context.chatMode === true;
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
+  const profileIdentity = providerProfileIdentity(config);
+  const storedProfileMatches =
+    asString(runtimeSessionParams.hostId, "") === profileIdentity.hostId &&
+    asString(runtimeSessionParams.profileId, "") === profileIdentity.profileId;
   const canResumeSession =
     runtimeSessionId.length > 0 &&
-    (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
-  const sessionPath = canResumeSession
+    (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd)) &&
+    (context.chatMode !== true || storedProfileMatches);
+  const sessionPath = canResumeSession || (failClosedOnMissingResume && runtimeSessionId.length > 0)
     ? runtimeSessionId
     : buildSessionPath(sessionsDir, agent.id, new Date().toISOString());
   
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
-      `[rudder] Pi session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`,
+      storedProfileMatches
+        ? `[rudder] Pi session "${runtimeSessionId}" was saved for cwd "${runtimeSessionCwd}" and will not be resumed in "${cwd}".\n`
+        : `[rudder] Pi native session "${runtimeSessionId}" is bound to ${asString(runtimeSessionParams.hostId, "unknown")}/${asString(runtimeSessionParams.profileId, "unknown")}; it will not be resumed as ${profileIdentity.hostId}/${profileIdentity.profileId}.\n`,
     );
   }
 
   // Ensure session file exists (Pi requires this on first run)
-  if (!canResumeSession) {
+  if (!canResumeSession && !(failClosedOnMissingResume && runtimeSessionId.length > 0)) {
     try {
       await fs.writeFile(sessionPath, "", { flag: "wx" });
     } catch (err) {
@@ -999,6 +1056,145 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ];
   })();
 
+  const rpcToolNames = [
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls",
+    ...rudderPiExtensionPath.toolNames,
+    ...(rudderBrowserPiExtensionPath?.toolNames ?? []),
+    ...managedExternalMcpBindings.flatMap((binding) => binding.tools.map((tool) => tool.name)),
+  ];
+  const buildRpcArgs = (): string[] => {
+    const args = ["--append-system-prompt", renderedSystemPromptExtension];
+    if (provider) args.push("--provider", provider);
+    if (modelId) args.push("--model", modelId);
+    if (thinking) args.push("--thinking", thinking);
+    args.push("--tools", rpcToolNames.join(","));
+    if (rudderPiExtensionPath.active) args.push("--extension", rudderPiExtensionPath.path);
+    if (rudderBrowserPiExtensionPath) args.push("--extension", rudderBrowserPiExtensionPath.path);
+    if (managedExternalMcpExtensionPath) args.push("--extension", managedExternalMcpExtensionPath);
+    args.push("--no-skills", "--skill", skillsDir);
+    if (extraArgs.length > 0) args.push(...extraArgs);
+    return args;
+  };
+
+  if (context.chatMode === true) {
+    const nativeSessionDir = path.resolve(
+      canResumeSession ? asString(runtimeSessionParams.sessionDir, path.dirname(sessionPath)) : path.dirname(sessionPath),
+    );
+    const rpcArgs = buildRpcArgs();
+    if (onMeta) {
+      await onMeta({
+        agentRuntimeType: "pi_local",
+        command,
+        cwd,
+        commandNotes: [
+          ...commandNotes,
+          "Using Pi --mode rpc with the provider session and session directory for chat mode.",
+          "Pi extensions, MCP bridges, and managed skills remain enabled in the RPC argv.",
+        ],
+        commandArgs: [
+          ...rpcArgs,
+          "--mode",
+          "rpc",
+          "--session-dir",
+          nativeSessionDir,
+          "--session",
+          sessionPath,
+        ],
+        env: redactEnvForLogs(runtimeEnv),
+        prompt: userPrompt,
+        agentInstructionStack,
+        promptMetrics,
+        loadedMcpServers: readPiLoadedMcpServers(),
+        loadedSkills,
+        realizedSkills: loadedSkills,
+        promptInjectedSkills: loadedSkills,
+        rudderMcp: rudderMcpRuntimeMetadata({
+          available: false,
+          browserEnabled,
+          preflight: rudderPiExtensionPath.rudderMcpPreflight,
+          fallbackReason: "Pi exposes Rudder tools through the managed extension in native RPC mode.",
+        }),
+        browserMcp: rudderBrowserMcpRuntimeMetadata({
+          available: false,
+          preflight: attemptedBrowserPiExtension?.rudderMcpPreflight,
+          fallbackReason: browserEnabled
+            ? "Pi exposes Rudder Browser tools through the managed extension in native RPC mode."
+            : "Rudder Browser is disabled for this run.",
+        }),
+        context,
+      });
+    }
+    try {
+      const nativeResult = await executePiNativeChat({
+        command,
+        cwd,
+        env: runtimeEnv,
+        sessionFile: sessionPath,
+        sessionDir: nativeSessionDir,
+        prompt: userPrompt,
+        model,
+        timeoutSec,
+        binding: profileIdentity,
+        signal: ctx.abortSignal,
+        controlAttempt,
+        rpcArgs,
+        onSpawn,
+        onLog: nativeChatLog(onLog),
+      });
+      return {
+        ...nativeResult,
+        biller: resolvePiBiller(runtimeEnv, nativeResult.provider ?? provider),
+        resultJson: {
+          ...sanitizeNativeResultJson(nativeResult.resultJson),
+          nativeSession: true,
+          profileId: profileIdentity.profileId,
+          hostId: profileIdentity.hostId,
+        },
+      };
+    } catch (error) {
+      const message = boundedNativeDiagnostic(error);
+      const status = error instanceof PiNativeCapabilityError ? error.status : "unknown";
+      await onLog("stderr", `[rudder] Pi native chat failed (${status}): ${message}\n`);
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorMessage: message,
+        errorCode: `pi_native_${status}`,
+        sessionId: sessionPath,
+        sessionParams: {
+          sessionId: sessionPath,
+          sessionFile: sessionPath,
+          sessionDir: nativeSessionDir,
+          cwd,
+          command,
+          rpcArgs,
+          hostId: profileIdentity.hostId,
+          profileId: profileIdentity.profileId,
+          ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+        },
+        sessionDisplayId: sessionPath,
+        provider,
+        biller: resolvePiBiller(runtimeEnv, provider),
+        model,
+        billingType: "unknown",
+        resultJson: {
+          transport: "pi_rpc",
+          nativeSession: true,
+          profileId: profileIdentity.profileId,
+          hostId: profileIdentity.hostId,
+        },
+        summary: "",
+      };
+    }
+  }
+
   const buildArgs = (sessionFile: string): string[] => {
     const args: string[] = [];
 
@@ -1012,19 +1208,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (modelId) args.push("--model", modelId);
     if (thinking) args.push("--thinking", thinking);
 
-    args.push("--tools", [
-      "read",
-      "bash",
-      "edit",
-      "write",
-      "grep",
-      "find",
-      "ls",
-      ...rudderPiExtensionPath.toolNames,
-      ...(rudderBrowserPiExtensionPath?.toolNames ?? []),
-      ...managedExternalMcpBindings.flatMap((binding) =>
-        binding.tools.map((tool) => tool.name)),
-    ].join(","));
+    args.push("--tools", rpcToolNames.join(","));
     args.push("--session", sessionFile);
     if (rudderPiExtensionPath.active) {
       args.push("--extension", rudderPiExtensionPath.path);
@@ -1271,6 +1455,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   
   if (
     canResumeSession &&
+    !failClosedOnMissingResume &&
     initialFailed &&
     isPiUnknownSessionError(initial.proc.stdout, initial.rawStderr)
   ) {

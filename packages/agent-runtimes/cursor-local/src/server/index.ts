@@ -1,11 +1,54 @@
+import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
+
 export { ensureCursorSkillsInjected, execute } from "./execute.js";
+export { runtimeProviderCapabilities } from "./native-capabilities.js";
+export {
+  createCursorLocalProviderCapabilities,
+  createCursorLocalProviderCapabilityResolver,
+  resolveCursorLocalProviderCapabilities,
+  CursorNativeCapabilityError,
+} from "./native-capabilities.js";
+export type {
+  CursorCapabilityEvidence,
+  CursorLocalProfileTransport,
+  CursorLocalProfileTransportResolver,
+  CursorNativeTranscriptReadRequest,
+  CursorNativeTranscriptReadResult,
+  CursorProviderBindingRef,
+  CursorProviderSessionRef,
+  CursorRuntimeProviderCapabilityAdapter,
+} from "./native-capabilities.js";
 export { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
 export { listCursorSkills, syncCursorSkills } from "./skills.js";
 export { testEnvironment } from "./test.js";
-import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
+
+const PROVIDER_SESSION_FIELDS = [
+  "profileHostId",
+  "profileId",
+  "capabilityRevision",
+  "cursorAcpTransport",
+  "cursorAcpCommand",
+  "cursorAcpProtocolVersion",
+  "cursorAcpAuthMethodId",
+  "cursorProviderVersion",
+] as const;
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readProviderSessionFields(record: Record<string, unknown>): Record<string, unknown> {
+  const fields: Array<[string, unknown]> = [];
+  for (const key of PROVIDER_SESSION_FIELDS) {
+    const stringValue = readNonEmptyString(record[key]);
+    if (stringValue) {
+      fields.push([key, stringValue]);
+      continue;
+    }
+    const numberValue = record[key];
+    if (typeof numberValue === "number" && Number.isFinite(numberValue)) fields.push([key, numberValue]);
+  }
+  return Object.fromEntries(fields);
 }
 
 export const sessionCodec: AgentRuntimeSessionCodec = {
@@ -30,6 +73,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       ...(workspaceId ? { workspaceId } : {}),
       ...(repoUrl ? { repoUrl } : {}),
       ...(repoRef ? { repoRef } : {}),
+      ...readProviderSessionFields(record),
     };
   },
   serialize(params: Record<string, unknown> | null) {
@@ -52,6 +96,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       ...(workspaceId ? { workspaceId } : {}),
       ...(repoUrl ? { repoUrl } : {}),
       ...(repoRef ? { repoRef } : {}),
+      ...readProviderSessionFields(params),
     };
   },
   getDisplayId(params: Record<string, unknown> | null) {

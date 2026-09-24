@@ -13,6 +13,10 @@ const mockGetRunSummary = vi.hoisted(() => vi.fn());
 const mockGetObservedRunEvents = vi.hoisted(() => vi.fn());
 const mockGetObservedRunLog = vi.hoisted(() => vi.fn());
 const mockGetObservedRunDetail = vi.hoisted(() => vi.fn());
+const mockGetObservedRunTranscript = vi.hoisted(() => vi.fn());
+const mockListNativeForkIntents = vi.hoisted(() => vi.fn());
+const mockReconcileNativeForkIntentById = vi.hoisted(() => vi.fn());
+const mockLogActivity = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/run-intelligence.js", () => ({
   listObservedRuns: mockListObservedRuns,
@@ -22,9 +26,22 @@ vi.mock("../services/run-intelligence.js", () => ({
   getObservedRunEvents: mockGetObservedRunEvents,
   getObservedRunLog: mockGetObservedRunLog,
   getObservedRunDetail: mockGetObservedRunDetail,
+  getObservedRunTranscript: mockGetObservedRunTranscript,
 }));
 
-function createExpressApp() {
+vi.mock("../services/runtime-kernel/native-fork-intent.js", () => ({
+  listNativeForkIntents: mockListNativeForkIntents,
+  reconcileNativeForkIntentById: mockReconcileNativeForkIntentById,
+  NativeForkIntentError: class NativeForkIntentError extends Error {
+    code = "intent_conflict";
+  },
+}));
+
+vi.mock("../services/activity-log.js", () => ({
+  logActivity: mockLogActivity,
+}));
+
+function createExpressApp(actorOverrides: Partial<Express.Request["actor"]> = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -34,6 +51,7 @@ function createExpressApp() {
       source: "session",
       isInstanceAdmin: false,
       orgIds: ["org-1"],
+      ...actorOverrides,
     };
     next();
   });
@@ -112,6 +130,82 @@ beforeEach(async () => {
       { kind: "result", ts: "2026-06-11T00:00:04.000Z", text: "failed", inputTokens: 1, outputTokens: 1, cachedTokens: 0, costUsd: 0, subtype: "error", isError: true, errors: ["boom"] },
     ],
   });
+  mockGetObservedRunTranscript.mockImplementation(async (_db: unknown, _runId: string, _scope: unknown, input: { range?: { fromExclusive?: number } | null } = {}) => {
+    const transcript = [
+      { kind: "assistant", ts: "2026-06-11T00:00:01.000Z", text: "I will run it." },
+      { kind: "tool_call", ts: "2026-06-11T00:00:02.000Z", name: "exec_command", input: { cmd: "pnpm test" } },
+      { kind: "tool_result", ts: "2026-06-11T00:00:03.000Z", toolUseId: "tool-1", toolName: "exec_command", content: "ERR".repeat(1000), isError: true },
+      { kind: "result", ts: "2026-06-11T00:00:04.000Z", text: "failed", inputTokens: 1, outputTokens: 1, cachedTokens: 0, costUsd: 0, subtype: "error", isError: true, errors: ["boom"] },
+    ];
+    const start = typeof input.range?.fromExclusive === "number" ? input.range.fromExclusive + 1 : 0;
+    return {
+      orgId: "org-1",
+      run: {
+        run: { id: "run-1", orgId: "org-1", status: "failed", error: "adapter failed", errorCode: "adapter_error" },
+        agentName: "Agent",
+        orgName: "Org",
+        issue: null,
+      },
+      page: {
+        items: transcript.slice(start).map((entry, index) => ({
+          id: `step-${start + index + 1}`,
+          sequence: start + index,
+          runId: "run-1",
+          spanId: null,
+          sourceEntryId: `step-${start + index + 1}`,
+          sourceRef: null,
+          ordinal: start + index,
+          kind: entry.kind,
+          ts: entry.ts,
+          payload: entry,
+          visibility: "visible",
+          origin: "legacy",
+          entry,
+        })),
+        nextCursor: null,
+        source: "legacy",
+        revision: "route-test-revision",
+        availability: "available",
+        completeness: "complete",
+      },
+    };
+  });
+  mockListNativeForkIntents.mockResolvedValue([]);
+  mockReconcileNativeForkIntentById.mockResolvedValue({
+    outcome: { status: "accepted" },
+    summary: {
+      intentId: "intent-1",
+      idempotencyKey: "side-chat:conversation-1",
+      status: "accepted",
+      source: {
+        orgId: "org-1",
+        sourceConversationId: "source-conversation-1",
+        sourceRunId: "run-1",
+        sourceSpanId: "span-1",
+        sourceBoundaryRef: "boundary-1",
+      },
+      target: {
+        bindingId: "binding-1",
+        segmentId: "segment-1",
+        orgId: "org-1",
+        bindingEpoch: 0,
+        runtimeType: "pi_local",
+        hostId: "local",
+        profileId: "default",
+        workspaceBindingId: null,
+        capabilityRevision: "capability-1",
+      },
+      reconciliation: "resolved",
+      reason: null,
+      reconciliationNote: "provider lookup returned the child",
+      createdAt: "2026-09-23T00:00:00.000Z",
+      updatedAt: "2026-09-23T00:01:00.000Z",
+      conversationId: "conversation-1",
+      segmentState: "open",
+      nativeSessionId: "child-session",
+    },
+  });
+  mockLogActivity.mockResolvedValue({ id: "activity-1" });
   appServer = createExpressApp().listen(0, "127.0.0.1");
   await once(appServer, "listening");
 });
@@ -123,6 +217,101 @@ afterEach(async () => {
 });
 
 describe("run intelligence routes", () => {
+  it("keeps native fork intent inspection instance-admin only", async () => {
+    const denied = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/native-fork-intents")
+      .query({ status: "unknown" });
+
+    expect(denied.status).toBe(403);
+    expect(mockListNativeForkIntents).not.toHaveBeenCalled();
+
+    await new Promise<void>((resolve, reject) => {
+      appServer.close((error) => error ? reject(error) : resolve());
+    });
+    appServer = createExpressApp({ isInstanceAdmin: true }).listen(0, "127.0.0.1");
+    await once(appServer, "listening");
+
+    mockListNativeForkIntents.mockResolvedValueOnce([{ intentId: "intent-1", status: "unknown" }]);
+    const allowed = await request(createApp())
+      .get("/api/run-intelligence/orgs/org-1/native-fork-intents")
+      .query({ status: "unknown", limit: "7" });
+
+    expect(allowed.status).toBe(200);
+    expect(allowed.body).toEqual({
+      items: [{ intentId: "intent-1", status: "unknown" }],
+      count: 1,
+    });
+    expect(mockListNativeForkIntents).toHaveBeenCalledWith(expect.anything(), {
+      orgId: "org-1",
+      status: "unknown",
+      limit: 7,
+    });
+  });
+
+  it("adopts a provider child idempotently and records an activity entry", async () => {
+    await new Promise<void>((resolve, reject) => {
+      appServer.close((error) => error ? reject(error) : resolve());
+    });
+    appServer = createExpressApp({ isInstanceAdmin: true }).listen(0, "127.0.0.1");
+    await once(appServer, "listening");
+
+    const res = await request(createApp())
+      .post("/api/run-intelligence/orgs/org-1/native-fork-intents/intent-1/reconcile")
+      .send({
+        note: "provider lookup returned the child",
+        child: {
+          continuity: "native",
+          boundary: "child-boundary",
+          sourceBoundary: "boundary-1",
+          session: {
+            sessionId: "child-session",
+            sessionParams: { sessionId: "child-session", branch: "child" },
+          },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      status: "accepted",
+      intent: {
+        intentId: "intent-1",
+        status: "accepted",
+        nativeSessionId: "child-session",
+      },
+    });
+    expect(res.body.intent.child).toBeUndefined();
+    expect(mockReconcileNativeForkIntentById).toHaveBeenCalledWith(expect.anything(), {
+      orgId: "org-1",
+      intentId: "intent-1",
+      note: "provider lookup returned the child",
+      child: expect.objectContaining({
+        continuity: "native",
+        boundary: "child-boundary",
+        session: expect.objectContaining({ sessionId: "child-session" }),
+      }),
+    });
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "runtime.native_fork_reconciled",
+      entityType: "native_fork_intent",
+      entityId: "intent-1",
+    }));
+  });
+
+  it("rejects an adoption payload that is not a native child", async () => {
+    await new Promise<void>((resolve, reject) => {
+      appServer.close((error) => error ? reject(error) : resolve());
+    });
+    appServer = createExpressApp({ isInstanceAdmin: true }).listen(0, "127.0.0.1");
+    await once(appServer, "listening");
+
+    const res = await request(createApp())
+      .post("/api/run-intelligence/orgs/org-1/native-fork-intents/intent-1/reconcile")
+      .send({ child: { continuity: "context_handoff" } });
+
+    expect(res.status).toBe(400);
+    expect(mockReconcileNativeForkIntentById).not.toHaveBeenCalled();
+  });
+
   it("returns bounded summary pages by default", async () => {
     mockListRunSummaries.mockResolvedValue({
       items: [{ id: "run-1", orgId: "org-1", status: "failed" }],
@@ -189,6 +378,7 @@ describe("run intelligence routes", () => {
     });
     expect(mockListRunSummaries).toHaveBeenCalledWith(expect.anything(), {
       orgId: "org-1",
+      sideChatOwnerId: "board-user",
       updatedAfter: null,
       runIdPrefix: null,
       agentId: "agent-1",
@@ -245,6 +435,7 @@ describe("run intelligence routes", () => {
     expect(res.body.page).toEqual({ afterSeq: 10, limit: 25, hasMore: true, nextAfterSeq: 12 });
     expect(mockGetObservedRunEvents).toHaveBeenCalledWith(expect.anything(), "run-1", {
       orgIds: ["org-1"],
+      sideChatOwnerId: "board-user",
     }, {
       cursor: null,
       afterSeq: 10,
@@ -275,6 +466,7 @@ describe("run intelligence routes", () => {
     expect(res.body.page).toEqual({ offset: 100, limitBytes: 12, endOffset: 112, eof: false, nextOffset: 112 });
     expect(mockGetObservedRunLog).toHaveBeenCalledWith(expect.anything(), "run-1", {
       orgIds: ["org-1"],
+      sideChatOwnerId: "board-user",
     }, { offset: 100, limitBytes: 12, signal: expect.any(AbortSignal) });
   });
 
@@ -302,6 +494,7 @@ describe("run intelligence routes", () => {
     expect(res.status).toBe(200);
     expect(mockListRunSummaries).toHaveBeenCalledWith(expect.anything(), {
       orgId: "org-1",
+      sideChatOwnerId: "board-user",
       updatedAfter: null,
       runIdPrefix: null,
       agentId: null,
@@ -345,6 +538,7 @@ describe("run intelligence routes", () => {
     expect(res.status).toBe(200);
     expect(mockGetRunSummary).toHaveBeenCalledWith(expect.anything(), "609695f1f90a", {
       orgIds: ["org-1"],
+      sideChatOwnerId: "board-user",
     });
   });
 
@@ -356,6 +550,7 @@ describe("run intelligence routes", () => {
     expect(res.status).toBe(200);
     expect(mockGetObservedRun).toHaveBeenCalledWith(expect.anything(), "609695f1f90a", {
       orgIds: ["org-1"],
+      sideChatOwnerId: "board-user",
     });
     expect(mockGetRunSummary).not.toHaveBeenCalled();
   });
@@ -510,22 +705,22 @@ describe("run intelligence routes", () => {
   });
 
   it("enforces org access on transcript routes", async () => {
-    mockGetObservedRunDetail.mockResolvedValueOnce({
-      run: { id: "run-2", orgId: "org-2", status: "failed" },
-      agentName: "Agent",
-      orgName: "Other Org",
-      issue: null,
-      bundle: {
-        agentRuntimeType: "process",
-        agentConfigRevisionId: null,
-        agentConfigRevisionCreatedAt: null,
-        agentConfigFingerprint: null,
-        runtimeConfigFingerprint: null,
+    mockGetObservedRunTranscript.mockResolvedValueOnce({
+      orgId: "org-2",
+      run: {
+        run: { id: "run-2", orgId: "org-2", status: "failed" },
+        agentName: "Agent",
+        orgName: "Other Org",
+        issue: null,
       },
-      events: [],
-      logContent: null,
-      logChunks: [],
-      transcript: [],
+      page: {
+        items: [],
+        nextCursor: null,
+        source: "legacy",
+        revision: "org-2-revision",
+        availability: "available",
+        completeness: "complete",
+      },
     });
 
     const res = await request(createApp()).get("/api/run-intelligence/runs/run-2/transcript");

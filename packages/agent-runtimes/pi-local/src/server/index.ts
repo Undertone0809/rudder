@@ -1,7 +1,77 @@
 import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
+export {
+  createPiLocalProviderCapabilities,
+  createPiLocalProviderCapabilityResolver,
+  resolvePiLocalProviderCapabilities,
+  runtimeProviderCapabilities,
+} from "./native-capabilities.js";
+export type {
+  PiCapabilityEvidence,
+  PiCapabilityStatus,
+  PiLocalProfileTransport,
+  PiLocalProfileTransportResolver,
+  PiRuntimeProviderCapabilityAdapter,
+} from "./native-capabilities.js";
+export {
+  createPiRpcControlHandle,
+  executePiNativeChat,
+  forkPiNativeSession,
+  readPiNativeTranscript,
+} from "./native-protocol.js";
+export type {
+  PiBinding,
+  PiForkRequest,
+  PiForkResult,
+  PiSession,
+  PiTranscriptRequest,
+  PiTranscriptResult,
+} from "./native-protocol.js";
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+const PROVIDER_SESSION_FIELDS = [
+  "hostId",
+  "profileId",
+  "capabilityRevision",
+  "sessionFile",
+  "sessionDir",
+  "cwd",
+  "command",
+  "providerSessionId",
+  "leafId",
+  "previousLeafId",
+] as const;
+
+const SAFE_PERSISTED_ENV_KEYS = new Set([
+  "HOME",
+  "USERPROFILE",
+  "PI_CODING_AGENT_DIR",
+  "PI_CODING_AGENT_SESSION_DIR",
+  "PI_OFFLINE",
+]);
+
+function readProviderSessionFields(record: Record<string, unknown>): Record<string, unknown> {
+  const rpcEnv = typeof record.rpcEnv === "object" && record.rpcEnv !== null && !Array.isArray(record.rpcEnv)
+    ? Object.fromEntries(
+      Object.entries(record.rpcEnv as Record<string, unknown>).filter(
+        (entry): entry is [string, string] => SAFE_PERSISTED_ENV_KEYS.has(entry[0]) && typeof entry[1] === "string" && entry[1].trim().length > 0,
+      ),
+    )
+    : null;
+  return {
+    ...Object.fromEntries(
+      PROVIDER_SESSION_FIELDS.flatMap((key) => {
+        const value = readNonEmptyString(record[key]);
+        return value ? [[key, value]] : [];
+      }),
+    ),
+    ...(Array.isArray(record.rpcArgs)
+      ? { rpcArgs: record.rpcArgs.filter((value): value is string => typeof value === "string") }
+      : {}),
+    ...(rpcEnv ? { rpcEnv } : {}),
+  };
 }
 
 export const sessionCodec: AgentRuntimeSessionCodec = {
@@ -20,6 +90,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
     return {
       sessionId,
       ...(cwd ? { cwd } : {}),
+      ...readProviderSessionFields(record),
     };
   },
   serialize(params: Record<string, unknown> | null) {
@@ -36,6 +107,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
     return {
       sessionId,
       ...(cwd ? { cwd } : {}),
+      ...readProviderSessionFields(params),
     };
   },
   getDisplayId(params: Record<string, unknown> | null) {

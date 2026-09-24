@@ -5,6 +5,7 @@ import {
   agents,
   approvals,
   assets,
+  automations,
   chatAttachments,
   chatContextLinks,
   chatControlActions,
@@ -14,6 +15,8 @@ import {
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
+  automationRuns,
+  heartbeatRuns,
   organizations
 } from "@rudderhq/db";
 import { parseShortRef, sanitizeChatStructuredPayload, shortRefFor, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
@@ -46,6 +49,7 @@ import {
   listDetachedChatTranscriptSummaries,
   loadChatTranscripts,
   replaceDetachedChatTranscript,
+  selectBoundedChatTranscript,
   selectChatTranscript,
   transcriptSummaryFromSources,
   type ChatGenerationSelectionCandidate,
@@ -102,6 +106,10 @@ import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-view
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
+  createTranscriptReader,
+  type TranscriptItem,
+} from "./runtime-kernel/transcript-reader.js";
+import {
   completeProductAnalyticsWorkCycle,
   recordProductAnalyticsChatCreated,
 } from "./product-analytics.js";
@@ -130,14 +138,66 @@ type ChatGenerationRow = typeof chatGenerations.$inferSelect;
 type ChatControlActionRow = typeof chatControlActions.$inferSelect;
 type ApprovalRow = typeof approvals.$inferSelect;
 
+type ChatApprovalScope = Pick<
+  ApprovalRow,
+  "orgId" | "type" | "payload" | "requestedByAgentId" | "requestedByUserId"
+> & { id?: string | null };
+
+type ChatApprovalProvenance = {
+  conversationId: string;
+  sourceMessageId: string | null;
+  targetRunId: string | null;
+  principalAgentId: string | null;
+  principalUserId: string | null;
+};
+
 const CHAT_TITLE_MAX_LENGTH = 200;
+const CHAT_TRANSCRIPT_READER_PAGE_LIMIT = 200;
+const CHAT_TRANSCRIPT_READER_MAX_PAGES = 25;
+const CHAT_TRANSCRIPT_READER_MAX_ITEMS = 5_000;
+const CHAT_TRANSCRIPT_READER_MAX_BYTES = 2 * 1024 * 1024;
 
 class InvalidQueueDeliveryActionLinkError extends Error {}
+
+function transcriptEntryFromReaderItem(item: TranscriptItem): ChatStreamTranscriptEntry | null {
+  const payload = item.payload && typeof item.payload === "object" && !Array.isArray(item.payload)
+    ? item.payload as Record<string, unknown>
+    : null;
+  const candidate = item.entry
+    ?? (payload && typeof payload.kind === "string" && typeof payload.ts === "string"
+      ? payload
+      : null);
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const entry = candidate as ChatStreamTranscriptEntry;
+  if (typeof entry.kind !== "string" || typeof entry.ts !== "string") return null;
+  const sourceEntryId = (entry as ChatStreamTranscriptEntry & { sourceEntryId?: unknown }).sourceEntryId;
+  return typeof sourceEntryId === "string" || !item.sourceEntryId
+    ? entry
+    : ({ ...entry, sourceEntryId: item.sourceEntryId } as unknown as ChatStreamTranscriptEntry);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function proposalWithoutLabels(value: Record<string, unknown> | null) {
+  if (!value) return null;
+  const { labelIds: _labelIds, ...rest } = value;
+  return rest;
+}
 
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
 export function chatService(db: Db, storage?: StorageService) {
   const generationProtocol = chatGenerationProtocolService(db);
+  const transcriptReader = createTranscriptReader(db);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
   const issuesSvc = issueService(db, storage);
   const approvalsSvc = approvalService(db);
@@ -610,6 +670,202 @@ export function chatService(db: Db, storage?: StorageService) {
       .then((rows) => rows[0] ?? null);
     if (!row) throw notFound("Chat conversation not found");
     return row;
+  }
+
+  function recordValue(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  }
+
+  function nonEmptyString(value: unknown) {
+    return typeof value === "string" ? safeTrim(value) : null;
+  }
+
+  function approvalRunId(payload: Record<string, unknown> | null | undefined) {
+    if (!payload) return null;
+    return nonEmptyString(payload.runId)
+      ?? nonEmptyString(payload.chatRunId)
+      ?? nonEmptyString(payload.targetRunId);
+  }
+
+  function automationRunId(payload: Record<string, unknown> | null | undefined) {
+    const metadata = recordValue(payload?.automationChatRun);
+    return nonEmptyString(metadata?.runId);
+  }
+
+  async function assertApprovalConversationScope(
+    approval: ChatApprovalScope,
+    payloadOverride?: Record<string, unknown>,
+  ): Promise<ChatApprovalProvenance | null> {
+    if (approval.type !== "chat_issue_creation" && approval.type !== "chat_operation") return null;
+
+    const originalPayload = recordValue(approval.payload);
+    const payload = recordValue(payloadOverride) ?? originalPayload;
+    const conversationId = nonEmptyString(payload?.chatConversationId);
+    const originalConversationId = nonEmptyString(originalPayload?.chatConversationId);
+    if (!conversationId) throw unprocessable("Chat approval missing chatConversationId");
+    if (payloadOverride && (!originalConversationId || originalConversationId !== conversationId)) {
+      throw unprocessable("Chat approval conversation cannot be changed during approval");
+    }
+
+    const conversation = await db
+      .select()
+      .from(chatConversations)
+      .where(and(eq(chatConversations.id, conversationId), eq(chatConversations.orgId, approval.orgId)))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!conversation) {
+      throw unprocessable("Chat approval conversation must belong to the approval organization");
+    }
+
+    const requestedByUserId = nonEmptyString(approval.requestedByUserId);
+    if (requestedByUserId && conversation.createdByUserId !== requestedByUserId) {
+      throw unprocessable("Chat approval conversation must belong to the requesting user");
+    }
+
+    const proposedByAgentId = nonEmptyString(payload?.proposedByAgentId);
+    const originalProposedByAgentId = nonEmptyString(originalPayload?.proposedByAgentId);
+    if (payloadOverride && proposedByAgentId !== originalProposedByAgentId) {
+      throw unprocessable("Chat approval proposing agent cannot be changed during approval");
+    }
+    const requestedByAgentId = nonEmptyString(approval.requestedByAgentId);
+    if (requestedByAgentId && proposedByAgentId && requestedByAgentId !== proposedByAgentId) {
+      throw unprocessable("Chat approval proposing agent does not match the requesting agent");
+    }
+    if (proposedByAgentId) {
+      const proposingAgent = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.id, proposedByAgentId), eq(agents.orgId, approval.orgId)))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!proposingAgent) {
+        throw unprocessable("Chat approval proposing agent must belong to the approval organization");
+      }
+    }
+
+    if (!approval.id) {
+      return {
+        conversationId,
+        sourceMessageId: null,
+        targetRunId: null,
+        principalAgentId: proposedByAgentId,
+        principalUserId: requestedByUserId,
+      };
+    }
+
+    const expectedKind = approval.type === "chat_issue_creation" ? "issue_proposal" : "operation_proposal";
+    const sourceMessageId = nonEmptyString(payload?.chatMessageId);
+    const sourceMessageConditions = [
+      eq(chatMessages.orgId, approval.orgId),
+      eq(chatMessages.conversationId, conversationId),
+      eq(chatMessages.approvalId, approval.id),
+      eq(chatMessages.kind, expectedKind),
+      ...(sourceMessageId ? [eq(chatMessages.id, sourceMessageId)] : []),
+    ];
+    const sourceMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(and(...sourceMessageConditions))
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!sourceMessage) {
+      throw unprocessable("Chat approval proposal must reference a message in the same conversation");
+    }
+
+    const sourceAgentId = nonEmptyString(sourceMessage.replyingAgentId);
+    if (!proposedByAgentId || !sourceAgentId || proposedByAgentId !== sourceAgentId) {
+      throw unprocessable("Chat approval proposal agent does not match its source message");
+    }
+
+    if (approval.type === "chat_issue_creation") {
+      const approvedProposal = proposalWithoutLabels(
+        issueProposalFromPayload(recordValue(payload?.proposedIssue)),
+      );
+      const originalProposal = proposalWithoutLabels(
+        issueProposalFromPayload(recordValue(originalPayload?.proposedIssue)),
+      );
+      const sourceProposal = proposalWithoutLabels(issueProposalFromPayload(sourceMessage.structuredPayload));
+      if (!approvedProposal || !originalProposal || !sourceProposal
+        || stableJson(approvedProposal) !== stableJson(originalProposal)
+        || stableJson(approvedProposal) !== stableJson(sourceProposal)) {
+        throw unprocessable("Chat issue proposal does not match its source message");
+      }
+    } else {
+      const approvedProposal = operationProposalFromPayload(recordValue(payload?.operationProposal) ?? payload);
+      const originalProposal = operationProposalFromPayload(recordValue(originalPayload?.operationProposal) ?? originalPayload);
+      const sourceProposal = operationProposalFromPayload(sourceMessage.structuredPayload);
+      if (!approvedProposal || !originalProposal || !sourceProposal
+        || stableJson(approvedProposal) !== stableJson(originalProposal)
+        || stableJson(approvedProposal) !== stableJson(sourceProposal)) {
+        throw unprocessable("Chat operation proposal does not match its source message");
+      }
+    }
+
+    const declaredRunId = approvalRunId(payload);
+    const sourceRunId = nonEmptyString(sourceMessage.runId);
+    if (declaredRunId && sourceRunId && declaredRunId !== sourceRunId) {
+      throw unprocessable("Chat approval target run does not match its source message");
+    }
+
+    let targetRunId = sourceRunId;
+    if (sourceRunId) {
+      const run = await db
+        .select({ id: heartbeatRuns.id, agentId: heartbeatRuns.agentId })
+        .from(heartbeatRuns)
+        .where(
+          and(
+            eq(heartbeatRuns.id, sourceRunId),
+            eq(heartbeatRuns.orgId, approval.orgId),
+            eq(heartbeatRuns.chatConversationId, conversationId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!run || run.agentId !== sourceAgentId) {
+        throw unprocessable("Chat approval target run does not belong to its conversation and agent");
+      }
+    }
+
+    const sourceAutomationRunId = automationRunId(sourceMessage.structuredPayload);
+    const targetAutomationRunId = sourceAutomationRunId;
+    if (targetAutomationRunId) {
+      const automationRun = await db
+        .select({ id: automationRuns.id, agentId: automations.assigneeAgentId })
+        .from(automationRuns)
+        .innerJoin(automations, eq(automationRuns.automationId, automations.id))
+        .where(
+          and(
+            eq(automationRuns.id, targetAutomationRunId),
+            eq(automationRuns.orgId, approval.orgId),
+            eq(automations.orgId, approval.orgId),
+            eq(automationRuns.linkedChatConversationId, conversationId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!automationRun || automationRun.agentId !== sourceAgentId) {
+        throw unprocessable("Chat approval automation run does not belong to its conversation and agent");
+      }
+      if (!sourceRunId) targetRunId = targetAutomationRunId;
+    }
+
+    if (!targetRunId) {
+      throw unprocessable("Chat approval proposal is missing its target run");
+    }
+    if (declaredRunId && declaredRunId !== sourceRunId && declaredRunId !== targetAutomationRunId) {
+      throw unprocessable("Chat approval target run does not match its source message");
+    }
+
+    return {
+      conversationId,
+      sourceMessageId: sourceMessage.id,
+      targetRunId,
+      principalAgentId: sourceAgentId,
+      principalUserId: requestedByUserId,
+    };
   }
 
   async function listAttachmentsForMessageIds(messageIds: string[]) {
@@ -3243,8 +3499,42 @@ export function chatService(db: Db, storage?: StorageService) {
     return row ? hydrateQueuedMessage(row) : null;
   }
 
+  async function readRunTranscriptThroughReader(run: Pick<MessageRow, "orgId" | "runId">) {
+    if (!run.runId) return [] as ChatStreamTranscriptEntry[];
+    const entries: ChatStreamTranscriptEntry[] = [];
+    let cursor: string | null = null;
+    let bytes = 2;
+    for (let pageCount = 0; pageCount < CHAT_TRANSCRIPT_READER_MAX_PAGES; pageCount += 1) {
+      const page = await transcriptReader.readRun({
+        orgId: run.orgId,
+        runId: run.runId,
+        principal: { type: "board", orgId: run.orgId, authorized: true },
+        cursor,
+        limit: CHAT_TRANSCRIPT_READER_PAGE_LIMIT,
+      });
+      for (const item of page.items) {
+        const entry = transcriptEntryFromReaderItem(item);
+        if (!entry) continue;
+        const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+        if (
+          entries.length >= CHAT_TRANSCRIPT_READER_MAX_ITEMS
+          || (entries.length > 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES)
+        ) {
+          return entries;
+        }
+        if (entries.length === 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES) return entries;
+        entries.push(entry);
+        bytes += entryBytes + (entries.length > 1 ? 1 : 0);
+      }
+      if (!page.nextCursor) return entries;
+      if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+      cursor = page.nextCursor;
+    }
+    return entries;
+  }
+
   async function hydrateMessages(rows: MessageHydrationRow[], options: { includeTranscript?: boolean } = {}) {
-    const includeTranscript = options.includeTranscript !== false;
+    const includeTranscript = options.includeTranscript === true;
     const assistantMessageIds = rows
       .filter((row) => row.role === "assistant")
       .map((row) => row.id);
@@ -3508,7 +3798,7 @@ export function chatService(db: Db, storage?: StorageService) {
       const transcriptPayload = nativeSteerTranscriptPayloadByMessageId.get(row.id) ?? row.structuredPayload;
       const ledgerTranscript = transcriptByAssistantMessageId.get(row.id);
       const transcript = includeRowTranscript
-        ? selectChatTranscript({
+        ? selectBoundedChatTranscript({
           ledger: ledgerTranscript,
           detached: hydratedDetachedTranscriptByMessageId.get(row.id),
           legacyPayload: transcriptPayload,
@@ -4227,7 +4517,7 @@ export function chatService(db: Db, storage?: StorageService) {
   }
 
   async function listMessages(conversationId: string, options: { includeTranscript?: boolean } = {}) {
-      const includeTranscript = options.includeTranscript !== false;
+      const includeTranscript = options.includeTranscript === true;
       const conversationOrgIds = db
         .select({ orgId: chatConversations.orgId })
         .from(chatConversations)
@@ -4276,11 +4566,19 @@ export function chatService(db: Db, storage?: StorageService) {
           conversationId: chatMessages.conversationId,
           role: chatMessages.role,
           structuredPayload: chatMessages.structuredPayload,
+          runId: chatMessages.runId,
         })
         .from(chatMessages)
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
+      if (row.runId) {
+        return {
+          messageId: row.id,
+          messageRef: messageShortRef(row.id),
+          transcript: await readRunTranscriptThroughReader(row),
+        };
+      }
       const [generation, detached] = await Promise.all([
         listChatGenerationTranscripts(db, [row]),
         listDetachedChatTranscripts(db, [row]),
@@ -4288,7 +4586,7 @@ export function chatService(db: Db, storage?: StorageService) {
       return {
         messageId: row.id,
         messageRef: messageShortRef(row.id),
-        transcript: selectChatTranscript({
+        transcript: selectBoundedChatTranscript({
           ledger: generation.transcriptByMessageId.get(row.id),
           detached: detached.get(row.id),
           legacyPayload: row.structuredPayload,
@@ -5013,6 +5311,9 @@ export function chatService(db: Db, storage?: StorageService) {
         return null;
       }
 
+      const provenance = await assertApprovalConversationScope(approval);
+      if (!provenance) throw unprocessable("Chat approval scope could not be established");
+
       const payload = approval.payload as Record<string, unknown>;
       const conversationId = safeTrim(typeof payload.chatConversationId === "string" ? payload.chatConversationId : null);
       const messageId = safeTrim(typeof payload.chatMessageId === "string" ? payload.chatMessageId : null);
@@ -5034,10 +5335,18 @@ export function chatService(db: Db, storage?: StorageService) {
           messageId,
           proposal: proposedIssueWithFeedback,
         });
-        const links = await issueApprovalsSvc.linkManyForApproval(approval.id, [issue.id], {
-          agentId: null,
-          userId: actorUserId ?? "board",
-        });
+        const links = await issueApprovalsSvc.linkManyForApproval(
+          approval.id,
+          [issue.id],
+          {
+            agentId: null,
+            userId: actorUserId ?? "board",
+          },
+          {
+            orgId: approval.orgId,
+            conversationId: provenance.conversationId,
+          },
+        );
         for (const link of links) {
           await logActivity(db, {
             orgId: approval.orgId,
@@ -5185,6 +5494,14 @@ export function chatService(db: Db, storage?: StorageService) {
         payload: Record<string, unknown>;
       },
     ) {
+      await assertApprovalConversationScope({
+        id: null,
+        orgId,
+        type: input.type,
+        payload: input.payload,
+        requestedByAgentId: null,
+        requestedByUserId: input.requestedByUserId,
+      });
       return approvalsSvc.create(orgId, {
         type: input.type,
         requestedByAgentId: null,
@@ -5271,6 +5588,7 @@ export function chatService(db: Db, storage?: StorageService) {
     convertToIssue,
     getMessage,
     getUserMessageMutationByClientMutationId,
+    assertApprovalConversationScope,
     applyApprovedApproval,
     createProposalApproval,
     resolveOperationProposal,

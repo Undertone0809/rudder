@@ -4,6 +4,15 @@ import * as annotationPrompts from "./chat-assistant.annotations.js";
 import {
   buildConversationPrompt,
   CHAT_RESULT_SENTINEL_PREFIX,
+  parseCompletedAssistantReply,
+  validateNativeApprovalDecision,
+  validateNativeApprovalHandle,
+  validateNativeApprovalRequest,
+  validateNativeControlResult,
+  validateNativeForkResult,
+  validateNativeInterruptResult,
+  validateNativeSecretSafePayload,
+  validateNativeSteerResult,
   validateAssistantResult,
 } from "./chat-assistant.helpers.js";
 
@@ -304,5 +313,162 @@ describe("chat assistant annotation prompt projection", () => {
     expect(feedback.text).toContain("annotation-only");
     expect(feedback.text).toContain(JSON.stringify("Referenced text"));
     expect(feedback.media).toBe(media);
+  });
+});
+
+describe("chat assistant structured and native result validation", () => {
+  const operationProposal = {
+    operationProposal: {
+      targetType: "organization",
+      targetId: "organization-1",
+      summary: "Rename organization",
+      patch: { name: "Rudder Ops" },
+    },
+  };
+
+  it("requires a strict operation proposal at the Chat/Side Chat assistant result boundary", () => {
+    expect(validateAssistantResult({
+      kind: "operation_proposal",
+      body: "I can rename the organization.",
+      structuredPayload: operationProposal,
+    })).toMatchObject({
+      kind: "operation_proposal",
+      structuredPayload: operationProposal,
+    });
+
+    expect(() => validateAssistantResult({
+      kind: "operation_proposal",
+      body: "I can rename the organization.",
+      structuredPayload: {
+        operationProposal: {
+          ...operationProposal.operationProposal,
+          patch: { name: "Rudder Ops", unknown: true },
+        },
+      },
+    })).toThrow("strict target patch");
+
+    const sentinel = `${CHAT_RESULT_SENTINEL_PREFIX}TEST`;
+    expect(parseCompletedAssistantReply(
+      `${sentinel}${JSON.stringify({
+        kind: "operation_proposal",
+        body: "Rename it?",
+        structuredPayload: operationProposal,
+      })}`,
+      sentinel,
+    ).kind).toBe("operation_proposal");
+  });
+
+  it("validates fork identity and rejects provider success-shaped extras", () => {
+    const result = validateNativeForkResult({
+      session: {
+        sessionId: "child-session",
+        sessionParams: { sessionId: "child-session", profileId: "profile-1" },
+        sessionDisplayId: "child-session",
+      },
+      boundary: "turn-1",
+      sourceBoundary: "turn-1",
+      continuity: "native",
+    }, { boundary: "turn-1", sourceBoundary: "turn-1" });
+    expect(result.session.sessionId).toBe("child-session");
+
+    expect(() => validateNativeForkResult({
+      session: {
+        sessionId: "child-session",
+        sessionParams: {},
+        sessionDisplayId: "child-session",
+      },
+      boundary: "turn-1",
+      continuity: "native",
+      rpcSuccess: true,
+    })).toThrow(/Invalid native fork result/);
+    expect(() => validateNativeForkResult({
+      session: {
+        sessionId: "child-session",
+        sessionParams: {},
+        sessionDisplayId: "child-session",
+      },
+      boundary: "other-turn",
+      continuity: "native",
+    }, { boundary: "turn-1" })).toThrow(/does not match/);
+  });
+
+  it("keeps steer dispositions honest and rejects accepted results without receipts", () => {
+    expect(validateNativeSteerResult({
+      disposition: "accepted_current",
+      providerThreadId: "thread-1",
+      providerTurnId: "turn-2",
+    }, { providerThreadId: "thread-1" })).toMatchObject({ disposition: "accepted_current" });
+    expect(validateNativeControlResult("interrupt", "waiting_safe_boundary")).toBe("waiting_safe_boundary");
+    expect(validateNativeInterruptResult("unverified")).toBe("unverified");
+    expect(() => validateNativeSteerResult({
+      disposition: "accepted_current",
+      providerThreadId: "thread-1",
+    })).toThrow(/Invalid native steer result/);
+    expect(() => validateNativeSteerResult({
+      disposition: "accepted_current",
+      providerThreadId: "other-thread",
+      providerTurnId: "turn-2",
+    }, { providerThreadId: "thread-1" })).toThrow(/active control handle/);
+    expect(() => validateNativeSteerResult({
+      disposition: "queued_next",
+      providerThreadId: "thread-1",
+      providerTurnId: "turn-2",
+    })).toThrow(/Invalid native steer result/);
+    expect(() => validateNativeInterruptResult("accepted")).toThrow(/Invalid native interrupt result/);
+  });
+
+  it("requires a known approval envelope and redacted secret-safe evidence", () => {
+    expect(validateNativeApprovalRequest({
+      type: "agent_runtime",
+      payload: {
+        provider: "hermes",
+        runtimeType: "hermes_gateway",
+        upstreamRunId: "run-1",
+        sessionId: "session-1",
+        event: { event: "approval.request", secretField: "[REDACTED]" },
+        choices: ["once", "deny"],
+      },
+    }).payload.choices).toEqual(["once", "deny"]);
+    expect(validateNativeApprovalHandle({ id: "approval-1", status: "pending" })).toEqual({
+      id: "approval-1",
+      status: "pending",
+    });
+    expect(validateNativeApprovalDecision({
+      id: "approval-1",
+      status: "rejected",
+      decisionNote: "Denied by operator",
+    }).status).toBe("rejected");
+    expect(validateNativeSecretSafePayload({ event: "approval.request", token: "[REDACTED]" })).toMatchObject({
+      event: "approval.request",
+    });
+    expect(() => validateNativeApprovalRequest({
+      type: "agent_runtime",
+      payload: {
+        provider: "hermes",
+        runtimeType: "hermes_gateway",
+        upstreamRunId: "run-1",
+        sessionId: "session-1",
+        event: {},
+        choices: ["once", "deny"],
+      },
+    })).toThrow(/approval\.request/);
+
+    expect(() => validateNativeApprovalRequest({
+      type: "agent_runtime",
+      payload: {
+        provider: "hermes",
+        runtimeType: "hermes_gateway",
+        upstreamRunId: "run-1",
+        sessionId: "session-1",
+        event: { token: "raw-token" },
+        choices: ["once", "deny"],
+      },
+    })).toThrow(/Sensitive native payload fields/);
+    expect(() => validateNativeSecretSafePayload({ secretField: "raw-secret" })).toThrow(/Sensitive native payload fields/);
+    expect(() => validateNativeSecretSafePayload({ accessToken: "raw-token" })).toThrow(/Sensitive native payload fields/);
+    expect(() => validateNativeSecretSafePayload({ credentials: ["raw-secret"] })).toThrow(/Sensitive native payload fields/);
+    expect(() => validateNativeApprovalHandle({ id: "approval-1", status: "pending", secret: "raw" })).toThrow(/Invalid native approval handle/);
+    expect(() => validateNativeApprovalDecision({ id: "approval-1", status: "approved", result: {} })).toThrow(/Invalid native approval decision/);
+    expect(() => validateNativeSecretSafePayload({ value: "raw-secret" })).toThrow(/Sensitive native payload fields/);
   });
 });
