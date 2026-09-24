@@ -243,9 +243,7 @@ export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm, openNewProject } = useDialog();
   const firstTurnStore = useFirstChatTurnStore();
-  const firstTurnOwner = firstTurnStore.getOwner() ?? firstChatTurnOwner(selectedOrganizationId, location.key);
-  const latestLocationKeyRef = useRef(location.key);
-  latestLocationKeyRef.current = location.key;
+  const firstTurnOwner = firstTurnStore.getOwner() ?? firstChatTurnOwner(selectedOrganizationId, location.key); const latestLocationKeyRef = useRef(location.key); latestLocationKeyRef.current = location.key;
   const firstTurnState = useSyncExternalStore(firstTurnStore.subscribe, firstTurnStore.getSnapshot);
   const pendingFirstTurn = firstTurnState.pending;
   const newConversationSendInFlight = Boolean(pendingFirstTurn);
@@ -557,13 +555,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         pathname: conversationId ? chatConversationPath(conversationId) : chatRootPath,
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "", }, { replace: true, state: preserveFirstChatTurnOwnerState(location) }, );
   }, [
-    firstTurnStore,
-    agents,
+    firstTurnStore, agents,
     chatConversationPath,
     chatRootPath,
     conversationId,
-    location,
-    navigate,
+    location, navigate,
     pendingPrefill,
     pendingAgentPrefill,
     pendingProjectPrefill,

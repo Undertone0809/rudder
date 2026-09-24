@@ -1096,11 +1096,7 @@ export function Layout() {
 
     const canonicalRouteKey = getOrganizationRouteKey(matchedOrganization);
     if (orgPrefix.toLowerCase() !== canonicalRouteKey.toLowerCase()) {
-      const suffix = location.pathname.replace(/^\/[^/]+/, "");
-      navigate(`/${canonicalRouteKey}${suffix}${location.search}`, {
-        replace: true,
-        state: preserveFirstChatTurnOwnerState(location),
-      });
+      navigate(`/${canonicalRouteKey}${location.pathname.replace(/^\/[^/]+/, "")}${location.search}`, { replace: true, state: preserveFirstChatTurnOwnerState(location) });
       return;
     }
 
