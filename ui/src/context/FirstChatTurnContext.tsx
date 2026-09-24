@@ -1,5 +1,6 @@
 import { useOrganization } from "@/context/OrganizationContext";
 import { FirstChatTurnStore } from "@/lib/chat-first-turn-store";
+import { toOrganizationRelativePath } from "@/lib/organization-routes";
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useInRouterContext, useLocation, useNavigationType } from "react-router-dom";
 
@@ -7,23 +8,24 @@ const FirstChatTurnContext = createContext<FirstChatTurnStore | null>(null);
 const FIRST_CHAT_TURN_OWNER_KEY = "__rudderFirstChatTurnOwnerKey";
 
 type FirstChatTurnLocation = { key: string; pathname: string; state: unknown };
-type FirstChatTurnRoute = { key: string; pathname: string; orgId: string | null };
+type FirstChatTurnRoute = { key: string; ownerKey: string; pathname: string; orgId: string | null };
 
 export function firstChatTurnOwner(orgId: string | null, locationKey: string) {
   return `${orgId ?? "__none__"}:${locationKey}`;
 }
 
 function firstChatTurnRouteState(value: unknown) {
-  const state = value && typeof value === "object" && !Array.isArray(value)
+  return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
-  return state;
 }
 
 export function preserveFirstChatTurnOwnerState(location: FirstChatTurnLocation) {
+  const state = firstChatTurnRouteState(location.state) ?? {};
+  const existingOwnerKey = state[FIRST_CHAT_TURN_OWNER_KEY];
   return {
-    ...(firstChatTurnRouteState(location.state) ?? {}),
-    [FIRST_CHAT_TURN_OWNER_KEY]: location.key,
+    ...state,
+    [FIRST_CHAT_TURN_OWNER_KEY]: typeof existingOwnerKey === "string" ? existingOwnerKey : location.key,
   };
 }
 
@@ -32,13 +34,13 @@ export function shouldPreserveFirstChatTurnOwner(
   location: FirstChatTurnLocation & { orgId: string | null },
   navigationType: "POP" | "PUSH" | "REPLACE",
 ) {
-  const previousKey = firstChatTurnRouteState(location.state)?.[FIRST_CHAT_TURN_OWNER_KEY];
+  const ownerKey = firstChatTurnRouteState(location.state)?.[FIRST_CHAT_TURN_OWNER_KEY];
   return navigationType === "REPLACE"
     && previous !== null
     && previous.key !== location.key
-    && previous.key === previousKey
-    && previous.pathname === location.pathname
-    && previous.orgId === location.orgId;
+    && previous.ownerKey === ownerKey
+    && previous.orgId === location.orgId
+    && toOrganizationRelativePath(previous.pathname) === toOrganizationRelativePath(location.pathname);
 }
 
 function RouteOwner({ store }: { store: FirstChatTurnStore }) {
@@ -52,15 +54,22 @@ function RouteOwner({ store }: { store: FirstChatTurnStore }) {
       pathname: location.pathname,
       orgId: selectedOrganizationId,
     };
-    if (!shouldPreserveFirstChatTurnOwner(previousRoute.current, { ...location, orgId: selectedOrganizationId }, navigationType)) {
-      store.setOwner(firstChatTurnOwner(selectedOrganizationId, location.key));
-    }
-    previousRoute.current = currentRoute;
+    const previous = previousRoute.current;
+    const preserveOwner = shouldPreserveFirstChatTurnOwner(
+      previous,
+      { ...location, orgId: selectedOrganizationId },
+      navigationType,
+    );
+    if (!preserveOwner) store.setOwner(firstChatTurnOwner(selectedOrganizationId, location.key));
+    previousRoute.current = {
+      ...currentRoute,
+      ownerKey: preserveOwner && previous ? previous.ownerKey : location.key,
+    };
   }, [store, selectedOrganizationId, location.key, location.pathname, location.state, navigationType]);
   return null;
 }
 
-/** The prefill replace preserves ownership; other committed navigations revoke it. */
+/** Only explicitly preserved replacements within the same organization route keep ownership. */
 export function FirstChatTurnProvider({ children }: { children: ReactNode }) {
   const [store] = useState(() => new FirstChatTurnStore());
   const inRouter = useInRouterContext();

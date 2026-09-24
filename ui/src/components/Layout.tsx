@@ -20,6 +20,7 @@ import { healthApi } from "../api/health";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { projectsApi } from "../api/projects";
 import { useDialog } from "../context/DialogContext";
+import { preserveFirstChatTurnOwnerState } from "../context/FirstChatTurnContext";
 import { NavigationBackProvider } from "../context/NavigationBackContext";
 import { useOrganization } from "../context/OrganizationContext";
 import { usePanel } from "../context/PanelContext";
@@ -1096,7 +1097,10 @@ export function Layout() {
     const canonicalRouteKey = getOrganizationRouteKey(matchedOrganization);
     if (orgPrefix.toLowerCase() !== canonicalRouteKey.toLowerCase()) {
       const suffix = location.pathname.replace(/^\/[^/]+/, "");
-      navigate(`/${canonicalRouteKey}${suffix}${location.search}`, { replace: true });
+      navigate(`/${canonicalRouteKey}${suffix}${location.search}`, {
+        replace: true,
+        state: preserveFirstChatTurnOwnerState(location),
+      });
       return;
     }
 

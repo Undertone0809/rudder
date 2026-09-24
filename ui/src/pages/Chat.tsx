@@ -244,6 +244,8 @@ export function Chat() { const { selectedOrganizationId } = useOrganization(); r
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm, openNewProject } = useDialog();
   const firstTurnStore = useFirstChatTurnStore();
   const firstTurnOwner = firstTurnStore.getOwner() ?? firstChatTurnOwner(selectedOrganizationId, location.key);
+  const latestLocationKeyRef = useRef(location.key);
+  latestLocationKeyRef.current = location.key;
   const firstTurnState = useSyncExternalStore(firstTurnStore.subscribe, firstTurnStore.getSnapshot);
   const pendingFirstTurn = firstTurnState.pending;
   const newConversationSendInFlight = Boolean(pendingFirstTurn);
@@ -533,7 +535,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }), enabled: !!selectedOrganizationId, }); const profileQuery = useQuery({
     queryKey: queryKeys.instance.profileSettings, queryFn: () => instanceSettingsApi.getProfile(), }); const generalSettingsQuery = useQuery({
     queryKey: queryKeys.instance.generalSettings, queryFn: () => instanceSettingsApi.getGeneral(), }); const showDeveloperDiagnostics = generalSettingsQuery.data?.showDeveloperDiagnostics === true;
-  useEffect(() => { if (pendingPrefill || newConversationSendInFlight) return; const hasAgentPrefill = pendingAgentPrefill.length > 0; const hasProjectPrefill = pendingProjectPrefill.length > 0; if (!hasAgentPrefill && !hasProjectPrefill) return;
+  useEffect(() => { if (pendingPrefill || newConversationSendInFlight || firstTurnStore.getSnapshot().pending || latestLocationKeyRef.current !== location.key) return; const hasAgentPrefill = pendingAgentPrefill.length > 0; const hasProjectPrefill = pendingProjectPrefill.length > 0; if (!hasAgentPrefill && !hasProjectPrefill) return;
     const agentAlreadyApplied = !hasAgentPrefill || pendingAgentPrefill === lastAppliedAgentPrefillRef.current;
     const projectAlreadyApplied = !hasProjectPrefill || pendingProjectPrefill === lastAppliedProjectPrefillRef.current; if (agentAlreadyApplied && projectAlreadyApplied) return;
     if (!conversationId) { if (hasAgentPrefill && !agentAlreadyApplied && !agents) return; if (hasProjectPrefill && !projectAlreadyApplied && !projects) return;
@@ -555,10 +557,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         pathname: conversationId ? chatConversationPath(conversationId) : chatRootPath,
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "", }, { replace: true, state: preserveFirstChatTurnOwnerState(location) }, );
   }, [
+    firstTurnStore,
     agents,
     chatConversationPath,
     chatRootPath,
     conversationId,
+    location,
     navigate,
     pendingPrefill,
     pendingAgentPrefill,
