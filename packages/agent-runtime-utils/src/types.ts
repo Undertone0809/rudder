@@ -2,6 +2,8 @@
 // Minimal agent-runtime-facing interfaces (no drizzle dependency)
 // ---------------------------------------------------------------------------
 
+import type { ChatAskUserRequest, ChatAskUserResponse } from "@rudderhq/shared";
+
 export interface AgentRuntimeAgent {
   id: string;
   orgId: string;
@@ -104,6 +106,11 @@ export interface AgentRuntimeExecutionResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  /** Durable provider submission state for the common Run boundary. */
+  submissionPhase?: AgentRuntimeNetworkSubmissionPhase | null;
+  /** Provider-native identity for the submitted execution, when known. */
+  providerThreadId?: string | null;
+  providerTurnId?: string | null;
   errorMessage?: string | null;
   errorCode?: string | null;
   errorMeta?: Record<string, unknown>;
@@ -336,10 +343,20 @@ export interface AgentRuntimeExecutionContext {
   agent: AgentRuntimeAgent;
   runtime: AgentRuntimeState;
   config: Record<string, unknown>;
-  context: Record<string, unknown>;
+  context: Record<string, unknown> & {
+    rudderCodexChatPrompt?: {
+      version: 1;
+      developerInstructions: string;
+    };
+  };
   media?: AgentRuntimeMediaAttachment[];
   onLog: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   onMeta?: (meta: AgentRuntimeInvocationMeta) => Promise<void>;
+  /** Host-created, non-secret transport selectors; persist before provider submission.
+   * Never populate this callback from provider output or session metadata. */
+  onNativeTransportProfile?: (profile: Record<string, unknown>) => Promise<void>;
+  /** Called before a native Chat transport falls back to a legacy transcript. */
+  onTranscriptSource?: (source: "legacy") => Promise<void>;
   onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
   authToken?: string;
   abortSignal?: AbortSignal;
@@ -352,6 +369,7 @@ export interface AgentRuntimeExecutionContext {
 export interface AgentRuntimeApprovalRequest {
   type: "agent_runtime";
   payload: Record<string, unknown>;
+  inputRequest?: ChatAskUserRequest;
 }
 
 export interface AgentRuntimeApprovalHandle {
@@ -363,6 +381,7 @@ export interface AgentRuntimeApprovalDecision {
   id: string;
   status: "pending" | "approved" | "rejected" | "cancelled";
   decisionNote?: string | null;
+  inputResponse?: ChatAskUserResponse;
 }
 
 export interface AgentRuntimeMediaAttachment {

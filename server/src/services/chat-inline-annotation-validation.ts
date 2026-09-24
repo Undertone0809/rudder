@@ -6,7 +6,6 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
-  heartbeatRunEvents,
   heartbeatRuns,
 } from "@rudderhq/db";
 import {
@@ -16,21 +15,26 @@ import {
   type ChatStreamTranscriptEntry,
   type ChatStreamTranscriptTextEntry,
 } from "@rudderhq/shared";
-import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import type { ChatGenerationProtocolTransaction } from "./chat-generation-protocol.helpers.js";
 import { renderedMarkdownSelectionText } from "./chat-inline-annotation-rendering.js";
 import { renderedMarkdownSelectionTextWithResolvedLabels } from "./chat-inline-annotation-resolved-labels.js";
+import { chatTranscriptEntryFromReaderItem } from "./chat-transcript-reader-item.js";
 import { chatTranscriptFromPayload } from "./chats.helpers.js";
 import { organizationWorkspaceBrowserService } from "./organization-workspace-browser.js";
+import { assertRunIntelligenceAccess } from "./run-intelligence-access.js";
+import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
+import type { TranscriptItem } from "./runtime-kernel/transcript-reader.js";
 
 const STABLE_ANNOTATION_MESSAGE_STATUSES = new Set(["completed", "stopped", "failed"]);
 const STABLE_ANNOTATION_GENERATION_STATUSES = new Set(["completed", "stopped", "failed"]);
 const STABLE_AGENT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
 const MAX_PROCESS_ANNOTATION_EVENT_SPAN = 1_000;
 const MAX_AGENT_RUN_ANNOTATION_MEMBER_IDS = 100;
+const MAX_AGENT_RUN_ANNOTATION_READER_ITEMS = 5_000;
+const AGENT_RUN_ANNOTATION_READER_PAGE_LIMIT = 200;
 const INTERNAL_RESULT_MARKER_PATTERN =
   /RUDDER_RESULT_(?:BEGIN|END)|__RUDDER_RESULT_[a-f0-9-]+__/i;
 
@@ -531,13 +535,23 @@ function validateFileAnnotationConversation(
 
 type AgentRunTranscriptAnnotation = Extract<ChatInlineAnnotation, { surface: "agent_run_transcript" }>;
 
-function runTranscriptEventPayload(event: typeof heartbeatRunEvents.$inferSelect) {
-  if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return null;
-  return event.payload as Record<string, unknown>;
+function runTranscriptItemPayload(item: TranscriptItem) {
+  if (item.payload && typeof item.payload === "object" && !Array.isArray(item.payload)) {
+    return item.payload as Record<string, unknown>;
+  }
+  if (item.entry && typeof item.entry === "object" && !Array.isArray(item.entry)) {
+    return item.entry as Record<string, unknown>;
+  }
+  return null;
 }
 
-function runTranscriptEventText(event: typeof heartbeatRunEvents.$inferSelect) {
-  const payload = runTranscriptEventPayload(event);
+function runTranscriptItemText(item: TranscriptItem) {
+  if (item.kind.startsWith("cursor:acp:")) {
+    const entry = chatTranscriptEntryFromReaderItem(item);
+    return entry && "text" in entry ? entry.text : null;
+  }
+  if (typeof item.text === "string") return item.text;
+  const payload = runTranscriptItemPayload(item);
   if (!payload) return null;
   if (typeof payload.text === "string") return payload.text;
   const nestedEntry = payload.entry;
@@ -549,24 +563,22 @@ function runTranscriptEventText(event: typeof heartbeatRunEvents.$inferSelect) {
   ) {
     return (nestedEntry as Record<string, unknown>).text as string;
   }
-  return typeof event.message === "string" ? event.message : null;
+  return null;
 }
 
-function runTranscriptEventIds(event: typeof heartbeatRunEvents.$inferSelect) {
-  const payload = runTranscriptEventPayload(event);
-  const ids = [String(event.id)];
+function runTranscriptItemIds(item: TranscriptItem) {
+  const payload = runTranscriptItemPayload(item);
+  const ids = [item.id, item.sourceEntryId].filter((value): value is string => Boolean(value));
   for (const key of ["id", "entryId", "sourceEntryId", "memberId"]) {
     const value = payload?.[key];
     if (typeof value === "string" || typeof value === "number") ids.push(String(value));
   }
-  const timestamp = typeof payload?.ts === "string"
-    ? payload.ts
-    : event.createdAt.toISOString();
+  const timestamp = typeof payload?.ts === "string" ? payload.ts : item.ts;
   const name = typeof payload?.name === "string"
     ? payload.name
     : typeof payload?.toolName === "string"
       ? payload.toolName
-      : event.eventType;
+      : item.kind;
   const toolUseId = payload?.toolUseId;
   if (typeof toolUseId === "string") ids.push(`tool:${toolUseId}:${timestamp}`);
   const messageId = payload?.messageId ?? payload?.segmentId ?? payload?.entryId;
@@ -585,8 +597,12 @@ function runTranscriptEventIds(event: typeof heartbeatRunEvents.$inferSelect) {
   return ids;
 }
 
-function runTranscriptEventIsDelta(event: typeof heartbeatRunEvents.$inferSelect) {
-  const payload = runTranscriptEventPayload(event);
+function runTranscriptItemIsDelta(item: TranscriptItem) {
+  if (item.kind.startsWith("cursor:acp:")) {
+    const entry = chatTranscriptEntryFromReaderItem(item);
+    return Boolean(entry && "delta" in entry && entry.delta === true);
+  }
+  const payload = runTranscriptItemPayload(item);
   return Boolean(payload?.delta === true
     || (
       payload?.entry
@@ -596,22 +612,32 @@ function runTranscriptEventIsDelta(event: typeof heartbeatRunEvents.$inferSelect
     ));
 }
 
-function joinRunTranscriptEventText(events: readonly (typeof heartbeatRunEvents.$inferSelect)[]) {
+function joinRunTranscriptItemText(items: readonly TranscriptItem[]) {
   let source = "";
   let previousWasDelta = false;
-  for (const event of events) {
-    const text = runTranscriptEventText(event);
+  for (const item of items) {
+    const text = runTranscriptItemText(item);
     if (!text) continue;
-    source += source.length === 0 || (previousWasDelta && runTranscriptEventIsDelta(event))
+    source += source.length === 0 || (previousWasDelta && runTranscriptItemIsDelta(item))
       ? text
       : `\n${text}`;
-    previousWasDelta = runTranscriptEventIsDelta(event);
+    previousWasDelta = runTranscriptItemIsDelta(item);
   }
   return source;
 }
 
-function isNiceTranscriptEvent(event: typeof heartbeatRunEvents.$inferSelect) {
-  const payload = runTranscriptEventPayload(event);
+function isNiceTranscriptItem(item: TranscriptItem) {
+  if (item.visibility !== "visible") return false;
+  // Content hashes and replay-window ordinals cannot identify a Cursor update
+  // occurrence once session/load returns a different retained subset.
+  if (item.kind.startsWith("cursor:acp:") && item.origin !== "object") return false;
+  const payload = runTranscriptItemPayload(item);
+  if (payload) {
+    const entry = payload.entry && typeof payload.entry === "object" && !Array.isArray(payload.entry)
+      ? payload.entry as Record<string, unknown>
+      : payload;
+    if (isExplicitlyHiddenTranscriptEvidence(payload, entry)) return false;
+  }
   if (payload?.internal === true || payload?.hidden === true || payload?.private === true) return false;
   if (payload?.visibility === "internal" || payload?.visibility === "hidden") return false;
   const nestedEntry = payload?.entry;
@@ -628,13 +654,72 @@ function isNiceTranscriptEvent(event: typeof heartbeatRunEvents.$inferSelect) {
       }
       : null;
   if (lifecycleCandidate && isInternalChatTranscriptLifecycleEntry(lifecycleCandidate)) return false;
-  return !/(?:lifecycle|invocation|diagnostic|session)/iu.test(event.eventType);
+  const eventType = typeof payload?.eventType === "string" ? payload.eventType : item.kind;
+  return !/(?:lifecycle|invocation|diagnostic|session)/iu.test(eventType);
+}
+
+function isGenerationTextEntry(
+  entry: ChatStreamTranscriptEntry | null,
+): entry is ChatStreamTranscriptTextEntry & {
+  generationId: string;
+  generationSeqStart: number;
+  generationSeqEnd: number;
+} {
+  return Boolean(entry
+    && (entry.kind === "assistant" || entry.kind === "thinking")
+    && typeof entry.generationId === "string"
+    && typeof entry.generationSeqStart === "number"
+    && typeof entry.generationSeqEnd === "number");
+}
+
+async function readConversationMessageItems(
+  query: ValidationQuery,
+  input: {
+    orgId: string;
+    conversationId: string;
+    messageId: string;
+    runId: string | null;
+    generationId: string;
+    annotationKind: string;
+    startSeq: number;
+    endSeq: number;
+  },
+) {
+  const reader = createHistoricalTranscriptReader(query as unknown as Pick<Db, "select">);
+  const items: TranscriptItem[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    const page = await reader.readConversation({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      principal: { type: "board", orgId: input.orgId, authorized: true },
+      cursor,
+      limit: AGENT_RUN_ANNOTATION_READER_PAGE_LIMIT,
+    });
+    for (const item of page.items) {
+      const messageMatch = [item.id, item.sourceEntryId]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => new RegExp(`^message:${input.messageId}:\\d+(?::\\d+)?$`, "u").test(value));
+      const entry = chatTranscriptEntryFromReaderItem(item);
+      const matchesGeneration = isGenerationTextEntry(entry)
+        && entry.kind === input.annotationKind
+        && entry.generationId === input.generationId
+        && entry.generationSeqStart >= input.startSeq
+        && entry.generationSeqEnd <= input.endSeq;
+      if (messageMatch || (input.runId && item.runId === input.runId && matchesGeneration)) items.push(item);
+    }
+    if (!page.nextCursor) break;
+    if (page.nextCursor === cursor) throw unprocessable("Transcript reader cursor did not advance");
+    cursor = page.nextCursor;
+  }
+  return items;
 }
 
 async function validateAgentRunTranscriptAnnotation(
   query: ValidationQuery,
   input: {
     orgId: string;
+    requesterUserId?: string | null;
     annotation: AgentRunTranscriptAnnotation;
   },
 ) {
@@ -651,7 +736,14 @@ async function validateAgentRunTranscriptAnnotation(
     .limit(1)
     .for("share")
     .then((rows) => rows[0] ?? null);
-  if (!run || run.agentId !== input.annotation.sourceAgentId) {
+  if (!run) {
+    throw unprocessable("Agent Run annotation source run must belong to the declared Agent and organization");
+  }
+  await assertRunIntelligenceAccess(query as unknown as Db, run, {
+    orgIds: [input.orgId],
+    sideChatOwnerId: input.requesterUserId ?? null,
+  });
+  if (run.agentId !== input.annotation.sourceAgentId) {
     throw unprocessable("Agent Run annotation source run must belong to the declared Agent and organization");
   }
   if (!STABLE_AGENT_RUN_STATUSES.has(run.status)) {
@@ -671,55 +763,70 @@ async function validateAgentRunTranscriptAnnotation(
     throw unprocessable("Agent Run annotation source Agent must belong to the organization");
   }
 
-  const events = await query
-    .select()
-    .from(heartbeatRunEvents)
-    .where(and(
-      eq(heartbeatRunEvents.orgId, input.orgId),
-      eq(heartbeatRunEvents.runId, input.annotation.sourceRunId),
-      eq(heartbeatRunEvents.agentId, input.annotation.sourceAgentId),
-    ))
-    .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id))
-    .limit(5_000)
-    .for("share");
+  const reader = createHistoricalTranscriptReader(query as unknown as Pick<Db, "select">);
+  const items: TranscriptItem[] = [];
+  let cursor: string | null = null;
+  let reachedEnd = false;
+  for (let pageCount = 0; pageCount < MAX_AGENT_RUN_ANNOTATION_READER_ITEMS / AGENT_RUN_ANNOTATION_READER_PAGE_LIMIT; pageCount += 1) {
+    const page = await reader.readRun({
+      orgId: input.orgId,
+      runId: input.annotation.sourceRunId,
+      principal: { type: "board", orgId: input.orgId, authorized: true },
+      cursor,
+      limit: AGENT_RUN_ANNOTATION_READER_PAGE_LIMIT,
+    });
+    items.push(...page.items);
+    if (!page.nextCursor) {
+      reachedEnd = true;
+      break;
+    }
+    if (page.nextCursor === cursor) throw unprocessable("Agent Run annotation transcript cursor did not advance");
+    cursor = page.nextCursor;
+  }
+  if (!reachedEnd) {
+    throw unprocessable("Agent Run annotation transcript evidence is too large");
+  }
   const requestedMemberIds = input.annotation.sourceMemberIds.map((memberId) => String(memberId));
   const requestedEvidenceIds = new Set([...requestedMemberIds, String(input.annotation.sourceEntryId)]);
-  const eventByRequestedId = new Map<string, typeof heartbeatRunEvents.$inferSelect>();
+  const itemByRequestedId = new Map<string, TranscriptItem>();
   const ambiguousIds = new Set<string>();
-  for (const event of events) {
-    for (const eventId of runTranscriptEventIds(event)) {
+  for (const item of items) {
+    for (const eventId of runTranscriptItemIds(item)) {
       if (!requestedEvidenceIds.has(eventId)) continue;
       if (ambiguousIds.has(eventId)) continue;
-      const existing = eventByRequestedId.get(eventId);
-      if (existing && existing.id !== event.id) {
-        eventByRequestedId.delete(eventId);
+      const existing = itemByRequestedId.get(eventId);
+      if (existing && existing.id !== item.id) {
+        itemByRequestedId.delete(eventId);
         ambiguousIds.add(eventId);
       } else {
-        eventByRequestedId.set(eventId, event);
+        itemByRequestedId.set(eventId, item);
       }
     }
   }
-  const memberEvents = requestedMemberIds.map((memberId) => eventByRequestedId.get(memberId));
-  if (memberEvents.some((event) => !event)) {
+  const memberItems = requestedMemberIds.map((memberId) => itemByRequestedId.get(memberId));
+  if (memberItems.some((item) => !item)) {
     throw unprocessable("Agent Run annotation transcript members are missing from the source run");
   }
-  const resolvedMemberEvents = memberEvents as Array<typeof heartbeatRunEvents.$inferSelect>;
-  if (resolvedMemberEvents.some((event) => !isNiceTranscriptEvent(event))) {
+  const resolvedMemberItems = memberItems as TranscriptItem[];
+  if (resolvedMemberItems.some((item) => !isNiceTranscriptItem(item))) {
     throw unprocessable("Agent Run annotation source must be visible Nice Transcript evidence");
   }
   const sourceEntryId = String(input.annotation.sourceEntryId);
-  const sourceEntry = eventByRequestedId.get(sourceEntryId);
+  const sourceEntry = itemByRequestedId.get(sourceEntryId);
   if (!sourceEntry) {
-    throw unprocessable("Agent Run annotation source entry is missing from the source run");
+    throw unprocessable("Agent Run annotation source entry must be visible Nice Transcript evidence");
   }
-  if (!isNiceTranscriptEvent(sourceEntry)) {
+  if (!isNiceTranscriptItem(sourceEntry)) {
     throw unprocessable("Agent Run annotation source entry must be visible Nice Transcript evidence");
   }
   if (input.annotation.anchorKind === "text") {
-    if (resolvedMemberEvents.some((event) => event.eventType !== "transcript.entry")) {
+    if (resolvedMemberItems.some((item) => {
+      const entry = chatTranscriptEntryFromReaderItem(item);
+      return entry?.kind !== "assistant" && entry?.kind !== "thinking";
+    })) {
       throw unprocessable("Text Agent Run annotations must reference transcript entries");
     }
-    const source = joinRunTranscriptEventText(resolvedMemberEvents);
+    const source = joinRunTranscriptItemText(resolvedMemberItems);
     if (!source || !source.includes(input.annotation.selectedText)) {
       throw unprocessable("Agent Run annotation selected text does not match transcript evidence");
     }
@@ -735,16 +842,16 @@ async function validateAgentRunTranscriptAnnotation(
   const transitionSnapshot = JSON.stringify({
     sourceEntryId,
     sourceMemberIds: requestedMemberIds,
-    members: resolvedMemberEvents.map((event) => ({
-      id: String(event.id),
-      seq: event.seq,
-      eventType: event.eventType,
-      text: runTranscriptEventText(event),
+    members: resolvedMemberItems.map((item) => ({
+      id: item.id,
+      seq: item.ordinal,
+      eventType: item.kind,
+      text: runTranscriptItemText(item),
     })),
   });
   if (
     input.annotation.sourceHash !== hashChatAnnotationSource(transitionSnapshot)
-    && input.annotation.sourceHash !== hashChatAnnotationSource(joinRunTranscriptEventText(resolvedMemberEvents))
+    && input.annotation.sourceHash !== hashChatAnnotationSource(joinRunTranscriptItemText(resolvedMemberItems))
     && input.annotation.sourceHash !== hashChatAnnotationSource(input.annotation.selectedText)
   ) {
     throw unprocessable("Agent Run annotation source hash does not match transition evidence");
@@ -782,7 +889,11 @@ async function validateProcessAnnotation(
     throw unprocessable("Process annotation evidence range is invalid or too large");
   }
   const events = await query
-    .select()
+    .select({
+      generationSeq: chatGenerationEvents.generationSeq,
+      eventKind: chatGenerationEvents.eventKind,
+      assistantMessageId: chatGenerationEvents.assistantMessageId,
+    })
     .from(chatGenerationEvents)
     .where(and(
       eq(chatGenerationEvents.orgId, input.orgId),
@@ -799,41 +910,49 @@ async function validateProcessAnnotation(
   ) {
     throw unprocessable("Process annotation evidence is missing from the declared generation range");
   }
+  if (events.some((event) =>
+    event.eventKind !== "transcript" || event.assistantMessageId !== input.sourceMessage.id,
+  )) {
+    throw unprocessable("Process annotation range must contain only visible transcript evidence");
+  }
+  const readerItems = await readConversationMessageItems(query, {
+    orgId: input.orgId,
+    conversationId: input.conversationId,
+    messageId: input.sourceMessage.id,
+    runId: input.sourceMessage.runId,
+    generationId: generation.id,
+    annotationKind: input.annotation.transcriptKind,
+    startSeq: input.annotation.generationSeqStart,
+    endSeq: input.annotation.generationSeqEnd,
+  });
+  const itemByGenerationSeq = new Map<number, { item: TranscriptItem; entry: ChatStreamTranscriptTextEntry }>();
+  for (const item of readerItems) {
+    const entry = chatTranscriptEntryFromReaderItem(item);
+    if (!isGenerationTextEntry(entry) || entry.generationId !== generation.id) continue;
+    if (entry.generationSeqStart !== entry.generationSeqEnd) continue;
+    itemByGenerationSeq.set(entry.generationSeqStart, { item, entry });
+  }
   const textEntries: ChatStreamTranscriptTextEntry[] = [];
   for (const event of events) {
-    const rawEntry = event.payload.entry;
+    const readerItem = itemByGenerationSeq.get(event.generationSeq);
+    const entry = readerItem?.entry;
     if (
-      event.eventKind !== "transcript"
-      || event.assistantMessageId !== input.sourceMessage.id
-      || !rawEntry
-      || typeof rawEntry !== "object"
-      || Array.isArray(rawEntry)
-    ) {
-      throw unprocessable("Process annotation range must contain only visible transcript evidence");
-    }
-    const entry = rawEntry as Record<string, unknown>;
-    if (
-      isExplicitlyHiddenTranscriptEvidence(event.payload, entry)
+      !readerItem
+      || !isNiceTranscriptItem(readerItem.item)
+      || !entry
       || entry.kind !== input.annotation.transcriptKind
-      || (entry.kind !== "assistant" && entry.kind !== "thinking")
-      || typeof entry.text !== "string"
       || entry.text.trim().length === 0
     ) {
       throw unprocessable("Process annotation range must contain only visible assistant or thinking prose");
     }
-    textEntries.push(withChatTranscriptGenerationProvenance(
-      {
-        kind: entry.kind,
-        ts: typeof entry.ts === "string" ? entry.ts : event.recordedAt.toISOString(),
-        text: entry.text,
-        ...(entry.delta === true ? { delta: true } : {}),
-      },
-      { generationId: generation.id, generationSeq: event.generationSeq },
-    ));
+    textEntries.push(entry);
   }
   const source = processAnnotationSource(textEntries);
+  // The Reader proves the source event range. The persisted message projection
+  // remains the user-visible boundary used to reject hidden or unprojected text.
   const projectedEntries = chatTranscriptFromPayload(input.sourceMessage.structuredPayload);
   const projectedEntry = projectedEntries
+    .filter(isGenerationTextEntry)
     .find((entry) =>
       entry.kind === input.annotation.transcriptKind
       && entry.generationId === generation.id
@@ -881,6 +1000,7 @@ export async function validateCanonicalChatInlineAnnotations(
     uploadedFileCount: number;
     attachmentFileIndexesByAnnotationId?: ReadonlyMap<string, readonly number[]>;
     editUserMessageId?: string | null;
+    requesterUserId?: string | null;
   },
 ) {
   const targetConversation = await query
@@ -911,6 +1031,7 @@ export async function validateCanonicalChatInlineAnnotations(
     if (annotation.surface === "agent_run_transcript") {
       await validateAgentRunTranscriptAnnotation(query, {
         orgId: input.orgId,
+        requesterUserId: input.requesterUserId,
         annotation,
       });
       continue;

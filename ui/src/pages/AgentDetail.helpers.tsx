@@ -238,6 +238,11 @@ export function readInvocationAgentInstructionStack(payload: Record<string, unkn
   return payload.prompt;
 }
 
+export function readInvocationContentSummary(payload: Record<string, unknown> | null | undefined) {
+  const summary = asRecord(payload?.invocationContent);
+  return summary?.textStored === false ? summary : null;
+}
+
 export function shouldRedactSecretValue(key: string, value: unknown): boolean {
   if (SECRET_ENV_KEY_RE.test(key)) return true;
   if (typeof value !== "string") return false;

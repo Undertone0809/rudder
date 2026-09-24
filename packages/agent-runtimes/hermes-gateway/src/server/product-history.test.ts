@@ -4,10 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  HermesProductHistoryError,
   HERMES_PRODUCT_HISTORY_HELPER_VERSION,
   readHermesProductHistory,
-  type HermesProductHistoryProfile,
+  type HermesProductHistoryProfile
 } from "./product-history.js";
 
 const FAKE_SESSION_DB = String.raw`

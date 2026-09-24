@@ -33,13 +33,32 @@ async function readProtocolRequests(capturePath: string): Promise<Array<Record<s
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-chat-"));
   fakeCodex = path.join(root, "fake-codex.mjs");
-  await fs.writeFile(fakeCodex, `#!/usr/bin/env node
+await fs.writeFile(fakeCodex, `#!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 
-const threadId = "thread-app-1";
+const threadId = process.env.RUDDER_TEST_THREAD_ID || "thread-app-1";
 const turnId = "turn-app-1";
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+if (process.argv[2] === "app-server" && process.argv[3] === "generate-json-schema") {
+  const outputIndex = process.argv.indexOf("--out");
+  const outputDirectory = outputIndex >= 0 ? process.argv[outputIndex + 1] : null;
+  if (!outputDirectory) process.exit(2);
+  const supportsDeveloperInstructions = process.env.RUDDER_TEST_SCHEMA_SUPPORTS_DEVELOPER_INSTRUCTIONS !== "0";
+  const properties = supportsDeveloperInstructions
+    ? { developerInstructions: { type: ["string", "null"] } }
+    : {};
+  fs.mkdirSync(path.join(outputDirectory, "v2"), { recursive: true });
+  for (const name of ["ThreadStartParams", "ThreadResumeParams"]) {
+    fs.writeFileSync(
+      path.join(outputDirectory, "v2", name + ".json"),
+      JSON.stringify({ properties }),
+      "utf8",
+    );
+  }
+  process.exit(0);
+}
 const commandDirectory = process.env.RUDDER_TEST_COMMAND_WORKDIR
   ? { workdir: process.env.RUDDER_TEST_COMMAND_WORKDIR }
   : process.env.RUDDER_TEST_COMMAND_CWD
@@ -90,8 +109,18 @@ if (process.env.RUDDER_TEST_APP_SERVER_MIXED_STDERR) {
 }
 
 const rl = readline.createInterface({ input: process.stdin });
+if (process.env.RUDDER_TEST_ARGV_CAPTURE_PATH) {
+  fs.writeFileSync(process.env.RUDDER_TEST_ARGV_CAPTURE_PATH, JSON.stringify(process.argv.slice(2)), "utf8");
+}
 rl.on("line", (line) => {
   const message = JSON.parse(line);
+  if (message.id === "user-input-request-1") {
+    if (process.env.RUDDER_TEST_SERVER_RESPONSE_CAPTURE_PATH) {
+      fs.writeFileSync(process.env.RUDDER_TEST_SERVER_RESPONSE_CAPTURE_PATH, JSON.stringify(message), "utf8");
+    }
+    finish("completed");
+    return;
+  }
   if (
     process.env.RUDDER_TEST_PROTOCOL_CAPTURE_PATH
     && ["thread/start", "thread/resume", "turn/start"].includes(message.method)
@@ -108,7 +137,30 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "thread/start" || message.method === "thread/resume") {
-    send({ id: message.id, result: { thread: { id: threadId } } });
+    if (
+      process.env.RUDDER_TEST_REJECT_DEVELOPER_INSTRUCTIONS === "1"
+      && Object.hasOwn(message.params || {}, "developerInstructions")
+    ) {
+      send({ id: message.id, error: {
+        code: -32602,
+        message: "Invalid params: unknown field \`developerInstructions\`",
+      } });
+      return;
+    }
+    if (message.method === "thread/resume" && process.env.RUDDER_TEST_RESUME_MISSING_ROLLOUT === "1") {
+      send({ id: message.id, error: { code: -32000, message: "thread/resume failed: no rollout found for thread id missing-thread" } });
+      return;
+    }
+    send({ id: message.id, result: {
+      thread: {
+        id: threadId,
+        sessionId: "root-session-app-1",
+        forkedFromId: null,
+        model: "gpt-test",
+        modelProvider: "openai",
+        ephemeral: false,
+      },
+    } });
     return;
   }
   if (message.method === "thread/read") {
@@ -147,6 +199,31 @@ rl.on("line", (line) => {
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_USER_INPUT_REQUEST === "1") {
+      send({
+        id: "user-input-request-1",
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId,
+          turnId,
+          itemId: "question-item-1",
+          questions: [{
+            id: "provider-question-1",
+            header: "Choice",
+            question: "Which option?",
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: "Alpha", description: "First" },
+              { label: "Beta", description: "Second" },
+            ],
+          }],
+          isBlocking: true,
+          autoResolutionMs: null,
+        },
+      });
+      return;
+    }
     if (process.env.RUDDER_TEST_AUTH_FAILURE === "1") {
       send({ method: "error", params: {
         threadId,
@@ -425,6 +502,7 @@ describe("executeCodexAppServerChat", () => {
 
   it("propagates a read-only sandbox to new and resumed threads and their turns", async () => {
     const capturePath = path.join(root, "protocol.ndjson");
+    const argvCapturePath = path.join(root, "argv.json");
     const executeWithSession = (sessionId: string | null) => executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
@@ -433,6 +511,7 @@ describe("executeCodexAppServerChat", () => {
         PATH: process.env.PATH ?? "",
         RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
         RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_ARGV_CAPTURE_PATH: argvCapturePath,
       } as Record<string, string>,
       prompt: "Inspect and plan",
       model: "gpt-test",
@@ -446,14 +525,31 @@ describe("executeCodexAppServerChat", () => {
       onLog: vi.fn(async () => undefined),
     });
 
-    await expect(executeWithSession(null)).resolves.toMatchObject({ exitCode: 0, resumed: false });
-    await expect(executeWithSession("thread-app-1")).resolves.toMatchObject({ exitCode: 0, resumed: true });
+    await expect(executeWithSession(null)).resolves.toMatchObject({
+      exitCode: 0,
+      resumed: false,
+      sessionParams: {
+        sessionId: "thread-app-1",
+        threadId: "thread-app-1",
+        rootSessionId: "root-session-app-1",
+        modelProvider: "openai",
+      },
+    });
+    await expect(executeWithSession("thread-app-1")).resolves.toMatchObject({
+      exitCode: 0,
+      resumed: true,
+      sessionParams: { rootSessionId: "root-session-app-1" },
+    });
 
     const requests = await readProtocolRequests(capturePath);
+    expect(JSON.parse(await fs.readFile(argvCapturePath, "utf8"))).toEqual(["app-server", "--stdio"]);
     expect(requests).toEqual([
       expect.objectContaining({
         method: "thread/start",
-        params: expect.objectContaining({ sandbox: "read-only" }),
+        params: expect.objectContaining({
+          sandbox: "read-only",
+          config: { web_search: "disabled" },
+        }),
       }),
       expect.objectContaining({
         method: "turn/start",
@@ -461,13 +557,330 @@ describe("executeCodexAppServerChat", () => {
       }),
       expect.objectContaining({
         method: "thread/resume",
-        params: expect.objectContaining({ sandbox: "read-only" }),
+        params: expect.objectContaining({
+          sandbox: "read-only",
+          config: { web_search: "disabled" },
+        }),
       }),
       expect.objectContaining({
         method: "turn/start",
         params: expect.objectContaining({ sandboxPolicy: { type: "readOnly" } }),
       }),
     ]);
+    expect(requests.filter((request) => request.method === "turn/start").map((request) => (
+      (request.params as Record<string, unknown>).input
+    ))).toEqual([
+      [{ type: "text", text: "Inspect and plan", text_elements: [] }],
+      [{ type: "text", text: "Inspect and plan", text_elements: [] }],
+    ]);
+  });
+
+  it("sends stable instructions through thread settings and only new input through each turn", async () => {
+    const capturePath = path.join(root, "native-chat-prompts.ndjson");
+    const executeTurn = (input: {
+      prompt: string;
+      sessionId: string | null;
+      instructions: string;
+      revision: string;
+      persistedRevision?: string | null;
+      threadId?: string;
+    }) => executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+        RUDDER_TEST_PHASED_AGENT_MESSAGES: "1",
+        ...(input.threadId ? { RUDDER_TEST_THREAD_ID: input.threadId } : {}),
+      } as Record<string, string>,
+      prompt: input.prompt,
+      chatDeveloperInstructions: input.instructions,
+      chatDeveloperInstructionsRevision: input.revision,
+      persistedChatDeveloperInstructionsRevision: input.persistedRevision ?? null,
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: input.sessionId,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    await expect(executeTurn({
+      prompt: "First turn input only",
+      sessionId: null,
+      instructions: "Stable Rudder instructions for source A",
+      revision: "revision-a",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: false,
+      chatDeveloperInstructionsRevision: "revision-a",
+    });
+    await expect(executeTurn({
+      prompt: "Second turn input only",
+      sessionId: "thread-app-1",
+      instructions: "Stable Rudder instructions for source A",
+      revision: "revision-a",
+      persistedRevision: "revision-a",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: true,
+      chatDeveloperInstructionsRevision: "revision-a",
+    });
+    await expect(executeTurn({
+      prompt: "Recovered turn input only",
+      sessionId: "thread-app-1",
+      instructions: "Stable Rudder instructions for source A",
+      revision: "revision-a",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: true,
+      chatDeveloperInstructionsRevision: "revision-a",
+    });
+    await expect(executeTurn({
+      prompt: "New source input only",
+      sessionId: null,
+      instructions: "Stable Rudder instructions for source B",
+      revision: "revision-b",
+      threadId: "thread-app-2",
+    })).resolves.toMatchObject({
+      exitCode: 0,
+      errorMessage: null,
+      resumed: false,
+      sessionId: "thread-app-2",
+      chatDeveloperInstructionsRevision: "revision-b",
+    });
+
+    const requests = await readProtocolRequests(capturePath);
+    const threadRequests = requests.filter((request) =>
+      request.method === "thread/start" || request.method === "thread/resume",
+    );
+    const turnRequests = requests.filter((request) => request.method === "turn/start");
+    expect(threadRequests.map((request) => request.method)).toEqual([
+      "thread/start",
+      "thread/resume",
+      "thread/resume",
+      "thread/start",
+    ]);
+    expect(threadRequests[0]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for source A",
+    });
+    expect(threadRequests[1]?.params).not.toHaveProperty("developerInstructions");
+    expect(threadRequests[2]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for source A",
+    });
+    expect(threadRequests[3]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for source B",
+    });
+    expect(threadRequests[3]?.params).not.toHaveProperty("threadId");
+    expect(turnRequests.map((request) => (request.params as Record<string, unknown>).input)).toEqual([
+      [{ type: "text", text: "First turn input only", text_elements: [] }],
+      [{ type: "text", text: "Second turn input only", text_elements: [] }],
+      [{ type: "text", text: "Recovered turn input only", text_elements: [] }],
+      [{ type: "text", text: "New source input only", text_elements: [] }],
+    ]);
+    expect(turnRequests.every((request) => (
+      !Object.hasOwn(request.params as Record<string, unknown>, "developerInstructions")
+    ))).toBe(true);
+  });
+
+  it("falls back to stable turn instructions when the installed schema lacks thread developerInstructions", async () => {
+    const capturePath = path.join(root, "legacy-native-chat-prompts.ndjson");
+    const executeTurn = (sessionId: string | null, persistedRevision?: string | null) => executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_SCHEMA_SUPPORTS_DEVELOPER_INSTRUCTIONS: "0",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: sessionId ? "Recovered new input only" : "First new input only",
+      chatDeveloperInstructions: "Stable Rudder instructions for a legacy thread",
+      chatDeveloperInstructionsRevision: "legacy-revision",
+      persistedChatDeveloperInstructionsRevision: persistedRevision ?? null,
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    await expect(executeTurn(null)).resolves.toMatchObject({
+      exitCode: 0,
+      chatDeveloperInstructionsRevision: null,
+    });
+    await expect(executeTurn("thread-app-1", "legacy-revision")).resolves.toMatchObject({
+      exitCode: 0,
+      resumed: true,
+      chatDeveloperInstructionsRevision: null,
+    });
+
+    const requests = await readProtocolRequests(capturePath);
+    const threadRequests = requests.filter((request) =>
+      request.method === "thread/start" || request.method === "thread/resume",
+    );
+    const turnRequests = requests.filter((request) => request.method === "turn/start");
+    expect(threadRequests.map((request) => request.method)).toEqual(["thread/start", "thread/resume"]);
+    expect(threadRequests.every((request) => (
+      !Object.hasOwn(request.params as Record<string, unknown>, "developerInstructions")
+    ))).toBe(true);
+    expect(turnRequests.map((request) => (request.params as Record<string, unknown>).input)).toEqual([
+      [{
+        type: "text",
+        text: "Stable Rudder instructions for a legacy thread\n\nFirst new input only",
+        text_elements: [],
+      }],
+      [{
+        type: "text",
+        text: "Stable Rudder instructions for a legacy thread\n\nRecovered new input only",
+        text_elements: [],
+      }],
+    ]);
+  });
+
+  it("retries an explicitly rejected resume field with instructions in turn input", async () => {
+    const capturePath = path.join(root, "rejected-native-chat-prompts.ndjson");
+    const onLog = vi.fn(async () => undefined);
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_REJECT_DEVELOPER_INSTRUCTIONS: "1",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Resume with new input only",
+      chatDeveloperInstructions: "Stable Rudder instructions for rejected resume",
+      chatDeveloperInstructionsRevision: "resume-revision",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: "thread-app-1",
+      timeoutSec: 5,
+      onLog,
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      resumed: true,
+      chatDeveloperInstructionsRevision: null,
+    });
+    const requests = await readProtocolRequests(capturePath);
+    const threadRequests = requests.filter((request) => request.method === "thread/resume");
+    const turnRequest = requests.find((request) => request.method === "turn/start");
+    expect(threadRequests).toHaveLength(2);
+    expect(threadRequests[0]?.params).toMatchObject({
+      developerInstructions: "Stable Rudder instructions for rejected resume",
+    });
+    expect(threadRequests[1]?.params).not.toHaveProperty("developerInstructions");
+    expect(turnRequest?.params).toMatchObject({
+      input: [{
+        type: "text",
+        text: "Stable Rudder instructions for rejected resume\n\nResume with new input only",
+        text_elements: [],
+      }],
+    });
+    expect(onLog).toHaveBeenCalledWith(
+      "stderr",
+      expect.stringContaining("stable chat instructions are included in turn input"),
+    );
+  });
+
+  it("does not silently start a new thread when resume reports a missing rollout", async () => {
+    const capturePath = path.join(root, "missing-rollout.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_RESUME_MISSING_ROLLOUT: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Continue the existing conversation",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: "missing-thread",
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: expect.stringContaining("no rollout found"),
+      sessionId: "missing-thread",
+      resumed: false,
+      clearSession: false,
+    });
+    expect(await readProtocolRequests(capturePath)).toEqual([
+      expect.objectContaining({ method: "thread/resume" }),
+    ]);
+  });
+
+  it("round-trips native user input over the App Server client", async () => {
+    const responsePath = path.join(root, "user-input-response.json");
+    const requestApproval = vi.fn(async () => ({ id: "rudder-approval-1", status: "pending" as const }));
+    const waitForApproval = vi.fn(async () => ({
+      id: "rudder-approval-1",
+      status: "approved" as const,
+      inputResponse: {
+        answers: [{ questionId: "codex_q1", optionIds: ["codex_q1_o2"] }],
+      },
+    }));
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_USER_INPUT_REQUEST: "1",
+        RUDDER_TEST_SERVER_RESPONSE_CAPTURE_PATH: responsePath,
+      } as Record<string, string>,
+      prompt: "Choose an option",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: false,
+      sandboxMode: null,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+      requestApproval,
+      waitForApproval,
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, sessionId: "thread-app-1", providerTurnId: "turn-app-1" });
+    expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+      inputRequest: expect.objectContaining({ questions: [expect.objectContaining({ id: "codex_q1" })] }),
+      payload: expect.objectContaining({ sessionId: "thread-app-1", turnId: "turn-app-1" }),
+    }));
+    expect(JSON.parse(await fs.readFile(responsePath, "utf8"))).toEqual({
+      id: "user-input-request-1",
+      result: { answers: { "provider-question-1": { answers: ["Beta"] } } },
+    });
+    expect(waitForApproval).toHaveBeenCalledWith("rudder-approval-1", 30 * 60_000);
   });
 
   it("keeps danger-full-access precedence over a structured read-only sandbox", async () => {

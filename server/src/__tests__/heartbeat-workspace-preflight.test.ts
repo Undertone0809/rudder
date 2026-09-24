@@ -22,6 +22,7 @@ import {
   projectResourceAttachments,
   projectWorkspaces,
   projects,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -331,6 +332,7 @@ describe("heartbeat managed workspace preflight", () => {
     await db.delete(organizationResources);
     await db.delete(projectWorkspaces);
     await db.delete(projects);
+    await db.delete(runtimeBindings);
     await db.delete(agents);
     await db.delete(organizations);
     if (rudderHome) await fs.rm(rudderHome, { recursive: true, force: true });
@@ -399,6 +401,15 @@ describe("heartbeat managed workspace preflight", () => {
       .then((rows) => rows[0] ?? null);
   }
 
+  function codexResumeProfileConfig() {
+    return {
+      cwd: rudderHome,
+      codexHome: path.join(rudderHome, "codex-home"),
+      providerVersion: "test-provider",
+      nativeCapabilityMethods: { threadResume: true },
+    };
+  }
+
   it("fails before adapter execution and records a workspace preflight event", async () => {
     const { orgId, agentId } = await seedAgentFixture();
     await db.insert(agentTaskSessions).values({
@@ -445,7 +456,7 @@ describe("heartbeat managed workspace preflight", () => {
   });
 
   it("preserves full explicit lineage across a retry that fails preflight", async () => {
-    const { orgId, agentId } = await seedAgentFixture();
+    const { orgId, agentId } = await seedAgentFixture(codexResumeProfileConfig());
     const sourceRunId = randomUUID();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
@@ -507,7 +518,7 @@ describe("heartbeat managed workspace preflight", () => {
   });
 
   it("does not resume a source session after the adapter explicitly clears it", async () => {
-    const { orgId, agentId } = await seedAgentFixture();
+    const { orgId, agentId } = await seedAgentFixture(codexResumeProfileConfig());
     const sourceRunId = randomUUID();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
@@ -546,6 +557,7 @@ describe("heartbeat managed workspace preflight", () => {
       sessionParamsAfterJson: {},
       sessionIdAfter: null,
     });
+    expect(mockRuntimeAdapter.execute).toHaveBeenCalledTimes(1);
     await db.insert(agentTaskSessions).values({
       orgId,
       agentId,
@@ -1182,7 +1194,7 @@ describe("heartbeat managed workspace preflight", () => {
   });
 
   it("reuses the first run session for a same-task follow-up", async () => {
-    const { agentId } = await seedAgentFixture();
+    const { agentId } = await seedAgentFixture(codexResumeProfileConfig());
     mockRuntimeAdapter.execute.mockImplementationOnce(async () => ({
       summary: "first task run",
       resultJson: null,
@@ -1816,6 +1828,7 @@ describe("heartbeat managed workspace preflight", () => {
           timedOut: false,
           exitCode: 1,
           errorMessage: "primary failed",
+          submissionPhase: "pre_submission",
         };
       }
       await ctx.onMeta?.({
@@ -1842,13 +1855,11 @@ describe("heartbeat managed workspace preflight", () => {
     expect(run?.id).toBeTruthy();
     await waitForCondition(async () => {
       const latestRun = await getRun(run!.id);
-      if (latestRun?.status !== "failed" || latestRun.terminalEffectsPending) return false;
+      return latestRun?.status === "failed" && !latestRun.terminalEffectsPending;
+    });
+    await waitForCondition(async () => {
       const events = await getRunEvents(run!.id);
-      return (
-        models.length === 2 &&
-        events.some((event) => event.eventType === "adapter.forbidden_marker") &&
-        events.filter((event) => event.eventType === "adapter.invoke").length === 2
-      );
+      return events.some((event) => event.eventType === "adapter.forbidden_marker");
     });
 
     expect(models).toEqual(["primary-model", "backup-model"]);
@@ -1859,6 +1870,7 @@ describe("heartbeat managed workspace preflight", () => {
       error: "Forbidden runtime skill marker observed",
     });
     const events = await getRunEvents(run!.id);
+    expect(events.filter((event) => event.eventType === "adapter.invoke")).toHaveLength(2);
     expect(events.find((event) => event.eventType === "adapter.forbidden_marker")).toMatchObject({
       payload: {
         forbiddenMarkerObserved: true,

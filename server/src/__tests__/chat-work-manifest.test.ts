@@ -9,16 +9,20 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
+  chatMessageTranscriptEntries,
   chatWorkManifestItems,
   createDb,
   ensurePostgresDatabase,
   heartbeatRuns,
   issueComments,
   issues,
+  nativeSegments,
   organizationResources,
   organizations,
   projectResourceAttachments,
   projects,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -29,6 +33,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { chatWorkManifestService } from "../services/chat-work-manifest.ts";
+import { createTranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -93,10 +98,15 @@ describe("chatWorkManifestService", () => {
   let svc!: ReturnType<typeof chatWorkManifestService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  let transcriptObjectDir = "";
+  let previousTranscriptObjectBasePath: string | undefined;
 
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
+    transcriptObjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-work-manifest-transcripts-"));
+    previousTranscriptObjectBasePath = process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = transcriptObjectDir;
     svc = chatWorkManifestService(db);
     instance = started.instance;
     dataDir = started.dataDir;
@@ -122,6 +132,9 @@ describe("chatWorkManifestService", () => {
 
   afterAll(async () => {
     await instance?.stop();
+    if (previousTranscriptObjectBasePath === undefined) delete process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    else process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = previousTranscriptObjectBasePath;
+    if (transcriptObjectDir) fs.rmSync(transcriptObjectDir, { recursive: true, force: true });
     if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -397,6 +410,129 @@ describe("chatWorkManifestService", () => {
       }),
     ]);
     expect(manifest.subagents.done).toEqual([]);
+    expect(manifest.subagents.totalCount).toBe(1);
+  });
+
+  it("projects Cursor ACP tool calls from a Run Reader without legacy chat transcript rows", async () => {
+    const { orgId, agentId, conversationId } = await seedBase("ReaderSubagents");
+    const runId = randomUUID();
+    const messageId = randomUUID();
+    const entry = {
+      kind: "cursor:acp:tool_call",
+      ts: "2026-07-29T02:00:00.000Z",
+      text: "subagent_activity",
+      sourceEntryId: "native-reader-subagent-entry",
+      payload: {
+        provider: "cursor_agent",
+        transport: "cursor-agent-acp-stdio",
+        method: "session/update",
+        sessionId: "reader-subagents-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "reader-active",
+          title: "subagent_activity",
+          status: "completed",
+          rawInput: {
+            id: "reader-active",
+            activity_kind: "inProgress",
+            agent_path: "/root/reader_verifier",
+            receiver_thread_ids: ["thread-reader"],
+          },
+        },
+      },
+    };
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      status: "completed",
+      chatConversationId: conversationId,
+      resultJson: {},
+    });
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const spanId = randomUUID();
+    const ownerToken = "reader-subagents-owner";
+    const openedAt = new Date("2026-07-29T02:00:00.000Z");
+    const closedAt = new Date("2026-07-29T02:01:00.000Z");
+    await db.insert(runtimeBindings).values({
+      id: bindingId,
+      orgId,
+      conversationId,
+      principalScopeRef: "board:reader-subagents",
+      agentId,
+      runtimeType: "process",
+      continuity: "native",
+      status: "active",
+    });
+    await db.insert(nativeSegments).values({
+      id: segmentId,
+      orgId,
+      bindingId,
+      runtimeType: "process",
+      segmentOrdinal: 0,
+      nativeSessionId: "reader-subagents-session",
+      rootSessionId: "reader-subagents-session",
+      state: "sealed",
+      createdAt: openedAt,
+      sealedAt: closedAt,
+      updatedAt: closedAt,
+    });
+    await db.insert(runRuntimeSpans).values({
+      id: spanId,
+      orgId,
+      runId,
+      bindingId,
+      segmentId,
+      attemptRef: "reader-subagents-attempt",
+      attemptEpoch: 1,
+      ownerToken,
+      ordinal: 0,
+      relation: "primary",
+      selectorJson: { kind: "native_execution", runtimeType: "process", runId },
+      state: "sealed",
+      completeness: "complete",
+      openedAt,
+      closedAt,
+      updatedAt: closedAt,
+    });
+    const objectStore = createTranscriptObjectStore(transcriptObjectDir);
+    const objectRef = await objectStore.write({
+      orgId,
+      runId,
+      spanId,
+      ownerToken,
+      entries: [entry],
+    });
+    await db.update(runRuntimeSpans)
+      .set({ supplementalObjectRef: objectRef })
+      .where(eq(runRuntimeSpans.id, spanId));
+    await db.insert(chatMessages).values({
+      id: messageId,
+      orgId,
+      conversationId,
+      role: "assistant",
+      status: "completed",
+      body: "Reader-backed delegation.",
+      runId,
+      replyingAgentId: agentId,
+    });
+
+    const manifest = await svc.getConversationManifest(conversationId);
+
+    expect(await db.select().from(chatGenerationEvents).where(eq(chatGenerationEvents.orgId, orgId))).toEqual([]);
+    expect(await db.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, orgId))).toEqual([]);
+    expect(manifest.subagents.active).toEqual([]);
+    expect(manifest.subagents.done).toEqual([
+      expect.objectContaining({
+        threadId: "thread-reader",
+        sourceMessageId: messageId,
+        label: "Reader Verifier",
+        state: "done",
+        status: "completed",
+      }),
+    ]);
     expect(manifest.subagents.totalCount).toBe(1);
   });
 

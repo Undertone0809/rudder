@@ -1,5 +1,9 @@
 import { chatsApi } from "@/api/chats";
 import { getTranscriptAgentAvatarImageSrc } from "@/components/transcript/TranscriptAgentAvatarIcon";
+import {
+  readLegacyChatTranscript,
+  useAgentRunTranscripts,
+} from "@/components/transcript/useAgentRunTranscripts";
 import { Button } from "@/components/ui/button";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
@@ -12,7 +16,7 @@ import {
 } from "@rudderhq/shared";
 import { useQuery } from "@tanstack/react-query";
 import { LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 type SubagentsTarget = Extract<SidePanelTarget, { kind: "subagents" }>;
 
@@ -173,17 +177,50 @@ export function SubagentsPanelView({
   });
   const subagents = manifestQuery.data?.subagents
     ?? { active: [], done: [], totalCount: 0 };
+  const agentRunTranscriptTargets = useMemo(
+    () => [...subagents.active, ...subagents.done].flatMap((item) => item.runId
+      ? [{ runId: item.runId, active: item.state === "active" }]
+      : []),
+    [subagents.active, subagents.done],
+  );
+  const { transcriptByRun, transcriptStateByRun, refetchRun } = useAgentRunTranscripts(agentRunTranscriptTargets);
 
   const openSubagent = async (item: ChatWorkManifestSubagentSummary) => {
     if (loadingThreadId) return;
     setLoadingThreadId(item.threadId);
     setLoadError(null);
     try {
-      const transcript = await chatsApi.getMessageTranscript(
+      if (item.runId) {
+        let entries = transcriptByRun.get(item.runId) ?? [];
+        if (!transcriptStateByRun.get(item.runId)?.hasData) {
+          entries = (await refetchRun(item.runId))?.entries ?? entries;
+        }
+        const response = [...entries].reverse().find((entry) => entry.kind === "assistant")?.text ?? null;
+        sidePanel.openTarget({
+          kind: "subagent",
+          callId: item.callId,
+          threadId: item.threadId,
+          avatarSeed: item.avatarSeed,
+          label: item.label,
+          senderLabel: item.senderLabel ?? "Main agent",
+          prompt: item.prompt,
+          model: item.model,
+          reasoningEffort: item.reasoningEffort,
+          status: item.status,
+          response,
+          entries,
+          conversationId: target.conversationId,
+          sourceMessageId: item.sourceMessageId,
+          runId: item.runId,
+        });
+        return;
+      }
+      const transcript = await readLegacyChatTranscript(
         target.conversationId,
         item.sourceMessageId,
+        item.runId,
       );
-      const inspection = collectChatSubagentInspections(transcript.transcript, {
+      const inspection = collectChatSubagentInspections(transcript, {
         sourceMessageId: item.sourceMessageId,
         runId: item.runId,
         sourceActive: item.state === "active",

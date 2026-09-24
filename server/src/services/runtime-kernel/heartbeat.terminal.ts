@@ -32,6 +32,7 @@ export type TerminalEffectName =
 
 export type RunActivityWatermark = {
   updatedAt: Date;
+  updatedAtExact?: string;
   eventCount: number;
 };
 
@@ -41,6 +42,8 @@ export type TerminalEffectIntent = {
     output?: string | null;
     /** Legacy input only. It is intentionally not persisted in v2. */
     transcript?: unknown[];
+    /** Identifies whether the transcript is provider-owned or a legacy copy. */
+    transcriptSource?: "native" | "legacy";
   };
   runtime?: {
     /** Legacy input only. It is normalized to bounded scalar fields. */
@@ -365,11 +368,13 @@ export async function transitionHeartbeatRunToTerminalInTransaction(
     ];
 
     if (input.activityWatermark) {
-      conditions.push(eq(heartbeatRuns.updatedAt, input.activityWatermark.updatedAt));
+      conditions.push(input.activityWatermark.updatedAtExact
+        ? sql`heartbeat_runs.updated_at = ${input.activityWatermark.updatedAtExact}::timestamptz`
+        : sql`date_trunc('milliseconds', heartbeat_runs.updated_at) = ${input.activityWatermark.updatedAt.toISOString()}::timestamptz`);
       conditions.push(sql`(
         select count(*)::int
-        from ${heartbeatRunEvents}
-        where ${heartbeatRunEvents.runId} = ${heartbeatRuns.id}
+        from heartbeat_run_events
+        where heartbeat_run_events.run_id = heartbeat_runs.id
       ) = ${input.activityWatermark.eventCount}`);
     }
     if (input.expectedExecutionOwnerToken) {

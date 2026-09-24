@@ -31,7 +31,6 @@ export {
   createAgentIssueCreationRequestSchema,
   type CreateAgentIssueCreationRequest
 } from "./agent-issue-creation.js";
-export { organizationEntityReferenceSchema } from "./reference.js";
 export {
   aiSearchRequestSchema,
   aiSearchScopeSchema,
@@ -51,7 +50,7 @@ export {
   assignMessengerCustomGroupEntrySchema,
   cancelChatQueuedMessageSchema,
   chatAskUserOptionSchema,
-  chatAskUserQuestionSchema, chatAskUserRequestFromStructuredPayload, chatAskUserRequestSchema, chatAutomationCreateFromStructuredPayload, chatAutomationCreateSchema, chatClientCheckpointSchema, chatContextEntityTypeSchema, chatControlActionKindSchema, chatControlDispositionSchema, chatConversationStatusSchema,
+  chatAskUserQuestionSchema, chatAskUserRequestFromStructuredPayload, chatAskUserRequestSchema, chatAskUserResponseAnswerSchema, chatAskUserResponseSchema, chatAutomationCreateFromStructuredPayload, chatAutomationCreateSchema, chatClientCheckpointSchema, chatContextEntityTypeSchema, chatControlActionKindSchema, chatControlDispositionSchema, chatConversationStatusSchema,
   chatDraftSchema, chatGenerationControlStateSchema, chatGenerationEventKindSchema, chatGenerationStatusSchema, chatInlineAnnotationInputSchema, chatInlineAnnotationSchema, chatInlineAnnotationsFromStructuredPayload, chatInlineAnnotationsInputSchema, chatInlineAnnotationsSchema, chatIssueCreationModeSchema, chatIssueProposalFromStructuredPayload, chatMessageKindSchema, chatMessageRoleSchema, chatOperationProposalFromStructuredPayload, chatOperationProposalSchema, chatProviderControlDispositionSchema, chatQueueDeliveryIntentSchema, chatQueuedMessagePayloadSchema, chatQueuedMessageStatusSchema, chatRichReferenceSchema, chatRichReferencesFromStructuredPayload, chatRichReferencesSchema, chatTerminalOutboxStatusSchema, convertChatToIssueSchema, createChatAttachmentMetadataSchema, createChatContextLinkSchema,
   createChatConversationSchema, createChatFirstTurnSchema, createChatQueuedMessageSchema, createMessengerCustomGroupSchema, createMessengerCustomGroupWithEntriesSchema, createSideChatSchema, forkChatConversationSchema, normalizeChatInlineAnnotations, reorderMessengerCustomGroupEntriesSchema, reorderMessengerCustomGroupsSchema, resolveChatOperationProposalSchema, sanitizeChatStructuredPayload, setChatProjectContextSchema,
   steerChatQueuedMessageSchema,
@@ -65,7 +64,7 @@ export {
   type CancelChatQueuedMessage,
   type ChatAskUserOption,
   type ChatAskUserQuestion,
-  type ChatAskUserRequest, type ChatAutomationCreate, type ChatClientCheckpoint, type ChatDraft, type ChatOperationProposal, type ChatQueuedMessagePayloadInput, type ChatRichReference, type ConvertChatToIssue, type CreateChatAttachmentMetadata, type CreateChatContextLink, type CreateChatConversation, type CreateChatFirstTurn, type CreateChatQueuedMessage, type CreateMessengerCustomGroup, type CreateMessengerCustomGroupWithEntries, type CreateSideChat, type ForkChatConversation, type ReorderMessengerCustomGroupEntries, type ReorderMessengerCustomGroups, type ResolveChatOperationProposal, type SetChatProjectContext,
+  type ChatAskUserRequest, type ChatAskUserResponse, type ChatAskUserResponseAnswer, type ChatAutomationCreate, type ChatClientCheckpoint, type ChatDraft, type ChatOperationProposal, type ChatQueuedMessagePayloadInput, type ChatRichReference, type ConvertChatToIssue, type CreateChatAttachmentMetadata, type CreateChatContextLink, type CreateChatConversation, type CreateChatFirstTurn, type CreateChatQueuedMessage, type CreateMessengerCustomGroup, type CreateMessengerCustomGroupWithEntries, type CreateSideChat, type ForkChatConversation, type ReorderMessengerCustomGroupEntries, type ReorderMessengerCustomGroups, type ResolveChatOperationProposal, type SetChatProjectContext,
   type SteerChatQueuedMessage, type StopChatGeneration, type UpdateChatConversation,
   type UpdateChatConversationUserState, type UpdateChatQueuedMessage,
   type UpdateMessengerCustomGroup,
@@ -108,6 +107,7 @@ export {
   type CreateOrganizationWorkspaceFile, type CreateOrganizationWorkspaceWebPreviewSession, type MoveOrganizationWorkspaceEntry, type RenameOrganizationWorkspaceEntry, type UpdateOrganization,
   type UpdateOrganizationBranding, type UpdateOrganizationWorkspaceFile
 } from "./organization.js";
+export { organizationEntityReferenceSchema } from "./reference.js";
 export {
   createOrganizationResourceSchema, createProjectInlineResourceSchema, organizationResourceKindSchema,
   organizationResourceSourceTypeSchema, projectResourceAttachmentInputSchema, projectResourceAttachmentRoleSchema, updateOrganizationResourceSchema, updateProjectResourceAttachmentSchema, type CreateOrganizationResource, type CreateProjectInlineResource, type ProjectResourceAttachmentInputPayload, type UpdateOrganizationResource, type UpdateProjectResourceAttachment

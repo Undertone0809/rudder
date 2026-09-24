@@ -40,6 +40,7 @@ import { parseGeminiStdoutLine } from "@rudderhq/agent-runtime-gemini-local/ui";
 import {
   agentConfigurationDoc as hermesGatewayAgentConfigurationDoc,
   models as hermesGatewayModels,
+  parseHermesGatewayStdoutLine,
 } from "@rudderhq/agent-runtime-hermes-gateway";
 import {
   execute as hermesGatewayExecute,
@@ -215,6 +216,7 @@ const openclawGatewayAdapter: ServerAgentRuntimeModule = {
 
 const hermesGatewayAdapter: ServerAgentRuntimeModule = {
   type: "hermes_gateway",
+  parseStdoutLine: parseHermesGatewayStdoutLine,
   execute: hermesGatewayExecute,
   testEnvironment: hermesGatewayTestEnvironment,
   listSkills: listHermesGatewaySkills,

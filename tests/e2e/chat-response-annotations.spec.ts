@@ -10,12 +10,13 @@ import {
   chatGenerations,
   chatMessages,
   createDb,
+  heartbeatRuns,
 } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import {
-  E2E_CODEX_APP_SERVER_STUB,
   E2E_CODEX_STUB,
   E2E_DATABASE_URL,
+  E2E_ROOT,
 } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
@@ -83,7 +84,7 @@ async function seedAnnotationChat(
         name: "Annotation Agent",
         agentRuntimeConfig: {
           model: "gpt-5.4",
-          command: E2E_CODEX_APP_SERVER_STUB,
+          command: join(E2E_ROOT, "fixtures", "codex-native-session.mjs"),
           chatAppServerEnabled: true,
         },
       }
@@ -1312,7 +1313,7 @@ test.describe("Chat response annotations", () => {
     await secondMarker.click();
     const editor = page.getByTestId("chat-response-annotation-editor");
     await expect(editor).toBeVisible();
-    await expect(editor).not.toContainText("Selected text:");
+    await expect(editor).not.toContainText("Selected excerpt");
     await expect(editor).not.toContainText("skill-creato");
     await expect(editor).not.toContainText("Rudder docs");
     await expect(page.getByTestId("chat-response-annotation-card")).toHaveCount(0);
@@ -2049,14 +2050,18 @@ test.describe("Chat response annotations", () => {
       .getByTestId("chat-transcript-steer-message")
       .filter({ hasText: "Edited Queue body keeps its annotation" });
     await expect(deliveredTurn).toBeVisible({ timeout: 30_000 });
-    // The native Steer bubble first appears in the live transcript and is then
-    // remounted from persisted history. Assert the immutable card only after
-    // that handoff so the test exercises the stable, refreshable UI.
-    await expect(page.getByRole("button", { name: "Stop streaming" }))
-      .toHaveCount(0, { timeout: 30_000 });
-    const steeredAssistant = page.getByTestId("chat-assistant-message").last();
+    // Native Steer continues the active turn; it need not create a second
+    // assistant bubble. The reply itself must still reach Chat from history.
+    const steeredAssistant = page.getByTestId("chat-assistant-message").filter({
+      hasText: "Native steer applied: Edited Queue body keeps its annotation",
+    });
     await expect(steeredAssistant).toContainText(
-      "User-provided response annotations",
+      "Native steer applied: Edited Queue body keeps its annotation",
+      { timeout: 30_000 },
+    );
+    await expect(steeredAssistant).toContainText(
+      "User-provided annotations:",
+      { timeout: 30_000 },
     );
     await expect(steeredAssistant).toContainText("第一段包含");
     await expect(steeredAssistant).toContainText(
@@ -2065,6 +2070,8 @@ test.describe("Chat response annotations", () => {
     await expect(steeredAssistant).toContainText(
       "Native steer image received: true",
     );
+    await expect(page.getByRole("button", { name: "Stop streaming" }))
+      .toHaveCount(0, { timeout: 30_000 });
     await expect(deliveredTurn).toBeVisible({ timeout: 30_000 });
     await expect(deliveredTurn.getByRole("button", { name: "Show 1 annotation" }))
       .toBeVisible();
@@ -2080,10 +2087,27 @@ test.describe("Chat response annotations", () => {
       .toHaveCount(0);
     await expect(page.getByTestId("chat-running-queue")).toHaveCount(0, { timeout: 30_000 });
 
+    const nativeRuns = await e2eDb.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, seeded.conversationId));
+    expect(nativeRuns).toHaveLength(1);
+    expect(nativeRuns[0]!.status).toBe("succeeded");
+    const transcriptRes = await page.request.get(`/api/run-intelligence/runs/${nativeRuns[0]!.id}/transcript`);
+    expect(transcriptRes.ok(), await transcriptRes.text()).toBe(true);
+    const nativeTranscript = await transcriptRes.json() as {
+      source: string;
+      availability: string;
+      completeness: string;
+      rows: Array<{ kind: string; preview?: string }>;
+    };
+    expect(nativeTranscript).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    expect(nativeTranscript.rows.some((row) => row.kind === "user"
+      && row.preview?.includes("Edited Queue body keeps its annotation"))).toBe(true);
+
     const messagesRes = await page.request.get(`/api/chats/${seeded.conversationId}/messages`);
     expect(messagesRes.ok(), await messagesRes.text()).toBe(true);
     const messages = await messagesRes.json() as Array<{
       role: string;
+      status: string;
       body: string;
       structuredPayload: {
         inlineAnnotations?: Array<{
@@ -2093,6 +2117,9 @@ test.describe("Chat response annotations", () => {
       } | null;
       attachments: Array<{ id: string; originalFilename: string | null }>;
     }>;
+    expect(messages.some((message) => message.role === "assistant"
+      && message.status === "completed"
+      && message.body.includes("Native steer applied: Edited Queue body keeps its annotation"))).toBe(true);
     const deliveredMessage = messages.find((message) => (
       message.role === "user"
       && message.body === "Edited Queue body keeps its annotation"
@@ -2139,7 +2166,7 @@ test.describe("Chat response annotations", () => {
     await provisionalCard.getByRole("button", { name: "Edit annotation 1" }).click();
     const provisionalEditor = page.getByTestId("chat-response-annotation-editor");
     await expect(provisionalEditor).toBeVisible();
-    await expect(provisionalEditor).toContainText("Selected text:");
+    await expect(provisionalEditor).toContainText("Selected excerpt");
     await expect(provisionalEditor).toContainText("Rudder docs");
     await provisionalEditor
       .getByPlaceholder("Add an optional comment…")

@@ -3,21 +3,20 @@ export {
   createOpenCodeLocalProviderCapabilities,
   createOpenCodeLocalProviderCapabilityResolver,
   resolveOpenCodeLocalProviderCapabilities,
-  runtimeProviderCapabilities,
+  runtimeProviderCapabilities
 } from "./native-capabilities.js";
 export type {
   OpenCodeCapabilityEvidence,
   OpenCodeCapabilityStatus,
   OpenCodeLocalProfileTransport,
   OpenCodeLocalProfileTransportResolver,
-  OpenCodeRuntimeProviderCapabilityAdapter,
+  OpenCodeRuntimeProviderCapabilityAdapter
 } from "./native-capabilities.js";
 export {
   disposeOpenCodeNativeServersForTests,
   ensureManagedOpenCodeServer,
   executeOpenCodeNativeChat,
-  forkOpenCodeNativeSession,
-  readOpenCodeNativeTranscript,
+  forkOpenCodeNativeSession, OpenCodeNativeCapabilityError, readOpenCodeNativeTranscript
 } from "./native-protocol.js";
 export type {
   OpenCodeBinding,
@@ -25,7 +24,7 @@ export type {
   OpenCodeForkResult,
   OpenCodeSession,
   OpenCodeTranscriptRequest,
-  OpenCodeTranscriptResult,
+  OpenCodeTranscriptResult
 } from "./native-protocol.js";
 
 function readNonEmptyString(value: unknown): string | null {
@@ -33,6 +32,8 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 const PROVIDER_SESSION_FIELDS = [
+  "profileBindingId",
+  "profileOrgId",
   "hostId",
   "profileId",
   "capabilityRevision",
@@ -68,19 +69,20 @@ function readProviderSessionFields(record: Record<string, unknown>): Record<stri
 
 function readProviderExportEnv(value: unknown): Record<string, string> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const result = Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).filter(
-      (entry): entry is [string, string] => SAFE_PERSISTED_ENV_KEYS.has(entry[0]) && typeof entry[1] === "string" && entry[1].trim().length > 0,
-    ),
-  );
-  return result;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.every(([key, entry]) => SAFE_PERSISTED_ENV_KEYS.has(key)
+    && typeof entry === "string"
+    && entry.trim().length > 0)) return null;
+  return Object.fromEntries(entries) as Record<string, string>;
 }
 
-function readProviderSessionFieldsWithEnv(record: Record<string, unknown>): Record<string, unknown> {
-  const exportEnv = readProviderExportEnv(record.exportEnv);
+function readProviderSessionFieldsWithEnv(record: Record<string, unknown>): Record<string, unknown> | null {
+  const hasExportEnv = Object.prototype.hasOwnProperty.call(record, "exportEnv");
+  const exportEnv = hasExportEnv ? readProviderExportEnv(record.exportEnv) : null;
+  if (hasExportEnv && !exportEnv) return null;
   return {
     ...readProviderSessionFields(record),
-    ...(exportEnv ? { exportEnv } : {}),
+    ...(hasExportEnv ? { exportEnv } : {}),
   };
 }
 
@@ -101,6 +103,8 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
     const repoUrl = readNonEmptyString(record.repoUrl) ?? readNonEmptyString(record.repo_url);
     const repoRef = readNonEmptyString(record.repoRef) ?? readNonEmptyString(record.repo_ref);
     const workspaceBindingId = readNonEmptyString(record.workspaceBindingId) ?? readNonEmptyString(record.workspace_binding_id);
+    const providerFields = readProviderSessionFieldsWithEnv(record);
+    if (!providerFields) return null;
     return {
       sessionId,
       ...(cwd ? { cwd } : {}),
@@ -108,7 +112,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       ...(repoUrl ? { repoUrl } : {}),
       ...(repoRef ? { repoRef } : {}),
       ...(workspaceBindingId ? { workspaceBindingId } : {}),
-      ...readProviderSessionFieldsWithEnv(record),
+      ...providerFields,
     };
   },
   serialize(params: Record<string, unknown> | null) {
@@ -126,6 +130,8 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
     const repoUrl = readNonEmptyString(params.repoUrl) ?? readNonEmptyString(params.repo_url);
     const repoRef = readNonEmptyString(params.repoRef) ?? readNonEmptyString(params.repo_ref);
     const workspaceBindingId = readNonEmptyString(params.workspaceBindingId) ?? readNonEmptyString(params.workspace_binding_id);
+    const providerFields = readProviderSessionFieldsWithEnv(params);
+    if (!providerFields) return null;
     return {
       sessionId,
       ...(cwd ? { cwd } : {}),
@@ -133,7 +139,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       ...(repoUrl ? { repoUrl } : {}),
       ...(repoRef ? { repoRef } : {}),
       ...(workspaceBindingId ? { workspaceBindingId } : {}),
-      ...readProviderSessionFieldsWithEnv(params),
+      ...providerFields,
     };
   },
   getDisplayId(params: Record<string, unknown> | null) {

@@ -1,18 +1,10 @@
 import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
 
 export * from "./app-server-client.js";
-export { estimateCodexCostUsd, resolveCodexTokenPrice } from "./cost.js";
-export { execute, getProviderReadinessFingerprint } from "./execute.js";
-export {
-  createCodexLocalProviderCapabilities,
-  createCodexLocalProviderCapabilityResolver,
-  resolveCodexLocalProviderCapabilities,
-  runtimeProviderCapabilities,
-} from "./native-capabilities.js";
 export {
   forkCodexNativeThread,
   readCodexNativeTranscript,
-  resumeCodexNativeThread,
+  resumeCodexNativeThread
 } from "./app-server-native.js";
 export type {
   CodexAppServerProfileTransport,
@@ -25,14 +17,24 @@ export type {
   CodexNativeTranscriptReadRequest,
   CodexNativeTranscriptReadResult,
   CodexProviderBindingRef,
-  CodexProviderSessionRef,
+  CodexProviderSessionRef
 } from "./app-server-native.js";
+export { resolveManagedCodexHomeDir } from "./codex-home.js";
+export { estimateCodexCostUsd, resolveCodexTokenPrice } from "./cost.js";
+export { execute, getProviderReadinessFingerprint } from "./execute.js";
+export {
+  createCodexLocalProviderCapabilities,
+  createCodexLocalProviderCapabilityResolver,
+  resolveCodexLocalProviderCapabilities,
+  runtimeProviderCapabilities
+} from "./native-capabilities.js";
 export {
   isCodexProviderAuthFailure,
   isCodexTransportDisconnectError,
   isCodexUnknownSessionError,
   parseCodexJsonl
 } from "./parse.js";
+export { buildCodexProfileEnvironment, codexConfiguredEnvironment } from "./profile-env.js";
 export {
   codexHomeDir, fetchCodexQuota,
   fetchCodexRpcQuota, fetchWithTimeout, getQuotaWindows, mapCodexRpcQuota, readCodexAuthInfo,

@@ -91,6 +91,7 @@ async function createApp(
     source: "local_implicit",
     isInstanceAdmin: false,
   },
+  db: Record<string, unknown> = {},
 ) {
   const app = express();
   app.use(express.json());
@@ -98,7 +99,7 @@ async function createApp(
     (req as any).actor = actor;
     next();
   });
-  app.use("/api", agentRoutes({} as any));
+  app.use("/api", agentRoutes(db as any));
   app.use(errorHandler);
   return startApp(app);
 }
@@ -138,6 +139,21 @@ function createRunIdLookupDb(rows: Array<{ id: string }>) {
   };
 }
 
+function createConversationLookupDb(rows: Array<{
+  id: string;
+  orgId: string;
+  conversationKind: "chat" | "side_chat";
+  createdByUserId: string | null;
+}>) {
+  return {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(async () => rows),
+      })),
+    })),
+  };
+}
+
 describe("agent run retry route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -170,6 +186,34 @@ describe("agent run retry route", () => {
         endDate: new Date("2026-06-16T12:00:00.000Z"),
       },
     );
+  });
+
+  it.each([
+    { label: "durable scene", scene: "side_chat" },
+    { label: "legacy scene", contextSnapshot: { scene: "side_chat" } },
+    { label: "legacy rudder scene", contextSnapshot: { rudderScene: "side_chat" } },
+    { label: "legacy unified admission", contextSnapshot: { unifiedAgentRun: { scene: "side_chat" } } },
+  ])("hides deleted private Runs with a cleared conversation ID ($label)", async (metadata) => {
+    mockHeartbeatService.list.mockResolvedValue([{
+      id: "609695f1-f90a-4b17-be61-4f0c6fe37c42",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "failed",
+      chatConversationId: null,
+      ...metadata,
+    }, {
+      id: "public-run",
+      orgId: "organization-1",
+      agentId: "agent-1",
+      status: "succeeded",
+      chatConversationId: null,
+    }]);
+
+    const res = await request(await createApp())
+      .get("/api/orgs/organization-1/heartbeat-runs");
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual([expect.objectContaining({ id: "public-run" })]);
   });
 
   it("loads the organization-scoped agent run overview", async () => {
@@ -314,7 +358,14 @@ describe("agent run retry route", () => {
       },
     ]);
 
-    const res = await request(await createApp())
+    const res = await request(await createApp(undefined, createConversationLookupDb([
+      {
+        id: "conversation-1",
+        orgId: "organization-1",
+        conversationKind: "chat",
+        createdByUserId: null,
+      },
+    ])))
       .get("/api/orgs/organization-1/agent-runs")
       .query({
         agentId: "agent-1",
@@ -348,20 +399,22 @@ describe("agent run retry route", () => {
   });
 
   it("retries a failed run through the dedicated recovery endpoint", async () => {
+    const sourceRunId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
+    const retryRunId = "5ab760bf-9232-4d67-9d62-8206f3c70729";
     mockHeartbeatService.getRun.mockResolvedValue({
-      id: "run-1",
+      id: sourceRunId,
       orgId: "organization-1",
       agentId: "agent-1",
       status: "failed",
     });
     mockHeartbeatService.retryRun.mockResolvedValue({
-      id: "run-2",
+      id: retryRunId,
       orgId: "organization-1",
       agentId: "agent-1",
       status: "queued",
       contextSnapshot: {
         recovery: {
-          originalRunId: "run-1",
+          originalRunId: sourceRunId,
           failureKind: "process_lost",
           failureSummary: "child pid disappeared",
           recoveryTrigger: "manual",
@@ -370,10 +423,10 @@ describe("agent run retry route", () => {
       },
     });
 
-    const res = await request(await createApp()).post("/api/heartbeat-runs/run-1/retry").send({});
+    const res = await request(await createApp()).post(`/api/heartbeat-runs/${sourceRunId}/retry`).send({});
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("run-1", {
+    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith(sourceRunId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
     });
@@ -382,9 +435,9 @@ describe("agent run retry route", () => {
       expect.objectContaining({
         orgId: "organization-1",
         action: "heartbeat.retried",
-        entityId: "run-2",
+        entityId: retryRunId,
         details: expect.objectContaining({
-          originalRunId: "run-1",
+          originalRunId: sourceRunId,
           recoveryTrigger: "manual",
         }),
       }),
@@ -392,14 +445,16 @@ describe("agent run retry route", () => {
   });
 
   it("retries through the agent-runs alias and returns normalized metadata", async () => {
+    const sourceRunId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
+    const retryRunId = "5ab760bf-9232-4d67-9d62-8206f3c70729";
     mockHeartbeatService.getRun.mockResolvedValue({
-      id: "run-1",
+      id: sourceRunId,
       orgId: "organization-1",
       agentId: "agent-1",
       status: "failed",
     });
     mockHeartbeatService.retryRun.mockResolvedValue({
-      id: "run-2",
+      id: retryRunId,
       orgId: "organization-1",
       agentId: "agent-1",
       invocationSource: "automation",
@@ -414,15 +469,15 @@ describe("agent run retry route", () => {
       },
     });
 
-    const res = await request(await createApp()).post("/api/agent-runs/run-1/retry").send({});
+    const res = await request(await createApp()).post(`/api/agent-runs/${sourceRunId}/retry`).send({});
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("run-1", {
+    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith(sourceRunId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
     });
     expect(res.body).toEqual(expect.objectContaining({
-      id: "run-2",
+      id: retryRunId,
       scene: "automation",
       triggerKind: "system",
       targetType: "automation_run",
@@ -434,20 +489,22 @@ describe("agent run retry route", () => {
   });
 
   it("retries a failed run with agent attribution for same-organization agent callers", async () => {
+    const sourceRunId = "609695f1-f90a-4b17-be61-4f0c6fe37c42";
+    const retryRunId = "5ab760bf-9232-4d67-9d62-8206f3c70729";
     mockHeartbeatService.getRun.mockResolvedValue({
-      id: "run-1",
+      id: sourceRunId,
       orgId: "organization-1",
       agentId: "agent-1",
       status: "failed",
     });
     mockHeartbeatService.retryRun.mockResolvedValue({
-      id: "run-2",
+      id: retryRunId,
       orgId: "organization-1",
       agentId: "agent-1",
       status: "queued",
       contextSnapshot: {
         recovery: {
-          originalRunId: "run-1",
+          originalRunId: sourceRunId,
           recoveryTrigger: "manual",
         },
       },
@@ -460,10 +517,10 @@ describe("agent run retry route", () => {
         agentId: "agent-1",
         runId: "caller-run",
       }),
-    ).post("/api/heartbeat-runs/run-1/retry").send({});
+    ).post(`/api/heartbeat-runs/${sourceRunId}/retry`).send({});
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith("run-1", {
+    expect(mockHeartbeatService.retryRun).toHaveBeenCalledWith(sourceRunId, {
       requestedByActorType: "agent",
       requestedByActorId: "agent-1",
     });
@@ -474,7 +531,7 @@ describe("agent run retry route", () => {
         actorType: "agent",
         actorId: "agent-1",
         action: "heartbeat.retried",
-        entityId: "run-2",
+        entityId: retryRunId,
       }),
     );
   });
@@ -512,14 +569,15 @@ describe("agent run retry route", () => {
   });
 
   it("cancels a run with agent attribution for same-organization agent callers", async () => {
+    const runId = "ec161374-0cdb-4cf4-bd8f-3372cd97bd9c";
     mockHeartbeatService.getRun.mockResolvedValue({
-      id: "run-1",
+      id: runId,
       orgId: "organization-1",
       agentId: "agent-1",
       status: "running",
     });
     mockHeartbeatService.cancelRun.mockResolvedValue({
-      id: "run-1",
+      id: runId,
       orgId: "organization-1",
       agentId: "agent-1",
       status: "cancelled",
@@ -532,10 +590,10 @@ describe("agent run retry route", () => {
         agentId: "agent-1",
         runId: "caller-run",
       }),
-    ).post("/api/heartbeat-runs/run-1/cancel").send({});
+    ).post(`/api/heartbeat-runs/${runId}/cancel`).send({});
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith("run-1");
+    expect(mockHeartbeatService.cancelRun).toHaveBeenCalledWith(runId);
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -543,7 +601,7 @@ describe("agent run retry route", () => {
         actorType: "agent",
         actorId: "agent-1",
         action: "heartbeat.cancelled",
-        entityId: "run-1",
+        entityId: runId,
       }),
     );
   });

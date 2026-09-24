@@ -2,7 +2,12 @@ import type {
   AgentRuntimeNetworkSuspension,
   TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
-import type { Db } from "@rudderhq/db";
+import {
+  chatConversations,
+  chatGenerations,
+  chatQueuedMessages,
+  type Db,
+} from "@rudderhq/db";
 import {
   addChatMessageSchema,
   cancelChatQueuedMessageSchema,
@@ -10,8 +15,6 @@ import {
   chatDraftSchema,
   createChatConversationSchema,
   createChatQueuedMessageSchema,
-  createSideChatSchema,
-  forkChatConversationSchema,
   parseShortRef,
   steerChatQueuedMessageSchema,
   updateChatConversationSchema,
@@ -24,6 +27,7 @@ import {
   type ChatMessage,
   type ChatQueueRequestActor,
 } from "@rudderhq/shared";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
@@ -63,6 +67,7 @@ import {
   chatTitleGenerationService,
 } from "../services/chat-title-generation.js";
 import { chatWorkManifestService } from "../services/chat-work-manifest.js";
+import { ACTIVE_CHAT_GENERATION_STATUSES } from "../services/chats.constants.js";
 import { validateCron } from "../services/cron.js";
 import {
   accessService,
@@ -84,6 +89,7 @@ import {
   NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
   NETWORK_WAIT_UNSAFE_ERROR_CODE,
 } from "../services/runtime-kernel/heartbeat.core.js";
+import { retrySideChatTerminalEvidence } from "../services/side-chat-runtime-admission.js";
 import {
   runtimeResultText,
   sanitizeGeneratedTitle,
@@ -101,6 +107,7 @@ import {
   turnContextFromUserMessage,
   type ChatTurnContext,
 } from "./chats.annotation-routes.js";
+import { registerChatForkSideChatRoutes } from "./chats.fork-side-chat-routes.js";
 import { attachGeneratedChatFiles } from "./chats.generated-attachments.js";
 import {
   isMultipartRequest,
@@ -143,12 +150,10 @@ export function chatRoutes(
   const chatRunsSvc = chatAgentRunService(db);
   const workManifestSvc = chatWorkManifestService(db);
   const operatorProfiles = operatorProfileService(db);
-  let recoverNetworkWaitingChatRun: ((run: NetworkWaitingRun) => Promise<boolean>) | null = null;
+  let recoverNetworkWaitingChatRun: ((run: NetworkWaitingRun, mode?: "network" | "orphaned_fork") => Promise<boolean>) | null = null;
   const heartbeat = heartbeatService(db, {
-    onNetworkWaitingRun: async (run) => {
-      if (!recoverNetworkWaitingChatRun) return false;
-      return recoverNetworkWaitingChatRun(run);
-    },
+    onNetworkWaitingRun: async (run) => recoverNetworkWaitingChatRun?.(run) ?? false,
+    onOrphanedClaudeForkRun: async (run) => recoverNetworkWaitingChatRun?.(run, "orphaned_fork") ?? false,
   });
   const productIntelligence = productIntelligenceService(db);
   const chatTitles = chatTitleGenerationService({ chats: svc, productIntelligence });
@@ -633,6 +638,7 @@ export function chatRoutes(
     return {
       conversation: hydratedConversation,
       messages: freshMessages as ChatMessage[],
+      principalScopeRef: `${actor.actorType}:${actor.actorId}`,
       contextLinks: (hydratedConversation.contextLinks ?? conversation.contextLinks) as ChatContextLink[],
       issueLabels,
       operatorProfile,
@@ -1262,6 +1268,64 @@ export function chatRoutes(
     terminalProjector.wake();
   }
 
+  async function recoverSettledExpiredSideChatTerminals() {
+    const candidates = await db
+      .select({
+        orgId: chatGenerations.orgId,
+        conversationId: chatGenerations.conversationId,
+        generationId: chatGenerations.id,
+        attemptEpoch: chatGenerations.attemptEpoch,
+        controlOwnerToken: chatGenerations.controlOwnerToken,
+      })
+      .from(chatQueuedMessages)
+      .innerJoin(chatConversations, and(
+        eq(chatConversations.id, chatQueuedMessages.conversationId),
+        eq(chatConversations.orgId, chatQueuedMessages.orgId),
+      ))
+      .innerJoin(chatGenerations, and(
+        eq(chatGenerations.id, chatQueuedMessages.continuationGenerationId),
+        eq(chatGenerations.orgId, chatQueuedMessages.orgId),
+        eq(chatGenerations.conversationId, chatQueuedMessages.conversationId),
+      ))
+      .where(and(
+        eq(chatConversations.conversationKind, "side_chat"),
+        eq(chatConversations.sideChatState, "expired"),
+        eq(chatConversations.messengerVisible, false),
+        eq(chatQueuedMessages.status, "failed_actionable"),
+        eq(chatQueuedMessages.lastDeliveryReason, "side_chat_expired"),
+        isNotNull(chatQueuedMessages.continuationGenerationId),
+        inArray(chatGenerations.status, ACTIVE_CHAT_GENERATION_STATUSES),
+      ))
+      .orderBy(asc(chatQueuedMessages.updatedAt))
+      .limit(25);
+
+    let recovered = 0;
+    for (const candidate of candidates) {
+      const evidence = await retrySideChatTerminalEvidence({
+        write: () => svc.generationProtocol.recordRuntimeTerminal({
+          orgId: candidate.orgId,
+          conversationId: candidate.conversationId,
+          generationId: candidate.generationId,
+          expectedAttemptEpoch: candidate.attemptEpoch,
+          expectedOwnerToken: candidate.controlOwnerToken,
+          finalStatus: "failed",
+          terminalReason: "side_chat_expired",
+        }),
+        onFailure: (error, attempt, willRetry) => {
+          if (!willRetry) {
+            logger.warn(
+              { err: error, generationId: candidate.generationId, attempts: attempt },
+              "failed to recover expired Side Chat terminal evidence",
+            );
+          }
+        },
+      });
+      if (evidence) recovered += 1;
+    }
+    if (recovered > 0) wakeTerminalProjector();
+    return { inspected: candidates.length, recovered };
+  }
+
   async function runServerQueuedMessage(
     claim: NonNullable<Awaited<ReturnType<typeof svc.claimNextServerQueuedMessage>>>,
   ) {
@@ -1315,9 +1379,10 @@ export function chatRoutes(
     let leaseRenewing = false;
     let leaseLost = false;
     let deliveryAcknowledged = false;
+    let deliverySettled = false;
     let deliveryAcknowledging = false;
     const renewLease = async () => {
-      if (leaseRenewing || leaseLost || deliveryAcknowledged || deliveryAcknowledging) return;
+      if (leaseRenewing || leaseLost || deliveryAcknowledged || deliverySettled || deliveryAcknowledging) return;
       leaseRenewing = true;
       try {
         const renewed = await svc.renewServerQueuedMessageClaim({
@@ -1327,7 +1392,7 @@ export function chatRoutes(
           leaseEpoch: claim.leaseEpoch,
           leaseMs: queueLeaseMs,
         });
-        if (!renewed && !deliveryAcknowledged && !deliveryAcknowledging) {
+        if (!renewed && !deliveryAcknowledged && !deliverySettled && !deliveryAcknowledging) {
           leaseLost = true;
           abortController.abort(new Error("Queued chat continuation lost its delivery lease"));
         }
@@ -1345,9 +1410,13 @@ export function chatRoutes(
 
     let terminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let terminalReason: string | null = null;
+    let deferTerminalEvidence = false;
+    let settleDeliveryAfterTerminalEvidence = false;
+    let recoverExpiredAdmissionTerminal = false;
     let assistantConversation = conversation;
     let activeChatRunId: string | null = null;
     const transcript: TranscriptEntry[] = [];
+    let nativeTranscriptObserved = false;
     let partialBody = "";
     let assistantProjectionMessageId: string | null = null;
     let activeAttemptEpoch = Math.max(
@@ -1369,12 +1438,15 @@ export function chatRoutes(
         const frozenAtCutoff = frozen && frozen.generation.acceptedThroughSeq !== null
           ? frozen
           : null;
+        const stoppedTranscript = nativeTranscriptObserved
+          ? transcript
+          : frozenAtCutoff?.projection.transcript ?? transcript;
         return persistPartialAssistantMessage(
           assistantConversation,
           frozenAtCutoff?.projection.body ?? partialBody,
           "stopped",
           turnContext,
-          frozenAtCutoff?.projection.transcript ?? transcript,
+          stoppedTranscript,
           replyingAgentId,
           assistantProjectionMessageId,
           activeChatRunId,
@@ -1382,6 +1454,22 @@ export function chatRoutes(
           false,
         );
       };
+      if (assistantConversation.conversationKind === "side_chat") {
+        const admission = await svc.admitQueuedSideChatRuntime({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          itemId: claim.item.id,
+          generationId: claim.generationId,
+          leaseToken: claim.leaseToken,
+          leaseEpoch: claim.leaseEpoch,
+        });
+        if (!admission.admitted) {
+          terminalReason = admission.reason;
+          settleDeliveryAfterTerminalEvidence = true;
+          recoverExpiredAdmissionTerminal = admission.reason === "side_chat_expired";
+          return;
+        }
+      }
       const streamed = await assistantSvc.streamChatAssistantReply({
         ...assistantInput,
         ...queuedChatRuntimeInvocationSnapshot(claim.item),
@@ -1452,8 +1540,9 @@ export function chatRoutes(
         onAssistantDelta: async (delta: string) => {
           if (!abortController.signal.aborted) partialBody = `${partialBody}${delta}`;
         },
-        onTranscriptEntry: async (entry: TranscriptEntry) => {
+        onTranscriptEntry: async (entry: TranscriptEntry, delivery) => {
           if (abortController.signal.aborted) return;
+          if (delivery?.source === "native") nativeTranscriptObserved = true;
           transcript.push(entry);
           try {
             const projection = await svc.generationProtocol.appendVisibleEventAndProject({
@@ -1462,7 +1551,14 @@ export function chatRoutes(
               generationId: claim.generationId,
               expectedAttemptEpoch: activeAttemptEpoch,
               eventKind: "transcript",
-              payload: { entry },
+              payload: delivery?.source === "native"
+                ? {
+                  source: "native",
+                  runId: delivery.runId,
+                  spanId: delivery.spanId,
+                }
+                : { entry },
+              transcriptSource: delivery?.source,
               messageId: assistantProjectionMessageId,
               runId: activeChatRunId,
               bodyHash: hashChatGenerationBody(partialBody),
@@ -1495,6 +1591,7 @@ export function chatRoutes(
       } else if (streamed.outcome === "waiting_for_network") {
         // The durable generation remains open; the background recovery path
         // will reattach and project the eventual assistant result.
+        deferTerminalEvidence = true;
         return;
       } else {
         let completionMessageId: string | null = null;
@@ -1567,7 +1664,7 @@ export function chatRoutes(
         { err: error, conversationId: conversation.id, queuedMessageId: claim.item.id },
         "server-owned queued chat continuation failed",
       );
-      if (!leaseLost) {
+      if (!leaseLost && !deferTerminalEvidence) {
         const failurePayload = recoverableFailurePayload(error, activeChatRunId);
         const failureBody = userVisiblePartialBodyFromError(error)
           || recoverableFailureBody(failurePayload)
@@ -1598,8 +1695,9 @@ export function chatRoutes(
       backgroundRuntime.clearTimer(leaseTimer);
       if (!leaseLost) {
         const latestGeneration = await svc.getLatestGeneration(conversation.id).catch(() => null);
-        const terminalEvidence = latestGeneration?.id === claim.generationId
-          ? await svc.generationProtocol.recordRuntimeTerminal({
+        let terminalEvidence = null;
+        if (latestGeneration?.id === claim.generationId) {
+          const recordTerminal = () => svc.generationProtocol.recordRuntimeTerminal({
               orgId: conversation.orgId,
               conversationId: conversation.id,
               generationId: claim.generationId,
@@ -1607,14 +1705,55 @@ export function chatRoutes(
               expectedOwnerToken: latestGeneration.controlOwnerToken,
               finalStatus: terminalStatus,
               terminalReason: terminalReason ?? terminalStatus,
-            }).catch((error: unknown) => {
-              logger.warn({ err: error, generationId: claim.generationId }, "failed to record queued chat terminal evidence");
-              return null;
+            });
+          terminalEvidence = assistantConversation.conversationKind === "side_chat"
+            ? await retrySideChatTerminalEvidence({
+              write: recordTerminal,
+              onFailure: (error, attempt, willRetry) => {
+                if (!willRetry) {
+                  logger.warn(
+                    { err: error, generationId: claim.generationId, attempts: attempt },
+                    "failed to record queued Side Chat terminal evidence",
+                  );
+                }
+              },
             })
-          : null;
-        if (terminalEvidence) wakeTerminalProjector();
+            : await (async () => {
+              for (let attempt = 0; attempt < 3; attempt += 1) {
+                try {
+                  const evidence = await recordTerminal();
+                  if (evidence) return evidence;
+                } catch (error) {
+                  if (attempt === 2) {
+                    logger.warn({ err: error, generationId: claim.generationId }, "failed to record queued chat terminal evidence");
+                  }
+                }
+              }
+              return null;
+            })();
+        }
+        if (terminalEvidence) {
+          wakeTerminalProjector();
+        }
+        if (
+          settleDeliveryAfterTerminalEvidence
+          && !deliverySettled
+          && (terminalEvidence || recoverExpiredAdmissionTerminal)
+        ) {
+          deliverySettled = Boolean(await svc.completeServerQueuedMessageDelivery({
+            itemId: claim.item.id,
+            generationId: claim.generationId,
+            leaseToken: claim.leaseToken,
+            leaseEpoch: claim.leaseEpoch,
+            status: terminalStatus === "completed" ? "completed" : terminalStatus,
+            reason: terminalReason ?? terminalStatus,
+          }).catch((error: unknown) => {
+            logger.warn({ err: error, generationId: claim.generationId }, "failed to settle queued chat delivery after terminal evidence");
+            return false;
+          }));
+        }
       }
-      if (!deliveryAcknowledged && !leaseLost) {
+      if (!deliveryAcknowledged && !deliverySettled && !leaseLost) {
         await svc.releaseServerQueuedMessageClaim({
           itemId: claim.item.id,
           generationId: claim.generationId,
@@ -1631,7 +1770,7 @@ export function chatRoutes(
   /** Resume a Chat generation that the heartbeat coordinator woke from a
    * durable network wait. This path deliberately shares the existing
    * generation/run rows instead of creating a second active Chat run. */
-  async function runRecoveredNetworkWaitingChatRun(run: NetworkWaitingRun): Promise<boolean> {
+  async function runRecoveredNetworkWaitingChatRun(run: NetworkWaitingRun, mode: "network" | "orphaned_fork" = "network"): Promise<boolean> {
     const context = run.contextSnapshot && typeof run.contextSnapshot === "object"
       && !Array.isArray(run.contextSnapshot)
       ? run.contextSnapshot as Record<string, unknown>
@@ -1686,7 +1825,8 @@ export function chatRoutes(
     let terminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let terminalReason: string | null = null;
     let waitingAgain = false;
-    const isTerminalGenerationStatus = (status: string) => [
+    let orphanedTerminalGeneration = false;
+    const isTerminalGenerationStatus = (status: string, runtimeTerminalAt?: Date | null) => Boolean(runtimeTerminalAt) || [
       "stop_requested",
       "stopping",
       "completed",
@@ -1731,23 +1871,25 @@ export function chatRoutes(
               error: NETWORK_WAIT_EXHAUSTED_ERROR,
             }
             : null);
-        if (isTerminalGenerationStatus(frozen.generation.status)) {
-          return finishRecoveryWithoutProvider(frozen.generation.status, frozen.generation.terminalReason);
+        const claudeFork = (context.sideChatRuntimeAdmission as { deferredForkDescriptor?: unknown } | null)?.deferredForkDescriptor;
+        if (isTerminalGenerationStatus(frozen.generation.status, frozen.generation.runtimeTerminalAt)) {
+          if (mode === "network" && !claudeFork) return finishRecoveryWithoutProvider(frozen.generation.status, frozen.generation.terminalReason);
+          orphanedTerminalGeneration = true;
         }
-        if (!recoveryFailure) {
+        if (!recoveryFailure && mode === "network" && !orphanedTerminalGeneration) {
           const resumedGeneration = await svc.generationProtocol.markNetworkResumed({
             orgId: conversation.orgId,
             conversationId: conversation.id,
             generationId,
             expectedAttemptEpoch: activeAttemptEpoch,
           });
-          if (isTerminalGenerationStatus(resumedGeneration.status)) {
+          if (isTerminalGenerationStatus(resumedGeneration.status, resumedGeneration.runtimeTerminalAt) && !claudeFork)
             return finishRecoveryWithoutProvider(resumedGeneration.status, resumedGeneration.terminalReason);
-          }
+          orphanedTerminalGeneration ||= isTerminalGenerationStatus(resumedGeneration.status, resumedGeneration.runtimeTerminalAt);
           const latestGeneration = await svc.getLatestGeneration(conversation.id).catch(() => null);
-          if (latestGeneration?.id === generationId && isTerminalGenerationStatus(latestGeneration.status)) {
+          if (latestGeneration?.id === generationId && isTerminalGenerationStatus(latestGeneration.status, latestGeneration.runtimeTerminalAt) && !claudeFork)
             return finishRecoveryWithoutProvider(latestGeneration.status, latestGeneration.terminalReason);
-          }
+          orphanedTerminalGeneration ||= latestGeneration?.id === generationId && isTerminalGenerationStatus(latestGeneration.status, latestGeneration.runtimeTerminalAt);
         }
         if (recoveryFailure) {
           throw new ChatAssistantStreamError(
@@ -1821,6 +1963,7 @@ export function chatRoutes(
         runContext: { chatGenerationId: generationId },
         resumeRunId: run.id,
         resumeRunOwnerToken: ownerToken,
+        resumeRunMaySubmit: !orphanedTerminalGeneration,
         stream: false,
         abortSignal: abortController.signal,
         controlCoordinator,
@@ -1874,7 +2017,7 @@ export function chatRoutes(
           assistantProjectionMessageId = projection.message.id;
           partialBody = projectedBody;
         },
-        onTranscriptEntry: async (entry: TranscriptEntry) => {
+        onTranscriptEntry: async (entry: TranscriptEntry, delivery) => {
           if (abortController.signal.aborted) return;
           transcript.push(entry);
           if (!generationId) return;
@@ -1884,7 +2027,14 @@ export function chatRoutes(
             generationId,
             expectedAttemptEpoch: activeAttemptEpoch,
             eventKind: "transcript",
-            payload: { entry },
+            payload: delivery?.source === "native"
+              ? {
+                source: "native",
+                runId: delivery.runId,
+                spanId: delivery.spanId,
+              }
+              : { entry },
+            transcriptSource: delivery?.source,
             messageId: assistantProjectionMessageId,
             runId: activeChatRunId,
             bodyHash: hashChatGenerationBody(partialBody),
@@ -2066,7 +2216,12 @@ export function chatRoutes(
     const recoverChatControlOwners = () => {
       if (!backgroundRuntime.acceptingWork) return;
       return svc.generationProtocol.recoverStaleControlOwners({})
-        .then(() => {
+        .then(async () => {
+          try {
+            await recoverSettledExpiredSideChatTerminals();
+          } catch (error) {
+            logger.warn({ err: error }, "expired Side Chat terminal recovery failed");
+          }
           wakeTerminalProjector();
           wakeServerQueue();
         })
@@ -2266,183 +2421,15 @@ export function chatRoutes(
     res.json(updated ? await assistantSvc.enrichConversation(updated as ChatConversation) : null);
   });
 
-  router.post("/chats/:id/fork", validate(forkChatConversationSchema), async (req, res) => {
-    assertBoard(req);
-    const existing = await assertConversationAccess(req, req.params.id as string);
-    if (!existing) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const sourceMessageId = req.body.sourceMessageId ?? null;
-    if (!sourceMessageId && hasActiveChatGeneration(existing.id)) {
-      throw conflict("Cannot fork a chat while a reply is in progress");
-    }
-
-    const actor = getActorInfo(req);
-    const userId = boardUserId(req);
-    const forked = await svc.forkConversation({
-      sourceConversationId: existing.id,
-      orgId: existing.orgId,
-      userId,
-      sourceMessageId,
-      title: req.body.title,
-      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-    });
-
-    await logActivity(db, {
-      orgId: existing.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.forked",
-      entityType: "chat",
-      entityId: forked?.id ?? "unknown",
-      details: {
-        sourceConversationId: existing.id,
-        sourceMessageId,
-        forkRootConversationId: forked?.forkRootConversationId ?? existing.id,
-      },
-    });
-
-    res.status(201).json(await assistantSvc.enrichConversation(forked as ChatConversation));
-  });
-
-  router.post("/chats/:id/side-chats", validate(createSideChatSchema), async (req, res) => {
-    assertBoard(req);
-    const existing = await assertConversationAccess(req, req.params.id as string);
-    if (!existing) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    const preferredAgentId = req.body.preferredAgentId ?? existing.preferredAgentId;
-    if (!preferredAgentId) {
-      res.status(422).json({ error: "Side Chat requires an available agent" });
-      return;
-    }
-    const preferredAgent = await agentsSvc.getById(preferredAgentId);
-    if (
-      !preferredAgent
-      || preferredAgent.orgId !== existing.orgId
-      || preferredAgent.status === "terminated"
-    ) {
-      res.status(422).json({ error: "Preferred agent must be available in the same organization" });
-      return;
-    }
-    const availability = await assistantSvc.getDraftChatAssistantAvailability({
-      orgId: existing.orgId,
-      preferredAgentId,
-      modelOverride: null,
-      effortOverride: null,
-      contextLinks: existing.contextLinks as ChatContextLink[],
-      planMode: existing.planMode,
-    });
-    if (!availability.available) {
-      res.status(503).json({ error: availability.error });
-      return;
-    }
-    const userId = boardUserId(req);
-    const sideChat = await sideChats.create({
-      sourceConversationId: existing.id,
-      sourceMessageId: req.body.sourceMessageId,
-      clientMutationId: req.body.clientMutationId,
-      orgId: existing.orgId,
-      userId,
-      preferredAgentId,
-    });
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: existing.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.side_chat_created",
-      entityType: "chat",
-      entityId: sideChat.id,
-      idempotencyKey: `chat.side_chat_created:${sideChat.id}`,
-      details: {
-        sourceConversationId: existing.id,
-        sourceMessageId: req.body.sourceMessageId,
-      },
-    });
-    res.status(201).json(await assistantSvc.enrichConversation(sideChat));
-  });
-
-  router.delete("/chats/:id/side-chat", async (req, res) => {
-    assertBoard(req);
-    const existing = await assertConversationAccess(req, req.params.id as string);
-    if (!existing || existing.conversationKind !== "side_chat") {
-      res.status(404).json({ error: "Side Chat not found" });
-      return;
-    }
-    if (existing.sideChatState === "kept" || existing.messengerVisible) {
-      throw conflict("A kept Side Chat is a normal Messenger chat");
-    }
-    if (hasActiveChatGeneration(existing.id)) {
-      cancelAndReleaseActiveChatGeneration(existing.id);
-    }
-    const attachments = await svc.listAttachmentsForConversation(existing.id);
-    const userId = boardUserId(req);
-    const destroyed = await sideChats.destroy({
-      conversationId: req.params.id as string,
-      userId,
-    });
-    for (const attachment of attachments) {
-      try {
-        if (!await svc.assetHasAttachments(attachment.assetId)) {
-          await storage.deleteObject(attachment.orgId, attachment.objectKey);
-        }
-      } catch (err) {
-        logger.warn({ err, conversationId: existing.id, attachmentId: attachment.id }, "failed to delete Side Chat attachment object");
-      }
-    }
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: existing.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.side_chat_destroyed",
-      entityType: "chat",
-      entityId: existing.id,
-      details: {
-        sourceConversationId: existing.forkedFromConversationId,
-        sourceMessageId: existing.forkedFromMessageId,
-      },
-    });
-    res.json(destroyed);
-  });
-
-  router.post("/chats/:id/side-chat/keep", async (req, res) => {
-    assertBoard(req);
-    const existing = await assertConversationAccess(req, req.params.id as string);
-    if (!existing || existing.conversationKind !== "side_chat") {
-      res.status(404).json({ error: "Side Chat not found" });
-      return;
-    }
-    const userId = boardUserId(req);
-    const sideChat = await sideChats.keepInMessenger({
-      conversationId: req.params.id as string,
-      userId,
-    });
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId: sideChat.orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.side_chat_kept",
-      entityType: "chat",
-      entityId: sideChat.id,
-      details: {
-        sourceConversationId: sideChat.forkedFromConversationId,
-        sourceMessageId: sideChat.forkedFromMessageId,
-      },
-    });
-    res.json(await assistantSvc.enrichConversation(sideChat));
+  registerChatForkSideChatRoutes({
+    router, db, storage,
+    svc,
+    assistantSvc,
+    agentsSvc,
+    sideChats,
+    logActivity,
+    assertConversationAccess,
+    boardUserId,
   });
 
   router.delete("/chats/:id", async (req, res) => {
@@ -2568,6 +2555,9 @@ export function chatRoutes(
       conversationId: conversation.id,
       annotations: parsed.data.payload.inlineAnnotations,
       uploadedFileCount: files.length,
+      ...(parsed.data.payload.inlineAnnotations.some((annotation) => annotation.surface === "agent_run_transcript")
+        ? { requesterUserId: req.actor.type === "board" ? req.actor.userId ?? null : null }
+        : {}),
     });
     const messageRuntimeProvided = Object.hasOwn(parsed.data.payload, "model")
       || Object.hasOwn(parsed.data.payload, "effort");
@@ -2754,6 +2744,9 @@ export function chatRoutes(
         conversationId: conversation.id,
         annotations: parsed.data.payload.inlineAnnotations ?? [],
         uploadedFileCount: files.length,
+        ...(parsed.data.payload.inlineAnnotations?.some((annotation) => annotation.surface === "agent_run_transcript")
+          ? { requesterUserId: req.actor.type === "board" ? req.actor.userId ?? null : null }
+          : {}),
       })
       : null;
     const storedFiles = await storeQueuedAnnotationFiles(conversation as ChatConversation, files);
@@ -3224,6 +3217,9 @@ export function chatRoutes(
         annotations: req.body.inlineAnnotations ?? [],
         uploadedFileCount: 0,
         editUserMessageId: req.body.editUserMessageId ?? null,
+        ...(req.body.inlineAnnotations?.some((annotation: { surface?: string }) => annotation.surface === "agent_run_transcript")
+          ? { requesterUserId: req.actor.type === "board" ? req.actor.userId ?? null : null }
+          : {}),
       })
       : null;
     const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
@@ -3294,6 +3290,7 @@ export function chatRoutes(
       const persistedAssistantMessages = await (async () => {
           const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
           const transcript: TranscriptEntry[] = [];
+          let persistTranscript = true;
           let fallbackOutput: string | null = null;
           try {
             const streamed = await assistantSvc.streamChatAssistantReply({
@@ -3307,7 +3304,8 @@ export function chatRoutes(
               onRunCreated: (runId) => {
                 activeChatRunId = runId;
               },
-              onTranscriptEntry: async (entry) => {
+              onTranscriptEntry: async (entry, delivery) => {
+                if (activeChatRunId || delivery?.runId) persistTranscript = false;
                 transcript.push(entry);
               },
             });
@@ -3329,6 +3327,7 @@ export function chatRoutes(
               streamed.replyingAgentId,
               null,
               activeChatRunId,
+              persistTranscript,
             );
             await linkChatRunMessages(assistantInput.conversation, activeChatRunId, created);
             await logChatMessagesAdded(assistantInput.conversation, created, {
@@ -3352,6 +3351,7 @@ export function chatRoutes(
                 null,
                 activeChatRunId,
                 failurePayload,
+                persistTranscript,
               );
               const failedMessages = failedMessage ? [failedMessage as ChatMessage] : [];
               await linkChatRunMessages(assistantInput.conversation, activeChatRunId, failedMessages);

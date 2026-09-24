@@ -453,6 +453,16 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return { data: [], isPending: false, isLoading: false, error: null };
   },
+  useQueries: ({ queries }: { queries: Array<{ queryKey: readonly unknown[] }> }) => queries.map(({ queryKey }) => {
+    mockState.allQueryKeys.push([...queryKey]);
+    return {
+      data: undefined,
+      isPending: false,
+      isFetching: false,
+      error: null,
+      refetch: async () => ({ data: undefined }),
+    };
+  }),
   useMutation: (options?: {
     mutationFn?: (variables: unknown) => unknown | Promise<unknown>;
     onSuccess?: (data: unknown, variables: unknown) => void | Promise<void>;
@@ -594,9 +604,24 @@ vi.mock("@/context/ChatGenerationContext", () => ({
   useChatGenerationActions: () => ({
     abortChatStream: mockState.abortChatStream,
     clearChatGenerationConversation: vi.fn(),
+    clearChatGenerationProviderState: (scopeKey: string, epoch: number, expectedStreamKey?: string | null) => {
+      const scope = mockState.chatGenerationScopes.get(scopeKey);
+      if (!scope || scope.epoch !== epoch) return false;
+      const currentDraft = mockState.streamDrafts[scopeKey];
+      if (expectedStreamKey && currentDraft && currentDraft.streamKey !== expectedStreamKey) return false;
+      mockState.abortChatStream(scopeKey);
+      mockState.setChatSendInFlight(scopeKey, false);
+      mockState.setStreamDraftForChat(scopeKey, (current: ChatStreamDraft | null) => (
+        expectedStreamKey && current && current.streamKey !== expectedStreamKey ? current : null
+      ));
+      return true;
+    },
     destroyChatGenerationConversation: vi.fn(async (_scopeKey: string, _conversationId: string, destroyer: () => Promise<void>) => {
       await destroyer();
     }),
+    getChatGenerationEpoch: (scopeKey: string) => (
+      mockState.chatGenerationScopes.get(scopeKey)?.epoch ?? null
+    ),
     isChatGenerationClosePending: (scopeKey: string, epoch?: number) => {
       const scope = mockState.chatGenerationScopes.get(scopeKey);
       return Boolean(scope?.closeRequested && (epoch === undefined || scope.epoch === epoch));
@@ -8346,6 +8371,69 @@ describe("Chat ask_user panel", () => {
 
     expect(mockState.sendMessageStream).toHaveBeenCalledTimes(1);
     expect(mockState.sendMessageStream.mock.calls[0]?.[1]).toContain("Answer: Test output, Screenshots");
+  });
+
+  it("sends native AskUserQuestion answers as a typed approval payload without starting a new run", async () => {
+    const askUser = pendingMultiAskUser({
+      approvalId: "approval-ask-user-native",
+      approval: {
+        id: "approval-ask-user-native",
+        orgId: "org-1",
+        type: "agent_runtime",
+        requestedByAgentId: "agent-1",
+        requestedByUserId: null,
+        status: "pending",
+        payload: {
+          provider: "claude",
+          requestId: "claude-request-1",
+        },
+        decisionNote: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        createdAt: new Date("2026-05-12T09:03:00.000Z"),
+        updatedAt: new Date("2026-05-12T09:03:00.000Z"),
+      },
+    });
+    mockState.messagesByChatId = {
+      "chat-1": [
+        message({ id: "user-before-ask", body: "Please help scope this." }),
+        askUser,
+      ],
+    };
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Narrow path");
+    await clickEnabledButton(container, "Missing tests");
+    await clickEnabledButton(container, "Other");
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+    expect(textarea).not.toBeNull();
+    act(() => {
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      valueSetter?.call(textarea, "Keep the native question answer typed.");
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickEnabledButton(container, "Review answers");
+    await clickEnabledButton(container, "Submit answer");
+
+    expect(mockState.sendMessageStream).not.toHaveBeenCalled();
+    expect(mockState.mutations.at(-1)).toEqual({
+      approvalId: "approval-ask-user-native",
+      action: "approve",
+      messageId: "ask-user-multi-1",
+      payloadOverride: {
+        inputResponse: {
+          answers: [
+            { questionId: "scope", optionIds: ["narrow"] },
+            { questionId: "risk", optionIds: ["tests"] },
+            {
+              questionId: "handoff",
+              optionIds: [],
+              freeformText: "Keep the native question answer typed.",
+            },
+          ],
+        },
+      },
+    });
   });
 });
 

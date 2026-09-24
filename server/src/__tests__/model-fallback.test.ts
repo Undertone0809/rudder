@@ -573,6 +573,190 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(adapter.execute).toHaveBeenCalledTimes(1);
   });
 
+  it("routes prepared heartbeat contexts through the native driver after session validation", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "adapter" })),
+    };
+    const driver = {
+      resume: vi.fn(() => ({
+        status: "supported" as const,
+        value: {
+          sessionId: "native-session",
+          sessionParams: { sessionId: "native-session", nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        },
+      })),
+      execute: vi.fn(async (attemptContext: AgentRuntimeExecutionContext) => {
+        expect(attemptContext.context).not.toHaveProperty("chatPrompt");
+        expect(attemptContext.runtime).toMatchObject({
+          sessionId: "native-session",
+          sessionParams: { nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        });
+        return result({ model: "native-driver" });
+      }),
+      submitInput: vi.fn(),
+    } as any;
+    const ctx = baseContext({ model: "gpt-primary" });
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+      resolveDriver: () => driver,
+      executeThroughDriver: true,
+    });
+
+    expect(executed.model).toBe("native-driver");
+    expect(driver.resume).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      sessionParams: { sessionId: "session-1" },
+      sessionDisplayId: "session-1",
+    });
+    expect(driver.execute).toHaveBeenCalledTimes(1);
+    expect(driver.submitInput).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("routes Chat submissions through the native driver's input boundary", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "adapter" })),
+    };
+    const driver = {
+      resume: vi.fn(() => ({
+        status: "supported" as const,
+        value: {
+          sessionId: "native-session",
+          sessionParams: { sessionId: "native-session", nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        },
+      })),
+      submitInput: vi.fn(async (submission: {
+        context: AgentRuntimeExecutionContext;
+        session: { sessionId: string } | null;
+        input: { text: string };
+      }) => {
+        expect(submission.context.runtime).toMatchObject({
+          sessionId: "native-session",
+          sessionParams: { nativeTransport: "app-server-stdio" },
+          sessionDisplayId: "native-session",
+        });
+        expect(submission.session).toMatchObject({ sessionId: "native-session" });
+        expect(submission.input.text).toBe("continue the conversation");
+        return result({ model: "native-driver" });
+      }),
+      execute: vi.fn(),
+    } as any;
+    const ctx = baseContext({ model: "gpt-primary" });
+    ctx.context.chatPrompt = "continue the conversation";
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+      resolveDriver: () => driver,
+      submitInputThroughDriver: true,
+    });
+
+    expect(executed.model).toBe("native-driver");
+    expect(driver.resume).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      sessionParams: { sessionId: "session-1" },
+      sessionDisplayId: "session-1",
+    });
+    expect(driver.submitInput).toHaveBeenCalledTimes(1);
+    expect(driver.execute).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects native Chat submissions when the profile-bound Driver is unavailable", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "legacy-adapter" })),
+    };
+    const ctx = baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-fallback" }],
+    });
+    ctx.context.chatPrompt = "continue the conversation";
+    const resolveDriver = vi.fn(() => null);
+
+    const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+      resolveDriver,
+      submitInputThroughDriver: true,
+      nativeDriverRequired: true,
+    });
+
+    expect(executed).toMatchObject({
+      exitCode: 1,
+      errorCode: "runtime_driver_required",
+      submissionPhase: "indeterminate",
+      resultJson: { runtimeType: "codex_local", nativeDriverRequired: true },
+    });
+    expect(resolveDriver).toHaveBeenCalledTimes(1);
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(["gemini_local", "openclaw_gateway"])(
+    "keeps unsupported %s attempts on their existing adapter fallback",
+    async (runtimeType) => {
+      const adapter: ServerAgentRuntimeModule = {
+        type: runtimeType,
+        testEnvironment: vi.fn(),
+        execute: vi.fn(async () => result({ model: runtimeType })),
+      };
+      const ctx = baseContext({ model: "fallback-model" });
+      ctx.agent = { ...ctx.agent, agentRuntimeType: runtimeType };
+
+      const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
+        resolveDriver: () => null,
+        executeThroughDriver: true,
+      });
+
+      expect(executed.model).toBe(runtimeType);
+      expect(adapter.execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("falls back from a native driver attempt to the Gemini adapter", async () => {
+    const primaryAdapter: ServerAgentRuntimeModule = {
+      type: "codex_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "adapter-bypass" })),
+    };
+    const fallbackAdapter: ServerAgentRuntimeModule = {
+      type: "gemini_local",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => result({ model: "gemini-fallback" })),
+    };
+    const driver = {
+      resume: vi.fn(() => ({
+        status: "supported" as const,
+        value: {
+          sessionId: "native-session",
+          sessionParams: { sessionId: "native-session" },
+          sessionDisplayId: "native-session",
+        },
+      })),
+      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "native runtime unavailable" })),
+      submitInput: vi.fn(),
+    } as any;
+    const ctx = baseContext({
+      model: "gpt-primary",
+      modelFallbacks: [{ agentRuntimeType: "gemini_local", model: "gemini-fallback" }],
+    });
+
+    const executed = await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
+      resolveAdapter: (runtimeType) => runtimeType === "gemini_local" ? fallbackAdapter : null,
+      resolveDriver: (runtimeType) => runtimeType === "codex_local" ? driver : null,
+      executeThroughDriver: true,
+    });
+
+    expect(executed.model).toBe("gemini-fallback");
+    expect(driver.execute).toHaveBeenCalledTimes(1);
+    expect(primaryAdapter.execute).not.toHaveBeenCalled();
+    expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
+  });
+
   it("fences runtime controls to one model attempt at a time", async () => {
     const events: string[] = [];
     const adapter: ServerAgentRuntimeModule = {

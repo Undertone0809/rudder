@@ -37,9 +37,14 @@ import {
 import { and, asc, desc, eq, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import {
   compareChatGenerationSelection,
-  listDetachedChatTranscripts,
   type ChatGenerationSelectionCandidate,
 } from "./chat-transcript-persistence.js";
+import { chatTranscriptEntryFromReaderItem } from "./chat-transcript-reader-item.js";
+import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
+import type {
+  TranscriptAvailability,
+  TranscriptSource
+} from "./runtime-kernel/transcript-reader.js";
 
 type ManifestCandidate = {
   orgId: string;
@@ -108,11 +113,95 @@ function asManifestItem(row: typeof chatWorkManifestItems.$inferSelect): ChatWor
   return row as ChatWorkManifestItem;
 }
 
-function legacyTranscriptFromPayload(
-  payload: Record<string, unknown> | null,
-): ChatStreamTranscriptEntry[] {
-  const transcript = payload?.__chatTranscript;
-  return Array.isArray(transcript) ? transcript as ChatStreamTranscriptEntry[] : [];
+const MANIFEST_TRANSCRIPT_READER_PAGE_LIMIT = 200;
+const MANIFEST_TRANSCRIPT_READER_MAX_PAGES = 25;
+const MANIFEST_TRANSCRIPT_READER_MAX_ITEMS = 5_000;
+const MANIFEST_TRANSCRIPT_READER_MAX_BYTES = 2 * 1024 * 1024;
+
+type ManifestRunTranscriptRead = {
+  entries: ChatStreamTranscriptEntry[];
+  source: TranscriptSource;
+  availability: TranscriptAvailability;
+};
+
+async function readRunTranscriptThroughReader(
+  reader: ReturnType<typeof createHistoricalTranscriptReader>,
+  run: { orgId: string; runId: string },
+): Promise<ManifestRunTranscriptRead> {
+  const entries: ChatStreamTranscriptEntry[] = [];
+  let cursor: string | null = null;
+  let source: TranscriptSource = "legacy";
+  let availability: TranscriptAvailability = "missing";
+  let bytes = 2;
+  for (let pageCount = 0; pageCount < MANIFEST_TRANSCRIPT_READER_MAX_PAGES; pageCount += 1) {
+    const page = await reader.readRun({
+      orgId: run.orgId,
+      runId: run.runId,
+      principal: { type: "board", orgId: run.orgId, authorized: true },
+      cursor,
+      limit: MANIFEST_TRANSCRIPT_READER_PAGE_LIMIT,
+    });
+    source = page.source;
+    availability = page.availability;
+    for (const item of page.items) {
+      const entry = chatTranscriptEntryFromReaderItem(item);
+      if (!entry) continue;
+      const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+      if (
+        entries.length >= MANIFEST_TRANSCRIPT_READER_MAX_ITEMS
+        || (entries.length > 0 && bytes + entryBytes > MANIFEST_TRANSCRIPT_READER_MAX_BYTES)
+        || (entries.length === 0 && bytes + entryBytes > MANIFEST_TRANSCRIPT_READER_MAX_BYTES)
+      ) {
+        return { entries, source, availability };
+      }
+      entries.push(entry);
+      bytes += entryBytes + (entries.length > 1 ? 1 : 0);
+    }
+    if (!page.nextCursor) return { entries, source, availability };
+    if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+    cursor = page.nextCursor;
+  }
+  return { entries, source, availability };
+}
+
+async function readConversationMessageTranscripts(
+  reader: ReturnType<typeof createHistoricalTranscriptReader>,
+  input: { orgId: string; conversationId: string; messageIds: readonly string[] },
+) {
+  const messageIds = new Set(input.messageIds);
+  const transcripts = new Map<string, Array<{ ordinal: number; index: number; entry: ChatStreamTranscriptEntry }>>();
+  let cursor: string | null = null;
+  let itemIndex = 0;
+  for (;;) {
+    const page = await reader.readConversation({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+      principal: { type: "board", orgId: input.orgId, authorized: true },
+      cursor,
+      limit: MANIFEST_TRANSCRIPT_READER_PAGE_LIMIT,
+    });
+    for (const item of page.items) {
+      const match = [item.id, item.sourceEntryId]
+        .filter((value): value is string => Boolean(value))
+        .map((value) => /^message:(.+):\d+(?::\d+)?$/u.exec(value))
+        .find((value) => value !== null);
+      const messageId = match?.[1];
+      const entry = chatTranscriptEntryFromReaderItem(item);
+      if (!messageId || !messageIds.has(messageId) || !entry) continue;
+      const items = transcripts.get(messageId) ?? [];
+      items.push({ ordinal: item.ordinal, index: itemIndex, entry });
+      transcripts.set(messageId, items);
+      itemIndex += 1;
+    }
+    if (!page.nextCursor) break;
+    if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+    cursor = page.nextCursor;
+  }
+  return new Map([...transcripts].map(([messageId, items]) => [
+    messageId,
+    items.sort((left, right) => left.ordinal - right.ordinal || left.index - right.index)
+      .map(({ entry }) => entry),
+  ]));
 }
 
 const ACTIVE_GENERATION_STATUSES = new Set([
@@ -126,6 +215,8 @@ const ACTIVE_GENERATION_STATUSES = new Set([
 ]);
 
 export function chatWorkManifestService(db: Db) {
+  const transcriptReader = createHistoricalTranscriptReader(db);
+
   async function getConversationSubagents(
     conversation: { id: string; orgId: string },
   ): Promise<ChatWorkManifestResponse["subagents"]> {
@@ -134,7 +225,6 @@ export function chatWorkManifestService(db: Db) {
         id: chatMessages.id,
         runId: chatMessages.runId,
         status: chatMessages.status,
-        structuredPayload: chatMessages.structuredPayload,
         createdAt: chatMessages.createdAt,
         senderLabel: agents.name,
       })
@@ -154,18 +244,37 @@ export function chatWorkManifestService(db: Db) {
       return { active: [], done: [], totalCount: 0 };
     }
 
-    const messageIds = messages.map((message) => message.id);
-    const detachedByMessageId = await listDetachedChatTranscripts(db, messages.map((message) => ({
-      id: message.id,
-      orgId: conversation.orgId,
-    })));
-    const eventRows = await db
-      .select({
-        messageId: chatGenerationEvents.assistantMessageId,
-        generationId: chatGenerationEvents.generationId,
-        generationSeq: chatGenerationEvents.generationSeq,
-        payload: chatGenerationEvents.payload,
-        eventRunId: chatGenerationEvents.runId,
+    const runTranscriptByRunId = new Map<string, ManifestRunTranscriptRead>();
+    const runIds = [...new Set(messages.map((message) => message.runId).filter((runId): runId is string => Boolean(runId)))];
+    await Promise.all(runIds.map(async (runId) => {
+      runTranscriptByRunId.set(runId, await readRunTranscriptThroughReader(transcriptReader, {
+        orgId: conversation.orgId,
+        runId,
+      }));
+    }));
+    const legacyFallbackMessageIds = new Set(messages
+      .filter((message) => message.runId)
+      .filter((message) => {
+        const read = runTranscriptByRunId.get(message.runId!);
+        return read?.source === "legacy" && read.entries.length === 0;
+      })
+      .map((message) => message.id));
+    const legacyMessages = messages.filter((message) => !message.runId || legacyFallbackMessageIds.has(message.id));
+    const messageIds = legacyMessages.map((message) => message.id);
+    const conversationTranscriptByMessageId = legacyMessages.length > 0
+      ? await readConversationMessageTranscripts(transcriptReader, {
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        messageIds,
+      })
+      : new Map<string, ChatStreamTranscriptEntry[]>();
+    const eventRows = legacyMessages.length > 0
+      ? await db
+        .select({
+          messageId: chatGenerationEvents.assistantMessageId,
+          generationId: chatGenerationEvents.generationId,
+          generationSeq: chatGenerationEvents.generationSeq,
+          eventRunId: chatGenerationEvents.runId,
         generationStatus: chatGenerations.status,
         generationStartedAt: chatGenerations.startedAt,
         generationCreatedAt: chatGenerations.createdAt,
@@ -190,7 +299,8 @@ export function chatWorkManifestService(db: Db) {
         desc(chatGenerationEvents.generationSeq),
         desc(chatGenerationEvents.generationId),
         asc(chatGenerationEvents.generationSeq),
-      );
+      )
+      : [];
 
     const nativeByMessageId = new Map<string, {
       generationId: string;
@@ -198,13 +308,10 @@ export function chatWorkManifestService(db: Db) {
       generationStartedAt: Date;
       generationStatus: string;
       runId: string | null;
-      entries: Array<{ generationSeq: number; entry: ChatStreamTranscriptEntry }>;
     }>();
     const nativeSelectionByMessageId = new Map<string, ChatGenerationSelectionCandidate>();
     for (const row of eventRows) {
       if (!row.messageId) continue;
-      const entry = row.payload.entry;
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
       const current = nativeByMessageId.get(row.messageId);
       const candidate = {
         generationId: row.generationId,
@@ -223,12 +330,10 @@ export function chatWorkManifestService(db: Db) {
           generationStartedAt: row.generationStartedAt,
           generationStatus: row.generationStatus,
           runId: row.eventRunId,
-          entries: [{ generationSeq: row.generationSeq, entry: entry as ChatStreamTranscriptEntry }],
         });
         continue;
       }
       if (current.generationId !== row.generationId) continue;
-      current.entries.push({ generationSeq: row.generationSeq, entry: entry as ChatStreamTranscriptEntry });
       if (!currentSelection || compareChatGenerationSelection(candidate, currentSelection) > 0) {
         nativeSelectionByMessageId.set(row.messageId, candidate);
       }
@@ -238,22 +343,26 @@ export function chatWorkManifestService(db: Db) {
 
     const summaries: ChatWorkManifestSubagentSummary[] = [];
     for (const message of messages) {
+      const runRead = message.runId ? runTranscriptByRunId.get(message.runId) ?? null : null;
       const native = nativeByMessageId.get(message.id);
-      const nativeEntries = native?.entries
-        ?.slice()
-        .sort((left, right) => left.generationSeq - right.generationSeq)
-        .map((item) => item.entry);
-      const entries = nativeEntries?.length
-        ? nativeEntries
-        : detachedByMessageId.get(message.id)?.length
-          ? detachedByMessageId.get(message.id)!
-        : legacyTranscriptFromPayload(message.structuredPayload);
+      const legacySourceEligible = !runRead || runRead.source === "legacy";
+      const legacyEntries = legacySourceEligible
+        ? conversationTranscriptByMessageId.get(message.id) ?? []
+        : [];
+      const entries = runRead
+        ? runRead.entries.length > 0
+          ? runRead.entries
+          : runRead.source === "legacy"
+            ? legacyEntries
+            : []
+        : legacyEntries;
       if (entries.length === 0) continue;
+      const readerBacked = Boolean(runRead && runRead.entries.length > 0);
       const sourceActive = native
         ? ACTIVE_GENERATION_STATUSES.has(native.generationStatus)
         : message.status === "streaming";
-      const sourceTerminalStatus = native && !sourceActive
-        ? native.generationStatus === "completed"
+      const sourceTerminalStatus = !sourceActive && (native || readerBacked)
+        ? native?.generationStatus === "completed" || (!native && message.status === "completed")
           ? "completed" as const
           : "stopped" as const
         : null;

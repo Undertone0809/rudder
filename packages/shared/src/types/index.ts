@@ -64,14 +64,14 @@ export type {
 export type {
   ChatAskUserOption,
   ChatAskUserQuestion,
-  ChatAskUserRequest, ChatAttachment,
+  ChatAskUserRequest, ChatAskUserResponse, ChatAskUserResponseAnswer, ChatAttachment,
   ChatContextLink, ChatControlAction, ChatControlActionKind, ChatControlDisposition, ChatConversation,
   ChatGeneration, ChatGenerationControlState, ChatGenerationEvent, ChatGenerationEventKind, ChatGenerationStatus,
   ChatGenerationTerminalOutboxEntry, ChatInlineAnnotation, ChatInlineAnnotationAgentRunAnchorKind, ChatInlineAnnotationInput,
   ChatInlineAnnotationSourceEntryId, ChatInlineAnnotationSurface, ChatInlineAnnotationTranscriptKind, ChatLinkedEntity, ChatMessage, ChatOperationProposalDecision, ChatOperationProposalDecisionAction,
   ChatOperationProposalDecisionStatus, ChatPrimaryIssueSummary, ChatProviderControlDisposition, ChatQueueClaimResponse, ChatQueueDeliveryIntent, ChatQueueRequestActor, ChatQueueSnapshot, ChatQueuedMessage, ChatQueuedMessagePayload, ChatQueuedMessageStatus, ChatRichReference,
   ChatRichReferenceDisplay,
-  ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
+  ChatRuntimeContinuity, ChatRuntimeDescriptor, ChatSteerResponse, ChatSteerResult, ChatStreamAckEvent,
   ChatStreamAssistantDeltaEvent,
   ChatStreamAssistantStateEvent, ChatStreamErrorEvent, ChatStreamEvent, ChatStreamFinalEvent, ChatStreamQueuedEvent, ChatStreamTranscriptEntry, ChatStreamTranscriptEntryEvent, ChatStreamTranscriptTextEntry, ChatStreamTranscriptTodoItem,
   ChatStreamTranscriptTodoItemStatus, ChatStreamWaitingForNetworkEvent, ChatTerminalOutboxStatus, ChatTranscriptGenerationProvenance, ChatTranscriptSummary, ChatWorkManifestItem, ChatWorkManifestResponse, ChatWorkManifestSubagentState, ChatWorkManifestSubagentStatus, ChatWorkManifestSubagentSummary, ChatWorkManifestSubagents, ChatWorkManifestTargetType

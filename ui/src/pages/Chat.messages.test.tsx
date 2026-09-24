@@ -7,7 +7,7 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type Agent, type ChatConversation, type ChatMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -138,20 +138,27 @@ afterEach(() => {
   }
 });
 
-function render(element: ReactNode) {
+function renderWithRerender(element: ReactNode) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  const rerender = (nextElement: ReactNode) => {
+    act(() => {
+      root.render(<QueryClientProvider client={queryClient}>{nextElement}</QueryClientProvider>);
+    });
+  };
   cleanupFn = () => {
     act(() => {
       root.unmount();
     });
     container.remove();
   };
-  act(() => {
-    root.render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>);
-  });
-  return container;
+  rerender(element);
+  return { container, rerender };
+}
+
+function render(element: ReactNode) {
+  return renderWithRerender(element).container;
 }
 
 function message(overrides: Partial<ChatMessage>): ChatMessage {
@@ -216,14 +223,15 @@ async function waitForIssueStatus(container: HTMLElement, status: string) {
   });
 }
 
-function renderChatMessageItem(
+function chatMessageItemElement(
   messageToRender: ChatMessage,
   agents: Agent[] = [],
   conversationOverrides: Partial<ChatConversation> = {},
   localizeText?: (text: string) => string,
+  onOpenSideChat: (message: ChatMessage) => void = vi.fn(),
 ) {
   const onForkMessage = vi.fn();
-  return render(
+  return (
     <ThemeProvider>
       <ChatMessageItem
         conversation={{
@@ -286,6 +294,7 @@ function renderChatMessageItem(
         onConvertToIssue={vi.fn()}
         actionPending={false}
         onCopyMessageText={vi.fn()}
+        onOpenSideChat={onOpenSideChat}
         onForkMessage={onForkMessage}
         onEditUserMessage={vi.fn()}
         onRetryFailedMessage={vi.fn()}
@@ -293,8 +302,24 @@ function renderChatMessageItem(
         skillReferences={[]}
         localizeText={localizeText}
       />
-    </ThemeProvider>,
+    </ThemeProvider>
   );
+}
+
+function renderChatMessageItem(
+  messageToRender: ChatMessage,
+  agents: Agent[] = [],
+  conversationOverrides: Partial<ChatConversation> = {},
+  localizeText?: (text: string) => string,
+  onOpenSideChat: (message: ChatMessage) => void = vi.fn(),
+) {
+  return render(chatMessageItemElement(
+    messageToRender,
+    agents,
+    conversationOverrides,
+    localizeText,
+    onOpenSideChat,
+  ));
 }
 
 describe("assistant attribution", () => {
@@ -778,6 +803,29 @@ describe("user chat message rendering", () => {
 });
 
 describe("assistant chat message rendering", () => {
+  it("keeps the streamed assistant copy tooltip stable across content updates", () => {
+    const streamingMessage = message({
+      id: "assistant-streaming-actions",
+      role: "assistant",
+      kind: "message",
+      status: "streaming",
+      body: "opencode-native-",
+    });
+    const { container, rerender } = renderWithRerender(
+      <StrictMode>{chatMessageItemElement(streamingMessage)}</StrictMode>,
+    );
+
+    const copyButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy message"]',
+    );
+    expect(copyButton?.title).toBe("Copy message");
+    expect(copyButton?.hasAttribute("data-slot")).toBe(false);
+    for (const body of ["opencode-native-four", "opencode-native-four is", "opencode-native-four is streaming"]) {
+      rerender(<StrictMode>{chatMessageItemElement({ ...streamingMessage, body })}</StrictMode>);
+      expect(container.textContent).toContain(body);
+    }
+  });
+
   it("aligns the final assistant body with the process reading column", () => {
     const container = renderChatMessageItem(message({
       role: "assistant",
@@ -821,17 +869,27 @@ describe("assistant chat message rendering", () => {
     expect(streaming.querySelector("[data-chat-annotation-source]")).toBeNull();
   });
 
-  it("keeps adjacent assistant actions while removing the message-level Side Chat icon", () => {
-    const container = renderChatMessageItem(message({
+  it("opens Side Chat from the selected completed assistant reply", () => {
+    const sourceMessage = message({
+      id: "assistant-side-chat-source",
       role: "assistant",
       kind: "message",
       status: "completed",
       body: "Fork from this answer",
-    }));
+    });
+    const onOpenSideChat = vi.fn();
+    const container = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
 
     expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Copy message"]')).not.toBeNull();
-    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+    const openSideChatButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open Side Chat"]',
+    );
+    expect(openSideChatButton).not.toBeNull();
+    expect(openSideChatButton?.title).toBe("Open Side Chat");
+    expect(openSideChatButton?.hasAttribute("data-slot")).toBe(false);
+    openSideChatButton?.click();
+    expect(onOpenSideChat).toHaveBeenCalledWith(sourceMessage);
   });
 
   it("does not expose Side Chat for an incomplete assistant response", () => {
@@ -840,6 +898,18 @@ describe("assistant chat message rendering", () => {
       kind: "message",
       status: "interrupted",
       body: "Partial answer",
+    }));
+
+    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+  });
+
+  it("does not expose Side Chat for superseded assistant replies", () => {
+    const container = renderChatMessageItem(message({
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Superseded answer",
+      supersededAt: new Date("2026-08-01T00:00:00.000Z"),
     }));
 
     expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();

@@ -22,8 +22,8 @@ import {
 import {
   chatTranscriptEntriesForMessage,
   isAgentRunTranscriptActiveStatus,
-  useLegacyChatTranscripts,
   useAgentRunTranscripts,
+  useLegacyChatTranscripts,
 } from "@/components/transcript/useAgentRunTranscripts";
 import { useToast } from "@/context/ToastContext";
 import { formatChatAgentLabel } from "@/lib/agent-labels";

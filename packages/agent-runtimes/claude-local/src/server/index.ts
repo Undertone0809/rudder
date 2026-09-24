@@ -1,32 +1,44 @@
 import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
 
 export { execute, runClaudeLogin } from "./execute.js";
-export { runtimeProviderCapabilities } from "./native-capabilities.js";
 export {
   createClaudeLocalProviderCapabilities,
   createClaudeLocalProviderCapabilityResolver,
-  resolveClaudeLocalProviderCapabilities,
   parseClaudeSessionJsonl,
+  resolveClaudeLocalProviderCapabilities,
   resolveClaudeSessionFilePath,
+  runtimeProviderCapabilities,
+  verifyClaudeSessionAssistantHead
 } from "./native-capabilities.js";
 export type {
+  ClaudeAssistantHeadCheck,
   ClaudeCapabilityEvidence,
+  ClaudeDeferredForkIntent,
   ClaudeLocalProfileTransport,
   ClaudeLocalProfileTransportResolver,
   ClaudeNativeTranscriptReadRequest,
   ClaudeNativeTranscriptReadResult,
   ClaudeProviderBindingRef,
   ClaudeProviderSessionRef,
-  ClaudeRuntimeProviderCapabilityAdapter,
+  ClaudeRuntimeProviderCapabilityAdapter
 } from "./native-capabilities.js";
 export {
   describeClaudeFailure,
   isClaudeMaxTurnsResult,
-  isClaudeUnknownSessionError, parseClaudeStreamJson
+  isClaudeUnknownSessionError,
+  parseClaudeStreamJson
 } from "./parse.js";
 export {
-  captureClaudeCliUsageText, claudeConfigDir, fetchClaudeCliQuota, fetchClaudeQuota, fetchWithTimeout, getQuotaWindows, parseClaudeCliUsageText, readClaudeAuthStatus,
-  readClaudeToken, toPercent
+  captureClaudeCliUsageText,
+  claudeConfigDir,
+  fetchClaudeCliQuota,
+  fetchClaudeQuota,
+  fetchWithTimeout,
+  getQuotaWindows,
+  parseClaudeCliUsageText,
+  readClaudeAuthStatus,
+  readClaudeToken,
+  toPercent
 } from "./quota.js";
 export { listClaudeSkills, syncClaudeSkills } from "./skills.js";
 export { testEnvironment } from "./test.js";
@@ -45,6 +57,7 @@ const PROVIDER_SESSION_FIELDS = [
   "transport",
   "claudeConfigDir",
   "sessionFilePath",
+  "lastUuid",
 ] as const;
 
 function readProviderSessionFields(record: Record<string, unknown>): Record<string, string> {

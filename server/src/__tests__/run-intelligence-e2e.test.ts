@@ -1,6 +1,8 @@
 import {
   agents,
   applyPendingMigrations,
+  chatConversations,
+  chatMessages,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunEvents,
@@ -8,7 +10,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -23,6 +25,7 @@ import { errorHandler } from "../middleware/index.js";
 import { runIntelligenceRoutes } from "../routes/run-intelligence.js";
 import { appendHeartbeatRunEvent } from "../services/run-events.js";
 import { getRunLogStore } from "../services/run-log-store.js";
+import { selectConversationSourceWindow } from "../services/runtime-kernel/transcript-reader.sources.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -167,6 +170,56 @@ describe("run intelligence real route workflow", () => {
     if (logDir) fs.rmSync(logDir, { recursive: true, force: true });
     if (previousLogBasePath === undefined) delete process.env.RUN_LOG_BASE_PATH;
     else process.env.RUN_LOG_BASE_PATH = previousLogBasePath;
+  });
+
+  it("pages conversation sources once when PostgreSQL timestamps contain microseconds", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    const firstRunId = "00000000-0000-4000-8000-000000000001";
+    const secondRunId = "00000000-0000-4000-8000-000000000002";
+    const messageId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Transcript precision",
+      urlKey: deriveOrganizationUrlKey(`Transcript precision ${orgId}`),
+      issuePrefix: "TRP",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Transcript Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(chatConversations).values({ id: conversationId, orgId });
+    await db.insert(heartbeatRuns).values([firstRunId, secondRunId].map((id) => ({
+      id,
+      orgId,
+      agentId,
+      chatConversationId: conversationId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "succeeded",
+    })));
+    await db.insert(chatMessages).values({ id: messageId, orgId, conversationId, role: "user", body: "Follow-up" });
+    await db.execute(sql`update ${heartbeatRuns} set created_at = '2026-09-23T12:00:00.123900Z' where id = ${firstRunId}::uuid`);
+    await db.execute(sql`update ${heartbeatRuns} set created_at = '2026-09-23T12:00:00.123100Z' where id = ${secondRunId}::uuid`);
+    await db.execute(sql`update ${chatMessages} set created_at = '2026-09-23T12:00:00.124789Z' where id = ${messageId}::uuid`);
+
+    const seen: string[] = [];
+    let after = null;
+    for (let page = 0; page < 3; page += 1) {
+      const window = await selectConversationSourceWindow(db, orgId, conversationId, after, 1);
+      expect(window.rows).toHaveLength(1);
+      seen.push(window.rows[0]!.descriptor.id);
+      after = window.rows[0]!.descriptor;
+    }
+    expect(seen).toEqual([firstRunId, secondRunId, messageId]);
+    expect((await selectConversationSourceWindow(db, orgId, conversationId, after, 1)).rows).toEqual([]);
   });
 
   it("walks summary, errors, bounded evidence, and detail without crossing org boundaries", async () => {
@@ -423,8 +476,8 @@ describe("run intelligence real route workflow", () => {
     expect(transcript.body.page).toMatchObject({
       order: "oldest",
       turnLimit: 1,
-      hasMore: true,
-      nextCursor: "step-4",
+      hasMore: false,
+      nextCursor: null,
       returnedSteps: 4,
     });
     expect(transcript.body.entries.map((entry: { id: string }) => entry.id)).toEqual([

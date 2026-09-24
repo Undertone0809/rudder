@@ -1,10 +1,10 @@
 import { useToolCallFailureIndicators } from "@/context/ThemeContext";
-import { Fragment, createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { cn } from "../../lib/utils";
 import { CommandTerminalDetail, DisclosureChevron, ExpandableTranscriptResponsePre, TranscriptRunAnnotationBlock, areAllToolEntriesErrored, renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import { ChatTranscriptAction, ChatTranscriptTurn, TranscriptActionIcon, TranscriptActionIconCategory, TranscriptActionIconStatus, TranscriptAgentInspection, TranscriptAnnotationSourceContext, TranscriptBlock, TranscriptDensity, TranscriptMarkdownLinkClickHandler, TranscriptRunAnnotationContext, TranscriptSentAnnotationContext, TranscriptSkillTarget, TranscriptToolCardEntry, TranscriptToolSemanticInfo, asRecord, compactWhitespace, formatTranscriptDuration, getTranscriptTimestampTitle, isInternalTranscriptLifecycleEntry, transcriptBlockStableKey, truncate } from "./RunTranscriptView.common";
-import { formatSemanticDigest, normalizeChatTranscriptTurns, summarizeToolResult } from "./RunTranscriptView.normalize";
+import { formatSemanticDigest, summarizeToolResult } from "./RunTranscriptView.normalize";
 import { formatNiceToolRequest, formatNiceToolRequestParameters, formatNiceToolResponse, getNiceToolRequestLabel } from "./RunTranscriptView.presentation";
 import { RudderMcpSemanticPresenter, getRudderMcpPresenterDefinition } from "./RunTranscriptView.rudder-mcp";
 import { describeToolSemanticInfo, extractMcpToolDetails, formatCommandTerminalOutput, isCommandTool, neutralizeToolFailureSemanticInfo } from "./RunTranscriptView.semantic";
@@ -17,7 +17,7 @@ import { TranscriptUnifiedDiff, parseUnifiedDiff } from "./TranscriptUnifiedDiff
 const EMPTY_AGENT_INSPECTIONS = new Map<string, TranscriptAgentInspection>();
 const CHAT_READING_COLUMN_CLASS = "w-full min-w-0 max-w-3xl px-1";
 const CHAT_FULL_COLUMN_CLASS = "w-full min-w-0";
-const TranscriptTextContext = createContext<(text: string) => string>((text) => text);
+export const TranscriptTextContext = createContext<(text: string) => string>((text) => text);
 
 function useTranscriptText() {
   return useContext(TranscriptTextContext);
@@ -1517,103 +1517,5 @@ export function filterChatAssistantTranscriptEntries(
     withRequiredBoundaries,
     options.streaming === true,
     preserveLifecycleBoundaries,
-  );
-}
-
-export function TranscriptChatTimeline({
-  entries,
-  density,
-  streaming,
-  collapseStdout,
-  thinkingClassName,
-  hideAssistantMessages,
-  hiddenAssistantMessageText,
-  localizeText = (text) => text,
-  showDeveloperDiagnostics,
-  onMarkdownLinkClick,
-  onOpenFile,
-  onOpenSkill,
-  canOpenSkill,
-  agentInspections,
-  onOpenAgent,
-  annotationSource,
-  sentAnnotationContext,
-}: {
-  entries: TranscriptEntry[];
-  density: TranscriptDensity;
-  streaming: boolean;
-  collapseStdout: boolean;
-  thinkingClassName?: string;
-  hideAssistantMessages: boolean;
-  hiddenAssistantMessageText?: string | null;
-  localizeText?: (text: string) => string;
-  showDeveloperDiagnostics: boolean;
-  onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
-  onOpenFile?: (targetPath: string, label: string) => void;
-  onOpenSkill?: (target: TranscriptSkillTarget) => void;
-  canOpenSkill?: (target: TranscriptSkillTarget) => boolean;
-  agentInspections: Map<string, TranscriptAgentInspection>;
-  onOpenAgent?: (agent: TranscriptAgentInspection) => void;
-  annotationSource?: TranscriptAnnotationSourceContext;
-  sentAnnotationContext?: TranscriptSentAnnotationContext;
-}) {
-  const timelineEntries = useMemo(
-    () => filterChatAssistantTranscriptEntries(entries, {
-      hideAssistantMessages,
-      hiddenAssistantMessageText,
-      streaming,
-      preserveLifecycleBoundaries: true,
-    }),
-    [entries, hideAssistantMessages, hiddenAssistantMessageText, streaming],
-  );
-  const { preludeBlocks, turns } = useMemo(
-    () => normalizeChatTranscriptTurns(timelineEntries, streaming, { showDeveloperDiagnostics }),
-    [timelineEntries, streaming, showDeveloperDiagnostics],
-  );
-
-  return (
-    <TranscriptTextContext.Provider value={localizeText}>
-      <div className="w-full min-w-0 space-y-3">
-      {preludeBlocks.map((block, index) => {
-        const fullWidth = block.type === "message" && block.source === "steer";
-        return (
-          <div
-            key={transcriptBlockStableKey(block, index)}
-            data-transcript-chat-column={fullWidth ? "full" : "reading"}
-            className={fullWidth ? CHAT_FULL_COLUMN_CLASS : CHAT_READING_COLUMN_CLASS}
-          >
-            {renderTranscriptBlock({
-              block,
-              index,
-              density,
-              presentation: "chat",
-              collapseStdout,
-              thinkingClassName,
-              onMarkdownLinkClick,
-              annotationSource,
-              sentAnnotationContext,
-              localizeText,
-            })}
-          </div>
-        );
-      })}
-      {turns.map((turn) => (
-        <TranscriptChatTurn
-          key={turn.key}
-          turn={turn}
-          density={density}
-          thinkingClassName={thinkingClassName}
-          onMarkdownLinkClick={onMarkdownLinkClick}
-          onOpenFile={onOpenFile}
-          onOpenSkill={onOpenSkill}
-          canOpenSkill={canOpenSkill}
-          agentInspections={agentInspections}
-          onOpenAgent={onOpenAgent}
-          annotationSource={annotationSource}
-          sentAnnotationContext={sentAnnotationContext}
-        />
-      ))}
-      </div>
-    </TranscriptTextContext.Provider>
   );
 }

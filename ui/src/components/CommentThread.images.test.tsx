@@ -37,8 +37,8 @@ vi.mock("./MarkdownEditor", () => ({
   MarkdownEditor: () => <div>Markdown editor</div>,
 }));
 
-vi.mock("./transcript/useLiveRunTranscripts", () => ({
-  useLiveRunTranscripts: () => ({
+vi.mock("./transcript/useAgentRunTranscripts", () => ({
+  useAgentRunTranscripts: () => ({
     transcriptByRun: new Map(),
     hasOutputForRun: () => false,
   }),

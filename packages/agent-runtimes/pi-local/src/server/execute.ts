@@ -27,6 +27,7 @@ import {
   asNumber,
   asString,
   asStringArray,
+  assertPersistablePiRpcArgs,
   buildRudderEnv,
   cleanupRetiredRudderManagedEntries,
   ensureAbsoluteDirectory,
@@ -63,7 +64,7 @@ import {
 } from "./managed-external-mcp.js";
 import { readPiLoadedMcpServers } from "./mcp-evidence.js";
 import { ensurePiModelConfiguredAndAvailable } from "./models.js";
-import { executePiNativeChat, PiNativeCapabilityError } from "./native-protocol.js";
+import { PiNativeCapabilityError, executePiNativeChat } from "./native-protocol.js";
 import {
   ensurePiOpenCodeAnonymousModelsConfig,
   parsePiModelId,
@@ -107,10 +108,21 @@ function firstNonEmptyLine(text: string): string {
 }
 
 function providerProfileIdentity(config: Record<string, unknown>) {
+  const profileBindingId = asString(config.providerBindingId ?? config.bindingId, "").trim();
+  const profileOrgId = asString(config.providerOrgId ?? config.orgId, "").trim();
+  const workspaceBindingId = asString(
+    config.providerWorkspaceBindingId ?? config.workspaceBindingId,
+    "",
+  ).trim();
+  const providerVersion = asString(config.providerVersion ?? config.piProviderVersion, "").trim();
   return {
     hostId: asString(config.providerHostId ?? config.hostId ?? config.runtimeHostId, "local").trim() || "local",
     profileId: asString(config.providerProfileId ?? config.profileId ?? config.profile ?? config.authProfile, "default").trim() || "default",
+    ...(profileBindingId ? { id: profileBindingId } : {}),
+    ...(profileOrgId ? { orgId: profileOrgId } : {}),
+    ...(workspaceBindingId ? { workspaceBindingId } : {}),
     capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
+    ...(providerVersion ? { providerVersion } : {}),
   };
 }
 
@@ -643,6 +655,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const workspaceId = asString(workspaceContext.workspaceId, "");
   const workspaceRepoUrl = asString(workspaceContext.repoUrl, "");
   const workspaceRepoRef = asString(workspaceContext.repoRef, "");
+  const workspaceBindingId = asString(workspaceContext.workspaceBindingId, "");
   const agentHome = asString(workspaceContext.agentHome, "");
   const agentInstructionsDir = asString(workspaceContext.instructionsDir, "");
   const agentMemoryDir = asString(workspaceContext.memoryDir, "");
@@ -906,6 +919,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (fromExtraArgs.length > 0) return fromExtraArgs;
     return asStringArray(config.args);
   })();
+  if (context.chatMode === true && extraArgs.length > 0) {
+    throw new Error("Pi native Chat does not persist arbitrary extraArgs; configure supported provider, model, and thinking options directly.");
+  }
 
   // Handle session
   const runtimeSessionParams = parseObject(runtime.sessionParams);
@@ -913,6 +929,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const failClosedOnMissingResume = context.chatMode === true;
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const profileIdentity = providerProfileIdentity(config);
+  const nativeWorkspace = {
+    workspaceId: workspaceId || null,
+    repoUrl: workspaceRepoUrl || null,
+    repoRef: workspaceRepoRef || null,
+    workspaceBindingId: workspaceBindingId || profileIdentity.workspaceBindingId || null,
+  };
   const storedProfileMatches =
     asString(runtimeSessionParams.hostId, "") === profileIdentity.hostId &&
     asString(runtimeSessionParams.profileId, "") === profileIdentity.profileId;
@@ -1086,7 +1108,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const nativeSessionDir = path.resolve(
       canResumeSession ? asString(runtimeSessionParams.sessionDir, path.dirname(sessionPath)) : path.dirname(sessionPath),
     );
-    const rpcArgs = buildRpcArgs();
+    // A resumed native session owns the exact RPC transport that created it.
+    // Rebuilding argv from the current Chat prompt would change the persisted
+    // system prompt/tools boundary for Side Chat and make the fail-closed
+    // transport check reject an otherwise valid continuation.
+    const persistedRpcArgs = canResumeSession ? asStringArray(runtimeSessionParams.rpcArgs) : [];
+    const rpcArgs = persistedRpcArgs.length > 0 ? persistedRpcArgs : buildRpcArgs();
+    assertPersistablePiRpcArgs(rpcArgs);
     if (onMeta) {
       await onMeta({
         agentRuntimeType: "pi_local",
@@ -1132,6 +1160,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
     try {
       const nativeResult = await executePiNativeChat({
+        runId,
         command,
         cwd,
         env: runtimeEnv,
@@ -1141,9 +1170,14 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         model,
         timeoutSec,
         binding: profileIdentity,
+        sessionParams: runtimeSessionId ? runtimeSessionParams : null,
+        workspace: nativeWorkspace,
         signal: ctx.abortSignal,
         controlAttempt,
+        requestApproval: ctx.requestApproval,
+        waitForApproval: ctx.waitForApproval,
         rpcArgs,
+        onNativeTransportProfile: ctx.onNativeTransportProfile,
         onSpawn,
         onLog: nativeChatLog(onLog),
       });
@@ -1167,19 +1201,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         timedOut: false,
         errorMessage: message,
         errorCode: `pi_native_${status}`,
-        sessionId: sessionPath,
-        sessionParams: {
-          sessionId: sessionPath,
-          sessionFile: sessionPath,
-          sessionDir: nativeSessionDir,
-          cwd,
-          command,
-          rpcArgs,
-          hostId: profileIdentity.hostId,
-          profileId: profileIdentity.profileId,
-          ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
-        },
-        sessionDisplayId: sessionPath,
+        // A rejected resume did not establish a replacement provider state.
+        // Preserve the last attested session (including its exact boundary),
+        // rather than replacing it with an incomplete transport guess.
+        sessionId: runtimeSessionId || null,
+        sessionParams: runtimeSessionId ? runtimeSessionParams : null,
+        sessionDisplayId: runtimeSessionId || null,
         provider,
         biller: resolvePiBiller(runtimeEnv, provider),
         model,

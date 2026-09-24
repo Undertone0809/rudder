@@ -1,6 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import { heartbeatRunAttempts } from "@rudderhq/db";
-import { and, desc, eq, notInArray } from "drizzle-orm";
+import { and, desc, eq, isNull, notInArray } from "drizzle-orm";
 
 type AttemptStatus = "started" | "waiting_for_network" | "succeeded" | "failed" | "cancelled" | "timed_out";
 type ResumeSource = "fresh" | "same_session" | "pristine_replay";
@@ -10,6 +10,14 @@ const terminalStatuses: AttemptStatus[] = ["succeeded", "failed", "cancelled", "
 export type HeartbeatAttemptRef = {
   id: string;
   attemptIndex: number;
+  /** The fence held when this worker admitted the attempt. */
+  ownerToken?: string | null;
+  attemptEpoch?: number | null;
+};
+
+export type HeartbeatAttemptOwnerFence = {
+  ownerToken: string;
+  attemptEpoch: number;
 };
 
 export type BeginHeartbeatAttemptInput = {
@@ -22,6 +30,8 @@ export type BeginHeartbeatAttemptInput = {
   model: string | null;
   isFallback: boolean;
   resumeSource: ResumeSource;
+  ownerToken?: string | null;
+  attemptEpoch?: number | null;
 };
 
 function normalizeJsonObject(value: unknown): Record<string, unknown> | null {
@@ -35,8 +45,62 @@ function costToCents(costUsd: unknown): number | null {
     : null;
 }
 
+/**
+ * `undefined` means the caller is using the pre-fence API. Such callers may
+ * still mutate legacy rows, but can never mutate a row that has an owner
+ * fence. This prevents a plain stale ref from bypassing the CAS predicate.
+ */
+function ownerFenceFromInput(input: {
+  ownerToken?: string | null;
+  attemptEpoch?: number | null;
+}): HeartbeatAttemptOwnerFence | null | undefined {
+  if (input.ownerToken === undefined && input.attemptEpoch === undefined) return undefined;
+  if (input.ownerToken === null && input.attemptEpoch === null) return null;
+
+  const ownerToken = input.ownerToken?.trim() ?? "";
+  if (!ownerToken || !Number.isInteger(input.attemptEpoch) || (input.attemptEpoch ?? 0) <= 0) {
+    throw new Error("Heartbeat attempt owner fence requires a non-empty ownerToken and positive attemptEpoch");
+  }
+  return { ownerToken, attemptEpoch: input.attemptEpoch as number };
+}
+
 function attemptWhere(ref: HeartbeatAttemptRef) {
-  return eq(heartbeatRunAttempts.id, ref.id);
+  const fence = ownerFenceFromInput(ref);
+  if (fence === undefined || fence === null) {
+    return and(
+      eq(heartbeatRunAttempts.id, ref.id),
+      isNull(heartbeatRunAttempts.ownerToken),
+      isNull(heartbeatRunAttempts.attemptEpoch),
+    );
+  }
+  return and(
+    eq(heartbeatRunAttempts.id, ref.id),
+    eq(heartbeatRunAttempts.ownerToken, fence.ownerToken),
+    eq(heartbeatRunAttempts.attemptEpoch, fence.attemptEpoch),
+  );
+}
+
+function refFromRow(row: {
+  id: string;
+  attemptIndex: number;
+  ownerToken?: string | null;
+  attemptEpoch?: number | null;
+}): HeartbeatAttemptRef {
+  return {
+    id: row.id,
+    attemptIndex: row.attemptIndex,
+    ownerToken: row.ownerToken ?? null,
+    attemptEpoch: row.attemptEpoch ?? null,
+  };
+}
+
+function fencesMatch(
+  row: { ownerToken?: string | null; attemptEpoch?: number | null },
+  fence: HeartbeatAttemptOwnerFence | null | undefined,
+) {
+  if (fence === undefined) return true;
+  return (row.ownerToken ?? null) === (fence?.ownerToken ?? null)
+    && (row.attemptEpoch ?? null) === (fence?.attemptEpoch ?? null);
 }
 
 export async function beginHeartbeatRunAttempt(
@@ -44,7 +108,12 @@ export async function beginHeartbeatRunAttempt(
   input: BeginHeartbeatAttemptInput,
 ): Promise<HeartbeatAttemptRef | null> {
   const existing = await db
-    .select({ id: heartbeatRunAttempts.id, attemptIndex: heartbeatRunAttempts.attemptIndex })
+    .select({
+      id: heartbeatRunAttempts.id,
+      attemptIndex: heartbeatRunAttempts.attemptIndex,
+      ownerToken: heartbeatRunAttempts.ownerToken,
+      attemptEpoch: heartbeatRunAttempts.attemptEpoch,
+    })
     .from(heartbeatRunAttempts)
     .where(and(
       eq(heartbeatRunAttempts.runId, input.runId),
@@ -52,7 +121,10 @@ export async function beginHeartbeatRunAttempt(
     ))
     .limit(1)
     .then((rows) => rows[0] ?? null);
-  if (existing) return existing;
+  const requestedFence = ownerFenceFromInput(input);
+  if (existing) {
+    return fencesMatch(existing, requestedFence) ? refFromRow(existing) : null;
+  }
 
   const inserted = await db
     .insert(heartbeatRunAttempts)
@@ -66,24 +138,56 @@ export async function beginHeartbeatRunAttempt(
       model: input.model,
       isFallback: input.isFallback,
       resumeSource: input.resumeSource,
+      ownerToken: requestedFence?.ownerToken ?? null,
+      attemptEpoch: requestedFence?.attemptEpoch ?? null,
       status: "started",
     })
     .onConflictDoNothing({
       target: [heartbeatRunAttempts.runId, heartbeatRunAttempts.attemptIndex],
     })
-    .returning({ id: heartbeatRunAttempts.id, attemptIndex: heartbeatRunAttempts.attemptIndex });
-  if (inserted[0]) return inserted[0];
+    .returning({
+      id: heartbeatRunAttempts.id,
+      attemptIndex: heartbeatRunAttempts.attemptIndex,
+      ownerToken: heartbeatRunAttempts.ownerToken,
+      attemptEpoch: heartbeatRunAttempts.attemptEpoch,
+    });
+  if (inserted[0]) return refFromRow(inserted[0]);
 
   // A second executor can win the unique insert while the local lease is
   // being fenced. Re-read rather than turning a durable run into a failure.
   return db
-    .select({ id: heartbeatRunAttempts.id, attemptIndex: heartbeatRunAttempts.attemptIndex })
+    .select({
+      id: heartbeatRunAttempts.id,
+      attemptIndex: heartbeatRunAttempts.attemptIndex,
+      ownerToken: heartbeatRunAttempts.ownerToken,
+      attemptEpoch: heartbeatRunAttempts.attemptEpoch,
+    })
     .from(heartbeatRunAttempts)
     .where(and(
       eq(heartbeatRunAttempts.runId, input.runId),
       eq(heartbeatRunAttempts.attemptIndex, input.attemptIndex),
     ))
     .limit(1)
+    .then((rows) => {
+      const row = rows[0] ?? null;
+      return row && fencesMatch(row, requestedFence) ? refFromRow(row) : null;
+    });
+}
+
+export async function checkpointHeartbeatRunAttempt(
+  db: Db,
+  ref: HeartbeatAttemptRef | null,
+  checkpointJson: unknown,
+) {
+  if (!ref) return null;
+  return db
+    .update(heartbeatRunAttempts)
+    .set({ checkpointJson: normalizeJsonObject(checkpointJson) ?? undefined })
+    .where(and(
+      attemptWhere(ref),
+      notInArray(heartbeatRunAttempts.status, terminalStatuses),
+    ))
+    .returning()
     .then((rows) => rows[0] ?? null);
 }
 
@@ -117,7 +221,10 @@ export async function markHeartbeatRunAttemptWaiting(
       error: input.error ?? undefined,
       suspendedAt: input.suspendedAt ?? new Date(),
     })
-    .where(attemptWhere(ref))
+    .where(and(
+      attemptWhere(ref),
+      notInArray(heartbeatRunAttempts.status, terminalStatuses),
+    ))
     .returning()
     .then((rows) => rows[0] ?? null);
 }
@@ -167,16 +274,42 @@ export async function finishLatestHeartbeatRunAttempt(
   db: Db,
   runId: string,
   input: Parameters<typeof finishHeartbeatRunAttempt>[2],
+  ownerFence?: HeartbeatAttemptOwnerFence | null,
 ) {
+  const fence = ownerFence === undefined
+    ? undefined
+    : ownerFence === null
+      ? null
+      : ownerFenceFromInput(ownerFence);
   const latest = await db
-    .select({ id: heartbeatRunAttempts.id, attemptIndex: heartbeatRunAttempts.attemptIndex })
+    .select({
+      id: heartbeatRunAttempts.id,
+      attemptIndex: heartbeatRunAttempts.attemptIndex,
+      ownerToken: heartbeatRunAttempts.ownerToken,
+      attemptEpoch: heartbeatRunAttempts.attemptEpoch,
+    })
     .from(heartbeatRunAttempts)
     .where(and(
       eq(heartbeatRunAttempts.runId, runId),
       notInArray(heartbeatRunAttempts.status, terminalStatuses),
+      ...(fence === undefined
+        ? [isNull(heartbeatRunAttempts.ownerToken), isNull(heartbeatRunAttempts.attemptEpoch)]
+        : fence === null
+          ? [isNull(heartbeatRunAttempts.ownerToken), isNull(heartbeatRunAttempts.attemptEpoch)]
+          : [
+              eq(heartbeatRunAttempts.ownerToken, fence.ownerToken),
+              eq(heartbeatRunAttempts.attemptEpoch, fence.attemptEpoch),
+            ]),
     ))
     .orderBy(desc(heartbeatRunAttempts.attemptIndex))
     .limit(1)
     .then((rows) => rows[0] ?? null);
-  return finishHeartbeatRunAttempt(db, latest, input);
+  if (!latest) return null;
+  return finishHeartbeatRunAttempt(db, {
+    ...refFromRow(latest),
+    ...(fence === undefined ? {} : {
+      ownerToken: fence?.ownerToken ?? null,
+      attemptEpoch: fence?.attemptEpoch ?? null,
+    }),
+  }, input);
 }

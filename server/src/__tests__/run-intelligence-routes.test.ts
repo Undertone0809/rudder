@@ -15,6 +15,8 @@ const mockGetObservedRunLog = vi.hoisted(() => vi.fn());
 const mockGetObservedRunDetail = vi.hoisted(() => vi.fn());
 const mockGetObservedRunTranscript = vi.hoisted(() => vi.fn());
 const mockListNativeForkIntents = vi.hoisted(() => vi.fn());
+const mockReadNativeForkIntent = vi.hoisted(() => vi.fn());
+const mockNativeForkIntentKey = vi.hoisted(() => vi.fn());
 const mockReconcileNativeForkIntentById = vi.hoisted(() => vi.fn());
 const mockLogActivity = vi.hoisted(() => vi.fn());
 
@@ -31,6 +33,8 @@ vi.mock("../services/run-intelligence.js", () => ({
 
 vi.mock("../services/runtime-kernel/native-fork-intent.js", () => ({
   listNativeForkIntents: mockListNativeForkIntents,
+  nativeForkIntentKey: mockNativeForkIntentKey,
+  readNativeForkIntent: mockReadNativeForkIntent,
   reconcileNativeForkIntentById: mockReconcileNativeForkIntentById,
   NativeForkIntentError: class NativeForkIntentError extends Error {
     code = "intent_conflict";
@@ -41,7 +45,7 @@ vi.mock("../services/activity-log.js", () => ({
   logActivity: mockLogActivity,
 }));
 
-function createExpressApp(actorOverrides: Partial<Express.Request["actor"]> = {}) {
+function createExpressApp(actorOverrides: Partial<Express.Request["actor"]> = {}, db: unknown = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -55,9 +59,62 @@ function createExpressApp(actorOverrides: Partial<Express.Request["actor"]> = {}
     };
     next();
   });
-  app.use("/api", runIntelligenceRoutes({} as never));
+  app.use("/api", runIntelligenceRoutes(db as never));
   app.use(errorHandler);
   return app;
+}
+
+type RouteReadQuery = {
+  from: (...args: unknown[]) => RouteReadQuery;
+  innerJoin: (...args: unknown[]) => RouteReadQuery;
+  where: (...args: unknown[]) => RouteReadQuery;
+  limit: (...args: unknown[]) => Promise<unknown[]>;
+};
+
+function createRouteReadDb(rows: unknown[]) {
+  let rowIndex = 0;
+  return {
+    select: vi.fn(() => {
+      const row = rows[rowIndex++];
+      const query: RouteReadQuery = {
+        from: () => query,
+        innerJoin: () => query,
+        where: () => query,
+        limit: async () => row === null || row === undefined ? [] : [row],
+      };
+      return query;
+    }),
+  };
+}
+
+function runLinkedIntent(runFence: Record<string, unknown> = {
+  runId: "run-1",
+  spanId: "span-1",
+  ownerToken: "old-owner",
+  attemptEpoch: 2,
+}) {
+  return {
+    intentId: "intent-1",
+    status: "unknown",
+    target: { orgId: "org-1", bindingId: "binding-1", segmentId: "segment-1" },
+    runFence,
+  };
+}
+
+function reconcileReadDb(active: unknown = {
+  runId: "run-1",
+  runStatus: "running",
+  ownerToken: "current-owner",
+  leaseExpiresAt: new Date(Date.now() + 60_000),
+  spanId: "span-1",
+  spanOwnerToken: "current-owner",
+  attemptEpoch: 4,
+  spanState: "open",
+}) {
+  return createRouteReadDb([
+    { segmentId: "segment-1", bindingId: "binding-1", providerStateJson: {} },
+    active,
+  ]);
 }
 
 let appServer: Server;
@@ -171,6 +228,8 @@ beforeEach(async () => {
     };
   });
   mockListNativeForkIntents.mockResolvedValue([]);
+  mockReadNativeForkIntent.mockReturnValue(null);
+  mockNativeForkIntentKey.mockReturnValue("__rudderNativeForkIntent");
   mockReconcileNativeForkIntentById.mockResolvedValue({
     outcome: { status: "accepted" },
     summary: {
@@ -252,13 +311,21 @@ describe("run intelligence routes", () => {
     await new Promise<void>((resolve, reject) => {
       appServer.close((error) => error ? reject(error) : resolve());
     });
-    appServer = createExpressApp({ isInstanceAdmin: true }).listen(0, "127.0.0.1");
+    const db = reconcileReadDb();
+    mockReadNativeForkIntent.mockReturnValue(runLinkedIntent());
+    appServer = createExpressApp({ isInstanceAdmin: true }, db).listen(0, "127.0.0.1");
     await once(appServer, "listening");
 
     const res = await request(createApp())
       .post("/api/run-intelligence/orgs/org-1/native-fork-intents/intent-1/reconcile")
       .send({
         note: "provider lookup returned the child",
+        runFence: {
+          runId: "caller-run",
+          spanId: "caller-span",
+          ownerToken: "caller-owner",
+          attemptEpoch: 999,
+        },
         child: {
           continuity: "native",
           boundary: "child-boundary",
@@ -289,12 +356,106 @@ describe("run intelligence routes", () => {
         boundary: "child-boundary",
         session: expect.objectContaining({ sessionId: "child-session" }),
       }),
+      runFence: {
+        runId: "run-1",
+        spanId: "span-1",
+        ownerToken: "current-owner",
+        attemptEpoch: 4,
+      },
     });
+    expect(db.select).toHaveBeenCalledTimes(2);
     expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       action: "runtime.native_fork_reconciled",
       entityType: "native_fork_intent",
       entityId: "intent-1",
     }));
+  });
+
+  it.each([
+    ["a terminal Run", {
+      runId: "run-1",
+      runStatus: "succeeded",
+      ownerToken: "current-owner",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      spanId: "span-1",
+      spanOwnerToken: "current-owner",
+      attemptEpoch: 4,
+      spanState: "open",
+    }],
+    ["an expired owner lease", {
+      runId: "run-1",
+      runStatus: "running",
+      ownerToken: "current-owner",
+      leaseExpiresAt: new Date(Date.now() - 1),
+      spanId: "span-1",
+      spanOwnerToken: "current-owner",
+      attemptEpoch: 4,
+      spanState: "open",
+    }],
+    ["a mismatched span owner", {
+      runId: "run-1",
+      runStatus: "running",
+      ownerToken: "current-owner",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      spanId: "span-1",
+      spanOwnerToken: "stale-owner",
+      attemptEpoch: 4,
+      spanState: "open",
+    }],
+    ["a missing active span", null],
+  ])("fails closed for %s without reconciling or logging completion", async (_label, active) => {
+    await new Promise<void>((resolve, reject) => {
+      appServer.close((error) => error ? reject(error) : resolve());
+    });
+    mockReadNativeForkIntent.mockReturnValue(runLinkedIntent());
+    appServer = createExpressApp(
+      { isInstanceAdmin: true },
+      reconcileReadDb(active),
+    ).listen(0, "127.0.0.1");
+    await once(appServer, "listening");
+
+    const res = await request(createApp())
+      .post("/api/run-intelligence/orgs/org-1/native-fork-intents/intent-1/reconcile")
+      .send({
+        child: {
+          continuity: "native",
+          boundary: "child-boundary",
+          sourceBoundary: "boundary-1",
+          session: { sessionId: "child-session", sessionParams: { sessionId: "child-session" } },
+        },
+      });
+
+    expect(res.status).toBe(409);
+    expect(mockReconcileNativeForkIntentById).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy intent reconciliation compatible without inventing a Run fence", async () => {
+    await new Promise<void>((resolve, reject) => {
+      appServer.close((error) => error ? reject(error) : resolve());
+    });
+    mockReadNativeForkIntent.mockReturnValue({ ...runLinkedIntent(), runFence: undefined });
+    const db = createRouteReadDb([
+      { segmentId: "segment-1", bindingId: "binding-1", providerStateJson: {} },
+    ]);
+    appServer = createExpressApp({ isInstanceAdmin: true }, db).listen(0, "127.0.0.1");
+    await once(appServer, "listening");
+
+    const res = await request(createApp())
+      .post("/api/run-intelligence/orgs/org-1/native-fork-intents/intent-1/reconcile")
+      .send({
+        child: {
+          continuity: "native",
+          boundary: "child-boundary",
+          sourceBoundary: "boundary-1",
+          session: { sessionId: "child-session", sessionParams: { sessionId: "child-session" } },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(db.select).toHaveBeenCalledTimes(1);
+    const reconcileInput = mockReconcileNativeForkIntentById.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(reconcileInput).not.toHaveProperty("runFence");
   });
 
   it("rejects an adoption payload that is not a native child", async () => {
@@ -575,6 +736,78 @@ describe("run intelligence routes", () => {
         originalLength: 3000,
       },
     });
+  });
+
+  it("projects Hermes database transcript items using their canonical fields", async () => {
+    const timestamp = "2026-09-24T08:00:00.000Z";
+    mockGetObservedRunTranscript.mockResolvedValueOnce({
+      orgId: "org-1",
+      run: {
+        run: { id: "run-1", orgId: "org-1", status: "succeeded" },
+        agentName: "Agent",
+        orgName: "Org",
+        issue: null,
+      },
+      page: {
+        items: [
+          {
+            id: "hermes:db:session-1:11",
+            sequence: 0,
+            ordinal: 11,
+            runId: "run-1",
+            spanId: "span-1",
+            sourceEntryId: "11",
+            sourceRef: null,
+            kind: "hermes:db:user",
+            ts: timestamp,
+            payload: { provider: "hermes_gateway", row: { role: "user", content: "Question" } },
+            visibility: "visible",
+            origin: "native",
+            text: "Question",
+            entry: { role: "user", content: "Question", timestamp },
+          },
+          {
+            id: "hermes:db:session-1:12",
+            sequence: 1,
+            ordinal: 12,
+            runId: "run-1",
+            spanId: "span-1",
+            sourceEntryId: "12",
+            sourceRef: null,
+            kind: "hermes:db:assistant",
+            ts: timestamp,
+            payload: { provider: "hermes_gateway", row: { role: "assistant", content: "Answer" } },
+            visibility: "visible",
+            origin: "native",
+            text: "Answer",
+            entry: { role: "assistant", content: "Answer", timestamp },
+          },
+        ],
+        nextCursor: null,
+        source: "native",
+        revision: "hermes-provider-fixture",
+        availability: "available",
+        completeness: "complete",
+      },
+    });
+
+    const res = await request(createApp())
+      .get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ output: "full", order: "oldest" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.rows).toHaveLength(2);
+    expect(res.body.rows.map((row: { kind: string }) => row.kind)).toEqual(["user", "assistant"]);
+    expect(res.body.entries).toMatchObject([
+      {
+        sourceEntryId: "11",
+        entry: { kind: "user", ts: timestamp, text: "Question", sourceEntryId: "11" },
+      },
+      {
+        sourceEntryId: "12",
+        entry: { kind: "assistant", ts: timestamp, text: "Answer", sourceEntryId: "12" },
+      },
+    ]);
   });
 
   it("returns full transcript entries and page metadata when requested", async () => {

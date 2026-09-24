@@ -5,6 +5,7 @@ import {
   buildConversationPrompt,
   CHAT_RESULT_SENTINEL_PREFIX,
   parseCompletedAssistantReply,
+  validateAssistantResult,
   validateNativeApprovalDecision,
   validateNativeApprovalHandle,
   validateNativeApprovalRequest,
@@ -13,7 +14,6 @@ import {
   validateNativeInterruptResult,
   validateNativeSecretSafePayload,
   validateNativeSteerResult,
-  validateAssistantResult,
 } from "./chat-assistant.helpers.js";
 
 describe("chat assistant annotation prompt projection", () => {

@@ -9,6 +9,7 @@ import {
   resolveOrganizationStorageKey,
   rudderBrowserMcpRuntimeMetadata,
   rudderMcpRuntimeMetadata,
+  type AgentRuntimeControlHandleLease,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
   type RudderMcpCliCommand,
@@ -57,11 +58,21 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createClaudeStreamControlHandle,
+  startClaudeStreamJsonProcess,
+} from "./claude-stream-json.js";
+import {
   configuredClaudeExtraArgs,
   resolveClaudePermissionMode,
   sanitizeClaudeExtraArgs,
 } from "./cli-args.js";
 import { readClaudeLoadedMcpServers } from "./mcp-evidence.js";
+import {
+  resolveClaudeSessionFilePath,
+  verifyClaudeSessionAssistantHead,
+  type ClaudeDeferredForkIntent,
+  type ClaudeLocalProfileTransport,
+} from "./native-capabilities.js";
 import {
   describeClaudeFailure,
   detectClaudeLoginRequired,
@@ -69,7 +80,6 @@ import {
   isClaudeUnknownSessionError,
   parseClaudeStreamJson,
 } from "./parse.js";
-import { resolveClaudeSessionFilePath } from "./native-capabilities.js";
 import { resolveClaudeDesiredSkillNames } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -140,6 +150,63 @@ function storedSessionString(params: Record<string, unknown>, keys: readonly str
     if (value) return value;
   }
   return "";
+}
+
+function readDeferredClaudeForkIntent(context: Record<string, unknown>): {
+  present: boolean;
+  intent: ClaudeDeferredForkIntent | null;
+} {
+  if (!Object.prototype.hasOwnProperty.call(context, "rudderNativeForkIntent")) {
+    return { present: false, intent: null };
+  }
+  const value = context.rudderNativeForkIntent;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { present: true, intent: null };
+  const record = value as Record<string, unknown>;
+  const sourceSession = parseObject(record.sourceSession);
+  const sourceBindingId = asString(record.sourceBindingId, "").trim();
+  const sourceSessionId = asString(sourceSession.sessionId, "").trim();
+  const sourceSessionParams = parseObject(sourceSession.sessionParams);
+  const sourceSelector = parseObject(record.sourceSelector);
+  const selectorSessionId = asString(sourceSelector.sessionId, "").trim();
+  const sourceAssistantUuid = asString(sourceSelector.throughInclusiveUuid, "").trim();
+  if (
+    record.version !== 1
+    || record.kind !== "claude_fork_on_first_input"
+    || sourceSelector.kind !== "claude_chain"
+    || !sourceSessionId
+    || !sourceBindingId
+    || !sourceAssistantUuid
+    || selectorSessionId !== sourceSessionId
+    || !asString(sourceSessionParams.sessionId, "").trim()
+  ) {
+    return { present: true, intent: null };
+  }
+  const sessionParamsId = asString(sourceSessionParams.sessionId, "").trim();
+  if (sessionParamsId !== sourceSessionId) return { present: true, intent: null };
+  return {
+    present: true,
+    intent: {
+      version: 1,
+      kind: "claude_fork_on_first_input",
+      sourceBindingId,
+      sourceSession: {
+        sessionId: sourceSessionId,
+        sessionParams: sourceSessionParams,
+        sessionDisplayId: asString(sourceSession.sessionDisplayId, sourceSessionId).trim() || sourceSessionId,
+      },
+      sourceSelector: {
+        kind: "claude_chain",
+        sessionId: sourceSessionId,
+        throughInclusiveUuid: sourceAssistantUuid,
+        ...(typeof sourceSelector.boundaryStatus === "string"
+          ? { boundaryStatus: sourceSelector.boundaryStatus }
+          : {}),
+        ...(typeof sourceSelector.ancestryRevision === "string"
+          ? { ancestryRevision: sourceSelector.ancestryRevision }
+          : {}),
+      },
+    },
+  };
 }
 
 export function validateClaudeResumeSession(input: {
@@ -826,10 +893,12 @@ export async function runClaudeLogin(input: {
 export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentRuntimeExecutionResult> {
   const { runId, agent, runtime, config, context, onLog, onMeta, onSpawn, authToken } = ctx;
 
-  const promptTemplate = selectPromptTemplate(
-    asString(config.promptTemplate, ""),
-    context,
-  );
+  const forkIntentRead = readDeferredClaudeForkIntent(context);
+  const forkIntent = forkIntentRead.intent;
+  const actualChatPrompt = typeof context.chatPrompt === "string" ? context.chatPrompt : "";
+  const promptTemplate = forkIntentRead.present
+    ? actualChatPrompt
+    : selectPromptTemplate(asString(config.promptTemplate, ""), context);
   const model = asString(config.model, "");
   const effort = asString(config.effort, "");
   const chrome = asBoolean(config.chrome, false);
@@ -868,6 +937,30 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ),
   );
   const billingType = resolveClaudeBillingType(effectiveEnv);
+  const deferredForkFailure = (reason: string): AgentRuntimeExecutionResult => ({
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    submissionPhase: "pre_submission",
+    errorMessage: `Claude deferred fork rejected: ${reason}`,
+    errorCode: "claude_fork_boundary_rejected",
+    sessionId: null,
+    sessionParams: null,
+    sessionDisplayId: null,
+    provider: "anthropic",
+    biller: "anthropic",
+    model,
+    billingType,
+    resultJson: {
+      fork: {
+        kind: "claude_fork_on_first_input",
+        status: "rejected",
+        reason,
+      },
+      submissionPhase: "pre_submission",
+    },
+    clearSession: false,
+  });
   const claudeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
   const desiredClaudeSkillNames = resolveClaudeDesiredSkillNames(config, claudeSkillEntries);
   const effectiveDesiredClaudeSkillNames = filterRudderDesiredSkillsForBrowserCapability(
@@ -947,10 +1040,72 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const persistedSessionId = asString(runtimeSessionParams.sessionId, "").trim();
-  const runtimeSessionId = persistedSessionId || asString(runtime.sessionId, "").trim();
+  if (forkIntentRead.present && !forkIntent) {
+    return deferredForkFailure("the deferred native fork intent is malformed or incomplete");
+  }
+  const sourceSessionId = forkIntent?.sourceSession.sessionId ?? null;
+  const runtimeSessionId = forkIntent
+    ? sourceSessionId!
+    : persistedSessionId || asString(runtime.sessionId, "").trim();
   const sessionId = runtimeSessionId;
+  const previousLastUuid = forkIntent
+    ? forkIntent.sourceSelector.throughInclusiveUuid
+    : asString(runtimeSessionParams.lastUuid, "").trim() || null;
   const profileIdentity = providerProfileIdentity(config, agent.orgId);
-  if (runtimeSessionId) {
+  if (forkIntent) {
+    const sourceSessionParams = forkIntent.sourceSession.sessionParams;
+    const sourceSelector = forkIntent.sourceSelector;
+    if (forkIntent.sourceBindingId === profileIdentity.profileBindingId) {
+      return deferredForkFailure("the source and target bindings must be independent");
+    }
+    if (sourceSelector.boundaryStatus === "missing" || sourceSelector.boundaryStatus === "unresolved") {
+      return deferredForkFailure("the source selector does not identify a verified assistant boundary");
+    }
+    if (persistedSessionId && persistedSessionId !== sourceSessionId) {
+      return deferredForkFailure("the target already has a different native session");
+    }
+    const sourceResumeRejection = validateClaudeResumeSession({
+      sessionId: sourceSessionId!,
+      sessionParams: sourceSessionParams,
+      cwd,
+      configDir: asString(env.CLAUDE_CONFIG_DIR, ""),
+      workspaceId,
+      repoUrl: workspaceRepoUrl,
+      repoRef: workspaceRepoRef,
+      profile: { ...profileIdentity, profileBindingId: forkIntent.sourceBindingId },
+    });
+    if (sourceResumeRejection) return deferredForkFailure(sourceResumeRejection);
+    const requiredSourceIdentity: Array<[string, string, string]> = [
+      ["cwd", asString(sourceSessionParams.cwd, "").trim(), cwd],
+      ["CLAUDE_CONFIG_DIR", asString(sourceSessionParams.claudeConfigDir, "").trim(), asString(env.CLAUDE_CONFIG_DIR, "").trim()],
+      ["provider host", asString(sourceSessionParams.profileHostId, "").trim(), profileIdentity.hostId],
+      ["provider profile", asString(sourceSessionParams.profileId, "").trim(), profileIdentity.profileId],
+      ["provider transport", asString(sourceSessionParams.transport, "").trim(), "claude_cli"],
+    ];
+    let expectedSourceSessionPath: string;
+    try {
+      expectedSourceSessionPath = resolveClaudeSessionFilePath(
+        asString(env.CLAUDE_CONFIG_DIR, ""),
+        cwd,
+        sourceSessionId!,
+      );
+    } catch {
+      return deferredForkFailure("the source session ID cannot resolve to a Claude session-store path");
+    }
+    requiredSourceIdentity.push([
+      "session file",
+      asString(sourceSessionParams.sessionFilePath, "").trim(),
+      expectedSourceSessionPath,
+    ]);
+    const missingOrMismatchedIdentity = requiredSourceIdentity.find(([label, stored, expected]) => (
+      !stored || (label === "cwd" || label === "CLAUDE_CONFIG_DIR" || label === "session file"
+        ? path.resolve(stored) !== path.resolve(expected)
+        : stored !== expected)
+    ));
+    if (missingOrMismatchedIdentity) {
+      return deferredForkFailure(`source session ${missingOrMismatchedIdentity[0]} identity is missing or does not match`);
+    }
+  } else if (runtimeSessionId) {
     const resumeRejection = validateClaudeResumeSession({
       sessionId: runtimeSessionId,
       sessionParams: runtimeSessionParams,
@@ -1020,17 +1175,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     wakeReason: context.wakeReason ?? null,
     wakeSource: context.wakeSource ?? null,
   };
-  const renderedPrompt = renderTemplate(promptTemplate, templateData);
+  const renderedPrompt = forkIntent ? actualChatPrompt : renderTemplate(promptTemplate, templateData);
   const renderedBootstrapPrompt =
     !sessionId && bootstrapPromptTemplate.trim().length > 0
       ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
       : "";
   const sessionHandoffNote = asString(context.rudderSessionHandoffMarkdown, "").trim();
-  const prompt = joinPromptSections([
-    renderedBootstrapPrompt,
-    sessionHandoffNote,
-    renderedPrompt,
-  ]);
+  const prompt = forkIntent
+    ? actualChatPrompt
+    : joinPromptSections([
+      renderedBootstrapPrompt,
+      sessionHandoffNote,
+      renderedPrompt,
+    ]);
   const agentInstructionStack = joinPromptSections([
     claudeSystemPrompt,
     prompt,
@@ -1044,9 +1201,48 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     heartbeatPromptChars: renderedPrompt.length,
   };
 
+  const forkProfileBinding = forkIntent
+    ? {
+      id: forkIntent.sourceBindingId,
+      orgId: profileIdentity.profileOrgId || agent.orgId,
+      hostId: profileIdentity.hostId,
+      profileId: profileIdentity.profileId,
+      ...(profileIdentity.workspaceBindingId ? { workspaceBindingId: profileIdentity.workspaceBindingId } : {}),
+      ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+    }
+    : null;
+  const forkProfile: ClaudeLocalProfileTransport | null = forkIntent && forkProfileBinding
+    ? {
+      binding: forkProfileBinding,
+      command,
+      cwd,
+      configDir: asString(env.CLAUDE_CONFIG_DIR, ""),
+      providerVersion: asString(config.claudeVersion ?? config.providerVersion, "unknown"),
+    }
+    : null;
+  const verifyForkHead = async () => {
+    if (!forkIntent || !forkProfileBinding || !forkProfile) return null;
+    return verifyClaudeSessionAssistantHead({
+      profile: forkProfile,
+      binding: forkProfileBinding,
+      session: forkIntent.sourceSession,
+      sourceAssistantUuid: forkIntent.sourceSelector.throughInclusiveUuid,
+    });
+  };
+
   const buildClaudeArgs = (resumeSessionId: string | null) => {
-    const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
+    const args = [
+      "--print",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--include-partial-messages",
+      "--replay-user-messages",
+    ];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
+    if (forkIntent) args.push("--fork-session");
     if (dangerouslySkipPermissions) args.push("--dangerously-skip-permissions");
     else args.push("--permission-mode", permissionMode);
     if (chrome) args.push("--chrome");
@@ -1080,6 +1276,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
+    if (forkIntent) {
+      if (context.chatMode !== true || !actualChatPrompt.trim()) {
+        return { kind: "fork_rejected" as const, reason: "the first real user prompt is empty" };
+      }
+      const head = await verifyForkHead();
+      if (!head || head.status !== "matched") {
+        return {
+          kind: "fork_rejected" as const,
+          reason: head?.reason ?? "the source assistant boundary could not be verified against the provider session head",
+        };
+      }
+    }
     const args = buildClaudeArgs(resumeSessionId);
     if (onMeta) {
       await onMeta({
@@ -1104,23 +1312,98 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       });
     }
 
-    const proc = await runChildProcess(runId, command, args, {
+    let controlLease: AgentRuntimeControlHandleLease | null = null;
+    const stream = startClaudeStreamJsonProcess({
+      runId,
+      command,
+      args,
       cwd,
       env,
-      stdin: prompt,
       timeoutSec,
       graceSec,
+      onLog,
       onSpawn,
       abortSignal: ctx.abortSignal,
-      onLog,
+      requestApproval: ctx.requestApproval,
+      waitForApproval: ctx.waitForApproval,
+      isCurrentAttempt: () => !ctx.controlAttempt || controlLease?.isCurrent() === true,
+      attemptEpoch: ctx.controlAttempt?.attemptEpoch ?? null,
     });
-
-    const parsedStream = parseClaudeStreamJson(proc.stdout);
-    const parsed = parsedStream.resultJson ?? parseJson(proc.stdout);
-    return { proc, parsedStream, parsed };
+    let streamClosed = false;
+    let inputState: "not_started" | "write_started" | "submitted" = "not_started";
+    try {
+      if (ctx.controlAttempt) {
+        controlLease = await ctx.controlAttempt.register(createClaudeStreamControlHandle(stream));
+        if (!controlLease) {
+          await stream.interrupt();
+          await stream.close();
+          streamClosed = true;
+          throw new Error("Claude stream-json control handle lost its attempt lease");
+        }
+      }
+      if (forkIntent) {
+        const head = await verifyForkHead();
+        if (!head || head.status !== "matched") {
+          await stream.close();
+          streamClosed = true;
+          return {
+            kind: "fork_rejected" as const,
+            reason: head?.reason ?? "the source assistant boundary changed before prompt submission",
+          };
+        }
+      }
+      inputState = "write_started";
+      await stream.sendUserMessage(prompt);
+      inputState = "submitted";
+      await stream.waitForTurn();
+      const proc = await stream.close();
+      streamClosed = true;
+      const parsedStream = parseClaudeStreamJson(proc.stdout);
+      const parsed = parsedStream.resultJson ?? parseJson(proc.stdout);
+      return {
+        kind: "attempt" as const,
+        proc,
+        parsedStream,
+        parsed,
+        lastUuid: stream.getLastUuid(),
+        providerTurnId: stream.getProviderTurnId(),
+        sessionId: stream.getSessionId(),
+        inputState,
+      };
+    } catch (error) {
+      if (!forkIntent || inputState === "not_started") throw error;
+      const proc = await stream.close().catch((): RunProcessResult => ({
+        exitCode: null,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "",
+        pid: null,
+        startedAt: null,
+      }));
+      streamClosed = true;
+      const parsedStream = parseClaudeStreamJson(proc.stdout);
+      return {
+        kind: "attempt" as const,
+        proc,
+        parsedStream,
+        parsed: parsedStream.resultJson ?? parseJson(proc.stdout),
+        lastUuid: stream.getLastUuid(),
+        providerTurnId: stream.getProviderTurnId(),
+        sessionId: stream.getSessionId(),
+        inputState,
+        forkAcceptanceUnknownReason: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      if (!streamClosed) await stream.close().catch(() => undefined);
+      await controlLease?.release().catch(() => undefined);
+    }
   };
 
-  const sessionParamsFor = (resolvedSessionId: string | null): Record<string, unknown> | null => {
+  const sessionParamsFor = (
+    resolvedSessionId: string | null,
+    resolvedLastUuid: string | null = previousLastUuid,
+  ): Record<string, unknown> | null => {
     if (!resolvedSessionId) return null;
     let sessionFilePath: string | null = null;
     try {
@@ -1134,6 +1417,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
     return {
       sessionId: resolvedSessionId,
+      ...(resolvedLastUuid ? { lastUuid: resolvedLastUuid } : {}),
       cwd,
       claudeConfigDir: env.CLAUDE_CONFIG_DIR,
       ...(sessionFilePath ? { sessionFilePath } : {}),
@@ -1150,9 +1434,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const toAdapterResult = (
     attempt: {
+      kind: "attempt";
       proc: RunProcessResult;
       parsedStream: ReturnType<typeof parseClaudeStreamJson>;
       parsed: Record<string, unknown> | null;
+      lastUuid: string | null;
+      providerTurnId: string | null;
+      sessionId: string | null;
+      inputState: "not_started" | "write_started" | "submitted";
+      forkAcceptanceUnknownReason?: string;
     },
     opts: { fallbackSessionId: string | null; clearSessionOnMissingSession?: boolean },
   ): AgentRuntimeExecutionResult => {
@@ -1167,9 +1457,45 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         ? {
             loginUrl: loginMeta.loginUrl,
           }
-        : undefined;
+      : undefined;
+
+    const childSessionId = attempt.sessionId && attempt.sessionId !== sourceSessionId
+      ? attempt.sessionId
+      : null;
+    const forkAcceptanceUnknown = (reason: string): AgentRuntimeExecutionResult => ({
+      exitCode: proc.exitCode,
+      signal: proc.signal,
+      timedOut: proc.timedOut,
+      submissionPhase: "indeterminate",
+      errorMessage: `Claude deferred fork acceptance is unknown: ${reason}`,
+      errorCode: "claude_fork_acceptance_unknown",
+      errorMeta,
+      sessionId: childSessionId,
+      sessionParams: childSessionId ? sessionParamsFor(childSessionId, attempt.lastUuid ?? null) : null,
+      sessionDisplayId: childSessionId,
+      provider: "anthropic",
+      biller: "anthropic",
+      model,
+      billingType,
+      resultJson: {
+        ...(parsed ?? {}),
+        fork: {
+          kind: "claude_fork_on_first_input",
+          status: "unknown",
+          sourceSessionId,
+          sourceAssistantUuid: forkIntent?.sourceSelector.throughInclusiveUuid,
+          childSessionId,
+          reason,
+        },
+        submissionPhase: "indeterminate",
+      },
+      clearSession: false,
+    });
 
     if (proc.timedOut) {
+      if (forkIntent && attempt.inputState !== "not_started") {
+        return forkAcceptanceUnknown(attempt.forkAcceptanceUnknownReason ?? "the provider did not return a terminal result");
+      }
       return {
         exitCode: proc.exitCode,
         signal: proc.signal,
@@ -1182,6 +1508,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
 
     if (!parsed) {
+      if (forkIntent && attempt.inputState !== "not_started") {
+        return forkAcceptanceUnknown(attempt.forkAcceptanceUnknownReason ?? "the provider did not return a parseable terminal result");
+      }
       const fallbackErrorMessage = parseFallbackErrorMessage(proc);
       const networkSuspension = classifyAgentRuntimeNetworkFailure({
         errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
@@ -1209,6 +1538,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       };
     }
 
+    if (forkIntent && (attempt.forkAcceptanceUnknownReason || !parsedStream.resultJson)) {
+      return forkAcceptanceUnknown(
+        attempt.forkAcceptanceUnknownReason ?? "the provider did not confirm completion of the submitted first input",
+      );
+    }
+
     const usage =
       parsedStream.usage ??
       (() => {
@@ -1223,11 +1558,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       })();
 
     const resolvedSessionId =
+      attempt.sessionId ??
       parsedStream.sessionId ??
       (asString(parsed.session_id, opts.fallbackSessionId ?? "") || opts.fallbackSessionId);
+    if (forkIntent && (!resolvedSessionId || resolvedSessionId === sourceSessionId)) {
+      return forkAcceptanceUnknown("the provider did not return an independent child session ID");
+    }
     const resolvedSessionParams = resolvedSessionId
       ? ({
-        ...(sessionParamsFor(resolvedSessionId) ?? {}),
+        ...(sessionParamsFor(resolvedSessionId, attempt.lastUuid ?? previousLastUuid) ?? {}),
         ...(workspaceId ? { workspaceId } : {}),
         ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
         ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
@@ -1235,6 +1574,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : null;
     const clearSessionForMaxTurns = isClaudeMaxTurnsResult(parsed);
     const resolvedModel = parsedStream.model || asString(parsed.model, model);
+    const transcriptBoundary = previousLastUuid
+      ? { status: "bounded", startExclusiveUuid: previousLastUuid }
+      : runtimeSessionId
+        ? { status: "missing", reason: "claude_session_last_uuid_unavailable" }
+        : { status: "initial", reason: "no_previous_claude_session" };
     const networkSuspension = classifyAgentRuntimeNetworkFailure({
       errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
       message: describeClaudeFailure(parsed),
@@ -1268,9 +1612,22 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       model: resolvedModel,
       billingType,
       costUsd: parsedStream.costUsd ?? asNumber(parsed.total_cost_usd, 0),
+      ...(forkIntent ? { submissionPhase: "accepted" as const } : {}),
       resultJson: {
         ...parsed,
-        ...(parsedStream.lastUuid ? { providerTurnId: parsedStream.lastUuid } : {}),
+        startExclusiveUuid: previousLastUuid,
+        providerTurnId: attempt.providerTurnId,
+        transcriptBoundary,
+        ...(forkIntent ? {
+          fork: {
+            kind: "claude_fork_on_first_input",
+            status: "accepted",
+            sourceSessionId,
+            sourceAssistantUuid: forkIntent.sourceSelector.throughInclusiveUuid,
+            childSessionId: resolvedSessionId,
+          },
+          submissionPhase: "accepted",
+        } : {}),
       },
       summary: parsedStream.summary || asString(parsed.result, ""),
       ...(networkSuspension ? { networkSuspension } : {}),
@@ -1280,6 +1637,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   try {
     const initial = await runAttempt(sessionId ?? null);
+    if (initial.kind === "fork_rejected") return deferredForkFailure(initial.reason);
     if (
       sessionId &&
       !initial.proc.timedOut &&
@@ -1291,7 +1649,32 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         "stderr",
         `[rudder] Claude resume session "${sessionId}" was rejected; a fresh session is not allowed.\n`,
       );
-      const rejected = toAdapterResult(initial, { fallbackSessionId: sessionId });
+      const rejected = toAdapterResult(initial, { fallbackSessionId: forkIntent ? null : sessionId });
+      if (forkIntent) {
+        const resultJson = parseObject(rejected.resultJson);
+        const fork = parseObject(resultJson.fork);
+        return {
+          ...rejected,
+          submissionPhase: "indeterminate",
+          errorCode: "claude_fork_acceptance_unknown",
+          errorMessage: rejected.errorMessage
+            || "Claude rejected the source session after the deferred fork prompt was submitted.",
+          clearSession: false,
+          resultJson: {
+            ...resultJson,
+            fork: {
+              ...fork,
+              kind: "claude_fork_on_first_input",
+              status: "unknown",
+              sourceSessionId,
+              sourceAssistantUuid: forkIntent.sourceSelector.throughInclusiveUuid,
+              childSessionId: rejected.sessionId ?? null,
+              reason: "provider_unknown_session",
+            },
+            submissionPhase: "indeterminate",
+          },
+        };
+      }
       return {
         ...rejected,
         errorCode: "claude_resume_rejected",
@@ -1304,7 +1687,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       };
     }
 
-    return toAdapterResult(initial, { fallbackSessionId: runtimeSessionId || runtime.sessionId });
+    return toAdapterResult(initial, {
+      fallbackSessionId: forkIntent ? null : runtimeSessionId || runtime.sessionId,
+    });
   } finally {
     await fs.rm(skillsDir, { recursive: true, force: true });
   }

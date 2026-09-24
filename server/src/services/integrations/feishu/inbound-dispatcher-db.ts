@@ -28,6 +28,11 @@ import {
   executeAdapterWithModelFallbacks,
   sanitizeUntrustedRuntimeConfig,
 } from "../../runtime-kernel/model-fallback.js";
+import {
+  currentNativeSession,
+  ensureRuntimeBinding,
+  revisionForRuntimeConfig,
+} from "../../runtime-kernel/native-session.js";
 import { secretService } from "../../secrets.js";
 import { runtimeResultText } from "../../title-generation.js";
 import type {
@@ -76,6 +81,10 @@ function feishuQuickCommandMessage(command: "new" | "stop", event: FeishuInbound
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function readBoolean(value: unknown, fallback: boolean) {
@@ -807,9 +816,50 @@ export function createFeishuInboundDispatcherDbDeps(
   };
 
   if (options.enqueueAgentRun !== false) {
-    deps.enqueueAgentRun = async (integration, _binding, chat, message, _event, issue) => {
+    deps.enqueueAgentRun = async (integration, binding, chat, message, event, issue) => {
       const conversation = await chats.getById(chat.conversationId);
       if (!conversation) throw new Error("Feishu chat conversation not found");
+      const agent = await db
+        .select({
+          id: agents.id,
+          orgId: agents.orgId,
+          agentRuntimeType: agents.agentRuntimeType,
+          agentRuntimeConfig: agents.agentRuntimeConfig,
+        })
+        .from(agents)
+        .where(and(
+          eq(agents.id, integration.agentId),
+          eq(agents.orgId, integration.orgId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (!agent) throw new Error("Feishu integration agent not found");
+      const runtimeConfig = asRecord(agent.agentRuntimeConfig);
+      const hostId = nonEmptyString(runtimeConfig.hostId ?? runtimeConfig.runtimeHostId) ?? "local";
+      const profileId = nonEmptyString(
+        runtimeConfig.profileId ?? runtimeConfig.profile ?? runtimeConfig.authProfile,
+      ) ?? "default";
+      const workspaceBindingId = nonEmptyString(
+        runtimeConfig.workspaceBindingId ?? runtimeConfig.workspaceId,
+      );
+      const runtimeBinding = await ensureRuntimeBinding(db, {
+        orgId: integration.orgId,
+        conversationId: conversation.id,
+        principalScopeRef: `user:${binding.userId}`,
+        agentId: agent.id,
+        runtimeType: agent.agentRuntimeType,
+        hostId,
+        profileId,
+        workspaceBindingId,
+        instructionsRevision: revisionForRuntimeConfig(runtimeConfig, ["apiKey", "authToken", "token", "password"]),
+        capabilityRevision: revisionForRuntimeConfig({
+          runtimeType: agent.agentRuntimeType,
+          planMode: conversation.planMode,
+          skills: [],
+        }),
+        continuity: "native",
+      });
+      const nativeSession = await currentNativeSession(db, runtimeBinding);
       const run = await chatRuns.createRun({
         conversation,
         agentId: integration.agentId,
@@ -817,14 +867,22 @@ export function createFeishuInboundDispatcherDbDeps(
         userMessageId: message.chatMessageId,
         linkedIssueIds: issue ? [issue.issueId] : [],
         linkedProjectId: null,
+        runtimeBinding,
+        runtimeSegment: nativeSession.segment,
+        nativeSessionId: nativeSession.sessionId,
+        nativeSessionParams: nativeSession.sessionParams,
+        runtimeModel: nonEmptyString(runtimeConfig.model),
+        runtimeResumeSource: nativeSession.sessionId ? "same_session" : "fresh",
+        inputCorrelationRef: message.chatMessageId,
+        idempotencyKey: message.chatMessageId,
         sourceMetadata: {
           source: "agent_integration",
           provider: integration.provider,
           integrationId: integration.id,
-          externalChatId: _event.chatId,
-          externalChatType: _event.chatType,
-          externalMessageId: _event.messageId,
-          externalEventId: _event.eventId,
+          externalChatId: event.chatId,
+          externalChatType: event.chatType,
+          externalMessageId: event.messageId,
+          externalEventId: event.eventId,
         },
       });
       return { runId: run.id };

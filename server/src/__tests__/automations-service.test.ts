@@ -14,6 +14,7 @@ import {
   chatMessageTranscriptEntries,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRunEvents,
   heartbeatRuns,
   issueFollows,
   issues,
@@ -33,6 +34,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { automationService } from "../services/automations.ts";
 import { ChatAssistantStreamError } from "../services/chat-assistant.ts";
 import { claimChatGeneration } from "../services/chat-generation-locks.ts";
+import { CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS } from "../services/chat-generation-provenance.ts";
+import { chatService } from "../services/chats.ts";
 import { issueService } from "../services/issues.ts";
 import { messengerService } from "../services/messenger.ts";
 import { sidebarBadgeService } from "../services/sidebar-badges.ts";
@@ -128,6 +131,7 @@ describe("automation service live-execution coalescing", () => {
   afterEach(async () => {
     await db.delete(activityLog);
     await db.delete(issueFollows);
+    await db.delete(heartbeatRunEvents);
     await db.delete(automationRuns);
     await db.delete(automationTriggers);
     await db.delete(automations);
@@ -455,7 +459,11 @@ describe("automation service live-execution coalescing", () => {
           source: "assignment",
           triggerDetail: "system",
           reason: "issue_assigned",
-          payload: { issueId: run.linkedIssueId, mutation: "create" },
+          payload: {
+            issueId: run.linkedIssueId,
+            mutation: "create",
+            automationRunId: run.id,
+          },
           requestedByActorType: undefined,
           requestedByActorId: null,
           contextSnapshot: expect.objectContaining({
@@ -794,6 +802,199 @@ describe("automation service live-execution coalescing", () => {
         source: "manual",
       }),
     }));
+  });
+
+  it("uses the Run Reader for run-backed automation transcript progress", async () => {
+    const assistantRunId = randomUUID();
+    const transcriptEntry = {
+      kind: "assistant" as const,
+      ts: "2026-09-24T00:00:01.000Z",
+      text: "Run Reader transcript output.",
+    };
+    const chatAssistant = {
+      enrichConversation: vi.fn(async (conversation: any) => ({
+        ...conversation,
+        chatRuntime: {
+          sourceType: "agent",
+          sourceLabel: "CodexCoder",
+          runtimeAgentId: conversation.preferredAgentId,
+          agentRuntimeType: "codex_local",
+          model: "test",
+          available: true,
+          error: null,
+        },
+      })),
+      streamChatAssistantReply: vi.fn(async (input: any) => {
+        await db.insert(heartbeatRuns).values({
+          id: assistantRunId,
+          orgId: input.conversation.orgId,
+          agentId: input.conversation.preferredAgentId,
+          invocationSource: "chat_assistant",
+          status: "running",
+          chatConversationId: input.conversation.id,
+          scene: "chat",
+          targetType: "automation_run",
+          targetId: input.runContext.automationRunId,
+          idempotencyKey: input.userMessageId,
+          sessionIntentJson: {
+            kind: "fresh",
+            reuseScope: "none",
+            sourceRunId: null,
+            sessionId: null,
+            sessionParams: null,
+          },
+        });
+        await input.onRunCreated?.(assistantRunId);
+        await input.onTranscriptEntry?.(transcriptEntry);
+        await db.insert(heartbeatRunEvents).values({
+          orgId: input.conversation.orgId,
+          runId: assistantRunId,
+          agentId: input.conversation.preferredAgentId,
+          seq: 1,
+          eventType: "transcript.entry",
+          payload: { entry: transcriptEntry },
+        });
+        await input.onAssistantDelta?.("Visible automation output.");
+        return {
+          outcome: "completed",
+          reply: { kind: "message", body: "Visible automation output.", structuredPayload: null },
+          partialBody: "Visible automation output.",
+          replyingAgentId: input.conversation.preferredAgentId,
+        };
+      }),
+    };
+    const { agentId, orgId, projectId, svc } = await seedFixture({ chatAssistant });
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Run-backed transcript",
+        description: "Exercise Run Reader transcript progress.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        notifyOnIssueCreated: false,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    await svc.executeChatOutputAutomationRun(run.id);
+
+    const assistantMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, run.linkedChatConversationId!))
+      .then((messages) => messages.find((message) => message.role === "assistant") ?? null);
+    expect(assistantMessage).toMatchObject({
+      body: "Visible automation output.",
+      runId: assistantRunId,
+      status: "completed",
+    });
+    await expect(db
+      .select({ payload: chatMessageTranscriptEntries.payload })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, assistantMessage!.id)))
+      .resolves.toEqual([]);
+
+    const runReaderMessage = await chatService(db).getMessage(run.linkedChatConversationId!, assistantMessage!.id);
+    expect(runReaderMessage?.transcript).toEqual([expect.objectContaining(transcriptEntry)]);
+  });
+
+  it("bounds legacy automation transcript progress for large streams and entries", async () => {
+    const chatAssistant = {
+      enrichConversation: vi.fn(async (conversation: any) => ({
+        ...conversation,
+        chatRuntime: {
+          sourceType: "agent",
+          sourceLabel: "CodexCoder",
+          runtimeAgentId: conversation.preferredAgentId,
+          agentRuntimeType: "codex_local",
+          model: "test",
+          available: true,
+          error: null,
+        },
+      })),
+      streamChatAssistantReply: vi.fn(async (input: any) => {
+        for (let index = 0; index < 320; index += 1) {
+          await input.onTranscriptEntry?.({
+            kind: "tool_result",
+            ts: "2026-09-24T00:00:01.000Z",
+            toolUseId: `legacy-${index}`,
+            content: `entry-${String(index).padStart(3, "0")}:` + "x".repeat(2_048),
+            isError: false,
+          });
+        }
+        await input.onTranscriptEntry?.({
+          kind: "tool_result",
+          ts: "2026-09-24T00:00:02.000Z",
+          toolUseId: "oversized-entry",
+          content: "z".repeat(CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS.bytes * 2),
+          isError: false,
+        });
+        await input.onAssistantDelta?.("Visible legacy progress.");
+        return {
+          outcome: "completed",
+          reply: { kind: "message", body: "Visible legacy final output.", structuredPayload: null },
+          partialBody: "Visible legacy final output.",
+          replyingAgentId: input.conversation.preferredAgentId,
+        };
+      }),
+    };
+    const { agentId, orgId, projectId, svc } = await seedFixture({ chatAssistant });
+    const automation = await svc.create(
+      orgId,
+      {
+        projectId,
+        goalId: null,
+        parentIssueId: null,
+        title: "Legacy transcript bounds",
+        description: "Exercise bounded legacy transcript progress.",
+        assigneeAgentId: agentId,
+        outputMode: "chat_output",
+        chatConversationId: null,
+        notifyOnIssueCreated: false,
+        priority: "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      {},
+    );
+    const run = await svc.runAutomation(automation.id, { source: "manual" });
+
+    await svc.executeChatOutputAutomationRun(run.id);
+
+    const assistantMessage = await db
+      .select()
+      .from(chatMessages)
+      .where(eq(chatMessages.conversationId, run.linkedChatConversationId!))
+      .then((messages) => messages.find((message) => message.role === "assistant") ?? null);
+    expect(assistantMessage).toMatchObject({
+      body: "Visible legacy final output.",
+      runId: null,
+      status: "completed",
+    });
+    const transcriptRows = await db
+      .select({ payload: chatMessageTranscriptEntries.payload })
+      .from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.messageId, assistantMessage!.id))
+      .orderBy(asc(chatMessageTranscriptEntries.entrySeq));
+    const transcriptBytes = transcriptRows.reduce(
+      (total, row) => total + Buffer.byteLength(JSON.stringify(row.payload), "utf8"),
+      0,
+    );
+    expect(transcriptRows.length).toBeLessThanOrEqual(CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS.entries);
+    expect(transcriptBytes).toBeLessThanOrEqual(CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS.bytes);
+    expect(transcriptRows[0]?.payload).not.toMatchObject({ toolUseId: "legacy-0" });
+    expect(transcriptRows.at(-1)?.payload).toMatchObject({ toolUseId: "legacy-319" });
+    expect(transcriptRows.some((row) => row.payload.toolUseId === "oversized-entry")).toBe(false);
   });
 
   it("snapshots the automation runtime override on a new chat output conversation", async () => {

@@ -1,4 +1,8 @@
-import { execute, resetOpenCodeModelsCacheForTests } from "@rudderhq/agent-runtime-opencode-local/server";
+import {
+  disposeOpenCodeNativeServersForTests,
+  execute,
+  resetOpenCodeModelsCacheForTests,
+} from "@rudderhq/agent-runtime-opencode-local/server";
 import { buildOpenCodeLocalConfig } from "@rudderhq/agent-runtime-opencode-local/ui";
 import {
   RUDDER_BROWSER_MCP_TOOL_NAMES,
@@ -10,7 +14,7 @@ import {
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   createRuntimeSkillFixture,
   installCanonicalDesktopMcp,
@@ -194,6 +198,135 @@ if (process.env.RUDDER_TEST_OPENCODE_NON_COMPLETION_SUMMARY === "1") {
   await fs.chmod(commandPath, 0o755);
 }
 
+type FakeOpenCodeNativeRequest = {
+  method: string;
+  url: string;
+  body: Record<string, unknown> | null;
+};
+
+async function writeFakeOpenCodeNativeCommand(commandPath: string): Promise<void> {
+const script = `#!/usr/bin/env node
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const exportPath = path.join(process.cwd(), "fake-opencode-export.json");
+
+if (process.argv[2] === "export") {
+  const sessionId = process.argv[3];
+  if (sessionId !== "opencode-session-1" || !fs.existsSync(exportPath)) process.exit(2);
+  process.stdout.write(fs.readFileSync(exportPath, "utf8"));
+  process.exit(0);
+}
+if (process.argv[2] !== "serve") process.exit(2);
+
+const portIndex = process.argv.indexOf("--port");
+const capturePath = process.env.RUDDER_TEST_NATIVE_CAPTURE_PATH;
+let eventResponse = null;
+const capture = (value) => {
+  if (capturePath) fs.appendFileSync(capturePath, JSON.stringify(value) + "\\n", "utf8");
+};
+const writeEvent = (event) => {
+  if (!eventResponse) return;
+  eventResponse.write("data: " + JSON.stringify({ id: "fake-event", ...event }) + "\\n\\n");
+};
+const readBody = async (request) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const text = Buffer.concat(chunks).toString("utf8");
+  return text ? JSON.parse(text) : null;
+};
+
+const server = http.createServer(async (request, response) => {
+  const body = await readBody(request);
+  const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+  capture({ method: request.method || "", url: request.url || "", body });
+  response.setHeader("content-type", "application/json");
+
+  if (request.method === "GET" && requestUrl.pathname === "/global/health") {
+    response.end(JSON.stringify({ version: "fake-opencode" }));
+    return;
+  }
+  if (request.method === "POST" && requestUrl.pathname === "/session") {
+    response.end(JSON.stringify({ id: "opencode-session-1", projectID: "fake-project" }));
+    return;
+  }
+  if (request.method === "GET" && requestUrl.pathname === "/event") {
+    response.statusCode = 200;
+    response.setHeader("content-type", "text/event-stream");
+    response.setHeader("cache-control", "no-cache");
+    response.flushHeaders();
+    eventResponse = response;
+    request.on("close", () => {
+      if (eventResponse === response) eventResponse = null;
+    });
+    return;
+  }
+  if (request.method === "POST" && requestUrl.pathname === "/session/opencode-session-1/prompt_async") {
+    const userMessageId = body?.messageID;
+    if (typeof userMessageId !== "string" || !userMessageId) {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ message: "prompt_async omitted messageID" }));
+      return;
+    }
+    const assistantMessageId = "provider-assistant-" + userMessageId;
+    fs.writeFileSync(exportPath, JSON.stringify({
+      info: { id: "opencode-session-1", time: { updated: 2 } },
+      messages: [
+        {
+          info: { id: userMessageId, role: "user", sessionID: "opencode-session-1" },
+          parts: Array.isArray(body.parts) ? body.parts : [],
+        },
+        {
+          info: {
+            id: assistantMessageId,
+            parentID: userMessageId,
+            role: "assistant",
+            sessionID: "opencode-session-1",
+            finish: "stop",
+            time: { created: 1, completed: 2 },
+            tokens: { input: 2, output: 3 },
+          },
+          parts: [{ type: "text", text: "native answer" }],
+        },
+      ],
+    }));
+    response.statusCode = 204;
+    response.end();
+    writeEvent({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "opencode-session-1",
+        messageID: assistantMessageId,
+        partID: "provider-part-1",
+        field: "text",
+        delta: "native answer",
+      },
+    });
+    writeEvent({ type: "session.idle", properties: { sessionID: "opencode-session-1" } });
+    return;
+  }
+  response.statusCode = 404;
+  response.end(JSON.stringify({ message: "missing fake OpenCode route" }));
+});
+
+server.listen(Number(process.argv[portIndex + 1]), "127.0.0.1", () => {
+  const address = server.address();
+  if (!address || typeof address === "string") process.exit(3);
+  process.stdout.write("http://127.0.0.1:" + address.port + "\\n");
+});
+`;
+  await fs.writeFile(commandPath, script, "utf8");
+  await fs.chmod(commandPath, 0o755);
+}
+
+async function readFakeOpenCodeNativeRequests(capturePath: string): Promise<FakeOpenCodeNativeRequest[]> {
+  const content = await fs.readFile(capturePath, "utf8");
+  return content
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as FakeOpenCodeNativeRequest);
+}
+
 async function createSkillDir(root: string, name: string) {
   const skillDir = path.join(root, name);
   await fs.mkdir(skillDir, { recursive: true });
@@ -240,6 +373,10 @@ async function createLegacyManagedCredentialBridgeSentinels(operatorHome: string
 }
 
 describe("opencode execute", { timeout: 20_000 }, () => {
+  afterEach(async () => {
+    await disposeOpenCodeNativeServersForTests();
+  });
+
   it("does not inherit the global dangerous permission default unless explicitly enabled", () => {
     expect(buildOpenCodeLocalConfig({
       agentRuntimeType: "opencode_local",
@@ -1314,7 +1451,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     const capturePath = path.join(root, "capture.json");
     const runtimeSkillsRoot = path.join(root, "runtime-skills");
     await fs.mkdir(workspace, { recursive: true });
-    await writeFakeOpenCodeCommand(commandPath);
+    await writeFakeOpenCodeNativeCommand(commandPath);
 
     const asciiHeartDir = await createSkillDir(runtimeSkillsRoot, "ascii-heart");
     const previousHome = process.env.HOME;
@@ -1357,7 +1494,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           },
           env: {
             ...clearInheritedGitIdentityEnv,
-            RUDDER_TEST_CAPTURE_PATH: capturePath,
+            RUDDER_TEST_NATIVE_CAPTURE_PATH: capturePath,
           },
           promptTemplate: "{{context.chatPrompt}}",
         },
@@ -1371,10 +1508,14 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       });
 
       expect(result.exitCode).toBe(0);
-      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { prompt: string };
-      expect(capture.prompt).toContain("Rudder internal repair request: emit the result envelope.");
-      expect(capture.prompt).not.toContain("<enabled_rudder_skills>");
-      expect(capture.prompt).not.toContain("## Skill: ascii-heart");
+      expect(result.resultJson).toMatchObject({ transport: "opencode_server", nativeSession: true });
+      const requests = await readFakeOpenCodeNativeRequests(capturePath);
+      const messageRequest = requests.find((request) => request.url.includes("/prompt_async"));
+      expect(messageRequest).toBeDefined();
+      const prompt = ((messageRequest!.body?.parts as Array<{ text?: unknown }> | undefined)?.[0]?.text ?? "") as string;
+      expect(prompt).toContain("Rudder internal repair request: emit the result envelope.");
+      expect(prompt).not.toContain("<enabled_rudder_skills>");
+      expect(prompt).not.toContain("## Skill: ascii-heart");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -1388,14 +1529,14 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     }
   });
 
-  it("passes chat prompts through stdin instead of an attached prompt file", async () => {
+  it("passes chat prompts through the native OpenCode message request", async () => {
     resetOpenCodeModelsCacheForTests();
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-chat-stdin-"));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-chat-native-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "opencode");
     const capturePath = path.join(root, "capture.json");
     await fs.mkdir(workspace, { recursive: true });
-    await writeFakeOpenCodeCommand(commandPath);
+    await writeFakeOpenCodeNativeCommand(commandPath);
 
     const previousHome = process.env.HOME;
     const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
@@ -1404,7 +1545,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
 
     try {
       const result = await execute({
-        runId: "run-opencode-chat-stdin",
+        runId: "run-opencode-chat-native",
         agent: {
           id: "agent-1",
           orgId: "organization-1",
@@ -1424,7 +1565,7 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           model: "openai/gpt-4.1-mini",
           env: {
             ...clearInheritedGitIdentityEnv,
-            RUDDER_TEST_CAPTURE_PATH: capturePath,
+            RUDDER_TEST_NATIVE_CAPTURE_PATH: capturePath,
           },
           promptTemplate: "{{context.chatPrompt}}",
         },
@@ -1437,13 +1578,13 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       });
 
       expect(result.exitCode).toBe(0);
-      const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as { argv: string[]; prompt: string; promptFilePath: string };
-      expect(capture.argv).toEqual(expect.arrayContaining(["run", "--format", "json", "--dir", workspace]));
-      expect(capture.argv).not.toContain("Follow the attached Rudder runtime prompt file exactly.");
-      expect(capture.argv).not.toContain("--file");
-      expect(capture.promptFilePath).toBe("");
-      expect(capture.prompt).toContain("Chat prompt with final result envelope.");
-      expect(capture.argv).not.toContain(capture.prompt);
+      expect(result.resultJson).toMatchObject({ transport: "opencode_server", nativeSession: true });
+      const requests = await readFakeOpenCodeNativeRequests(capturePath);
+      const messageRequest = requests.find((request) => request.url.includes("/prompt_async"));
+      expect(messageRequest).toBeDefined();
+      const prompt = ((messageRequest!.body?.parts as Array<{ text?: unknown }> | undefined)?.[0]?.text ?? "") as string;
+      expect(prompt).toContain("Chat prompt with final result envelope.");
+      expect(prompt).not.toContain("Follow the attached Rudder runtime prompt file exactly.");
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
@@ -1458,8 +1599,9 @@ describe("opencode execute", { timeout: 20_000 }, () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-opencode-chat-timeout-"));
     const workspace = path.join(root, "workspace");
     const commandPath = path.join(root, "opencode");
+    const capturePath = path.join(root, "capture.json");
     await fs.mkdir(workspace, { recursive: true });
-    await writeFakeOpenCodeCommand(commandPath);
+    await writeFakeOpenCodeNativeCommand(commandPath);
 
     const previousHome = process.env.HOME;
     const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
@@ -1487,9 +1629,9 @@ describe("opencode execute", { timeout: 20_000 }, () => {
           command: commandPath,
           cwd: workspace,
           model: "openai/gpt-4.1-mini",
-          timeoutSec: 0,
           env: {
             ...clearInheritedGitIdentityEnv,
+            RUDDER_TEST_NATIVE_CAPTURE_PATH: capturePath,
           },
           promptTemplate: "{{context.chatPrompt}}",
         },
@@ -1505,9 +1647,12 @@ describe("opencode execute", { timeout: 20_000 }, () => {
       });
 
       expect(result.exitCode).toBe(0);
+      expect(result.resultJson).toMatchObject({ transport: "opencode_server", nativeSession: true });
       expect(commandNotes).toContain(
         "Applied 60s default timeout for OpenCode chat mode because timeoutSec was unset.",
       );
+      const requests = await readFakeOpenCodeNativeRequests(capturePath);
+      expect(requests.some((request) => request.url.includes("/prompt_async"))).toBe(true);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

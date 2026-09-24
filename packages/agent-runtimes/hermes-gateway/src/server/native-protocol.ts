@@ -1,4 +1,6 @@
 import type {
+  AgentRuntimeApprovalDecision,
+  AgentRuntimeApprovalRequest,
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlInterruptReason,
   AgentRuntimeControlInterruptResult,
@@ -26,13 +28,8 @@ const MAX_DIAGNOSTIC = 2_000;
 
 type JsonRecord = Record<string, unknown>;
 type RpcId = number;
-type HermesAcpApprovalRequest = {
-  type: "agent_runtime";
-  payload: JsonRecord;
-};
-type HermesAcpApprovalDecision = {
-  status: string;
-};
+type HermesAcpApprovalRequest = AgentRuntimeApprovalRequest;
+type HermesAcpApprovalDecision = AgentRuntimeApprovalDecision;
 
 export type HermesAcpBinding = {
   id?: string | null;
@@ -104,8 +101,8 @@ export type HermesAcpTranscriptResult = {
   nextCursor: string | null;
   source: "native";
   revision: string;
-  availability: "available" | "offline" | "missing" | "incompatible";
-  completeness: "complete" | "partial" | "unknown";
+  availability: "available" | "offline" | "missing" | "expired" | "incompatible";
+  completeness: "complete" | "partial" | "terminal_only" | "unknown";
 };
 
 export type HermesAcpTranscriptBoundary = {
@@ -140,7 +137,12 @@ export class HermesAcpNativeCapabilityError extends Error {
   constructor(
     readonly status: "unsupported" | "unknown",
     message: string,
-    readonly details: { sessionId?: string | null; sessionParams?: Record<string, unknown> | null } = {},
+    readonly details: {
+      sessionId?: string | null;
+      sessionParams?: Record<string, unknown> | null;
+      inputCorrelationId?: string | null;
+      transcriptBoundary?: HermesAcpTranscriptBoundary | null;
+    } = {},
   ) {
     super(message);
   }
@@ -275,6 +277,7 @@ type HermesAcpHandshake = {
   agentName: string | null;
   capabilities: JsonRecord;
   authMethodIds: string[];
+  authenticatedMethodId: string | null;
 };
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -311,15 +314,16 @@ function textFrom(value: unknown): string {
 
 function secretValues(profile: HermesAcpProfile): string[] {
   const values: string[] = [];
-  for (const [key, value] of Object.entries(profile.env ?? {})) {
-    if (/(?:key|token|secret|password|auth|credential|cookie)/iu.test(key) && value.trim()) values.push(value.trim());
+  for (const [key, value] of Object.entries({ ...process.env, ...(profile.env ?? {}) })) {
+    const secret = typeof value === "string" ? value.trim() : "";
+    if (/(?:key|token|secret|password|auth|credential|cookie)/iu.test(key) && secret) values.push(secret);
   }
   return [...new Set(values)];
 }
 
 function redactText(value: string, secrets: readonly string[]): string {
   return secrets.reduce((result, secret) => secret ? result.split(secret).join("[REDACTED]") : result, value)
-    .replace(/((?:api[-_]?key|authorization|bearer|token|secret|password|credential|cookie)\s*[:=]\s*)(?:bearer\s+)?[^\s,;}'"]+/giu, "$1[REDACTED]");
+    .replace(/((?:api[-_]?key|authorization|bearer|token|secret|password|credential|cookie|value)\s*[:=]\s*)(?:bearer\s+)?[^\s,;}'"]+/giu, "$1[REDACTED]");
 }
 
 function redactValue(value: unknown, secrets: readonly string[], depth = 0): unknown {
@@ -330,27 +334,36 @@ function redactValue(value: unknown, secrets: readonly string[], depth = 0): unk
   if (!record) return value;
   return Object.fromEntries(Object.entries(record).slice(0, 64).map(([key, child]) => [
     key,
-    /(?:api[-_]?key|authorization|bearer|token|secret|password|credential|cookie|private[-_]?key)/iu.test(key)
+    /(?:api[-_]?key|authorization|bearer|token|secret|password|credential|cookie|private[-_]?key|^value$)/iu.test(key)
       ? "[REDACTED]"
       : redactValue(child, secrets, depth + 1),
   ]));
 }
 
 function safeUpdate(update: AcpUpdate, secrets: readonly string[]): JsonRecord {
-  const kind = nonEmpty(update.sessionUpdate ?? update.session_update ?? update.type) ?? "unknown";
+  const kind = redactText(nonEmpty(update.sessionUpdate ?? update.session_update ?? update.type) ?? "unknown", secrets).slice(0, 80);
   const content = asRecord(update.content);
   const messageId = nonEmpty(update.messageId ?? update.message_id);
   const toolCallId = nonEmpty(update.toolCallId ?? update.tool_call_id);
+  const contextSize = finiteTokenCount(update.size);
+  const contextUsed = finiteTokenCount(update.used);
+  const usage = usageProjection(update);
+  const safeValue = redactValue(update, secrets);
   return {
     sessionUpdate: kind,
-    ...(messageId ? { messageId } : {}),
-    ...(toolCallId ? { toolCallId } : {}),
-    ...(nonEmpty(update.status) ? { status: nonEmpty(update.status) } : {}),
+    ...(messageId ? { messageId: redactText(messageId, secrets).slice(0, 160) } : {}),
+    ...(toolCallId ? { toolCallId: redactText(toolCallId, secrets).slice(0, 160) } : {}),
+    ...(nonEmpty(update.status) ? { status: redactText(nonEmpty(update.status)!, secrets).slice(0, 80) } : {}),
     ...(nonEmpty(update.title) ? { title: redactText(nonEmpty(update.title)!, secrets).slice(0, 240) } : {}),
     ...(content?.type ? { contentType: content.type } : {}),
     ...(content?.text !== undefined ? { textHash: stableHash(redactText(String(content.text), secrets)) } : {}),
     ...(update.rawInput !== undefined ? { rawInputHash: stableHash(redactValue(update.rawInput, secrets)) } : {}),
     ...(update.rawOutput !== undefined ? { rawOutputHash: stableHash(redactValue(update.rawOutput, secrets)) } : {}),
+    ...(contextSize !== null || contextUsed !== null
+      ? { contextUsage: { ...(contextSize !== null ? { size: contextSize } : {}), ...(contextUsed !== null ? { used: contextUsed } : {}) } }
+      : {}),
+    ...(usage ? { tokenUsage: usage } : {}),
+    eventHash: stableHash(safeValue),
   };
 }
 
@@ -362,6 +375,67 @@ function updateText(update: AcpUpdate): string {
 
 function updateKind(update: AcpUpdate): string {
   return nonEmpty(update.sessionUpdate ?? update.session_update ?? update.type) ?? "unknown";
+}
+
+function providerHttpStatus(value: unknown, depth = 0): number | null {
+  if (depth > 5) return null;
+  if (typeof value === "number") return Number.isInteger(value) && value >= 400 && value <= 599 ? value : null;
+  if (typeof value === "string") {
+    const explicit = value.match(/\b(?:http(?:\s+status)?(?:\s+code)?|status(?:\s+code)?)\s*[:=]?\s*([45]\d{2})\b/iu);
+    if (explicit) return Number(explicit[1]);
+    const labeled = value.match(/\b([45]\d{2})\s+(?:bad request|unauthorized|forbidden|payment required|subscription|server error)\b/iu);
+    return labeled ? Number(labeled[1]) : null;
+  }
+
+  const record = asRecord(value);
+  if (!record) return null;
+  for (const key of ["httpStatus", "http_status", "httpStatusCode", "http_status_code", "statusCode", "status_code", "status"]) {
+    const status = providerHttpStatus(record[key], depth + 1);
+    if (status !== null) return status;
+  }
+  for (const key of ["error", "data", "response", "cause"]) {
+    const status = providerHttpStatus(record[key], depth + 1);
+    if (status !== null) return status;
+  }
+  return typeof record.message === "string" ? providerHttpStatus(record.message, depth + 1) : null;
+}
+
+function providerHttpStatusFromUpdate(update: AcpUpdate): number | null {
+  const status = providerHttpStatus({
+    httpStatus: update.httpStatus ?? update.http_status,
+    httpStatusCode: update.httpStatusCode ?? update.http_status_code,
+    statusCode: update.statusCode ?? update.status_code,
+    status: update.status,
+    error: update.error,
+  });
+  if (status !== null) return status;
+  const diagnostic = updateText(update);
+  return hasNonRetryableClientErrorMarker(diagnostic) ? providerHttpStatus(diagnostic) : null;
+}
+
+function hasNonRetryableClientErrorMarker(value: string): boolean {
+  return /^\s*non[_ -]retryable[_ -]client[_ -]error\s*:/iu.test(value);
+}
+
+function isProviderErrorText(value: string): boolean {
+  const status = providerHttpStatus(value);
+  if (hasNonRetryableClientErrorMarker(value) && status !== null) return true;
+  if (/^\s*error\s*:/iu.test(value)) return true;
+  return status !== null
+    && /\b(?:provider|api|upstream|request|model)\b/iu.test(value)
+    && /\b(?:error|failed|failure|rejected|forbidden|denied|subscription|entitlement)\b/iu.test(value);
+}
+
+function isProviderErrorUpdate(update: AcpUpdate): boolean {
+  const kind = updateKind(update);
+  if (/(?:^|[_-])(?:provider[_-]?)?error(?:[_-]update)?$/iu.test(kind)) return true;
+  if (update.error !== undefined && update.error !== null && update.error !== false && update.error !== "") return true;
+  if (update.providerError === true || update.nonRetryable === true || update.non_retryable === true || update.retryable === false) return true;
+  const code = nonEmpty(update.errorCode ?? update.error_code ?? update.code);
+  if (code && /^(?:provider[_-]?error|non[_ -]retryable[_ -]client[_ -]error)$/iu.test(code)) return true;
+  const status = nonEmpty(update.status);
+  if (status && /^(?:error|failed|failure|rejected|non[_ -]retryable[_ -]client[_ -]error)$/iu.test(status)) return true;
+  return providerHttpStatusFromUpdate(update) !== null;
 }
 
 function rangeValue(value: unknown): { id: string | null; ordinal: number | null } {
@@ -421,8 +495,8 @@ export function validateHermesAcpSession(input: {
   if (nonEmpty(params.cwd) && path.resolve(nonEmpty(params.cwd)!) !== path.resolve(input.profile.cwd)) return "Hermes ACP persisted cwd does not match the provider profile.";
   if (nonEmpty(params.acpArgsHash) !== argsHash(input.profile.args)) return "Hermes ACP persisted argument hash does not match the provider profile.";
   const storedAuthMethodId = nonEmpty(params.acpAuthMethodId);
-  if (storedAuthMethodId !== (input.profile.authMethodId ?? null)) return "Hermes ACP persisted authentication method does not match the provider profile.";
-  if (input.profile.providerVersion && nonEmpty(params.hermesProviderVersion) && input.profile.providerVersion !== nonEmpty(params.hermesProviderVersion)) return "Hermes ACP persisted provider version does not match the provider profile.";
+  if ("authMethodId" in input.profile && storedAuthMethodId !== nonEmpty(input.profile.authMethodId)) return "Hermes ACP persisted authentication method does not match the provider profile.";
+  if (input.profile.providerVersion && nonEmpty(params.hermesProviderVersion) !== input.profile.providerVersion) return "Hermes ACP persisted provider version does not match the provider profile.";
   if (input.profile.protocolVersion && Number(params.acpProtocolVersion) !== input.profile.protocolVersion) return "Hermes ACP persisted protocol version does not match the provider profile.";
   const identities: Array<[string, unknown, unknown]> = [
     ["host", params.profileHostId ?? params.hostId, input.profile.binding.hostId],
@@ -497,6 +571,21 @@ type PendingRequest = {
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 };
+
+export class HermesAcpRpcTimeoutError extends Error {
+  override readonly name = "HermesAcpRpcTimeoutError";
+  readonly code = "HERMES_ACP_RPC_TIMEOUT";
+  readonly errorCode = "hermes_native_timeout";
+
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number,
+    readonly sessionId: string | null = null,
+    readonly sessionParams: Record<string, unknown> | null = null,
+  ) {
+    super(`Hermes ACP ${method} timed out after ${timeoutMs}ms.`);
+  }
+}
 
 class HermesAcpRpcClient {
   private readonly stdoutDecoder = new StringDecoder("utf8");
@@ -590,11 +679,13 @@ class HermesAcpRpcClient {
   async request(method: string, params: JsonRecord, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<unknown> {
     if (this.closed) throw new Error("Hermes ACP process is closed.");
     const id = this.nextId++;
+    const boundedTimeoutMs = Math.max(1, timeoutMs);
     const response = new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
         this.pending.delete(id);
-        reject(new Error(`Hermes ACP ${method} timed out after ${timeoutMs}ms.`));
-      }, Math.max(1, timeoutMs));
+        reject(new HermesAcpRpcTimeoutError(method, boundedTimeoutMs));
+      }, boundedTimeoutMs);
       this.pending.set(id, { resolve, reject, timer });
     });
     try {
@@ -629,10 +720,12 @@ class HermesAcpRpcClient {
     }
     this.closeStarted = true;
     if (this.child.exitCode === null && !this.child.killed) this.child.kill("SIGTERM");
+    let closeTimer: NodeJS.Timeout | undefined;
     await Promise.race([
       this.exitPromise,
-      new Promise<void>((resolve) => setTimeout(resolve, CLOSE_TIMEOUT_MS)),
+      new Promise<void>((resolve) => { closeTimer = setTimeout(resolve, CLOSE_TIMEOUT_MS); }),
     ]);
+    if (closeTimer) clearTimeout(closeTimer);
     if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill("SIGKILL");
   }
 }
@@ -643,6 +736,10 @@ class HermesAcpRpcError extends Error {
   constructor(readonly code: number, message: string) {
     super(message);
   }
+}
+
+export function hermesNativeRpcErrorCode(error: unknown): number | null {
+  return error instanceof HermesAcpRpcError ? error.code : null;
 }
 
 function capabilityFromInitialize(value: unknown): HermesAcpHandshake {
@@ -660,6 +757,7 @@ function capabilityFromInitialize(value: unknown): HermesAcpHandshake {
     agentName: nonEmpty(agentInfo.name),
     capabilities,
     authMethodIds,
+    authenticatedMethodId: null,
   };
 }
 
@@ -672,25 +770,33 @@ async function initializeClient(client: HermesAcpRpcClient, profile: HermesAcpPr
       clientCapabilities: {},
     }, timeoutMs);
   } catch (error) {
+    if (error instanceof HermesAcpRpcTimeoutError) throw error;
     throw new HermesAcpNativeCapabilityError(
       error instanceof HermesAcpRpcError && error.code === -32601 ? "unsupported" : "unknown",
       `Hermes ACP initialize failed: ${boundedDiagnostic(error)}${client.stderrDiagnostic ? ` (${client.stderrDiagnostic})` : ""}`,
     );
   }
   const handshake = capabilityFromInitialize(response);
+  if (!handshake.agentName?.toLowerCase().includes("hermes")) {
+    throw new HermesAcpNativeCapabilityError("unsupported", `Hermes ACP initialize identified a different agent (${handshake.agentName ?? "unknown"}).`);
+  }
   if (profile.protocolVersion && handshake.protocolVersion !== profile.protocolVersion) {
     throw new HermesAcpNativeCapabilityError("unsupported", `Hermes ACP protocol ${handshake.protocolVersion} does not match configured protocol ${profile.protocolVersion}.`);
   }
-  if (profile.authMethodId) {
-    if (!handshake.authMethodIds.includes(profile.authMethodId)) {
-      throw new HermesAcpNativeCapabilityError("unsupported", `Hermes ACP did not advertise authentication method ${profile.authMethodId}.`);
+  const providerAuthMethods = handshake.authMethodIds.filter((methodId) => methodId !== "hermes-setup");
+  const authMethodId = profile.authMethodId ?? (providerAuthMethods.length === 1 ? providerAuthMethods[0] : null);
+  if (authMethodId) {
+    if (!handshake.authMethodIds.includes(authMethodId)) {
+      throw new HermesAcpNativeCapabilityError("unsupported", `Hermes ACP did not advertise authentication method ${authMethodId}.`);
     }
     try {
-      const authenticated = await client.request("authenticate", { methodId: profile.authMethodId }, timeoutMs);
+      const authenticated = await client.request("authenticate", { methodId: authMethodId }, timeoutMs);
       if (authenticated === null || authenticated === undefined) throw new Error("Hermes ACP authenticate returned no response.");
     } catch (error) {
+      if (error instanceof HermesAcpRpcTimeoutError) throw error;
       throw new HermesAcpNativeCapabilityError("unknown", `Hermes ACP authentication failed: ${boundedDiagnostic(error)}.`);
     }
+    handshake.authenticatedMethodId = authMethodId;
   }
   return handshake;
 }
@@ -717,55 +823,143 @@ function requireLoadedSession(value: unknown): void {
   }
 }
 
-function promptParams(sessionId: string, text: string, messageId: string): JsonRecord {
+function promptParams(sessionId: string, text: string): JsonRecord {
+  return { sessionId, prompt: [{ type: "text", text }] };
+}
+
+function finiteTokenCount(value: unknown): number | null {
+  const count = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+}
+
+function usageProjection(value: unknown): JsonRecord | null {
+  const usage = asRecord(value);
+  if (!usage) return null;
+  const projected: JsonRecord = {};
+  const fields: Record<string, string[]> = {
+    inputTokens: ["inputTokens", "input_tokens"],
+    outputTokens: ["outputTokens", "output_tokens"],
+    totalTokens: ["totalTokens", "total_tokens"],
+    thoughtTokens: ["thoughtTokens", "thought_tokens"],
+    cachedInputTokens: ["cachedInputTokens", "cached_input_tokens", "cachedReadTokens", "cached_read_tokens"],
+  };
+  for (const [target, keys] of Object.entries(fields)) {
+    const raw = keys.map((key) => usage[key]).find((candidate) => candidate !== undefined && candidate !== null);
+    const count = finiteTokenCount(raw);
+    if (count !== null) projected[target] = count;
+  }
+  return Object.keys(projected).length > 0 ? projected : null;
+}
+
+function usageFrom(value: unknown): { inputTokens: number; outputTokens: number; cachedInputTokens?: number } | undefined {
+  const projected = usageProjection(value);
+  if (!projected || (projected.inputTokens === undefined && projected.outputTokens === undefined)) return undefined;
   return {
-    sessionId,
-    prompt: [{ type: "text", text }],
-    messageId,
+    inputTokens: typeof projected.inputTokens === "number" ? projected.inputTokens : 0,
+    outputTokens: typeof projected.outputTokens === "number" ? projected.outputTokens : 0,
+    ...(typeof projected.cachedInputTokens === "number" ? { cachedInputTokens: projected.cachedInputTokens } : {}),
   };
 }
 
-function usageFrom(value: unknown): { inputTokens: number; outputTokens: number } | undefined {
-  const usage = asRecord(value);
-  if (!usage) return undefined;
-  const inputTokens = Number(usage.inputTokens ?? usage.input_tokens ?? 0);
-  const outputTokens = Number(usage.outputTokens ?? usage.output_tokens ?? 0);
-  return Number.isFinite(inputTokens) || Number.isFinite(outputTokens)
-    ? { inputTokens: Number.isFinite(inputTokens) ? inputTokens : 0, outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0 }
-    : undefined;
-}
-
-function permissionOutcome(params: JsonRecord, input: {
+async function permissionOutcome(params: JsonRecord, input: {
+  requestId: string;
+  secrets: readonly string[];
   requestApproval?: (request: HermesAcpApprovalRequest) => Promise<{ id: string; status: string }>;
   waitForApproval?: (id: string, timeoutMs: number) => Promise<HermesAcpApprovalDecision>;
   timeoutMs: number;
   provider: string;
+  onEvent: (event: JsonRecord) => Promise<void>;
 }): Promise<JsonRecord> {
   const options = Array.isArray(params.options) ? params.options.map(asRecord).filter((value): value is JsonRecord => Boolean(value)) : [];
-  const safeOptions = options.map((option) => ({ optionId: nonEmpty(option.optionId ?? option.option_id) ?? "unknown", kind: nonEmpty(option.kind) ?? "unknown", name: nonEmpty(option.name) ?? "" }));
+  const safeOptions = options.flatMap((option, index) => {
+    const providerOptionId = nonEmpty(option.optionId ?? option.option_id);
+    if (!providerOptionId) return [];
+    return [{
+      providerOptionId,
+      clientOptionId: `option-${index + 1}`,
+      kind: redactText(nonEmpty(option.kind) ?? "unknown", input.secrets).slice(0, 80),
+      label: redactText(nonEmpty(option.name) ?? nonEmpty(option.kind) ?? `Option ${index + 1}`, input.secrets).slice(0, 100),
+      ...(nonEmpty(option.description) ? { description: redactText(nonEmpty(option.description)!, input.secrets).slice(0, 220) } : {}),
+    }];
+  });
   const denied = (): JsonRecord => ({ outcome: { outcome: "cancelled" } });
-  if (!input.requestApproval || !input.waitForApproval) return Promise.resolve(denied());
-  return input.requestApproval({
-    type: "agent_runtime",
-    payload: {
-      provider: input.provider,
-      runtimeType: "hermes_gateway",
-      sessionId: nonEmpty(params.sessionId),
-      choices: safeOptions,
-      permission: true,
-    },
-  }).then(async (request) => {
-    const decision = await input.waitForApproval!(request.id, input.timeoutMs);
-    if (decision.status !== "approved") return denied();
-    const selected = safeOptions.find((option) => option.kind === "allow_once" || option.kind === "allow_always") ?? safeOptions[0];
-    return selected ? { outcome: { outcome: "selected", optionId: selected.optionId } } : denied();
-  }).catch(() => denied());
+  const toolCall = asRecord(params.toolCall ?? params.tool_call);
+  const toolTitle = nonEmpty(toolCall?.title ?? toolCall?.name);
+  const safeToolCall = {
+    ...(toolTitle ? { title: redactText(toolTitle, input.secrets).slice(0, 240) } : {}),
+    ...(nonEmpty(toolCall?.toolCallId ?? toolCall?.tool_call_id)
+      ? { toolCallId: redactText(nonEmpty(toolCall?.toolCallId ?? toolCall?.tool_call_id)!, input.secrets).slice(0, 160) }
+      : {}),
+    ...(toolCall?.rawInput !== undefined || toolCall?.raw_input !== undefined
+      ? { inputHash: stableHash(redactValue(toolCall.rawInput ?? toolCall.raw_input, input.secrets)) }
+      : {}),
+  };
+  const safeEvent = {
+    interactionKind: "permission",
+    requestId: redactText(input.requestId, input.secrets).slice(0, 160),
+    sessionId: nonEmpty(params.sessionId) ? redactText(nonEmpty(params.sessionId)!, input.secrets).slice(0, 160) : null,
+    toolCall: safeToolCall,
+    choices: safeOptions.map(({ clientOptionId, kind, label }) => ({ id: clientOptionId, kind, label })),
+  };
+  await input.onEvent({ ...safeEvent, status: "requested" });
+  if (!input.requestApproval || !input.waitForApproval || safeOptions.length === 0) {
+    await input.onEvent({ ...safeEvent, status: "cancelled", reason: "approval_bridge_unavailable" });
+    return denied();
+  }
+  const questionId = "hermes_permission";
+  const inputRequest: NonNullable<AgentRuntimeApprovalRequest["inputRequest"]> = {
+    questions: [{
+      id: questionId,
+      header: "Hermes",
+      question: toolTitle
+        ? `Allow Hermes to perform ${redactText(toolTitle, input.secrets).slice(0, 180)}?`
+        : "Allow Hermes to perform this action?",
+      options: safeOptions.map(({ clientOptionId, label, description }) => ({
+        id: clientOptionId,
+        label,
+        ...(description ? { description } : {}),
+      })),
+    }],
+  };
+  try {
+    const request = await input.requestApproval({
+      type: "agent_runtime",
+      payload: {
+        provider: input.provider,
+        runtimeType: "hermes_gateway",
+        protocol: "acp",
+        sessionId: nonEmpty(params.sessionId) ? redactText(nonEmpty(params.sessionId)!, input.secrets).slice(0, 160) : null,
+        requestId: redactText(input.requestId, input.secrets).slice(0, 160),
+        interactionKind: "permission",
+        toolCall: safeToolCall,
+        choices: safeEvent.choices,
+      },
+      inputRequest,
+    });
+    if (request.status === "rejected" || request.status === "cancelled") {
+      await input.onEvent({ ...safeEvent, status: request.status });
+      return denied();
+    }
+    const decision = await input.waitForApproval(request.id, input.timeoutMs);
+    const answer = decision.inputResponse?.answers.find((entry) => entry.questionId === questionId);
+    const selectedId = answer?.optionIds.length === 1 ? answer.optionIds[0] : null;
+    const selected = safeOptions.find((option) => option.clientOptionId === selectedId);
+    if (decision.id !== request.id || decision.status !== "approved" || !selected?.providerOptionId) {
+      await input.onEvent({ ...safeEvent, status: "cancelled" });
+      return denied();
+    }
+    await input.onEvent({ ...safeEvent, status: "resolved", selected: selected.clientOptionId });
+    return { outcome: { outcome: "selected", optionId: selected.providerOptionId } };
+  } catch {
+    await input.onEvent({ ...safeEvent, status: "cancelled" });
+    return denied();
+  }
 }
 
-function identityFor(profile: HermesAcpProfile, handshake: { protocolVersion: number; providerVersion: string | null }, sessionId: string, workspace?: HermesAcpWorkspace | null): Record<string, unknown> {
+function identityFor(profile: HermesAcpProfile, handshake: HermesAcpHandshake, sessionId: string, workspace?: HermesAcpWorkspace | null): Record<string, unknown> {
   return buildHermesAcpSessionParams({
     sessionId,
-    profile,
+    profile: { ...profile, authMethodId: handshake.authenticatedMethodId },
     providerVersion: handshake.providerVersion ?? profile.providerVersion ?? null,
     protocolVersion: handshake.protocolVersion,
     workspace,
@@ -780,8 +974,14 @@ async function createClient(
 ): Promise<HermesAcpRpcClient> {
   validateProfile(profile);
   const child = spawnAcp(profile);
-  if (typeof child.pid === "number") await onSpawn?.({ pid: child.pid, startedAt: new Date().toISOString() });
-  return new HermesAcpRpcClient(child, onNotification, onServerRequest);
+  const client = new HermesAcpRpcClient(child, onNotification, onServerRequest);
+  try {
+    if (typeof child.pid === "number") await onSpawn?.({ pid: child.pid, startedAt: new Date().toISOString() });
+    return client;
+  } catch (error) {
+    await client.close();
+    throw error;
+  }
 }
 
 // Both installed Hermes transports use the same framed JSON-RPC process
@@ -841,10 +1041,15 @@ export async function executeHermesNativeChat(input: {
   const onServerRequest = async (request: AcpServerRequest): Promise<unknown> => {
     if (request.method === "session/request_permission") {
       return permissionOutcome(asRecord(request.params) ?? {}, {
+        requestId: String(request.id),
+        secrets,
         requestApproval: input.requestApproval,
         waitForApproval: input.waitForApproval,
         timeoutMs: input.timeoutMs,
         provider: "hermes",
+        onEvent: async (event) => {
+          await input.onLog("stdout", `${JSON.stringify({ type: "hermes_acp_interaction", ...event })}\n`);
+        },
       });
     }
     throw new Error(`Hermes ACP client does not implement ${request.method}.`);
@@ -857,8 +1062,17 @@ export async function executeHermesNativeChat(input: {
   try {
     client = await createClient(input.profile, onNotification, onServerRequest, input.onSpawn);
     handshake = await initializeClient(client, input.profile, Math.min(input.timeoutMs, DEFAULT_REQUEST_TIMEOUT_MS));
+    if (handshake.capabilities.loadSession !== true) {
+      throw new HermesAcpNativeCapabilityError("unsupported", "Hermes ACP did not advertise loadSession; native session continuity cannot be guaranteed.");
+    }
     if (sessionId) {
-      const rejection = validateHermesAcpSession({ sessionId, sessionParams: input.sessionParams ?? {}, profile: input.profile, workspace: input.workspace });
+      const sessionProfile: HermesAcpProfile = {
+        ...input.profile,
+        authMethodId: handshake.authenticatedMethodId,
+        providerVersion: handshake.providerVersion ?? input.profile.providerVersion,
+        protocolVersion: handshake.protocolVersion,
+      };
+      const rejection = validateHermesAcpSession({ sessionId, sessionParams: input.sessionParams ?? {}, profile: sessionProfile, workspace: input.workspace });
       if (rejection) throw new HermesAcpNativeCapabilityError("unsupported", rejection, { sessionId, sessionParams: input.sessionParams });
       const loaded = await client.request("session/load", sessionRequestParams(input.profile, input.profile.cwd, sessionId), input.timeoutMs);
       requireLoadedSession(loaded);
@@ -878,27 +1092,19 @@ export async function executeHermesNativeChat(input: {
       ? await readHermesHistoryTail({ profile: input.profile, sessionId, timeoutMs: input.timeoutMs, signal: input.signal })
       : null;
 
-    const providerTurnId = randomUUID();
+    const inputCorrelationId = randomUUID();
     if (input.controlAttempt) {
       controlLease = await input.controlAttempt.register({
         runtimeType: "hermes_gateway",
         providerThreadId: sessionId,
-        providerTurnId,
+        providerTurnId: inputCorrelationId,
         capabilities: { steer: "interrupt_continue", interrupt: "native" },
-        async steer(controlInput: AgentRuntimeControlSteerInput): Promise<AgentRuntimeControlSteerResult> {
+        async steer(_controlInput: AgentRuntimeControlSteerInput): Promise<AgentRuntimeControlSteerResult> {
           if (!client || !sessionId) return { disposition: "closing", reason: "Hermes ACP session is closed." };
-          const steerMessageId = randomUUID();
-          try {
-            void client.request("session/prompt", promptParams(sessionId, controlInput.text, steerMessageId), input.timeoutMs).catch(() => {});
-            return {
-              disposition: "acceptance_unknown",
-              providerThreadId: sessionId,
-              providerTurnId: steerMessageId,
-              reason: "Hermes ACP accepts native session/prompt input but does not expose a separate steer acknowledgement.",
-            };
-          } catch {
-            return { disposition: "closing", reason: "Hermes ACP steer prompt could not be submitted." };
-          }
+          return {
+            disposition: "unsupported",
+            reason: "Hermes ACP has no native steer method; a concurrent session/prompt is queued as a follow-up.",
+          };
         },
         async interrupt(_reason: AgentRuntimeControlInterruptReason): Promise<AgentRuntimeControlInterruptResult> {
           await cancel();
@@ -915,7 +1121,14 @@ export async function executeHermesNativeChat(input: {
     }
     await input.onLog("stdout", `[rudder] Hermes ACP native session started session=${sessionId} agent=${handshake.agentName ?? "unknown"}\n`);
     promptActive = true;
-    const response = asRecord(await client.request("session/prompt", promptParams(sessionId, input.prompt, providerTurnId), input.timeoutMs)) ?? {};
+    let response: JsonRecord = {};
+    let promptError: unknown = null;
+    try {
+      response = asRecord(await client.request("session/prompt", promptParams(sessionId, input.prompt), input.timeoutMs)) ?? {};
+    } catch (error) {
+      if (error instanceof HermesAcpRpcTimeoutError) throw error;
+      promptError = error;
+    }
     promptActive = false;
     await liveLogs;
     const historyAfter = await readHermesHistoryTail({
@@ -930,15 +1143,19 @@ export async function executeHermesNativeChat(input: {
       before: historyBefore,
       after: historyAfter,
     });
-    const stopReason = nonEmpty(response.stopReason ?? response.stop_reason) ?? "unknown";
+    const stopReason = promptError ? "error" : nonEmpty(response.stopReason ?? response.stop_reason) ?? "unknown";
     const output = assistant.join("").trim();
-    const providerError = /^error\s*:/iu.test(output);
+    const promptErrorMessage = promptError instanceof Error ? promptError.message : "";
+    const providerErrorUpdates = updates.filter(isProviderErrorUpdate);
+    const rpcProviderError = promptError instanceof HermesAcpRpcError && isProviderErrorText(promptErrorMessage);
+    const providerError = providerErrorUpdates.length > 0 || rpcProviderError;
+    const providerStatus = providerErrorUpdates.map(providerHttpStatusFromUpdate).find((status) => status !== null)
+      ?? (rpcProviderError ? providerHttpStatus(promptErrorMessage) : null);
+    const emptyResponse = stopReason === "end_turn" && !output;
     const resultJson: JsonRecord = {
       nativeSession: true,
       transport: HERMES_ACP_NATIVE_TRANSPORT,
       sessionId,
-      providerTurnId,
-      inputCorrelationId: providerTurnId,
       transcriptBoundary,
       protocol: {
         version: handshake.protocolVersion,
@@ -947,8 +1164,16 @@ export async function executeHermesNativeChat(input: {
       },
       stopReason,
       providerError,
+      ...(providerStatus !== null ? { providerHttpStatus: providerStatus } : {}),
+      emptyResponse,
+      ...(promptError ? {
+        promptFailure: {
+          rpcCode: promptError instanceof HermesAcpRpcError ? promptError.code : null,
+        },
+      } : {}),
       updateCount: updates.length,
       updates: updates.map((update) => safeUpdate(update, secrets)),
+      inputCorrelationId,
       control: { cancelRequested: cancelSent },
       continuity: {
         mode: "hermes_acp_session",
@@ -959,7 +1184,7 @@ export async function executeHermesNativeChat(input: {
     };
     const usage = usageFrom(response.usage);
     const cancelled = stopReason === "cancelled" || aborted;
-    const completed = stopReason === "end_turn" && !cancelled && !providerError;
+    const completed = stopReason === "end_turn" && !cancelled && !providerError && !emptyResponse;
     await controlLease?.release();
     controlLease = null;
     return {
@@ -979,12 +1204,26 @@ export async function executeHermesNativeChat(input: {
           ? "Hermes ACP prompt cancelled."
           : providerError
             ? "Hermes ACP provider returned an error response."
-            : `Hermes ACP prompt ended with ${stopReason}.`,
-        errorCode: cancelled ? "hermes_native_cancelled" : providerError ? "hermes_native_provider_error" : "hermes_native_prompt_failed",
+            : emptyResponse
+              ? "Hermes ACP prompt ended without assistant output."
+              : promptError
+                ? "Hermes ACP session/prompt request failed."
+                : `Hermes ACP prompt ended with ${stopReason}.`,
+        errorCode: cancelled
+          ? "hermes_native_cancelled"
+          : providerError
+            ? "hermes_native_provider_error"
+            : emptyResponse
+              ? "hermes_native_empty_response"
+              : "hermes_native_prompt_failed",
       }),
     };
   } catch (error) {
     const details = error instanceof HermesAcpNativeCapabilityError ? error.details : { sessionId, sessionParams };
+    if (error instanceof HermesAcpRpcTimeoutError) {
+      if (handshake) await cancel().catch(() => {});
+      throw new HermesAcpRpcTimeoutError(error.method, error.timeoutMs, sessionId, sessionParams);
+    }
     if (error instanceof HermesAcpNativeCapabilityError) throw error;
     throw new HermesAcpNativeCapabilityError("unknown", `Hermes ACP native session failed: ${boundedDiagnostic(error)}.`, details);
   } finally {
@@ -1003,8 +1242,6 @@ async function withLoadedAcpSession<T>(input: {
   operation: (client: HermesAcpRpcClient, handshake: HermesAcpHandshake) => Promise<T>;
   onUpdate?: (update: AcpUpdate) => void;
 }): Promise<T> {
-  const rejection = validateHermesAcpSession({ sessionId: input.session.sessionId, sessionParams: input.session.sessionParams, profile: input.profile, workspace: input.workspace });
-  if (rejection) throw new HermesAcpNativeCapabilityError("unsupported", rejection);
   const onNotification = (method: string, params: JsonRecord) => {
     if (method === "session/update") input.onUpdate?.(asRecord(params.update) ?? params);
   };
@@ -1012,6 +1249,17 @@ async function withLoadedAcpSession<T>(input: {
   const client = await createClient(input.profile, onNotification, onServerRequest);
   try {
     const handshake = await initializeClient(client, input.profile, DEFAULT_REQUEST_TIMEOUT_MS);
+    if (handshake.capabilities.loadSession !== true) {
+      throw new HermesAcpNativeCapabilityError("unsupported", "Hermes ACP did not advertise loadSession; native session continuity cannot be guaranteed.");
+    }
+    const sessionProfile: HermesAcpProfile = {
+      ...input.profile,
+      authMethodId: handshake.authenticatedMethodId,
+      providerVersion: handshake.providerVersion ?? input.profile.providerVersion,
+      protocolVersion: handshake.protocolVersion,
+    };
+    const rejection = validateHermesAcpSession({ sessionId: input.session.sessionId, sessionParams: input.session.sessionParams, profile: sessionProfile, workspace: input.workspace });
+    if (rejection) throw new HermesAcpNativeCapabilityError("unsupported", rejection, { sessionId: input.session.sessionId, sessionParams: input.session.sessionParams });
     const loaded = await client.request("session/load", sessionRequestParams(input.profile, input.profile.cwd, input.session.sessionId), DEFAULT_REQUEST_TIMEOUT_MS);
     requireLoadedSession(loaded);
     return await input.operation(client, handshake);

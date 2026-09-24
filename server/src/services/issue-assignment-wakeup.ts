@@ -72,6 +72,7 @@ export function queueIssueAssignmentWakeup(input: {
   reason: string;
   mutation: string;
   contextSource: string;
+  automationRunId?: string | null;
   requestedByActorType?: "user" | "agent" | "system";
   requestedByActorId?: string | null;
   rethrowOnError?: boolean;
@@ -83,11 +84,16 @@ export function queueIssueAssignmentWakeup(input: {
       source: "assignment",
       triggerDetail: "system",
       reason: input.reason,
-      payload: { issueId: input.issue.id, mutation: input.mutation },
+      payload: {
+        issueId: input.issue.id,
+        mutation: input.mutation,
+        ...(input.automationRunId ? { automationRunId: input.automationRunId } : {}),
+      },
       requestedByActorType: input.requestedByActorType,
       requestedByActorId: input.requestedByActorId ?? null,
       contextSnapshot: {
         issueId: input.issue.id,
+        ...(input.automationRunId ? { automationRunId: input.automationRunId } : {}),
         goalId: input.issue.goalId ?? null,
         source: input.contextSource,
         wakeSource: "assignment",

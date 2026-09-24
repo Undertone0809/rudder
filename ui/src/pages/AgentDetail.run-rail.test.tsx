@@ -5,7 +5,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentRunsApi } from "../api/agent-runs";
+import { ApiError } from "../api/client";
 import { SidePanelProvider, useSidePanel } from "../context/SidePanelContext";
+import { queryKeys } from "../lib/queryKeys";
 import { sidePanelTargetKey, type SidePanelTarget } from "../lib/side-panel-targets";
 import {
   RunConversationListItem,
@@ -41,6 +44,11 @@ vi.mock("../context/I18nContext", () => ({
         "agentRuns.runCount.many": `${params?.count} runs`,
         "agentRuns.openAgentRunForConversation.one": `Open agent run for conversation ${params?.shortId}, ${params?.count} run`,
         "agentRuns.openAgentRunForConversation.many": `Open agent run for conversation ${params?.shortId}, ${params?.count} runs`,
+        "agentRuns.runNotFound": "Run not found. It may have been removed or belong to another agent.",
+        "agentRuns.backToRuns": "Back to runs",
+        "agentRuns.loadingRun": "Loading run...",
+        "agentRuns.runLoadFailed": "Could not load this run.",
+        "agentRuns.retry": "Retry",
       };
       return values[key] ?? key;
     },
@@ -158,6 +166,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  vi.restoreAllMocks();
   queryClient.clear();
   localStorage.removeItem("rudder.run-feedback-draft:org-1:agent-1");
   container.remove();
@@ -546,26 +555,115 @@ describe("RunsTab shared rail branches", () => {
     expect(selectedRow?.textContent).not.toContain("Newest sorted result");
   });
 
-  it("renders grouped rows through the desktop no-selection branch", () => {
-    act(() => {
+  it("reports an unavailable deep-linked run without hiding the run list", async () => {
+    vi.spyOn(agentRunsApi, "get").mockRejectedValue(new ApiError("Not found", 404, null));
+    await act(async () => {
       root.render(
-        <SidePanelProvider>
-          <RunsTab
-            runs={groupedRuns}
-            orgId="org-1"
-            agentId="agent-1"
-            agentRouteId="agent-route"
-            selectedRunId="missing-run"
-            agentRuntimeType="codex_local"
-          />
-        </SidePanelProvider>,
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId="missing-run"
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
       );
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(queryClient.getQueryState(queryKeys.runDetail("missing-run"))?.status).toBe("error"));
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
     });
 
     expectRoundedClipPane(container.querySelector<HTMLElement>("[data-testid='agent-runs-list-pane']"));
     expect(container.querySelector("[data-testid='agent-runs-detail-pane']")).toBeNull();
     expect(container.querySelectorAll("[data-testid='agent-run-conversation-group-row']")).toHaveLength(1);
     expect(container.textContent).toContain("2 runs");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Run not found");
+    expect(container.querySelector<HTMLAnchorElement>('[role="alert"] a')?.getAttribute("to"))
+      .toContain("/agents/agent-route/runs");
+  });
+
+  it("offers a retry when a deep-linked run request fails", async () => {
+    vi.spyOn(agentRunsApi, "get").mockRejectedValue(new ApiError("Unavailable", 500, null));
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId="unavailable-run"
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(queryClient.getQueryState(queryKeys.runDetail("unavailable-run"))?.status).toBe("error"));
+    });
+    await act(async () => {
+      await vi.waitFor(() => expect(container.querySelector('[role="alert"]')).not.toBeNull());
+    });
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Could not load this run");
+    expect(container.querySelector<HTMLButtonElement>('[role="alert"] button')?.textContent).toBe("Retry");
+  });
+
+  it("opens a deep-linked older run outside the bounded list", () => {
+    const olderRun = run({ id: "older-run", resultJson: { summary: "Older answer" } });
+    queryClient.setQueryData(queryKeys.runDetail(olderRun.id), olderRun);
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={olderRun.id}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(container.querySelector("[data-testid='agent-runs-detail-pane']")).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("does not show a cached run from another organization", () => {
+    const foreignRun = run({ id: "foreign-run", orgId: "other-org", resultJson: { summary: "Private answer" } });
+    queryClient.setQueryData(queryKeys.runDetail(foreignRun.id), foreignRun);
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SidePanelProvider>
+            <RunsTab
+              runs={groupedRuns}
+              orgId="org-1"
+              agentId="agent-1"
+              agentRouteId="agent-route"
+              selectedRunId={foreignRun.id}
+              agentRuntimeType="codex_local"
+            />
+          </SidePanelProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(container.querySelector("[data-testid='agent-runs-detail-pane']")).toBeNull();
+    expect(container.textContent).not.toContain("Private answer");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Run not found");
   });
 
   it("clips the desktop selected-run rail while preserving its sticky inner scroller", () => {

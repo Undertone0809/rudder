@@ -4,23 +4,36 @@ import type {
   UsageSummary,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import {
   CodexAppServerClient,
   CodexAppServerClosedError,
   createCodexAppServerStdioTransport,
   type CodexAppServerNotification,
-  type CodexAppServerServerRequestHandler,
 } from "./app-server-client.js";
+import { createCodexAppServerServerRequestHandlers } from "./app-server-interactions.js";
 import { isCodexProviderAuthFailure } from "./parse.js";
 import { CODEX_STDERR_LINE_BUFFER_LIMIT, createCodexStderrLineFilter, splitCompleteLines } from "./stderr-filter.js";
+export { createCodexAppServerServerRequestHandlers } from "./app-server-interactions.js";
 
 const APP_SERVER_INTERRUPT_TIMEOUT_MS = 1_000;
 const APP_SERVER_PROCESS_HARD_DEADLINE_MS = 2_000;
+const APP_SERVER_SERVER_REQUEST_TIMEOUT_MS = 31 * 60_000;
 const APP_SERVER_CAPTURE_LIMIT = 8 * 1024 * 1024;
 const APP_SERVER_SUBAGENT_ITEM_LIMIT = 256;
 const APP_SERVER_SUBAGENT_READ_TIMEOUT_MS = 1_500;
+const APP_SERVER_SCHEMA_PROBE_TIMEOUT_MS = 5_000;
+const APP_SERVER_SCHEMA_CACHE_TTL_MS = 60_000;
+
+type DeveloperInstructionsSchemaCacheEntry = {
+  expiresAt: number;
+  result: Promise<boolean>;
+};
+
+const developerInstructionsSchemaCache = new Map<string, DeveloperInstructionsSchemaCacheEntry>();
 
 type PackageJson = { version?: string };
 
@@ -42,11 +55,16 @@ export interface CodexAppServerChatOptions {
   sandboxMode?: "read-only" | null;
   imagePaths: string[];
   sessionId: string | null;
+  chatDeveloperInstructions?: string;
+  chatDeveloperInstructionsRevision?: string | null;
+  persistedChatDeveloperInstructionsRevision?: string | null;
   timeoutSec: number;
   onLog: AgentRuntimeExecutionContext["onLog"];
   onSpawn?: AgentRuntimeExecutionContext["onSpawn"];
   abortSignal?: AbortSignal;
   controlAttempt?: AgentRuntimeExecutionContext["controlAttempt"];
+  requestApproval?: AgentRuntimeExecutionContext["requestApproval"];
+  waitForApproval?: AgentRuntimeExecutionContext["waitForApproval"];
   onProviderAuthFailure?: (message: string) => Promise<void> | void;
 }
 
@@ -60,6 +78,9 @@ export interface CodexAppServerChatResult {
   summary: string;
   usage: UsageSummary;
   sessionId: string | null;
+  /** Provider-native thread metadata returned by thread/start or thread/resume. */
+  sessionParams: Record<string, unknown> | null;
+  chatDeveloperInstructionsRevision: string | null;
   providerTurnId: string | null;
   resumed: boolean;
   clearSession: boolean;
@@ -73,6 +94,144 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function developerInstructionsSchemaCacheKey(command: string, env: Record<string, string>): string {
+  return [command, env.PATH ?? "", env.CODEX_HOME ?? ""].join("\0");
+}
+
+function schemaDeclaresDeveloperInstructions(value: unknown): boolean {
+  const schema = asRecord(value);
+  const properties = asRecord(schema?.properties);
+  return Boolean(properties && Object.hasOwn(properties, "developerInstructions"));
+}
+
+async function detectNativeDeveloperInstructionsSupport(input: {
+  command: string;
+  cwd: string;
+  env: Record<string, string>;
+}): Promise<boolean> {
+  let tempRoot: string | null = null;
+  try {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-codex-app-schema-"));
+    const outputDir = path.join(tempRoot, "schema");
+    const child = spawn(input.command, [
+      "app-server",
+      "generate-json-schema",
+      "--experimental",
+      "--out",
+      outputDir,
+    ], {
+      cwd: input.cwd,
+      env: input.env,
+      detached: false,
+      shell: false,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    const exitCode = await new Promise<number | null>((resolve) => {
+      let settled = false;
+      let timeout: NodeJS.Timeout | null = null;
+      let hardKillTimeout: NodeJS.Timeout | null = null;
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        if (hardKillTimeout) clearTimeout(hardKillTimeout);
+        resolve(code);
+      };
+      timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        hardKillTimeout = setTimeout(() => child.kill("SIGKILL"), 500);
+        hardKillTimeout.unref?.();
+      }, APP_SERVER_SCHEMA_PROBE_TIMEOUT_MS);
+      timeout.unref?.();
+      child.once("error", () => finish(null));
+      child.once("close", (code) => finish(code));
+    });
+    if (exitCode !== 0) return false;
+
+    const [threadStart, threadResume] = await Promise.all([
+      fs.readFile(path.join(outputDir, "v2", "ThreadStartParams.json"), "utf8"),
+      fs.readFile(path.join(outputDir, "v2", "ThreadResumeParams.json"), "utf8"),
+    ]);
+    return schemaDeclaresDeveloperInstructions(JSON.parse(threadStart))
+      && schemaDeclaresDeveloperInstructions(JSON.parse(threadResume));
+  } catch {
+    return false;
+  } finally {
+    if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function supportsNativeDeveloperInstructions(input: {
+  command: string;
+  cwd: string;
+  env: Record<string, string>;
+}): Promise<boolean> {
+  const cacheKey = developerInstructionsSchemaCacheKey(input.command, input.env);
+  const now = Date.now();
+  for (const [key, value] of developerInstructionsSchemaCache) {
+    if (value.expiresAt <= now) developerInstructionsSchemaCache.delete(key);
+  }
+  const cached = developerInstructionsSchemaCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.result;
+
+  const result = detectNativeDeveloperInstructionsSupport(input).catch(() => false);
+  developerInstructionsSchemaCache.set(cacheKey, {
+    expiresAt: now + APP_SERVER_SCHEMA_CACHE_TTL_MS,
+    result,
+  });
+  return result;
+}
+
+function rememberNativeDeveloperInstructionsSupport(
+  command: string,
+  env: Record<string, string>,
+  supported: boolean,
+): void {
+  developerInstructionsSchemaCache.set(developerInstructionsSchemaCacheKey(command, env), {
+    expiresAt: Date.now() + APP_SERVER_SCHEMA_CACHE_TTL_MS,
+    result: Promise.resolve(supported),
+  });
+}
+
+function isDeveloperInstructionsFieldRejection(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("message" in error)) return false;
+  const message = asString(error.message);
+  return /developerInstructions/i.test(message)
+    && /(?:unknown|unexpected|unrecognized|unsupported|not allowed|additional).{0,40}(?:field|property|param|argument|key)|(?:field|property|param|argument|key).{0,40}(?:unknown|unexpected|unrecognized|unsupported|not allowed|additional)/i.test(message);
+}
+
+function promptWithDeveloperInstructions(prompt: string, instructions: string): string {
+  const stableInstructions = instructions.trim();
+  if (!stableInstructions) return prompt;
+  return prompt ? `${stableInstructions}\n\n${prompt}` : stableInstructions;
+}
+
+function sessionParamsFromThread(
+  response: JsonRecord,
+  threadId: string,
+  cwd: string,
+): Record<string, unknown> {
+  const thread = asRecord(response.thread) ?? {};
+  const params: Record<string, unknown> = {
+    sessionId: threadId,
+    threadId,
+    cwd,
+  };
+  const stringFields: Array<readonly [string, string]> = [
+    ["sessionId", "rootSessionId"],
+    ["forkedFromId", "forkedFromId"],
+    ["model", "model"],
+    ["modelProvider", "modelProvider"],
+  ];
+  for (const [source, target] of stringFields) {
+    const value = asString(thread[source]).trim();
+    if (value) params[target] = value;
+  }
+  if (typeof thread.ephemeral === "boolean") params.ephemeral = thread.ephemeral;
+  return params;
 }
 
 function messagePhase(value: unknown): "commentary" | "final_answer" | null {
@@ -125,7 +284,7 @@ function withCommandWorkingDirectory(
   return cwd ? { ...normalized, cwd } : normalized;
 }
 
-function normalizeThreadItem(value: unknown): JsonRecord {
+export function normalizeThreadItem(value: unknown): JsonRecord {
   const item = asRecord(value) ?? {};
   const type = asString(item.type);
   if (type === "agentMessage") {
@@ -235,40 +394,6 @@ function usageFromNotification(params: JsonRecord): UsageSummary | null {
   };
 }
 
-function serverRequestHandlers(
-  bypass: boolean,
-): Readonly<Record<string, CodexAppServerServerRequestHandler>> {
-  return {
-    "item/commandExecution/requestApproval": ({ signal }) => ({
-      decision: signal.aborted ? "cancel" : bypass ? "accept" : "decline",
-    }),
-    "item/fileChange/requestApproval": ({ signal }) => ({
-      decision: signal.aborted ? "cancel" : bypass ? "accept" : "decline",
-    }),
-    "item/tool/requestUserInput": () => ({ answers: {} }),
-    "mcpServer/elicitation/request": () => ({ action: "cancel", content: null, _meta: null }),
-    "item/permissions/requestApproval": async () => {
-      throw new Error("Rudder does not grant additional App Server permission profiles during a chat turn");
-    },
-    "item/tool/call": () => ({
-      contentItems: [{ type: "inputText", text: "Dynamic App Server tools are not registered for this Rudder run." }],
-      success: false,
-    }),
-    "account/chatgptAuthTokens/refresh": async () => {
-      throw new Error("Codex App Server must use the isolated CODEX_HOME credentials for this run");
-    },
-    "attestation/generate": async () => {
-      throw new Error("Client attestation is not enabled for Rudder App Server chat runs");
-    },
-    applyPatchApproval: ({ signal }) => ({
-      decision: signal.aborted ? "abort" : bypass ? "approved" : "denied",
-    }),
-    execCommandApproval: ({ signal }) => ({
-      decision: signal.aborted ? "abort" : bypass ? "approved" : "denied",
-    }),
-  };
-}
-
 function signalProcessGroup(child: ChildProcess, force: boolean): void {
   const signal = force ? "SIGKILL" : "SIGTERM";
   if (process.platform !== "win32" && child.pid) {
@@ -312,12 +437,13 @@ async function waitForProcessTreeExit(child: ChildProcess, timeoutMs: number): P
 export async function executeCodexAppServerChat(
   options: CodexAppServerChatOptions,
 ): Promise<CodexAppServerChatResult> {
-  const child = spawn(options.command, [
-    "app-server",
-    "--stdio",
-    "--disable",
-    "plugins",
-  ], {
+  const stableDeveloperInstructions = options.chatDeveloperInstructions?.trim() ?? "";
+  let hasNativeDeveloperInstructions = stableDeveloperInstructions.length > 0
+    && await supportsNativeDeveloperInstructions(options);
+  let turnPrompt = hasNativeDeveloperInstructions
+    ? options.prompt
+    : promptWithDeveloperInstructions(options.prompt, stableDeveloperInstructions);
+  const child = spawn(options.command, ["app-server", "--stdio"], {
     cwd: options.cwd,
     env: options.env,
     detached: process.platform !== "win32",
@@ -363,6 +489,8 @@ export async function executeCodexAppServerChat(
   const commandWorkingDirectoryByItemId = new Map<string, string | null>();
   const fileChangePatchByItemId = new Map<string, unknown[]>();
   let threadId: string | null = null;
+  let sessionParams: Record<string, unknown> | null = null;
+  let chatDeveloperInstructionsRevision: string | null = null;
   let turnId: string | null = null;
   let turnCompleted = false;
   let turnError: Error | null = null;
@@ -401,8 +529,14 @@ export async function executeCodexAppServerChat(
     clientInfo: { name: "rudder", title: "Rudder", version: APP_SERVER_CLIENT_VERSION },
     capabilities: { experimentalApi: true },
     requestTimeoutMs: 30_000,
-    serverRequestTimeoutMs: 30_000,
-    serverRequestHandlers: serverRequestHandlers(options.bypassApprovalsAndSandbox),
+    serverRequestTimeoutMs: APP_SERVER_SERVER_REQUEST_TIMEOUT_MS,
+    serverRequestHandlers: createCodexAppServerServerRequestHandlers({
+      bypassApprovalsAndSandbox: options.bypassApprovalsAndSandbox,
+      getSessionId: () => threadId,
+      getTurnId: () => turnId,
+      requestApproval: options.requestApproval,
+      waitForApproval: options.waitForApproval,
+    }),
     onNotification: async (notification: CodexAppServerNotification, { signal }) => {
       if (signal.aborted) return;
       const params = asRecord(notification.params) ?? {};
@@ -662,8 +796,13 @@ export async function executeCodexAppServerChat(
   let clearSession = false;
   try {
     await client.initialize();
-    let threadResponse: JsonRecord;
-    const threadParams = {
+    const shouldUpdateChatDeveloperInstructions = hasNativeDeveloperInstructions
+      && (
+        !options.sessionId
+        || !options.persistedChatDeveloperInstructionsRevision
+        || options.persistedChatDeveloperInstructionsRevision !== options.chatDeveloperInstructionsRevision
+      );
+    const sharedThreadParams = {
       model: options.model || null,
       cwd: options.cwd,
       approvalPolicy: options.bypassApprovalsAndSandbox ? "never" : null,
@@ -672,37 +811,66 @@ export async function executeCodexAppServerChat(
         : options.sandboxMode ?? null,
       config: {
         web_search: options.search ? "live" : "disabled",
-        skills: { bundled: { enabled: false } },
       },
     };
-    if (options.sessionId) {
+    const requestThread = async (includeDeveloperInstructions: boolean): Promise<JsonRecord> => {
+      const params = {
+        ...(options.sessionId ? { threadId: options.sessionId } : {}),
+        ...sharedThreadParams,
+        ...(includeDeveloperInstructions
+          ? { developerInstructions: stableDeveloperInstructions }
+          : {}),
+        ...(!options.sessionId ? { ephemeral: false } : {}),
+      };
       try {
-        threadResponse = asRecord(await client.request("thread/resume", {
-          threadId: options.sessionId,
-          ...threadParams,
-        })) ?? {};
-        resumed = true;
+        return asRecord(await client.request(options.sessionId ? "thread/resume" : "thread/start", params)) ?? {};
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!/unknown|not found|no rollout|missing rollout/i.test(message)) throw error;
-        clearSession = true;
-        threadResponse = asRecord(await client.request("thread/start", {
-          ...threadParams,
-          ephemeral: false,
-        })) ?? {};
+        if (options.sessionId && /unknown|not found|no rollout|missing rollout/i.test(message)) {
+          throw new Error(
+            `Codex App Server could not resume thread "${options.sessionId}": ${message}`,
+          );
+        }
+        throw error;
       }
-    } else {
-      threadResponse = asRecord(await client.request("thread/start", {
-        ...threadParams,
-        ephemeral: false,
-      })) ?? {};
+    };
+    let threadResponse: JsonRecord;
+    try {
+      threadResponse = await requestThread(shouldUpdateChatDeveloperInstructions);
+      resumed = Boolean(options.sessionId);
+    } catch (error) {
+      if (!shouldUpdateChatDeveloperInstructions || !isDeveloperInstructionsFieldRejection(error)) throw error;
+      hasNativeDeveloperInstructions = false;
+      rememberNativeDeveloperInstructionsSupport(options.command, options.env, false);
+      turnPrompt = promptWithDeveloperInstructions(options.prompt, stableDeveloperInstructions);
+      await options.onLog(
+        "stderr",
+        "[rudder] Codex App Server rejected thread developerInstructions; stable chat instructions are included in turn input.\n",
+      );
+      threadResponse = await requestThread(false);
+      resumed = Boolean(options.sessionId);
     }
     threadId = asString(asRecord(threadResponse.thread)?.id);
     if (!threadId) throw new Error("Codex App Server did not return a thread id");
+    if (resumed && threadId !== options.sessionId) {
+      throw new Error(
+        `Codex App Server resumed thread ${threadId}, not the requested thread ${options.sessionId}`,
+      );
+    }
+    sessionParams = sessionParamsFromThread(threadResponse, threadId, options.cwd);
+    chatDeveloperInstructionsRevision = hasNativeDeveloperInstructions
+      ? options.chatDeveloperInstructionsRevision ?? null
+      : null;
+    if (stableDeveloperInstructions && !hasNativeDeveloperInstructions && !shouldUpdateChatDeveloperInstructions) {
+      await options.onLog(
+        "stderr",
+        "[rudder] Codex App Server schema does not expose thread developerInstructions; stable chat instructions are included in turn input.\n",
+      );
+    }
     await emit({ type: "thread.started", thread_id: threadId, model: options.model || "codex" });
 
     const input = [
-      { type: "text", text: options.prompt, text_elements: [] },
+      { type: "text", text: turnPrompt, text_elements: [] },
       ...options.imagePaths.map((imagePath) => ({ type: "localImage", path: imagePath })),
     ];
     const turnResponse = asRecord(await client.request("turn/start", {
@@ -803,6 +971,8 @@ export async function executeCodexAppServerChat(
       summary: finalAgentText,
       usage: latestUsage,
       sessionId: threadId,
+      sessionParams,
+      chatDeveloperInstructionsRevision,
       providerTurnId: turnId,
       resumed,
       clearSession,
@@ -818,6 +988,8 @@ export async function executeCodexAppServerChat(
       summary: finalAgentText,
       usage: latestUsage,
       sessionId: threadId ?? options.sessionId,
+      sessionParams,
+      chatDeveloperInstructionsRevision,
       providerTurnId: turnId,
       resumed,
       clearSession,

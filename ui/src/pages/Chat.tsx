@@ -36,6 +36,7 @@ import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
 import type { TranscriptAgentInspection, TranscriptSkillTarget } from "@/components/transcript/RunTranscriptView";
+import { chatTranscriptEntriesForMessage } from "@/components/transcript/useAgentRunTranscripts";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -212,6 +213,7 @@ import {
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useCurrentUserAvatar } from "../hooks/useCurrentUserAvatar";
+import { createChatAskUserApprovalSubmit } from "./Chat.ask-user-approval";
 import { PendingAttachmentPreview } from "./Chat.attachments";
 import {
   ChatComposerFileDropOverlay,
@@ -219,6 +221,7 @@ import {
   useChatComposerPasteAttachments,
 } from "./Chat.file-drop";
 import { ChatPendingFirstTurn, firstChatTurnRecoveryToast } from "./Chat.first-turn";
+import { useChatInitialBottomScroll } from "./Chat.initial-scroll";
 import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import {
   ChatAgentMenuContent,
@@ -233,6 +236,13 @@ import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-contr
 import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annotation-selection";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { buildChatTimelineRows } from "./Chat.timeline";
+import {
+  chatRunAnnotationContextForMessage,
+  chatTranscriptPresentationForMessage,
+  renderChatRunTranscriptContinuation,
+  useAutoLoadChatSteerTranscripts,
+  useChatTranscripts,
+} from "./Chat.transcripts";
 import { ChatWorkManifest, ChatWorkManifestToggle, chatWorkManifestCount, hasChatWorkManifestContent } from "./Chat.work-manifest";
 import { CHAT_ISSUE_MENTION_LIMIT, CHAT_LIST_PREVIEW_LIMIT, CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD, CHAT_STEER_RETRY_DELAYS_MS, EMPTY_CHAT_BODY_SHA256, EMPTY_STATE_PROMPT_PAGE_TRANSITION_MS, RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT, RECENT_PROJECT_CONVERSATION_LOAD_INCREMENT, activeGenerationIdFromSnapshot, applyChatStreamProgressEvent, canQueueComposerDraft, chatComposerSendButtonMode, chatMessageJumpTargetFromHref, chatReferenceMarkdown, chatSendButtonDisabled, createQueuedComposerMessage, findChatMessageElement, isExternalBoundConversation, localAppRecoveryDraftStorageScope, projectChatQueueDelivery, queuedMessagePayloadForBodyEdit, revealChatAnnotationSourceElement, revealChatMessageElement, shouldPollChatQueue, sideChatTargetFromMessage, useChatDraftQueries, type PendingChatSteerRetry } from "./Chat.workspace-helpers";
 export * from "./Chat.attachments";
@@ -265,7 +275,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const stopRecoveryStreamKeysRef = useRef<Record<string, string>>({});
   const streamOwnershipRef = useRef<Record<string, { streamKey: string; controller: AbortController }>>({});
   const streamDraftsRef = useRef(streamDrafts);
-  const transcriptLoadPromisesRef = useRef<Record<string, Promise<TranscriptEntry[] | null>>>({});
   streamDraftsRef.current = streamDrafts;
   const submitStopRecoveryRef = useRef<(recovery: PendingChatStopRecovery) => void>(() => {});
   const stopRecoveryRetrierRef = useRef<ReturnType<typeof createChatStopRecoveryRetrier> | null>(null);
@@ -308,7 +317,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   }, []);
   const [, refreshPendingFiles] = useState(0);
   const pendingFiles = readChatPendingAttachmentsForScope(draftStorageScopeKey);
-  const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]);  const [openProcessMessageIds, setOpenProcessMessageIds] = useState<Record<string, boolean>>({}); const [loadingTranscriptMessageIds, setLoadingTranscriptMessageIds] = useState<Record<string, true>>({}); const [loadedTranscriptsByMessageId, setLoadedTranscriptsByMessageId] = useState<Record<string, TranscriptEntry[]>>({}); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
+  const setPendingFilesForCurrentScope = useCallback((updater: (current: File[]) => File[]) => { updateChatPendingAttachmentsForScope(draftStorageScopeKey, updater); refreshPendingFiles((version) => version + 1); }, [draftStorageScopeKey]); const clearPendingFilesForCurrentScope = useCallback(() => { setPendingFilesForCurrentScope(() => []); }, [setPendingFilesForCurrentScope]); const [draftPreferredAgentId, setDraftPreferredAgentId] = useState<string>(NO_CHAT_AGENT_ID); const [draftProjectId, setDraftProjectId] = useState<string>(NO_PROJECT_ID);
 
   const [pendingProjectContextOverride, setPendingProjectContextOverride] = useState<{ chatId: string; projectId: string | null; } | null>(null); const [draftPlanMode, setDraftPlanMode] = useState(false); const [pendingPlanModeOverride, setPendingPlanModeOverride] = useState<boolean | null>(null); const [decisionNotesByMessageId, setDecisionNotesByMessageId] = useState<Record<string, string>>({}); const [issueProposalOverridesByMessageId, setIssueProposalOverridesByMessageId] = useState<Record<string, Record<string, unknown>>>({}); const [plusMenuOpen, setPlusMenuOpen] = useState(false); const [agentMenuOpen, setAgentMenuOpen] = useState(false); const [projectMenuOpen, setProjectMenuOpen] = useState(false); const [skillMenuOpen, setSkillMenuOpen] = useState(false); const [skillSearchQuery, setSkillSearchQuery] = useState(""); const [libraryFileMentionQuery, setLibraryFileMentionQuery] = useState<string | null>(null); const [composerMenuPosition, setComposerMenuPosition] = useState<CSSProperties | null>(null); const [sideChatSlashMenuPosition, setSideChatSlashMenuPosition] = useState<CSSProperties | null>(null); const [inlineEditUserMessageId, setInlineEditUserMessageId] = useState<string | null>(null); const [inlineEditDraft, setInlineEditDraft] = useState(""); const [editingQueuedItem, setEditingQueuedItem] = useState<{ itemId: string; value: string; version: number } | null>(null); const [stoppingChatIds, setStoppingChatIds] = useState<Set<string>>(() => new Set()); const [steeringQueuedItemIds, setSteeringQueuedItemIds] = useState<Set<string>>(() => new Set()); const [branchPreview, setBranchPreview] = useState<ChatBranchPreview | null>(null); const [emptyStateActiveTab, setEmptyStateActiveTab] = useState<"recent" | "use-cases">("use-cases"); const [emptyStateActiveSuggestionIndex, setEmptyStateActiveSuggestionIndex] = useState(0); const [dismissedEmptyStatePromptQuery, setDismissedEmptyStatePromptQuery] = useState<string | null>(null); const [retainedEmptyStatePromptSuggestions, setRetainedEmptyStatePromptSuggestions] = useState<readonly EmptyStatePromptSuggestion[]>([]); const [recentProjectConversationLimit, setRecentProjectConversationLimit] = useState(RECENT_PROJECT_CONVERSATION_INITIAL_LIMIT); const [recentAskUserAnswerMessageId, setRecentAskUserAnswerMessageId] = useState<string | null>(null); const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null); const [renameDraft, setRenameDraft] = useState(""); const [generatingChatTitleIds, setGeneratingChatTitleIds] = useState<Set<string>>(() => new Set()); const [workManifestWideOpen, setWorkManifestWideOpen] = useState(true); const fileInputRef = useRef<HTMLInputElement>(null); const composerSurfaceRef = useRef<HTMLDivElement>(null); const composerEditorRef = useRef<MarkdownEditorRef>(null); const inlineEditSurfaceRef = useRef<HTMLDivElement>(null); const inlineEditEditorRef = useRef<MarkdownEditorRef>(null); const composerContextMenuRef = useRef<HTMLDivElement>(null); const composerEditorScrollRef = useScrollbarActivityRef(); const skillSearchInputRef = useRef<HTMLInputElement>(null); const manuallyMarkedUnreadKeyRef = useRef<string | null>(null); const chatSendLocksRef = useRef<Record<string, true>>({}); const stoppingChatIdsRef = useRef(new Set<string>()); const steeringQueuedItemIdsRef = useRef(new Set<string>()); const lastAppliedPrefillRef = useRef<string | null>(null); const lastAppliedAgentPrefillRef = useRef<string | null>(null); const lastAppliedProjectPrefillRef = useRef<string | null>(null); const draftProjectScopeKeyRef = useRef<string | null>(null); const draftProjectDefaultKeyRef = useRef<string | null>(null); const draftProjectManuallySelectedRef = useRef(false); const chatMessagesScrollElementRef = useRef<HTMLDivElement | null>(null); const chatMainWorkspaceRef = useRef<HTMLElement | null>(null); const initialScrolledConversationRef = useRef<string | null>(null); const { open: sidePanelOpen, openTarget: openSidePanelTarget, openTargetForContext: openSidePanelTargetForContext, showPanelForContext: showSidePanelForContext } = useSidePanel(); const chatMessagesActivityRef = useScrollbarActivityRef(); const chatMessagesScrollRef = useCallback((element: HTMLDivElement | null) => { chatMessagesScrollElementRef.current = element; chatMessagesActivityRef(element); }, [chatMessagesActivityRef]); const pendingPrefill = searchParams.get("prefill") ?? ""; const pendingAgentPrefill = searchParams.get("agentId")?.trim() ?? ""; const pendingProjectPrefill = searchParams.get("projectId")?.trim() ?? ""; const pendingIssueId = searchParams.get("issueId")?.trim() ?? ""; const pendingTargetMessageId = (searchParams.get("messageId") ?? searchParams.get("targetMessageId") ?? "").trim(); const isMessengerChatRoute = /^\/(?:[^/]+\/)?messenger\/chat(?:\/|$)/.test(location.pathname); const relativePath = toOrganizationRelativePath(location.pathname); const chatRouteBase = relativePath.startsWith("/messenger/chat") ? "/messenger/chat" : "/chat"; const chatRootPath = chatRouteBase; const chatConversationPath = useCallback((id: string) => `${chatRouteBase}/${id}`, [chatRouteBase]); const resolveCurrentSidePanelChatContextKey = useCallback(() => { const activePath = typeof window === "undefined" ? relativePath : toOrganizationRelativePath(window.location.pathname); const match = activePath.match(/^\/(?:messenger\/)?chat\/([^/?#]+)/); const chatId = match?.[1] ?? conversationId ?? null; return chatId ? `chat:${chatId}` : null; }, [conversationId, relativePath]); const openLocalFile = useCallback((targetPath: string) => { const desktopShell = readDesktopShell();
     if (!desktopShell) {
@@ -474,6 +483,28 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   }).canQueryMessages; const messagesQuery = useQuery({
     queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.listMessages(selectedOrganizationId!, conversationId!, { includeTranscript: false }), enabled: canQueryMessages, });
+  const rawMessages = messagesQuery.data ?? [];
+  const {
+    openProcessMessageIds,
+    loadingTranscriptMessageIds,
+    loadedTranscriptsByMessageId,
+    transcriptByRun,
+    transcriptStateByRun,
+    transcriptNavigationByRun,
+    setProcessOpenForMessage,
+    loadMessageTranscript,
+    keepProcessOpenForMessages,
+    handleRunAnnotation: handleChatRunAnnotation,
+  } = useChatTranscripts({
+    messages: rawMessages,
+    selectedOrganizationId,
+    queryClient,
+    pushToast,
+    annotationState: responseAnnotationState,
+    dispatchResponseAnnotation,
+    setAnnouncement: setResponseAnnotationAnnouncement,
+    translate: t,
+  });
   const workManifestQuery = useQuery({
     queryKey: queryKeys.chats.workManifest(selectedOrganizationId ?? "__none__", conversationId ?? "__none__"),
     queryFn: () => chatsApi.getWorkManifest(conversationId!),
@@ -531,7 +562,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     }), enabled: !!selectedOrganizationId, }); const profileQuery = useQuery({
     queryKey: queryKeys.instance.profileSettings, queryFn: () => instanceSettingsApi.getProfile(), }); const generalSettingsQuery = useQuery({
     queryKey: queryKeys.instance.generalSettings, queryFn: () => instanceSettingsApi.getGeneral(), }); const showDeveloperDiagnostics = generalSettingsQuery.data?.showDeveloperDiagnostics === true;
-  useEffect(() => { if (pendingPrefill || newConversationSendInFlight) return; const hasAgentPrefill = pendingAgentPrefill.length > 0; const hasProjectPrefill = pendingProjectPrefill.length > 0; if (!hasAgentPrefill && !hasProjectPrefill) return;
+  useEffect(() => { if (pendingPrefill || newConversationSendInFlight || firstTurnStore.getSnapshot().pending) return; const hasAgentPrefill = pendingAgentPrefill.length > 0; const hasProjectPrefill = pendingProjectPrefill.length > 0; if (!hasAgentPrefill && !hasProjectPrefill) return;
     const agentAlreadyApplied = !hasAgentPrefill || pendingAgentPrefill === lastAppliedAgentPrefillRef.current;
     const projectAlreadyApplied = !hasProjectPrefill || pendingProjectPrefill === lastAppliedProjectPrefillRef.current; if (agentAlreadyApplied && projectAlreadyApplied) return;
     if (!conversationId) { if (hasAgentPrefill && !agentAlreadyApplied && !agents) return; if (hasProjectPrefill && !projectAlreadyApplied && !projects) return;
@@ -557,6 +588,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     chatConversationPath,
     chatRootPath,
     conversationId,
+    firstTurnStore,
     navigate,
     pendingPrefill,
     pendingAgentPrefill,
@@ -760,55 +792,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       latestActivityAt: sentAt, preview: body, }); return optimisticConversation; }; const upsertMessages = (chatId: string, incoming: ChatMessage[]) => {
     queryClient.setQueryData<ChatMessage[]>(
       queryKeys.chats.messages(selectedOrganizationId ?? "__none__", chatId), (current) => mergeChatMessages(current ?? [], incoming), ); }; const acquireChatSendLock = useCallback((chatId: string) => { if (chatSendLocksRef.current[chatId]) return false;
-    chatSendLocksRef.current = { ...chatSendLocksRef.current, [chatId]: true, }; return true; }, []); const releaseChatSendLock = useCallback((chatId: string) => { if (!(chatId in chatSendLocksRef.current)) return; const { [chatId]: _removed, ...rest } = chatSendLocksRef.current; chatSendLocksRef.current = rest; }, []); const setProcessOpenForMessage = useCallback((messageId: string, open: boolean) => {
-    setOpenProcessMessageIds((current) => {
-      if (messageId in current && current[messageId] === open) return current;
-      return { ...current, [messageId]: open };
-    }); }, []); const loadMessageTranscript = useCallback((chatId: string, messageId: string) => {
-    const pending = transcriptLoadPromisesRef.current[messageId];
-    if (pending) return pending;
-    const request = (async () => {
-      setLoadingTranscriptMessageIds((current) => ({ ...current, [messageId]: true }));
-      try {
-        const response = await chatsApi.getMessageTranscript(chatId, messageId);
-        const transcript = response.transcript as TranscriptEntry[];
-        setLoadedTranscriptsByMessageId((current) => ({ ...current, [messageId]: transcript }));
-        queryClient.setQueryData<ChatMessage[]>(
-          queryKeys.chats.messages(selectedOrganizationId ?? "__none__", chatId),
-          (current) => (current ?? []).map((message) =>
-            message.id === messageId
-              ? { ...message, transcript }
-              : message,
-          ),
-        );
-        setProcessOpenForMessage(messageId, true);
-        return transcript;
-      } catch (error) {
-        pushToast({
-          title: "Failed to load process details",
-          body: error instanceof Error ? error.message : "Try again.",
-          tone: "error",
-        });
-        return null;
-      } finally {
-        const { [messageId]: _removed, ...rest } = transcriptLoadPromisesRef.current;
-        transcriptLoadPromisesRef.current = rest;
-        setLoadingTranscriptMessageIds((current) => {
-          if (!(messageId in current)) return current;
-          const { [messageId]: _removed, ...rest } = current;
-          return rest;
-        });
-      }
-    })();
-    transcriptLoadPromisesRef.current[messageId] = request;
-    return request;
-  }, [pushToast, queryClient, selectedOrganizationId, setProcessOpenForMessage]); const keepProcessOpenForMessages = useCallback((messages: ChatMessage[]) => { const messageIds = messages .filter((message) => { const transcript = (message.transcript ?? []) as TranscriptEntry[];
-        return transcript.length > 0 && (
-            message.role === "assistant"
-            || message.kind === "issue_proposal" || message.kind === "operation_proposal" ); }) .map((message) => message.id); if (messageIds.length === 0) return;
-    setOpenProcessMessageIds((current) => { let changed = false; const next = { ...current };
-      for (const messageId of messageIds) { if (next[messageId]) continue; next[messageId] = true;
-        changed = true; } return changed ? next : current; }); }, []); const setDecisionNoteForMessage = useCallback((messageId: string, value: string) => {
+    chatSendLocksRef.current = { ...chatSendLocksRef.current, [chatId]: true, }; return true; }, []); const releaseChatSendLock = useCallback((chatId: string) => { if (!(chatId in chatSendLocksRef.current)) return; const { [chatId]: _removed, ...rest } = chatSendLocksRef.current; chatSendLocksRef.current = rest; }, []);
+  const setDecisionNoteForMessage = useCallback((messageId: string, value: string) => {
     setDecisionNotesByMessageId((current) => {
       if (!value.trim()) { if (!(messageId in current)) return current; const { [messageId]: _removed, ...rest } = current;
         return rest; } return { ...current, [messageId]: value }; }); }, []); const clearDecisionNoteForMessage = useCallback((messageId: string) => {
@@ -1562,6 +1547,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         if (!createdConversation) {
           throw new Error("Chat stream ended before accepting the first message");
         }
+        // The provider stream has finished. Cache refresh must not retain an
+        // invisible send lock while the composer already offers Send again.
+        if (chatSendLockAcquired) {
+          releaseChatSendLock(createdConversation.id);
+          chatSendLockAcquired = false;
+        }
         if (options?.clearPendingFilesOnSuccess) clearPendingFilesForCurrentScope();
         await refreshChat(createdConversation.id);
         await queryClient.invalidateQueries({ queryKey: queryKeys.chats.queue(selectedOrganizationId, createdConversation.id) });
@@ -1823,7 +1814,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       }
       if (newConversationLockAcquired && activeStreamKey) { firstTurnStore.finish(firstTurnOwner, activeStreamKey); } } }; const conversations = useMemo(() => { const items = conversationsQuery.data ?? [];
     return [...items].sort((a, b) => { if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1; return new Date(b.lastMessageAt ?? b.updatedAt).getTime() - new Date(a.lastMessageAt ?? a.updatedAt).getTime(); }); }, [conversationsQuery.data]);
-  const rawMessages = messagesQuery.data ?? [];
   useEffect(() => {
     if (!conversationId || !selectedConversation || queueQuery.data?.activeGenerationStatus !== "waiting_for_network") return;
     const scopeKey = chatGenerationScopeKey(selectedOrganizationId!, selectedConversation);
@@ -1866,6 +1856,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     loadedTranscriptsByMessageId,
     rawMessages,
     selectedConversationId: selectedConversation?.id ?? null,
+    transcriptByRun,
   });
   const addPendingResponseAnnotation = useCallback(async (
     options: { focusComposer?: boolean } = {},
@@ -2170,16 +2161,19 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     void (async () => {
       if (annotation.surface === "process_transcript") {
         setProcessOpenForMessage(sourceMessage.id, true);
-        let transcript = loadedTranscriptsByMessageId[sourceMessage.id]
-          ?? sourceMessage.transcript
-          ?? [];
+        let transcript = chatTranscriptEntriesForMessage(
+          sourceMessage,
+          loadedTranscriptsByMessageId,
+          transcriptByRun,
+        );
         if (
           !transcript.some(isMatchingProcessEntry)
-          && sourceMessage.transcriptSummary?.entryCount
+          && (sourceMessage.runId || sourceMessage.transcriptSummary?.entryCount)
         ) {
           transcript = await loadMessageTranscript(
             sourceMessage.conversationId,
             sourceMessage.id,
+            sourceMessage,
           ) ?? [];
         }
         if (!transcript.some(isMatchingProcessEntry)) {
@@ -2222,6 +2216,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     selectedConversation,
     selectedOrganizationId,
     setProcessOpenForMessage,
+    transcriptByRun,
   ]);
   const pendingResponseAnnotationSource = useMemo(
     () => readChatResponseAnnotationNavigationState(location.state),
@@ -2284,6 +2279,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       return annotations.some((annotation) => annotation.id === current) ? null : current;
     });
   }, []);
+  const handleActivateResponseAnnotation = useCallback((
+    annotationId: string,
+    anchor: HTMLButtonElement,
+  ) => {
+    if (!responseAnnotationState.annotations.some((annotation) => annotation.id === annotationId)) {
+      responseAnnotationEditor.close();
+      return;
+    }
+    setResponseAnnotationsExpanded(false);
+    responseAnnotationEditor.openFromAnchor(annotationId, anchor);
+  }, [
+    responseAnnotationEditor.close,
+    responseAnnotationEditor.openFromAnchor,
+    responseAnnotationState.annotations,
+  ]);
   const latestIncomingMessageId = useMemo(() => { const messages = [...rawMessages] .filter(isUserVisibleIncomingChatMessage) .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); return messages[0]?.id ?? null; }, [rawMessages]); const displayedMessages = useMemo(
     () => computeDisplayedChatMessages(rawMessages, branchPreview), [rawMessages, branchPreview], ); const showMessagesLoading = transcriptLoadState.showMessagesLoading; const activeStream = readChatScopedState(streamDrafts, selectedConversationStreamScopeKey ?? undefined); const activeSendInFlight = readChatScopedFlag(sendInFlightByChatId, selectedConversationStreamScopeKey ?? undefined); const activeQueueItems = queueQuery.data?.items ?? []; const activeQueueProjectionKey = activeQueueItems.map((item) => `${item.id}:${item.status}:${item.version}`).join("|"); const visibleQueueItems = activeQueueItems.filter((item) => projectChatQueueDelivery(item).state !== "hidden"); const agentSelectionLocked = isChatAgentSelectionLocked({ hasConversation: Boolean(selectedConversation), preferredAgentId: selectedConversation?.preferredAgentId, hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const projectSelectionLocked = isChatProjectSelectionLocked({
     hasConversation: Boolean(selectedConversation),
@@ -2398,7 +2408,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   const latestUnansweredAskUserMessage = useMemo(
     () => findLatestUnansweredAskUserMessage(visibleMessages), [visibleMessages], ); const activeStreamUserTurnVisible = Boolean(activeStream && !activeStreamPreviewHidden); const activeStreamAskUserRequest = activeStreamUserTurnVisible && latestUnansweredAskUserMessage ? askUserRequestFromMessage(latestUnansweredAskUserMessage) : null; const pendingAskUserMessage = activeStreamUserTurnVisible ? null : latestUnansweredAskUserMessage; const pendingAskUserRequest = pendingAskUserMessage ? askUserRequestFromMessage(pendingAskUserMessage) : null; const lastMarkedReadKeyRef = useRef<string | null>(null); const optimisticReadBadgeMarkerRef = useRef<string | null>(null);
   useEffect(() => { if (!pendingAskUserRequest) return; closeComposerContextMenus(); }, [closeComposerContextMenus, pendingAskUserRequest]);
-  useEffect(() => { const chatId = selectedConversation?.id ?? null; if (!chatId || showMessagesLoading) return; if (initialScrolledConversationRef.current === chatId) return; initialScrolledConversationRef.current = chatId; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; scrollChatMessagesToBottom(scrollElement); }); return () => cancelAnimationFrame(frame); }, [selectedConversation?.id, showMessagesLoading, visibleMessages.length]);
+  useChatInitialBottomScroll({
+    conversationId: selectedConversation?.id ?? null,
+    loading: showMessagesLoading,
+    targetMessageId: pendingTargetMessageId,
+    scrollElementRef: chatMessagesScrollElementRef,
+    scrolledConversationRef: initialScrolledConversationRef,
+    scrollToBottom: scrollChatMessagesToBottom,
+  });
   useEffect(() => { if (!conversationId || !pendingTargetMessageId || showMessagesLoading) return; const frame = requestAnimationFrame(() => { const scrollElement = chatMessagesScrollElementRef.current; if (!scrollElement) return; const target = findChatMessageElement(scrollElement, pendingTargetMessageId); if (!target) return; revealChatMessageElement(target); const nextSearch = new URLSearchParams(searchParams); nextSearch.delete("messageId"); nextSearch.delete("targetMessageId"); navigate({
         pathname: chatConversationPath(conversationId),
         search: nextSearch.toString() ? `?${nextSearch.toString()}` : "",
@@ -2479,21 +2496,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     [activeStream?.streamKey],
   );
   const estimateChatTimelineItemSize = useCallback(() => 180, []);
-  useEffect(() => {
-    for (const message of visibleMessages) {
-      if (message.role !== "assistant" || !message.generationId) continue;
-      if ((nativeSteerMessagesByGenerationId.get(message.generationId)?.length ?? 0) === 0) continue;
-      if ((loadedTranscriptsByMessageId[message.id] ?? message.transcript ?? []).length > 0) continue;
-      if (!message.transcriptSummary?.entryCount || loadingTranscriptMessageIds[message.id]) continue;
-      void loadMessageTranscript(message.conversationId, message.id);
-    }
-  }, [
-    loadMessageTranscript,
-    loadedTranscriptsByMessageId,
-    loadingTranscriptMessageIds,
-    nativeSteerMessagesByGenerationId,
-    visibleMessages,
-  ]);
+  useAutoLoadChatSteerTranscripts({
+    visibleMessages, nativeSteerMessagesByGenerationId,
+    loadedTranscriptsByMessageId, loadingTranscriptMessageIds,
+    transcriptByRun, transcriptStateByRun, loadMessageTranscript,
+  });
   const loadError = (conversationsQuery.data === undefined ? conversationsQuery.error : null) ?? (conversationQuery.data === undefined ? conversationQuery.error : null) ?? (messagesQuery.data === undefined ? messagesQuery.error : null) ?? agentsError ?? organizationSkillsError ?? activeAgentSkillsError ?? projectsError ?? issuesError;
   const loadErrorMessage = loadError instanceof Error ? loadError.message : loadError ? "Failed to load chat data." : null; const workManifestError = workManifestQuery.error instanceof Error ? workManifestQuery.error.message : workManifestQuery.error ? "Failed to load files and links." : null; const startActiveConversationRename = () => { if (!selectedConversation) return; setRenamingConversationId(selectedConversation.id); setRenameDraft(selectedConversation.title); }; const submitActiveConversationRename = () => { if (!selectedConversation || renamingConversationId !== selectedConversation.id) return; const trimmed = renameDraft.trim(); setRenamingConversationId(null); if (!trimmed || trimmed === selectedConversation.title) return; renameConversationMutation.mutate({ chatId: selectedConversation.id, title: trimmed }); }; const copyActiveConversationLink = async () => { if (!selectedConversation) return;
     try {
@@ -2524,7 +2531,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       : draftPreflightError
         ?? draftPreflightQuery.data?.error
         ?? "Selected chat configuration is unavailable."; const hasPendingLightweightProposal = rawMessages.some(
-    (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval));
+    (message) => !message.supersededAt && message.kind === "operation_proposal" && !message.approval && operationProposalStatusFromMessage(message) === "pending", ); const hasActionableApprovals = rawMessages .filter((m) => !m.supersededAt) .some((message) => approvalNeedsAction(message.approval)
+    && !(message.kind === "ask_user" && askUserRequestFromMessage(message)));
   const runtimePillLabel = chatRuntimeSelectionLabel({
     agent: activeSkillAgent,
     runtime: selectedConversation?.chatRuntime ?? draftPreflightQuery.data ?? null,
@@ -4026,7 +4034,8 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                               );
                             }
                             const { message, messageIndex } = timelineRow;
-                            const previousMessage = visibleMessages[messageIndex - 1] ?? null; const previousPreviousMessage = visibleMessages[messageIndex - 2] ?? null; if (shouldAttachIssueCreatedSystemMessage(previousMessage, message) || shouldAttachApprovalFeedbackSystemMessage(previousPreviousMessage, previousMessage, message)) return null; const nextMessage = visibleMessages[messageIndex + 1] ?? null; const issueCreatedMessage = shouldAttachIssueCreatedSystemMessage(message, nextMessage) ? nextMessage : null; const persistedTranscript = (loadedTranscriptsByMessageId[message.id] ?? message.transcript ?? []) as TranscriptEntry[];
+                            const previousMessage = visibleMessages[messageIndex - 1] ?? null; const previousPreviousMessage = visibleMessages[messageIndex - 2] ?? null; if (shouldAttachIssueCreatedSystemMessage(previousMessage, message) || shouldAttachApprovalFeedbackSystemMessage(previousPreviousMessage, previousMessage, message)) return null; const nextMessage = visibleMessages[messageIndex + 1] ?? null; const issueCreatedMessage = shouldAttachIssueCreatedSystemMessage(message, nextMessage) ? nextMessage : null;
+                            const { state: readerTranscriptState, entries: persistedTranscript, navigation: readerTranscriptNavigation } = chatTranscriptPresentationForMessage(message, loadedTranscriptsByMessageId, transcriptByRun, transcriptStateByRun, transcriptNavigationByRun);
                             const messageSteerMessages = message.generationId
                               ? nativeSteerMessagesByGenerationId.get(message.generationId) ?? []
                               : [];
@@ -4034,7 +4043,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                               || message.kind === "issue_proposal" || message.kind === "operation_proposal";
                             const shouldRenderPersistedTranscript =
                               (persistedTranscript.length > 0 || messageSteerMessages.length > 0)
-                              && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageSteerMessages.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary?.entryCount); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
+                              && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageSteerMessages.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary && (message.runId ? !readerTranscriptState?.hasData : message.transcriptSummary.entryCount > 0)); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
                             const messageTurnBranchControls = turnBranchControlsFor(message);
                             const refreshTurnBranchControls = message.chatTurnId ? turnBranchControlsForTurn(message.chatTurnId) : null;
                             const historicalAnnotationsForMessage = historicalResponseAnnotations.filter(
@@ -4075,22 +4084,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                             sourceConversationId: message.conversationId,
                                             sourceMessageId: message.id,
                                             annotations: responseAnnotationsForMessage,
-                                            onActivateAnnotation: (annotationId, anchor) => {
-                                              if (responseAnnotationState.annotations.some(
-                                                (annotation) => annotation.id === annotationId,
-                                              )) {
-                                                setResponseAnnotationsExpanded(false);
-                                                responseAnnotationEditor.openFromAnchor(
-                                                  annotationId,
-                                                  anchor,
-                                                );
-                                              } else {
-                                                responseAnnotationEditor.close();
-                                              }
-                                            },
+                                            onActivateAnnotation: handleActivateResponseAnnotation,
                                           }
                                         : undefined
                                     }
+                                    runAnnotationContext={chatRunAnnotationContextForMessage(message, handleChatRunAnnotation)}
                                     sentAnnotationContext={{
                                       onSelect: handleSelectSentResponseAnnotation,
                                       onExpandedChange: handleSentResponseAnnotationsExpanded,
@@ -4100,10 +4098,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     summary={message.transcriptSummary}
                                     state={message.status}
                                     generationTerminalReason={message.generationTerminalReason}
-                                    loading={Boolean(loadingTranscriptMessageIds[message.id])}
+                                    loading={Boolean(message.runId ? readerTranscriptState?.loading : loadingTranscriptMessageIds[message.id])}
                                     localizeText={localizeChatProcessText}
-                                    onLoad={() => void loadMessageTranscript(message.conversationId, message.id)}
+                                    onLoad={() => void loadMessageTranscript(message.conversationId, message.id, message)}
                                   /> ) : null}
+                                {renderChatRunTranscriptContinuation(message, messageCanShowProcess, readerTranscriptNavigation, readerTranscriptState)}
                                 <ChatMessageItem
                                   localizeText={localizeChatProcessText}
                                   conversation={selectedConversation}
@@ -4127,7 +4126,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       chatId: selectedConversation.id,
                                       message: messageToConvert,
                                       proposalOverride: issueProposalOverridesByMessageId[messageToConvert.id], })
-                                  } onCopyMessageText={copyChatMessageText} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
+                                  } onCopyMessageText={copyChatMessageText} onOpenSideChat={selectedConversationExternalBound ? undefined : (messageForSideChat) => openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), sideChatTargetFromMessage(selectedConversation, messageForSideChat))} onEditUserMessage={selectedConversationExternalBound ? undefined : beginEditUserMessage} onRetryFailedMessage={selectedConversationExternalBound ? undefined : retryFailedMessage} canRefreshAssistantMessage={canRefreshDisplayedAssistantChatMessage({
                                     message,
                                     branchControls: refreshTurnBranchControls,
                                     hasActiveReply: selectedConversationHasActiveReply,
@@ -4136,19 +4135,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     sourceMessageId: messageToFork.id,
                                   })} onOpenFile={openLocalFile} onMarkdownLinkClick={handleChatMarkdownLinkClick}
                                   responseAnnotations={responseAnnotationsForMessage}
-                                  onEditResponseAnnotation={(annotationId, anchor) => {
-                                    if (responseAnnotationState.annotations.some(
-                                      (annotation) => annotation.id === annotationId,
-                                    )) {
-                                      setResponseAnnotationsExpanded(false);
-                                      responseAnnotationEditor.openFromAnchor(
-                                        annotationId,
-                                        anchor,
-                                      );
-                                    } else {
-                                      responseAnnotationEditor.close();
-                                    }
-                                  }}
+                                  onEditResponseAnnotation={handleActivateResponseAnnotation}
                                   onSelectResponseAnnotation={handleSelectSentResponseAnnotation}
                                   onResponseAnnotationsExpanded={handleSentResponseAnnotationsExpanded}
                                   unlocatableResponseAnnotationId={unlocatableResponseAnnotationId}
@@ -4190,7 +4177,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     ) : pendingAskUserMessage && pendingAskUserRequest ? (
                       <AskUserPanel
                         message={pendingAskUserMessage}
-                        request={pendingAskUserRequest} disabled={controlsDisabled || composerUnavailable}
+                        request={pendingAskUserRequest} disabled={controlsDisabled || composerUnavailable || approvalMutation.isPending}
                         pendingFiles={pendingFiles}
                         onAddAttachment={() => fileInputRef.current?.click()}
                         onDropAttachments={appendPendingFiles}
@@ -4203,7 +4190,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             clearPendingFilesOnSuccess: true,
                             forceImmediateSend: true,
                             onUserMessageAcknowledged: () => clearChatAskUserDraft(pendingAskUserMessage.orgId, pendingAskUserMessage.id), });
-                        }} /> ) : (
+                        }}
+                        onStructuredSubmit={createChatAskUserApprovalSubmit(
+                          pendingAskUserMessage,
+                          (approvalId, messageId, inputResponse) => approvalMutation.mutate({
+                            approvalId,
+                            action: "approve",
+                            messageId,
+                            payloadOverride: { inputResponse },
+                          }),
+                          pushToast,
+                        )} /> ) : (
                       renderComposer(false)
                     )} </div> </div>
                 )} </div> </> ) : (

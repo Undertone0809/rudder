@@ -1,10 +1,9 @@
 import type { Db } from "@rudderhq/db";
 import {
-  agentIntegrationChatBindings,
-  agentIntegrations,
   agents,
   approvals,
   assets,
+  automationRuns,
   automations,
   chatAttachments,
   chatContextLinks,
@@ -15,13 +14,11 @@ import {
   chatGenerations,
   chatMessages,
   chatQueuedMessages,
-  automationRuns,
   heartbeatRuns,
-  organizations
+  organizations,
 } from "@rudderhq/db";
 import { parseShortRef, sanitizeChatStructuredPayload, shortRefFor, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
-import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import type { StorageService } from "../storage/types.js";
@@ -44,47 +41,34 @@ import {
 } from "./chat-queued-message-materialization.js";
 import {
   compareChatGenerationSelection,
-  listChatGenerationTranscripts,
-  listDetachedChatTranscripts,
   listDetachedChatTranscriptSummaries,
-  loadChatTranscripts,
   replaceDetachedChatTranscript,
   selectBoundedChatTranscript,
-  selectChatTranscript,
   transcriptSummaryFromSources,
   type ChatGenerationSelectionCandidate,
 } from "./chat-transcript-persistence.js";
+import { chatTranscriptEntryFromReaderItem } from "./chat-transcript-reader-item.js";
 import { createChatAnnotationMessagePersistence, createChatMessageMutationLookup } from "./chats.annotation-persistence.js";
-import {
-  listActiveChatGenerationIds,
-  listPendingChatProposalConversationIds,
-} from "./chats.attention-order.js";
 import {
   ACTIVE_CHAT_GENERATION_STATUSES,
   CHAT_GENERATION_CONTROL_LEASE_MS,
   NATIVE_STEER_GENERATION_STATUSES,
   SERVER_QUEUE_RUNNING_STATUSES,
 } from "./chats.constants.js";
+import { createChatConversationListingService } from "./chats.conversation-listing.js";
 import { createChatConversation, createChatWithInitialMessage, type CreateChatInput, type CreateChatWithInitialMessageInput } from "./chats.create.js";
-import { conversationMutability, nextForkTitle } from "./chats.fork-helpers.js";
+import { nextForkTitle } from "./chats.fork-helpers.js";
 import {
-  buildSearchSnippet,
   CHAT_TRANSCRIPT_KEY,
   chatTranscriptFromPayload,
   contentPath,
-  escapeLikePattern,
-  incomingMessagePreviewSql,
   issueProposalFromPayload,
   isVisibleIncomingChatMessage,
-  listContextLinksForConversationIds,
-  listPrimaryIssues,
   operationProposalDecisionStatusFromPayload,
   operationProposalFromPayload,
   resolveContextEntities,
   safeTrim,
   stripChatMetadataFromPayload,
-  textContains,
-  truncatePreview,
   visibleIncomingMessageSql,
   withOperationProposalDecisionState,
 } from "./chats.helpers.js";
@@ -98,7 +82,8 @@ import {
   findQueuedMessageReplay,
   updateChatAgentRuntimeInvariant,
 } from "./chats.runtime-controls.js";
-import type { ChatServerQueueClaim, ConversationSourceMetadata, ConversationSummaryCursor, MessageHydrationRow } from "./chats.types.js";
+import { assertChatWriteAdmitted } from "./chats.side-chat-write-admission.js";
+import type { ChatServerQueueClaim, MessageHydrationRow } from "./chats.types.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
@@ -106,21 +91,20 @@ import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-view
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
-  createTranscriptReader,
-  type TranscriptItem,
-} from "./runtime-kernel/transcript-reader.js";
-import {
   completeProductAnalyticsWorkCycle,
   recordProductAnalyticsChatCreated,
 } from "./product-analytics.js";
-
-function chatShortRef(id: string): string | null {
-  try {
-    return shortRefFor("chat", id);
-  } catch {
-    return null;
-  }
-}
+import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
+import {
+  expireRuntimeRetentionClaimsInTransaction,
+  lockRuntimeRetentionScope,
+  type RuntimeRetentionDb,
+} from "./runtime-kernel/runtime-retention.js";
+import type {
+  TranscriptAvailability,
+  TranscriptItem,
+  TranscriptSource,
+} from "./runtime-kernel/transcript-reader.js";
 
 function messageShortRef(id: string): string | null {
   try {
@@ -131,7 +115,6 @@ function messageShortRef(id: string): string | null {
 }
 
 type ConversationRow = typeof chatConversations.$inferSelect;
-type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
 type MessageRow = typeof chatMessages.$inferSelect;
 type ChatQueuedMessageRow = typeof chatQueuedMessages.$inferSelect;
 type ChatGenerationRow = typeof chatGenerations.$inferSelect;
@@ -159,21 +142,71 @@ const CHAT_TRANSCRIPT_READER_MAX_BYTES = 2 * 1024 * 1024;
 
 class InvalidQueueDeliveryActionLinkError extends Error {}
 
-function transcriptEntryFromReaderItem(item: TranscriptItem): ChatStreamTranscriptEntry | null {
-  const payload = item.payload && typeof item.payload === "object" && !Array.isArray(item.payload)
-    ? item.payload as Record<string, unknown>
-    : null;
-  const candidate = item.entry
-    ?? (payload && typeof payload.kind === "string" && typeof payload.ts === "string"
-      ? payload
-      : null);
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
-  const entry = candidate as ChatStreamTranscriptEntry;
-  if (typeof entry.kind !== "string" || typeof entry.ts !== "string") return null;
-  const sourceEntryId = (entry as ChatStreamTranscriptEntry & { sourceEntryId?: unknown }).sourceEntryId;
-  return typeof sourceEntryId === "string" || !item.sourceEntryId
-    ? entry
-    : ({ ...entry, sourceEntryId: item.sourceEntryId } as unknown as ChatStreamTranscriptEntry);
+async function readConversationMessageTranscripts(
+  database: Pick<Db, "select">,
+  messages: readonly Pick<MessageRow, "id" | "orgId" | "conversationId" | "role" | "body" | "createdAt">[],
+) {
+  const transcripts = new Map<string, ChatStreamTranscriptEntry[]>();
+  const groups = new Map<string, typeof messages[number][]>();
+  for (const message of messages) {
+    const key = `${message.orgId}\u0000${message.conversationId}`;
+    const group = groups.get(key);
+    if (group) group.push(message);
+    else groups.set(key, [message]);
+  }
+
+  const reader = createHistoricalTranscriptReader(database);
+  for (const group of groups.values()) {
+    const messagesById = new Map(group.map((message) => [message.id, message]));
+    const itemsByMessageId = new Map<string, Array<{
+      ordinal: number;
+      index: number;
+      item: TranscriptItem;
+      entry: ChatStreamTranscriptEntry;
+    }>>();
+    let cursor: string | null = null;
+    let itemIndex = 0;
+    for (;;) {
+      const page = await reader.readConversation({
+        orgId: group[0]!.orgId,
+        conversationId: group[0]!.conversationId,
+        principal: { type: "board", orgId: group[0]!.orgId, authorized: true },
+        cursor,
+        limit: CHAT_TRANSCRIPT_READER_PAGE_LIMIT,
+      });
+      for (const item of page.items) {
+        const match = [item.id, item.sourceEntryId]
+          .filter((value): value is string => Boolean(value))
+          .map((value) => /^message:(.+):\d+(?::\d+)?$/u.exec(value))
+          .find((value) => value !== null && messagesById.has(value[1]!));
+        const message = match ? messagesById.get(match[1]!) : undefined;
+        const entry = chatTranscriptEntryFromReaderItem(item);
+        if (!message || !entry) continue;
+        const list = itemsByMessageId.get(message.id) ?? [];
+        list.push({ ordinal: item.ordinal, index: itemIndex, item, entry });
+        itemsByMessageId.set(message.id, list);
+        itemIndex += 1;
+      }
+      if (!page.nextCursor) break;
+      if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+      cursor = page.nextCursor;
+    }
+
+    for (const message of group) {
+      const items = (itemsByMessageId.get(message.id) ?? [])
+        .sort((left, right) => left.ordinal - right.ordinal || left.index - right.index);
+      const only = items[0];
+      const bodyKind = message.role === "user" ? "user" : message.role === "system" ? "system" : "assistant";
+      const isBodyFallback = items.length === 1
+        && only?.item.sourceEntryId === `message:${message.id}:0`
+        && only.entry.kind === bodyKind
+        && "text" in only.entry
+        && only.entry.text === message.body
+        && Date.parse(only.item.ts) === message.createdAt.getTime();
+      transcripts.set(message.id, isBodyFallback ? [] : items.map(({ entry }) => entry));
+    }
+  }
+  return transcripts;
 }
 
 function stableJson(value: unknown): string {
@@ -197,470 +230,22 @@ export type { ChatServerQueueClaim } from "./chats.types.js";
 
 export function chatService(db: Db, storage?: StorageService) {
   const generationProtocol = chatGenerationProtocolService(db);
-  const transcriptReader = createTranscriptReader(db);
+  const transcriptReader = createHistoricalTranscriptReader(db);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
   const issuesSvc = issueService(db, storage);
   const approvalsSvc = approvalService(db);
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
+  const {
+    hydrateConversations,
+    list,
+    listSummaries,
+    listPinnedSummaries,
+    listSummariesByIds,
+  } = createChatConversationListingService(db);
   const addUserChatMessage = createChatAnnotationMessagePersistence(db, getMessage);
   const getUserMessageMutationByClientMutationId = createChatMessageMutationLookup(db, getMessage);
-
-  async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
-    if (rows.length === 0) return;
-    const now = new Date();
-    await db
-      .insert(chatConversationUserStates)
-      .values(
-        rows.map((row) => ({
-          orgId: row.orgId,
-          conversationId: row.id,
-          userId,
-          lastReadAt: row.lastMessageAt ?? row.updatedAt ?? row.createdAt,
-          updatedAt: now,
-        })),
-      )
-      .onConflictDoNothing();
-  }
-
-  async function listConversationUserStates(orgId: string, userId: string, conversationIds: string[]) {
-    if (conversationIds.length === 0) return new Map<string, ConversationUserStateRow>();
-    const rows = await db
-      .select()
-      .from(chatConversationUserStates)
-      .where(
-        and(
-          eq(chatConversationUserStates.orgId, orgId),
-          eq(chatConversationUserStates.userId, userId),
-          inArray(chatConversationUserStates.conversationId, conversationIds),
-        ),
-      );
-    return new Map(rows.map((row) => [row.conversationId, row]));
-  }
-
-  async function listUnreadCountsByConversation(
-    orgId: string,
-    userId: string,
-    conversationIds: string[],
-  ) {
-    if (conversationIds.length === 0) return new Map<string, number>();
-    const rows = await db
-      .select({
-        conversationId: chatMessages.conversationId,
-        count: sql<number>`count(*)`,
-      })
-      .from(chatMessages)
-      .innerJoin(
-        chatConversationUserStates,
-        and(
-          eq(chatConversationUserStates.orgId, orgId),
-          eq(chatConversationUserStates.userId, userId),
-          eq(chatConversationUserStates.conversationId, chatMessages.conversationId),
-        ),
-      )
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, conversationIds),
-          isNull(chatMessages.supersededAt),
-          visibleIncomingMessageSql(),
-          gt(chatMessages.createdAt, chatConversationUserStates.lastReadAt),
-          sql<boolean>`not exists (
-            select 1
-            from ${agentIntegrationChatBindings}
-            where ${agentIntegrationChatBindings.orgId} = ${orgId}
-              and ${agentIntegrationChatBindings.conversationId} = ${chatMessages.conversationId}
-          )`,
-        ),
-      )
-      .groupBy(chatMessages.conversationId);
-    return new Map(rows.map((row) => [row.conversationId, Number(row.count ?? 0)]));
-  }
-
-  async function listConversationSourceMetadata(orgId: string, conversationIds: string[]) {
-    if (conversationIds.length === 0) return new Map<string, ConversationSourceMetadata>();
-    const rows = await db
-      .select({
-        conversationId: agentIntegrationChatBindings.conversationId,
-        integrationId: agentIntegrationChatBindings.integrationId,
-        provider: agentIntegrations.provider,
-        externalChatId: agentIntegrationChatBindings.externalChatId,
-        externalChatType: agentIntegrationChatBindings.externalChatType,
-      })
-      .from(agentIntegrationChatBindings)
-      .innerJoin(agentIntegrations, eq(agentIntegrations.id, agentIntegrationChatBindings.integrationId))
-      .where(
-        and(
-          eq(agentIntegrationChatBindings.orgId, orgId),
-          inArray(agentIntegrationChatBindings.conversationId, conversationIds),
-        ),
-      )
-      .orderBy(agentIntegrationChatBindings.createdAt);
-    const map = new Map<string, ConversationSourceMetadata>();
-    for (const row of rows) {
-      if (map.has(row.conversationId)) continue;
-      map.set(row.conversationId, {
-        source: "agent_integration",
-        provider: row.provider,
-        integrationId: row.integrationId,
-        externalChatId: row.externalChatId,
-        externalChatType: row.externalChatType,
-      });
-    }
-    const missingConversationIds = conversationIds.filter((id) => !map.has(id));
-    if (missingConversationIds.length === 0) return map;
-
-    const historicalRows = await db
-      .select({
-        conversationId: chatMessages.conversationId,
-        payload: chatMessages.structuredPayload,
-      })
-      .from(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, missingConversationIds),
-          sql<boolean>`${chatMessages.structuredPayload}->>'source' = 'agent_integration'`,
-          sql<boolean>`${chatMessages.structuredPayload}->>'provider' = 'feishu'`,
-        ),
-      )
-      .orderBy(chatMessages.createdAt);
-    for (const row of historicalRows) {
-      if (map.has(row.conversationId)) continue;
-      const payload = row.payload ?? {};
-      const integrationId = typeof payload.integrationId === "string" ? payload.integrationId : null;
-      const externalChatId = typeof payload.externalChatId === "string" ? payload.externalChatId : null;
-      const externalChatType = typeof payload.externalChatType === "string" ? payload.externalChatType : null;
-      if (!integrationId || !externalChatId || !externalChatType) continue;
-      map.set(row.conversationId, {
-        source: "agent_integration",
-        provider: "feishu",
-        integrationId,
-        externalChatId,
-        externalChatType,
-      });
-    }
-    return map;
-  }
-
-  async function listLatestReplyPreviews(orgId: string, conversationIds: string[]) {
-    if (conversationIds.length === 0) return new Map<string, string | null>();
-
-    const latestReplyAt = db
-      .select({
-        conversationId: chatMessages.conversationId,
-        latestReplyAt: sql<Date>`max(${chatMessages.createdAt})`.as("latest_reply_at"),
-      })
-      .from(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, conversationIds),
-          isNull(chatMessages.supersededAt),
-          incomingMessagePreviewSql(),
-        ),
-      )
-      .groupBy(chatMessages.conversationId)
-      .as("latest_chat_reply_at");
-
-    const rows = await db
-      .select({
-        conversationId: chatMessages.conversationId,
-        body: chatMessages.body,
-      })
-      .from(chatMessages)
-      .innerJoin(
-        latestReplyAt,
-        and(
-          eq(chatMessages.conversationId, latestReplyAt.conversationId),
-          eq(chatMessages.createdAt, latestReplyAt.latestReplyAt),
-        ),
-      )
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, conversationIds),
-          isNull(chatMessages.supersededAt),
-          incomingMessagePreviewSql(),
-        ),
-      )
-      .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id));
-
-    const map = new Map<string, string | null>();
-    for (const row of rows) {
-      if (!map.has(row.conversationId)) {
-        map.set(row.conversationId, truncatePreview(row.body));
-      }
-    }
-    return map;
-  }
-
-  async function listUserMessageSummaries(orgId: string, conversationIds: string[]) {
-    if (conversationIds.length === 0) return new Map<string, { count: number; latestPreview: string | null }>();
-
-    const countRows = await db
-      .select({
-        conversationId: chatMessages.conversationId,
-        count: sql<number>`count(*)`,
-      })
-      .from(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, conversationIds),
-          isNull(chatMessages.supersededAt),
-          eq(chatMessages.role, "user"),
-          eq(chatMessages.kind, "message"),
-          sql<boolean>`btrim(${chatMessages.body}) <> ''`,
-        ),
-      )
-      .groupBy(chatMessages.conversationId);
-
-    const latestUserAt = db
-      .select({
-        conversationId: chatMessages.conversationId,
-        latestUserAt: sql<Date>`max(${chatMessages.createdAt})`.as("latest_user_at"),
-      })
-      .from(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, conversationIds),
-          isNull(chatMessages.supersededAt),
-          eq(chatMessages.role, "user"),
-          eq(chatMessages.kind, "message"),
-          sql<boolean>`btrim(${chatMessages.body}) <> ''`,
-        ),
-      )
-      .groupBy(chatMessages.conversationId)
-      .as("latest_chat_user_at");
-
-    const previewRows = await db
-      .select({
-        conversationId: chatMessages.conversationId,
-        body: chatMessages.body,
-      })
-      .from(chatMessages)
-      .innerJoin(
-        latestUserAt,
-        and(
-          eq(chatMessages.conversationId, latestUserAt.conversationId),
-          eq(chatMessages.createdAt, latestUserAt.latestUserAt),
-        ),
-      )
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, conversationIds),
-          isNull(chatMessages.supersededAt),
-          eq(chatMessages.role, "user"),
-          eq(chatMessages.kind, "message"),
-          sql<boolean>`btrim(${chatMessages.body}) <> ''`,
-        ),
-      )
-      .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id));
-
-    const map = new Map<string, { count: number; latestPreview: string | null }>();
-    for (const row of countRows) {
-      map.set(row.conversationId, { count: Number(row.count ?? 0), latestPreview: null });
-    }
-    for (const row of previewRows) {
-      const current = map.get(row.conversationId) ?? { count: 0, latestPreview: null };
-      if (!current.latestPreview) {
-        map.set(row.conversationId, { ...current, latestPreview: truncatePreview(row.body) });
-      }
-    }
-    return map;
-  }
-
-  async function listSearchPreviews(
-    orgId: string,
-    rows: ConversationRow[],
-    query: string,
-    containsPattern: string,
-  ) {
-    if (rows.length === 0) return new Map<string, string | null>();
-
-    const previews = new Map<string, string | null>();
-    for (const row of rows) {
-      if (textContains(row.title, query)) {
-        previews.set(row.id, buildSearchSnippet(row.title, query));
-      } else if (textContains(row.summary, query)) {
-        previews.set(row.id, buildSearchSnippet(row.summary, query));
-      }
-    }
-
-    const messageSearchIds = rows
-      .map((row) => row.id)
-      .filter((id) => !previews.has(id));
-    if (messageSearchIds.length === 0) return previews;
-
-    const messageRows = await db
-      .select({
-        conversationId: chatMessages.conversationId,
-        body: chatMessages.body,
-      })
-      .from(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.orgId, orgId),
-          inArray(chatMessages.conversationId, messageSearchIds),
-          isNull(chatMessages.supersededAt),
-          sql<boolean>`${chatMessages.body} ILIKE ${containsPattern} ESCAPE '\\'`,
-        ),
-      )
-      .orderBy(desc(chatMessages.createdAt));
-
-    for (const message of messageRows) {
-      if (previews.has(message.conversationId)) continue;
-      previews.set(message.conversationId, buildSearchSnippet(message.body, query));
-    }
-    return previews;
-  }
-
-  async function hydrateConversations(rows: ConversationRow[], userId?: string | null) {
-    if (userId) {
-      await ensureConversationUserStates(rows, userId);
-    }
-
-    const conversationIds = rows.map((row) => row.id);
-    const sourceLookupConversationIds = [
-      ...new Set([
-        ...conversationIds,
-        ...rows.flatMap((row) => [row.forkedFromConversationId, row.forkRootConversationId].filter((id): id is string => Boolean(id))),
-      ]),
-    ];
-    const orgId = rows[0]?.orgId ?? null;
-
-    const [
-      contextLinksByConversationId,
-      primaryIssuesById,
-      userStatesByConversationId,
-      unreadCountsByConversationId,
-      pendingProposalConversationIds,
-      latestReplyPreviewsByConversationId,
-      userMessageSummariesByConversationId,
-      sourceMetadataByConversationId,
-    ] = await Promise.all([
-      listContextLinksForConversationIds(db, rows.map((row) => row.id)),
-      listPrimaryIssues(db, rows),
-      userId && orgId
-        ? listConversationUserStates(orgId, userId, conversationIds)
-        : Promise.resolve(new Map<string, ConversationUserStateRow>()),
-      userId && orgId
-        ? listUnreadCountsByConversation(orgId, userId, conversationIds)
-        : Promise.resolve(new Map<string, number>()),
-      orgId
-        ? listPendingChatProposalConversationIds(db, orgId, conversationIds)
-        : Promise.resolve(new Set<string>()),
-      orgId
-        ? listLatestReplyPreviews(orgId, conversationIds)
-        : Promise.resolve(new Map<string, string | null>()),
-      orgId
-        ? listUserMessageSummaries(orgId, conversationIds)
-        : Promise.resolve(new Map<string, { count: number; latestPreview: string | null }>()),
-      orgId
-        ? listConversationSourceMetadata(orgId, sourceLookupConversationIds)
-        : Promise.resolve(new Map<string, ConversationSourceMetadata>()),
-    ]);
-    return rows.map((row) => {
-      const sourceMetadata = sourceMetadataByConversationId.get(row.id) ?? null;
-      const isExternalBound = Boolean(sourceMetadata);
-      const unreadCount = isExternalBound ? 0 : (unreadCountsByConversationId.get(row.id) ?? 0);
-      const shortRef = chatShortRef(row.id);
-      return {
-        ...row,
-        ...(shortRef ? { shortRef } : {}),
-        primaryIssue: row.primaryIssueId ? (primaryIssuesById.get(row.primaryIssueId) ?? null) : null,
-        latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
-        latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
-        userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
-        contextLinks: contextLinksByConversationId.get(row.id) ?? [],
-        sourceMetadata,
-        mutability: conversationMutability(row, sourceMetadata, sourceMetadataByConversationId),
-        lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
-        isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
-        unreadCount,
-        isUnread: unreadCount > 0,
-        needsAttention: !isExternalBound && (
-          unreadCount > 0 ||
-          pendingProposalConversationIds.has(row.id)
-        ),
-      };
-    });
-  }
-
-  async function hydrateConversationSummaries(rows: ConversationRow[], userId?: string | null) {
-    if (userId) {
-      await ensureConversationUserStates(rows, userId);
-    }
-
-    const conversationIds = rows.map((row) => row.id);
-    const sourceLookupConversationIds = [
-      ...new Set([
-        ...conversationIds,
-        ...rows.flatMap((row) => [row.forkedFromConversationId, row.forkRootConversationId].filter((id): id is string => Boolean(id))),
-      ]),
-    ];
-    const orgId = rows[0]?.orgId ?? null;
-
-    const [
-      userStatesByConversationId,
-      unreadCountsByConversationId,
-      pendingProposalConversationIds,
-      activeGenerationIdsByConversationId,
-      latestReplyPreviewsByConversationId,
-      userMessageSummariesByConversationId,
-      sourceMetadataByConversationId,
-    ] = await Promise.all([
-      userId && orgId
-        ? listConversationUserStates(orgId, userId, conversationIds)
-        : Promise.resolve(new Map<string, ConversationUserStateRow>()),
-      userId && orgId
-        ? listUnreadCountsByConversation(orgId, userId, conversationIds)
-        : Promise.resolve(new Map<string, number>()),
-      orgId
-        ? listPendingChatProposalConversationIds(db, orgId, conversationIds)
-        : Promise.resolve(new Set<string>()),
-      orgId
-        ? listActiveChatGenerationIds(db, orgId, conversationIds)
-        : Promise.resolve(new Map<string, string>()),
-      orgId
-        ? listLatestReplyPreviews(orgId, conversationIds)
-        : Promise.resolve(new Map<string, string | null>()),
-      orgId
-        ? listUserMessageSummaries(orgId, conversationIds)
-        : Promise.resolve(new Map<string, { count: number; latestPreview: string | null }>()),
-      orgId
-        ? listConversationSourceMetadata(orgId, sourceLookupConversationIds)
-        : Promise.resolve(new Map<string, ConversationSourceMetadata>()),
-    ]);
-    return rows.map((row) => {
-      const sourceMetadata = sourceMetadataByConversationId.get(row.id) ?? null;
-      const isExternalBound = Boolean(sourceMetadata);
-      const unreadCount = isExternalBound ? 0 : (unreadCountsByConversationId.get(row.id) ?? 0);
-      const shortRef = chatShortRef(row.id);
-      return {
-        ...row,
-        ...(shortRef ? { shortRef } : {}),
-        latestReplyPreview: latestReplyPreviewsByConversationId.get(row.id) ?? null,
-        latestUserMessagePreview: userMessageSummariesByConversationId.get(row.id)?.latestPreview ?? null,
-        userMessageCount: userMessageSummariesByConversationId.get(row.id)?.count ?? 0,
-        sourceMetadata,
-        mutability: conversationMutability(row, sourceMetadata, sourceMetadataByConversationId),
-        lastReadAt: userStatesByConversationId.get(row.id)?.lastReadAt ?? null,
-        isPinned: Boolean(userStatesByConversationId.get(row.id)?.pinnedAt),
-        unreadCount,
-        isUnread: unreadCount > 0,
-        needsAttention: !isExternalBound && (
-          unreadCount > 0 ||
-          pendingProposalConversationIds.has(row.id)
-        ),
-        activeGenerationId: activeGenerationIdsByConversationId.get(row.id) ?? null,
-      };
-    });
-  }
 
   async function getConversationOrThrow(id: string) {
     const row = await db
@@ -772,7 +357,36 @@ export function chatService(db: Db, storage?: StorageService) {
       .limit(1)
       .then((rows) => rows[0] ?? null);
     if (!sourceMessage) {
-      throw unprocessable("Chat approval proposal must reference a message in the same conversation");
+      if (sourceMessageId) {
+        throw unprocessable("Chat approval proposal must reference a message in the same conversation");
+      }
+
+      // Older approved proposals were persisted before proposal messages were
+      // bound to approvals. Preserve those records after rechecking their
+      // organization, conversation, principal, and payload above.
+      const legacyTargetRunId = approvalRunId(payload);
+      if (legacyTargetRunId) {
+        const legacyRun = await db
+          .select({ id: heartbeatRuns.id, agentId: heartbeatRuns.agentId })
+          .from(heartbeatRuns)
+          .where(and(
+            eq(heartbeatRuns.id, legacyTargetRunId),
+            eq(heartbeatRuns.orgId, approval.orgId),
+            eq(heartbeatRuns.chatConversationId, conversationId),
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (!legacyRun || (proposedByAgentId && legacyRun.agentId !== proposedByAgentId)) {
+          throw unprocessable("Chat approval target run does not belong to its conversation and agent");
+        }
+      }
+      return {
+        conversationId,
+        sourceMessageId: null,
+        targetRunId: legacyTargetRunId,
+        principalAgentId: proposedByAgentId,
+        principalUserId: requestedByUserId,
+      };
     }
 
     const sourceAgentId = nonEmptyString(sourceMessage.replyingAgentId);
@@ -2570,6 +2184,105 @@ export function chatService(db: Db, storage?: StorageService) {
     return hydrateQueuedMessage(row);
   }
 
+  async function admitQueuedSideChatRuntime(input: {
+    orgId: string;
+    conversationId: string;
+    itemId: string;
+    generationId: string;
+    leaseToken: string;
+    leaseEpoch: number;
+  }): Promise<{ admitted: true } | { admitted: false; reason: string }> {
+    const [seed] = await db
+      .select({ orgId: chatConversations.orgId, conversationKind: chatConversations.conversationKind })
+      .from(chatConversations)
+      .where(and(
+        eq(chatConversations.id, input.conversationId),
+        eq(chatConversations.orgId, input.orgId),
+      ))
+      .limit(1);
+    if (!seed || seed.conversationKind !== "side_chat") {
+      return { admitted: false, reason: "side_chat_missing" };
+    }
+
+    return db.transaction(async (tx) => {
+      const txRetention = tx as unknown as RuntimeRetentionDb;
+      await lockRuntimeRetentionScope(txRetention, input.orgId);
+      const [conversation] = await tx
+        .select()
+        .from(chatConversations)
+        .where(and(
+          eq(chatConversations.id, input.conversationId),
+          eq(chatConversations.orgId, input.orgId),
+          eq(chatConversations.conversationKind, "side_chat"),
+        ))
+        .for("update");
+      if (!conversation) return { admitted: false, reason: "side_chat_missing" };
+
+      const [item] = await tx
+        .select()
+        .from(chatQueuedMessages)
+        .where(and(
+          eq(chatQueuedMessages.id, input.itemId),
+          eq(chatQueuedMessages.orgId, input.orgId),
+          eq(chatQueuedMessages.conversationId, input.conversationId),
+          eq(chatQueuedMessages.continuationGenerationId, input.generationId),
+          eq(chatQueuedMessages.deliveryLeaseToken, input.leaseToken),
+          eq(chatQueuedMessages.deliveryLeaseEpoch, input.leaseEpoch),
+          inArray(chatQueuedMessages.status, SERVER_QUEUE_RUNNING_STATUSES),
+          isNull(chatQueuedMessages.cancelledAt),
+        ))
+        .limit(1)
+        .for("update");
+      if (!item) return { admitted: false, reason: "queued_delivery_claim_lost" };
+
+      const ownerUserId = item.requestActor?.type === "board"
+        ? item.requestActor.userId ?? "local-board"
+        : null;
+      if (!ownerUserId || conversation.createdByUserId !== ownerUserId) {
+        return { admitted: false, reason: "side_chat_owner_mismatch" };
+      }
+      if (conversation.sideChatState === "kept" && conversation.messengerVisible) {
+        return { admitted: true };
+      }
+
+      const now = new Date();
+      const expiresAt = conversation.sideChatExpiresAt;
+      if (
+        conversation.sideChatState === "active"
+        && !conversation.messengerVisible
+        && expiresAt
+        && expiresAt.getTime() > now.getTime()
+      ) {
+        return { admitted: true };
+      }
+
+      if (
+        conversation.sideChatState === "active"
+        && (!expiresAt || expiresAt.getTime() <= now.getTime())
+      ) {
+        await tx
+          .update(chatConversations)
+          .set({ sideChatState: "expired", sideChatExpiresAt: null, updatedAt: now })
+          .where(and(
+            eq(chatConversations.id, conversation.id),
+            eq(chatConversations.orgId, conversation.orgId),
+            eq(chatConversations.sideChatState, "active"),
+            or(isNull(chatConversations.sideChatExpiresAt), lte(chatConversations.sideChatExpiresAt, now)),
+          ));
+        await expireRuntimeRetentionClaimsInTransaction(txRetention, {
+          orgId: conversation.orgId,
+          purpose: `side_chat:${conversation.id}`,
+          principalScopeRef: `user:${ownerUserId}`,
+          now,
+          force: true,
+        });
+        return { admitted: false, reason: "side_chat_expired" };
+      }
+
+      return { admitted: false, reason: "side_chat_not_mutable" };
+    });
+  }
+
   async function claimNextServerQueuedMessage(input: {
     workerId: string;
     leaseMs: number;
@@ -3499,11 +3212,23 @@ export function chatService(db: Db, storage?: StorageService) {
     return row ? hydrateQueuedMessage(row) : null;
   }
 
-  async function readRunTranscriptThroughReader(run: Pick<MessageRow, "orgId" | "runId">) {
-    if (!run.runId) return [] as ChatStreamTranscriptEntry[];
+  type RunTranscriptRead = {
+    entries: ChatStreamTranscriptEntry[];
+    source: TranscriptSource;
+    availability: TranscriptAvailability;
+  };
+
+  async function readRunTranscriptThroughReader(
+    run: Pick<MessageRow, "orgId" | "runId">,
+  ): Promise<RunTranscriptRead> {
+    if (!run.runId) {
+      return { entries: [], source: "legacy", availability: "missing" };
+    }
     const entries: ChatStreamTranscriptEntry[] = [];
     let cursor: string | null = null;
     let bytes = 2;
+    let source: TranscriptSource = "legacy";
+    let availability: TranscriptAvailability = "missing";
     for (let pageCount = 0; pageCount < CHAT_TRANSCRIPT_READER_MAX_PAGES; pageCount += 1) {
       const page = await transcriptReader.readRun({
         orgId: run.orgId,
@@ -3512,36 +3237,85 @@ export function chatService(db: Db, storage?: StorageService) {
         cursor,
         limit: CHAT_TRANSCRIPT_READER_PAGE_LIMIT,
       });
+      source = page.source;
+      availability = page.availability;
       for (const item of page.items) {
-        const entry = transcriptEntryFromReaderItem(item);
+        const entry = chatTranscriptEntryFromReaderItem(item);
         if (!entry) continue;
         const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
         if (
           entries.length >= CHAT_TRANSCRIPT_READER_MAX_ITEMS
           || (entries.length > 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES)
         ) {
-          return entries;
+          return { entries, source, availability };
         }
-        if (entries.length === 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES) return entries;
+        if (entries.length === 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES) {
+          return { entries, source, availability };
+        }
         entries.push(entry);
         bytes += entryBytes + (entries.length > 1 ? 1 : 0);
       }
-      if (!page.nextCursor) return entries;
+      if (!page.nextCursor) return { entries, source, availability };
       if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
       cursor = page.nextCursor;
     }
-    return entries;
+    return { entries, source, availability };
+  }
+
+  async function loadForkTranscripts(
+    database: Pick<Db, "select">,
+    messages: readonly MessageRow[],
+  ) {
+    const byMessageId = new Map<string, readonly ChatStreamTranscriptEntry[]>();
+    const runReads = new Map<string, RunTranscriptRead>();
+    const runIds = [...new Set(messages.map((message) => message.runId).filter((runId): runId is string => Boolean(runId)))];
+    await Promise.all(runIds.map(async (runId) => {
+      runReads.set(runId, await readRunTranscriptThroughReader({
+        orgId: messages.find((message) => message.runId === runId)?.orgId ?? "",
+        runId,
+      }));
+    }));
+
+    const legacyFallbackMessages: MessageRow[] = [];
+    for (const message of messages) {
+      if (!message.runId) {
+        legacyFallbackMessages.push(message);
+        continue;
+      }
+      const runRead = runReads.get(message.runId);
+      if (!runRead || runRead.source === "legacy" && runRead.entries.length === 0) {
+        if (runRead?.source !== "native" && runRead?.source !== "native_plus_objects") {
+          legacyFallbackMessages.push(message);
+        } else {
+          // A native Run owns its transcript even when the provider currently
+          // has no readable items; suppress the copy helper's payload fallback.
+          byMessageId.set(message.id, []);
+        }
+        continue;
+      }
+      byMessageId.set(message.id, runRead.entries);
+    }
+
+    const legacyTranscripts = await readConversationMessageTranscripts(database, legacyFallbackMessages);
+    for (const message of legacyFallbackMessages) {
+      const transcript = legacyTranscripts.get(message.id);
+      if (transcript) byMessageId.set(message.id, transcript);
+    }
+    return byMessageId;
   }
 
   async function hydrateMessages(rows: MessageHydrationRow[], options: { includeTranscript?: boolean } = {}) {
-    const includeTranscript = options.includeTranscript === true;
+    // Preserve the service-layer default used by Messenger and existing internal callers.
+    // HTTP/UI list routes opt into the lightweight projection explicitly.
+    const includeTranscript = options.includeTranscript !== false;
+    const legacyTranscriptRows = rows.filter((row) => !row.runId);
     const assistantMessageIds = rows
       .filter((row) => row.role === "assistant")
       .map((row) => row.id);
     const nativeSteerMessageIds = rows
       .filter((row) => row.role === "user" && row.structuredPayload?.source === "steer")
       .map((row) => row.id);
-    const [attachmentsByMessageId, approvalsById, generationMessageRows, linkedSteerQueueRows, detachedTranscriptByMessageId] = await Promise.all([
+    const [attachmentsByMessageId, approvalsById, generationMessageRows, linkedSteerQueueRows] = await Promise.all([
       listAttachmentsForMessageIds(rows.map((row) => row.id)),
       listApprovalsForMessages(rows),
       assistantMessageIds.length > 0
@@ -3581,10 +3355,22 @@ export function chatService(db: Db, storage?: StorageService) {
             inArray(chatQueuedMessages.continuationMessageId, nativeSteerMessageIds),
           ))
         : Promise.resolve([]),
-      includeTranscript
-        ? listDetachedChatTranscripts(db, rows)
-        : Promise.resolve(new Map<string, ChatStreamTranscriptEntry[]>()),
     ]);
+    const runTranscriptByRunId = new Map<string, RunTranscriptRead>();
+    const runIds = [...new Set(rows.map((row) => row.runId).filter((runId): runId is string => Boolean(runId)))];
+    await Promise.all(runIds.map(async (runId) => {
+      runTranscriptByRunId.set(runId, await readRunTranscriptThroughReader({
+        orgId: rows.find((row) => row.runId === runId)?.orgId ?? "",
+        runId,
+      }));
+    }));
+    const runTranscriptReadForRow = (row: MessageHydrationRow) =>
+      row.runId ? runTranscriptByRunId.get(row.runId) ?? null : null;
+    const allowsLegacyTranscriptFallback = (row: MessageHydrationRow) => {
+      const runRead = runTranscriptReadForRow(row);
+      return !row.runId || (runRead?.source === "legacy" && runRead.entries.length === 0);
+    };
+    const legacyFallbackRows = rows.filter((row) => row.runId && allowsLegacyTranscriptFallback(row));
     const generationIds = [...new Set(generationMessageRows.map((row) => row.generationId))];
     const generationsById = generationIds.length === 0
       ? new Map<string, { orgId: string; conversationId: string; terminalReason: string | null }>()
@@ -3665,80 +3451,39 @@ export function chatService(db: Db, storage?: StorageService) {
       ? []
       : assistantMessageIds.filter((messageId) => {
         const generationId = generationIdByAssistantMessageId.get(messageId);
-        return Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
+        const message = messageById.get(messageId);
+        return Boolean(
+          generationId
+          && nativeSteerTargetGenerationIds.has(generationId)
+          && message
+          && allowsLegacyTranscriptFallback(message),
+        );
       });
-    const hydratedDetachedTranscriptByMessageId = includeTranscript
-      ? detachedTranscriptByMessageId
-      : nativeSteerAssistantMessageIds.length > 0
-        ? await listDetachedChatTranscripts(db, rows)
-        : detachedTranscriptByMessageId;
-    const assistantGenerationIds = [
-      ...new Set(generationIdByAssistantMessageId.values()),
-    ];
+    const transcriptFallbackRows = rows.filter((row) =>
+      allowsLegacyTranscriptFallback(row)
+      && (includeTranscript || nativeSteerAssistantMessageIds.includes(row.id)),
+    );
+    const conversationTranscriptByMessageId = transcriptFallbackRows.length > 0
+      ? await readConversationMessageTranscripts(db, transcriptFallbackRows)
+      : new Map<string, ChatStreamTranscriptEntry[]>();
     const assistantGenerationPairs = [...generationIdByAssistantMessageId].map(
       ([assistantMessageId, generationId]) => ({ assistantMessageId, generationId }),
     );
-    const selectedGenerationEventCondition = assistantGenerationPairs.length > 0
-      ? or(...assistantGenerationPairs.map(({ assistantMessageId, generationId }) => and(
+    const legacyAssistantGenerationPairs = assistantGenerationPairs.filter(({ assistantMessageId }) => {
+      const message = messageById.get(assistantMessageId);
+      return Boolean(message && allowsLegacyTranscriptFallback(message));
+    });
+    const selectedGenerationEventCondition = legacyAssistantGenerationPairs.length > 0
+      ? or(...legacyAssistantGenerationPairs.map(({ assistantMessageId, generationId }) => and(
         eq(chatGenerationEvents.assistantMessageId, assistantMessageId),
         eq(chatGenerationEvents.generationId, generationId),
       )))
       : undefined;
-    const generationIdsNeedingFullTranscript = includeTranscript
-      ? assistantGenerationIds
-      : [...nativeSteerTargetGenerationIds].filter((generationId) =>
-        assistantGenerationIds.includes(generationId));
-    const assistantMessageIdsNeedingFullTranscript = assistantGenerationPairs
-      .filter(({ generationId }) => generationIdsNeedingFullTranscript.includes(generationId))
-      .map(({ assistantMessageId }) => assistantMessageId);
-    const transcriptByAssistantMessageId = new Map<string, ChatStreamTranscriptEntry[]>();
-    if (generationIdsNeedingFullTranscript.length > 0) {
-      const transcriptEventRows = await db
-        .select({
-          assistantMessageId: chatGenerationEvents.assistantMessageId,
-          generationId: chatGenerationEvents.generationId,
-          generationSeq: chatGenerationEvents.generationSeq,
-          payload: chatGenerationEvents.payload,
-        })
-        .from(chatGenerationEvents)
-        .innerJoin(chatGenerations, eq(chatGenerations.id, chatGenerationEvents.generationId))
-        .where(and(
-          selectedGenerationEventCondition,
-          inArray(chatGenerationEvents.assistantMessageId, assistantMessageIdsNeedingFullTranscript),
-          eq(chatGenerationEvents.eventKind, "transcript"),
-          or(
-            isNull(chatGenerations.acceptedThroughSeq),
-            lte(chatGenerationEvents.generationSeq, chatGenerations.acceptedThroughSeq),
-          ),
-        ))
-        .orderBy(
-          asc(chatGenerationEvents.generationId),
-          asc(chatGenerationEvents.generationSeq),
-        );
-      for (const eventRow of transcriptEventRows) {
-        if (!eventRow.assistantMessageId) continue;
-        const entry = eventRow.payload.entry;
-        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-        const provenancedEntry = withChatTranscriptGenerationProvenance(
-          entry as ChatStreamTranscriptEntry,
-          {
-            generationId: eventRow.generationId,
-            generationSeq: eventRow.generationSeq,
-          },
-        );
-        const transcript = transcriptByAssistantMessageId.get(eventRow.assistantMessageId);
-        if (transcript) transcript.push(provenancedEntry);
-        else transcriptByAssistantMessageId.set(
-          eventRow.assistantMessageId,
-          [provenancedEntry],
-        );
-      }
-    }
     const transcriptSummaryByAssistantMessageId = new Map<
       string,
       MessageHydrationRow["transcriptSummary"]
     >();
-    if (!includeTranscript && assistantGenerationPairs.length > 0) {
+    if (!includeTranscript && legacyAssistantGenerationPairs.length > 0) {
       const summaryRows = await db
         .select({
           assistantMessageId: chatGenerationEvents.assistantMessageId,
@@ -3768,24 +3513,13 @@ export function chatService(db: Db, storage?: StorageService) {
     }
     const detachedTranscriptSummaryByMessageId = includeTranscript
       ? new Map<string, MessageHydrationRow["transcriptSummary"]>()
-      : await listDetachedChatTranscriptSummaries(db, rows);
-    const nativeSteerTranscriptPayloadByMessageId = new Map<string, Record<string, unknown> | null>();
-    if (nativeSteerAssistantMessageIds.length > 0) {
-      const transcriptPayloadRows = await db
-        .select({
-          id: chatMessages.id,
-          structuredPayload: chatMessages.structuredPayload,
-        })
-        .from(chatMessages)
-        .where(inArray(chatMessages.id, nativeSteerAssistantMessageIds));
-      for (const transcriptPayloadRow of transcriptPayloadRows) {
-        nativeSteerTranscriptPayloadByMessageId.set(
-          transcriptPayloadRow.id,
-          transcriptPayloadRow.structuredPayload,
-        );
+      : await listDetachedChatTranscriptSummaries(db, legacyTranscriptRows);
+    if (!includeTranscript && legacyFallbackRows.length > 0) {
+      const fallbackSummaries = await listDetachedChatTranscriptSummaries(db, legacyFallbackRows);
+      for (const [messageId, summary] of fallbackSummaries) {
+        detachedTranscriptSummaryByMessageId.set(messageId, summary);
       }
     }
-
     return rows.map((row) => {
       const {
         clientMutationId: _clientMutationId,
@@ -3795,25 +3529,56 @@ export function chatService(db: Db, storage?: StorageService) {
       const generationId = generationIdByAssistantMessageId.get(row.id) ?? null;
       const includeRowTranscript = includeTranscript
         || Boolean(generationId && nativeSteerTargetGenerationIds.has(generationId));
-      const transcriptPayload = nativeSteerTranscriptPayloadByMessageId.get(row.id) ?? row.structuredPayload;
-      const ledgerTranscript = transcriptByAssistantMessageId.get(row.id);
-      const transcript = includeRowTranscript
+      const conversationTranscript = conversationTranscriptByMessageId.get(row.id) ?? [];
+      const runRead = runTranscriptReadForRow(row);
+      const legacySourceEligible = !runRead || runRead.source === "legacy";
+      // Native Run rows are owned by the Reader even when the provider returns
+      // an empty page. Use conversation transcript items only when the Run
+      // Reader explicitly selected legacy or the message has no Run.
+      const legacyTranscript = legacySourceEligible
         ? selectBoundedChatTranscript({
-          ledger: ledgerTranscript,
-          detached: hydratedDetachedTranscriptByMessageId.get(row.id),
-          legacyPayload: transcriptPayload,
+          ledger: conversationTranscript,
+          detached: undefined,
+          legacyPayload: null,
         })
         : [];
-      const transcriptSummary = includeRowTranscript
+      const legacyTranscriptSummary = legacySourceEligible
         ? transcriptSummaryFromSources({
-          ledger: ledgerTranscript,
-          detached: hydratedDetachedTranscriptByMessageId.get(row.id),
-          legacyPayload: transcriptPayload,
+          ledger: conversationTranscript,
+          detached: undefined,
+          legacyPayload: null,
         })
-        : transcriptSummaryByAssistantMessageId.get(row.id)
-          ?? detachedTranscriptSummaryByMessageId.get(row.id)
-          ?? row.transcriptSummary
-          ?? null;
+        : null;
+      const readerTranscript = runRead && runRead.entries.length > 0
+        ? selectBoundedChatTranscript({
+          ledger: runRead.entries,
+          detached: undefined,
+          legacyPayload: null,
+        })
+        : null;
+      const transcript = includeRowTranscript
+        ? readerTranscript
+          ?? (runRead && runRead.source !== "legacy" ? [] : legacyTranscript)
+        : [];
+      const transcriptSummary = runRead
+        ? runRead.entries.length > 0
+          ? transcriptSummaryFromSources({
+            ledger: runRead.entries,
+            detached: undefined,
+            legacyPayload: null,
+          })
+          : runRead.source === "legacy"
+            ? (includeRowTranscript ? legacyTranscriptSummary : transcriptSummaryByAssistantMessageId.get(row.id)
+              ?? detachedTranscriptSummaryByMessageId.get(row.id)
+              ?? row.transcriptSummary
+              ?? legacyTranscriptSummary)
+            : null
+        : includeRowTranscript
+          ? legacyTranscriptSummary
+          : transcriptSummaryByAssistantMessageId.get(row.id)
+            ?? detachedTranscriptSummaryByMessageId.get(row.id)
+            ?? row.transcriptSummary
+            ?? null;
       const structuredPayload = effectiveStructuredPayload(row);
       return {
         ...publicRow,
@@ -3837,170 +3602,6 @@ export function chatService(db: Db, storage?: StorageService) {
         updatedAt: at,
       })
       .where(eq(chatConversations.id, conversationId));
-  }
-
-  async function list(
-      orgId: string,
-      options?: {
-        status?: "active" | "resolved" | "archived" | "all";
-        q?: string;
-        limit?: number;
-        projectId?: string;
-      },
-      userId?: string | null,
-    ) {
-      const status = options?.status ?? "active";
-      const rawSearch = options?.q?.trim() ?? "";
-      const hasSearch = rawSearch.length > 0;
-      const containsPattern = `%${escapeLikePattern(rawSearch)}%`;
-      const conditions = [eq(chatConversations.orgId, orgId)];
-      if (status !== "all") {
-        conditions.push(eq(chatConversations.status, status));
-      }
-      if (options?.projectId) {
-        conditions.push(sql<boolean>`EXISTS (
-          SELECT 1
-          FROM ${chatContextLinks}
-          WHERE ${chatContextLinks.conversationId} = ${chatConversations.id}
-            AND ${chatContextLinks.orgId} = ${orgId}
-            AND ${chatContextLinks.entityType} = 'project'
-            AND ${chatContextLinks.entityId} = ${options.projectId}
-        )`);
-      }
-      if (hasSearch) {
-        conditions.push(sql<boolean>`(
-          ${chatConversations.title} ILIKE ${containsPattern} ESCAPE '\\'
-          OR ${chatConversations.summary} ILIKE ${containsPattern} ESCAPE '\\'
-          OR EXISTS (
-            SELECT 1
-            FROM ${chatMessages}
-            WHERE ${chatMessages.conversationId} = ${chatConversations.id}
-              AND ${chatMessages.orgId} = ${orgId}
-              AND ${chatMessages.supersededAt} IS NULL
-              AND ${chatMessages.body} ILIKE ${containsPattern} ESCAPE '\\'
-          )
-        )`);
-      }
-      let query = db
-        .select()
-        .from(chatConversations)
-        .where(and(...conditions))
-        .orderBy(desc(sql`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`))
-        .$dynamic();
-      if (typeof options?.limit === "number" && Number.isFinite(options.limit)) {
-        query = query.limit(Math.max(1, Math.min(500, Math.floor(options.limit))));
-      }
-      const rows = await query;
-      const conversations = await hydrateConversations(rows, userId);
-      if (!hasSearch) return conversations;
-      const searchPreviews = await listSearchPreviews(orgId, rows, rawSearch, containsPattern);
-      return conversations.map((conversation) => ({
-        ...conversation,
-        searchPreview: searchPreviews.get(conversation.id) ?? null,
-      }));
-  }
-
-  async function listSummaries(
-      orgId: string,
-      options?: {
-        status?: "active" | "resolved" | "archived" | "all";
-        limit?: number;
-        after?: ConversationSummaryCursor | null;
-        excludePinned?: boolean;
-      },
-      userId?: string | null,
-    ) {
-      const status = options?.status ?? "active";
-      const conditions = [eq(chatConversations.orgId, orgId)];
-      const activityAtSql =
-        sql<Date>`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`;
-      const threadKeySql = sql<string>`'chat:' || ${chatConversations.id}`;
-      if (status !== "all") {
-        conditions.push(eq(chatConversations.status, status));
-      }
-      if (options?.after) {
-        const afterActivityAt = options.after.activityAt.toISOString();
-        conditions.push(sql<boolean>`(
-          ${activityAtSql} < ${afterActivityAt}
-          OR (
-            ${activityAtSql} = ${afterActivityAt}
-            AND (
-              ${chatConversations.title} > ${options.after.title}
-              OR (
-                ${chatConversations.title} = ${options.after.title}
-                AND ${threadKeySql} > ${options.after.threadKey}
-              )
-            )
-          )
-        )`);
-      }
-      if (options?.excludePinned && userId) {
-        conditions.push(sql<boolean>`NOT EXISTS (
-          SELECT 1
-          FROM ${chatConversationUserStates}
-          WHERE ${chatConversationUserStates.orgId} = ${orgId}
-            AND ${chatConversationUserStates.userId} = ${userId}
-            AND ${chatConversationUserStates.conversationId} = ${chatConversations.id}
-            AND ${chatConversationUserStates.pinnedAt} IS NOT NULL
-        )`);
-      }
-      let query = db
-        .select()
-        .from(chatConversations)
-        .where(and(...conditions))
-        .orderBy(desc(activityAtSql), chatConversations.title, chatConversations.id)
-        .$dynamic();
-      if (typeof options?.limit === "number" && Number.isFinite(options.limit)) {
-        query = query.limit(Math.max(1, Math.floor(options.limit)));
-      }
-      const rows = await query;
-      return hydrateConversationSummaries(rows, userId);
-  }
-
-  async function listPinnedSummaries(orgId: string, userId: string) {
-    const stateRows = await db
-      .select({ conversationId: chatConversationUserStates.conversationId })
-      .from(chatConversationUserStates)
-      .where(
-        and(
-          eq(chatConversationUserStates.orgId, orgId),
-          eq(chatConversationUserStates.userId, userId),
-          sql<boolean>`${chatConversationUserStates.pinnedAt} IS NOT NULL`,
-        ),
-      );
-    const conversationIds = stateRows.map((row) => row.conversationId);
-    if (conversationIds.length === 0) return [];
-
-    const activityAtSql = sql<Date>`coalesce(${chatConversations.lastMessageAt}, ${chatConversations.updatedAt})`;
-    const rows = await db
-      .select()
-      .from(chatConversations)
-      .where(
-        and(
-          eq(chatConversations.orgId, orgId),
-          eq(chatConversations.status, "active"),
-          inArray(chatConversations.id, conversationIds),
-        ),
-      )
-      .orderBy(desc(activityAtSql), chatConversations.title, chatConversations.id);
-    return hydrateConversationSummaries(rows, userId);
-  }
-
-  async function listSummariesByIds(orgId: string, conversationIds: string[], userId?: string | null) {
-    const uniqueConversationIds = [...new Set(conversationIds.filter((id) => id.trim().length > 0))];
-    if (uniqueConversationIds.length === 0) return [];
-
-    const rows = await db
-      .select()
-      .from(chatConversations)
-      .where(
-        and(
-          eq(chatConversations.orgId, orgId),
-          eq(chatConversations.status, "active"),
-          inArray(chatConversations.id, uniqueConversationIds),
-        ),
-      );
-    return hydrateConversationSummaries(rows, userId);
   }
 
   async function getById(id: string, userId?: string | null) {
@@ -4217,7 +3818,7 @@ export function chatService(db: Db, storage?: StorageService) {
         sourceConversation: source,
         targetConversationId: child.id,
         orgId: input.orgId,
-        transcriptBySourceMessageId: await loadChatTranscripts(tx, forkMessages),
+        transcriptBySourceMessageId: await loadForkTranscripts(tx, forkMessages),
       });
 
       const [systemEvent] = await tx
@@ -4517,7 +4118,9 @@ export function chatService(db: Db, storage?: StorageService) {
   }
 
   async function listMessages(conversationId: string, options: { includeTranscript?: boolean } = {}) {
-      const includeTranscript = options.includeTranscript === true;
+      // Keep the historical service contract; callers that render message lists
+      // without transcript data pass `{ includeTranscript: false }` explicitly.
+      const includeTranscript = options.includeTranscript !== false;
       const conversationOrgIds = db
         .select({ orgId: chatConversations.orgId })
         .from(chatConversations)
@@ -4560,36 +4163,35 @@ export function chatService(db: Db, storage?: StorageService) {
 
   async function getMessageTranscript(conversationId: string, messageId: string) {
       const row = await db
-        .select({
-          id: chatMessages.id,
-          orgId: chatMessages.orgId,
-          conversationId: chatMessages.conversationId,
-          role: chatMessages.role,
-          structuredPayload: chatMessages.structuredPayload,
-          runId: chatMessages.runId,
-        })
+      .select({
+        id: chatMessages.id,
+        orgId: chatMessages.orgId,
+        conversationId: chatMessages.conversationId,
+        role: chatMessages.role,
+        body: chatMessages.body,
+        createdAt: chatMessages.createdAt,
+        runId: chatMessages.runId,
+      })
         .from(chatMessages)
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
-      if (row.runId) {
+      const runRead = row.runId ? await readRunTranscriptThroughReader(row) : null;
+      if (runRead && (runRead.entries.length > 0 || runRead.source !== "legacy")) {
         return {
           messageId: row.id,
           messageRef: messageShortRef(row.id),
-          transcript: await readRunTranscriptThroughReader(row),
+          transcript: runRead.entries,
         };
       }
-      const [generation, detached] = await Promise.all([
-        listChatGenerationTranscripts(db, [row]),
-        listDetachedChatTranscripts(db, [row]),
-      ]);
+      const conversationTranscript = await readConversationMessageTranscripts(db, [row]);
       return {
         messageId: row.id,
         messageRef: messageShortRef(row.id),
         transcript: selectBoundedChatTranscript({
-          ledger: generation.transcriptByMessageId.get(row.id),
-          detached: detached.get(row.id),
-          legacyPayload: row.structuredPayload,
+          ledger: conversationTranscript.get(row.id),
+          detached: undefined,
+          legacyPayload: null,
         }),
       };
   }
@@ -4610,22 +4212,22 @@ export function chatService(db: Db, storage?: StorageService) {
 
   async function transcriptSnapshotForWrite(
     database: Pick<Db, "select">,
-    message: Pick<MessageRow, "id" | "orgId" | "conversationId" | "role" | "structuredPayload">,
+    message: Pick<MessageRow, "id" | "orgId" | "conversationId" | "role" | "body" | "createdAt" | "structuredPayload" | "runId">,
     requestedTranscript: ChatStreamTranscriptEntry[] | undefined,
-  ) {
+  ): Promise<ChatStreamTranscriptEntry[] | null> {
+    // A Run Reader owns transcripts once a message is linked to a Run. Keep
+    // existing snapshots intact for legacy fallback, but do not rewrite them.
+    if (message.runId) return null;
+    const conversationTranscript = await readConversationMessageTranscripts(database, [message]);
     // Generation events are the canonical live source. Never duplicate their
     // transcript into the detached snapshot table during a metadata update.
-    if (message.role === "assistant") {
-      const generation = await listChatGenerationTranscripts(database, [message]);
-      if ((generation.transcriptByMessageId.get(message.id)?.length ?? 0) > 0) return [];
-    }
+    if (message.role === "assistant" && (conversationTranscript.get(message.id) ?? []).some((entry) => {
+      const provenance = entry as unknown as Record<string, unknown>;
+      return typeof provenance.generationId === "string"
+        && typeof provenance.generationSeqStart === "number";
+    })) return [];
     if (requestedTranscript !== undefined) return requestedTranscript;
-    const detached = await listDetachedChatTranscripts(database, [message]);
-    return selectChatTranscript({
-      ledger: undefined,
-      detached: detached.get(message.id),
-      legacyPayload: message.structuredPayload,
-    });
+    return conversationTranscript.get(message.id) ?? [];
   }
 
   async function addMessage(
@@ -4652,6 +4254,7 @@ export function chatService(db: Db, storage?: StorageService) {
       const transcriptFromPayload = chatTranscriptFromPayload(sanitizedPayload);
       const transcript = input.transcript ?? transcriptFromPayload;
       const { message } = await db.transaction(async (tx) => {
+        if (input.role === "user") await assertChatWriteAdmitted(tx, input.orgId, conversationId);
         const [inserted] = await tx
           .insert(chatMessages)
           .values({
@@ -4670,7 +4273,7 @@ export function chatService(db: Db, storage?: StorageService) {
           })
           .returning();
         if (!inserted) throw new Error("Failed to create chat message");
-        if (transcript.length > 0) {
+        if (transcript.length > 0 && !input.runId) {
           await replaceDetachedChatTranscript(tx, {
             orgId: input.orgId,
             messageId: inserted.id,
@@ -4737,7 +4340,10 @@ export function chatService(db: Db, storage?: StorageService) {
           : undefined;
       const { updated } = await db.transaction(async (tx) => {
         const transcript = hasPayloadUpdate
-          ? await transcriptSnapshotForWrite(tx, existing, requestedTranscript)
+          ? await transcriptSnapshotForWrite(tx, {
+            ...existing,
+            runId: input.runId !== undefined ? input.runId : existing.runId,
+          }, requestedTranscript)
           : null;
         const [next] = await tx
           .update(chatMessages)
@@ -4842,7 +4448,7 @@ export function chatService(db: Db, storage?: StorageService) {
           })
           .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
           .returning();
-        if (next) {
+        if (next && transcript !== null) {
           await replaceDetachedChatTranscript(tx, {
             orgId: existing.orgId,
             messageId: existing.id,
@@ -5567,6 +5173,7 @@ export function chatService(db: Db, storage?: StorageService) {
     acknowledgeServerQueuedMessageDelivery,
     completeServerQueuedMessageDelivery,
     releaseServerQueuedMessageClaim,
+    admitQueuedSideChatRuntime,
     recoverExpiredServerQueueClaims,
     claimNextQueuedMessage,
     releaseQueuedMessageClaim,

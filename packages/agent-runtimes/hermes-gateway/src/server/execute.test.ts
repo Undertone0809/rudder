@@ -9,6 +9,36 @@ import { testEnvironment } from "./test.js";
 
 const servers: Server[] = [];
 const cleanupDirs = new Set<string>();
+const ACP_TIMEOUT_MOCK = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") {
+      if (process.env.HERMES_STALL_METHOD === message.method) continue;
+      send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true }, ...(process.env.HERMES_STALL_METHOD === "authenticate" ? { authMethods: [{ id: "hermes-test-auth" }] } : {}) } });
+    } else if (message.method === "authenticate") {
+      if (process.env.HERMES_STALL_METHOD !== message.method) send({ id: message.id, result: {} });
+    } else if (message.method === "session/new") {
+      send({ id: message.id, result: { sessionId: "execute-hermes-timeout-session" } });
+    } else if (message.method === "session/load") {
+      if (process.env.HERMES_STALL_METHOD !== message.method) send({ id: message.id, result: { sessionId: message.params.sessionId } });
+    } else if (message.method === "session/prompt") {
+      if (process.env.HERMES_STALL_METHOD === message.method) continue;
+      send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "native timeout fixture result" } } } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+    } else if (message.method === "session/cancel") {
+      process.stderr.write("session cancel received\n");
+    }
+  }
+});
+`;
 
 async function createSkill(slug: string, content: string): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `rudder-hermes-${slug}-`));
@@ -91,6 +121,238 @@ afterEach(async () => {
 });
 
 describe("Hermes gateway execution", () => {
+  it("uses ACP for chat without requiring the legacy HTTP gateway and returns a native session", async () => {
+    const mockAcp = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "execute-hermes-session" } });
+    else if (message.method === "session/prompt") {
+      send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "native execute result" } } } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+    }
+  }
+});
+`;
+    const pids: number[] = [];
+    const result = await execute(context({
+      hermesChatBackend: "acp",
+      command: process.execPath,
+      args: ["-e", mockAcp],
+      providerHostId: "host-hermes-execute",
+      providerProfileId: "profile-hermes-execute",
+      hermesProviderVersion: "0.21.0",
+      timeoutMs: 2_000,
+    }, {
+      context: { chatMode: true, chatPrompt: "native chat prompt" },
+      onSpawn: async ({ pid }) => { pids.push(pid); },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      sessionId: "execute-hermes-session",
+      resultJson: { nativeSession: true, transport: "hermes-acp-stdio", profileId: "profile-hermes-execute" },
+    });
+    expect(result.summary).toBe("native execute result");
+    expect(pids).toHaveLength(1);
+    expect(() => process.kill(pids[0], 0)).toThrow();
+  });
+
+  it("preserves an initialize timeout on resume without cancelling before the handshake", async () => {
+    const baseConfig = { hermesChatBackend: "acp", command: process.execPath, args: ["-e", ACP_TIMEOUT_MOCK] };
+    const seed = await execute(context({ ...baseConfig, timeoutMs: 1_000 }, {
+      context: { chatMode: true, chatPrompt: "create resumable session" },
+    }));
+    expect(seed.sessionId).toBe("execute-hermes-timeout-session");
+    expect(seed.sessionParams).toBeTruthy();
+
+    const pids: number[] = [];
+    const logs: string[] = [];
+    const result = await execute(context({
+      ...baseConfig,
+      env: { HERMES_STALL_METHOD: "initialize" },
+      timeoutMs: 250,
+    }, {
+      runtime: {
+        sessionId: seed.sessionId!,
+        sessionParams: seed.sessionParams!,
+        sessionDisplayId: seed.sessionDisplayId!,
+        taskKey: null,
+      },
+      context: { chatMode: true, chatPrompt: "initialize stalled" },
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+      onSpawn: async ({ pid }) => { pids.push(pid); },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: true,
+      errorCode: "hermes_native_timeout",
+      sessionId: seed.sessionId,
+      resultJson: { timeout: { code: "HERMES_ACP_RPC_TIMEOUT", method: "initialize", timeoutMs: 250 } },
+    });
+    expect(result.sessionParams).toEqual(seed.sessionParams);
+    expect(result.errorMessage).toContain("initialize timed out");
+    expect(logs.join("\n")).not.toContain("Hermes ACP cancel requested");
+    expect(pids).toHaveLength(1);
+    expect(() => process.kill(pids[0]!, 0)).toThrow();
+  });
+
+  it("preserves an authenticate RPC timeout and reaps the child before a session exists", async () => {
+    const pids: number[] = [];
+    const logs: string[] = [];
+    const result = await execute(context({
+      hermesChatBackend: "acp",
+      command: process.execPath,
+      args: ["-e", ACP_TIMEOUT_MOCK],
+      env: { HERMES_STALL_METHOD: "authenticate" },
+      hermesAcpAuthMethodId: "hermes-test-auth",
+      timeoutMs: 250,
+    }, {
+      context: { chatMode: true, chatPrompt: "authenticate stalled" },
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+      onSpawn: async ({ pid }) => { pids.push(pid); },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: true,
+      errorCode: "hermes_native_timeout",
+      sessionId: null,
+      resultJson: { timeout: { code: "HERMES_ACP_RPC_TIMEOUT", method: "authenticate", timeoutMs: 250 } },
+    });
+    expect(result.errorMessage).toContain("authenticate timed out");
+    expect(logs.join("\n")).not.toContain("Hermes ACP cancel requested");
+    expect(pids).toHaveLength(1);
+    expect(() => process.kill(pids[0]!, 0)).toThrow();
+  });
+
+  it("maps a stalled ACP prompt to a timeout terminal and cancels and reaps its child", async () => {
+    const pids: number[] = [];
+    const logs: string[] = [];
+    const result = await execute(context({
+      hermesChatBackend: "acp",
+      command: process.execPath,
+      args: ["-e", ACP_TIMEOUT_MOCK],
+      env: { HERMES_STALL_METHOD: "session/prompt" },
+      providerHostId: "host-hermes-prompt-timeout",
+      providerProfileId: "profile-hermes-prompt-timeout",
+      hermesProviderVersion: "0.21.0",
+      timeoutMs: 250,
+    }, {
+      context: { chatMode: true, chatPrompt: "stalled prompt" },
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+      onSpawn: async ({ pid }) => { pids.push(pid); },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: true,
+      errorCode: "hermes_native_timeout",
+      sessionId: "execute-hermes-timeout-session",
+      resultJson: { timeout: { code: "HERMES_ACP_RPC_TIMEOUT", method: "session/prompt", timeoutMs: 250 } },
+    });
+    expect(result.sessionParams).toMatchObject({ sessionId: "execute-hermes-timeout-session", transport: "hermes-acp-stdio" });
+    expect(logs.join("\n")).toContain("Hermes ACP cancel requested session=execute-hermes-timeout-session");
+    expect(pids).toHaveLength(1);
+    expect(() => process.kill(pids[0]!, 0)).toThrow();
+  });
+
+  it("maps a stalled ACP session/load to a timeout terminal and cancels and reaps its child", async () => {
+    const baseConfig = {
+      hermesChatBackend: "acp",
+      command: process.execPath,
+      args: ["-e", ACP_TIMEOUT_MOCK],
+      providerHostId: "host-hermes-load-timeout",
+      providerProfileId: "profile-hermes-load-timeout",
+      hermesProviderVersion: "0.21.0",
+    };
+    const seed = await execute(context({ ...baseConfig, timeoutMs: 1_000 }, {
+      context: { chatMode: true, chatPrompt: "create resumable session" },
+    }));
+    expect(seed.sessionId).toBe("execute-hermes-timeout-session");
+    expect(seed.sessionParams).toBeTruthy();
+
+    const pids: number[] = [];
+    const logs: string[] = [];
+    const result = await execute(context({
+      ...baseConfig,
+      env: { HERMES_STALL_METHOD: "session/load" },
+      timeoutMs: 250,
+    }, {
+      runtime: {
+        sessionId: seed.sessionId!,
+        sessionParams: seed.sessionParams!,
+        sessionDisplayId: seed.sessionDisplayId!,
+        taskKey: null,
+      },
+      context: { chatMode: true, chatPrompt: "resume stalled session" },
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+      onSpawn: async ({ pid }) => { pids.push(pid); },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: true,
+      errorCode: "hermes_native_timeout",
+      sessionId: seed.sessionId,
+      resultJson: { timeout: { code: "HERMES_ACP_RPC_TIMEOUT", method: "session/load", timeoutMs: 250 } },
+    });
+    expect(result.sessionParams).toEqual(seed.sessionParams);
+    expect(logs.join("\n")).toContain(`Hermes ACP cancel requested session=${seed.sessionId}`);
+    expect(pids).toHaveLength(1);
+    expect(() => process.kill(pids[0]!, 0)).toThrow();
+  });
+
+  it("propagates a Hermes ACP subscription 403 as a failed Rudder execution", async () => {
+    const mockAcp = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "execute-hermes-session-http-403" } });
+    else if (message.method === "session/prompt") {
+      send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "error", error: { code: "non_retryable_client_error", status: 403, message: "subscription required" } } } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+    }
+  }
+});
+`;
+    const result = await execute(context({
+      hermesChatBackend: "acp",
+      command: process.execPath,
+      args: ["-e", mockAcp],
+      providerHostId: "host-hermes-http-403",
+      providerProfileId: "profile-hermes-http-403",
+      hermesProviderVersion: "0.21.0",
+      timeoutMs: 2_000,
+    }, {
+      context: { chatMode: true, chatPrompt: "native chat prompt" },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorCode: "hermes_native_provider_error",
+      sessionId: "execute-hermes-session-http-403",
+      resultJson: { nativeSession: true, providerError: true, providerHttpStatus: 403 },
+    });
+  });
+
   it("injects only the selected Rudder skills and records name-only projection evidence", async () => {
     const selectedMarker = "R6Z182_SELECTED_MARKER";
     const unselectedMarker = "R6Z182_UNSELECTED_MARKER";
@@ -354,11 +616,28 @@ describe("Hermes gateway execution", () => {
     });
 
     const result = await execute(context(
-      { url: server.url, timeoutMs: 1_000 },
+      {
+        url: server.url,
+        timeoutMs: 1_000,
+        providerHostId: "host-hermes-test",
+        providerProfileId: "profile-hermes-test",
+        capabilityRevision: "hermes-api-v1",
+        hermesProviderVersion: "0.19.1",
+        hermesAuthEnvVar: "HERMES_API_KEY",
+      },
       { runtime: { sessionId: "hermes-session-existing", sessionParams: { sessionId: "hermes-session-existing" }, sessionDisplayId: "hermes-session-existing", taskKey: null } },
     ));
 
     expect(result.exitCode).toBe(0);
+    expect(result.sessionParams).toMatchObject({
+      sessionId: "hermes-session-existing",
+      hermesTransport: "hermes-http-sse",
+      profileHostId: "host-hermes-test",
+      profileId: "profile-hermes-test",
+      capabilityRevision: "hermes-api-v1",
+      hermesProviderVersion: "0.19.1",
+      hermesAuthEnvVar: "HERMES_API_KEY",
+    });
     expect(server.requests.map((request) => request.path)).toEqual([
       "/api/sessions/hermes-session-existing",
       "/api/sessions/hermes-session-existing/messages",
@@ -410,6 +689,157 @@ describe("Hermes gateway execution", () => {
     expect(result.errorCode).toBe("hermes_gateway_stopped");
     expect(server.requests.some((request) => request.path.endsWith("/stop"))).toBe(true);
   }, 5_000);
+
+  it("keeps Hermes credentials and raw tool interactions out of persisted metadata", async () => {
+    const secret = "HERMES_API_KEY_VALUE";
+    const interactionSecret = "raw-tool-interaction-secret";
+    const metas: unknown[] = [];
+    const logs: string[] = [];
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        expect(JSON.stringify(body)).not.toContain(secret);
+        return json(res, 202, { run_id: "hermes-run-secret-check", status: "started" });
+      }
+      if (req.url === "/v1/runs/hermes-run-secret-check/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+        return;
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const result = await execute(context({
+      url: server.url,
+      apiKey: secret,
+      hermesAuthEnvVar: secret,
+      timeoutMs: 1_000,
+    }, {
+      context: {
+        issueId: "issue-hermes-secret-check",
+        wakeReason: "manual",
+        apiKey: secret,
+        rudderToolContext: [{ kind: "tool_call", toolCallId: "call-1", content: interactionSecret }],
+      },
+      onMeta: async (meta) => { metas.push(meta); },
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+    }));
+
+    expect(result.exitCode).toBe(0);
+    expect(result.sessionParams).not.toHaveProperty("apiKey");
+    expect(result.sessionParams).not.toHaveProperty("hermesAuthEnvVar");
+    expect(JSON.stringify(metas)).not.toContain(secret);
+    expect(JSON.stringify(metas)).not.toContain(interactionSecret);
+    expect(metas[0]).toMatchObject({
+      context: {
+        rudderToolContextSummary: { mode: "bounded-hash", eventCount: 1 },
+      },
+    });
+    expect(logs.join("\n")).not.toContain(secret);
+    expect(logs.join("\n")).not.toContain(interactionSecret);
+  });
+
+  it("redacts configured credentials from an upstream submission error", async () => {
+    const secret = "HERMES_API_KEY_VALUE";
+    const unconfiguredSecret = "unconfigured-upstream-secret";
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        await readJsonBody(req);
+        return json(res, 401, { error: `clientSecret=${unconfiguredSecret}`, apiKey: secret });
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const result = await execute(context({ url: server.url, apiKey: secret, timeoutMs: 1_000 }));
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_submission_failed" });
+    expect(result.errorMessage).not.toContain(secret);
+    expect(result.errorMessage).not.toContain(unconfiguredSecret);
+    expect(JSON.stringify(result.resultJson)).not.toContain(secret);
+    expect(JSON.stringify(result.resultJson)).not.toContain(unconfiguredSecret);
+    expect(result.resultJson).toMatchObject({ error: "clientSecret=[REDACTED]", apiKey: "[REDACTED]" });
+  });
+
+  it("passes only safe approval evidence to the Rudder interaction bridge", async () => {
+    const secret = "hermes-approval-secret";
+    const unconfiguredSecret = "unconfigured-approval-secret";
+    let approvalPayload: Record<string, unknown> | null = null;
+    const logs: string[] = [];
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") return json(res, 202, { run_id: "hermes-run-approval-safe", status: "started" });
+      if (req.url === "/v1/runs/hermes-run-approval-safe/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end([
+          `data: ${JSON.stringify({ event: "approval.request", approval_id: "remote-approval-1", tool: `clientSecret=${unconfiguredSecret}`, output: secret, secretField: secret, privateKey: unconfiguredSecret })}\n\n`,
+          `data: ${JSON.stringify({ event: "run.completed", output: "approved flow complete" })}\n\n`,
+        ].join(""));
+        return;
+      }
+      if (req.url === "/v1/runs/hermes-run-approval-safe/approval" && req.method === "POST") {
+        await readJsonBody(req);
+        return json(res, 200, { status: "denied" });
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const result = await execute(context({
+      url: server.url,
+      headers: { authorization: `Bearer ${secret}`, "x-api-key": secret },
+      timeoutMs: 1_000,
+    }, {
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+      requestApproval: async (request) => {
+        approvalPayload = request.payload;
+        return { id: "rudder-approval-1", status: "pending" };
+      },
+      waitForApproval: async () => ({ id: "rudder-approval-1", status: "rejected" }),
+    }));
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.stringify(approvalPayload)).not.toContain(secret);
+    expect(JSON.stringify(approvalPayload)).not.toContain(unconfiguredSecret);
+    expect(approvalPayload).toMatchObject({
+      provider: "hermes",
+      event: { event: "approval.request", approval_id: "remote-approval-1", tool: "clientSecret=[REDACTED]" },
+      choices: ["once", "deny"],
+    });
+    expect(logs.join("\n")).not.toContain(secret);
+  });
+
+  it("fails closed for native secret requests without persisting secret-shaped values", async () => {
+    const secret = "raw-native-secret";
+    const logs: string[] = [];
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") return json(res, 202, { run_id: "hermes-run-secret-request", status: "started" });
+      if (req.url === "/v1/runs/hermes-run-secret-request/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.end([
+          `data: ${JSON.stringify({ event: "secret.request", request_id: "native-secret-1", clientSecret: secret, privateKey: secret, bearerToken: secret, value: secret })}\n\n`,
+          `data: ${JSON.stringify({ event: "run.completed", output: `clientSecret=${secret}` })}\n\n`,
+        ].join(""));
+        return;
+      }
+      if (req.url === "/v1/runs/hermes-run-secret-request/stop" && req.method === "POST") return json(res, 200, { run_id: "hermes-run-secret-request", status: "stopping" });
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const result = await execute(context({ url: server.url, apiKey: "hermes-gateway-key", timeoutMs: 1_000 }, {
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+    }));
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorCode: "hermes_gateway_interaction_unresolved",
+      resultJson: { output: null },
+    });
+    expect(JSON.stringify(result.resultJson)).not.toContain(secret);
+    expect(result.summary).toBeUndefined();
+    expect(logs.join("\n")).not.toContain(secret);
+  });
 });
 
 describe("Hermes gateway environment probe", () => {

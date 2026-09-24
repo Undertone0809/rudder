@@ -285,6 +285,15 @@ describe("parsePiJsonl", () => {
     const parsed = parsePiJsonl(stdout);
     expect(parsed.errors).toContain("401 invalid x-api-key");
   });
+
+  it("retains a provider error when Pi only emits it in the agent_end message", () => {
+    const parsed = parsePiJsonl(JSON.stringify({
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [], stopReason: "error", errorMessage: "401 status code (no body)" }],
+    }));
+    expect(parsed.errors).toEqual(["401 status code (no body)"]);
+    expect(parsed.finalMessage).toBe("");
+  });
 });
 
 describe("isPiUnknownSessionError", () => {

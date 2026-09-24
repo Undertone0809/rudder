@@ -747,6 +747,84 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
     ]);
   });
 
+  it.each([
+    ["runtime binding marker", { runtimeBindingId: "binding-native" }],
+    ["native transcript source marker", { transcriptSource: "native" }],
+  ])("does not infer skills from a stale local log for a native run with %s", async (_label, contextSnapshot) => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const logRef = path.join(orgId, agentId, `${runId}.ndjson`);
+    const chunk = `${JSON.stringify({
+      type: "item.started",
+      item: {
+        id: "native_item_1",
+        type: "command_execution",
+        command: "cat native-only/SKILL.md",
+        status: "in_progress",
+      },
+    })}\n`;
+    const logContent = `${JSON.stringify({
+      ts: "2026-04-21T10:00:05.000Z",
+      stream: "stdout",
+      chunk,
+    })}\n`;
+
+    fs.mkdirSync(path.dirname(path.join(runLogDir, logRef)), { recursive: true });
+    fs.writeFileSync(path.join(runLogDir, logRef), logContent, "utf8");
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Rudder Native Analytics",
+      urlKey: deriveOrganizationUrlKey(`Rudder Native Analytics ${orgId}`),
+      issuePrefix: "RNA",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Native Agent",
+      role: "engineer",
+      status: "idle",
+      agentRuntimeType: "codex_local",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      createdAt: new Date("2026-04-21T10:00:00.000Z"),
+      updatedAt: new Date("2026-04-21T10:05:00.000Z"),
+      contextSnapshot,
+      logStore: "local_file",
+      logRef,
+      logBytes: Buffer.byteLength(logContent, "utf8"),
+    });
+
+    const analytics = await svc.getAgentSkillAnalytics(agentId, {
+      startDate: "2026-04-21",
+      endDate: "2026-04-21",
+    });
+
+    expect(analytics.totalCount).toBe(0);
+    expect(analytics.totalRunsWithSkills).toBe(0);
+    expect(analytics.evidenceCounts).toEqual({ used: 0, requested: 0, loaded: 0 });
+    expect(analytics.skills).toEqual([]);
+    expect(analytics.days).toEqual([{
+      date: "2026-04-21",
+      totalCount: 0,
+      runCount: 0,
+      evidenceCounts: { used: 0, requested: 0, loaded: 0 },
+      skills: [],
+    }]);
+  });
+
   it("infers used skills from provider Skill tool calls in stored local runtime logs", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

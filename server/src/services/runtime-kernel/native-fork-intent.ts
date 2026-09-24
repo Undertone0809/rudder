@@ -7,9 +7,14 @@ import {
 } from "@rudderhq/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import type { RuntimeProviderBindingRef, RuntimeProviderForkResult, RuntimeProviderSessionRef } from "./provider-capabilities.js";
-import type { RuntimeDriver } from "./runtime-driver.js";
 import type { NativeSegmentRecord, RuntimeBindingRecord } from "./native-session.js";
+import type {
+  NativeSpanSelector,
+  RuntimeProviderBindingRef,
+  RuntimeProviderForkResult,
+  RuntimeProviderSessionRef,
+} from "./provider-capabilities.js";
+import type { RuntimeDriver } from "./runtime-driver.js";
 
 const NATIVE_FORK_INTENT_KEY = "__rudderNativeForkIntent";
 const NATIVE_FORK_INTENT_VERSION = 1 as const;
@@ -27,6 +32,11 @@ export type NativeForkIntentSource = {
   sourceRunId: string;
   sourceSpanId: string;
   sourceBoundaryRef: string;
+  selectorJson: Record<string, unknown>;
+};
+
+type NativeForkIntentStoredSource = Omit<NativeForkIntentSource, "selectorJson"> & {
+  selectorJson?: Record<string, unknown>;
 };
 
 export type NativeForkIntentTarget = {
@@ -43,13 +53,21 @@ export type NativeForkIntentTarget = {
 
 export type NativeForkIntentChild = RuntimeProviderForkResult;
 
+export type NativeForkIntentRunFence = {
+  runId: string;
+  spanId: string;
+  ownerToken: string;
+  attemptEpoch: number;
+};
+
 export type NativeForkIntentRecord = {
   version: typeof NATIVE_FORK_INTENT_VERSION;
   intentId: string;
   idempotencyKey: string;
   status: NativeForkIntentStatus;
-  source: NativeForkIntentSource;
+  source: NativeForkIntentStoredSource;
   target: NativeForkIntentTarget;
+  runFence?: NativeForkIntentRunFence;
   child?: NativeForkIntentChild;
   reason: string | null;
   reconciliation: NativeForkReconciliation;
@@ -69,7 +87,7 @@ export type NativeForkIntentSummary = {
   intentId: string;
   idempotencyKey: string;
   status: NativeForkIntentStatus;
-  source: NativeForkIntentSource;
+  source: NativeForkIntentStoredSource;
   target: NativeForkIntentTarget;
   reconciliation: NativeForkReconciliation;
   reason: string | null;
@@ -87,6 +105,7 @@ export type NativeForkIntentInput = {
   targetBinding: RuntimeBindingRecord;
   targetSegment: NativeSegmentRecord;
   providerBinding?: RuntimeProviderBindingRef | null;
+  runFence?: NativeForkIntentRunFence | null;
 };
 
 export type NativeForkIntentOutcome =
@@ -104,7 +123,8 @@ export class NativeForkIntentError extends Error {
       | "intent_conflict"
       | "intent_unknown"
       | "provider_rejected"
-      | "child_invalid",
+      | "child_invalid"
+      | "run_fence_stale",
     message: string,
   ) {
     super(message);
@@ -144,8 +164,83 @@ function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function normalizeRunFence(value: NativeForkIntentRunFence | null | undefined): NativeForkIntentRunFence | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Number.isInteger(value.attemptEpoch) || value.attemptEpoch <= 0) {
+    throw new NativeForkIntentError("invalid_input", "Run fence attemptEpoch must be a positive integer");
+  }
+  return {
+    runId: requiredString(value.runId, "Run fence runId"),
+    spanId: requiredString(value.spanId, "Run fence spanId"),
+    ownerToken: requiredString(value.ownerToken, "Run fence ownerToken"),
+    attemptEpoch: value.attemptEpoch,
+  };
+}
+
+function sameRunSpan(left: NativeForkIntentRunFence, right: NativeForkIntentRunFence) {
+  return left.runId === right.runId && left.spanId === right.spanId;
+}
+
+function sameRunFence(left: NativeForkIntentRunFence, right: NativeForkIntentRunFence) {
+  return sameRunSpan(left, right)
+    && left.ownerToken === right.ownerToken
+    && left.attemptEpoch === right.attemptEpoch;
+}
+
 function cloneRecord(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
   return value ? { ...value } : {};
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (!value || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+    .join(",")}}`;
+}
+
+function normalizeSelectorJson(value: unknown): Record<string, unknown> {
+  const selector = record(value);
+  if (!selector) {
+    throw new NativeForkIntentError("invalid_input", "source selectorJson must be an object");
+  }
+  const kind = requiredString(selector.kind, "source selector kind");
+  if (kind === "pending" || kind === "unresolved") {
+    throw new NativeForkIntentError("invalid_input", "source selectorJson must identify a completed native boundary");
+  }
+  return { ...selector, kind };
+}
+
+function selectorRuntimeType(value: Record<string, unknown>): string | null {
+  const declared = optionalString(value.runtimeType);
+  if (declared) return declared;
+  switch (value.kind) {
+    case "codex_turn": return "codex_local";
+    case "claude_chain": return "claude_local";
+    case "hermes_execution": return "hermes_gateway";
+    case "opencode_input": return "opencode_local";
+    case "pi_branch_range": return "pi_local";
+    case "cursor_execution": return "cursor";
+    default: return null;
+  }
+}
+
+function selectorSessionId(value: Record<string, unknown>): string | null {
+  switch (value.kind) {
+    case "codex_turn":
+      return optionalString(value.threadId);
+    case "claude_chain":
+    case "opencode_input":
+    case "cursor_execution":
+      return optionalString(value.sessionId);
+    case "hermes_execution":
+      return optionalString(value.sessionRef);
+    case "pi_branch_range":
+      return optionalString(value.sessionResourceRef);
+    default:
+      return null;
+  }
 }
 
 function cloneChild(child: NativeForkIntentChild): NativeForkIntentChild {
@@ -208,12 +303,13 @@ function sameString(left: string | null | undefined, right: string | null | unde
   return (left?.trim() || null) === (right?.trim() || null);
 }
 
-function sameSource(left: NativeForkIntentSource, right: NativeForkIntentSource) {
+function sameSource(left: NativeForkIntentStoredSource, right: NativeForkIntentSource) {
   return left.orgId === right.orgId
     && sameString(left.sourceConversationId, right.sourceConversationId)
     && left.sourceRunId === right.sourceRunId
     && left.sourceSpanId === right.sourceSpanId
-    && left.sourceBoundaryRef === right.sourceBoundaryRef;
+    && left.sourceBoundaryRef === right.sourceBoundaryRef
+    && (!left.selectorJson || stableJson(left.selectorJson) === stableJson(right.selectorJson));
 }
 
 function sameTarget(left: NativeForkIntentTarget, right: NativeForkIntentTarget) {
@@ -251,11 +347,16 @@ function intentFromProviderState(value: unknown): NativeForkIntentRecord | null 
   }
   const source = parsed.source as JsonRecord;
   const target = parsed.target as JsonRecord;
+  const sourceSelector = source.selectorJson === undefined || source.selectorJson === null
+    ? null
+    : record(source.selectorJson);
   if (
     typeof source.orgId !== "string"
     || typeof source.sourceRunId !== "string"
     || typeof source.sourceSpanId !== "string"
     || typeof source.sourceBoundaryRef !== "string"
+    || (source.selectorJson !== undefined && source.selectorJson !== null
+      && (!sourceSelector || typeof sourceSelector.kind !== "string" || sourceSelector.kind.trim().length === 0))
     || typeof target.bindingId !== "string"
     || typeof target.segmentId !== "string"
     || typeof target.orgId !== "string"
@@ -267,6 +368,26 @@ function intentFromProviderState(value: unknown): NativeForkIntentRecord | null 
     || typeof target.capabilityRevision !== "string"
   ) {
     throw new NativeForkIntentError("intent_conflict", "The target segment contains an invalid native fork identity");
+  }
+  let runFence: NativeForkIntentRunFence | undefined;
+  if (parsed.runFence !== undefined && parsed.runFence !== null) {
+    const rawFence = record(parsed.runFence);
+    if (
+      !rawFence
+      || typeof rawFence.runId !== "string"
+      || typeof rawFence.spanId !== "string"
+      || typeof rawFence.ownerToken !== "string"
+      || !Number.isInteger(rawFence.attemptEpoch)
+      || (rawFence.attemptEpoch as number) <= 0
+    ) {
+      throw new NativeForkIntentError("intent_conflict", "The target segment contains an invalid native fork Run fence");
+    }
+    runFence = {
+      runId: rawFence.runId,
+      spanId: rawFence.spanId,
+      ownerToken: rawFence.ownerToken,
+      attemptEpoch: rawFence.attemptEpoch as number,
+    };
   }
   const child = parsed.child === undefined || parsed.child === null ? undefined : parsed.child as NativeForkIntentChild;
   if (parsed.status === "accepted" && !child) {
@@ -283,7 +404,9 @@ function intentFromProviderState(value: unknown): NativeForkIntentRecord | null 
       sourceRunId: source.sourceRunId,
       sourceSpanId: source.sourceSpanId,
       sourceBoundaryRef: source.sourceBoundaryRef,
+      ...(sourceSelector ? { selectorJson: { ...sourceSelector } } : {}),
     },
+    ...(runFence ? { runFence } : {}),
     target: {
       bindingId: target.bindingId,
       segmentId: target.segmentId,
@@ -350,6 +473,7 @@ function normalizeSource(input: NativeForkIntentSource): NativeForkIntentSource 
     sourceRunId: requiredString(input.sourceRunId, "source run"),
     sourceSpanId: requiredString(input.sourceSpanId, "source span"),
     sourceBoundaryRef: requiredString(input.sourceBoundaryRef, "source boundary"),
+    selectorJson: normalizeSelectorJson(input.selectorJson),
   };
 }
 
@@ -413,6 +537,95 @@ async function loadTarget(tx: Db, input: NativeForkIntentInput) {
   return { binding, segment, target: targetFromBinding(binding, segment) };
 }
 
+async function lockIntentTarget(
+  tx: Db,
+  bindingId: string,
+  segmentId: string,
+  runFence?: NativeForkIntentRunFence,
+) {
+  if (runFence) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${runFence.runId}))`);
+  }
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`native-fork-intent:${bindingId}:${segmentId}`}, 0))`);
+}
+
+async function assertCurrentRunFence(
+  tx: Db,
+  fence: NativeForkIntentRunFence,
+  target: { orgId: string; bindingId: string; segmentId: string },
+) {
+  const run = await tx
+    .select({
+      id: heartbeatRuns.id,
+      agentId: heartbeatRuns.agentId,
+      chatConversationId: heartbeatRuns.chatConversationId,
+      status: heartbeatRuns.status,
+      executionOwnerToken: heartbeatRuns.executionOwnerToken,
+      executionLeaseExpiresAt: heartbeatRuns.executionLeaseExpiresAt,
+    })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.id, fence.runId),
+      eq(heartbeatRuns.orgId, target.orgId),
+      eq(heartbeatRuns.status, "running"),
+      eq(heartbeatRuns.executionOwnerToken, fence.ownerToken),
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!run || (run.executionLeaseExpiresAt && run.executionLeaseExpiresAt.getTime() <= Date.now())) {
+    throw new NativeForkIntentError("run_fence_stale", "Native fork target Run owner fence is stale");
+  }
+  const binding = await tx
+    .select({ agentId: runtimeBindings.agentId, conversationId: runtimeBindings.conversationId })
+    .from(runtimeBindings)
+    .where(and(
+      eq(runtimeBindings.id, target.bindingId),
+      eq(runtimeBindings.orgId, target.orgId),
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!binding || binding.agentId !== run.agentId || binding.conversationId !== run.chatConversationId) {
+    throw new NativeForkIntentError("run_fence_stale", "Native fork target Run does not own the target runtime binding");
+  }
+  const span = await tx
+    .select()
+    .from(runRuntimeSpans)
+    .where(and(
+      eq(runRuntimeSpans.id, fence.spanId),
+      eq(runRuntimeSpans.orgId, target.orgId),
+      eq(runRuntimeSpans.runId, fence.runId),
+      eq(runRuntimeSpans.bindingId, target.bindingId),
+      eq(runRuntimeSpans.segmentId, target.segmentId),
+      eq(runRuntimeSpans.ownerToken, fence.ownerToken),
+      eq(runRuntimeSpans.attemptEpoch, fence.attemptEpoch),
+      eq(runRuntimeSpans.state, "open"),
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!span) {
+    throw new NativeForkIntentError("run_fence_stale", "Native fork target Run span owner fence is stale");
+  }
+  return span;
+}
+
+function assertIntentRunFence(
+  intent: NativeForkIntentRecord,
+  supplied: NativeForkIntentRunFence | undefined,
+  options: { allowOwnerRotation?: boolean } = {},
+) {
+  if (!intent.runFence && !supplied) return undefined;
+  if (!supplied) {
+    throw new NativeForkIntentError("run_fence_stale", "Run-linked native fork intent requires its current Run fence");
+  }
+  if (intent.runFence && !sameRunSpan(intent.runFence, supplied)) {
+    throw new NativeForkIntentError("run_fence_stale", "Native fork intent is linked to a different Run span");
+  }
+  if (intent.runFence && !sameRunFence(intent.runFence, supplied) && !options.allowOwnerRotation) {
+    throw new NativeForkIntentError("run_fence_stale", "Native fork intent was reserved by a different Run owner");
+  }
+  return supplied;
+}
+
 async function assertSource(tx: Db, source: NativeForkIntentSource, targetRuntimeType: string) {
   const sourceRun = await tx
     .select({ id: heartbeatRuns.id, orgId: heartbeatRuns.orgId, status: heartbeatRuns.status, chatConversationId: heartbeatRuns.chatConversationId })
@@ -439,6 +652,10 @@ async function assertSource(tx: Db, source: NativeForkIntentSource, targetRuntim
   if (!sourceSpan || sourceSpan.state !== "sealed" || sourceSpan.completeness !== "complete") {
     throw new NativeForkIntentError("source_invalid", "Source native span is not a complete sealed boundary");
   }
+  const persistedSelector = record(sourceSpan.selectorJson);
+  if (!persistedSelector || stableJson(persistedSelector) !== stableJson(source.selectorJson)) {
+    throw new NativeForkIntentError("source_invalid", "Source selector does not match the persisted native span selector");
+  }
   const sourceSegment = await tx
     .select({ runtimeType: nativeSegments.runtimeType, nativeSessionId: nativeSegments.nativeSessionId, leafId: nativeSegments.leafId, sourceBoundaryRef: nativeSegments.sourceBoundaryRef })
     .from(nativeSegments)
@@ -451,6 +668,14 @@ async function assertSource(tx: Db, source: NativeForkIntentSource, targetRuntim
     .then((rows) => rows[0] ?? null);
   if (!sourceSegment || sourceSegment.runtimeType !== targetRuntimeType || !sourceSegment.nativeSessionId) {
     throw new NativeForkIntentError("source_invalid", "Source native session does not match the target runtime");
+  }
+  const selectorRuntime = selectorRuntimeType(source.selectorJson);
+  if (selectorRuntime && selectorRuntime !== targetRuntimeType) {
+    throw new NativeForkIntentError("source_invalid", "Source selector runtime does not match the target runtime");
+  }
+  const selectorSession = selectorSessionId(source.selectorJson);
+  if (selectorSession && selectorSession !== sourceSegment.nativeSessionId) {
+    throw new NativeForkIntentError("source_invalid", "Source selector session does not match the persisted native session");
   }
   const spanBoundary = sourceSpan.nativeExecutionRef?.trim() || null;
   const boundaryMatches = (spanBoundary
@@ -504,21 +729,33 @@ export async function reserveNativeForkIntent(
 ): Promise<NativeForkIntentOutcome> {
   const source = normalizeSource(input.source);
   const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const runFence = normalizeRunFence(input.runFence);
+  const normalizedInput = { ...input, runFence };
   if (source.orgId !== input.targetBinding.orgId) {
     throw new NativeForkIntentError("source_invalid", "Source and target organizations must match");
   }
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`native-fork-intent:${input.targetBinding.id}:${input.targetSegment.id}`}, 0))`);
-    const { binding, segment, target } = await loadTarget(tx as unknown as Db, input);
+    const database = tx as unknown as Db;
+    await lockIntentTarget(database, input.targetBinding.id, input.targetSegment.id, runFence);
+    const { binding, segment, target } = await loadTarget(database, normalizedInput);
+    if (runFence) {
+      await assertCurrentRunFence(database, runFence, {
+        orgId: binding.orgId,
+        bindingId: binding.id,
+        segmentId: segment.id,
+      });
+    }
     await assertSource(tx as unknown as Db, source, target.runtimeType);
-    const existing = intentFromProviderState(segment.providerStateJson);
+    let existing = intentFromProviderState(segment.providerStateJson);
     if (existing) {
-      assertSameIntent(existing, { ...input, source, idempotencyKey }, target);
+      assertSameIntent(existing, { ...normalizedInput, source, idempotencyKey }, target);
+      assertIntentRunFence(existing, runFence, { allowOwnerRotation: true });
       if (existing.status === "reserved") {
         const now = new Date().toISOString();
         const unknown: NativeForkIntentRecord = {
           ...existing,
           status: "unknown",
+          ...(runFence ? { runFence } : {}),
           reason: "A previous native fork reservation had no durable child after recovery; no automatic retry is allowed.",
           reconciliation: "provider_lookup_required",
           reconciliationNote: "Use provider-native lookup or operator reconciliation before retrying admission.",
@@ -534,6 +771,15 @@ export async function reserveNativeForkIntent(
         ));
         return intentResult(unknown);
       }
+      if (existing.status === "accepted" && existing.child && runFence) {
+        existing = await bindAcceptedIntentToRunSpan(
+          database,
+          { intentId: existing.intentId, orgId: binding.orgId, bindingId: binding.id, segmentId: segment.id },
+          segment,
+          existing,
+          runFence,
+        );
+      }
       return intentResult(existing);
     }
     if (segment.nativeSessionId || record(segment.providerStateJson)?.sessionId) {
@@ -547,6 +793,7 @@ export async function reserveNativeForkIntent(
       status: "reserved",
       source,
       target,
+      ...(runFence ? { runFence } : {}),
       reason: null,
       reconciliation: "not_required",
       reconciliationNote: null,
@@ -620,22 +867,87 @@ function normalizeChild(child: NativeForkIntentChild, sourceBoundaryRef: string)
   };
 }
 
+async function bindAcceptedIntentToRunSpan(
+  tx: Db,
+  reference: NativeForkIntentReference,
+  segment: NativeSegmentRecord,
+  intent: NativeForkIntentRecord,
+  runFence: NativeForkIntentRunFence,
+): Promise<NativeForkIntentRecord> {
+  if (!intent.child) throw new NativeForkIntentError("intent_conflict", "An accepted native fork intent has no persisted child");
+  const child = normalizeChild(intent.child, intent.source.sourceBoundaryRef);
+  const [updatedSpan] = await tx.update(runRuntimeSpans).set({
+    nativeExecutionRef: child.boundary,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(runRuntimeSpans.id, runFence.spanId),
+    eq(runRuntimeSpans.orgId, reference.orgId),
+    eq(runRuntimeSpans.runId, runFence.runId),
+    eq(runRuntimeSpans.bindingId, reference.bindingId),
+    eq(runRuntimeSpans.segmentId, reference.segmentId),
+    eq(runRuntimeSpans.ownerToken, runFence.ownerToken),
+    eq(runRuntimeSpans.attemptEpoch, runFence.attemptEpoch),
+    eq(runRuntimeSpans.state, "open"),
+    sql`(${runRuntimeSpans.nativeExecutionRef} is null or ${runRuntimeSpans.nativeExecutionRef} = ${child.boundary})`,
+  )).returning({ id: runRuntimeSpans.id });
+  if (!updatedSpan) {
+    throw new NativeForkIntentError("run_fence_stale", "Native fork child could not be bound to its active Run span");
+  }
+  if (!intent.runFence || !sameRunFence(intent.runFence, runFence)) {
+    const rebound: NativeForkIntentRecord = {
+      ...intent,
+      runFence,
+      updatedAt: new Date().toISOString(),
+    };
+    const [updatedSegment] = await tx.update(nativeSegments).set({
+      providerStateJson: withIntent(segment.providerStateJson, rebound),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(nativeSegments.id, segment.id),
+      eq(nativeSegments.orgId, reference.orgId),
+      eq(nativeSegments.bindingId, reference.bindingId),
+      eq(nativeSegments.state, segment.state),
+    )).returning({ id: nativeSegments.id });
+    if (!updatedSegment) {
+      throw new NativeForkIntentError("intent_conflict", "Rebinding native fork intent lost the target segment CAS");
+    }
+    return rebound;
+  }
+  return intent;
+}
+
 async function persistChild(
   db: Db,
   reference: NativeForkIntentReference,
   child: NativeForkIntentChild,
   reconciliation: NativeForkReconciliation,
   reconciliationNote: string | null,
+  inputRunFence?: NativeForkIntentRunFence | null,
+  allowOwnerRotation = false,
 ): Promise<NativeForkIntentOutcome> {
+  const runFence = normalizeRunFence(inputRunFence);
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`native-fork-intent:${reference.bindingId}:${reference.segmentId}`}, 0))`);
-    const { segment, intent } = await loadIntentReference(tx as unknown as Db, reference);
+    const database = tx as unknown as Db;
+    await lockIntentTarget(database, reference.bindingId, reference.segmentId, runFence);
+    const { segment, intent } = await loadIntentReference(database, reference);
+    const effectiveFence = assertIntentRunFence(intent, runFence, {
+      allowOwnerRotation: allowOwnerRotation && (intent.status === "unknown" || intent.status === "accepted"),
+    });
+    if (effectiveFence) {
+      await assertCurrentRunFence(database, effectiveFence, {
+        orgId: reference.orgId,
+        bindingId: reference.bindingId,
+        segmentId: reference.segmentId,
+      });
+    }
     if (intent.status === "accepted" && intent.child) {
       const normalized = normalizeChild(child, intent.source.sourceBoundaryRef);
-      if (JSON.stringify(normalized) !== JSON.stringify(intent.child)) {
+      if (stableJson(normalized) !== stableJson(intent.child)) {
         throw new NativeForkIntentError("intent_conflict", "A different child is already persisted for this native fork intent");
       }
-      return intentResult(intent);
+      return intentResult(effectiveFence
+        ? await bindAcceptedIntentToRunSpan(tx as unknown as Db, reference, segment, intent, effectiveFence)
+        : intent);
     }
     if (intent.status === "rejected") {
       throw new NativeForkIntentError("intent_conflict", "A rejected native fork intent cannot accept a child");
@@ -644,10 +956,14 @@ async function persistChild(
     if (segment.nativeSessionId && segment.nativeSessionId !== normalized.session.sessionId) {
       throw new NativeForkIntentError("intent_conflict", "Target segment already contains a different provider child");
     }
+    if (intent.status === "unknown" && !allowOwnerRotation) {
+      throw new NativeForkIntentError("intent_unknown", "Unknown native fork intent requires explicit provider reconciliation");
+    }
     const now = new Date().toISOString();
     const accepted: NativeForkIntentRecord = {
       ...intent,
       status: "accepted",
+      ...(effectiveFence ? { runFence: effectiveFence } : {}),
       child: normalized,
       reason: null,
       reconciliation,
@@ -677,22 +993,49 @@ async function persistChild(
       eq(nativeSegments.state, segment.state),
     )).returning({ id: nativeSegments.id });
     if (!updated) throw new NativeForkIntentError("intent_conflict", "Persisting the native fork child lost the target segment CAS");
+    if (effectiveFence) {
+      const [updatedSpan] = await tx.update(runRuntimeSpans).set({
+        nativeExecutionRef: normalized.boundary,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(runRuntimeSpans.id, effectiveFence.spanId),
+        eq(runRuntimeSpans.orgId, reference.orgId),
+        eq(runRuntimeSpans.runId, effectiveFence.runId),
+        eq(runRuntimeSpans.bindingId, reference.bindingId),
+        eq(runRuntimeSpans.segmentId, reference.segmentId),
+        eq(runRuntimeSpans.ownerToken, effectiveFence.ownerToken),
+        eq(runRuntimeSpans.attemptEpoch, effectiveFence.attemptEpoch),
+        eq(runRuntimeSpans.state, "open"),
+        sql`(${runRuntimeSpans.nativeExecutionRef} is null or ${runRuntimeSpans.nativeExecutionRef} = ${normalized.boundary})`,
+      )).returning({ id: runRuntimeSpans.id });
+      if (!updatedSpan) {
+        throw new NativeForkIntentError("run_fence_stale", "Persisting native fork child lost the target Run span fence");
+      }
+    }
     return intentResult(accepted);
   });
 }
 
 export async function persistNativeForkChild(
   db: Db,
-  input: { reference: NativeForkIntentReference; child: NativeForkIntentChild },
+  input: { reference: NativeForkIntentReference; child: NativeForkIntentChild; runFence?: NativeForkIntentRunFence | null },
 ): Promise<NativeForkIntentOutcome> {
-  return persistChild(db, input.reference, input.child, "not_required", null);
+  return persistChild(db, input.reference, input.child, "not_required", null, input.runFence);
 }
 
 export async function reconcileNativeForkIntent(
   db: Db,
-  input: { reference: NativeForkIntentReference; child: NativeForkIntentChild; note?: string | null },
+  input: { reference: NativeForkIntentReference; child: NativeForkIntentChild; note?: string | null; runFence?: NativeForkIntentRunFence | null },
 ): Promise<NativeForkIntentOutcome> {
-  return persistChild(db, input.reference, input.child, "resolved", input.note?.trim() || "Provider child reconciled before admission.");
+  return persistChild(
+    db,
+    input.reference,
+    input.child,
+    "resolved",
+    input.note?.trim() || "Provider child reconciled before admission.",
+    input.runFence,
+    true,
+  );
 }
 
 export async function listNativeForkIntents(
@@ -739,6 +1082,7 @@ export async function reconcileNativeForkIntentById(
     intentId: string;
     child: NativeForkIntentChild;
     note?: string | null;
+    runFence?: NativeForkIntentRunFence | null;
   },
 ): Promise<{ outcome: NativeForkIntentOutcome; summary: NativeForkIntentSummary }> {
   const row = await db
@@ -759,12 +1103,13 @@ export async function reconcileNativeForkIntentById(
   const intent = readNativeForkIntent(row.segment.providerStateJson);
   if (!intent) throw new NativeForkIntentError("intent_conflict", "Native fork intent was not found in the target segment");
   if (intent.status === "rejected") throw new NativeForkIntentError("intent_conflict", "A rejected native fork intent cannot be reconciled");
-  const outcome = intent.status === "accepted" && intent.child
+  const outcome = intent.status === "accepted" && intent.child && !intent.runFence && !input.runFence
     ? intentResult(intent)
     : await reconcileNativeForkIntent(db, {
       reference: referenceForIntent(intent),
       child: input.child,
       note: input.note,
+      runFence: input.runFence,
     });
   const refreshed = await db
     .select({ segment: nativeSegments, binding: runtimeBindings })
@@ -790,6 +1135,7 @@ async function updateIntentStatus(
   db: Db,
   input: {
     reference: NativeForkIntentReference;
+    runFence?: NativeForkIntentRunFence | null;
     status: "unknown" | "rejected";
     reason: string;
     reconciliation: NativeForkReconciliation;
@@ -797,9 +1143,21 @@ async function updateIntentStatus(
   },
 ): Promise<NativeForkIntentOutcome> {
   const reason = requiredString(input.reason, "fork intent reason");
+  const runFence = normalizeRunFence(input.runFence);
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`native-fork-intent:${input.reference.bindingId}:${input.reference.segmentId}`}, 0))`);
-    const { segment, intent } = await loadIntentReference(tx as unknown as Db, input.reference);
+    const database = tx as unknown as Db;
+    await lockIntentTarget(database, input.reference.bindingId, input.reference.segmentId, runFence);
+    const { segment, intent } = await loadIntentReference(database, input.reference);
+    const effectiveFence = assertIntentRunFence(intent, runFence, {
+      allowOwnerRotation: input.status === "unknown",
+    });
+    if (effectiveFence) {
+      await assertCurrentRunFence(database, effectiveFence, {
+        orgId: input.reference.orgId,
+        bindingId: input.reference.bindingId,
+        segmentId: input.reference.segmentId,
+      });
+    }
     if (intent.status === "accepted") return intentResult(intent);
     if (intent.status === input.status) return intentResult(intent);
     if (intent.status !== "reserved") {
@@ -808,6 +1166,7 @@ async function updateIntentStatus(
     const updatedIntent: NativeForkIntentRecord = {
       ...intent,
       status: input.status,
+      ...(effectiveFence ? { runFence: effectiveFence } : {}),
       reason,
       reconciliation: input.reconciliation,
       reconciliationNote: input.reconciliationNote,
@@ -829,10 +1188,11 @@ async function updateIntentStatus(
 
 export async function markNativeForkIntentUnknown(
   db: Db,
-  input: { reference: NativeForkIntentReference; reason: string; reconciliation?: "provider_lookup_required" | "provider_lookup_unavailable"; note?: string | null },
+  input: { reference: NativeForkIntentReference; reason: string; runFence?: NativeForkIntentRunFence | null; reconciliation?: "provider_lookup_required" | "provider_lookup_unavailable"; note?: string | null },
 ): Promise<NativeForkIntentOutcome> {
   return updateIntentStatus(db, {
     reference: input.reference,
+    runFence: input.runFence,
     status: "unknown",
     reason: input.reason,
     reconciliation: input.reconciliation ?? "provider_lookup_required",
@@ -842,10 +1202,11 @@ export async function markNativeForkIntentUnknown(
 
 export async function markNativeForkIntentRejected(
   db: Db,
-  input: { reference: NativeForkIntentReference; reason: string },
+  input: { reference: NativeForkIntentReference; reason: string; runFence?: NativeForkIntentRunFence | null },
 ): Promise<NativeForkIntentOutcome> {
   return updateIntentStatus(db, {
     reference: input.reference,
+    runFence: input.runFence,
     status: "rejected",
     reason: input.reason,
     reconciliation: "not_required",
@@ -868,13 +1229,16 @@ export async function executeNativeForkIntent(input: {
   providerBinding: RuntimeProviderBindingRef;
   signal?: AbortSignal;
 }): Promise<NativeForkIntentOutcome> {
-  const reservation = await reserveNativeForkIntent(input.db, input.intent);
+  const runFence = normalizeRunFence(input.intent.runFence);
+  const reservation = await reserveNativeForkIntent(input.db, { ...input.intent, runFence });
   if (reservation.status !== "reserved") return reservation;
+  const effectiveFence = reservation.intent.runFence ?? runFence;
   let operation: Awaited<ReturnType<RuntimeDriver["fork"]>>;
   try {
     operation = await input.driver.fork({
       session: input.sourceSession,
       boundary: requiredString(input.boundary, "source boundary"),
+      selector: input.intent.source.selectorJson as NativeSpanSelector,
       binding: input.providerBinding,
       signal: input.signal,
     });
@@ -883,6 +1247,7 @@ export async function executeNativeForkIntent(input: {
     await markNativeForkIntentUnknown(input.db, {
       reference: reservation.reference,
       reason: `Provider fork acceptance is unknown: ${reason}`,
+      runFence: effectiveFence,
     });
     throw new NativeForkAcceptanceUnknownError(
       reservation.reference,
@@ -895,22 +1260,25 @@ export async function executeNativeForkIntent(input: {
       await markNativeForkIntentUnknown(input.db, {
         reference: reservation.reference,
         reason,
+        runFence: effectiveFence,
       });
       throw new NativeForkAcceptanceUnknownError(reservation.reference, "Provider fork acceptance is unknown; automatic retry is disabled.");
     }
-    await markNativeForkIntentRejected(input.db, { reference: reservation.reference, reason });
+    await markNativeForkIntentRejected(input.db, { reference: reservation.reference, reason, runFence: effectiveFence });
     throw new NativeForkIntentError("provider_rejected", `Provider-native fork ${operation.status}: ${reason}`);
   }
   try {
     return await persistNativeForkChild(input.db, {
       reference: reservation.reference,
       child: operation.value,
+      runFence: effectiveFence,
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     await markNativeForkIntentUnknown(input.db, {
       reference: reservation.reference,
       reason: `Provider returned a child but durable child persistence failed: ${reason}`,
+      runFence: effectiveFence,
     }).catch(() => undefined);
     throw new NativeForkAcceptanceUnknownError(
       reservation.reference,

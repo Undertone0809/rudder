@@ -1,7 +1,4 @@
 import { z } from "zod";
-import { agentIconSchema } from "./agent.js";
-import { organizationIssueKeySchema } from "./organization.js";
-import { organizationEntityReferenceSchema } from "./reference.js";
 import {
   AUTOMATION_CATCH_UP_POLICIES,
   AUTOMATION_CONCURRENCY_POLICIES,
@@ -16,6 +13,9 @@ import {
   ISSUE_STATUSES,
 } from "../constants.js";
 import type { ChatInlineAnnotation, ChatInlineAnnotationInput } from "../types/chat.js";
+import { agentIconSchema } from "./agent.js";
+import { organizationIssueKeySchema } from "./organization.js";
+import { organizationEntityReferenceSchema } from "./reference.js";
 
 export const chatConversationStatusSchema = z.enum(CHAT_CONVERSATION_STATUSES);
 export const chatIssueCreationModeSchema = z.enum(CHAT_ISSUE_CREATION_MODES);
@@ -656,7 +656,7 @@ export const chatAskUserQuestionSchema = z.object({
   id: chatAskUserIdentifierSchema,
   header: z.string().trim().min(1).max(32).optional(),
   question: z.string().trim().min(1).max(240),
-  options: z.array(chatAskUserOptionSchema).min(2).max(3),
+  options: z.array(chatAskUserOptionSchema).min(2).max(4),
   selectionMode: z.enum(["single", "multiple"]).optional(),
   allowFreeform: z.boolean().optional(),
 }).superRefine((question, ctx) => {
@@ -675,7 +675,7 @@ export const chatAskUserQuestionSchema = z.object({
 });
 
 export const chatAskUserRequestSchema = z.object({
-  questions: z.array(chatAskUserQuestionSchema).min(1).max(3),
+  questions: z.array(chatAskUserQuestionSchema).min(1).max(4),
 }).superRefine((request, ctx) => {
   const questionIds = new Set<string>();
   request.questions.forEach((question, index) => {
@@ -688,6 +688,37 @@ export const chatAskUserRequestSchema = z.object({
       return;
     }
     questionIds.add(question.id);
+  });
+});
+
+export const chatAskUserResponseAnswerSchema = z.object({
+  questionId: chatAskUserIdentifierSchema,
+  optionIds: z.array(chatAskUserIdentifierSchema).max(4),
+  freeformText: z.string().trim().min(1).max(2_000).optional(),
+}).strict().superRefine((answer, ctx) => {
+  if (new Set(answer.optionIds).size !== answer.optionIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Option ids must be unique within each answer",
+      path: ["optionIds"],
+    });
+  }
+});
+
+export const chatAskUserResponseSchema = z.object({
+  answers: z.array(chatAskUserResponseAnswerSchema).min(1).max(4),
+}).strict().superRefine((response, ctx) => {
+  const questionIds = new Set<string>();
+  response.answers.forEach((answer, index) => {
+    if (questionIds.has(answer.questionId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Question ids must be unique within inputResponse",
+        path: ["answers", index, "questionId"],
+      });
+      return;
+    }
+    questionIds.add(answer.questionId);
   });
 });
 
@@ -1047,6 +1078,8 @@ export type AppendChatGenerationEvent = z.infer<typeof appendChatGenerationEvent
 export type ChatAskUserOption = z.infer<typeof chatAskUserOptionSchema>;
 export type ChatAskUserQuestion = z.infer<typeof chatAskUserQuestionSchema>;
 export type ChatAskUserRequest = z.infer<typeof chatAskUserRequestSchema>;
+export type ChatAskUserResponseAnswer = z.infer<typeof chatAskUserResponseAnswerSchema>;
+export type ChatAskUserResponse = z.infer<typeof chatAskUserResponseSchema>;
 export type ChatRichReference = z.infer<typeof chatRichReferenceSchema>;
 export type ChatAutomationCreate = z.infer<typeof chatAutomationCreateSchema>;
 export type CreateChatAttachmentMetadata = z.infer<typeof createChatAttachmentMetadataSchema>;

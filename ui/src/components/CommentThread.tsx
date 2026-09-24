@@ -44,7 +44,7 @@ import { MarkdownEditor, type MarkdownEditorRef, type MentionOption } from "./Ma
 import type { MarkdownSkillReferencePreview } from "./SkillReferenceToken";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
-import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
+import { useCommentThreadAgentRunTranscripts } from "./transcript/useCommentThreadAgentRunTranscripts";
 
 const COMMENT_ATTACHMENT_ACCEPT = "image/*,application/pdf,text/plain,text/markdown,application/json,text/csv,text/html,.md,.markdown";
 const COMMENT_HASH_SCROLL_RETRY_DELAYS_MS = [120, 360, 900] as const;
@@ -1129,11 +1129,7 @@ export function CommentThread({
       shouldExpandRunByDefault(run.status) || runExpandedOverrides[run.id] === true)
   ), [runExpandedOverrides, transcriptRuns]);
 
-  const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({
-    runs: hydratedTranscriptRuns,
-    orgId,
-    maxChunksPerRun: 120,
-  });
+  const { transcriptByRun, hasOutputForRun } = useCommentThreadAgentRunTranscripts(hydratedTranscriptRuns);
 
   const toggleRunExpanded = useCallback((runId: string, expanded: boolean) => {
     setRunExpandedOverrides((current) => ({

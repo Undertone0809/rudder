@@ -3,7 +3,7 @@ import { useOptionalToast } from "../../context/ToastContext";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
-import { TranscriptChatTimeline } from "./RunTranscriptView.chat";
+import { TranscriptChatTimeline } from "./RunTranscriptView.chat-timeline";
 import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
@@ -206,6 +206,7 @@ function RunTranscriptViewContent({
           onOpenAgent={onOpenAgent}
           annotationSource={annotationSource}
           sentAnnotationContext={sentAnnotationContext}
+          runAnnotationContext={effectiveRunAnnotationContext}
         />
       </div>
           )

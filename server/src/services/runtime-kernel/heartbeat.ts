@@ -1,3 +1,4 @@
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
   hasSessionCompactionThresholds
 } from "@rudderhq/agent-runtime-utils";
@@ -9,14 +10,11 @@ import {
   agentWakeupRequests,
   goalResultProposals,
   goals,
-  heartbeatRunAttempts,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
-  nativeSegments,
   organizations,
-  runRuntimeSpans,
-  runtimeBindings,
+  runRuntimeSpans
 } from "@rudderhq/db";
 import type { AgentSkillAnalytics, HeartbeatRun } from "@rudderhq/shared";
 import {
@@ -54,24 +52,17 @@ import { recordProductAnalyticsEvent } from "../product-analytics.js";
 import { appendHeartbeatRunEvent } from "../run-events.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
+import { finishLatestHeartbeatRunAttempt } from "./heartbeat-attempt-ledger.js";
+import { isNativeTranscriptSource } from "./transcript-source.js";
 import {
-  beginHeartbeatRunAttempt,
-  finishHeartbeatRunAttempt,
-  finishLatestHeartbeatRunAttempt,
-  type HeartbeatAttemptOwnerFence,
-  type HeartbeatAttemptRef,
-} from "./heartbeat-attempt-ledger.js";
-import {
-  bindRunRuntimeSpanAttempt,
-  claimOpenRunRuntimeSpan,
-  currentNativeSession,
-  ensureRuntimeBinding,
-  finishRunRuntimeSpan,
-  startRunRuntimeSpanInTransaction,
-} from "./native-session.js";
-import type { RuntimeBindingTargetType } from "@rudderhq/db";
+  lockUnifiedAgentRunCapacity,
+  reserveUnifiedAgentRunCapacity,
+} from "./unified-agent-run.heartbeat-persistence.js";
+import { createHeartbeatUnifiedAgentRunAdapter } from "./unified-agent-run.integration.js";
+import type { UnifiedAttemptFinishInput, UnifiedNativeExecutionInput } from "./unified-agent-run.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
+export { buildHeartbeatRunAdmissionFields } from "./heartbeat.admission.js";
 
 import type { SessionCompactionDecision, UsageTotals, WakeupOptions } from "./heartbeat.core.js";
 import * as heartbeatCore from "./heartbeat.core.js";
@@ -80,15 +71,16 @@ import * as heartbeatSessions from "./heartbeat.sessions.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, NETWORK_WAIT_MAX_ATTEMPTS, NETWORK_WAIT_EXHAUSTED_ERROR_CODE, NETWORK_WAIT_EXHAUSTED_ERROR, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, isIssueCommentMentionWake, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun, formatDurationMs } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
+import { buildHeartbeatRunAdmissionFields, createHeartbeatAdmissionHandlers } from "./heartbeat.admission.js";
 import { createHeartbeatExecuteHandlers } from "./heartbeat.execute.js";
 import { createHeartbeatIssueCancellationHandlers } from "./heartbeat.issue-cancellation.js";
 import { createHeartbeatMiscHandlers } from "./heartbeat.misc.js";
 import { claimAvailableQueuedRuns } from "./heartbeat.queue.js";
+import { createHeartbeatReaperHandlers } from "./heartbeat.reapers.js";
 import { createHeartbeatRecoveryHandlers } from "./heartbeat.recovery.js";
 import { createHeartbeatReleaseHandlers } from "./heartbeat.release.js";
 import {
   checkpointHeartbeatRunTerminalEffect,
-  claimExpiredHeartbeatRunExecution,
   claimHeartbeatRunTerminalEffects,
   completeHeartbeatRunTerminalEffects,
   failHeartbeatRunTerminalEffect,
@@ -105,177 +97,12 @@ import {
   transitionHeartbeatRunToTerminal,
   type RunActivityWatermark,
   type TerminalEffectIntent,
-  type TerminalEffectName,
+  type TerminalEffectName
 } from "./heartbeat.terminal.js";
 import { createHeartbeatWakeupHandlers } from "./heartbeat.wakeup.js";
 
-const DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS = 0;
-const DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS = 0;
 const TERMINAL_EFFECT_CLAIM_RENEW_INTERVAL_MS = 60_000;
-const UNIFIED_ADMISSION_CONTEXT_KEY = "unifiedAgentRun";
 
-function nonEmptyAdmissionString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function admissionObject(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
-function admissionSessionIntent(input: {
-  sessionReuseScope?: string | null;
-  sessionId?: string | null;
-  sessionParams?: Record<string, unknown> | null;
-  sourceRunId?: string | null;
-}) {
-  const reuseScope = input.sessionReuseScope === "task" ? "task"
-    : input.sessionReuseScope === "explicit" ? "explicit"
-      : "none";
-  const sourceRunId = nonEmptyAdmissionString(input.sourceRunId);
-  const sessionId = nonEmptyAdmissionString(input.sessionId);
-  const sessionParams = admissionObject(input.sessionParams);
-  const isFresh = reuseScope === "none" && !sourceRunId && !sessionId && !sessionParams;
-  return isFresh
-    ? {
-        kind: "fresh" as const,
-        reuseScope: "none" as const,
-        sourceRunId: null,
-        sessionId: null,
-        sessionParams: null,
-      }
-    : {
-        kind: "resume" as const,
-        reuseScope: reuseScope === "task" ? "task" as const : "explicit" as const,
-        sourceRunId,
-        sessionId,
-        sessionParams,
-      };
-}
-
-/**
- * Build the compatibility projection used by the common Agent Run boundary.
- * Queueing, issue locks, and budget checks remain owned by heartbeat; this
- * helper only makes every newly admitted row carry the same identity.
- */
-export function buildHeartbeatRunAdmissionFields(input: {
-  agent: { orgId: string; agentRuntimeType: string };
-  scene?: "chat" | "side_chat" | "issue" | "review" | "automation" | "heartbeat" | null;
-  targetType?: RuntimeBindingTargetType | null;
-  source?: string | null;
-  targetId?: string | null;
-  requestId: string;
-  idempotencyKey?: string | null;
-  contextSnapshot?: Record<string, unknown> | null;
-  payload?: Record<string, unknown> | null;
-  sourceRunId?: string | null;
-  sessionReuseScope?: string | null;
-  sessionId?: string | null;
-  sessionParams?: Record<string, unknown> | null;
-  runtimeBindingId?: string | null;
-  runtimeSegmentId?: string | null;
-  ownerFence?: Partial<{
-    ownerFenceId: string | null;
-    lastOwnerToken: string | null;
-    attemptEpoch: number | null;
-    lastLeaseExpiresAt: string | null;
-  }>;
-}) {
-  const source = nonEmptyAdmissionString(input.source) ?? "on_demand";
-  const context = { ...(input.contextSnapshot ?? {}) };
-  const payload = input.payload ?? null;
-  const storedContextAdmission = admissionObject(context[UNIFIED_ADMISSION_CONTEXT_KEY]);
-  const issueId = nonEmptyAdmissionString(context.issueId) ?? nonEmptyAdmissionString(payload?.issueId);
-  const automationRunId = nonEmptyAdmissionString(context.automationRunId)
-    ?? nonEmptyAdmissionString(payload?.automationRunId);
-  const targetId = nonEmptyAdmissionString(input.targetId)
-    ?? nonEmptyAdmissionString(storedContextAdmission?.targetId)
-    ?? automationRunId
-    ?? issueId
-    ?? input.requestId;
-  const derivedScene = source === "review"
-    ? "review"
-    : automationRunId
-      ? "automation"
-      : issueId
-        ? "issue"
-        : "heartbeat";
-  const storedScene = storedContextAdmission?.scene;
-  const scene = input.scene
-    ?? (storedScene === "chat" || storedScene === "side_chat" || storedScene === "issue"
-      || storedScene === "review" || storedScene === "automation" || storedScene === "heartbeat"
-      ? storedScene
-      : derivedScene);
-  const targetType = input.targetType
-    ?? (nonEmptyAdmissionString(storedContextAdmission?.targetType) as RuntimeBindingTargetType | null)
-    ?? (scene === "review"
-    ? "review"
-    : scene === "automation"
-      ? "automation_run"
-      : scene === "issue"
-        ? "issue"
-        : scene === "chat" || scene === "side_chat"
-          ? "chat_conversation"
-          : "wakeup_request");
-  const idempotencyKey = nonEmptyAdmissionString(input.idempotencyKey)
-    ?? `heartbeat:${input.requestId}`;
-  const sessionIntent = admissionSessionIntent({
-    sessionReuseScope: input.sessionReuseScope,
-    sessionId: input.sessionId,
-    sessionParams: input.sessionParams,
-    sourceRunId: input.sourceRunId,
-  });
-  const fingerprint = JSON.stringify({
-    scene,
-    target: { type: targetType, id: targetId },
-    runtimeType: input.agent.agentRuntimeType,
-    model: null,
-    sessionIntent,
-  });
-  const unifiedAgentRun = {
-    version: 1,
-    scene,
-    targetType,
-    targetId,
-    idempotencyKey,
-    runtimeType: input.agent.agentRuntimeType,
-    model: null,
-    sessionIntent,
-    runtimeBindingId: nonEmptyAdmissionString(input.runtimeBindingId),
-    runtimeSegmentId: nonEmptyAdmissionString(input.runtimeSegmentId),
-    fingerprint,
-    ...input.ownerFence,
-  };
-  const nextContext = {
-    ...context,
-    scene,
-    targetType,
-    targetId,
-    ...(nonEmptyAdmissionString(input.runtimeBindingId)
-      ? { runtimeBindingId: input.runtimeBindingId }
-      : {}),
-    ...(nonEmptyAdmissionString(input.runtimeSegmentId)
-      ? { runtimeSegmentId: input.runtimeSegmentId }
-      : {}),
-    [UNIFIED_ADMISSION_CONTEXT_KEY]: unifiedAgentRun,
-  };
-  return {
-    scene,
-    targetType,
-    targetId,
-    idempotencyKey,
-    sessionIntentJson: sessionIntent,
-    contextSnapshot: nextContext,
-  };
-}
-
-class HeartbeatCommonRunBoundaryError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "HeartbeatCommonRunBoundaryError";
-  }
-}
 
 // heartbeatService is instantiated by routes and the scheduler. Execution
 // ownership must therefore be shared across every service instance in this
@@ -291,6 +118,31 @@ const localExecutionLeaseStates = new Map<string, {
 }>();
 const LOCAL_EXECUTION_SLEEP_GAP_MS = RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS * 2;
 const heartbeatRecoveryTails = new WeakMap<object, Promise<void>>();
+
+export function registerLiveChatRunExecution(
+  runId: string,
+  ownerToken: string,
+  controller: AbortController,
+) {
+  if (activeRunExecutions.has(runId) || runAbortControllers.has(runId)) {
+    throw new Error(`Chat Run ${runId} already has a live execution owner`);
+  }
+  activeRunExecutions.add(runId);
+  runAbortControllers.set(runId, controller);
+  localExecutionLeaseStates.set(runId, {
+    executionOwnerToken: ownerToken,
+    lastRenewedAtMs: Date.now(),
+    sleepRecoveryUsed: false,
+    sleepRecoveryPending: false,
+    sleepRecoveryGraceUntilMs: null,
+  });
+  return () => {
+    if (runAbortControllers.get(runId) !== controller) return;
+    runAbortControllers.delete(runId);
+    activeRunExecutions.delete(runId);
+    localExecutionLeaseStates.delete(runId);
+  };
+}
 
 function getLocalExecutionLeaseState(runId: string, nowMs: number) {
   const existing = localExecutionLeaseStates.get(runId);
@@ -351,6 +203,7 @@ export function heartbeatService(
         error: string;
       };
     }) => Promise<boolean> | boolean;
+    onOrphanedClaudeForkRun?: (run: typeof heartbeatRuns.$inferSelect) => Promise<boolean> | boolean;
     beforeRunExecutionLeaseRenewal?: (input: {
       runId: string;
       ownerToken: string;
@@ -373,6 +226,7 @@ export function heartbeatService(
     cancelWorkForScope: (scope: BudgetEnforcementScope) => cancelBudgetScopeWork(scope),
   };
   const budgets = budgetService(db, budgetHooks);
+  const unifiedRunAdapter = createHeartbeatUnifiedAgentRunAdapter(db);
 
   async function getAgent(agentId: string) {
     return db
@@ -390,409 +244,14 @@ export function heartbeatService(
       .then((rows) => rows[0] ?? null);
   }
 
-  function readCommonRunAdmission(run: typeof heartbeatRuns.$inferSelect) {
-    const context = admissionObject(run.contextSnapshot);
-    const stored = admissionObject(context?.[UNIFIED_ADMISSION_CONTEXT_KEY]);
-    if (
-      !nonEmptyAdmissionString(run.scene)
-      || !nonEmptyAdmissionString(run.targetType)
-      || !nonEmptyAdmissionString(run.targetId)
-      || !nonEmptyAdmissionString(run.idempotencyKey)
-      || !admissionObject(run.sessionIntentJson)
-      || !stored
-      || stored.version !== 1
-    ) {
-      return null;
-    }
-    return {
-      scene: run.scene,
-      targetType: run.targetType,
-      targetId: run.targetId,
-      idempotencyKey: run.idempotencyKey,
-      runtimeType: nonEmptyAdmissionString(stored.runtimeType) ?? "",
-      sessionIntent: admissionObject(run.sessionIntentJson) as Record<string, unknown>,
-      stored,
-    };
-  }
-
-  async function resolveHeartbeatNativeResources(
-    database: Db,
-    input: {
-      run: typeof heartbeatRuns.$inferSelect;
-      runtimeType: string;
-    },
-  ) {
-    const admission = readCommonRunAdmission(input.run);
-    if (!admission) return null;
-    const context = admissionObject(input.run.contextSnapshot) ?? {};
-    const intent = admission.sessionIntent;
-    const sourceRunId = nonEmptyAdmissionString(input.run.sourceRunId)
-      ?? nonEmptyAdmissionString(intent.sourceRunId)
-      ?? nonEmptyAdmissionString(context.sourceRunId);
-    const sourceSpan = sourceRunId
-      ? await database
-          .select()
-          .from(runRuntimeSpans)
-          .where(and(
-            eq(runRuntimeSpans.orgId, input.run.orgId),
-            eq(runRuntimeSpans.runId, sourceRunId),
-          ))
-          .orderBy(desc(runRuntimeSpans.ordinal))
-          .limit(1)
-          .then((rows) => rows[0] ?? null)
-      : null;
-    const bindingId = nonEmptyAdmissionString(context.nativeBindingId)
-      ?? nonEmptyAdmissionString(context.runtimeBindingId)
-      ?? sourceSpan?.bindingId
-      ?? null;
-    const segmentId = nonEmptyAdmissionString(context.nativeSegmentId)
-      ?? nonEmptyAdmissionString(context.runtimeSegmentId)
-      ?? sourceSpan?.segmentId
-      ?? null;
-    if (!bindingId || !segmentId) return null;
-
-    const binding = await database
-      .select()
-      .from(runtimeBindings)
-      .where(and(
-        eq(runtimeBindings.id, bindingId),
-        eq(runtimeBindings.orgId, input.run.orgId),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    const segment = await database
-      .select()
-      .from(nativeSegments)
-      .where(and(
-        eq(nativeSegments.id, segmentId),
-        eq(nativeSegments.orgId, input.run.orgId),
-        eq(nativeSegments.bindingId, bindingId),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (!binding || !segment) return null;
-    if (
-      binding.agentId !== input.run.agentId
-      || binding.runtimeType !== input.runtimeType
-      || binding.targetType !== input.run.targetType
-      || binding.targetId !== input.run.targetId
-      || segment.orgId !== input.run.orgId
-      || segment.bindingId !== binding.id
-      || segment.runtimeType !== input.runtimeType
-      || segment.state === "sealed"
-      || segment.state === "superseded"
-    ) {
-      throw new HeartbeatCommonRunBoundaryError(
-        `native binding/segment identity is not safe for heartbeat run ${input.run.id}`,
-      );
-    }
-    // A non-Chat row may only reuse a binding/segment that is already present
-    // in a real source run or was explicitly supplied by a trusted server
-    // context. No provider session or span is invented here.
-    if (!sourceSpan && !nonEmptyAdmissionString(context.nativeBindingId) && !nonEmptyAdmissionString(context.runtimeBindingId)) {
-      return null;
-    }
-    return {
-      binding,
-      segment,
-      inputCorrelationRef: admission.idempotencyKey,
-    };
-  }
-
-  /**
-   * Materialize the native identity before a non-Chat heartbeat row is
-   * inserted. The existing heartbeat scheduler still owns queueing and issue
-   * locking; this only supplies the common Run admission anchor.
-   */
-  async function ensureHeartbeatRunAdmission(database: any, input: {
-    agent: typeof agents.$inferSelect;
-    scene?: "chat" | "side_chat" | "issue" | "review" | "automation" | "heartbeat" | null;
-    targetType?: RuntimeBindingTargetType | null;
-    source?: string | null;
-    requestId: string;
-    targetId?: string | null;
-    idempotencyKey?: string | null;
-    contextSnapshot?: Record<string, unknown> | null;
-    payload?: Record<string, unknown> | null;
-    sourceRunId?: string | null;
-    sessionReuseScope?: string | null;
-    sessionId?: string | null;
-    sessionParams?: Record<string, unknown> | null;
-  }) {
-    const initial = buildHeartbeatRunAdmissionFields(input);
-    if (initial.scene === "chat" || initial.scene === "side_chat") return initial;
-
-    const targetType = initial.targetType as RuntimeBindingTargetType;
-    const binding = await ensureRuntimeBinding(database, {
-      orgId: input.agent.orgId,
-      agentId: input.agent.id,
-      runtimeType: input.agent.agentRuntimeType,
-      target: { type: targetType, id: initial.targetId },
-      conversationId: null,
-      continuity: input.sourceRunId ? "context_handoff" : "native",
-      sourceBoundaryRef: input.sourceRunId ?? null,
-    });
-    const nativeSession = await currentNativeSession(database, binding);
-    return buildHeartbeatRunAdmissionFields({
-      ...input,
-      runtimeBindingId: binding.id,
-      runtimeSegmentId: nativeSession.segment.id,
-    });
-  }
-
-  async function currentCommonRunFence(runId: string): Promise<HeartbeatAttemptOwnerFence | null> {
-    const run = await getRun(runId);
-    if (!run || !readCommonRunAdmission(run)) return null;
-    const attempt = await db
-      .select({
-        ownerToken: heartbeatRunAttempts.ownerToken,
-        attemptEpoch: heartbeatRunAttempts.attemptEpoch,
-      })
-      .from(heartbeatRunAttempts)
-      .where(and(
-        eq(heartbeatRunAttempts.orgId, run.orgId),
-        eq(heartbeatRunAttempts.runId, run.id),
-      ))
-      .orderBy(desc(heartbeatRunAttempts.attemptIndex))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (!attempt?.ownerToken || !attempt.attemptEpoch) return null;
-    return { ownerToken: attempt.ownerToken, attemptEpoch: attempt.attemptEpoch };
-  }
-
-  async function ensureCommonRunExecutionBoundary(
-    database: Db,
-    run: typeof heartbeatRuns.$inferSelect,
-    ownerToken: string,
-    attemptEpoch = 1,
-    options: {
-      attemptIndex?: number;
-      fallbackIndex?: number | null;
-      runtimeType?: string | null;
-      model?: string | null;
-      isFallback?: boolean;
-      resumeSource?: "fresh" | "same_session" | "pristine_replay";
-    } = {},
-  ): Promise<{ attemptRef: HeartbeatAttemptRef; spanId: string; ownerToken: string; attemptEpoch: number } | null> {
-    const admission = readCommonRunAdmission(run);
-    if (!admission || admission.scene === "chat" || admission.scene === "side_chat") return null;
-    if (!ownerToken) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} has no execution owner token`);
-
-    const existingAttempt = await database
-      .select()
-      .from(heartbeatRunAttempts)
-      .where(and(
-        eq(heartbeatRunAttempts.orgId, run.orgId),
-        eq(heartbeatRunAttempts.runId, run.id),
-      ))
-      .orderBy(desc(heartbeatRunAttempts.attemptIndex))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    const attemptIndex = options.attemptIndex ?? existingAttempt?.attemptIndex ?? 0;
-    const attemptRef = await beginHeartbeatRunAttempt(database, {
-      orgId: run.orgId,
-      runId: run.id,
-      agentId: run.agentId,
-      attemptIndex,
-      fallbackIndex: options.fallbackIndex ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.fallbackIndex : null) ?? null,
-      runtimeType: options.runtimeType ?? admission.runtimeType,
-      model: options.model ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.model : null) ?? null,
-      isFallback: options.isFallback ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.isFallback : false) ?? false,
-      resumeSource: options.resumeSource ?? (attemptIndex === existingAttempt?.attemptIndex ? existingAttempt?.resumeSource : "fresh") ?? "fresh",
-      ownerToken,
-      attemptEpoch,
-    });
-    if (!attemptRef) {
-      throw new HeartbeatCommonRunBoundaryError(
-        `heartbeat run ${run.id} attempt ${attemptIndex} owner fence is stale`,
-      );
-    }
-    const attempt = await database
-      .select()
-      .from(heartbeatRunAttempts)
-      .where(and(
-        eq(heartbeatRunAttempts.id, attemptRef.id),
-        eq(heartbeatRunAttempts.orgId, run.orgId),
-        eq(heartbeatRunAttempts.runId, run.id),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (!attempt) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} attempt readback failed`);
-
-    let span = await database
-      .select()
-      .from(runRuntimeSpans)
-      .where(and(
-        eq(runRuntimeSpans.orgId, run.orgId),
-        eq(runRuntimeSpans.runId, run.id),
-        eq(runRuntimeSpans.state, "open"),
-      ))
-      .orderBy(desc(runRuntimeSpans.ordinal))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (span) {
-      if (span.ownerToken !== ownerToken || span.attemptEpoch !== attemptEpoch) {
-        throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} native span owner fence is stale`);
-      }
-      if (span.attemptId !== attempt.id) {
-        const rebound = await bindRunRuntimeSpanAttempt(database, {
-          orgId: run.orgId,
-          runId: run.id,
-          spanId: span.id,
-          ownerToken,
-          runtimeType: admission.runtimeType,
-          attemptEpoch,
-          attemptId: attempt.id,
-        });
-        if (!rebound) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} native span attempt bind failed`);
-        span = rebound;
-      }
-    } else {
-      const native = await resolveHeartbeatNativeResources(database, {
-        run,
-      runtimeType: admission.runtimeType,
-      });
-      if (!native) {
-        throw new HeartbeatCommonRunBoundaryError(
-          `no durable native binding/segment is available for ${admission.scene}/${admission.targetType}; heartbeat admission is fail-closed`,
-        );
-      }
-      span = await startRunRuntimeSpanInTransaction(database, {
-        orgId: run.orgId,
-        runId: run.id,
-        binding: native.binding,
-        segment: native.segment,
-          runtimeType: options.runtimeType ?? admission.runtimeType,
-        attemptRef: `${admission.idempotencyKey}:attempt:${attempt.attemptIndex}`,
-        attemptId: attempt.id,
-        attemptEpoch,
-        ownerToken,
-        inputCorrelationRef: native.inputCorrelationRef,
-      });
-    }
-
-    const existingCheckpoint = admissionObject(attempt.checkpointJson) ?? {};
-    const submissionKey = `${admission.idempotencyKey}:attempt:${attempt.attemptIndex}`;
-    await database
-      .update(heartbeatRunAttempts)
-      .set({
-        checkpointJson: {
-          ...existingCheckpoint,
-          unifiedSubmission: {
-            key: submissionKey,
-            state: "pending",
-            phase: "pre_submission",
-            retry: "allowed",
-            providerThreadId: null,
-            providerTurnId: null,
-            reason: null,
-          },
-        },
-        submissionPhase: "pre_submission",
-      })
-      .where(and(
-        eq(heartbeatRunAttempts.id, attempt.id),
-        eq(heartbeatRunAttempts.orgId, run.orgId),
-        eq(heartbeatRunAttempts.runId, run.id),
-        eq(heartbeatRunAttempts.ownerToken, ownerToken),
-        eq(heartbeatRunAttempts.attemptEpoch, attemptEpoch),
-      ));
-
-    const nextContext = {
-      ...(admissionObject(run.contextSnapshot) ?? {}),
-      [UNIFIED_ADMISSION_CONTEXT_KEY]: {
-        ...admission.stored,
-        ownerFenceId: span.id,
-        lastOwnerToken: ownerToken,
-        attemptEpoch,
-        lastLeaseExpiresAt: run.executionLeaseExpiresAt?.toISOString() ?? null,
-      },
-    };
-    await database
-      .update(heartbeatRuns)
-      .set({ contextSnapshot: nextContext, updatedAt: new Date() })
-      .where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.orgId, run.orgId)));
-    return {
-      attemptRef: {
-        id: attempt.id,
-        attemptIndex: attempt.attemptIndex,
-        ownerToken,
-        attemptEpoch,
-      },
-      spanId: span.id,
-      ownerToken,
-      attemptEpoch,
-    };
-  }
-
-  async function syncCommonRunOwnerAfterRecovery(
-    claim: { run: typeof heartbeatRuns.$inferSelect; ownerToken: string },
-  ) {
-    const admission = readCommonRunAdmission(claim.run);
-    if (!admission) return claim;
-    const previousSpan = await db
-      .select()
-      .from(runRuntimeSpans)
-      .where(and(
-        eq(runRuntimeSpans.orgId, claim.run.orgId),
-        eq(runRuntimeSpans.runId, claim.run.id),
-        eq(runRuntimeSpans.state, "open"),
-      ))
-      .orderBy(desc(runRuntimeSpans.ordinal))
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (!previousSpan) {
-      throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} has no open native span during recovery`);
-    }
-    const fencedSpan = await claimOpenRunRuntimeSpan(db, {
-      orgId: claim.run.orgId,
-      runId: claim.run.id,
-      ownerToken: claim.ownerToken,
-      runtimeType: admission.runtimeType,
-      attemptEpoch: previousSpan.attemptEpoch + 1,
-    });
-    if (!fencedSpan || !fencedSpan.attemptId) {
-      throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} native span recovery fence failed`);
-    }
-    const [fencedAttempt] = await db
-      .update(heartbeatRunAttempts)
-      .set({ ownerToken: claim.ownerToken, attemptEpoch: fencedSpan.attemptEpoch })
-      .where(and(
-        eq(heartbeatRunAttempts.id, fencedSpan.attemptId),
-        eq(heartbeatRunAttempts.orgId, claim.run.orgId),
-        eq(heartbeatRunAttempts.runId, claim.run.id),
-        eq(heartbeatRunAttempts.ownerToken, previousSpan.ownerToken),
-        eq(heartbeatRunAttempts.attemptEpoch, previousSpan.attemptEpoch),
-      ))
-      .returning();
-    if (!fencedAttempt) {
-      throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} attempt recovery fence failed`);
-    }
-    const refreshed = await getRun(claim.run.id);
-    if (!refreshed) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${claim.run.id} disappeared during recovery`);
-    const context = admissionObject(refreshed.contextSnapshot) ?? {};
-    await db
-      .update(heartbeatRuns)
-      .set({
-        contextSnapshot: {
-          ...context,
-          [UNIFIED_ADMISSION_CONTEXT_KEY]: {
-            ...admission.stored,
-            ownerFenceId: fencedSpan.id,
-            lastOwnerToken: claim.ownerToken,
-            attemptEpoch: fencedSpan.attemptEpoch,
-            lastLeaseExpiresAt: refreshed.executionLeaseExpiresAt?.toISOString() ?? null,
-          },
-        },
-        updatedAt: new Date(),
-      })
-      .where(eq(heartbeatRuns.id, refreshed.id));
-    return {
-      ...claim,
-      run: { ...refreshed, executionOwnerToken: claim.ownerToken },
-      attemptEpoch: fencedSpan.attemptEpoch,
-    };
-  }
+  const {
+    readCommonRunAdmission,
+    resolveHeartbeatNativeResources,
+    ensureHeartbeatRunAdmission,
+    currentCommonRunFence,
+    ensureCommonRunExecutionBoundary,
+    claimRunForRecovery,
+  } = createHeartbeatAdmissionHandlers({ db, getRun, unifiedRunAdapter });
 
   async function getRuntimeState(agentId: string) {
     return db
@@ -1283,15 +742,18 @@ export function heartbeatService(
       terminalEffectsIntent?: TerminalEffectIntent | null;
       processExitedAt?: Date | null;
       expectedExecutionOwnerToken?: string | null;
+      attempt?: UnifiedAttemptFinishInput;
+      nativeExecution?: UnifiedNativeExecutionInput;
     },
   ) {
     const runBeforeTerminal = await getRun(runId);
     const commonAdmission = runBeforeTerminal && runBeforeTerminal.status === "running"
       ? readCommonRunAdmission(runBeforeTerminal)
       : null;
-    const commonOwnerFence = commonAdmission
-      ? await currentCommonRunFence(runId)
+    const commonEntry = commonAdmission
+      ? await unifiedRunAdapter.get(runId)
       : null;
+    const commonOwnerFence = commonEntry?.ownerFence ?? null;
     const commonExpectedOwnerToken = opts?.expectedExecutionOwnerToken ?? runBeforeTerminal?.executionOwnerToken ?? null;
     const agentIssueCreationSettlement = runBeforeTerminal
       ? await (async () => {
@@ -1330,7 +792,8 @@ export function heartbeatService(
         ? { agentIssueCreationNotification }
         : {}),
     };
-    if (commonAdmission && commonOwnerFence && runBeforeTerminal && commonExpectedOwnerToken === commonOwnerFence.ownerToken) {
+    let usedUnifiedTerminal = false;
+    if (commonAdmission && commonEntry && commonOwnerFence && runBeforeTerminal && commonExpectedOwnerToken === commonOwnerFence.ownerToken) {
       const spanResult = {
         resultJson: patch.resultJson ?? runBeforeTerminal.resultJson ?? null,
         sessionId: patch.sessionIdAfter ?? runBeforeTerminal.sessionIdAfter ?? null,
@@ -1341,33 +804,58 @@ export function heartbeatService(
         exitCode: patch.exitCode ?? runBeforeTerminal.exitCode ?? (status === "succeeded" ? 0 : 1),
         signal: patch.signal ?? runBeforeTerminal.signal ?? null,
       } as unknown as AgentRuntimeExecutionResult;
-      const sealedSpan = await finishRunRuntimeSpan(db, {
-        orgId: runBeforeTerminal.orgId,
-        runId: runBeforeTerminal.id,
-        ownerToken: commonOwnerFence.ownerToken,
-        runtimeType: commonAdmission.runtimeType,
-        attemptEpoch: commonOwnerFence.attemptEpoch,
-        result: spanResult,
-        error: status !== "succeeded",
+      const nativeExecution = opts?.nativeExecution ?? (commonEntry.span.state === "open"
+        ? {
+          spanId: commonEntry.span.id,
+          result: spanResult,
+          error: status !== "succeeded",
+        }
+        : undefined);
+      const terminal = await unifiedRunAdapter.finishRun(runId, commonOwnerFence, status, {
+        error: patch.error ?? null,
+        errorCode: patch.errorCode ?? null,
+        resultJson: patch.resultJson ?? null,
+        resultSummaryJson: patch.resultSummaryJson ?? null,
+        usageJson: patch.usageJson ?? null,
+        terminalFields: {
+          ...(patch.finishedAt instanceof Date ? { finishedAt: patch.finishedAt } : {}),
+          ...(patch.exitCode !== undefined ? { exitCode: patch.exitCode } : {}),
+          ...(patch.signal !== undefined ? { signal: patch.signal } : {}),
+          ...(patch.sessionIdAfter !== undefined ? { sessionIdAfter: patch.sessionIdAfter } : {}),
+          ...(patch.sessionParamsAfterJson !== undefined ? { sessionParamsAfterJson: patch.sessionParamsAfterJson } : {}),
+          ...(patch.stdoutExcerpt !== undefined ? { stdoutExcerpt: patch.stdoutExcerpt } : {}),
+          ...(patch.stderrExcerpt !== undefined ? { stderrExcerpt: patch.stderrExcerpt } : {}),
+          ...(patch.logBytes !== undefined ? { logBytes: patch.logBytes } : {}),
+          ...(patch.logSha256 !== undefined ? { logSha256: patch.logSha256 } : {}),
+          ...(patch.logCompressed !== undefined ? { logCompressed: patch.logCompressed } : {}),
+        },
+        nativeExecution,
+        terminalEffectsPending: opts?.terminalEffectsPending,
+        terminalEffectsIntent,
+        processExitedAt: opts?.processExitedAt,
+        expectedStatuses: opts?.expectedStatuses,
+        activityWatermark: opts?.activityWatermark,
+        attempt: opts?.attempt,
       });
-      if (!sealedSpan) {
-        throw new Error(`common native span could not be sealed for heartbeat run ${runId}`);
-      }
+      if (!terminal.ok) return null;
+      usedUnifiedTerminal = true;
     }
-    const updated = await transitionHeartbeatRunToTerminal(db, {
-      runId,
-      status,
-      patch,
-      expectedStatuses: opts?.expectedStatuses,
-      activityWatermark: opts?.activityWatermark,
-      terminalEffectsPending: opts?.terminalEffectsPending,
-      terminalEffectsIntent,
-      processExitedAt: opts?.processExitedAt,
-      expectedExecutionOwnerToken: opts?.expectedExecutionOwnerToken,
-    });
+    const updated = usedUnifiedTerminal
+      ? await getRun(runId)
+      : await transitionHeartbeatRunToTerminal(db, {
+          runId,
+          status,
+          patch,
+          expectedStatuses: opts?.expectedStatuses,
+          activityWatermark: opts?.activityWatermark,
+          terminalEffectsPending: opts?.terminalEffectsPending,
+          terminalEffectsIntent,
+          processExitedAt: opts?.processExitedAt,
+          expectedExecutionOwnerToken: opts?.expectedExecutionOwnerToken,
+        });
     if (updated) {
       publishRunStatus(updated);
-      await finishLatestHeartbeatRunAttempt(db, updated.id, {
+      if (!usedUnifiedTerminal) await finishLatestHeartbeatRunAttempt(db, updated.id, {
         status,
         usageDeltaJson: updated.usageJson,
         costUsd: updated.usageJson?.costUsd,
@@ -1840,10 +1328,10 @@ export function heartbeatService(
             .then((rows) => rows[0] ?? null)
         : null;
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${run.id}))`);
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`agent-run-state:${run.agentId}`}))`);
+      await lockUnifiedAgentRunCapacity(tx as unknown as Db, run.agentId);
       await tx.execute(sql`select id from agents where id = ${run.agentId} for update`);
       const currentAgent = await tx
-        .select({ status: agents.status })
+        .select({ status: agents.status, runtimeConfig: agents.runtimeConfig })
         .from(agents)
         .where(eq(agents.id, run.agentId))
         .then((rows) => rows[0] ?? null);
@@ -1986,6 +1474,12 @@ export function heartbeatService(
         taskSessionParams,
         taskSessionDisplayId,
       });
+      const capacity = await reserveUnifiedAgentRunCapacity(tx as unknown as Db, {
+        agentId: run.agentId,
+        runtimeConfig: currentAgent.runtimeConfig,
+        lockHeld: true,
+      });
+      if (!capacity.admitted) return null;
       const claimedRun = await tx
         .update(heartbeatRuns)
         .set({
@@ -2112,353 +1606,29 @@ export function heartbeatService(
     }
   }
 
-  async function reapOrphanedRunsLocked(opts?: { staleThresholdMs?: number; now?: Date; recoveryCutoff?: Date }) {
-    pruneLocalExecutionLeaseStates();
-    const staleThresholdMs = opts?.staleThresholdMs ?? 0;
-    const now = opts?.now ?? new Date();
-    const recoveryCutoff = opts?.recoveryCutoff ?? now;
-    const reaped: string[] = [];
-
-    try {
-      // Find all runs stuck in "running" state (queued runs are legitimately waiting; resumeQueuedRuns handles them)
-      const activeRuns = await db
-        .select({
-          run: heartbeatRuns,
-          agentRuntimeType: agents.agentRuntimeType,
-        })
-        .from(heartbeatRuns)
-        .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-        .where(or(
-          and(
-            eq(heartbeatRuns.status, "running"),
-            or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
-          ),
-          eq(heartbeatRuns.terminalEffectsPending, true),
-        ));
-
-      for (const { run, agentRuntimeType } of activeRuns) {
-      if (run.terminalEffectsPending) {
-        if (!run.processExitedAt) {
-          const exited = await terminateRunProcessAndWait(run, agentRuntimeType);
-          if (!exited || activeRunExecutions.has(run.id)) continue;
-          await acknowledgeRunProcessExit(run.id);
-        }
-        const completed = await completeTerminalControlEffects(run);
-        if (!completed) continue;
-        reaped.push(run.id);
-        continue;
-      }
-
-      // Apply staleness threshold to avoid false positives
-      if (staleThresholdMs > 0) {
-        const refTime = run.updatedAt ? new Date(run.updatedAt).getTime() : 0;
-        if (now.getTime() - refTime < staleThresholdMs) continue;
-      }
-
-      // The lease timer pauses while the host sleeps, but the child process
-      // and this server's execution registry can remain alive. Preserve that
-      // local execution instead of turning it into a process-loss retry.
-      if (activeRunExecutions.has(run.id) || runningProcesses.has(run.id)) {
-        if (!localExecutionOwnerMatches(run.id, run.executionOwnerToken)) {
-          abortRunExecution(run.id);
-          continue;
-        }
-        if (run.executionOwnerToken) {
-          const renewed = await renewRunExecutionLease(run.id, run.executionOwnerToken, now);
-          if (!renewed) abortRunExecution(run.id);
-        }
-        continue;
-      }
-
-      const recoveryClaim = await claimExpiredHeartbeatRunExecution(db, run.id, { now, recoveryCutoff });
-      if (!recoveryClaim) continue;
-      const claimedRun = recoveryClaim.run;
-
-      const tracksLocalChild = isTrackedLocalChildProcessAdapter(agentRuntimeType);
-      let detachedTerminationMessage: string | null = null;
-      if (!claimedRun.processExitedAt && tracksLocalChild && claimedRun.processPid && isProcessAlive(claimedRun.processPid)) {
-        const termination = await terminateOrphanedProcess(claimedRun.processPid);
-        if (termination.stillAlive) {
-          const detachedMessage = termination.error
-            ? `Lost in-memory process handle, child pid ${claimedRun.processPid} is still alive, and Rudder could not terminate it: ${termination.error}`
-            : `Lost in-memory process handle, but child pid ${claimedRun.processPid} is still alive`;
-          const detachedRun = await setRunStatus(claimedRun.id, "running", {
-            error: detachedMessage,
-            errorCode: DETACHED_PROCESS_ERROR_CODE,
-          });
-          if (detachedRun) {
-            await appendRunEvent(detachedRun, {
-              eventType: "lifecycle",
-              stream: "system",
-              level: "warn",
-              message: detachedMessage,
-              payload: {
-                processPid: claimedRun.processPid,
-              },
-            });
-          }
-          continue;
-        }
-        detachedTerminationMessage = termination.terminationSignal
-          ? `Terminated detached child pid ${claimedRun.processPid} with ${termination.terminationSignal} after Rudder lost its process handle`
-          : `Detached child pid ${claimedRun.processPid} exited before Rudder could terminate it`;
-      }
-
-      const shouldRetry = tracksLocalChild && !!claimedRun.processPid && (claimedRun.processLossRetryCount ?? 0) < 1;
-      const baseMessage = claimedRun.processPid
-        ? `Process lost -- child pid ${claimedRun.processPid} is no longer running`
-        : "Process lost -- server may have restarted";
-
-      let finalizedRun = await transitionRunToTerminal(claimedRun.id, "failed", {
-        error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
-        errorCode: "process_lost",
-        finishedAt: now,
-      }, {
-        processExitedAt: now,
-        terminalEffectsIntent: shouldRetry ? { version: 1, processLossRetry: true } : { version: 1 },
-        expectedExecutionOwnerToken: recoveryClaim.ownerToken,
-      });
-      if (!finalizedRun) continue;
-      await setWakeupStatus(claimedRun.wakeupRequestId, "failed", {
-        finishedAt: now,
-        error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
-      });
-      if (detachedTerminationMessage) {
-        await appendRunEvent(finalizedRun, {
-          eventType: "lifecycle",
-          stream: "system",
-          level: "warn",
-          message: detachedTerminationMessage,
-          payload: {
-            ...(claimedRun.processPid ? { processPid: claimedRun.processPid } : {}),
-          },
-        });
-      }
-
-      await appendRunEvent(finalizedRun, {
-        eventType: "lifecycle",
-        stream: "system",
-        level: "error",
-        message: shouldRetry
-          ? `${baseMessage}; retry will be queued after terminal effects complete`
-          : baseMessage,
-        payload: {
-          ...(claimedRun.processPid ? { processPid: claimedRun.processPid } : {}),
-        },
-      });
-      const completed = await completeTerminalControlEffects(finalizedRun);
-      runningProcesses.delete(claimedRun.id);
-      if (!completed) continue;
-      reaped.push(claimedRun.id);
-      }
-    } finally {
-      // Terminal effects are the fast path. Keep a request-scoped sweep as a
-      // second durable path for runs whose effect was lost or dead-lettered.
-      await agentIssueCreationSvc.reconcileTerminalSettlements().catch((error) => {
-        logger.warn({ err: error }, "failed to reconcile terminal Agent Issue creation requests");
-      });
-    }
-
-    if (reaped.length > 0) {
-      logger.warn({ reapedCount: reaped.length, runIds: reaped }, "reaped orphaned heartbeat runs");
-    }
-    return { reaped: reaped.length, runIds: reaped };
-  }
-
-  async function reapInactiveRunsLocked(opts?: { maxInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
-    pruneLocalExecutionLeaseStates();
-    const maxInactivityMs = opts?.maxInactivityMs ?? DEFAULT_HEARTBEAT_RUN_INACTIVITY_TIMEOUT_MS;
-    if (!Number.isFinite(maxInactivityMs) || maxInactivityMs <= 0) {
-      return { timedOut: 0, runIds: [] };
-    }
-
-    const now = opts?.now ?? new Date();
-    const activeRuns = await db
-      .select({
-        run: heartbeatRuns,
-        agentRuntimeType: agents.agentRuntimeType,
-        lastEventAt: sql<Date | null>`max(${heartbeatRunEvents.createdAt})`,
-        eventCount: sql<number>`count(${heartbeatRunEvents.id})::int`,
-      })
-      .from(heartbeatRuns)
-      .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-      .leftJoin(heartbeatRunEvents, eq(heartbeatRunEvents.runId, heartbeatRuns.id))
-      .where(and(
-        eq(heartbeatRuns.status, "running"),
-        or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
-      ))
-      .groupBy(heartbeatRuns.id, agents.agentRuntimeType);
-
-    const timedOut: string[] = [];
-
-    for (const { run, agentRuntimeType, lastEventAt, eventCount } of activeRuns) {
-      if (opts?.recoveryCutoff && new Date(run.createdAt).getTime() >= opts.recoveryCutoff.getTime()) continue;
-      if (await preserveLiveExecutionAfterSleep(run, now)) continue;
-      const activityTimes = [
-        run.updatedAt,
-        lastEventAt,
-        run.processStartedAt,
-        run.startedAt,
-        run.createdAt,
-      ]
-        .map((value) => value ? new Date(value).getTime() : null)
-        .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-      const lastActivityMs = activityTimes.length > 0 ? Math.max(...activityTimes) : null;
-      if (!lastActivityMs) continue;
-
-      const inactiveMs = now.getTime() - lastActivityMs;
-      if (inactiveMs < maxInactivityMs) continue;
-
-      const message = `Run had no recorded activity for ${formatDurationMs(maxInactivityMs)}`;
-      const processExitPending =
-        activeRunExecutions.has(run.id)
-        || runningProcesses.has(run.id)
-        || (!run.processExitedAt && isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
-      const finalizedRun = await transitionRunToTerminal(run.id, "timed_out", {
-        finishedAt: now,
-        error: message,
-        errorCode: "inactivity_timeout",
-        terminalEffectsPending: true,
-      }, {
-        activityWatermark: {
-          updatedAt: run.updatedAt,
-          eventCount: Number(eventCount ?? 0),
-        },
-        processExitedAt: processExitPending ? null : now,
-        expectedExecutionOwnerToken: run.executionOwnerToken,
-      });
-      if (!finalizedRun) continue;
-      await setWakeupStatus(run.wakeupRequestId, "timed_out", {
-        finishedAt: now,
-        error: message,
-      });
-
-      await appendRunEvent(finalizedRun, {
-        eventType: "lifecycle",
-        stream: "system",
-        level: "error",
-        message,
-        payload: {
-          maxInactivityMs,
-          inactiveMs,
-          lastActivityAt: new Date(lastActivityMs).toISOString(),
-          timedOutAt: now.toISOString(),
-          ...(run.processPid ? { processPid: run.processPid } : {}),
-        },
-      });
-      const processExited = !processExitPending || await terminateRunProcessAndWait(finalizedRun, agentRuntimeType);
-      if (processExited && !activeRunExecutions.has(finalizedRun.id)) {
-        await acknowledgeRunProcessExit(finalizedRun.id);
-        await completeTerminalControlEffects(finalizedRun);
-        runningProcesses.delete(run.id);
-      }
-      timedOut.push(run.id);
-    }
-
-    if (timedOut.length > 0) {
-      logger.warn(
-        { timedOutCount: timedOut.length, runIds: timedOut, maxInactivityMs },
-        "timed out inactive heartbeat runs",
-      );
-    }
-
-    return { timedOut: timedOut.length, runIds: timedOut };
-  }
-
-  async function reapTimedOutRunsLocked(opts?: { maxRuntimeMs?: number; now?: Date; recoveryCutoff?: Date }) {
-    pruneLocalExecutionLeaseStates();
-    const maxRuntimeMs = opts?.maxRuntimeMs ?? DEFAULT_HEARTBEAT_RUN_TIMEOUT_MS;
-    if (!Number.isFinite(maxRuntimeMs) || maxRuntimeMs <= 0) {
-      return { timedOut: 0, runIds: [] };
-    }
-
-    const now = opts?.now ?? new Date();
-    const activeRuns = await db
-      .select({
-        run: heartbeatRuns,
-        agentRuntimeType: agents.agentRuntimeType,
-      })
-      .from(heartbeatRuns)
-      .innerJoin(agents, eq(heartbeatRuns.agentId, agents.id))
-      .where(and(
-        eq(heartbeatRuns.status, "running"),
-        or(isNull(heartbeatRuns.runningSubstate), ne(heartbeatRuns.runningSubstate, "waiting_for_network")),
-      ));
-
-    const timedOut: string[] = [];
-
-    for (const { run, agentRuntimeType } of activeRuns) {
-      if (opts?.recoveryCutoff && new Date(run.createdAt).getTime() >= opts.recoveryCutoff.getTime()) continue;
-      if (await preserveLiveExecutionAfterSleep(run, now)) continue;
-      const startedAt = run.startedAt ? new Date(run.startedAt).getTime() : null;
-      if (!startedAt || !Number.isFinite(startedAt)) continue;
-
-      const runtimeMs = Math.max(0, now.getTime() - startedAt - (run.networkWaitDurationMs ?? 0));
-      if (runtimeMs < maxRuntimeMs) continue;
-
-      const message = `Run exceeded maximum duration of ${formatDurationMs(maxRuntimeMs)}`;
-      const processExitPending =
-        activeRunExecutions.has(run.id)
-        || runningProcesses.has(run.id)
-        || (!run.processExitedAt && isTrackedLocalChildProcessAdapter(agentRuntimeType) && !!run.processPid && isProcessAlive(run.processPid));
-      const finalizedRun = await transitionRunToTerminal(run.id, "timed_out", {
-        finishedAt: now,
-        error: message,
-        errorCode: "timeout",
-        terminalEffectsPending: true,
-      }, {
-        processExitedAt: processExitPending ? null : now,
-        expectedExecutionOwnerToken: run.executionOwnerToken,
-      });
-      if (!finalizedRun) continue;
-      await setWakeupStatus(run.wakeupRequestId, "timed_out", {
-        finishedAt: now,
-        error: message,
-      });
-
-      await appendRunEvent(finalizedRun, {
-        eventType: "lifecycle",
-        stream: "system",
-        level: "error",
-        message,
-        payload: {
-          maxRuntimeMs,
-          runtimeMs,
-          startedAt: run.startedAt ? new Date(run.startedAt).toISOString() : null,
-          timedOutAt: now.toISOString(),
-          ...(run.processPid ? { processPid: run.processPid } : {}),
-        },
-      });
-      const processExited = !processExitPending || await terminateRunProcessAndWait(finalizedRun, agentRuntimeType);
-      if (processExited && !activeRunExecutions.has(finalizedRun.id)) {
-        await acknowledgeRunProcessExit(finalizedRun.id);
-        await completeTerminalControlEffects(finalizedRun);
-        runningProcesses.delete(run.id);
-      }
-      timedOut.push(run.id);
-    }
-
-    if (timedOut.length > 0) {
-      logger.warn(
-        { timedOutCount: timedOut.length, runIds: timedOut, maxRuntimeMs },
-        "timed out long-running heartbeat runs",
-      );
-    }
-
-    return { timedOut: timedOut.length, runIds: timedOut };
-  }
-
-  async function reapOrphanedRuns(opts?: { staleThresholdMs?: number; now?: Date; recoveryCutoff?: Date }) {
-    return withHeartbeatRecoveryLock(() => reapOrphanedRunsLocked(opts));
-  }
-
-  async function reapInactiveRuns(opts?: { maxInactivityMs?: number; now?: Date; recoveryCutoff?: Date }) {
-    return withHeartbeatRecoveryLock(() => reapInactiveRunsLocked(opts));
-  }
-
-  async function reapTimedOutRuns(opts?: { maxRuntimeMs?: number; now?: Date; recoveryCutoff?: Date }) {
-    return withHeartbeatRecoveryLock(() => reapTimedOutRunsLocked(opts));
-  }
+  const { reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns } = createHeartbeatReaperHandlers({
+    db,
+    agentIssueCreationSvc,
+    activeRunExecutions,
+    DETACHED_PROCESS_ERROR_CODE,
+    runningProcesses,
+    pruneLocalExecutionLeaseStates,
+    localExecutionOwnerMatches,
+    renewRunExecutionLease,
+    abortRunExecution,
+    claimRunForRecovery,
+    setRunStatus,
+    appendRunEvent,
+    completeTerminalControlEffects,
+    terminateRunProcessAndWait,
+    acknowledgeRunProcessExit,
+    transitionRunToTerminal,
+    setWakeupStatus,
+    preserveLiveExecutionAfterSleep,
+    withHeartbeatRecoveryLock,
+    formatDurationMs,
+    onOrphanedClaudeForkRun: testHooks?.onOrphanedClaudeForkRun,
+  });
 
   let recoverPendingWakeups: (() => Promise<void>) | null = null;
 
@@ -2569,7 +1739,6 @@ export function heartbeatService(
     opts?: {
       startNext?: boolean;
       automationOutput?: string | null;
-      automationTranscript?: Parameters<typeof publishAutomationRunOutputToChat>[1]["transcript"];
     },
   ) {
     const claim = await claimHeartbeatRunTerminalEffects(db, run.id);
@@ -2637,7 +1806,14 @@ export function heartbeatService(
           issueId: readNonEmptyString(runContext.issueId),
           output: opts?.automationOutput ?? intent.automation?.output ?? current.error,
           status: current.status,
-          transcript: opts?.automationTranscript ?? [],
+          transcript: Array.isArray(intent.automation?.transcript)
+            ? intent.automation.transcript.filter((entry): entry is TranscriptEntry => {
+              return Boolean(entry && typeof entry === "object" && !Array.isArray(entry)
+                && typeof (entry as Record<string, unknown>).kind === "string"
+                && typeof (entry as Record<string, unknown>).ts === "string");
+            })
+            : [],
+          transcriptSource: intent.automation?.transcriptSource,
         }));
       }
 
@@ -2811,7 +1987,7 @@ export function heartbeatService(
   }
   const baseContext = {
     db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets,
-    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatRunAdmissionFields, ensureHeartbeatRunAdmission, resolveHeartbeatNativeResources, ensureCommonRunExecutionBoundary, syncCommonRunOwnerAfterRecovery, currentCommonRunFence, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, withHeartbeatRecoveryLock, formatDurationMs,
+    getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, buildHeartbeatRunAdmissionFields, ensureHeartbeatRunAdmission, resolveHeartbeatNativeResources, ensureCommonRunExecutionBoundary, currentCommonRunFence, unifiedRunAdapter, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, terminateRunProcessAndWait, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, reapInactiveRuns, reapTimedOutRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, withHeartbeatRecoveryLock, formatDurationMs,
   } as any;
   const recoveryHandlers = createHeartbeatRecoveryHandlers({ ...baseContext, startNextQueuedRunForAgent });
   const wakeupHandlers = createHeartbeatWakeupHandlers({
@@ -2875,7 +2051,7 @@ export function heartbeatService(
         );
       if (!pristineReplayAllowed && !sameSessionAllowed) {
         const unsafeClaim = candidate.chatConversationId && testHooks?.onNetworkWaitingRun
-          ? await claimExpiredHeartbeatRunExecution(db, candidate.id, { now })
+          ? await claimRunForRecovery(candidate, { now })
           : null;
         if (unsafeClaim && candidate.chatConversationId && testHooks?.onNetworkWaitingRun) {
           await Promise.resolve(testHooks.onNetworkWaitingRun({
@@ -2916,7 +2092,7 @@ export function heartbeatService(
         continue;
       }
       if ((candidate.networkWaitAttemptCount ?? 0) >= NETWORK_WAIT_MAX_ATTEMPTS) {
-        const claim = await claimExpiredHeartbeatRunExecution(db, candidate.id, { now });
+        const claim = await claimRunForRecovery(candidate, { now });
         if (!claim) continue;
         if (candidate.chatConversationId && testHooks?.onNetworkWaitingRun) {
           await Promise.resolve(testHooks.onNetworkWaitingRun({
@@ -2956,7 +2132,7 @@ export function heartbeatService(
         }
         continue;
       }
-      const claim = await claimExpiredHeartbeatRunExecution(db, candidate.id, { now });
+      const claim = await claimRunForRecovery(candidate, { now });
       if (!claim) continue;
       const waitStartedAt = candidate.networkWaitStartedAt ? new Date(candidate.networkWaitStartedAt).getTime() : now.getTime();
       const waitedMs = Math.max(0, now.getTime() - waitStartedAt);
@@ -3293,13 +2469,28 @@ export function heartbeatService(
       const run = await db
         .select({
           id: heartbeatRuns.id,
+          orgId: heartbeatRuns.orgId,
           logStore: heartbeatRuns.logStore,
           logRef: heartbeatRuns.logRef,
+          contextSnapshot: heartbeatRuns.contextSnapshot,
+          resultJson: heartbeatRuns.resultJson,
         })
         .from(heartbeatRuns)
         .where(eq(heartbeatRuns.id, runId))
         .then((rows) => rows[0] ?? null);
       if (!run) throw notFound("Heartbeat run not found");
+      const nativeSpan = await db
+        .select({ id: runRuntimeSpans.id })
+        .from(runRuntimeSpans)
+        .where(and(
+          eq(runRuntimeSpans.orgId, run.orgId),
+          eq(runRuntimeSpans.runId, runId),
+        ))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      if (isNativeTranscriptSource(run, { hasRuntimeSpan: Boolean(nativeSpan) })) {
+        throw notFound("Run log not found");
+      }
       if (!run.logStore || !run.logRef) throw notFound("Run log not found");
 
       const result = await runLogStore.read(

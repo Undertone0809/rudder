@@ -3,28 +3,26 @@ export {
   createPiLocalProviderCapabilities,
   createPiLocalProviderCapabilityResolver,
   resolvePiLocalProviderCapabilities,
-  runtimeProviderCapabilities,
+  runtimeProviderCapabilities
 } from "./native-capabilities.js";
 export type {
   PiCapabilityEvidence,
   PiCapabilityStatus,
   PiLocalProfileTransport,
   PiLocalProfileTransportResolver,
-  PiRuntimeProviderCapabilityAdapter,
+  PiRuntimeProviderCapabilityAdapter
 } from "./native-capabilities.js";
 export {
   createPiRpcControlHandle,
   executePiNativeChat,
-  forkPiNativeSession,
-  readPiNativeTranscript,
+  forkPiNativeSession, PI_NATIVE_TRANSPORT, readPiNativeTranscript
 } from "./native-protocol.js";
 export type {
   PiBinding,
   PiForkRequest,
   PiForkResult,
-  PiSession,
-  PiTranscriptRequest,
-  PiTranscriptResult,
+  PiSession, PiTranscriptRequest,
+  PiTranscriptResult, PiWorkspaceIdentity
 } from "./native-protocol.js";
 
 function readNonEmptyString(value: unknown): string | null {
@@ -32,9 +30,17 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 const PROVIDER_SESSION_FIELDS = [
+  "profileBindingId",
+  "profileOrgId",
   "hostId",
   "profileId",
+  "transport",
+  "providerVersion",
   "capabilityRevision",
+  "workspaceId",
+  "repoUrl",
+  "repoRef",
+  "workspaceBindingId",
   "sessionFile",
   "sessionDir",
   "cwd",
@@ -52,14 +58,19 @@ const SAFE_PERSISTED_ENV_KEYS = new Set([
   "PI_OFFLINE",
 ]);
 
-function readProviderSessionFields(record: Record<string, unknown>): Record<string, unknown> {
-  const rpcEnv = typeof record.rpcEnv === "object" && record.rpcEnv !== null && !Array.isArray(record.rpcEnv)
-    ? Object.fromEntries(
-      Object.entries(record.rpcEnv as Record<string, unknown>).filter(
-        (entry): entry is [string, string] => SAFE_PERSISTED_ENV_KEYS.has(entry[0]) && typeof entry[1] === "string" && entry[1].trim().length > 0,
-      ),
-    )
+function readProviderSessionFields(record: Record<string, unknown>): Record<string, unknown> | null {
+  const hasRpcEnv = Object.prototype.hasOwnProperty.call(record, "rpcEnv");
+  const rpcEnvRecord = typeof record.rpcEnv === "object" && record.rpcEnv !== null && !Array.isArray(record.rpcEnv)
+    ? record.rpcEnv as Record<string, unknown>
     : null;
+  if (hasRpcEnv && !rpcEnvRecord) return null;
+  const rpcEnvEntries = rpcEnvRecord ? Object.entries(rpcEnvRecord) : [];
+  if (hasRpcEnv && !rpcEnvEntries.every(([key, entry]) => SAFE_PERSISTED_ENV_KEYS.has(key)
+    && typeof entry === "string"
+    && entry.trim().length > 0)) return null;
+  const rpcEnv = hasRpcEnv ? Object.fromEntries(rpcEnvEntries) as Record<string, string> : null;
+  const hasRpcArgs = Object.prototype.hasOwnProperty.call(record, "rpcArgs");
+  if (hasRpcArgs && (!Array.isArray(record.rpcArgs) || !record.rpcArgs.every((value) => typeof value === "string"))) return null;
   return {
     ...Object.fromEntries(
       PROVIDER_SESSION_FIELDS.flatMap((key) => {
@@ -67,10 +78,8 @@ function readProviderSessionFields(record: Record<string, unknown>): Record<stri
         return value ? [[key, value]] : [];
       }),
     ),
-    ...(Array.isArray(record.rpcArgs)
-      ? { rpcArgs: record.rpcArgs.filter((value): value is string => typeof value === "string") }
-      : {}),
-    ...(rpcEnv ? { rpcEnv } : {}),
+    ...(hasRpcArgs ? { rpcArgs: [...record.rpcArgs as string[]] } : {}),
+    ...(hasRpcEnv ? { rpcEnv } : {}),
   };
 }
 
@@ -87,10 +96,12 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       readNonEmptyString(record.cwd) ??
       readNonEmptyString(record.workdir) ??
       readNonEmptyString(record.folder);
+    const providerFields = readProviderSessionFields(record);
+    if (!providerFields) return null;
     return {
       sessionId,
       ...(cwd ? { cwd } : {}),
-      ...readProviderSessionFields(record),
+      ...providerFields,
     };
   },
   serialize(params: Record<string, unknown> | null) {
@@ -104,10 +115,12 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
       readNonEmptyString(params.cwd) ??
       readNonEmptyString(params.workdir) ??
       readNonEmptyString(params.folder);
+    const providerFields = readProviderSessionFields(params);
+    if (!providerFields) return null;
     return {
       sessionId,
       ...(cwd ? { cwd } : {}),
-      ...readProviderSessionFields(params),
+      ...providerFields,
     };
   },
   getDisplayId(params: Record<string, unknown> | null) {

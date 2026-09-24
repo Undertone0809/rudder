@@ -17,6 +17,9 @@ import { sanitizePostgresJsonValue } from "./postgres-json.js";
 type ReadDatabase = Pick<Db, "select">;
 type WriteDatabase = Pick<Db, "delete" | "insert" | "select">;
 
+export const CHAT_TRANSCRIPT_COMPAT_MAX_ITEMS = 5_000;
+export const CHAT_TRANSCRIPT_COMPAT_MAX_BYTES = 2 * 1024 * 1024;
+
 export type ChatTranscriptMessageSource = {
   id: string;
   orgId: string;
@@ -54,6 +57,20 @@ function transcriptEntryFromPayload(payload: unknown): ChatStreamTranscriptEntry
   return payload && typeof payload === "object" && !Array.isArray(payload)
     ? payload as ChatStreamTranscriptEntry
     : null;
+}
+
+function boundedTranscriptEntries(entries: readonly ChatStreamTranscriptEntry[]) {
+  const bounded: ChatStreamTranscriptEntry[] = [];
+  let bytes = 2;
+  for (const entry of entries) {
+    if (bounded.length >= CHAT_TRANSCRIPT_COMPAT_MAX_ITEMS) break;
+    const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
+    if (bounded.length > 0 && bytes + entryBytes > CHAT_TRANSCRIPT_COMPAT_MAX_BYTES) break;
+    if (bounded.length === 0 && bytes + entryBytes > CHAT_TRANSCRIPT_COMPAT_MAX_BYTES) break;
+    bounded.push(entry);
+    bytes += entryBytes + (bounded.length > 1 ? 1 : 0);
+  }
+  return bounded;
 }
 
 export async function listChatGenerationTranscripts(
@@ -331,6 +348,17 @@ export function selectChatTranscript(
   if (input.ledger && input.ledger.length > 0) return [...input.ledger];
   if (input.detached && input.detached.length > 0) return [...input.detached];
   return chatTranscriptFromPayload(input.legacyPayload);
+}
+
+/**
+ * Read-only compatibility boundary for callers that still need a legacy
+ * message transcript. Persistence and copy paths must continue using the
+ * unbounded selector so old data is never rewritten or discarded.
+ */
+export function selectBoundedChatTranscript(
+  input: Parameters<typeof selectChatTranscript>[0],
+) {
+  return boundedTranscriptEntries(selectChatTranscript(input));
 }
 
 export function transcriptSummaryFromSources(

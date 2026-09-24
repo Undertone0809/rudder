@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatInvocationValueForCopy, formatInvocationValueForDisplay, readInvocationAgentInstructionStack, readInvocationMcpServerList } from "./AgentDetail.helpers";
+import { formatInvocationValueForCopy, formatInvocationValueForDisplay, readInvocationAgentInstructionStack, readInvocationContentSummary, readInvocationMcpServerList } from "./AgentDetail.helpers";
 
 describe("readInvocationAgentInstructionStack", () => {
   it("prefers the explicit full instruction stack over the legacy prompt", () => {
@@ -13,6 +13,20 @@ describe("readInvocationAgentInstructionStack", () => {
     expect(readInvocationAgentInstructionStack({
       prompt: "Legacy invocation prompt",
     })).toBe("Legacy invocation prompt");
+  });
+
+  it("does not treat a native digest summary as invocation text", () => {
+    const payload = {
+      invocationContent: {
+        textStored: false,
+        textSource: "agent_run_transcript_reader",
+        prompt: { sanitizedSha256: "a".repeat(64), sanitizedCharacterLength: 42 },
+      },
+    };
+
+    expect(readInvocationAgentInstructionStack(payload)).toBeUndefined();
+    expect(readInvocationContentSummary(payload)).toEqual(payload.invocationContent);
+    expect(readInvocationContentSummary({ prompt: "legacy" })).toBeNull();
   });
 });
 

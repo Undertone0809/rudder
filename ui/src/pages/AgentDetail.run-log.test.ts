@@ -2,6 +2,7 @@ import type { HeartbeatRunEvent } from "@rudderhq/shared";
 import { describe, expect, it } from "vitest";
 import {
   advancePersistedRunEventCursor,
+  canPersistRunTranscriptAnnotations,
   mergeRunEvents,
 } from "./AgentDetail.run-log";
 
@@ -36,5 +37,19 @@ describe("Run event cursor reconciliation", () => {
 
     expect(cursor).toBe(3);
     expect(visibleEvents.map((event) => event.seq)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("Run transcript annotation anchor trust", () => {
+  const partial = { hasData: true, fetching: false, availability: "available", completeness: "partial" } as const;
+  const complete = { hasData: true, fetching: false, availability: "available", completeness: "complete" } as const;
+
+  it("gates new persistent annotations in both completeness transition orders", () => {
+    expect([partial, complete].map(canPersistRunTranscriptAnnotations)).toEqual([false, true]);
+    expect([complete, partial].map(canPersistRunTranscriptAnnotations)).toEqual([true, false]);
+    expect(canPersistRunTranscriptAnnotations({ ...complete, availability: "offline" })).toBe(false);
+    expect(canPersistRunTranscriptAnnotations({ ...complete, fetching: true })).toBe(false);
+    expect(canPersistRunTranscriptAnnotations({ ...complete, hasData: false })).toBe(false);
+    expect(canPersistRunTranscriptAnnotations(undefined)).toBe(false);
   });
 });

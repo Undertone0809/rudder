@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   assertRuntimeIdentity,
+  nativeSessionIdFromResult,
   RuntimeIdentityContractError,
   runtimeTypeFromSelector,
   selectorForRuntime,
-  nativeSessionIdFromResult,
 } from "./native-session.js";
 
 describe("native session runtime identity", () => {
@@ -24,6 +24,37 @@ describe("native session runtime identity", () => {
     });
     expect(selectorForRuntime({ ...input, runtimeType: "opencode_local" })).toMatchObject({
       userMessageId: "native-user-2", terminalMessageIds: ["assistant-2"],
+    });
+  });
+  it("persists an explicit OpenCode partial boundary from observed assistant message IDs", () => {
+    const selector = selectorForRuntime({
+      runtimeType: "opencode_local",
+      sessionId: "opencode-session",
+      executionRef: null,
+      inputCorrelationRef: "rudder-input",
+      runId: "run-stopped",
+      result: {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        sessionId: "opencode-session",
+        resultJson: {
+          userMessageId: "provider-user-r1",
+          transcriptBoundary: {
+            status: "partial",
+            observedAssistantMessageIds: ["provider-assistant-r1"],
+          },
+        },
+      },
+    });
+
+    expect(selector).toEqual({
+      kind: "opencode_input",
+      sessionId: "opencode-session",
+      userMessageId: "provider-user-r1",
+      terminalMessageIds: [],
+      observedAssistantMessageIds: ["provider-assistant-r1"],
+      completeness: "partial",
     });
   });
   it("carries Hermes product-history row ranges into the Run selector", () => {

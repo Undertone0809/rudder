@@ -15,6 +15,7 @@ import {
 } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import {
   createRudderSkillDirectoryLink,
+  readInstalledSkillTargets,
   resolveLocalOperatorHome,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { randomUUID } from "node:crypto";
@@ -31,16 +32,12 @@ const LEGACY_RUDDER_MANAGED_SKILLS_MARKERS = new Set([
   "# rudder-managed-skills:start",
   "# rudder-managed-skills:end",
 ]);
-const MANAGED_CODEX_HOME_PRUNE_TARGETS = [
-  "plugins",
-  path.join(".tmp", "plugins"),
-  path.join(".tmp", "plugins.sha"),
-  path.join(".tmp", "app-server-remote-plugin-sync-v1"),
-] as const;
 const codexHomeMutationLocks = new Map<string, Promise<void>>();
 
 export type CodexSkillIsolationSurface = {
   disabledSkillPaths: string[];
+  /** Provider-native skill roots explicitly retained from the authorized profile. */
+  preservedSkillPaths?: string[];
 };
 
 export function resolveTrustedOperatorHome(env: NodeJS.ProcessEnv = process.env): string {
@@ -52,11 +49,21 @@ export function resolveTrustedOperatorHome(env: NodeJS.ProcessEnv = process.env)
   return resolveLocalOperatorHome(env);
 }
 
-export async function discoverExternalCodexSkillDisablePaths(skillRoots: string[]): Promise<string[]> {
+function isPathWithin(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+export async function discoverExternalCodexSkillDisablePaths(
+  skillRoots: string[],
+  preservedSkillRoots: string[] = [],
+): Promise<string[]> {
   const disabledPaths = new Set<string>();
+  const preservedRoots = preservedSkillRoots.map((value) => path.resolve(value));
 
   for (const root of skillRoots) {
     const resolvedRoot = path.resolve(root);
+    if (preservedRoots.some((preservedRoot) => isPathWithin(resolvedRoot, preservedRoot))) continue;
     disabledPaths.add(resolvedRoot);
     const rootSkillFile = path.join(resolvedRoot, "SKILL.md");
     if (await fs.access(rootSkillFile).then(() => true).catch(() => false)) {
@@ -217,7 +224,6 @@ function isTomlTableBoundary(trimmedLine: string): boolean {
 
 function isManagedCodexConfigTableToStrip(trimmedLine: string): boolean {
   if (/^\[mcp_servers(?:\..+)?\]$/.test(trimmedLine)) return true;
-  if (/^\[plugins\..+\]$/.test(trimmedLine)) return true;
   return false;
 }
 
@@ -228,10 +234,93 @@ function unsupportedCodexServiceTierLine(trimmedLine: string): boolean {
   return value !== "fast" && value !== "flex";
 }
 
-function renderDisabledCodexSkillConfigEntries(skillPaths: string[]): string {
+function ensureCodexIsolationDefaults(content: string): {
+  content: string;
+  addedFeatures: boolean;
+  addedBundledSkills: boolean;
+} {
+  const newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const lines = content.split(/\r?\n/);
+  const output: string[] = [];
+  let blockLines: string[] | null = null;
+  let blockName: string | null = null;
+  let hasFeatures = false;
+  let hasFeaturePlugins = false;
+  let hasBundledSkills = false;
+  let hasBundledSkillsEnabled = false;
+  let addedFeatures = false;
+  let addedBundledSkills = false;
+
+  const appendDefaultToBlock = (block: string[], property: string): string[] => {
+    let end = block.length;
+    while (end > 1 && block[end - 1].trim() === "") end -= 1;
+    return [...block.slice(0, end), property, ...block.slice(end)];
+  };
+
+  const flushBlock = () => {
+    if (!blockLines || !blockName) return;
+    if (blockName === "[features]" && !hasFeaturePlugins) {
+      blockLines = appendDefaultToBlock(blockLines, "plugins = false");
+      addedFeatures = true;
+    }
+    if (blockName === "[skills.bundled]" && !hasBundledSkillsEnabled) {
+      blockLines = appendDefaultToBlock(blockLines, "enabled = false");
+      addedBundledSkills = true;
+    }
+    output.push(...blockLines);
+    blockLines = null;
+    blockName = null;
+    hasFeaturePlugins = false;
+    hasBundledSkillsEnabled = false;
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (isTomlTableBoundary(trimmed)) {
+      flushBlock();
+      blockLines = [line];
+      blockName = trimmed;
+      if (trimmed === "[features]") hasFeatures = true;
+      if (trimmed === "[skills.bundled]") hasBundledSkills = true;
+      continue;
+    }
+
+    if (!blockLines) {
+      output.push(line);
+      continue;
+    }
+    blockLines.push(line);
+    if (blockName === "[features]" && /^plugins\s*=/.test(trimmed)) hasFeaturePlugins = true;
+    if (blockName === "[skills.bundled]" && /^enabled\s*=/.test(trimmed)) hasBundledSkillsEnabled = true;
+  }
+  flushBlock();
+
+  if (!hasFeatures) {
+    while (output.at(-1)?.trim() === "") output.pop();
+    if (output.length > 0) output.push("");
+    output.push("[features]", "plugins = false");
+    addedFeatures = true;
+  }
+
+  if (!hasBundledSkills) {
+    while (output.at(-1)?.trim() === "") output.pop();
+    if (output.length > 0) output.push("");
+    output.push("[skills.bundled]", "enabled = false");
+    addedBundledSkills = true;
+  }
+
+  return { content: output.join(newline), addedFeatures, addedBundledSkills };
+}
+
+function renderDisabledCodexSkillConfigEntries(
+  skillPaths: string[],
+  preservedSkillPaths: string[] = [],
+): string {
   const normalized = Array.from(
     new Set(skillPaths.map((value) => path.resolve(value))),
-  ).sort((left, right) => left.localeCompare(right));
+  )
+    .filter((skillPath) => !preservedSkillPaths.some((preservedPath) => isPathWithin(skillPath, path.resolve(preservedPath))))
+    .sort((left, right) => left.localeCompare(right));
 
   if (normalized.length === 0) return "";
 
@@ -320,7 +409,6 @@ export function renderManagedExternalMcpCodexConfig(
 
 function sanitizeCodexConfigToml(content: string): {
   content: string;
-  removedSkillEntries: number;
   removedManagedTables: number;
   removedNotifyHooks: number;
   removedUnsupportedServiceTiers: number;
@@ -329,9 +417,7 @@ function sanitizeCodexConfigToml(content: string): {
   const lines = content.split(/\r?\n/);
   const output: string[] = [];
   let blockLines: string[] | null = null;
-  let blockIsSkillsConfig = false;
   let blockShouldBeRemoved = false;
-  let removedSkillEntries = 0;
   let removedManagedTables = 0;
   let removedNotifyHooks = 0;
   let removedUnsupportedServiceTiers = 0;
@@ -340,13 +426,10 @@ function sanitizeCodexConfigToml(content: string): {
     if (!blockLines) return;
     if (blockShouldBeRemoved) {
       removedManagedTables += 1;
-    } else if (blockIsSkillsConfig) {
-      removedSkillEntries += 1;
     } else {
       output.push(...blockLines);
     }
     blockLines = null;
-    blockIsSkillsConfig = false;
     blockShouldBeRemoved = false;
   };
 
@@ -355,7 +438,6 @@ function sanitizeCodexConfigToml(content: string): {
     if (isTomlTableBoundary(trimmedLine)) {
       flushBlock();
       blockLines = [line];
-      blockIsSkillsConfig = trimmedLine === "[[skills.config]]";
       blockShouldBeRemoved = isManagedCodexConfigTableToStrip(trimmedLine);
       continue;
     }
@@ -379,87 +461,10 @@ function sanitizeCodexConfigToml(content: string): {
   flushBlock();
   return {
     content: output.join(newline),
-    removedSkillEntries,
     removedManagedTables,
     removedNotifyHooks,
     removedUnsupportedServiceTiers,
   };
-}
-
-function normalizeCodexFeaturesBlock(blockLines: string[]): {
-  lines: string[];
-  changed: boolean;
-} {
-  const output: string[] = [];
-  let sawPlugins = false;
-  let changed = false;
-
-  for (const [index, line] of blockLines.entries()) {
-    if (index === 0) {
-      output.push(line);
-      continue;
-    }
-    if (/^\s*plugins\s*=/.test(line)) {
-      const indent = line.match(/^(\s*)/)?.[1] ?? "";
-      output.push(`${indent}plugins = false`);
-      sawPlugins = true;
-      if (line.trim() !== "plugins = false") {
-        changed = true;
-      }
-      continue;
-    }
-    output.push(line);
-  }
-
-  if (!sawPlugins) {
-    const trailingBlankLines: string[] = [];
-    while (output.length > 1 && output.at(-1)?.trim() === "") {
-      trailingBlankLines.unshift(output.pop() ?? "");
-    }
-    output.push("plugins = false");
-    output.push(...trailingBlankLines);
-    changed = true;
-  }
-
-  return { lines: output, changed };
-}
-
-function normalizeCodexBundledSkillsBlock(blockLines: string[]): {
-  lines: string[];
-  changed: boolean;
-} {
-  const output: string[] = [];
-  let sawEnabled = false;
-  let changed = false;
-
-  for (const [index, line] of blockLines.entries()) {
-    if (index === 0) {
-      output.push(line);
-      continue;
-    }
-    if (/^\s*enabled\s*=/.test(line)) {
-      const indent = line.match(/^(\s*)/)?.[1] ?? "";
-      output.push(`${indent}enabled = false`);
-      sawEnabled = true;
-      if (line.trim() !== "enabled = false") {
-        changed = true;
-      }
-      continue;
-    }
-    output.push(line);
-  }
-
-  if (!sawEnabled) {
-    const trailingBlankLines: string[] = [];
-    while (output.length > 1 && output.at(-1)?.trim() === "") {
-      trailingBlankLines.unshift(output.pop() ?? "");
-    }
-    output.push("enabled = false");
-    output.push(...trailingBlankLines);
-    changed = true;
-  }
-
-  return { lines: output, changed };
 }
 
 function normalizeCodexSkillSourceDir(source: string): string {
@@ -468,130 +473,6 @@ function normalizeCodexSkillSourceDir(source: string): string {
     return path.dirname(resolved);
   }
   return resolved;
-}
-
-function ensureCodexPluginsDisabled(content: string): {
-  content: string;
-  changed: boolean;
-} {
-  const newline = content.includes("\r\n") ? "\r\n" : "\n";
-  const lines = content.split(/\r?\n/);
-  const output: string[] = [];
-  let blockLines: string[] | null = null;
-  let blockIsFeatures = false;
-  let sawFeatures = false;
-  let changed = false;
-
-  const flushBlock = () => {
-    if (!blockLines) return;
-    if (blockIsFeatures) {
-      const normalized = normalizeCodexFeaturesBlock(blockLines);
-      output.push(...normalized.lines);
-      if (normalized.changed) changed = true;
-    } else {
-      output.push(...blockLines);
-    }
-    blockLines = null;
-    blockIsFeatures = false;
-  };
-
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-    if (isTomlTableBoundary(trimmedLine)) {
-      flushBlock();
-      blockLines = [line];
-      blockIsFeatures = trimmedLine === "[features]";
-      if (blockIsFeatures) sawFeatures = true;
-      continue;
-    }
-
-    if (!blockLines) {
-      output.push(line);
-      continue;
-    }
-
-    blockLines.push(line);
-  }
-
-  flushBlock();
-
-  if (!sawFeatures) {
-    const base = output.join(newline).replace(/\s+$/u, "");
-    const next = base.length > 0
-      ? `${base}${newline}${newline}[features]${newline}plugins = false${newline}`
-      : `[features]${newline}plugins = false${newline}`;
-    return {
-      content: next,
-      changed: true,
-    };
-  }
-
-  return {
-    content: output.join(newline),
-    changed,
-  };
-}
-
-function ensureCodexBundledSkillsDisabled(content: string): {
-  content: string;
-  changed: boolean;
-} {
-  const newline = content.includes("\r\n") ? "\r\n" : "\n";
-  const lines = content.split(/\r?\n/);
-  const output: string[] = [];
-  let blockLines: string[] | null = null;
-  let blockIsBundledSkills = false;
-  let sawBundledSkills = false;
-  let changed = false;
-
-  const flushBlock = () => {
-    if (!blockLines) return;
-    if (blockIsBundledSkills) {
-      const normalized = normalizeCodexBundledSkillsBlock(blockLines);
-      output.push(...normalized.lines);
-      if (normalized.changed) changed = true;
-    } else {
-      output.push(...blockLines);
-    }
-    blockLines = null;
-    blockIsBundledSkills = false;
-  };
-
-  for (const line of lines) {
-    const trimmedLine = line.trim();
-    if (isTomlTableBoundary(trimmedLine)) {
-      flushBlock();
-      blockLines = [line];
-      blockIsBundledSkills = trimmedLine === "[skills.bundled]";
-      if (blockIsBundledSkills) sawBundledSkills = true;
-      continue;
-    }
-
-    if (!blockLines) {
-      output.push(line);
-      continue;
-    }
-
-    blockLines.push(line);
-  }
-
-  flushBlock();
-
-  if (!sawBundledSkills) {
-    const base = output.join(newline).replace(/\s+$/u, "");
-    const next = base.length > 0
-      ? `${base}${newline}${newline}[skills.bundled]${newline}enabled = false${newline}`
-      : `[skills.bundled]${newline}enabled = false${newline}`;
-    return {
-      content: next,
-      changed: true,
-    };
-  }
-
-  return {
-    content: output.join(newline),
-    changed,
-  };
 }
 
 async function syncManagedCodexConfigToml(
@@ -610,17 +491,21 @@ async function syncManagedCodexConfigToml(
   const existingTarget = await fs.lstat(target).catch(() => null);
   const existingTargetContent = existingTarget ? await fs.readFile(target, "utf8") : null;
   const sourceExists = await pathExists(source);
-  // The managed home is derived from the operator's current Codex config; do not preserve stale provider/auth settings.
+  // The managed home is rebuilt from the authorized provider profile. Runtime
+  // state remains in the managed home, while this config snapshot refreshes
+  // profile changes without sharing the operator's writable home.
   const rawContent = sourceExists ? await fs.readFile(source, "utf8") : "";
   const withoutLegacyMarkers = rawContent
     .split(/\r?\n/)
     .filter((line) => !LEGACY_RUDDER_MANAGED_SKILLS_MARKERS.has(line.trim()))
     .join(rawContent.includes("\r\n") ? "\r\n" : "\n");
   const sanitized = sanitizeCodexConfigToml(withoutLegacyMarkers);
-  const bundledSkillsDisabled = ensureCodexBundledSkillsDisabled(sanitized.content);
-  const pluginsDisabled = ensureCodexPluginsDisabled(bundledSkillsDisabled.content);
-  const baseContent = pluginsDisabled.content.replace(/\s+$/u, "");
-  const disabledSkillConfigEntries = renderDisabledCodexSkillConfigEntries(isolationSurface.disabledSkillPaths);
+  const isolationDefaults = ensureCodexIsolationDefaults(sanitized.content);
+  const baseContent = isolationDefaults.content.replace(/\s+$/u, "");
+  const disabledSkillConfigEntries = renderDisabledCodexSkillConfigEntries(
+    isolationSurface.disabledSkillPaths,
+    isolationSurface.preservedSkillPaths,
+  );
   const mergedContent = [
     baseContent,
     await renderRudderMcpCodexConfig(
@@ -646,17 +531,10 @@ async function syncManagedCodexConfigToml(
     await fs.writeFile(target, nextContent, "utf8");
   }
 
-  if (sanitized.removedSkillEntries > 0) {
-    await onLog(
-      "stdout",
-      `[rudder] Removed ${sanitized.removedSkillEntries} inherited Codex [[skills.config]] entr${sanitized.removedSkillEntries === 1 ? "y" : "ies"} from ${target}\n`,
-    );
-  }
-
   if (sanitized.removedManagedTables > 0) {
     await onLog(
       "stdout",
-      `[rudder] Removed ${sanitized.removedManagedTables} inherited Codex plugin/MCP configuration tabl${sanitized.removedManagedTables === 1 ? "e" : "es"} from ${target}\n`,
+      `[rudder] Removed ${sanitized.removedManagedTables} inherited Codex MCP configuration tabl${sanitized.removedManagedTables === 1 ? "e" : "es"} from ${target}; provider-native plugin tables were retained.\n`,
     );
   }
 
@@ -674,17 +552,17 @@ async function syncManagedCodexConfigToml(
     );
   }
 
-  if (pluginsDisabled.changed) {
+  if (isolationDefaults.addedFeatures) {
     await onLog(
       "stdout",
-      `[rudder] Forced Codex plugins feature off in ${target} to prevent adapter plugin leakage.\n`,
+      `[rudder] Added a disabled Codex plugins default to ${target}; explicit provider-native plugin settings remain profile-controlled.\n`,
     );
   }
 
-  if (bundledSkillsDisabled.changed) {
+  if (isolationDefaults.addedBundledSkills) {
     await onLog(
       "stdout",
-      `[rudder] Forced Codex bundled skills off in ${target} to prevent platform default system skills from loading.\n`,
+      `[rudder] Added a disabled Codex bundled-skills default to ${target}; explicit provider-native skill settings remain profile-controlled.\n`,
     );
   }
 
@@ -692,35 +570,6 @@ async function syncManagedCodexConfigToml(
     await onLog(
       "stdout",
       `[rudder] Disabled ${isolationSurface.disabledSkillPaths.length} external Codex skill path${isolationSurface.disabledSkillPaths.length === 1 ? "" : "s"} in ${target} to keep runtime skills controlled by Rudder.\n`,
-    );
-  }
-}
-
-async function pruneManagedCodexPluginSurface(
-  codexHome: string,
-  onLog: AgentRuntimeExecutionContext["onLog"],
-): Promise<void> {
-  let removedEntries = 0;
-
-  for (const relativeTarget of MANAGED_CODEX_HOME_PRUNE_TARGETS) {
-    const absoluteTarget = path.join(codexHome, relativeTarget);
-    if (!(await pathExists(absoluteTarget))) continue;
-    await fs.rm(absoluteTarget, { recursive: true, force: true });
-    removedEntries += 1;
-  }
-
-  const tmpDir = path.join(codexHome, ".tmp");
-  const tmpEntries = await fs.readdir(tmpDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of tmpEntries) {
-    if (!entry.name.startsWith("plugins-clone-")) continue;
-    await fs.rm(path.join(tmpDir, entry.name), { recursive: true, force: true });
-    removedEntries += 1;
-  }
-
-  if (removedEntries > 0) {
-    await onLog(
-      "stdout",
-      `[rudder] Pruned ${removedEntries} inherited Codex plugin cache entr${removedEntries === 1 ? "y" : "ies"} from ${codexHome}\n`,
     );
   }
 }
@@ -741,7 +590,6 @@ export async function prepareManagedCodexHome(
 
   await withCodexHomeMutationLock(targetHome, async () => {
     await fs.mkdir(targetHome, { recursive: true });
-    await pruneManagedCodexPluginSurface(targetHome, onLog);
 
     for (const name of MIRRORED_SHARED_FILES) {
       const source = path.join(sourceHome, name);
@@ -790,6 +638,7 @@ async function syncManagedCodexSkillsHome(
   codexHome: string,
   skillSources: string[],
   onLog: AgentRuntimeExecutionContext["onLog"],
+  managedSkillSources: string[] = skillSources,
 ): Promise<void> {
   const skillsHome = path.join(codexHome, "skills");
   const desiredSkillSources = Array.from(
@@ -803,13 +652,21 @@ async function syncManagedCodexSkillsHome(
   const desiredByRuntimeName = new Map(
     desiredSkillSources.map((sourceDir) => [path.basename(sourceDir), sourceDir]),
   );
+  const managedSourcePaths = new Set(
+    managedSkillSources.map((source) => normalizeCodexSkillSourceDir(source)),
+  );
 
   await fs.mkdir(skillsHome, { recursive: true });
 
   const existingEntries = await fs.readdir(skillsHome, { withFileTypes: true }).catch(() => []);
+  const installed = await readInstalledSkillTargets(skillsHome);
   let prunedEntries = 0;
   for (const entry of existingEntries) {
     if (desiredByRuntimeName.has(entry.name)) continue;
+    const installedEntry = installed.get(entry.name);
+    if (installedEntry?.kind !== "symlink" || !installedEntry.targetPath || !managedSourcePaths.has(path.resolve(installedEntry.targetPath))) {
+      continue;
+    }
     await fs.rm(path.join(skillsHome, entry.name), { recursive: true, force: true });
     prunedEntries += 1;
   }
@@ -844,6 +701,7 @@ export async function realizeManagedCodexSkillEntries(
   runtimeConfig: unknown = {},
   includeCoreMcp = true,
   verifiedComputerMcpCommand?: RudderMcpCliCommand,
+  managedSkillSources: string[] = skillSources,
 ): Promise<void> {
   await withCodexHomeMutationLock(codexHome, async () => {
     const sourceHome = resolveSharedCodexHomeDir(env);
@@ -862,6 +720,6 @@ export async function realizeManagedCodexSkillEntries(
       includeCoreMcp,
       verifiedComputerMcpCommand,
     );
-    await syncManagedCodexSkillsHome(codexHome, skillSources, onLog);
+    await syncManagedCodexSkillsHome(codexHome, skillSources, onLog, managedSkillSources);
   });
 }

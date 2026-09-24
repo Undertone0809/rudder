@@ -8,9 +8,12 @@ import {
   applyPendingMigrations,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRunAttempts,
   heartbeatRuns,
   issues,
   organizations,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -33,11 +36,16 @@ const mockRuntimeAdapter = vi.hoisted(() => {
     sessionDisplayId: string | null;
     sessionParams: Record<string, unknown> | null;
   }> = [];
+  let completeNextExecution = false;
 
   return {
     calls,
+    completeNextExecution() {
+      completeNextExecution = true;
+    },
     reset() {
       calls.length = 0;
+      completeNextExecution = false;
     },
     adapter: {
       type: "codex_local",
@@ -73,6 +81,18 @@ const mockRuntimeAdapter = vi.hoisted(() => {
           sessionDisplayId: ctx.runtime.sessionDisplayId,
           sessionParams: ctx.runtime.sessionParams,
         });
+        if (completeNextExecution) {
+          completeNextExecution = false;
+          return {
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+            sessionId: null,
+            sessionDisplayId: null,
+            sessionParams: null,
+            resultJson: { summary: "legacy queued execution completed" },
+          };
+        }
         return await new Promise(() => {});
       },
     },
@@ -92,6 +112,34 @@ vi.mock("../agent-runtimes/index.ts", async () => {
   return {
     ...actual,
     getServerAdapter: vi.fn(() => mockRuntimeAdapter.adapter),
+    createProfileBoundRuntimeProviderCapabilityResolverFromConfig: vi.fn(() => (
+      runtimeType: string,
+      binding: { hostId: string; profileId: string } | null,
+    ) => ({
+      adapter: {
+        runtimeType,
+        sessionResume: {
+          evidence: {
+            status: "supported",
+            reason: "Fake adapter resumes its saved session",
+            transport: "test-adapter",
+            profileBound: true,
+            profileRequired: true,
+          },
+        },
+        input: {
+          evidence: {
+            status: "supported",
+            reason: "Fake adapter accepts one input",
+            transport: "test-adapter",
+            profileBound: true,
+            profileRequired: true,
+          },
+        },
+      },
+      binding,
+      profileResolved: Boolean(binding),
+    })),
     runningProcesses: new Map(),
   };
 });
@@ -1556,6 +1604,70 @@ describe("heartbeat run concurrency", () => {
     expect(statuses.filter((run) => run.status === "running")).toHaveLength(1);
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(2);
     expect(mockRuntimeAdapter.calls.map((call) => call.taskKey)).toEqual(["serial:1"]);
+  });
+
+  it("executes a legacy queued run through the old attempt ledger without creating native identity", async () => {
+    const { orgId, agentId } = await seedAgentFixture(1);
+    const runId = await seedQueuedRun({
+      orgId,
+      agentId,
+      taskKey: "legacy-queued-ledger",
+      createdAt: new Date("2026-04-27T00:35:00.000Z"),
+    });
+    const [legacyBefore] = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId));
+    expect(legacyBefore).toMatchObject({
+      status: "queued",
+      scene: null,
+      targetType: null,
+      targetId: null,
+      idempotencyKey: null,
+      sessionIntentJson: null,
+    });
+    expect(legacyBefore?.contextSnapshot).not.toHaveProperty("unifiedAgentRun");
+
+    mockRuntimeAdapter.completeNextExecution();
+    await heartbeatService(db).resumeQueuedRuns();
+    await waitForCondition(async () => {
+      const [run] = await db
+        .select({ status: heartbeatRuns.status, terminalEffectsPending: heartbeatRuns.terminalEffectsPending })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId));
+      return mockRuntimeAdapter.calls.some((call) => call.runId === runId)
+        && run?.status === "succeeded"
+        && run.terminalEffectsPending === false;
+    });
+
+    const [finishedRun] = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId));
+    expect(finishedRun).toMatchObject({
+      status: "succeeded",
+      scene: null,
+      targetType: null,
+      targetId: null,
+      idempotencyKey: null,
+      sessionIntentJson: null,
+    });
+    expect(finishedRun?.contextSnapshot).not.toHaveProperty("unifiedAgentRun");
+
+    const attempts = await db
+      .select()
+      .from(heartbeatRunAttempts)
+      .where(and(eq(heartbeatRunAttempts.orgId, orgId), eq(heartbeatRunAttempts.runId, runId)));
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      attemptIndex: 0,
+      status: "succeeded",
+      ownerToken: expect.any(String),
+      attemptEpoch: 1,
+      finishedAt: expect.any(Date),
+    });
+    await expect(db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, runId))).resolves.toHaveLength(0);
+    await expect(db.select().from(runtimeBindings).where(eq(runtimeBindings.agentId, agentId))).resolves.toHaveLength(0);
   });
 
   it("abandons local execution when its initial lease renewal loses ownership", async () => {

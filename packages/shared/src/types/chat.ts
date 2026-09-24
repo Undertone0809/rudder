@@ -175,6 +175,8 @@ export interface ChatRuntimeDescriptor {
   error: string | null;
 }
 
+export type ChatRuntimeContinuity = "native" | "context_handoff" | "legacy";
+
 export type ChatGenerationStatus =
   | "starting"
   | "active"
@@ -502,6 +504,7 @@ export interface ChatConversation {
   forkedFromConversationId: string | null;
   forkedFromMessageId: string | null;
   forkRootConversationId: string | null;
+  runtimeContinuity?: ChatRuntimeContinuity;
   primaryIssue: ChatPrimaryIssueSummary | null;
   issueCreationMode: "manual_approval" | "auto_create";
   planMode: boolean;
@@ -663,6 +666,16 @@ export interface ChatAskUserQuestion {
 
 export interface ChatAskUserRequest {
   questions: ChatAskUserQuestion[];
+}
+
+export interface ChatAskUserResponseAnswer {
+  questionId: string;
+  optionIds: string[];
+  freeformText?: string;
+}
+
+export interface ChatAskUserResponse {
+  answers: ChatAskUserResponseAnswer[];
 }
 
 export type ChatRichReference =

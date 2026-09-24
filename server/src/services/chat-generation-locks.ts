@@ -115,6 +115,7 @@ export function getActiveChatGeneration(conversationId: string): {
   generationId: string | null;
   clientMutationId: string | null;
   attemptEpoch: number;
+  attemptOwnerToken: string | null;
   lifecycle: ActiveChatGeneration["lifecycle"];
   runtimeType: string | null;
 } | null {
@@ -124,6 +125,7 @@ export function getActiveChatGeneration(conversationId: string): {
     generationId: active.generationId,
     clientMutationId: active.clientMutationId,
     attemptEpoch: active.attemptEpoch,
+    attemptOwnerToken: active.attemptOwnerToken,
     lifecycle: active.lifecycle,
     runtimeType: active.control?.handle.runtimeType ?? null,
   };

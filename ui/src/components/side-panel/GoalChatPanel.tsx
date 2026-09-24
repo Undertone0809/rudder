@@ -12,8 +12,8 @@ import {
 import {
   chatTranscriptEntriesForMessage,
   isAgentRunTranscriptActiveStatus,
-  useLegacyChatTranscripts,
   useAgentRunTranscripts,
+  useLegacyChatTranscripts,
 } from "@/components/transcript/useAgentRunTranscripts";
 import { Button } from "@/components/ui/button";
 import { chatErrorMessage } from "@/lib/chat-errors";

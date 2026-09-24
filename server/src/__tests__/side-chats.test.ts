@@ -1,34 +1,53 @@
 import {
+  activityLog,
+  agents,
   applyPendingMigrations,
   assets,
   chatAttachments,
   chatContextLinks,
+  chatControlActions,
   chatConversations,
+  chatGenerations,
   chatMessages,
+  chatQueuedMessages,
   chatWorkManifestItems,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRuns,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  nativeSegments,
+  organizationLogos,
   organizations,
   productAnalyticsEvents,
+  runRuntimeSpans,
+  runtimeBindings,
+  runtimeRetentionClaims,
+  runtimeSourceAliases,
+  sideChatCloseIntents,
+  sideChatProviderCleanupIntents,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   deriveOrganizationUrlKey,
   MESSENGER_FORK_GROUP_DEFAULT_ICON,
 } from "@rudderhq/shared";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { RuntimeDriver } from "../agent-runtimes/index.js";
 import { hashChatAnnotationSource } from "../services/chat-inline-annotations.js";
 import { chatWorkManifestService } from "../services/chat-work-manifest.js";
 import { chatService } from "../services/chats.js";
+import { lockRuntimeRetentionScope, type RuntimeRetentionDb } from "../services/runtime-kernel/runtime-retention.js";
+import { sideChatCloseService } from "../services/side-chat-close.js";
+import { sideChatProviderCleanupService } from "../services/side-chat-provider-cleanup.js";
 import { SIDE_CHAT_TTL_MS, sideChatService } from "../services/side-chats.js";
+import type { StorageService } from "../storage/types.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -91,6 +110,22 @@ async function startTempDatabase() {
   return { connectionString, dataDir, instance };
 }
 
+async function waitForDatabaseLockWaiters(db: ReturnType<typeof createDb>, minimum: number) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await db.$client.unsafe(
+      `select count(*)::int as count
+       from pg_stat_activity
+       where datname = current_database()
+         and pid <> pg_backend_pid()
+         and wait_event_type = 'Lock'`,
+    ) as Array<{ count: number }>;
+    if ((rows[0]?.count ?? 0) >= minimum) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${minimum} PostgreSQL lock waiters`);
+}
+
 describe("sideChatService", () => {
   let db!: ReturnType<typeof createDb>;
   let chats!: ReturnType<typeof chatService>;
@@ -108,6 +143,12 @@ describe("sideChatService", () => {
   }, 60_000);
 
   afterEach(async () => {
+    await db.delete(activityLog);
+    await db.delete(sideChatCloseIntents);
+    await db.delete(sideChatProviderCleanupIntents);
+    await db.delete(runtimeRetentionClaims);
+    await db.delete(runtimeBindings);
+    await db.delete(heartbeatRuns);
     await db.delete(productAnalyticsEvents);
     await db.delete(messengerCustomGroupEntries);
     await db.delete(messengerCustomGroups);
@@ -117,6 +158,7 @@ describe("sideChatService", () => {
     await db.delete(chatContextLinks);
     await db.delete(chatMessages);
     await db.delete(chatConversations);
+    await db.delete(agents);
     await db.delete(organizations);
   });
 
@@ -195,6 +237,182 @@ describe("sideChatService", () => {
       clientMutationId: "side-chat-test-mutation",
     });
   }
+
+  async function seedProviderForkForCleanup(
+    source: Awaited<ReturnType<typeof createSource>>,
+    sideChat: Awaited<ReturnType<typeof createSideChat>>,
+    options: { runtimeType?: string } = {},
+  ) {
+    const runtimeType = options.runtimeType ?? "test_runtime";
+    const agentId = randomUUID();
+    const forkRunId = randomUUID();
+    const parentBindingId = randomUUID();
+    const bindingId = randomUUID();
+    const parentSessionId = "opencode-parent-session";
+    const nativeSessionId = "opencode-side-chat-session";
+    const cwd = "/workspace/side-chat-cleanup";
+    const exportEnv = { HOME: "/operator" };
+    const sessionParams = {
+      sessionId: nativeSessionId,
+      profileBindingId: bindingId,
+      profileOrgId: source.orgId,
+      hostId: "local",
+      profileId: "opencode-profile",
+      capabilityRevision: "opencode-capability-1",
+      transport: "opencode-managed-server-http",
+      serverUrl: "http://127.0.0.1:43123",
+      cwd,
+      directory: cwd,
+      serverCommand: "opencode",
+      exportCommand: "opencode",
+      providerVersion: "1.2.3",
+      exportEnv,
+    };
+    await db.insert(agents).values({
+      id: agentId,
+      orgId: source.orgId,
+      name: "Side Chat cleanup agent",
+      role: "engineer",
+      agentRuntimeType: runtimeType,
+      permissions: {},
+    });
+    await db.insert(runtimeBindings).values({
+      id: parentBindingId,
+      orgId: source.orgId,
+      conversationId: source.sourceConversationId,
+      principalScopeRef: `user:${source.userId}`,
+      agentId,
+      runtimeType,
+      hostId: "local",
+      profileId: "opencode-profile",
+      capabilityRevision: "opencode-capability-1",
+      continuity: "native",
+    });
+    const [parentSegment] = await db.insert(nativeSegments).values({
+      orgId: source.orgId,
+      bindingId: parentBindingId,
+      runtimeType,
+      nativeSessionId: parentSessionId,
+      rootSessionId: parentSessionId,
+      providerStateJson: { sessionId: parentSessionId },
+      state: "open",
+    }).returning();
+    await db.update(runtimeBindings).set({ currentSegmentId: parentSegment!.id })
+      .where(eq(runtimeBindings.id, parentBindingId));
+
+    await db.insert(runtimeBindings).values({
+      id: bindingId,
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      principalScopeRef: `user:${source.userId}`,
+      agentId,
+      runtimeType,
+      hostId: "local",
+      profileId: "opencode-profile",
+      capabilityRevision: "opencode-capability-1",
+      continuity: "native",
+      parentBindingId,
+      sourceBoundaryRef: "opencode-parent-turn",
+      bindingEpoch: 7,
+    });
+    const [segment] = await db.insert(nativeSegments).values({
+      orgId: source.orgId,
+      bindingId,
+      runtimeType,
+      nativeSessionId,
+      rootSessionId: parentSessionId,
+      providerStateJson: sessionParams,
+      sourceBoundaryRef: "opencode-child-turn",
+      state: "open",
+    }).returning();
+    await db.update(runtimeBindings).set({ currentSegmentId: segment!.id })
+      .where(eq(runtimeBindings.id, bindingId));
+
+    await db.insert(heartbeatRuns).values({
+      id: forkRunId,
+      orgId: source.orgId,
+      agentId,
+      status: "completed",
+      chatConversationId: sideChat.id,
+      scene: "side_chat",
+      targetType: "chat_conversation",
+      targetId: sideChat.id,
+      idempotencyKey: `side-chat-cleanup:${sideChat.id}`,
+      sessionIntentJson: {
+        kind: "fork",
+        reuseScope: "explicit",
+        sourceRunId: "parent-run",
+        sourceBoundaryRef: "opencode-parent-turn",
+        sessionId: nativeSessionId,
+        sessionParams,
+      },
+      contextSnapshot: {
+        runtimeProviderProfile: {
+          runtimeType,
+          cwd,
+          providerVersion: "1.2.3",
+          command: "opencode",
+          serverCommand: "opencode",
+          exportCommand: "opencode",
+          exportEnv,
+        },
+      },
+    });
+    await db.insert(runRuntimeSpans).values({
+      orgId: source.orgId,
+      runId: forkRunId,
+      bindingId,
+      segmentId: segment!.id,
+      attemptRef: `side-chat-cleanup:${forkRunId}`,
+      ownerToken: "test-run-owner",
+      ordinal: 0,
+      selectorJson: { kind: "opencode_message", sessionId: nativeSessionId },
+    });
+    return { agentId, bindingId, forkRunId, nativeSessionId, parentSessionId, runtimeType, segmentId: segment!.id };
+  }
+
+  it("hydrates runtime continuity from each conversation binding, with legacy fallback", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const legacySource = await createSource("side-chat-legacy-owner", "Legacy source");
+    const agentId = randomUUID();
+    await db.insert(agents).values({
+      id: agentId,
+      orgId: source.orgId,
+      name: "Continuity Test Agent",
+      role: "engineer",
+      agentRuntimeType: "codex_local",
+      permissions: {},
+    });
+    await db.insert(runtimeBindings).values([
+      {
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        principalScopeRef: "board:continuity-parent",
+        agentId,
+        runtimeType: "codex_local",
+        continuity: "native",
+      },
+      {
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        principalScopeRef: "board:continuity-side-chat",
+        agentId,
+        runtimeType: "codex_local",
+        continuity: "context_handoff",
+      },
+    ]);
+
+    const [parent, child, legacy] = await Promise.all([
+      chats.getById(source.sourceConversationId),
+      chats.getById(sideChat.id),
+      chats.getById(legacySource.sourceConversationId),
+    ]);
+
+    expect(parent?.runtimeContinuity).toBe("native");
+    expect(child?.runtimeContinuity).toBe("context_handoff");
+    expect(legacy?.runtimeContinuity).toBe("legacy");
+  });
 
   async function createKeptSideChatWithParentAnchorAnnotation(
     source: Awaited<ReturnType<typeof createSource>>,
@@ -291,7 +509,17 @@ describe("sideChatService", () => {
     ]));
     expect(copied.map((message) => message.body)).not.toContain("Must not be copied");
     const copiedAnchor = copied.find((message) => message.body === "Anchored answer");
-    expect(copiedAnchor).toMatchObject({ runId: null, approvalId: null, structuredPayload: null });
+    expect(copiedAnchor).toMatchObject({
+      runId: null,
+      approvalId: null,
+      structuredPayload: {
+        sideChatSource: {
+          conversationId: source.sourceConversationId,
+          messageId: source.anchorMessageId,
+        },
+      },
+    });
+    expect(copiedAnchor?.structuredPayload).not.toHaveProperty("privateRuntimeData");
     const copiedContextLinks = await db
       .select()
       .from(chatContextLinks)
@@ -776,6 +1004,515 @@ describe("sideChatService", () => {
     expect(events.filter((event) => event.eventName === "chat_created")).toHaveLength(1);
   });
 
+  it("keeps Side Chat data until the active provider generation is terminal", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const [generation] = await db.insert(chatGenerations).values({
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      status: "stopping",
+    }).returning();
+    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id))).toHaveLength(1);
+    await db.update(chatGenerations).set({ status: "completed", runtimeTerminalAt: new Date() })
+      .where(eq(chatGenerations.id, generation!.id));
+    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId }))
+      .resolves.toEqual({ id: sideChat.id });
+  });
+
+  it("persists Side Chat close, stops only its generation, and resumes deletion after restart", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const [parentGeneration] = await db.insert(chatGenerations).values({
+      orgId: source.orgId, conversationId: source.sourceConversationId, status: "running",
+    }).returning();
+    const [childGeneration] = await db.insert(chatGenerations).values({
+      orgId: source.orgId, conversationId: sideChat.id, status: "running",
+    }).returning();
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    expect((await service.requestClose({ conversationId: sideChat.id, userId: source.userId })).id).toBe(intent.id);
+    const [marked] = await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id));
+    expect(marked).toMatchObject({ sideChatState: "completed", sideChatExpiresAt: null });
+    await expect(service.assertMutable(sideChat, source.userId))
+      .rejects.toMatchObject({ status: 409 });
+    await expect(service.keepInMessenger({ conversationId: sideChat.id, userId: source.userId }))
+      .rejects.toMatchObject({ status: 409 });
+    const storage = { deleteObject: vi.fn() } as unknown as StorageService;
+    const close = sideChatCloseService(db, storage, service, "close-worker-before-restart");
+    expect(await close.processIntent(intent.id)).toBe("pending");
+    const [stopAction] = await db.select().from(chatControlActions)
+      .where(eq(chatControlActions.id, intent.stopControlActionId));
+    expect(stopAction).toMatchObject({ actionKind: "stop", expectedGenerationId: childGeneration!.id });
+    expect((await db.select().from(chatGenerations).where(eq(chatGenerations.id, childGeneration!.id)))[0]?.status)
+      .toBe("stop_requested");
+    expect((await db.select().from(chatGenerations).where(eq(chatGenerations.id, parentGeneration!.id)))[0]?.status)
+      .toBe("running");
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id)))
+      .toHaveLength(1);
+
+    await db.update(chatGenerations).set({
+      status: "stopped", controlState: "terminal", runtimeTerminalAt: new Date(), completedAt: new Date(),
+    }).where(eq(chatGenerations.id, childGeneration!.id));
+    await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    const restarted = sideChatCloseService(db, storage, service, "close-worker-after-restart");
+    expect(await restarted.processBatch(1)).toBe(1);
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id))).toEqual([]);
+    expect(await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id))).toEqual([]);
+    expect((await db.select().from(chatGenerations).where(eq(chatGenerations.id, parentGeneration!.id)))[0]?.status)
+      .toBe("running");
+  });
+
+  it("serializes close with new user and queued writes without blocking the parent chat", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    let releaseClose!: () => void;
+    let closeLocked!: () => void;
+    const released = new Promise<void>((resolve) => { releaseClose = resolve; });
+    const locked = new Promise<void>((resolve) => { closeLocked = resolve; });
+    const closing = db.transaction(async (tx) => {
+      await lockRuntimeRetentionScope(tx as unknown as RuntimeRetentionDb, source.orgId);
+      await tx.select({ id: chatConversations.id }).from(chatConversations)
+        .where(eq(chatConversations.id, sideChat.id)).for("update");
+      await tx.insert(sideChatCloseIntents).values({
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        ownerUserId: source.userId,
+        sourceConversationId: source.sourceConversationId,
+        sourceMessageId: source.anchorMessageId,
+      });
+      await tx.update(chatConversations).set({
+        sideChatState: "completed", sideChatCompletedAt: new Date(), sideChatExpiresAt: null,
+      }).where(eq(chatConversations.id, sideChat.id));
+      closeLocked();
+      await released;
+    });
+    await locked;
+
+    const failures = [
+      chats.addUserChatMessage(sideChat.id, source.orgId, "Late user message"),
+      chats.createQueuedMessage({
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        clientMutationId: "close-race-queued",
+        payload: { body: "Late queued message" },
+      }),
+      chats.addMessage(sideChat.id, {
+        orgId: source.orgId, role: "user", kind: "message", body: "Late direct user message",
+      }),
+    ].map((promise) => promise.then(() => null, (error: unknown) => error));
+    try {
+      await waitForDatabaseLockWaiters(db, 2);
+      await expect(chats.addUserChatMessage(source.sourceConversationId, source.orgId, "Parent remains writable"))
+        .resolves.toMatchObject({ body: "Parent remains writable" });
+      await expect(chats.createQueuedMessage({
+        orgId: source.orgId,
+        conversationId: source.sourceConversationId,
+        clientMutationId: "parent-close-race-queue",
+        payload: { body: "Parent queue remains writable" },
+      })).resolves.toMatchObject({ conversationId: source.sourceConversationId });
+    } finally {
+      releaseClose();
+      await closing;
+    }
+    expect(await Promise.all(failures)).toEqual([
+      expect.objectContaining({ status: 409 }),
+      expect.objectContaining({ status: 409 }),
+      expect.objectContaining({ status: 409 }),
+    ]);
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, sideChat.id)))
+      .not.toContainEqual(expect.objectContaining({ body: "Late user message" }));
+    expect(await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.conversationId, sideChat.id)))
+      .toEqual([]);
+  });
+
+  it("rejects message and queue replays after a durable close request", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const messageInput = [
+      sideChat.id, source.orgId, "Accepted before close", null,
+      { clientMutationId: "side-chat-close-replay" },
+    ] as const;
+    const queueInput = {
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      clientMutationId: "side-chat-close-queue-replay",
+      payload: { body: "Queued before close" },
+    };
+    await chats.addUserChatMessage(...messageInput);
+    await chats.createQueuedMessage(queueInput);
+    const beforeClose = await db.select().from(chatMessages)
+      .where(eq(chatMessages.conversationId, sideChat.id));
+    await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    await expect(chats.addUserChatMessage(...messageInput)).rejects.toMatchObject({ status: 409 });
+    await expect(chats.createQueuedMessage(queueInput)).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, sideChat.id)))
+      .toHaveLength(beforeClose.length);
+    expect(await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.conversationId, sideChat.id)))
+      .toHaveLength(1);
+  });
+
+  it("waits for the child Run terminal and writes provider cleanup only after destruction", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const fork = await seedProviderForkForCleanup(source, sideChat);
+    const [generation] = await db.insert(chatGenerations).values({
+      orgId: source.orgId, conversationId: sideChat.id, status: "running",
+    }).returning();
+    await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, fork.forkRunId));
+    const [targetOnlyRun] = await db.insert(heartbeatRuns).values({
+      orgId: source.orgId,
+      agentId: fork.agentId,
+      status: "running",
+      scene: "side_chat",
+      targetType: "chat_conversation",
+      targetId: sideChat.id,
+      idempotencyKey: `side-chat-close-target-only:${sideChat.id}`,
+      sessionIntentJson: {
+        kind: "fresh", reuseScope: "none", sourceRunId: null, sessionId: null, sessionParams: null,
+      },
+    }).returning();
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    const close = sideChatCloseService(db, { deleteObject: vi.fn() } as unknown as StorageService, service);
+    expect(await close.processIntent(intent.id)).toBe("pending");
+    const [stopAction] = await db.select().from(chatControlActions)
+      .where(eq(chatControlActions.id, intent.stopControlActionId));
+    expect(stopAction).toMatchObject({ actionKind: "stop", expectedGenerationId: generation!.id });
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id)))
+      .toHaveLength(1);
+    expect(await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id))).toEqual([]);
+
+    await db.update(chatGenerations).set({
+      status: "stopped", controlState: "terminal", runtimeTerminalAt: new Date(), completedAt: new Date(),
+    }).where(eq(chatGenerations.id, generation!.id));
+    await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    expect(await close.processIntent(intent.id)).toBe("pending");
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id)))
+      .toHaveLength(1);
+
+    await db.update(heartbeatRuns).set({ status: "completed", finishedAt: new Date() })
+      .where(eq(heartbeatRuns.id, fork.forkRunId));
+    await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    expect(await close.processIntent(intent.id)).toBe("pending");
+    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id))).toEqual([]);
+    await db.update(heartbeatRuns).set({ status: "completed", finishedAt: new Date() })
+      .where(eq(heartbeatRuns.id, targetOnlyRun!.id));
+    await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    expect(await close.processIntent(intent.id)).toBe("closed");
+    expect(await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id))).toHaveLength(1);
+  });
+
+  it("retains a close intent when runtime termination is unverified", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    await db.insert(chatGenerations).values({
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      status: "interrupted_unverified",
+      controlState: "control_lost",
+      runtimeTerminalAt: new Date(),
+    });
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    const close = sideChatCloseService(db, { deleteObject: vi.fn() } as unknown as StorageService, service);
+    expect(await close.processIntent(intent.id)).toBe("pending");
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id)))
+      .toHaveLength(1);
+    expect((await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id)))[0])
+      .toMatchObject({ state: "retry_wait", lastError: "generation_terminal_not_verified" });
+  });
+
+  it("requires review for a legacy terminal generation without runtime terminal evidence", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    await db.insert(chatGenerations).values({
+      orgId: source.orgId, conversationId: sideChat.id, status: "completed",
+      completedAt: new Date(), runtimeTerminalAt: null,
+    });
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    const close = sideChatCloseService(db, { deleteObject: vi.fn() } as unknown as StorageService, service);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(await close.processIntent(intent.id)).toBe("pending");
+      await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+        .where(eq(sideChatCloseIntents.id, intent.id));
+    }
+    expect(await close.processIntent(intent.id)).toBe("review_required");
+    expect((await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id)))[0])
+      .toMatchObject({ state: "review_required", lastError: "generation_terminal_not_verified" });
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id)))
+      .toHaveLength(1);
+  });
+
+  it("retries object cleanup after conversation deletion without losing attachment identity", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const [message] = await db.select({ id: chatMessages.id }).from(chatMessages)
+      .where(eq(chatMessages.conversationId, sideChat.id)).limit(1);
+    const [asset] = await db.insert(assets).values({
+      orgId: source.orgId, provider: "local_disk", objectKey: "close-object.png",
+      contentType: "image/png", byteSize: 4, sha256: "a".repeat(64),
+    }).returning();
+    await db.insert(chatAttachments).values({
+      orgId: source.orgId, conversationId: sideChat.id, messageId: message!.id, assetId: asset!.id,
+    });
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    const deleteObject = vi.fn().mockRejectedValueOnce(new Error("storage temporarily unavailable"))
+      .mockResolvedValue(undefined);
+    const storage = {
+      deleteObject,
+      headObject: vi.fn().mockResolvedValueOnce({ exists: true }).mockResolvedValue({ exists: false }),
+    } as unknown as StorageService;
+    expect(await sideChatCloseService(db, storage, service, "first-close-worker").processIntent(intent.id))
+      .toBe("pending");
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id))).toEqual([]);
+    const [retained] = await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id));
+    expect(retained).toMatchObject({
+      attachmentCursor: 0,
+      attachmentsJson: [{ orgId: source.orgId, assetId: asset!.id, objectKey: "close-object.png", provider: "local_disk" }],
+      state: "retry_wait",
+    });
+
+    await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    const restarted = sideChatCloseService(db, storage, service, "restarted-close-worker");
+    expect(await restarted.processIntent(intent.id)).toBe("pending");
+    expect((await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id)))[0])
+      .toMatchObject({ attachmentCursor: 0, state: "retry_wait" });
+    await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    expect(await restarted.processBatch(1))
+      .toBe(1);
+    expect(deleteObject).toHaveBeenCalledTimes(3);
+    expect(await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id))).toEqual([]);
+  });
+
+  it("persists unmaterialized queued assets through deletion and resumes cleanup after restart", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const [asset] = await db.insert(assets).values({
+      orgId: source.orgId, provider: "local_disk", objectKey: "staged-queue.png",
+      contentType: "image/png", byteSize: 4, sha256: "a".repeat(64),
+    }).returning();
+    await db.insert(chatQueuedMessages).values({
+      orgId: source.orgId, conversationId: sideChat.id, position: 1,
+      clientMutationId: "pending-file", payload: {
+        body: "Queued file", __rudderQueueAnnotationAssets: {
+          version: 1, fingerprint: "pending-file", attachments: [{
+            assetId: asset!.id, annotationId: randomUUID(), fileIndex: 0,
+          }],
+        },
+      },
+    });
+    // A repeated queue reference must not produce duplicate object deletion.
+    await db.insert(chatQueuedMessages).values({
+      orgId: source.orgId, conversationId: sideChat.id, position: 2,
+      clientMutationId: "pending-file-repeated", payload: {
+        body: "Another queued reference", __rudderQueueAnnotationAssets: {
+          version: 1, fingerprint: "pending-file-repeated", attachments: [{
+            assetId: asset!.id, annotationId: randomUUID(), fileIndex: 0,
+          }],
+        },
+      },
+    });
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    const deleteObject = vi.fn().mockRejectedValueOnce(new Error("temporary object-store failure"))
+      .mockResolvedValue(undefined);
+    const storage = {
+      deleteObject, headObject: vi.fn().mockResolvedValue({ exists: false }),
+    } as unknown as StorageService;
+    expect(await sideChatCloseService(db, storage, service, "queued-first-worker").processIntent(intent.id))
+      .toBe("pending");
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id))).toEqual([]);
+    expect(await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.conversationId, sideChat.id)))
+      .toEqual([]);
+    const [retained] = await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id));
+    expect(retained).toMatchObject({
+      state: "retry_wait", attachmentCursor: 0,
+      attachmentsJson: [{ orgId: source.orgId, assetId: asset!.id,
+        objectKey: "staged-queue.png", provider: "local_disk" }],
+    });
+    expect(retained!.attachmentsJson).toHaveLength(1);
+    await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    expect(await sideChatCloseService(db, storage, service, "queued-restarted-worker").processIntent(intent.id))
+      .toBe("closed");
+    expect(deleteObject).toHaveBeenCalledTimes(2);
+    expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toEqual([]);
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, source.sourceConversationId)))
+      .toHaveLength(1);
+  });
+
+  it("preserves an asset still referenced by another conversation's queued message", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const [asset] = await db.insert(assets).values({
+      orgId: source.orgId, provider: "local_disk", objectKey: "shared-queue.png",
+      contentType: "image/png", byteSize: 4, sha256: "a".repeat(64),
+    }).returning();
+    const payload = { body: "Pending file", __rudderQueueAnnotationAssets: {
+      version: 1, fingerprint: "shared-queue", attachments: [{
+        assetId: asset!.id, annotationId: randomUUID(), fileIndex: 0,
+      }],
+    } };
+    await db.insert(chatQueuedMessages).values([
+      { orgId: source.orgId, conversationId: sideChat.id, position: 1,
+        clientMutationId: "child-shared-queue", payload },
+      { orgId: source.orgId, conversationId: source.sourceConversationId, position: 1,
+        clientMutationId: "parent-shared-queue", payload },
+    ]);
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    const deleteObject = vi.fn();
+    expect(await sideChatCloseService(db, { deleteObject } as unknown as StorageService, service)
+      .processIntent(intent.id)).toBe("closed");
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(1);
+    expect(await db.select().from(chatQueuedMessages)
+      .where(eq(chatQueuedMessages.conversationId, source.sourceConversationId))).toHaveLength(1);
+  });
+
+  it.each(["attachment org", "asset org"] as const)(
+    "fails closed when the Side Chat %s differs from its conversation organization",
+    async (mismatch) => {
+      const source = await createSource();
+      const other = await createSource();
+      const sideChat = await createSideChat(source);
+      const [message] = await db.select({ id: chatMessages.id }).from(chatMessages)
+        .where(eq(chatMessages.conversationId, sideChat.id)).limit(1);
+      const [asset] = await db.insert(assets).values({
+        orgId: mismatch === "asset org" ? other.orgId : source.orgId,
+        provider: "local_disk", objectKey: `cross-org-${mismatch}.png`,
+        contentType: "image/png", byteSize: 4, sha256: "a".repeat(64),
+      }).returning();
+      await db.insert(chatAttachments).values({
+        orgId: mismatch === "attachment org" ? other.orgId : source.orgId,
+        conversationId: sideChat.id, messageId: message!.id, assetId: asset!.id,
+      });
+      const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+      const deleteObject = vi.fn();
+      expect(await sideChatCloseService(db, { deleteObject } as unknown as StorageService, service)
+        .processIntent(intent.id)).toBe("pending");
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id)))
+        .toHaveLength(1);
+      expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(1);
+      expect(deleteObject).not.toHaveBeenCalled();
+      expect((await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id)))[0])
+        .toMatchObject({
+          state: "retry_wait", attachmentsJson: [],
+          lastError: "Side Chat attachment identity is missing or outside its organization",
+        });
+    },
+  );
+
+  it("preserves an attachment asset shared with the organization logo", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const [message] = await db.select({ id: chatMessages.id }).from(chatMessages)
+      .where(eq(chatMessages.conversationId, sideChat.id)).limit(1);
+    const [asset] = await db.insert(assets).values({
+      orgId: source.orgId, provider: "local_disk", objectKey: "shared-logo.png",
+      contentType: "image/png", byteSize: 4, sha256: "a".repeat(64),
+    }).returning();
+    await db.insert(chatAttachments).values({
+      orgId: source.orgId, conversationId: sideChat.id, messageId: message!.id, assetId: asset!.id,
+    });
+    await db.insert(organizationLogos).values({ orgId: source.orgId, assetId: asset!.id });
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    const deleteObject = vi.fn();
+    expect(await sideChatCloseService(db, { deleteObject } as unknown as StorageService, service)
+      .processIntent(intent.id)).toBe("closed");
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toHaveLength(1);
+    expect(await db.select().from(organizationLogos).where(eq(organizationLogos.assetId, asset!.id)))
+      .toHaveLength(1);
+  });
+
+  it("fences a slow object delete after another worker reclaims its lease", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const [message] = await db.select({ id: chatMessages.id }).from(chatMessages)
+      .where(eq(chatMessages.conversationId, sideChat.id)).limit(1);
+    const [asset] = await db.insert(assets).values({
+      orgId: source.orgId, provider: "local_disk", objectKey: "slow-close.png",
+      contentType: "image/png", byteSize: 4, sha256: "a".repeat(64),
+    }).returning();
+    await db.insert(chatAttachments).values({
+      orgId: source.orgId, conversationId: sideChat.id, messageId: message!.id, assetId: asset!.id,
+    });
+    const intent = await service.requestClose({ conversationId: sideChat.id, userId: source.userId });
+    let releaseDelete!: () => void;
+    let signalDelete!: () => void;
+    const deleting = new Promise<void>((resolve) => { signalDelete = resolve; });
+    const heldDelete = new Promise<void>((resolve) => { releaseDelete = resolve; });
+    const deleteObject = vi.fn().mockImplementationOnce(async () => {
+      signalDelete();
+      await heldDelete;
+    }).mockResolvedValue(undefined);
+    const storage = { deleteObject, headObject: vi.fn().mockResolvedValue({ exists: false }) } as unknown as StorageService;
+    const first = sideChatCloseService(db, storage, service, "slow-close-worker").processIntent(intent.id);
+    await deleting;
+    expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toEqual([]);
+    await db.update(sideChatCloseIntents).set({ leaseExpiresAt: new Date(0) })
+      .where(eq(sideChatCloseIntents.id, intent.id));
+    expect(await sideChatCloseService(db, storage, service, "recovery-close-worker")
+      .processIntent(intent.id)).toBe("closed");
+    releaseDelete();
+    expect(await first).toBe("pending");
+    expect(deleteObject).toHaveBeenCalledTimes(2);
+    expect(await db.select().from(sideChatCloseIntents).where(eq(sideChatCloseIntents.id, intent.id))).toEqual([]);
+  });
+
+  it("rejects queued Side Chat runtime admission when expiry passes after queue acceptance", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const queuedItem = await chats.createQueuedMessage({
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      clientMutationId: "side-chat-expiry-queued-admission",
+      runtimeSnapshotVersion: 1,
+      payload: { body: "Wait until the Side Chat expires" },
+      requestActor: {
+        type: "board",
+        source: "session",
+        userId: source.userId,
+        orgIds: [source.orgId],
+      },
+    });
+    expect(sideChat.sideChatExpiresAt!.getTime()).toBeGreaterThan(Date.now());
+
+    const claim = await chats.claimNextServerQueuedMessage({
+      workerId: "side-chat-expiry-worker",
+      leaseMs: 30_000,
+    });
+    expect(claim?.item.id).toBe(queuedItem.id);
+
+    await db.update(chatConversations)
+      .set({ sideChatExpiresAt: new Date(Date.now() - 1) })
+      .where(eq(chatConversations.id, sideChat.id));
+
+    await expect(chats.admitQueuedSideChatRuntime({
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      itemId: claim!.item.id,
+      generationId: claim!.generationId,
+      leaseToken: claim!.leaseToken,
+      leaseEpoch: claim!.leaseEpoch,
+    })).resolves.toEqual({ admitted: false, reason: "side_chat_expired" });
+
+    const [expired] = await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id));
+    expect(expired).toMatchObject({ sideChatState: "expired", sideChatExpiresAt: null });
+    const agentRuns = await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
+      .where(eq(heartbeatRuns.chatConversationId, sideChat.id));
+    expect(agentRuns).toEqual([]);
+  });
+
   it("destroys an unkept Side Chat and turns an elapsed Side Chat read-only", async () => {
     const source = await createSource();
     const sideChat = await createSideChat(source);
@@ -807,6 +1544,478 @@ describe("sideChatService", () => {
       .rejects.toMatchObject({ status: 409 });
     const [rejectedKeep] = await db.select().from(chatConversations).where(eq(chatConversations.id, staleKeep.id));
     expect(rejectedKeep).toMatchObject({ sideChatState: "expired", messengerVisible: false });
+  });
+
+  it("atomically persists a fork cleanup intent and resumes an expired worker lease after restart", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const seeded = await seedProviderForkForCleanup(source, sideChat);
+
+    await service.destroy({ conversationId: sideChat.id, userId: source.userId });
+    const [persisted] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id));
+    expect(persisted).toMatchObject({
+      ownerUserId: source.userId,
+      bindingId: seeded.bindingId,
+      bindingEpoch: 7,
+      segmentId: seeded.segmentId,
+      forkRunId: seeded.forkRunId,
+      nativeSessionId: seeded.nativeSessionId,
+      parentSessionId: seeded.parentSessionId,
+      state: "pending",
+    });
+
+    await db.update(sideChatProviderCleanupIntents).set({
+      state: "claimed",
+      leaseOwner: "crashed-worker",
+      leaseEpoch: 4,
+      leaseExpiresAt: new Date(Date.now() - 1_000),
+      attemptCount: 1,
+    }).where(eq(sideChatProviderCleanupIntents.id, persisted!.id));
+
+    let deleteRequest: Record<string, unknown> | null = null;
+    const driver = {
+      resume: () => ({
+        status: "supported",
+        value: {
+          sessionId: seeded.nativeSessionId,
+          sessionDisplayId: seeded.nativeSessionId,
+          sessionParams: persisted!.sessionParamsJson,
+        },
+      }),
+      deleteSideChatForkSession: async (request: Record<string, unknown>) => {
+        deleteRequest = request;
+        return { status: "supported", value: undefined };
+      },
+    } as unknown as RuntimeDriver;
+    const restartedWorker = sideChatProviderCleanupService(db, {
+      workerId: "worker-after-restart",
+      resolveDriver: () => driver,
+    });
+
+    await expect(restartedWorker.processBatch(1)).resolves.toBe(1);
+    expect(deleteRequest).toMatchObject({
+      expectedParentSessionId: seeded.parentSessionId,
+      forkRunId: seeded.forkRunId,
+      binding: { id: seeded.bindingId, orgId: source.orgId },
+    });
+    const [completed] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.id, persisted!.id));
+    expect(completed).toMatchObject({
+      state: "completed",
+      leaseOwner: null,
+      leaseEpoch: 5,
+      attemptCount: 2,
+    });
+    expect(completed?.completedAt).toBeInstanceOf(Date);
+  });
+
+  it("collects rotated provider sessions and detaches every historical Side Chat alias reference", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const seeded = await seedProviderForkForCleanup(source, sideChat);
+    const [firstSegment] = await db.select().from(nativeSegments)
+      .where(eq(nativeSegments.id, seeded.segmentId));
+    const [firstRun] = await db.select().from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, seeded.forkRunId));
+    const rotatedSessionId = "opencode-side-chat-session-rotated";
+    const rotatedSessionParams = {
+      ...(firstSegment!.providerStateJson ?? {}),
+      sessionId: rotatedSessionId,
+    };
+    const [rotatedSegment] = await db.insert(nativeSegments).values({
+      orgId: source.orgId,
+      bindingId: seeded.bindingId,
+      runtimeType: seeded.runtimeType,
+      segmentOrdinal: 1,
+      nativeSessionId: rotatedSessionId,
+      rootSessionId: seeded.parentSessionId,
+      providerStateJson: rotatedSessionParams,
+      sourceBoundaryRef: "opencode-child-turn-rotated",
+      state: "open",
+    }).returning();
+    await db.update(runtimeBindings).set({ currentSegmentId: rotatedSegment!.id })
+      .where(eq(runtimeBindings.id, seeded.bindingId));
+
+    const rotatedRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: rotatedRunId,
+      orgId: source.orgId,
+      agentId: seeded.agentId,
+      status: "completed",
+      chatConversationId: sideChat.id,
+      scene: "side_chat",
+      targetType: "chat_conversation",
+      targetId: sideChat.id,
+      idempotencyKey: `side-chat-cleanup-rotated:${sideChat.id}`,
+      sessionIntentJson: {
+        ...(firstRun!.sessionIntentJson as Record<string, unknown>),
+        sessionId: rotatedSessionId,
+        sessionParams: rotatedSessionParams,
+      },
+      contextSnapshot: firstRun!.contextSnapshot,
+    });
+    await db.insert(runRuntimeSpans).values({
+      orgId: source.orgId,
+      runId: rotatedRunId,
+      bindingId: seeded.bindingId,
+      segmentId: rotatedSegment!.id,
+      attemptRef: `side-chat-cleanup:${rotatedRunId}`,
+      ownerToken: "rotated-test-run-owner",
+      ordinal: 0,
+      selectorJson: { kind: "opencode_message", sessionId: rotatedSessionId },
+    });
+
+    const aliasRefs = ["side-chat-history-alias", "side-chat-current-alias", "side-chat-conversation-alias"];
+    await db.insert(runtimeSourceAliases).values([
+      {
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        runId: seeded.forkRunId,
+        bindingId: seeded.bindingId,
+        segmentId: seeded.segmentId,
+        sourceKind: "test_side_chat_history",
+        sourceRef: aliasRefs[0]!,
+        principalScopeRef: `user:${source.userId}`,
+      },
+      {
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        runId: rotatedRunId,
+        bindingId: seeded.bindingId,
+        segmentId: rotatedSegment!.id,
+        sourceKind: "test_side_chat_current",
+        sourceRef: aliasRefs[1]!,
+        principalScopeRef: `user:${source.userId}`,
+      },
+      {
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        sourceKind: "test_side_chat_conversation",
+        sourceRef: aliasRefs[2]!,
+        principalScopeRef: `user:${source.userId}`,
+      },
+    ]);
+
+    await service.destroy({ conversationId: sideChat.id, userId: source.userId });
+
+    const intents = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id));
+    expect(intents).toHaveLength(2);
+    expect(new Set(intents.map(({ nativeSessionId }) => nativeSessionId)).size).toBe(2);
+    expect(intents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nativeSessionId: seeded.nativeSessionId }),
+      expect.objectContaining({ nativeSessionId: rotatedSessionId }),
+    ]));
+    expect(intents.every(({ state }) => state === "review_required")).toBe(true);
+
+    const aliases = await db.select().from(runtimeSourceAliases)
+      .where(inArray(runtimeSourceAliases.sourceRef, aliasRefs));
+    expect(aliases).toHaveLength(aliasRefs.length);
+    expect(aliases).toEqual(expect.arrayContaining(aliasRefs.map((sourceRef) =>
+      expect.objectContaining({
+        sourceRef,
+        conversationId: null,
+        runId: null,
+        bindingId: null,
+        segmentId: null,
+      }),
+    )));
+  });
+
+  it("keeps OpenCode cleanup review-required because Fork/delete exclusion is process-local", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const seeded = await seedProviderForkForCleanup(source, sideChat, { runtimeType: "opencode_local" });
+    await service.destroy({ conversationId: sideChat.id, userId: source.userId });
+
+    const [intent] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id));
+    expect(intent).toMatchObject({
+      state: "review_required",
+      stateReason: "provider_fork_delete_mutual_exclusion_is_process_local",
+    });
+    let deleteCalls = 0;
+    const driver = {
+      resume: () => ({
+        status: "supported",
+        value: {
+          sessionId: seeded.nativeSessionId,
+          sessionDisplayId: seeded.nativeSessionId,
+          sessionParams: intent!.sessionParamsJson,
+        },
+      }),
+      deleteSideChatForkSession: async () => {
+        deleteCalls += 1;
+        return { status: "supported", value: undefined };
+      },
+    } as unknown as RuntimeDriver;
+    const cleanup = sideChatProviderCleanupService(db, { resolveDriver: () => driver });
+
+    await expect(cleanup.processBatch(1)).resolves.toBe(0);
+    await expect(cleanup.retryReviewRequired({ orgId: source.orgId, intentId: intent!.id }))
+      .resolves.toMatchObject({ state: "pending" });
+    await expect(cleanup.processBatch(1)).resolves.toBe(1);
+    expect(deleteCalls).toBe(0);
+    const [stillReviewRequired] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.id, intent!.id));
+    expect(stillReviewRequired).toMatchObject({
+      state: "review_required",
+      stateReason: "provider_fork_delete_mutual_exclusion_is_process_local",
+      attemptCount: 1,
+    });
+  });
+
+  it("retains and marks review-required when the Provider session is shared by another binding", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const seeded = await seedProviderForkForCleanup(source, sideChat);
+    const sharedConversationId = randomUUID();
+    const sharedBindingId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: sharedConversationId,
+      orgId: source.orgId,
+      title: "Other session consumer",
+      createdByUserId: source.userId,
+    });
+    await db.insert(runtimeBindings).values({
+      id: sharedBindingId,
+      orgId: source.orgId,
+      conversationId: sharedConversationId,
+      principalScopeRef: `user:${source.userId}`,
+      agentId: seeded.agentId,
+      runtimeType: seeded.runtimeType,
+      hostId: "local",
+      profileId: "opencode-profile",
+      capabilityRevision: "opencode-capability-1",
+      continuity: "native",
+    });
+    await db.insert(nativeSegments).values({
+      orgId: source.orgId,
+      bindingId: sharedBindingId,
+      runtimeType: seeded.runtimeType,
+      nativeSessionId: seeded.nativeSessionId,
+      state: "open",
+    });
+
+    await service.destroy({ conversationId: sideChat.id, userId: source.userId });
+    const [intent] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id));
+    expect(intent).toMatchObject({
+      state: "review_required",
+      stateReason: "provider_session_id_is_referenced_by_another_binding",
+      nativeSessionId: seeded.nativeSessionId,
+    });
+  });
+
+  it("refuses to destroy a Side Chat whose native binding is a parent of another runtime", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const seeded = await seedProviderForkForCleanup(source, sideChat);
+    const childConversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: childConversationId,
+      orgId: source.orgId,
+      title: "Native descendant",
+      createdByUserId: source.userId,
+    });
+    await db.insert(runtimeBindings).values({
+      orgId: source.orgId,
+      conversationId: childConversationId,
+      principalScopeRef: `user:${source.userId}`,
+      agentId: seeded.agentId,
+      runtimeType: seeded.runtimeType,
+      hostId: "local",
+      profileId: "opencode-profile",
+      capabilityRevision: "opencode-capability-1",
+      continuity: "native",
+      parentBindingId: seeded.bindingId,
+    });
+
+    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, sideChat.id)))
+      .toHaveLength(1);
+    expect(await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id))).toEqual([]);
+  });
+
+  it("detaches retained lineage references but never sends an unsafe provider delete", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const seeded = await seedProviderForkForCleanup(source, sideChat);
+    await db.insert(runtimeRetentionClaims).values({
+      orgId: source.orgId,
+      bindingId: seeded.bindingId,
+      segmentId: seeded.segmentId,
+      resourceRef: `provider-session:${seeded.nativeSessionId}`,
+      purpose: "transcript-reader",
+      principalScopeRef: `user:${source.userId}`,
+    });
+
+    await service.destroy({ conversationId: sideChat.id, userId: source.userId });
+    const [intent] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id));
+    const [claim] = await db.select().from(runtimeRetentionClaims)
+      .where(eq(runtimeRetentionClaims.resourceRef, `provider-session:${seeded.nativeSessionId}`));
+    expect(intent).toMatchObject({
+      state: "review_required",
+      stateReason: "provider_resource_has_descendant_or_retention_references",
+    });
+    expect(claim).toMatchObject({ bindingId: null, segmentId: null, status: "active" });
+  });
+
+  it("makes an unsupported Provider cleanup observable without retrying deletion", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    await seedProviderForkForCleanup(source, sideChat);
+    await service.destroy({ conversationId: sideChat.id, userId: source.userId });
+
+    const deleteForkedSession = async () => ({
+      status: "unsupported",
+      capability: "side_chat_fork_cleanup",
+      reason: "Provider does not support safe fork deletion",
+    });
+    const driver = {
+      resume: () => ({
+        status: "supported",
+        value: {
+          sessionId: "opencode-side-chat-session",
+          sessionDisplayId: "opencode-side-chat-session",
+          sessionParams: {},
+        },
+      }),
+      deleteSideChatForkSession: deleteForkedSession,
+    } as unknown as RuntimeDriver;
+    const cleanup = sideChatProviderCleanupService(db, { resolveDriver: () => driver });
+
+    await expect(cleanup.processBatch(1)).resolves.toBe(1);
+    const reviewRequired = await cleanup.listReviewRequired();
+    expect(reviewRequired).toHaveLength(1);
+    expect(reviewRequired[0]).toMatchObject({
+      state: "review_required",
+      stateReason: expect.stringContaining("Provider does not support safe fork deletion"),
+      lastError: expect.stringContaining("Provider does not support safe fork deletion"),
+    });
+  });
+
+  it("keeps direct source aliases fail-closed and allows an explicit review retry after release", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const seeded = await seedProviderForkForCleanup(source, sideChat);
+    const aliasRef = `provider-session:${seeded.nativeSessionId}`;
+    await db.insert(runtimeSourceAliases).values({
+      orgId: source.orgId,
+      sourceKind: "provider_session",
+      sourceRef: aliasRef,
+      principalScopeRef: `user:${source.userId}`,
+    });
+    await service.destroy({ conversationId: sideChat.id, userId: source.userId });
+
+    const [intent] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.conversationId, sideChat.id));
+    expect(intent).toMatchObject({ state: "review_required" });
+    let deleteCalls = 0;
+    const driver = {
+      resume: () => ({
+        status: "supported",
+        value: {
+          sessionId: seeded.nativeSessionId,
+          sessionDisplayId: seeded.nativeSessionId,
+          sessionParams: intent!.sessionParamsJson,
+        },
+      }),
+      deleteSideChatForkSession: async () => {
+        deleteCalls += 1;
+        return { status: "supported", value: undefined };
+      },
+    } as unknown as RuntimeDriver;
+    const cleanup = sideChatProviderCleanupService(db, { resolveDriver: () => driver });
+
+    await expect(cleanup.processBatch(1)).resolves.toBe(0);
+    expect(deleteCalls).toBe(0);
+    const [stillBlocked] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.id, intent!.id));
+    expect(stillBlocked).toMatchObject({
+      state: "review_required",
+      stateReason: "provider_resource_has_descendant_or_retention_references",
+    });
+
+    const releasedAt = new Date();
+    await db.update(runtimeSourceAliases).set({ releasedAt, updatedAt: releasedAt })
+      .where(eq(runtimeSourceAliases.sourceRef, aliasRef));
+    await expect(cleanup.retryReviewRequired({ orgId: randomUUID(), intentId: intent!.id }))
+      .resolves.toBeNull();
+    await expect(cleanup.retryReviewRequired({ orgId: source.orgId, intentId: intent!.id }))
+      .resolves.toMatchObject({ state: "pending", stateReason: null });
+
+    await expect(cleanup.processBatch(1)).resolves.toBe(1);
+    expect(deleteCalls).toBe(1);
+    const [completed] = await db.select().from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.id, intent!.id));
+    expect(completed).toMatchObject({ state: "completed", attemptCount: 1 });
+  });
+
+  it("takes the retention advisory lock before an expired Side Chat row lock", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    await db.update(chatConversations).set({ sideChatExpiresAt: new Date(0) })
+      .where(eq(chatConversations.id, sideChat.id));
+    const stale = { ...sideChat, sideChatExpiresAt: new Date(0) };
+    const now = new Date();
+
+    let releaseAdvisory!: () => void;
+    const advisoryRelease = new Promise<void>((resolve) => {
+      releaseAdvisory = resolve;
+    });
+    let advisoryHeld!: () => void;
+    const advisoryAcquired = new Promise<void>((resolve) => {
+      advisoryHeld = resolve;
+    });
+    const holderTransaction = db.transaction(async (tx) => {
+      await lockRuntimeRetentionScope(tx as unknown as RuntimeRetentionDb, source.orgId);
+      advisoryHeld();
+      await advisoryRelease;
+    });
+    await advisoryAcquired;
+
+    const expiredAttempt = service.assertMutable(stale, source.userId, now);
+    let releaseRow!: () => void;
+    const rowRelease = new Promise<void>((resolve) => {
+      releaseRow = resolve;
+    });
+    let rowLockTransaction: Promise<unknown> | null = null;
+    try {
+      await waitForDatabaseLockWaiters(db, 1);
+
+      let rowAcquired!: () => void;
+      const rowAcquisition = new Promise<void>((resolve) => {
+        rowAcquired = resolve;
+      });
+      rowLockTransaction = db.transaction(async (tx) => {
+        await tx.select({ id: chatConversations.id })
+          .from(chatConversations)
+          .where(eq(chatConversations.id, sideChat.id))
+          .for("update");
+        rowAcquired();
+        await rowRelease;
+      });
+
+      const rowWasAvailableBeforeAdvisoryRelease = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => resolve(false), 1_000);
+        rowAcquisition.then(() => {
+          clearTimeout(timeout);
+          resolve(true);
+        });
+      });
+      expect(rowWasAvailableBeforeAdvisoryRelease).toBe(true);
+    } finally {
+      releaseAdvisory();
+      await holderTransaction;
+      releaseRow();
+      await rowLockTransaction;
+    }
+    await expect(expiredAttempt).rejects.toMatchObject({ status: 409 });
   });
 
   it("rejects an assistant anchor that has not completed", async () => {

@@ -73,6 +73,62 @@ describe("transcript file target resolution", () => {
 });
 
 describe("RunTranscriptView", () => {
+  it("renders native Cursor ACP chunks as messages and tools rather than stdout", () => {
+    const cursor = (sessionUpdate: string, sourceEntryId: string, update: Record<string, unknown>, text?: string) => ({
+      kind: `cursor:acp:${sessionUpdate}`,
+      ts: "2026-09-23T08:00:00.000Z",
+      sourceEntryId,
+      ...(text === undefined ? {} : { text }),
+      payload: {
+        provider: "cursor_agent",
+        transport: "cursor-agent-acp-stdio",
+        method: "session/update",
+        sessionId: "cursor-session-1",
+        update: { sessionUpdate, ...update },
+      },
+    });
+    // Run Intelligence retains provider kinds in the API payload despite the canonical UI type.
+    const entries = [
+      cursor("user_message_chunk", "user-1", { content: { type: "text", text: "Ask " } }, "Ask"),
+      cursor("user_message_chunk", "user-2", { content: { type: "text", text: "away" } }, "away"),
+      cursor("agent_thought_chunk", "thought-1", { content: { type: "text", text: "Checking " } }, "Checking"),
+      cursor("agent_thought_chunk", "thought-2", { content: { type: "text", text: "files" } }, "files"),
+      cursor("agent_message_chunk", "answer-1", { content: { type: "text", text: "Hello " } }, "Hello"),
+      cursor("agent_message_chunk", "answer-2", { content: { type: "text", text: "world" } }, "world"),
+      cursor("tool_call", "tool-1", { toolCallId: "read-1", title: "read_file", rawInput: { path: "README.md" } }),
+      cursor("tool_call_update", "tool-2", { toolCallId: "read-1", status: "completed", rawOutput: "contents" }),
+      cursor("tool_call", "tool-terminal", { toolCallId: "read-2", title: "read_file", status: "cancelled", rawOutput: "cancelled" }),
+      cursor("plan", "plan-1", { entries: [
+        { content: "Inspect", status: "completed" }, { content: "Verify", status: "in_progress" },
+      ] }),
+    ] as unknown as TranscriptEntry[];
+
+    const blocks = normalizeTranscript(entries, false);
+    expect(blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "message", role: "user", text: "Ask away", sourceEntryIds: [] }),
+      expect.objectContaining({ type: "thinking", text: "Checking files", sourceEntryIds: [] }),
+      expect.objectContaining({ type: "message", role: "assistant", text: "Hello world", sourceEntryIds: [] }),
+      expect.objectContaining({ type: "tool", toolUseId: "read-1", result: "contents", sourceEntryIds: [] }),
+      expect.objectContaining({ type: "tool", toolUseId: "read-2", status: "error", isError: true,
+        input: expect.objectContaining({ toolCallId: "read-2", status: "cancelled" }),
+        sourceEntryIds: [] }),
+      expect.objectContaining({ type: "todo_list", sourceEntryIds: [], items: [
+        { text: "Inspect", status: "completed" }, { text: "Verify", status: "in_progress" },
+      ] }),
+    ]));
+    expect(blocks.some((block) => block.type === "stdout")).toBe(false);
+
+    const html = renderToStaticMarkup(
+      <ThemeProvider><RunTranscriptView presentation="detail" entries={entries} /></ThemeProvider>,
+    );
+    expect(html).toContain("Hello world");
+    expect(html).toContain("Verify");
+    expect(html).not.toContain('data-transcript-action-icon="stdout"');
+    const objectEntries = [{ ...cursor("agent_message_chunk", "object-update-1",
+      { content: { type: "text", text: "Persisted" } }), origin: "object" }] as unknown as TranscriptEntry[];
+    expect(normalizeTranscript(objectEntries, false)[0]).toMatchObject({ sourceEntryIds: ["object-update-1"] });
+  });
+
   it.each([
     ["mcp__rudder-tools__rudder_automation_get", "Get automation"],
     ["mcp__rudder-tools__rudder_automation_update", "Update automation"],

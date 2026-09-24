@@ -54,6 +54,17 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+describe("native transcript event tolerance", () => {
+  it("skips a textless event instead of crashing the Run transcript", () => {
+    const textless = {
+      kind: "stdout",
+      ts: "2026-07-21T08:00:00.000Z",
+      sourceEntryId: "native-event-1",
+    } as unknown as TranscriptEntry;
+    expect(normalizeTranscript([textless], false)).toEqual([]);
+  });
+});
+
 let cleanupFn: (() => void) | null = null;
 
 afterEach(() => {
@@ -346,6 +357,72 @@ describe("TranscriptRunAnnotationBlock", () => {
       { blockId: "status-a", sourceMemberIds: ["status-a"], text: "status\n\nThe same status text" },
       { blockId: "status-b", sourceMemberIds: ["status-b"], text: "status\n\nThe same status text" },
     ]);
+  });
+
+  it("requires verified transcript completeness and preserves existing source anchors", () => {
+    const onAnnotate = vi.fn();
+    const block: TranscriptBlock = {
+      type: "event",
+      ts: "2026-07-23T12:01:00.000Z",
+      label: "status",
+      tone: "info",
+      text: "Historical event",
+      sourceEntryIds: ["legacy-entry-1"],
+    };
+    function CompletenessGatedBlock() {
+      const [complete, setComplete] = useState(false);
+      return (
+        <>
+          <button type="button" data-testid="toggle-transcript-completeness" onClick={() => setComplete((value) => !value)}>
+            Toggle completeness
+          </button>
+          <TranscriptRunAnnotationBlock
+            block={block}
+            presentation="detail"
+            context={complete ? { sourceRunId: "run-1", sourceAgentId: "agent-1", onAnnotate } : undefined}
+          >
+            <span>Historical event</span>
+          </TranscriptRunAnnotationBlock>
+        </>
+      );
+    }
+
+    const container = render(<CompletenessGatedBlock />);
+    const toggle = () => act(() => container.querySelector<HTMLButtonElement>("[data-testid='toggle-transcript-completeness']")?.click());
+    expect(container.querySelector("[data-run-transcript-annotation-trigger]")).toBeNull();
+    expect(container.textContent).toContain("Historical event");
+
+    toggle();
+    let trigger = container.querySelector<HTMLButtonElement>("[data-run-transcript-annotation-trigger]");
+    expect(trigger).not.toBeNull();
+    const blockId = container.querySelector<HTMLElement>("[data-run-transcript-block='true']")?.dataset.runTranscriptBlockId;
+    expect(blockId).toBe("legacy-entry-1");
+    trigger!.getBoundingClientRect = () => new DOMRect(20, 20, 28, 28);
+    act(() => trigger?.click());
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).not.toBeNull();
+
+    toggle();
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).toBeNull();
+    expect(container.querySelector("[data-run-transcript-block='true']")).toBeNull();
+    expect(container.textContent).toContain("Historical event");
+
+    toggle();
+    expect(document.querySelector("[data-testid='chat-response-annotation-editor']")).toBeNull();
+    trigger = container.querySelector<HTMLButtonElement>("[data-run-transcript-annotation-trigger]");
+    expect(trigger).not.toBeNull();
+    expect(container.querySelector<HTMLElement>("[data-run-transcript-block='true']")?.dataset.runTranscriptBlockId).toBe(blockId);
+    trigger!.getBoundingClientRect = () => new DOMRect(20, 20, 28, 28);
+    act(() => trigger?.click());
+    act(() => {
+      Array.from(document.querySelectorAll("[data-testid='chat-response-annotation-editor'] button"))
+        .find((button) => button.textContent === "Save")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onAnnotate).toHaveBeenCalledWith(expect.objectContaining({
+      blockId: "legacy-entry-1",
+      sourceMemberIds: ["legacy-entry-1"],
+    }));
   });
 
   it("closes the previous editor when another transcript item receives focus", () => {

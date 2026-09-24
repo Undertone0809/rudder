@@ -69,7 +69,7 @@ export function VirtualizedActivityTimeline<T>({
     isScrolling: boolean;
     scrollDirection: "backward" | "forward" | null;
   } | null>(null);
-  const [scrollRootRevision, setScrollRootRevision] = useState(0);
+  const [resolvedScrollElement, setResolvedScrollElement] = useState<HTMLElement | null>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
   const itemKeys = useMemo(
     () => items.map((item, index) => getItemKey(item, index)),
@@ -106,28 +106,32 @@ export function VirtualizedActivityTimeline<T>({
     return Array.from({ length: end - start + 1 }, (_, index) => start + index);
   }, [leadingOverscan, overscan]);
   useLayoutEffect(() => {
+    const resolveScrollElement = () => {
+      const next = resolveTimelineScrollElement(scrollElementRef.current);
+      setResolvedScrollElement((current) => current === next ? current : next);
+    };
     let refreshFrame: number | null = null;
     const refreshScrollElement = () => {
       if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
       refreshFrame = requestAnimationFrame(() => {
         refreshFrame = null;
-        setScrollRootRevision((revision) => revision + 1);
+        resolveScrollElement();
       });
     };
-    setScrollRootRevision((revision) => revision + 1);
+    refreshScrollElement();
     window.addEventListener("resize", refreshScrollElement);
     return () => {
       if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
       window.removeEventListener("resize", refreshScrollElement);
     };
-  }, []);
-  const resolvedScrollElement = resolveTimelineScrollElement(scrollElementRef.current);
+  }, [scrollElementRef]);
   const usesWindowScroll = typeof document !== "undefined"
     && resolvedScrollElement === document.scrollingElement;
   const getScrollElement = useCallback(
-    () => resolveTimelineScrollElement(scrollElementRef.current),
-    [scrollElementRef, scrollRootRevision],
+    () => resolvedScrollElement,
+    [resolvedScrollElement],
   );
+  const virtualizerEnabled = !baselineMode && resolvedScrollElement !== null;
   const sharedVirtualizerOptions = {
     count: items.length,
     estimateSize,
@@ -148,12 +152,12 @@ export function VirtualizedActivityTimeline<T>({
   };
   const elementVirtualizer = useVirtualizer({
     ...sharedVirtualizerOptions,
-    enabled: !baselineMode && !usesWindowScroll,
+    enabled: virtualizerEnabled && !usesWindowScroll,
     getScrollElement,
   });
   const windowVirtualizer = useWindowVirtualizer({
     ...sharedVirtualizerOptions,
-    enabled: !baselineMode && usesWindowScroll,
+    enabled: virtualizerEnabled && usesWindowScroll,
   });
   const virtualizer = usesWindowScroll ? windowVirtualizer : elementVirtualizer;
   virtualizerRef.current = virtualizer;

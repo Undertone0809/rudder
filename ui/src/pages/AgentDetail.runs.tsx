@@ -89,6 +89,7 @@ import {
   writeRunFilterState,
 } from "./AgentDetail.run-filters";
 import { LogViewer } from "./AgentDetail.run-log";
+import { resolveSelectedRun, RunSelectionFallback, useRunOutsideList } from "./AgentDetail.run-selection";
 
 export type RunFeedbackTarget = Extract<SidePanelTarget, { kind: "run_feedback_chat" }>;
 export type RunDebugTarget = Extract<SidePanelTarget, { kind: "run_debug_chat" }>;
@@ -758,8 +759,9 @@ export function RunsTab({
     setSidebarOpen(false);
   }, [agentId, contextKey, orgId, pushToast, setSidebarOpen, sidePanel]);
   const filterState = useMemo(() => parseRunFilterState(searchParams), [searchParams]);
+  const { fetchedRun, selectedRunQuery } = useRunOutsideList(runs, selectedRunId, orgId, agentId);
 
-  if (runs.length === 0) {
+  if (runs.length === 0 && !selectedRunId) {
     return <p className="text-sm text-muted-foreground">No runs yet.</p>;
   }
 
@@ -788,16 +790,9 @@ export function RunsTab({
     }), { replace: true });
   };
 
-  // The current run is the primary narrow-screen surface; history stays available on demand.
-  const defaultRunId = filtered[0]?.id ?? sorted[0]?.id ?? null;
-  const effectiveRunId = selectedRunId ?? defaultRunId;
-  const selectedRun = sorted.find((r) => r.id === effectiveRunId) ?? null;
-  const selectedRunOutsideFilters = Boolean(selectedRun && filtersActive && !filtered.some((run) => run.id === selectedRun.id));
-  const railEntries = buildRunRailEntries(
-    filtered,
-    effectiveRunId,
-    selectedRunOutsideFilters ? selectedRun : null,
-  );
+  const { effectiveRunId, selectedRun, selectedRunOutsideList, selectedRunOutsideFilters } =
+    resolveSelectedRun(sorted, filtered, selectedRunId, fetchedRun, filtersActive);
+  const railEntries = buildRunRailEntries(filtered, effectiveRunId, selectedRunOutsideList ? selectedRun : null);
   const listEmptyMessage = filtersActive
     ? "No runs match the current filters."
     : "No runs yet.";
@@ -815,6 +810,7 @@ export function RunsTab({
     return (
       <div className="space-y-3">
         {toolbar}
+        {selectedRunId && <RunSelectionFallback agentRouteId={agentRouteId} searchParams={searchParams} query={selectedRunQuery} />}
         {activeFilterChips.length > 0 && (
           <RunFilterChipRow chips={activeFilterChips} onClear={clearRunFilters} />
         )}

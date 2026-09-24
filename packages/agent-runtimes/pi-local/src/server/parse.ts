@@ -90,6 +90,10 @@ export function parsePiJsonl(stdout: string): ParsedPiOutput {
           const content = lastMessage.content as string | Array<{ type: string; text?: string }>;
           result.finalMessage = extractTextContent(content);
           if (result.finalMessage) result.modelOutputObserved = true;
+          const errorMessage = asString(lastMessage.errorMessage, "").trim();
+          if (lastMessage.stopReason === "error" && errorMessage && !result.errors.includes(errorMessage)) {
+            result.errors.push(errorMessage);
+          }
         }
       }
       continue;

@@ -80,6 +80,34 @@ export async function lockGeneration(
   return generation;
 }
 
+export async function withGenerationProjectionFence<T>(db: Db, input: {
+  orgId: string;
+  conversationId: string;
+  generationId: string;
+  expectedAttemptEpoch: number;
+  expectedOwnerToken: string | null;
+  projection: "completed" | "stopped" | "failed";
+  project: () => Promise<T>;
+}): Promise<T> {
+  return db.transaction(async (tx) => {
+    const generation = await lockGeneration(tx, input);
+    assertGenerationFence(generation, input);
+    if (generation.runtimeTerminalAt !== null) {
+      throw conflict("Chat generation runtime attempt changed");
+    }
+    if (input.projection !== "stopped" && (
+      generation.stopRequestedAt !== null
+      || generation.status === "stop_requested"
+      || generation.status === "stopping"
+    )) {
+      throw conflict("Chat-visible output admission is closed for this generation");
+    }
+    // Projection services use separate DB handles; hold the generation row
+    // lock until the write finishes to serialize an owner transfer.
+    return input.project();
+  });
+}
+
 export async function nextGenerationSeq(
   tx: ChatGenerationProtocolTransaction,
   generationId: string,

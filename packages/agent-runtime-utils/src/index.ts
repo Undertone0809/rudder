@@ -1,3 +1,13 @@
+export {
+  chatAskUserRequestSchema,
+  chatAskUserResponseAnswerSchema,
+  chatAskUserResponseSchema
+} from "@rudderhq/shared";
+export type {
+  ChatAskUserRequest,
+  ChatAskUserResponse,
+  ChatAskUserResponseAnswer
+} from "@rudderhq/shared";
 export { inferOpenAiCompatibleBiller } from "./billing.js";
 export {
   REDACTED_HOME_PATH_USER,
@@ -91,8 +101,9 @@ export type {
   SessionCompactionPolicy
 } from "./session-compaction.js";
 export type {
-  AgentRuntimeAgent,
-  AgentRuntimeBillingType,
+  AgentRuntimeAgent, AgentRuntimeApprovalDecision,
+  AgentRuntimeApprovalHandle,
+  AgentRuntimeApprovalRequest, AgentRuntimeBillingType,
   AgentRuntimeControlAttempt,
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlCoordinator,
@@ -106,8 +117,7 @@ export type {
   AgentRuntimeEnvironmentCheckLevel,
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
-  AgentRuntimeEnvironmentTestStatus,
-  AgentRuntimeExecutionContext,
+  AgentRuntimeEnvironmentTestStatus, AgentRuntimeExecutionContext,
   AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta,
   AgentRuntimeLoadedMcpServerMeta,
   AgentRuntimeLoadedSkillMeta,

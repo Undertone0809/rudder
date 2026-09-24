@@ -25,23 +25,21 @@ import {
   useState,
   type CSSProperties
 } from "react";
-import { buildTranscript, getUIAdapter } from "../agent-runtimes";
 import { agentRunsApi, type LiveRunForIssue } from "../api/agent-runs";
 import { agentsApi } from "../api/agents";
-import { chatsApi } from "../api/chats";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { CopyText } from "../components/CopyText";
 import { PageTabBar } from "../components/PageTabBar";
 import { RunTranscriptView, type TranscriptMode, type TranscriptRunAnnotationInput, type TranscriptSkillTarget } from "../components/transcript/RunTranscriptView";
-import { useLiveRunTranscripts } from "../components/transcript/useLiveRunTranscripts";
+import { TranscriptContinuationControls } from "../components/transcript/TranscriptContinuationControls";
+import { isAgentRunTranscriptActiveStatus, useAgentRunTranscripts, type AgentRunTranscriptState } from "../components/transcript/useAgentRunTranscripts";
 import { useActivityCoordinator } from "../context/ActivityCoordinatorContext";
 import { useI18n } from "../context/I18nContext";
 import { useSidePanel } from "../context/SidePanelContext";
 import { queryKeys } from "../lib/queryKeys";
-import { chatTranscriptEntriesToRunTranscriptEntries, heartbeatRunEventsToTranscriptEntries, mergeTranscriptEntries, resolveRunChatTranscriptTarget } from "../lib/run-detail-events";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
-import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForCopy, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readScrollMetrics, redactPathText, redactPathValue, RunEventsList, RunLogChunk, runLogChunkDedupeKey, ScrollContainer, scrollToContainerBottom, utf8ByteLength, WorkspaceOperationsSection } from "./AgentDetail.helpers";
+import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForCopy, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readInvocationContentSummary, readScrollMetrics, redactPathValue, RunEventsList, ScrollContainer, scrollToContainerBottom, WorkspaceOperationsSection } from "./AgentDetail.helpers";
 
 export function mergeRunEvents(
   currentEvents: HeartbeatRunEvent[],
@@ -51,6 +49,15 @@ export function mergeRunEvents(
     [...currentEvents, ...incomingEvents].map((event) => [event.seq, event]),
   );
   return [...eventsBySeq.values()].sort((left, right) => left.seq - right.seq);
+}
+
+export function canPersistRunTranscriptAnnotations(
+  state: Pick<AgentRunTranscriptState, "availability" | "completeness" | "fetching" | "hasData"> | null | undefined,
+): boolean {
+  return state?.availability === "available"
+    && state.completeness === "complete"
+    && state.hasData
+    && !state.fetching;
 }
 
 export function advancePersistedRunEventCursor(
@@ -95,10 +102,7 @@ export function LogViewer({
   type RunDetailTab = "transcript" | "invocation";
   const { locale } = useI18n();
   const [events, setEvents] = useState<HeartbeatRunEvent[]>([]);
-  const [logLines, setLogLines] = useState<RunLogChunk[]>([]);
   const [loading, setLoading] = useState(true);
-  const [logLoading, setLogLoading] = useState(!!run.logRef);
-  const [logError, setLogError] = useState<string | null>(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [transcriptMode, setTranscriptMode] = useState<TranscriptMode>("nice");
   const [activeDetailTab, setActiveDetailTab] = useState<RunDetailTab>("transcript");
@@ -132,8 +136,6 @@ export function LogViewer({
   const logEndRef = useRef<HTMLDivElement>(null);
   const transcriptExpandButtonRef = useRef<HTMLButtonElement>(null);
   const persistedEventCursorRef = useRef(0);
-  const pendingLogLineRef = useRef("");
-  const seenLogChunkKeysRef = useRef<Set<string>>(new Set());
   const scrollContainerRef = useRef<ScrollContainer | null>(null);
   const isFollowingRef = useRef(false);
   const lastMetricsRef = useRef<{ scrollHeight: number; distanceFromBottom: number }>({
@@ -146,9 +148,7 @@ export function LogViewer({
     setTranscriptModalOpen(false);
     onAnnotate?.(input);
   }, [onAnnotate]);
-  const liveTranscriptRuns = useMemo<LiveRunForIssue[]>(() => {
-    if (!isLive) return [];
-    return [{
+  const liveTranscriptRuns = useMemo<LiveRunForIssue[]>(() => [{
       id: run.id,
       status: run.status,
       invocationSource: run.invocationSource,
@@ -160,10 +160,9 @@ export function LogViewer({
       agentName: "",
       agentRuntimeType,
       issueId: null,
-    }];
-  }, [
+      contextSnapshot: run.contextSnapshot,
+    }], [
     agentRuntimeType,
-    isLive,
     run.agentId,
     run.createdAt,
     run.finishedAt,
@@ -172,69 +171,22 @@ export function LogViewer({
     run.startedAt,
     run.status,
     run.triggerDetail,
+    run.contextSnapshot,
   ]);
-  const { transcriptByRun: liveTranscriptByRun } = useLiveRunTranscripts({
-    runs: liveTranscriptRuns,
-    orgId: run.orgId,
-    maxChunksPerRun: 500,
-    includeRunEvents: false,
-  });
+  const {
+    transcriptByRun: liveTranscriptByRun,
+    transcriptStateByRun,
+    transcriptNavigationByRun,
+  } = useAgentRunTranscripts(liveTranscriptRuns.map((liveRun) => ({
+    runId: liveRun.id,
+    active: isAgentRunTranscriptActiveStatus(liveRun.status),
+  })));
   const liveTranscriptSize = liveTranscriptByRun.get(run.id)?.length ?? 0;
   const { data: workspaceOperations = [] } = useQuery({
     queryKey: queryKeys.runWorkspaceOperations(run.id),
     queryFn: () => agentRunsApi.workspaceOperations(run.id),
     refetchInterval: isLive ? 2000 : false,
   });
-
-  function appendLogContent(content: string, finalize = false) {
-    if (!content && !finalize) return;
-    const combined = `${pendingLogLineRef.current}${content}`;
-    const split = combined.split("\n");
-    pendingLogLineRef.current = split.pop() ?? "";
-    if (finalize && pendingLogLineRef.current) {
-      split.push(pendingLogLineRef.current);
-      pendingLogLineRef.current = "";
-    }
-
-    const parsed: RunLogChunk[] = [];
-    for (const line of split) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const raw = JSON.parse(trimmed) as { ts?: unknown; stream?: unknown; chunk?: unknown };
-        const stream =
-          raw.stream === "stderr" || raw.stream === "system" ? raw.stream : "stdout";
-        const chunk = typeof raw.chunk === "string" ? raw.chunk : "";
-        const ts = typeof raw.ts === "string" ? raw.ts : new Date().toISOString();
-        if (!chunk) continue;
-        parsed.push({ ts, stream, chunk });
-      } catch {
-        // ignore malformed lines
-      }
-    }
-
-    if (parsed.length > 0) {
-      appendLogChunks(parsed);
-    }
-  }
-
-  function appendLogChunks(chunks: RunLogChunk[]) {
-    if (chunks.length === 0) return;
-    setLogLines((prev) => {
-      const nextChunks: RunLogChunk[] = [];
-      for (const chunk of chunks) {
-        const key = runLogChunkDedupeKey(chunk);
-        if (seenLogChunkKeysRef.current.has(key)) continue;
-        seenLogChunkKeysRef.current.add(key);
-        nextChunks.push(chunk);
-      }
-      if (nextChunks.length === 0) return prev;
-      if (seenLogChunkKeysRef.current.size > 12000) {
-        seenLogChunkKeysRef.current = new Set(nextChunks.map(runLogChunkDedupeKey));
-      }
-      return [...prev, ...nextChunks];
-    });
-  }
 
   // Fetch events
   const {
@@ -243,7 +195,7 @@ export function LogViewer({
     isFetching: initialEventsFetching,
   } = useQuery({
     queryKey: queryKeys.runEvents(run.id),
-    queryFn: () => agentRunsApi.allEvents(run.id),
+    queryFn: () => agentRunsApi.events(run.id, 0, 200),
     refetchOnMount: "always",
   });
 
@@ -393,58 +345,7 @@ export function LogViewer({
       isFollowingRef.current = true;
     }
     setIsFollowing((prev) => (prev ? prev : true));
-  }, [events.length, getScrollContainer, isLive, liveTranscriptSize, logLines.length, transcriptVisible]);
-
-  // Fetch persisted shell log
-  useEffect(() => {
-    let cancelled = false;
-    pendingLogLineRef.current = "";
-    seenLogChunkKeysRef.current.clear();
-    setLogLines([]);
-    setLogError(null);
-
-    // Live Runs use the shared ActivityCoordinator-backed transcript source.
-    // Only terminal detail views hydrate the persisted log directly.
-    if (isLive || !run.logRef) {
-      setLogLoading(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setLogLoading(true);
-    const firstLimit =
-      typeof run.logBytes === "number" && run.logBytes > 0
-        ? Math.min(Math.max(run.logBytes + 1024, 256_000), 2_000_000)
-        : 256_000;
-
-    const load = async () => {
-      try {
-        let offset = 0;
-        let first = true;
-        while (!cancelled) {
-          const result = await agentRunsApi.log(run.id, offset, first ? firstLimit : 256_000);
-          if (cancelled) break;
-          appendLogContent(result.content, result.nextOffset === undefined);
-          const next = result.nextOffset ?? result.endOffset ?? offset + utf8ByteLength(result.content);
-          offset = next;
-          first = false;
-          if (result.nextOffset === undefined || isLive) break;
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setLogError(err instanceof Error ? err.message : "Failed to load run log");
-        }
-      } finally {
-        if (!cancelled) setLogLoading(false);
-      }
-    };
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [run.id, run.logRef, run.logBytes, isLive]);
+  }, [events.length, getScrollContainer, isLive, liveTranscriptSize, transcriptVisible]);
 
   // Reuse the single organization event stream owned by LiveUpdatesProvider.
   useEffect(() => {
@@ -502,65 +403,21 @@ export function LogViewer({
     return redactPathValue(asRecord(evt?.payload ?? null), censorUsernameInLogs);
   }, [censorUsernameInLogs, events]);
 
-  const adapter = useMemo(() => getUIAdapter(agentRuntimeType), [agentRuntimeType]);
-  const logTranscript = useMemo(
-    () => buildTranscript(logLines, adapter.parseStdoutLine, { censorUsernameInLogs }),
-    [adapter, censorUsernameInLogs, logLines],
-  );
-  const liveLogTranscript = liveTranscriptByRun.get(run.id) ?? [];
-  const eventTranscript = useMemo(() => heartbeatRunEventsToTranscriptEntries(events, {
-    redactText: (value) => redactPathText(value, censorUsernameInLogs),
-    redactValue: (value) => redactPathValue(value, censorUsernameInLogs),
-  }), [censorUsernameInLogs, events]);
-  const nativeTranscript = useMemo(() => {
-    const effectiveLogTranscript = liveLogTranscript.length > logTranscript.length
-      ? liveLogTranscript
-      : logTranscript;
-    return mergeTranscriptEntries(effectiveLogTranscript, eventTranscript);
-  }, [eventTranscript, liveLogTranscript, logTranscript]);
-  const chatTranscriptTarget = resolveRunChatTranscriptTarget(run);
-  const shouldLoadChatTranscriptFallback = !isLive
-    && Boolean(chatTranscriptTarget)
-    && !loading
-    && !initialEventsFetching
-    && !logLoading
-    && logTranscript.length === 0
-    && liveLogTranscript.length === 0
-    && !events.some((event) => event.eventType === "transcript.entry");
-  const chatTranscriptQuery = useQuery({
-    queryKey: chatTranscriptTarget
-      ? queryKeys.chats.messageTranscript(
-        run.orgId,
-        chatTranscriptTarget.conversationId,
-        chatTranscriptTarget.messageId,
-      )
-      : queryKeys.chats.messageTranscript("__none__", "__none__", "__none__"),
-    queryFn: () => chatsApi.getMessageTranscript(
-      chatTranscriptTarget!.conversationId,
-      chatTranscriptTarget!.messageId,
-    ),
-    enabled: shouldLoadChatTranscriptFallback,
-  });
-  const persistedChatTranscript = useMemo(() => chatTranscriptEntriesToRunTranscriptEntries(
-    chatTranscriptQuery.data?.transcript ?? [],
-    censorUsernameInLogs,
-  ), [chatTranscriptQuery.data?.transcript, censorUsernameInLogs]);
-  const hasNativeTranscript = logTranscript.length > 0
-    || liveLogTranscript.length > 0
-    || events.some((event) => event.eventType === "transcript.entry");
-  const transcript = useMemo(
-    () => hasNativeTranscript
-      ? nativeTranscript
-      : mergeTranscriptEntries(nativeTranscript, persistedChatTranscript),
-    [hasNativeTranscript, nativeTranscript, persistedChatTranscript],
-  );
-  const transcriptEmptyMessage = chatTranscriptQuery.isError
-    ? "Transcript unavailable."
-    : run.logRef
-      ? "Waiting for transcript..."
-      : "No persisted transcript for this run.";
+  const transcript = liveTranscriptByRun.get(run.id) ?? [];
+  const transcriptState = transcriptStateByRun.get(run.id);
+  const transcriptNavigation = transcriptNavigationByRun.get(run.id);
+  const canPersistTranscriptAnnotations = canPersistRunTranscriptAnnotations(transcriptState);
+  const transcriptError = transcriptState?.error ?? null;
+  const transcriptEmptyMessage = transcriptError
+    ? `Transcript unavailable: ${transcriptError.message}`
+    : transcriptState?.availability && transcriptState.availability !== "available"
+      ? `Transcript ${transcriptState.availability}.`
+      : transcriptState?.loading || isLive
+        ? "Waiting for transcript..."
+        : "No transcript for this run.";
   const hasInvocationTab = Boolean(adapterInvokePayload);
   const invocationAgentInstructionStack = readInvocationAgentInstructionStack(adapterInvokePayload);
+  const invocationContentSummary = readInvocationContentSummary(adapterInvokePayload);
   const invocationPromptText =
     invocationAgentInstructionStack !== undefined
       ? formatInvocationValueForDisplay(invocationAgentInstructionStack, censorUsernameInLogs)
@@ -629,9 +486,8 @@ export function LogViewer({
 
   if (
     loading
-    || logLoading
+    || transcriptState?.loading
     || (initialEventsFetching && (initialEvents === undefined || initialEvents.length === 0))
-    || (shouldLoadChatTranscriptFallback && chatTranscriptQuery.isFetching)
   ) {
     return <p className="text-xs text-muted-foreground">Loading run logs...</p>;
   }
@@ -723,7 +579,7 @@ export function LogViewer({
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
               agentDirectory={agentDirectory}
-              runAnnotationContext={onAnnotate ? {
+              runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,
                 sourceAgentId: run.agentId,
                 onAnnotate: handleAnnotate,
@@ -732,11 +588,10 @@ export function LogViewer({
               onOpenSkill={openTranscriptSkill}
               canOpenSkill={(target) => Boolean(target.path)}
             />
-            {logError && (
-              <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                {logError}
-              </div>
-            )}
+            <TranscriptContinuationControls
+              navigation={transcriptNavigation}
+              state={transcriptState}
+            />
             <div ref={logEndRef} />
           </div>
         ) : (
@@ -783,6 +638,19 @@ export function LogViewer({
               )}
               <InvocationSkillEvidence invocationPayload={adapterInvokePayload} usagePayload={adapterSkillUsagePayload} />
               <InvocationMcpEvidence invocationPayloads={adapterInvokePayloads} />
+              {invocationPromptText === null && invocationContentSummary && (
+                <div
+                  role="status"
+                  data-testid="invocation-content-summary"
+                  className="space-y-2 text-xs text-muted-foreground"
+                >
+                  <div className="font-medium text-foreground">Invocation text not persisted in metadata</div>
+                  <p>Check Transcript for reader-backed content. If text is unavailable, its status is shown there.</p>
+                  <pre className="rounded-md bg-neutral-100 p-2 whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
+                    {formatInvocationValueForDisplay(invocationContentSummary, censorUsernameInLogs)}
+                  </pre>
+                </div>
+              )}
               {invocationPromptText !== null && (
                 <div>
                   <div className="mb-1 text-xs text-muted-foreground">Agent Instruction Stack</div>
@@ -868,7 +736,7 @@ export function LogViewer({
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
               agentDirectory={agentDirectory}
-              runAnnotationContext={onAnnotate ? {
+              runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,
                 sourceAgentId: run.agentId,
                 onAnnotate: handleAnnotate,
@@ -877,11 +745,10 @@ export function LogViewer({
               onOpenSkill={openTranscriptSkill}
               canOpenSkill={(target) => Boolean(target.path)}
             />
-            {logError && (
-              <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                {logError}
-              </div>
-            )}
+            <TranscriptContinuationControls
+              navigation={transcriptNavigation}
+              state={transcriptState}
+            />
           </div>
         </DialogContent>
       </Dialog>

@@ -18,6 +18,7 @@ import {
   withQueuedAnnotationAssetState,
   type StagedQueuedAnnotationAttachment,
 } from "./chat-queued-message-materialization.js";
+import { assertChatWriteAdmitted } from "./chats.side-chat-write-admission.js";
 import { isPostgresError } from "./postgres-errors.js";
 
 export async function createQueuedMessageWithStagedAttachments(
@@ -52,6 +53,7 @@ export async function createQueuedMessageWithStagedAttachments(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await db.transaction(async (tx) => {
+        await assertChatWriteAdmitted(tx, input.orgId, input.conversationId);
         const existing = await tx
           .select()
           .from(chatQueuedMessages)

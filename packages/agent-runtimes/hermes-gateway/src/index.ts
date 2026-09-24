@@ -1,3 +1,5 @@
+export { parseHermesGatewayStdoutLine } from "./parse-stdout.js";
+
 export const type = "hermes_gateway";
 export const label = "Hermes API Server";
 export const models: { id: string; label: string }[] = [];

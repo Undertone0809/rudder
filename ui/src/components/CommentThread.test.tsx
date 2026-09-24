@@ -128,8 +128,8 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-vi.mock("./transcript/useLiveRunTranscripts", () => ({
-  useLiveRunTranscripts: (options: unknown) => {
+vi.mock("./transcript/useAgentRunTranscripts", () => ({
+  useAgentRunTranscripts: (options: unknown) => {
     mockUseLiveRunTranscripts(options);
     return {
       transcriptByRun: mockTranscriptState.transcriptByRun,
@@ -1297,6 +1297,7 @@ describe("CommentThread", () => {
               createdAt: new Date("2026-06-17T08:00:00.000Z"),
               startedAt: new Date("2026-06-17T08:00:00.000Z"),
               invocationSource: "manual",
+              contextSnapshot: { runtimeBindingId: "binding-1" },
             },
           ]}
           onAdd={async () => undefined}
@@ -1306,6 +1307,9 @@ describe("CommentThread", () => {
 
     expect(html).toContain('data-presentation="chat"');
     expect(html).toContain('data-transcript-entry-count="3"');
+    expect(mockUseLiveRunTranscripts.mock.calls.at(-1)?.[0]).toEqual([
+      { runId: "run-1", active: true },
+    ]);
   });
 
   it("uses the operator nickname for board-authored comments", () => {
@@ -1971,9 +1975,9 @@ describe("CommentThread", () => {
       </MemoryRouter>,
     );
 
-    expect(mockUseLiveRunTranscripts.mock.calls.at(-1)?.[0]).toMatchObject({
-      runs: [{ id: activeRunId }],
-    });
+    expect(mockUseLiveRunTranscripts.mock.calls.at(-1)?.[0]).toEqual([
+      { runId: activeRunId, active: true },
+    ]);
 
     const terminalRow = container.querySelector(`[data-run-id="${terminalRunId}"]`);
     const expandButton = terminalRow?.querySelector<HTMLButtonElement>('button[aria-label="Show details"]');
@@ -1982,12 +1986,10 @@ describe("CommentThread", () => {
       expandButton!.click();
     });
 
-    expect(mockUseLiveRunTranscripts.mock.calls.at(-1)?.[0]).toMatchObject({
-      runs: [
-        { id: terminalRunId, resultJson: { summary: "Persisted terminal summary" } },
-        { id: activeRunId },
-      ],
-    });
+    expect(mockUseLiveRunTranscripts.mock.calls.at(-1)?.[0]).toEqual([
+      { runId: terminalRunId, active: false },
+      { runId: activeRunId, active: true },
+    ]);
   });
 
   it("renders active linked run details in streaming mode", () => {

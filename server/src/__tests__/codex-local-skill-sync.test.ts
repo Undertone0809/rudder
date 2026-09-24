@@ -125,9 +125,12 @@ describe("codex local skill sync", () => {
     expect(configToml).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills"))}`);
     expect(configToml).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak"))}`);
     expect(configToml).toContain(`path = ${JSON.stringify(path.join(operatorHome, ".agents", "skills", "home-leak", "SKILL.md"))}`);
-    expect(configToml).toContain(`path = ${JSON.stringify(path.join(codexHome, "skills"))}`);
-    expect(configToml).toContain(`path = ${JSON.stringify(path.join(codexHome, "skills", "shared-leak"))}`);
-    expect(configToml).toContain(`path = ${JSON.stringify(path.join(codexHome, "skills", "shared-leak", "SKILL.md"))}`);
+    // The configured provider CODEX_HOME is an authorized native surface. Its
+    // existing skills remain available; only operator/workspace roots outside
+    // that surface are disabled by the managed profile.
+    expect(configToml).not.toContain(`path = ${JSON.stringify(path.join(codexHome, "skills"))}`);
+    expect(configToml).not.toContain(`path = ${JSON.stringify(path.join(codexHome, "skills", "shared-leak"))}`);
+    expect(configToml).not.toContain(`path = ${JSON.stringify(path.join(codexHome, "skills", "shared-leak", "SKILL.md"))}`);
     expect(configToml).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills"))}`);
     expect(configToml).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak"))}`);
     expect(configToml).toContain(`path = ${JSON.stringify(path.join(workspace, ".agents", "skills", "repo-leak", "SKILL.md"))}`);

@@ -41,6 +41,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@rudderhq/agent-runtime-hermes-gateway": "workspace:*",
     "@rudderhq/agent-runtime-claude-local": "workspace:*",
     "@rudderhq/agent-runtime-codex-local": "workspace:*",
     "@rudderhq/agent-runtime-cursor-local": "workspace:*",

@@ -623,7 +623,8 @@ export function isInternalAgentInstructionText(text: string): boolean {
   return false;
 }
 
-export function filterRoutineStdout(value: string, showDeveloperDiagnostics: boolean): string {
+export function filterRoutineStdout(value: string | null | undefined, showDeveloperDiagnostics: boolean): string {
+  if (typeof value !== "string") return "";
   if (showDeveloperDiagnostics) return value.trim();
   const trimmedValue = value.trim();
   if (isProviderProtocolEnvelopeLine(trimmedValue)) return "";

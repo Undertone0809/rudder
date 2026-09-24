@@ -504,7 +504,7 @@ class CodexRpcClient {
 }
 
 export async function fetchCodexRpcQuota(): Promise<CodexRpcQuotaSnapshot> {
-  const args = ["--disable", "plugins", "-s", "read-only", "-a", "untrusted", "app-server"];
+  const args = ["-s", "read-only", "-a", "untrusted", "app-server"];
   const cwd = process.cwd();
   const command = await resolveCodexCommand("codex", cwd, process.env);
   const target = await resolveSpawnTarget(command, args, cwd, process.env);

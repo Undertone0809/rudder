@@ -46,6 +46,8 @@ function createRunLookupDb(run: { orgId: string } | null) {
   };
 }
 
+const RUN_ID = "11111111-1111-4111-8111-111111111111";
+
 const activeServers = new Set<Server>();
 
 async function createApp(db: Record<string, unknown> = {}) {
@@ -220,10 +222,10 @@ describe("activity routes", () => {
     ]);
 
     const res = await request(await createApp(createRunLookupDb({ orgId: "organization-1" })))
-      .get("/api/agent-runs/run-1/issues");
+      .get(`/api/agent-runs/${RUN_ID}/issues`);
 
     expect(res.status).toBe(200);
-    expect(mockActivityService.issuesForRun).toHaveBeenCalledWith("run-1");
+    expect(mockActivityService.issuesForRun).toHaveBeenCalledWith(RUN_ID);
     expect(res.body).toEqual([{ issueId: "issue-1" }]);
   });
 
@@ -235,7 +237,7 @@ describe("activity routes", () => {
     ]);
 
     const res = await request(await createApp(createRunLookupDb({ orgId: "organization-2" })))
-      .get("/api/agent-runs/run-1/issues");
+      .get(`/api/agent-runs/${RUN_ID}/issues`);
 
     expect(res.status).toBe(403);
     expect(mockActivityService.issuesForRun).not.toHaveBeenCalled();
@@ -245,7 +247,7 @@ describe("activity routes", () => {
     mockActivityService.issuesForRun.mockResolvedValue([]);
 
     const res = await request(await createApp(createRunLookupDb(null)))
-      .get("/api/heartbeat-runs/run-1/issues");
+      .get(`/api/heartbeat-runs/${RUN_ID}/issues`);
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Heartbeat run not found" });

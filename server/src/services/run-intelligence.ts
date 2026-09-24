@@ -1,5 +1,13 @@
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { agentConfigRevisions, agents, heartbeatRunEvents, heartbeatRuns, issues, organizations } from "@rudderhq/db";
+import {
+  agentConfigRevisions,
+  agents,
+  heartbeatRunEvents,
+  heartbeatRuns,
+  issues,
+  organizations,
+} from "@rudderhq/db";
 import {
   diagnoseRun,
   observedRunFromFilesystem,
@@ -24,14 +32,44 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { badRequest, forbidden, notFound } from "../errors.js";
+import { createProfileBoundRuntimeProviderCapabilityResolverFromConfig } from "../agent-runtimes/index.js";
+import {
+  runtimeConfigFromProviderProfileSnapshot,
+  sanitizeRuntimeProviderProfileSnapshot,
+} from "../agent-runtimes/runtime-provider-profile-snapshot.js";
+import { badRequest, notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
-import { resolveHeartbeatRunIdReference } from "./heartbeat-run-reference.js";
 import { heartbeatService } from "./heartbeat.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "./operator-event-visibility.js";
+import {
+  assertRunIntelligenceAccess,
+  resolveRunIdReferenceForScope,
+  sideChatVisibilityCondition,
+  type RunIntelligenceAccessScope
+} from "./run-intelligence-access.js";
 import { getRunLogStore } from "./run-log-store.js";
+import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
+import {
+  createRuntimeNativeTranscriptReaderHook,
+  type RuntimeProviderCapabilityResolver,
+} from "./runtime-kernel/provider-capabilities.js";
+import { createTranscriptObjectReader } from "./runtime-kernel/transcript-object-store.js";
+import {
+  createLegacyTranscriptReader,
+  createTranscriptReader,
+  type TranscriptItem,
+  type TranscriptPage,
+  type TranscriptRange,
+} from "./runtime-kernel/transcript-reader.js";
+
+export {
+  assertRunIntelligenceAccess,
+  filterRunsByRunIntelligenceAccess,
+  resolveRunIdReferenceForScope
+} from "./run-intelligence-access.js";
+export type { RunIntelligenceAccessScope } from "./run-intelligence-access.js";
 
 function hashValue(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
@@ -185,6 +223,7 @@ type RunRow = typeof heartbeatRuns.$inferSelect & {
 
 export interface ListObservedRunsInput {
   orgId: string;
+  sideChatOwnerId?: string | null;
   updatedAfter?: Date | null;
   runIdPrefix?: string | null;
   agentId?: string | null;
@@ -227,6 +266,7 @@ type SummaryRunRow = {
   logStore: string | null;
   logRef: string | null;
   chatConversationId: string | null;
+  scene: string | null;
   sourceRunId: string | null;
   contextSnapshot: Record<string, unknown> | null;
   createdAt: Date;
@@ -306,6 +346,148 @@ function finiteNonNegativeNumber(value: string | null) {
   if (value === null || value.trim() === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export type HistoricalRunProfileRun = Pick<
+  RunRow,
+  "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
+> & {
+  sessionParamsBeforeJson?: Record<string, unknown> | null;
+  sessionParamsAfterJson?: Record<string, unknown> | null;
+};
+
+export type HistoricalRunConfigRevision = Pick<
+  typeof agentConfigRevisions.$inferSelect,
+  "id" | "createdAt" | "beforeConfig" | "afterConfig"
+>;
+
+export interface HistoricalRunRuntimeProfile {
+  agentRuntimeType: string;
+  runtimeConfig: Record<string, unknown>;
+  cwd: string | null;
+  agentConfigRevisionId: string | null;
+  agentConfigRevisionCreatedAt: string | null;
+}
+
+function revisionTime(revision: HistoricalRunConfigRevision) {
+  const time = new Date(revision.createdAt).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function dynamicNativeRuntimeConfig(runtimeType: string, profile: Record<string, unknown>): Record<string, unknown> {
+  if (runtimeType !== "opencode_local" && runtimeType !== "pi_local") return {};
+  try {
+    const filtered = filterNativeTransportProfile({ ...profile, runtimeType });
+    if (runtimeType === "opencode_local") {
+      return typeof filtered.serverUrl === "string" ? { serverUrl: filtered.serverUrl } : {};
+    }
+    return Array.isArray(filtered.rpcArgs) ? { rpcArgs: [...filtered.rpcArgs] } : {};
+  } catch {
+    return {};
+  }
+}
+
+export function resolveHistoricalRunRuntimeProfile(
+  run: HistoricalRunProfileRun,
+  revisions: readonly HistoricalRunConfigRevision[],
+): HistoricalRunRuntimeProfile {
+  const orderedRevisions = revisions
+    .map((revision) => ({ revision, time: revisionTime(revision) }))
+    .filter((entry): entry is { revision: HistoricalRunConfigRevision; time: number } => entry.time !== null)
+    .sort((left, right) => right.time - left.time)
+    .map((entry) => entry.revision);
+  const runTime = new Date(run.createdAt).getTime();
+  const revisionAtRun = Number.isFinite(runTime)
+    ? orderedRevisions.find((revision) => (revisionTime(revision) ?? Number.POSITIVE_INFINITY) <= runTime) ?? null
+    : null;
+  const selectedRevision = revisionAtRun ?? orderedRevisions.at(-1) ?? null;
+  const snapshot = revisionAtRun?.afterConfig ?? selectedRevision?.beforeConfig ?? null;
+  const snapshotRecord = asRecord(snapshot);
+  const agentRuntimeConfig = recordOrNull(snapshotRecord.agentRuntimeConfig)
+    ?? asRecord(run.agentRuntimeConfig);
+  const runtimeConfig = recordOrNull(snapshotRecord.runtimeConfig)
+    ?? asRecord(run.runtimeConfig);
+  const mergedRuntimeConfig = { ...runtimeConfig, ...agentRuntimeConfig };
+  const runContext = asRecord(run.contextSnapshot);
+  const rawPreparedProfile = asRecord(runContext.runtimeProviderProfile);
+  const preparedProfile = sanitizeRuntimeProviderProfileSnapshot(rawPreparedProfile);
+  const runtimeType = readString(snapshotRecord.agentRuntimeType)
+    ?? readString(run.agentRuntimeType)
+    ?? "process";
+  // Only the server-authored, bounded profile projection is authoritative.
+  // Session payloads never supply commands, environment, or transport paths.
+  if (runtimeType === "opencode_local") {
+    delete mergedRuntimeConfig.serverUrl;
+    delete mergedRuntimeConfig.opencodeServerUrl;
+  }
+  if (runtimeType === "pi_local") {
+    delete mergedRuntimeConfig.rpcArgs;
+  }
+  if (preparedProfile?.runtimeType === runtimeType) {
+    Object.assign(mergedRuntimeConfig, runtimeConfigFromProviderProfileSnapshot(preparedProfile));
+    Object.assign(mergedRuntimeConfig, dynamicNativeRuntimeConfig(runtimeType, rawPreparedProfile ?? {}));
+  }
+  const workspace = asRecord(runContext.rudderWorkspace);
+  const cwd = [
+    preparedProfile?.runtimeType === runtimeType ? preparedProfile.cwd : null,
+    workspace.executionWorkspaceCwd,
+    workspace.cwd,
+    workspace.worktreePath,
+    runContext.executionWorkspaceCwd,
+    runContext.cwd,
+    runContext.worktreePath,
+    mergedRuntimeConfig.cwd,
+  ].map(readString).find((value): value is string => Boolean(value)) ?? null;
+
+  return {
+    agentRuntimeType: runtimeType,
+    runtimeConfig: mergedRuntimeConfig,
+    cwd,
+    agentConfigRevisionId: selectedRevision?.id ?? null,
+    agentConfigRevisionCreatedAt: selectedRevision?.createdAt
+      ? new Date(selectedRevision.createdAt).toISOString()
+      : null,
+  };
+}
+
+export function createHistoricalRunRuntimeProviderCapabilityResolver(
+  run: HistoricalRunProfileRun,
+  revisions: readonly HistoricalRunConfigRevision[],
+): RuntimeProviderCapabilityResolver {
+  const profile = resolveHistoricalRunRuntimeProfile(run, revisions);
+  const resolveProfile = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+    runtimeType: profile.agentRuntimeType,
+    runtimeConfig: profile.runtimeConfig,
+    cwd: profile.cwd,
+    resolutionMode: "historical",
+  });
+
+  return (runtimeType, binding, context) => {
+    if (runtimeType.trim() !== profile.agentRuntimeType) return null;
+    const persistedSessionParams = {
+      ...asRecord(context?.readerInput?.run.sessionParamsBeforeJson),
+      ...asRecord(context?.readerInput?.run.sessionParamsAfterJson),
+    };
+    const session = context?.session;
+    const enrichedContext = session && Object.keys(persistedSessionParams).length > 0
+      ? {
+        ...context,
+        session: {
+          ...session,
+          sessionParams: {
+            ...session.sessionParams,
+            ...persistedSessionParams,
+          },
+        },
+      }
+      : context;
+    return resolveProfile(runtimeType, binding, enrichedContext);
+  };
 }
 
 function resolveBundleForRun(
@@ -421,6 +603,9 @@ async function serializeRunRow(
 
 async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow[]> {
   const conditions = [eq(heartbeatRuns.orgId, input.orgId)];
+  if (input.sideChatOwnerId !== undefined) {
+    conditions.push(sideChatVisibilityCondition(input.sideChatOwnerId));
+  }
   if (input.updatedAfter) conditions.push(gt(heartbeatRuns.updatedAt, input.updatedAfter));
   if (input.createdBefore) conditions.push(lt(heartbeatRuns.createdAt, input.createdBefore));
   if (input.agentId) conditions.push(eq(heartbeatRuns.agentId, input.agentId));
@@ -464,6 +649,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
       goalId: heartbeatRuns.goalId,
       sourceRunId: heartbeatRuns.sourceRunId,
       processPid: heartbeatRuns.processPid,
@@ -490,6 +676,9 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
 
 async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise<SummaryRunRow[]> {
   const conditions = [eq(heartbeatRuns.orgId, input.orgId)];
+  if (input.sideChatOwnerId !== undefined) {
+    conditions.push(sideChatVisibilityCondition(input.sideChatOwnerId));
+  }
   if (input.updatedAfter) conditions.push(gt(heartbeatRuns.updatedAt, input.updatedAfter));
   if (input.createdBefore) conditions.push(lt(heartbeatRuns.createdAt, input.createdBefore));
   if (input.agentId) conditions.push(eq(heartbeatRuns.agentId, input.agentId));
@@ -530,6 +719,7 @@ async function loadSummaryRunRows(db: Db, input: ListRunSummariesInput): Promise
       logStore: heartbeatRuns.logStore,
       logRef: heartbeatRuns.logRef,
       chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
       sourceRunId: heartbeatRuns.sourceRunId,
       contextSnapshot: heartbeatRuns.contextSnapshot,
       createdAt: heartbeatRuns.createdAt,
@@ -646,6 +836,8 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       resultJson: heartbeatRuns.resultJson,
       sessionIdBefore: heartbeatRuns.sessionIdBefore,
       sessionIdAfter: heartbeatRuns.sessionIdAfter,
+      sessionParamsBeforeJson: heartbeatRuns.sessionParamsBeforeJson,
+      sessionParamsAfterJson: heartbeatRuns.sessionParamsAfterJson,
       sessionReuseScope: heartbeatRuns.sessionReuseScope,
       logStore: heartbeatRuns.logStore,
       logRef: heartbeatRuns.logRef,
@@ -657,6 +849,7 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
       sourceRunId: heartbeatRuns.sourceRunId,
       processPid: heartbeatRuns.processPid,
       processStartedAt: heartbeatRuns.processStartedAt,
@@ -697,22 +890,137 @@ async function loadRunEvents(db: Db, runId: string): Promise<HeartbeatRunEvent[]
   }));
 }
 
-async function loadRunLogContent(
-  run: Pick<typeof heartbeatRuns.$inferSelect, "logStore" | "logRef" | "logBytes">,
-) {
-  if (!run.logStore || !run.logRef) return "";
+const TRANSCRIPT_ENTRY_FIELDS: Record<string, readonly string[]> = {
+  assistant: ["text", "delta", "phase", "segmentId"],
+  thinking: ["text", "delta", "segmentId"],
+  user: ["text", "source", "messageId", "controlActionId"],
+  tool_call: ["name", "input", "toolUseId"],
+  tool_result: ["toolUseId", "toolName", "content", "isError"],
+  todo_list: ["todoListId", "items"],
+  init: ["model", "sessionId"],
+  result: ["text", "inputTokens", "outputTokens", "cachedTokens", "costUsd", "subtype", "isError", "errors"],
+  stderr: ["text"],
+  system: ["text"],
+  stdout: ["text"],
+};
+
+const TRANSCRIPT_TEXT_KINDS = new Set(["assistant", "thinking", "user", "result", "stderr", "system", "stdout"]);
+
+function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | null {
+  const entry = item.entry && typeof item.entry === "object" && !Array.isArray(item.entry)
+    ? item.entry as Record<string, unknown>
+    : null;
+  const payload = asRecord(item.payload);
+  const source = entry ?? payload;
+  const projected: Record<string, unknown> = { kind: item.kind, ts: item.ts };
+  const fields = TRANSCRIPT_ENTRY_FIELDS[item.kind] ?? ["text"];
+
+  for (const field of fields) {
+    const value = field === "text" && typeof item.text === "string"
+      ? item.text
+      : source?.[field];
+    if (value !== undefined) projected[field] = value;
+  }
+
+  const sourceEntryId = typeof item.sourceEntryId === "string" && item.sourceEntryId.length > 0
+    ? item.sourceEntryId
+    : source?.sourceEntryId;
+  if (typeof sourceEntryId === "string") projected.sourceEntryId = sourceEntryId;
+
+  // Native items carry useful structured data outside the legacy entry shape.
+  // Keep it nested, without promoting unrelated reader metadata into the entry.
+  if (!entry && item.payload !== undefined) projected.payload = item.payload;
+  if (TRANSCRIPT_TEXT_KINDS.has(item.kind) && typeof projected.text !== "string") return null;
+
+  return projected as unknown as TranscriptEntry;
+}
+
+async function createHistoricalRunTranscriptReader(db: Db, run: RunRow) {
+  const revisionsByAgentId = await loadRevisionsForRuns(db, [run]);
   const logStore = getRunLogStore();
-  const result = await logStore.read(
-    {
-      store: run.logStore as "local_file",
-      logRef: run.logRef,
+  const legacyReader = createLegacyTranscriptReader({ logStore });
+  return createTranscriptReader(db, {
+    nativeReader: createRuntimeNativeTranscriptReaderHook(
+      createHistoricalRunRuntimeProviderCapabilityResolver(
+        run,
+        revisionsByAgentId.get(run.agentId) ?? [],
+      ),
+    ),
+    objectReader: createTranscriptObjectReader(),
+    logStore,
+    legacyReader: {
+      readRun(input) {
+        return legacyReader.readRun({ ...input, runtimeType: run.agentRuntimeType });
+      },
     },
-    {
-      offset: 0,
-      limitBytes: Math.max(256_000, Number(run.logBytes ?? 0) || 256_000),
-    },
-  );
-  return result.content;
+  });
+}
+
+type RunTranscriptRead = { entries: TranscriptEntry[] };
+
+async function loadRunTranscriptFromReader(db: Db, orgId: string, runId: string): Promise<RunTranscriptRead> {
+  const run = await loadRunRowById(db, runId);
+  if (!run || run.orgId !== orgId) return { entries: [] };
+  const reader = await createHistoricalRunTranscriptReader(db, run);
+  const entries: TranscriptEntry[] = [];
+  let cursor: string | null = null;
+  for (let pageCount = 0; pageCount < 100_000; pageCount += 1) {
+    const page = await reader.readRun({
+      orgId,
+      runId,
+      principal: { type: "board", orgId, authorized: true },
+      cursor,
+      limit: 200,
+    });
+    for (const item of page.items) {
+      const entry = transcriptEntryFromReaderItem(item);
+      if (entry) entries.push(entry);
+    }
+    if (!page.nextCursor) return { entries };
+    if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
+    cursor = page.nextCursor;
+  }
+  throw new Error("Transcript reader exceeded the page limit");
+}
+
+export interface ObservedRunTranscriptPageInput {
+  cursor?: string | null;
+  limit?: number;
+  spanId?: string | null;
+  range?: TranscriptRange | null;
+  visibilityCutoffRef?: string | null;
+}
+
+export async function getObservedRunTranscript(
+  db: Db,
+  runId: string,
+  scope: RunIdResolutionScope = {},
+  input: ObservedRunTranscriptPageInput = {},
+): Promise<{ orgId: string; run: RunExportRow; page: TranscriptPage }> {
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) throw notFound("Agent run not found");
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+  const orgId = runAccess.orgId;
+
+  const [run, observedRun] = await Promise.all([
+    loadRunRowById(db, resolvedRunId),
+    getObservedRun(db, resolvedRunId, scope),
+  ]);
+  if (!run || !observedRun) throw notFound("Agent run not found");
+
+  const reader = await createHistoricalRunTranscriptReader(db, run);
+  const page = await reader.readRun({
+    orgId,
+    runId: resolvedRunId,
+    principal: { type: "board", orgId, authorized: true },
+    cursor: input.cursor ?? null,
+    limit: input.limit,
+    spanId: input.spanId ?? null,
+    range: input.range ?? null,
+    visibilityCutoffRef: input.visibilityCutoffRef ?? null,
+  });
+  return { orgId, run: observedRun, page };
 }
 
 export async function listObservedRuns(db: Db, input: ListObservedRunsInput): Promise<RunExportRow[]> {
@@ -812,44 +1120,51 @@ export async function getRunSummary(
   runId: string,
   scope: RunIdResolutionScope = {},
 ): Promise<RunSummary | null> {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) return null;
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) return null;
+  await assertRunIntelligenceAccess(db, runAccess, scope);
   const page = await listRunSummaries(db, {
-    orgId,
+    orgId: runAccess.orgId,
     runIdPrefix: resolvedRunId,
+    sideChatOwnerId: scope.sideChatOwnerId,
     limit: 1,
   });
   return page.items.find((row) => row.id === resolvedRunId) ?? null;
 }
 
-type RunIdResolutionScope = { orgIds?: string[] };
+type RunIdResolutionScope = RunIntelligenceAccessScope;
 
-function assertRunOrgScope(orgId: string, scope: RunIdResolutionScope) {
-  if (scope.orgIds && !scope.orgIds.includes(orgId)) {
-    throw forbidden("User does not have access to this organization");
-  }
-}
+type RunAccessRow = {
+  orgId: string;
+  chatConversationId: string | null;
+  scene: string | null;
+  contextSnapshot: Record<string, unknown> | null;
+};
 
-async function loadRunOrgId(db: Db, runId: string) {
+async function loadRunAccess(db: Db, runId: string): Promise<RunAccessRow | null> {
   return db
-    .select({ orgId: heartbeatRuns.orgId })
+    .select({
+      orgId: heartbeatRuns.orgId,
+      chatConversationId: heartbeatRuns.chatConversationId,
+      scene: heartbeatRuns.scene,
+      contextSnapshot: heartbeatRuns.contextSnapshot,
+    })
     .from(heartbeatRuns)
     .where(eq(heartbeatRuns.id, runId))
     .limit(1)
-    .then((rows) => rows[0]?.orgId ?? null);
+    .then((rows) => rows[0] ?? null);
 }
 
 export async function getObservedRun(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<RunExportRow | null> {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) return null;
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) return null;
+  await assertRunIntelligenceAccess(db, runAccess, scope);
   const row = await loadRunRowById(db, resolvedRunId);
   if (!row) return null;
   const [issueMap, revisionsByAgentId] = await Promise.all([
-    loadIssuesForRuns(db, orgId, [row]),
+    loadIssuesForRuns(db, runAccess.orgId, [row]),
     loadRevisionsForRuns(db, [row]),
   ]);
   return serializeRunRow(row, issueMap, revisionsByAgentId);
@@ -867,10 +1182,11 @@ export async function getObservedRunEvents(
     maxPayloadChars?: number;
   } = {},
 ) {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) throw notFound("Agent run not found");
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) throw notFound("Agent run not found");
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+  const orgId = runAccess.orgId;
   const afterSeq = Math.max(0, Math.floor(input.afterSeq ?? 0));
   const cursor = input.cursor ? decodeRunEventCursor(input.cursor) : null;
   const limit = Math.max(1, Math.min(200, Math.floor(input.limit ?? 200)));
@@ -947,10 +1263,11 @@ export async function getObservedRunLog(
   scope: RunIdResolutionScope = {},
   input: { offset?: number; limitBytes?: number; signal?: AbortSignal } = {},
 ) {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
-  const orgId = await loadRunOrgId(db, resolvedRunId);
-  if (!orgId) throw notFound("Agent run not found");
-  assertRunOrgScope(orgId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) throw notFound("Agent run not found");
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+  const orgId = runAccess.orgId;
   const heartbeat = heartbeatService(db);
   const offset = Math.max(0, Math.floor(input.offset ?? 0));
   const limitBytes = Math.max(4, Math.min(1_000_000, Math.floor(input.limitBytes ?? 256_000)));
@@ -971,22 +1288,27 @@ export async function getObservedRunLog(
 }
 
 export async function getObservedRunDetail(db: Db, runId: string, scope: RunIdResolutionScope = {}): Promise<ObservedRunDetail | null> {
-  const resolvedRunId = await resolveHeartbeatRunIdReference(db, runId, scope);
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
   const observedRun = await getObservedRun(db, resolvedRunId, scope);
   if (!observedRun) return null;
-  const events = await loadRunEvents(db, resolvedRunId);
+  const [events, readerTranscript] = await Promise.all([
+    loadRunEvents(db, resolvedRunId),
+    loadRunTranscriptFromReader(db, observedRun.run.orgId, resolvedRunId)
+      .catch((): RunTranscriptRead => ({ entries: [] })),
+  ]);
 
   const run = { ...observedRun.run, chatConversationId: observedRun.run.chatConversationId ?? null };
-  const logContent = await loadRunLogContent(run).catch(() => "");
-  return observedRunFromFilesystem({
+  const detail = observedRunFromFilesystem({
     run,
     agentName: observedRun.agentName,
     orgName: observedRun.orgName,
     issue: observedRun.issue,
     bundle: observedRun.bundle,
     events,
-    logContent,
+    logContent: null,
+    transcript: readerTranscript.entries.length > 0 ? readerTranscript.entries : undefined,
   });
+  return detail;
 }
 
 export async function diagnoseObservedRun(

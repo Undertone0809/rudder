@@ -52,6 +52,7 @@ export function chatInlineAnnotationService(db: Db) {
     annotations: readonly ChatInlineAnnotationInput[];
     uploadedFileCount: number;
     editUserMessageId?: string | null;
+    requesterUserId?: string | null;
   }): Promise<PreparedChatInlineAnnotations> {
     const annotations = normalizeChatInlineAnnotations(input.annotations);
     const attachmentFileIndexesByAnnotationId = new Map<string, number[]>();
@@ -73,6 +74,7 @@ export function chatInlineAnnotationService(db: Db) {
         annotations,
         uploadedFileCount: input.uploadedFileCount,
         attachmentFileIndexesByAnnotationId,
+        requesterUserId: input.requesterUserId,
       },
     );
     return { annotations, attachmentFileIndexesByAnnotationId };

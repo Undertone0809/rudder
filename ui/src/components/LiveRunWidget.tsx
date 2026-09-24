@@ -12,7 +12,7 @@ import { AgentIdentity } from "./AgentAvatar";
 import { Identity } from "./Identity";
 import { StatusBadge } from "./StatusBadge";
 import { RunTranscriptView } from "./transcript/RunTranscriptView";
-import { useLiveRunTranscripts } from "./transcript/useLiveRunTranscripts";
+import { useAgentRunTranscripts } from "./transcript/useAgentRunTranscripts";
 
 interface LiveRunWidgetProps {
   issueId: string;
@@ -66,6 +66,7 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
         agentRuntimeType: activeRun.agentRuntimeType,
         executionPhase: activeRun.executionPhase,
         issueId,
+        contextSnapshot: activeRun.contextSnapshot,
       });
     }
     return [...deduped.values()].sort(
@@ -73,7 +74,12 @@ export function LiveRunWidget({ issueId, orgId }: LiveRunWidgetProps) {
     );
   }, [activeRun, issueId, liveRuns]);
 
-  const { transcriptByRun, hasOutputForRun } = useLiveRunTranscripts({ runs, orgId });
+  const { transcriptByRun, hasOutputForRun } = useAgentRunTranscripts(
+    runs.map((run) => ({
+      runId: run.id,
+      active: isRunActive(run),
+    })),
+  );
   const hasActiveRun = runs.some(isRunActive);
   const { data: agents } = useQuery({
     queryKey: queryKeys.agents.list(orgId ?? "__none__"),

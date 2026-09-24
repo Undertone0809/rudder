@@ -1,22 +1,27 @@
 import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
 
 export { ensureCursorSkillsInjected, execute } from "./execute.js";
-export { runtimeProviderCapabilities } from "./native-capabilities.js";
 export {
   createCursorLocalProviderCapabilities,
   createCursorLocalProviderCapabilityResolver,
-  resolveCursorLocalProviderCapabilities,
+  CURSOR_NATIVE_TRANSPORT,
   CursorNativeCapabilityError,
+  executeCursorNativeChat,
+  normalizeCursorAcpMcpServers,
+  resolveCursorLocalProviderCapabilities,
+  runtimeProviderCapabilities
 } from "./native-capabilities.js";
 export type {
+  CursorAcpMcpServer,
   CursorCapabilityEvidence,
   CursorLocalProfileTransport,
   CursorLocalProfileTransportResolver,
+  CursorNativeChatRequest,
   CursorNativeTranscriptReadRequest,
-  CursorNativeTranscriptReadResult,
-  CursorProviderBindingRef,
+  CursorNativeTranscriptReadResult, CursorProviderBindingRef,
   CursorProviderSessionRef,
   CursorRuntimeProviderCapabilityAdapter,
+  CursorWorkspaceIdentity
 } from "./native-capabilities.js";
 export { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
 export { listCursorSkills, syncCursorSkills } from "./skills.js";
@@ -31,6 +36,7 @@ const PROVIDER_SESSION_FIELDS = [
   "cursorAcpProtocolVersion",
   "cursorAcpAuthMethodId",
   "cursorProviderVersion",
+  "workspaceBindingId",
 ] as const;
 
 function readNonEmptyString(value: unknown): string | null {

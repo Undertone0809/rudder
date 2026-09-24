@@ -11,8 +11,8 @@ import {
   type TranscriptBuildOptions,
 } from "../../agent-runtimes/transcript";
 import {
-  agentRunsApi,
   AGENT_RUN_TRANSCRIPT_TURN_LIMIT,
+  agentRunsApi,
   type AgentRunTranscriptAvailability,
   type AgentRunTranscriptCompleteness,
   type AgentRunTranscriptResult,
@@ -65,6 +65,55 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function canonicalCursorUpdate(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalCursorUpdate);
+  const record = readRecord(value);
+  if (!record) return value;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [key, canonicalCursorUpdate(record[key])]));
+}
+
+function cursorAcpIdentity(entry: TranscriptEntry): string | null {
+  const item = readRecord(entry);
+  if (typeof item?.kind !== "string" || !item.kind.startsWith("cursor:acp:")) return null;
+  const payload = readRecord(item.payload);
+  const update = readRecord(payload?.update);
+  if (payload?.provider !== "cursor_agent" || payload.transport !== "cursor-agent-acp-stdio"
+    || payload.method !== "session/update" || typeof payload.sessionId !== "string"
+    || update?.sessionUpdate !== item.kind.slice("cursor:acp:".length)) return null;
+  return `cursor-acp:${payload.sessionId}:${JSON.stringify(canonicalCursorUpdate(update))}`;
+}
+
+function cursorAcpLiveEntry(chunk: string, ts: string): TranscriptEntry | null {
+  let event: unknown;
+  try {
+    event = JSON.parse(chunk.trim());
+  } catch {
+    return null;
+  }
+  const record = readRecord(event);
+  if (record?.method !== "session/update") return null;
+  const params = readRecord(record.params);
+  const update = readRecord(params?.update);
+  const sessionId = readString(params?.sessionId);
+  const updateKind = readString(update?.sessionUpdate);
+  if (!sessionId || !updateKind || ![
+    "agent_message_chunk", "agent_message", "agent_thought_chunk", "agent_thought",
+    "user_message_chunk", "user_message", "tool_call", "tool_call_update", "plan",
+  ].includes(updateKind)) return null;
+  const content = readRecord(update?.content);
+  // Live logs have no Reader-verified identity. Leave sourceEntryId absent so
+  // a provisional chunk cannot produce an annotation anchor.
+  return {
+    kind: `cursor:acp:${updateKind}`,
+    ts,
+    payload: {
+      provider: "cursor_agent", transport: "cursor-agent-acp-stdio",
+      method: "session/update", sessionId, update,
+    },
+    ...(typeof content?.text === "string" ? { text: content.text } : {}),
+  } as unknown as TranscriptEntry;
+}
+
 function transcriptEntryKey(entry: TranscriptEntry): string {
   if (typeof entry.sourceEntryId === "string" && entry.sourceEntryId.length > 0) {
     return `source:${entry.sourceEntryId}`;
@@ -109,20 +158,36 @@ function transcriptResultFromPage(page: Awaited<ReturnType<typeof agentRunsApi.t
 }
 
 function mergeTranscriptEntriesUnique(...groups: TranscriptEntry[][]): TranscriptEntry[] {
-  const entriesByKey = new Map<string, TranscriptEntry>();
+  type PositionedEntry = { entry: TranscriptEntry; order: number };
+  const entriesByKey = new Map<string, PositionedEntry>();
+  const cursorEntries = new Map<string, { live: PositionedEntry[]; replay: PositionedEntry[] }>();
+  let order = 0;
   for (const group of groups) {
     for (const entry of group) {
-      entriesByKey.set(transcriptEntryKey(entry), entry);
+      const positioned = { entry, order: order++ };
+      const cursorKey = cursorAcpIdentity(entry);
+      if (cursorKey) {
+        const matched = cursorEntries.get(cursorKey) ?? { live: [], replay: [] };
+        matched[entry.sourceEntryId?.startsWith("acp:") ? "replay" : "live"].push(positioned);
+        cursorEntries.set(cursorKey, matched);
+        continue;
+      }
+      entriesByKey.set(transcriptEntryKey(entry), positioned);
     }
   }
-  return [...entriesByKey.values()].sort((left, right) => {
-    const leftTime = Date.parse(left.ts);
-    const rightTime = Date.parse(right.ts);
+  const merged = [...entriesByKey.values()];
+  for (const { live, replay } of cursorEntries.values()) {
+    merged.push(...replay.map((item, index) => ({ ...item, order: live[index]?.order ?? item.order })),
+      ...live.slice(replay.length));
+  }
+  return merged.sort((left, right) => {
+    const leftTime = Date.parse(left.entry.ts);
+    const rightTime = Date.parse(right.entry.ts);
     if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
       return leftTime - rightTime;
     }
-    return 0;
-  });
+    return left.order - right.order;
+  }).map(({ entry }) => entry);
 }
 
 function unavailableTranscriptError(availability: AgentRunTranscriptAvailability): Error | null {
@@ -398,11 +463,21 @@ export function useLiveRunTranscripts({
             : readString(payload["stream"]) === "system"
               ? "system"
               : "stdout";
+        const cursorEntry = stream === "stdout" && runById.get(runId)?.agentRuntimeType === "cursor"
+          ? cursorAcpLiveEntry(chunk, ts)
+          : null;
+        if (cursorEntry) {
+          appendChunks(runId, [{
+            type: "entry", entry: cursorEntry, source: "live",
+            dedupeKey: `log:${runId}:id:${event.id}:${event.createdAt}`,
+          }]);
+          return;
+        }
         appendChunks(runId, [{
           type: "log",
           chunk: { ts, stream, chunk },
           source: "live",
-          dedupeKey: `log:${runId}:${ts}:${stream}:${chunk}`,
+          dedupeKey: `log:${runId}:id:${event.id}:${event.createdAt}`,
         }]);
         return;
       }
@@ -413,13 +488,21 @@ export function useLiveRunTranscripts({
         const messageText = readString(payload["message"]) ?? eventType;
         const eventId = readEventId(event.id);
         const eventPayload = readRecord(payload["payload"]);
-        const nativeEntry = readRecord(eventPayload?.entry);
+        const nestedEntry = readRecord(eventPayload?.entry);
+        const nativeEntry = nestedEntry ?? (
+          typeof eventPayload?.kind === "string" && eventPayload.kind.startsWith("cursor:acp:")
+            ? eventPayload : null
+        );
+        const nativeCursorEntry = typeof nativeEntry?.kind === "string"
+          && nativeEntry.kind.startsWith("cursor:acp:");
+        const nativeFields = nativeEntry ? { ...nativeEntry } : null;
+        if (nativeCursorEntry && nativeFields) delete nativeFields.sourceEntryId;
         const transcriptEntry = nativeEntry
           && typeof nativeEntry.kind === "string"
           && typeof nativeEntry.ts === "string"
           ? {
-            ...nativeEntry as TranscriptEntry,
-            ...(eventId ? { sourceEntryId: eventId } : {}),
+            ...nativeFields as TranscriptEntry,
+            ...(!nativeCursorEntry && eventId ? { sourceEntryId: eventId } : {}),
           }
           : heartbeatRunEventTranscriptEntry({
           id: typeof event.id === "number" ? event.id : 0,

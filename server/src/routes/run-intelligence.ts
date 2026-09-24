@@ -1,13 +1,14 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import type { Db } from "@rudderhq/db";
+import { heartbeatRuns, nativeSegments, runRuntimeSpans, type Db } from "@rudderhq/db";
 import {
   buildObservedRunTrace,
   type ObservedRunDetail,
   type ObservedRunStep,
 } from "@rudderhq/run-intelligence-core";
 import { shortRefFor, toAgentRunOrigin, type RunInspectionHeader } from "@rudderhq/shared";
+import { and, eq, sql } from "drizzle-orm";
 import { Router, type Request } from "express";
-import { badRequest, notFound } from "../errors.js";
+import { badRequest, conflict, notFound } from "../errors.js";
 import { logActivity } from "../services/activity-log.js";
 import { formatShortRunId } from "../services/heartbeat-run-reference.js";
 import {
@@ -23,8 +24,12 @@ import {
 import {
   listNativeForkIntents,
   NativeForkIntentError,
+  nativeForkIntentKey,
+  readNativeForkIntent,
   reconcileNativeForkIntentById,
   type NativeForkIntentChild,
+  type NativeForkIntentRecord,
+  type NativeForkIntentRunFence,
   type NativeForkIntentStatus,
 } from "../services/runtime-kernel/native-fork-intent.js";
 import type { TranscriptItem } from "../services/runtime-kernel/transcript-reader.js";
@@ -82,6 +87,52 @@ function parseStepStableId(value: string | null) {
   if (!value) return null;
   const match = /^step-(\d+)$/.exec(value.trim());
   return match ? Number(match[1]) : null;
+}
+
+type TranscriptProjectionCursor = {
+  version: 1;
+  kind: "run_transcript_projection";
+  runId: string;
+  orgId: string;
+  sourceCursor: string | null;
+  source: string;
+  revision: string;
+  order: "oldest" | "newest";
+  errorsOnly: boolean;
+  aroundError: string | null;
+  contextTurns: number;
+  turnLimit: number;
+  offset: number;
+};
+
+const MAX_TRANSCRIPT_PROJECTION_ITEMS = 50_000;
+const MAX_TRANSCRIPT_PROJECTION_BYTES = 32 * 1024 * 1024;
+const MAX_TRANSCRIPT_PROJECTION_READ_MS = 10_000;
+
+function encodeTranscriptProjectionCursor(input: TranscriptProjectionCursor): string {
+  return Buffer.from(JSON.stringify(input), "utf8").toString("base64url");
+}
+
+function decodeTranscriptProjectionCursor(value: string | null): TranscriptProjectionCursor | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<TranscriptProjectionCursor>;
+    if (parsed.version !== 1 || parsed.kind !== "run_transcript_projection"
+      || typeof parsed.runId !== "string" || typeof parsed.orgId !== "string"
+      || (parsed.sourceCursor !== null && typeof parsed.sourceCursor !== "string")
+      || typeof parsed.source !== "string" || typeof parsed.revision !== "string"
+      || (parsed.order !== "oldest" && parsed.order !== "newest")
+      || typeof parsed.errorsOnly !== "boolean"
+      || (parsed.aroundError !== null && typeof parsed.aroundError !== "string")
+      || !Number.isSafeInteger(parsed.contextTurns) || (parsed.contextTurns ?? 0) < 1
+      || !Number.isSafeInteger(parsed.turnLimit) || (parsed.turnLimit ?? 0) < 1
+      || !Number.isSafeInteger(parsed.offset) || (parsed.offset ?? -1) < 0) {
+      return null;
+    }
+    return parsed as TranscriptProjectionCursor;
+  } catch {
+    return null;
+  }
 }
 
 function fullText(value: string) {
@@ -144,6 +195,92 @@ function parseNativeForkChild(value: unknown): NativeForkIntentChild {
   };
 }
 
+async function currentNativeForkIntentRunFence(db: Db, orgId: string, intentId: string) {
+  const target = await db
+    .select({
+      segmentId: nativeSegments.id,
+      bindingId: nativeSegments.bindingId,
+      providerStateJson: nativeSegments.providerStateJson,
+    })
+    .from(nativeSegments)
+    .where(and(
+      eq(nativeSegments.orgId, orgId),
+      sql`${nativeSegments.providerStateJson} -> ${nativeForkIntentKey()} ->> 'intentId' = ${intentId}`,
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (!target) return undefined;
+
+  let intent: NativeForkIntentRecord | null;
+  try {
+    intent = readNativeForkIntent(target.providerStateJson);
+  } catch (error) {
+    if (error instanceof NativeForkIntentError) {
+      throw badRequest(error.message, { code: error.code });
+    }
+    throw error;
+  }
+  if (!intent) return undefined;
+  const storedFence = intent.runFence;
+  if (!storedFence) return undefined;
+  if (intent.intentId !== intentId
+    || intent.target.orgId !== orgId
+    || intent.target.bindingId !== target.bindingId
+    || intent.target.segmentId !== target.segmentId) {
+    throw conflict("Native fork intent target identity is inconsistent", { code: "run_fence_stale" });
+  }
+
+  const active = await db
+    .select({
+      runId: heartbeatRuns.id,
+      runStatus: heartbeatRuns.status,
+      ownerToken: heartbeatRuns.executionOwnerToken,
+      leaseExpiresAt: heartbeatRuns.executionLeaseExpiresAt,
+      spanId: runRuntimeSpans.id,
+      spanOwnerToken: runRuntimeSpans.ownerToken,
+      attemptEpoch: runRuntimeSpans.attemptEpoch,
+      spanState: runRuntimeSpans.state,
+    })
+    .from(runRuntimeSpans)
+    .innerJoin(heartbeatRuns, and(
+      eq(heartbeatRuns.id, runRuntimeSpans.runId),
+      eq(heartbeatRuns.orgId, runRuntimeSpans.orgId),
+    ))
+    .where(and(
+      eq(heartbeatRuns.id, storedFence.runId),
+      eq(heartbeatRuns.orgId, orgId),
+      eq(heartbeatRuns.status, "running"),
+      eq(runRuntimeSpans.id, storedFence.spanId),
+      eq(runRuntimeSpans.orgId, orgId),
+      eq(runRuntimeSpans.runId, storedFence.runId),
+      eq(runRuntimeSpans.bindingId, target.bindingId),
+      eq(runRuntimeSpans.segmentId, target.segmentId),
+      eq(runRuntimeSpans.state, "open"),
+      eq(heartbeatRuns.executionOwnerToken, runRuntimeSpans.ownerToken),
+    ))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+
+  if (!active
+    || active.runId !== storedFence.runId
+    || active.runStatus !== "running"
+    || active.spanId !== storedFence.spanId
+    || active.spanState !== "open"
+    || !active.ownerToken
+    || active.ownerToken !== active.spanOwnerToken
+    || (active.leaseExpiresAt && active.leaseExpiresAt.getTime() <= Date.now())) {
+    throw conflict("Native fork intent has no current active Run owner fence", { code: "run_fence_stale" });
+  }
+
+  const runFence: NativeForkIntentRunFence = {
+    runId: active.runId,
+    spanId: active.spanId,
+    ownerToken: active.ownerToken,
+    attemptEpoch: active.attemptEpoch,
+  };
+  return runFence;
+}
+
 function compactTranscriptRow(step: ObservedRunStep, maxChars: number, includeOutput: boolean) {
   return {
     id: stepStableId(step),
@@ -169,13 +306,23 @@ function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | 
     ?? (typeof payload.kind === "string" && typeof payload.ts === "string"
       ? payload
       : { ...payload, kind: item.kind, ts: item.ts });
-  if (typeof candidate.kind !== "string" || typeof candidate.ts !== "string") return null;
+  const candidateRecord = candidate as Record<string, unknown>;
+  const sourceKind = typeof candidateRecord.kind === "string" ? candidateRecord.kind : item.kind;
+  const kind = sourceKind === "hermes:db:assistant"
+    ? "assistant"
+    : sourceKind === "hermes:db:user" ? "user" : sourceKind;
+  const ts = typeof candidateRecord.ts === "string" ? candidateRecord.ts : item.ts;
+  const text = typeof candidateRecord.text === "string" ? candidateRecord.text : item.text;
+  if (typeof kind !== "string" || typeof ts !== "string") return null;
   return {
-    ...(candidate as TranscriptEntry),
-    ...(item.sourceEntryId && typeof (candidate as Record<string, unknown>).sourceEntryId !== "string"
+    ...candidateRecord,
+    kind,
+    ts,
+    ...(typeof text === "string" ? { text } : {}),
+    ...(item.sourceEntryId && typeof candidateRecord.sourceEntryId !== "string"
       ? { sourceEntryId: item.sourceEntryId }
       : {}),
-  };
+  } as TranscriptEntry;
 }
 
 function compactRunHeader(run: ObservedRunDetail["run"]): RunInspectionHeader {
@@ -226,6 +373,105 @@ function limitRowsByJsonBytes<Row>(rows: Row[], maxBytes: number) {
     bytes += rowBytes;
   }
   return included;
+}
+
+function filterTranscriptSteps(
+  steps: ObservedRunStep[],
+  input: { errorsOnly: boolean; aroundError: string | null; contextTurns: number },
+) {
+  let rows = steps;
+  if (input.errorsOnly) rows = rows.filter((step) => step.isError);
+
+  const targetIndex = parseStepStableId(input.aroundError);
+  if (!targetIndex) return rows;
+
+  const target = steps.find((step) => step.index === targetIndex);
+  if (!target) return [];
+
+  if (target.turnIndex !== null) {
+    const minTurn = target.turnIndex - input.contextTurns;
+    const maxTurn = target.turnIndex + input.contextTurns;
+    return rows.filter((step) =>
+      step.turnIndex !== null
+        ? step.turnIndex >= minTurn && step.turnIndex <= maxTurn
+        : Math.abs(step.index - target.index) <= input.contextTurns,
+    );
+  }
+
+  return rows.filter((step) => Math.abs(step.index - target.index) <= input.contextTurns);
+}
+
+function paginateTranscriptEntries(
+  orderedEntries: Array<{ item: TranscriptItem; entry: TranscriptEntry; step: ObservedRunStep }>,
+  input: { offset: number; turnLimit: number },
+) {
+  const available = orderedEntries.slice(input.offset);
+  const rows: ObservedRunStep[] = [];
+  const entries: Array<{ item: TranscriptItem; entry: TranscriptEntry; step: ObservedRunStep }> = [];
+  const seenTurnKeys = new Set<string>();
+  for (const entry of available) {
+    const turnKey = entry.step.turnIndex === null ? `step-${entry.step.index}` : `turn-${entry.step.turnIndex}`;
+    if (!seenTurnKeys.has(turnKey) && seenTurnKeys.size >= input.turnLimit) break;
+    seenTurnKeys.add(turnKey);
+    rows.push(entry.step);
+    entries.push(entry);
+  }
+  const hasMore = rows.length < available.length;
+  return {
+    rows: entries,
+    page: {
+      offset: input.offset,
+      nextOffset: hasMore ? input.offset + entries.length : null,
+      hasMore,
+      turnLimit: input.turnLimit,
+      returnedSteps: entries.length,
+      totalFilteredSteps: orderedEntries.length,
+    },
+  };
+}
+
+async function readTranscriptPages(
+  db: Db,
+  runId: string,
+  scope: ReturnType<typeof runIntelligenceScope>,
+  input: { cursor: string | null },
+) {
+  let readerCursor = input.cursor;
+  let result: Awaited<ReturnType<typeof getObservedRunTranscript>> | null = null;
+  const entries: Array<{ item: TranscriptItem; entry: TranscriptEntry; sourceIndex: number }> = [];
+  let sourceIndex = 0;
+  let sourceBytes = 0;
+  const startedAt = Date.now();
+
+  for (let pageCount = 0; pageCount < 2_000; pageCount += 1) {
+    if (Date.now() - startedAt > MAX_TRANSCRIPT_PROJECTION_READ_MS) {
+      throw badRequest("Transcript projection exceeded its bounded read time");
+    }
+    const pageResult = await getObservedRunTranscript(db, runId, scope, {
+      cursor: readerCursor,
+      limit: 200,
+    });
+    result = pageResult;
+    for (const item of pageResult.page.items) {
+      const entry = transcriptEntryFromReaderItem(item);
+      if (!entry) continue;
+      const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8");
+      if (entries.length >= MAX_TRANSCRIPT_PROJECTION_ITEMS
+        || sourceBytes + itemBytes > MAX_TRANSCRIPT_PROJECTION_BYTES) {
+        throw badRequest("Transcript projection exceeded its bounded source size");
+      }
+      sourceBytes += itemBytes;
+      entries.push({ item, entry, sourceIndex: sourceIndex++ });
+    }
+    const nextCursor = pageResult.page.nextCursor;
+    if (!nextCursor) {
+      return { result, entries };
+    }
+    if (nextCursor === readerCursor) throw new Error("Transcript reader cursor made no progress");
+    readerCursor = nextCursor;
+  }
+
+  throw new Error("Transcript reader exceeded the route page limit");
 }
 
 function buildRunErrors(detail: ObservedRunDetail, maxChars: number) {
@@ -341,11 +587,21 @@ export function runIntelligenceRoutes(db: Db) {
       ? null
       : requiredBodyString(body.note, "note", 2_000);
     const child = parseNativeForkChild(body?.child);
+    const runFence = await currentNativeForkIntentRunFence(db, orgId, intentId);
     let result: Awaited<ReturnType<typeof reconcileNativeForkIntentById>>;
     try {
-      result = await reconcileNativeForkIntentById(db, { orgId, intentId, child, note });
+      result = await reconcileNativeForkIntentById(db, {
+        orgId,
+        intentId,
+        child,
+        note,
+        ...(runFence ? { runFence } : {}),
+      });
     } catch (error) {
       if (error instanceof NativeForkIntentError) {
+        if (error.code === "run_fence_stale") {
+          throw conflict(error.message, { code: error.code });
+        }
         throw badRequest(error.message, { code: error.code });
       }
       throw error;
@@ -434,31 +690,53 @@ export function runIntelligenceRoutes(db: Db) {
     const order = req.query.order === "oldest" || req.query.order === "chronological"
       ? "oldest"
       : "newest";
-    const legacyCursorIndex = parseStepStableId(cursor);
-    const pageResult = await getObservedRunTranscript(db, runId, scope, {
-      cursor: legacyCursorIndex === null ? cursor : null,
-      limit: turnLimit,
-      // Legacy step ids are one-based while Reader numeric ranges are
-      // zero-based source positions.
-      range: legacyCursorIndex === null ? null : { fromExclusive: Math.max(0, legacyCursorIndex - 1) },
-    });
-    assertCompanyAccess(req, pageResult.orgId);
+    const aroundError = asString(req.query.aroundError);
+    const errorsOnly = asBoolean(req.query.errorsOnly);
+    const projectionCursor = decodeTranscriptProjectionCursor(cursor);
+    const legacyCursorIndex = projectionCursor ? null : parseStepStableId(cursor);
+    if (projectionCursor) {
+      if (projectionCursor.runId !== runId
+        || projectionCursor.order !== order
+        || projectionCursor.errorsOnly !== errorsOnly
+        || projectionCursor.aroundError !== aroundError
+        || projectionCursor.contextTurns !== contextTurns
+        || projectionCursor.turnLimit !== turnLimit) {
+        throw badRequest("Transcript cursor does not belong to this projection");
+      }
+    }
 
-    const chronologicalReaderEntries = pageResult.page.items
-      .map((item) => ({ item, entry: transcriptEntryFromReaderItem(item) }))
-      .filter((value): value is { item: TranscriptItem; entry: TranscriptEntry } => Boolean(value.entry));
+    // Always read through the shared Transcript Reader. The route cursor is a
+    // bounded projection cursor that retains the reader's opaque source cursor
+    // instead of replacing it with a synthetic step-N position.
+    const scanned = await readTranscriptPages(db, runId, scope, {
+      cursor: projectionCursor?.sourceCursor ?? (legacyCursorIndex === null ? cursor : null),
+    });
+    const pageResult = scanned.result;
+    if (!pageResult) throw notFound("Agent run transcript not found");
+    let chronologicalReaderEntries = scanned.entries;
+    assertCompanyAccess(req, pageResult.orgId);
+    if (projectionCursor
+      && (projectionCursor.orgId !== pageResult.orgId
+        || projectionCursor.source !== pageResult.page.source
+        || projectionCursor.revision !== pageResult.page.revision)) {
+      throw badRequest("Transcript cursor source or revision is no longer current");
+    }
+
     const chronologicalTrace = buildObservedRunTrace(chronologicalReaderEntries.map((value) => value.entry));
     const stableTraceSteps = chronologicalTrace.steps.map((step, index) => ({
       ...step,
-      index: (chronologicalReaderEntries[index]?.item.sequence ?? (step.index - 1)) + 1,
+      index: (chronologicalReaderEntries[index]?.sourceIndex ?? index) + 1,
     }));
-    const aroundError = asString(req.query.aroundError);
+    const indexedReaderEntries = chronologicalReaderEntries.map((value, index) => ({
+      ...value,
+      step: stableTraceSteps[index]!,
+    }));
     const targetIndex = parseStepStableId(aroundError);
     const targetTurn = targetIndex === null
       ? null
       : stableTraceSteps.find((step) => step.index === targetIndex)?.turnIndex ?? null;
-    const filteredReaderEntries = chronologicalReaderEntries.filter(({ entry, item }, index) => {
-      if (asBoolean(req.query.errorsOnly)) {
+    let filteredReaderEntries = indexedReaderEntries.filter(({ entry, item, step }) => {
+      if (errorsOnly) {
         const isError = entry.kind === "stderr"
           || (entry.kind === "tool_result" && entry.isError)
           || (entry.kind === "result" && entry.isError);
@@ -466,37 +744,52 @@ export function runIntelligenceRoutes(db: Db) {
       }
       if (!aroundError) return true;
       if (targetIndex === null) return item.id === aroundError;
-      if (targetTurn !== null && stableTraceSteps[index]?.turnIndex === targetTurn) return true;
-      return Math.abs((stableTraceSteps[index]?.index ?? index + 1) - targetIndex) <= contextTurns;
+      if (targetTurn !== null && step.turnIndex === targetTurn) return true;
+      return Math.abs(step.index - targetIndex) <= contextTurns;
     });
+
+    // `step-N` is retained as a legacy input only. In chronological order it
+    // means "after N"; in newest order it means "older than N".
+    if (legacyCursorIndex !== null) {
+      filteredReaderEntries = filteredReaderEntries.filter(({ step }) => order === "newest"
+        ? step.index < legacyCursorIndex
+        : step.index > legacyCursorIndex);
+    }
+
     const filteredTrace = buildObservedRunTrace(filteredReaderEntries.map((value) => value.entry));
     const displayReaderEntries = order === "newest" ? [...filteredReaderEntries].reverse() : filteredReaderEntries;
-    const displayTraceSteps = order === "newest" ? [...filteredTrace.steps].reverse() : filteredTrace.steps;
-    const allRows = displayReaderEntries.map(({ item, entry }, index) => {
-      const step = displayTraceSteps[index];
-      if (!step) return {
-        id: item.id,
-        index: item.sequence ?? index + 1,
-        turnIndex: null,
-        kind: item.kind,
-        ts: item.ts,
-        label: item.kind,
-        preview: "text" in entry ? entry.text : "",
-        detailPreview: "text" in entry ? entry.text : "",
-        isError: false,
-        isPayloadEntry: false,
-        isModelEntry: false,
-        output: includeOutputs ? fullText("text" in entry ? entry.text : "") : null,
-      };
-      return {
-        ...compactTranscriptRow(step, maxChars, includeOutputs),
-        id: item.id,
-        index: item.sequence ?? step.index,
-      };
+    const projectionOffset = projectionCursor?.offset ?? 0;
+    const paged = paginateTranscriptEntries(displayReaderEntries, {
+      offset: projectionOffset,
+      turnLimit,
     });
+    const allRows = paged.rows.map(({ item, step }) => ({
+      ...compactTranscriptRow(step, maxChars, includeOutputs),
+      id: stepStableId(step),
+      index: step.index,
+      sourceEntryId: item.sourceEntryId ?? item.id,
+    }));
     const rows = outputMode === "full" ? allRows : limitRowsByJsonBytes(allRows, 400_000);
-    const responseHasMore = Boolean(pageResult.page.nextCursor) || rows.length < allRows.length;
-    const responseItems = displayReaderEntries.slice(0, rows.length);
+    const responseItems = paged.rows.slice(0, rows.length);
+    const responseHasMore = paged.page.hasMore || rows.length < allRows.length;
+    const nextProjectionOffset = projectionOffset + responseItems.length;
+    const nextCursor = responseHasMore
+      ? encodeTranscriptProjectionCursor({
+        version: 1,
+        kind: "run_transcript_projection",
+        runId,
+        orgId: pageResult.orgId,
+        sourceCursor: projectionCursor?.sourceCursor ?? (legacyCursorIndex === null ? cursor : null),
+        source: pageResult.page.source,
+        revision: pageResult.page.revision,
+        order,
+        errorsOnly,
+        aroundError,
+        contextTurns,
+        turnLimit,
+        offset: nextProjectionOffset,
+      })
+      : null;
 
     res.json({
       run: outputMode === "full" ? pageResult.run.run : compactRunHeader(pageResult.run.run),
@@ -508,21 +801,22 @@ export function runIntelligenceRoutes(db: Db) {
       page: {
         cursor,
         hasMore: responseHasMore,
-        nextCursor: pageResult.page.nextCursor,
+        nextCursor,
         turnLimit,
         returnedSteps: rows.length,
-        totalFilteredSteps: rows.length,
+        totalFilteredSteps: filteredReaderEntries.length,
         order,
       },
       rows,
       ...(outputMode === "full"
         ? {
-          entries: responseItems.map(({ item, entry }, index) => ({
-            id: item.id,
-            index: item.sequence ?? index + 1,
-            turnIndex: displayTraceSteps[index]?.turnIndex ?? null,
+          entries: responseItems.map(({ item, entry, step }) => ({
+            id: stepStableId(step),
+            index: step.index,
+            turnIndex: step.turnIndex,
             entry,
-            output: fullText(displayTraceSteps[index]?.detailText ?? ""),
+            sourceEntryId: item.sourceEntryId ?? item.id,
+            output: fullText(step.detailText),
           })),
         }
         : {}),

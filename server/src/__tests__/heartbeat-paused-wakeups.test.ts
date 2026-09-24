@@ -12,8 +12,11 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
+  nativeSegments,
   organizationSkills,
   organizations,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
@@ -136,6 +139,9 @@ describe("heartbeat paused wakeups", () => {
         await db.delete(agentWakeupRequests);
         await db.delete(agentTaskSessions);
         await db.delete(agentRuntimeState);
+        await db.delete(runRuntimeSpans);
+        await db.delete(nativeSegments);
+        await db.delete(runtimeBindings);
         await db.delete(organizationSkills);
         await db.delete(goals);
         await db.delete(agents);

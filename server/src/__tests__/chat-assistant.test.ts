@@ -1,9 +1,15 @@
+import type { AgentRuntimeExecutionContext, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { ChatAttachment, ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NATIVE_CHAT_RUNTIME_TYPES } from "../services/runtime-kernel/runtime-driver.js";
+
+vi.mock("../agent-runtimes/prepare-runtime-provider-profile.js", () => ({
+  prepareRuntimeProviderProfile: async ({ config }: { config: Record<string, unknown> }) => config,
+}));
 
 const mockAdapter = vi.hoisted(() => ({
   type: "codex_local",
@@ -87,6 +93,10 @@ const mockAdapter = vi.hoisted(() => ({
 }));
 
 const mockFindServerAdapter = vi.hoisted(() => vi.fn(() => mockAdapter));
+const mockGetRuntimeDriver = vi.hoisted(() => vi.fn(() => null));
+const mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig = vi.hoisted(
+  () => vi.fn(() => () => null),
+);
 
 const mockAgentService = vi.hoisted(() => ({
   getInternalById: vi.fn(),
@@ -101,13 +111,64 @@ const mockRunContextService = vi.hoisted(() => ({
 
 const mockChatAgentRuns = vi.hoisted(() => ({
   createRun: vi.fn(),
+  adoptRecoveredRun: vi.fn(),
+  beginOwnedRunExecution: vi.fn(),
+  beginRuntimeAttempt: vi.fn(),
+  recordNativeExecutionResult: vi.fn(),
+  markRuntimeAttemptWaiting: vi.fn(),
+  finishRuntimeAttempt: vi.fn(),
+  markWaitingForNetwork: vi.fn(),
   appendAdapterInvoke: vi.fn(),
   appendTranscriptEntry: vi.fn(),
+  markLegacyTranscriptSource: vi.fn(),
   finalizeRun: vi.fn(),
+}));
+
+const mockRuntimeBinding = vi.hoisted(() => ({
+  id: "binding-1",
+  orgId: "organization-1",
+  conversationId: "chat-1",
+  principalScopeRef: "org:organization-1",
+  agentId: "agent-1",
+  runtimeType: "codex_local",
+  hostId: "local",
+  profileId: "default",
+  workspaceBindingId: null,
+  instructionsRevision: "instructions",
+  capabilityRevision: "capability",
+  continuity: "native" as const,
+  parentBindingId: null,
+  sourceBoundaryRef: null,
+  bindingEpoch: 0,
+  currentSegmentId: "segment-1",
+  status: "active" as const,
+  createdAt: new Date("2026-03-29T08:00:00.000Z"),
+  updatedAt: new Date("2026-03-29T08:00:00.000Z"),
+}));
+
+const mockRuntimeSegment = vi.hoisted(() => ({
+  id: "segment-1",
+  orgId: "organization-1",
+  bindingId: "binding-1",
+  runtimeType: "codex_local",
+  segmentOrdinal: 0,
+  nativeSessionId: null,
+  rootSessionId: null,
+  parentSegmentId: null,
+  leafId: null,
+  providerStateJson: null,
+  sourceBoundaryRef: null,
+  state: "pending" as const,
+  createdAt: new Date("2026-03-29T08:00:00.000Z"),
+  sealedAt: null,
+  updatedAt: new Date("2026-03-29T08:00:00.000Z"),
 }));
 
 vi.mock("../agent-runtimes/index.js", () => ({
   findServerAdapter: mockFindServerAdapter,
+  getRuntimeDriver: mockGetRuntimeDriver,
+  createProfileBoundRuntimeProviderCapabilityResolverFromConfig:
+    mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig,
 }));
 
 vi.mock("../services/agents.js", () => ({
@@ -122,7 +183,20 @@ vi.mock("../services/chat-agent-runs.js", () => ({
   chatAgentRunService: () => mockChatAgentRuns,
 }));
 
-const { chatAssistantService } = await import("../services/chat-assistant.js");
+vi.mock("../services/runtime-kernel/native-session.js", () => ({
+  currentNativeSession: vi.fn(async () => ({
+    binding: mockRuntimeBinding,
+    segment: mockRuntimeSegment,
+    sessionId: null,
+    sessionParams: null,
+    sessionDisplayId: null,
+  })),
+  ensureRuntimeBinding: vi.fn(async () => mockRuntimeBinding),
+  revisionForRuntimeConfig: vi.fn(() => "capability"),
+}));
+
+const { chatAssistantService: createChatAssistantService } = await import("../services/chat-assistant.js");
+const { MAX_CHAT_ASSISTANT_STDOUT_LINE_BYTES } = await import("../services/chat-assistant.stdout-buffer.js");
 const {
   buildAutomationRunInputPromptSection,
   ChatAssistantStreamError,
@@ -131,6 +205,18 @@ const {
 const {
   userImageContentPathsFromMessages,
 } = await import("../services/chat-assistant.proposal-validation.js");
+
+const chatTestSelection = {
+  from: vi.fn(() => chatTestSelection),
+  where: vi.fn(() => chatTestSelection),
+  orderBy: vi.fn(() => chatTestSelection),
+  limit: vi.fn(async () => []),
+};
+const chatTestDb = {
+  select: vi.fn(() => chatTestSelection),
+};
+const chatAssistantService = (db: unknown, storage?: unknown) =>
+  createChatAssistantService(chatTestDb as any, storage as any);
 
 let currentAgentHome = "";
 const cleanupDirs = new Set<string>();
@@ -343,12 +429,78 @@ function sentinelFromContext(ctx: { context?: Record<string, unknown> }) {
   return prompt.match(/(__RUDDER_RESULT_[a-f0-9-]+__)/i)?.[1] ?? "__RUDDER_RESULT_TEST__";
 }
 
+function combinedChatRuntimePrompt(context: Record<string, unknown> | undefined) {
+  const codexPrompt = context?.rudderCodexChatPrompt;
+  const developerInstructions = codexPrompt && typeof codexPrompt === "object" && !Array.isArray(codexPrompt)
+    ? (codexPrompt as Record<string, unknown>).developerInstructions
+    : null;
+  const turnInput = context?.chatPrompt;
+  return [developerInstructions, turnInput]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .join("\n\n");
+}
+
 function assistantSummary(ctx: { context?: Record<string, unknown> }, body: string) {
   return `${sentinelFromContext(ctx)}${JSON.stringify({
     kind: "message",
     body,
     structuredPayload: null,
   })}`;
+}
+
+function createChatTestRuntimeDriver(options: any) {
+  const adapter = options.adapter;
+  return {
+    capabilities: { fork: { status: "unsupported", reason: "Chat unit fixture has no native fork." } },
+    ensureSession: async (intent: any) => {
+      const binding = await options.sessionBindingOwner.ensureBinding(intent);
+      const state = await options.sessionBindingOwner.currentSession(binding);
+      return {
+        status: "supported",
+        value: {
+          binding: {
+            id: binding.id,
+            orgId: binding.orgId,
+            hostId: binding.hostId,
+            profileId: binding.profileId,
+            workspaceBindingId: binding.workspaceBindingId,
+            capabilityRevision: binding.capabilityRevision,
+          },
+          segmentId: state.segment.id,
+          segmentState: state.segment.state,
+          providerSession: null,
+        },
+      };
+    },
+    resume: (input: any) => ({
+      status: "supported",
+      value: {
+        sessionId: input.sessionId,
+        sessionParams: input.sessionParams ?? { sessionId: input.sessionId },
+        sessionDisplayId: input.sessionDisplayId ?? input.sessionId,
+        binding: input.binding ?? null,
+      },
+    }),
+    submitInput: async ({ context, session, input }: any) => adapter.execute({
+      ...context,
+      runtime: {
+        ...context.runtime,
+        sessionId: session?.sessionId ?? null,
+        sessionParams: session?.sessionParams ?? null,
+        sessionDisplayId: session?.sessionDisplayId ?? null,
+      },
+      context: { ...context.context, chatMode: true, chatPrompt: input.text },
+      ...(input.media ? { media: input.media } : {}),
+    }),
+    execute: (context: AgentRuntimeExecutionContext) => adapter.execute(context),
+    reconcileExecution: async () => ({ status: "supported", value: { ok: true } }),
+    respondToRequest: async (request: any, timeoutMs: number) => {
+      const handle = await options.approvalBridge.requestApproval(request);
+      const decision = await options.approvalBridge.waitForApproval(handle.id, timeoutMs);
+      return { status: "supported", value: { handle, decision } };
+    },
+    fork: async () => ({ status: "unsupported", capability: "fork", reason: "Chat unit fixture has no native fork." }),
+  };
 }
 
 function askUserSummary(ctx: { context?: Record<string, unknown> }) {
@@ -405,9 +557,14 @@ function makeAutomationRunInputMessage(overrides: Partial<ChatMessage> = {}): Ch
 describe("chatAssistantService operator profile prompt injection", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockGetRuntimeDriver.mockImplementation(((runtimeType: string, options: any) =>
+      (NATIVE_CHAT_RUNTIME_TYPES as readonly string[]).includes(runtimeType)
+        ? createChatTestRuntimeDriver(options)
+        : null) as any);
     currentAgentHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-agent-home-"));
     cleanupDirs.add(currentAgentHome);
     mockFindServerAdapter.mockImplementation(() => mockAdapter);
+    mockAdapter.execute.mockReset();
     mockAgentService.getInternalById.mockResolvedValue({
       id: "agent-1",
       orgId: "organization-1",
@@ -448,9 +605,24 @@ describe("chatAssistantService operator profile prompt injection", () => {
       orgId: "organization-1",
       agentId: "agent-1",
       status: "running",
+      runtimeSpanId: "span-1",
+      runtimeSpanOwnerToken: "owner-1",
+      runtimeSpanAttemptEpoch: 1,
+      runtimeAttemptRef: { id: "attempt-1", attemptIndex: 0 },
     });
+    mockChatAgentRuns.adoptRecoveredRun.mockResolvedValue(null);
+    mockChatAgentRuns.beginOwnedRunExecution.mockImplementation(() => ({
+      signal: new AbortController().signal,
+      release: vi.fn(),
+    }));
+    mockChatAgentRuns.beginRuntimeAttempt.mockResolvedValue({ id: "attempt-1", attemptIndex: 0 });
+    mockChatAgentRuns.recordNativeExecutionResult.mockResolvedValue(null);
+    mockChatAgentRuns.markRuntimeAttemptWaiting.mockResolvedValue(undefined);
+    mockChatAgentRuns.finishRuntimeAttempt.mockResolvedValue(undefined);
+    mockChatAgentRuns.markWaitingForNetwork.mockResolvedValue(undefined);
     mockChatAgentRuns.appendAdapterInvoke.mockResolvedValue(undefined);
     mockChatAgentRuns.appendTranscriptEntry.mockResolvedValue(undefined);
+    mockChatAgentRuns.markLegacyTranscriptSource.mockResolvedValue(true);
     mockChatAgentRuns.finalizeRun.mockResolvedValue(undefined);
     mockAdapter.execute.mockImplementation(async (ctx) => ({
       summary: assistantSummary(ctx, "Clarify the goal first."),
@@ -747,7 +919,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       },
     });
 
-    const prompt = mockAdapter.execute.mock.calls[0]?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls[0]?.[0]?.context);
     expect(prompt).toContain("You are Chat Specialist, handling the current task and communicating with the user through Rudder Chat.");
     expect(prompt).toContain("Use ask_user only when this Agent Run cannot continue");
     expect(prompt).not.toContain("message: clarification, summaries, and small requests");
@@ -802,7 +974,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
-    const prompt = executeInput?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(executeInput?.context);
     expect(prompt).toContain("Treat message attachments as part of the user's message.");
     expect(prompt).toContain("Current user message attachments:");
     expect(prompt).toContain("The latest user message includes 1 attachment(s). Inspect any listed localPath directly before answering.");
@@ -838,6 +1010,50 @@ describe("chatAssistantService operator profile prompt injection", () => {
     ]);
     expect(storage.getObject).toHaveBeenCalledWith("organization-1", "chats/chat-1/image.png");
     expect(executeInput?.authToken).toEqual(expect.any(String));
+  });
+
+  it("returns a completed stream while prepared image cleanup is pending", async () => {
+    const [message] = makeMessages();
+    const attachment = makeAttachment();
+    const storage = makeStorageService();
+    const svc = chatAssistantService({} as any, storage as any);
+    const originalRm = fs.rm.bind(fs);
+    let startCleanup!: () => void;
+    let releaseCleanup!: () => void;
+    let finishCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => { startCleanup = resolve; });
+    const cleanupRelease = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    const cleanupFinished = new Promise<void>((resolve) => { finishCleanup = resolve; });
+    const rmSpy = vi.spyOn(fs, "rm").mockImplementation(async (target, options) => {
+      if (String(target).includes("rudder-chat-attachments-")) {
+        startCleanup();
+        await cleanupRelease;
+        await originalRm(target, options);
+        finishCleanup();
+        return;
+      }
+      return originalRm(target, options);
+    });
+    const streamed = svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: [{ ...message!, attachments: [attachment] }],
+      contextLinks: [],
+      stream: true,
+    });
+    let settled = false;
+    void streamed.then(() => { settled = true; });
+    try {
+      await cleanupStarted;
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 500 });
+      expect(await streamed).toMatchObject({ outcome: "completed" });
+      expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(
+        "chat-run-1", expect.objectContaining({ status: "succeeded" }),
+      );
+    } finally {
+      releaseCleanup();
+      await cleanupFinished;
+      rmSpy.mockRestore();
+    }
   });
 
   it("persists image-view transcript evidence with the durable attachment URL", async () => {
@@ -888,8 +1104,137 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
       expect.objectContaining({ id: "chat-run-1" }),
       expect.objectContaining({ kind: "tool_call", input: expectedInput }),
+      expect.objectContaining({
+        source: "legacy",
+        persistRaw: true,
+        runId: "chat-run-1",
+        spanId: "span-1",
+      }),
     );
     expect(JSON.stringify(visibleEntries)).not.toContain("rudder-chat-attachments-");
+  });
+
+  it("records actual legacy retention for a CLI-only Side Chat with native binding continuity", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", `${JSON.stringify({
+        type: "item.completed", item: { type: "agent_message", text: "CLI reply" },
+      })}\n`);
+      return { summary: assistantSummary(ctx, "CLI reply"), resultJson: null, timedOut: false, exitCode: 0, errorMessage: null };
+    });
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation({ conversationKind: "side_chat" }),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    expect(mockChatAgentRuns.createRun).toHaveBeenCalledWith(expect.objectContaining({
+      runContext: expect.objectContaining({ transcriptSource: "legacy" }),
+      runtimeBinding: expect.objectContaining({ continuity: "native" }),
+    }));
+    expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.objectContaining({ source: "legacy", persistRaw: true }),
+    );
+  });
+
+  it("parses a complete legacy JSONL record split across stdout chunks", async () => {
+    const svc = chatAssistantService({} as any);
+    const stdoutLine = JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "Chunked JSONL reply" },
+    });
+    const splitAt = Math.floor(stdoutLine.length / 2);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", stdoutLine.slice(0, splitAt));
+      await ctx.onLog("stdout", `${stdoutLine.slice(splitAt)}\n`);
+      return {
+        summary: assistantSummary(ctx, "Chunked JSONL reply"),
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    expect(mockAdapter.parseStdoutLine).toHaveBeenCalledWith(stdoutLine, expect.any(String));
+  });
+
+  it("preserves a multi-megabyte legacy tool result within the stdout line cap", async () => {
+    const svc = chatAssistantService({} as any);
+    const content = "x".repeat(2 * 1024 * 1024);
+    const stdoutLine = JSON.stringify({
+      type: "item.completed",
+      item: { type: "tool_result", tool_use_id: "large-tool", content, status: "completed" },
+    });
+    const splitAt = Math.floor(stdoutLine.length / 2);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", stdoutLine.slice(0, splitAt));
+      await ctx.onLog("stdout", `${stdoutLine.slice(splitAt)}\n`);
+      return {
+        summary: assistantSummary(ctx, "Large tool output was processed."),
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    });
+
+    expect(Buffer.byteLength(stdoutLine, "utf8")).toBeGreaterThan(2 * 1024 * 1024);
+    expect(Buffer.byteLength(stdoutLine, "utf8")).toBeLessThan(MAX_CHAT_ASSISTANT_STDOUT_LINE_BYTES);
+    expect(mockAdapter.parseStdoutLine).toHaveBeenCalledWith(stdoutLine, expect.any(String));
+    expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "tool_result", content }),
+      expect.anything(),
+    );
+  });
+
+  it("fails visibly when legacy stdout emits an oversized line without a newline", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", "x".repeat(MAX_CHAT_ASSISTANT_STDOUT_LINE_BYTES + 1));
+      return {
+        summary: assistantSummary(ctx, "This must not complete."),
+        resultJson: null,
+        timedOut: false,
+        exitCode: 0,
+        errorMessage: null,
+      };
+    });
+
+    const error = await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ChatAssistantStreamError);
+    expect(error).toMatchObject({
+      message: `Chat runtime stdout line exceeded ${MAX_CHAT_ASSISTANT_STDOUT_LINE_BYTES} bytes`,
+      errorCode: "chat_runtime_exception",
+      userMessage: "The assistant produced an output event that was too large to process safely. Rudder stopped the reply instead of truncating it; retry with smaller tool output.",
+    });
+    expect(mockAdapter.parseStdoutLine).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(
+      "chat-run-1",
+      expect.objectContaining({ status: "failed" }),
+    );
   });
 
   it("prepares multiple chat images in message order and does not pass non-images as runtime media", async () => {
@@ -1066,7 +1411,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     const runtimeConfig = mockAdapter.execute.mock.calls.at(-1)?.[0]?.config as Record<string, unknown>;
     expect(prompt).toContain("\"planMode\": true");
     expect(prompt).toContain("This Agent Run is in Plan mode.");
@@ -1261,7 +1606,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     const runtimeConfig = mockAdapter.execute.mock.calls.at(-1)?.[0]?.config as Record<string, unknown>;
     expect(prompt).toContain("This Agent Run is in Plan mode.");
     expect(runtimeConfig).toEqual(expect.objectContaining({
@@ -1281,7 +1626,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).not.toContain("This Agent Run is in Plan mode.");
     expect(prompt).not.toContain("issue plan document");
     expect(prompt).not.toContain("\"body\": \"optional markdown plan\"");
@@ -1316,7 +1661,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       },
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Automation execution context:");
     expect(prompt).toContain("This Agent Run was triggered by an existing Rudder Automation.");
     expect(prompt).toContain("already-created automation");
@@ -1424,7 +1769,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Automation execution context:");
     expect(prompt).toContain("continues an existing Rudder Automation after the user supplied requested input");
     expect(prompt).not.toContain("This Agent Run was triggered by an existing Rudder Automation.");
@@ -1573,7 +1918,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Use ask_user only when this Agent Run cannot continue");
     expect(prompt).toContain("requestUserInput");
     expect(result).toEqual(expect.objectContaining({
@@ -1725,7 +2070,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("## Organization Resources");
     expect(prompt).toContain("Main codebase: ~/projects/rudder");
     expect(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context).toMatchObject({
@@ -1751,7 +2096,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Organization issue labels:");
     expect(prompt).toContain("- Engineering (11111111-1111-4111-8111-111111111111)");
     expect(prompt).toContain("include labelIds with at least one best-fit label id");
@@ -1769,7 +2114,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Do not emit issue_proposal merely because work is large or durable");
     expect(prompt).toContain("the latest human-authored request explicitly asks");
     expect(prompt).toContain("create an issue");
@@ -1787,7 +2132,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Preserve directly relevant user-provided original images in the description.");
     expect(prompt).toContain("Prefer the original over a redraw, generated replacement, or text-only substitute.");
     expect(prompt).toContain("using only its canonical contentPath");
@@ -1828,7 +2173,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("When revising, re-check eligible user images across recentMessages");
     expect(prompt).toContain("even if the latest feedback has no attachments");
     expect(prompt).toContain('"name": "original-evidence.png"');
@@ -1985,7 +2330,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       expect.objectContaining({ projectId: "project-1" }),
       null,
     );
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Selected project context:");
     expect(prompt).toContain("- Project ID: project-1");
     expect(prompt).toContain("- Name: Launch Ops");
@@ -2012,7 +2357,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       operatorProfile: null,
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(mockAdapter.execute.mock.calls.at(-1)?.[0]?.context);
     expect(prompt).toContain("Organization issue labels:");
     expect(prompt).toContain("- Engineering (label-1)");
     expect(prompt).toContain("include labelIds with at least one best-fit label id from this list");
@@ -2036,7 +2381,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       null,
     );
     const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
-    const prompt = executeInput?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(executeInput?.context);
     expect(prompt).toContain("Selected issue context:");
     expect(prompt).toContain("- Issue ID: issue-1");
     expect(prompt).toContain("- Identifier: ISS-42");
@@ -2062,7 +2407,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
-    const prompt = executeInput?.context?.chatPrompt as string;
+    const prompt = combinedChatRuntimePrompt(executeInput?.context);
     expect(prompt).toContain("Selected Goal context:");
     expect(prompt).toContain("- Goal ID: goal-1");
     expect(prompt).toContain("- Title: Ship Goal v2");
@@ -2130,7 +2475,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(prompt.lastIndexOf("Conversation input:")).toBeLessThan(
       prompt.lastIndexOf("Final Rudder result reminder:"),
     );
-    expect(prompt.trim()).toContain("RUDDER_RESULT_BEGIN\n<final answer body only>\nRUDDER_RESULT_END");
+    expect(prompt.trim()).toContain("the native runtime final message is authoritative");
     expect(prompt.trim()).toContain(`Only use ${sentinel} plus JSON when the result kind is ask_user`);
   });
 
@@ -2195,6 +2540,11 @@ describe("chatAssistantService operator profile prompt injection", () => {
   });
 
   it("uses provider-aware model fallbacks for the selected chat agent runtime", async () => {
+    const primaryAdapter = {
+      ...mockAdapter,
+      type: "gemini_local",
+      execute: vi.fn(),
+    };
     const fallbackAdapter = {
       type: "claude_local",
       supportsLocalAgentJwt: true,
@@ -2214,12 +2564,25 @@ describe("chatAssistantService operator profile prompt injection", () => {
     }];
 
     mockFindServerAdapter.mockImplementation((agentRuntimeType: string) =>
-      agentRuntimeType === "claude_local" ? fallbackAdapter : mockAdapter,
+      agentRuntimeType === "claude_local"
+        ? fallbackAdapter
+        : agentRuntimeType === "gemini_local"
+          ? primaryAdapter
+          : mockAdapter,
     );
+    mockAgentService.getInternalById.mockResolvedValueOnce({
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Gemini Specialist",
+      status: "idle",
+      agentRuntimeType: "gemini_local",
+      agentRuntimeConfig: { model: "gemini-primary" },
+      metadata: null,
+    });
     mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
-      resolvedConfig: { model: "gpt-primary", modelFallbacks },
+      resolvedConfig: { model: "gemini-primary", modelFallbacks },
       runtimeConfig: {
-        model: "gpt-primary",
+        model: "gemini-primary",
         modelFallbacks,
         rudderSkillSync: { desiredSkills: [] },
         paperclipSkillSync: { desiredSkills: [] },
@@ -2229,7 +2592,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       runtimeSkillEntries: [],
       secretKeys: new Set(),
     });
-    mockAdapter.execute.mockResolvedValueOnce({
+    primaryAdapter.execute.mockResolvedValueOnce({
       summary: null,
       resultJson: null,
       timedOut: false,
@@ -2239,14 +2602,20 @@ describe("chatAssistantService operator profile prompt injection", () => {
 
     const svc = chatAssistantService({} as any);
     const result = await svc.generateChatAssistantReply({
-      conversation: makeConversation(),
+      conversation: makeConversation({
+        chatRuntime: {
+          ...makeConversation().chatRuntime!,
+          agentRuntimeType: "gemini_local",
+          model: "gemini-primary",
+        },
+      }),
       messages: makeMessages(),
       contextLinks: [],
       operatorProfile: null,
     });
 
     expect(result.body).toBe("Fallback handled the chat.");
-    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
+    expect(primaryAdapter.execute).toHaveBeenCalledTimes(1);
     expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
     expect(fallbackAdapter.execute).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2258,6 +2627,234 @@ describe("chatAssistantService operator profile prompt injection", () => {
         }),
       }),
     );
+  });
+
+  it("fails native Chat closed instead of executing the adapter when its attempt Driver is missing", async () => {
+    const initialDriverFactory = mockGetRuntimeDriver.getMockImplementation();
+    if (!initialDriverFactory) throw new Error("Chat Runtime Driver fixture is not configured");
+    mockGetRuntimeDriver
+      .mockImplementationOnce(initialDriverFactory as any)
+      .mockReturnValueOnce(null);
+
+    const svc = chatAssistantService({} as any);
+    const error = await svc.generateChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ChatAssistantStreamError);
+    expect(error).toMatchObject({ errorCode: "chat_runtime_boot_failed" });
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.finishRuntimeAttempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "failed", errorCode: "runtime_driver_required" }),
+    );
+  });
+
+  it("continues persisted legacy Cursor CLI sessions through Chat admission and blocks saved ACP or unknown transports", async () => {
+    const [{ createRuntimeDriver }, { sessionCodec }, nativeSessionModule] = await Promise.all([
+      import("../services/runtime-kernel/runtime-driver.js"),
+      import("@rudderhq/agent-runtime-cursor-local/server"),
+      import("../services/runtime-kernel/native-session.js"),
+    ]);
+    const previousGetRuntimeDriver = mockGetRuntimeDriver.getMockImplementation();
+    const previousResolverFactory = mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.getMockImplementation();
+    const previousEnsureRuntimeBinding = vi.mocked(nativeSessionModule.ensureRuntimeBinding).getMockImplementation();
+    const cursorBinding = { ...mockRuntimeBinding, runtimeType: "cursor" };
+    const cursorSegment = { ...mockRuntimeSegment, runtimeType: "cursor" };
+    const cursorSessionParams = {
+      sessionId: "cursor-cli-session-1",
+      cwd: process.cwd(),
+      profileHostId: "local",
+      profileId: "default",
+      capabilityRevision: "capability",
+      cursorAcpTransport: "cursor-agent-cli-context-handoff",
+    };
+    const cursorResult = (context: AgentRuntimeExecutionContext, body: string) => ({
+      summary: assistantSummary(context, body),
+      resultJson: null,
+      timedOut: false,
+      exitCode: 0,
+      errorMessage: null,
+      sessionId: cursorSessionParams.sessionId,
+      sessionDisplayId: cursorSessionParams.sessionId,
+      sessionParams: cursorSessionParams,
+    });
+    const cursorExecute = vi.fn(async (context: AgentRuntimeExecutionContext) =>
+      cursorResult(context, "Unexpected Cursor execution."),
+    );
+    cursorExecute
+      .mockImplementationOnce(async (context) => {
+        await context.onTranscriptSource?.("legacy");
+        await context.onLog("stdout", "[rudder] Cursor legacy first turn\n");
+        return cursorResult(context, "Started the Cursor conversation.");
+      })
+      .mockImplementationOnce(async (context) => {
+        await context.onTranscriptSource?.("legacy");
+        await context.onLog("stdout", "[rudder] Cursor legacy second turn\n");
+        return cursorResult(context, "Continued the Cursor conversation.");
+      });
+    const cursorAdapter = {
+      ...mockAdapter,
+      type: "cursor",
+      sessionCodec,
+      execute: cursorExecute,
+      supportsLocalAgentJwt: true,
+    };
+    const evidence = {
+      status: "supported" as const,
+      reason: "Cursor CLI resume is verified for the selected profile.",
+      transport: "cursor-agent-cli",
+      profileBound: true,
+      profileRequired: true,
+    };
+    const cursorResolver = (_runtimeType: string, binding: any) => ({
+      adapter: {
+        runtimeType: "cursor",
+        input: { evidence },
+        sessionResume: { evidence },
+      },
+      binding,
+      profileResolved: Boolean(binding?.hostId && binding?.profileId),
+    });
+    const runtimeDriverFactory = (runtimeType: string, options: any) => createRuntimeDriver(runtimeType, options);
+    mockFindServerAdapter.mockImplementation((runtimeType: string) =>
+      runtimeType === "cursor" ? cursorAdapter as any : mockAdapter,
+    );
+    mockGetRuntimeDriver.mockImplementation(runtimeDriverFactory as any);
+    mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockImplementation(
+      (() => cursorResolver) as any,
+    );
+    vi.mocked(nativeSessionModule.ensureRuntimeBinding).mockImplementation(
+      (async () => cursorBinding) as any,
+    );
+    mockAgentService.getInternalById.mockResolvedValue({
+      id: "agent-1",
+      orgId: "organization-1",
+      name: "Cursor Specialist",
+      status: "idle",
+      agentRuntimeType: "cursor",
+      agentRuntimeConfig: { model: "cursor-default" },
+      metadata: null,
+    });
+
+    const freshNativeSession = {
+      binding: cursorBinding,
+      segment: cursorSegment,
+      sessionId: null,
+      sessionParams: null,
+      sessionDisplayId: null,
+    };
+    const storedLegacySession = {
+      ...freshNativeSession,
+      sessionId: cursorSessionParams.sessionId,
+      sessionParams: cursorSessionParams,
+      sessionDisplayId: cursorSessionParams.sessionId,
+    };
+    vi.mocked(nativeSessionModule.currentNativeSession)
+      .mockResolvedValueOnce(freshNativeSession as any)
+      .mockResolvedValueOnce(storedLegacySession as any)
+      .mockResolvedValueOnce({
+        ...storedLegacySession,
+        sessionParams: { ...cursorSessionParams, cursorAcpTransport: "cursor-agent-acp-stdio" },
+      } as any)
+      .mockResolvedValueOnce({
+        ...storedLegacySession,
+        sessionParams: { ...cursorSessionParams, cursorAcpTransport: "cursor-agent-cli-unverified" },
+      } as any);
+
+    const svc = chatAssistantService({} as any);
+    const conversation = makeConversation({
+      chatRuntime: {
+        ...makeConversation().chatRuntime!,
+        agentRuntimeType: "cursor",
+        model: "cursor-default",
+      },
+    });
+    const [firstUserMessage] = makeMessages();
+    try {
+      const firstReply = await svc.generateChatAssistantReply({
+        conversation,
+        messages: [firstUserMessage!],
+        contextLinks: [],
+        operatorProfile: null,
+      });
+      expect(firstReply.body).toBe("Started the Cursor conversation.");
+      expect(cursorExecute).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        runtime: expect.objectContaining({ sessionId: null, sessionParams: null }),
+      }));
+      expect(mockChatAgentRuns.finishRuntimeAttempt).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({
+          status: "succeeded",
+          sessionParamsJson: expect.objectContaining({
+            cursorAcpTransport: "cursor-agent-cli-context-handoff",
+          }),
+        }),
+      );
+
+      const secondReply = await svc.generateChatAssistantReply({
+        conversation,
+        messages: [{ ...firstUserMessage!, id: "message-2", body: "Continue from the previous turn." }],
+        contextLinks: [],
+        operatorProfile: null,
+      });
+      expect(secondReply.body).toBe("Continued the Cursor conversation.");
+      expect(mockChatAgentRuns.markLegacyTranscriptSource).not.toHaveBeenCalled();
+      expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ text: expect.stringContaining("Cursor legacy second turn") }),
+        expect.objectContaining({ source: "legacy", persistRaw: true }),
+      );
+      expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ resultJson: expect.objectContaining({ retention: { transcriptSource: "legacy" } }) }),
+      );
+      expect(cursorExecute).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        runtime: expect.objectContaining({
+          sessionId: cursorSessionParams.sessionId,
+          sessionParams: expect.objectContaining({
+            cursorAcpTransport: "cursor-agent-cli-context-handoff",
+          }),
+        }),
+      }));
+
+      for (const cursorAcpTransport of ["cursor-agent-acp-stdio", "cursor-agent-cli-unverified"]) {
+        const error = await svc.generateChatAssistantReply({
+          conversation,
+          messages: [{ ...firstUserMessage!, id: `message-${cursorAcpTransport}`, body: "Continue safely." }],
+          contextLinks: [],
+          operatorProfile: null,
+        }).catch((caught) => caught);
+
+        expect(error).toBeInstanceOf(ChatAssistantStreamError);
+        expect(error).toMatchObject({ errorCode: "chat_runtime_boot_failed" });
+        expect(mockChatAgentRuns.finishRuntimeAttempt).toHaveBeenLastCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            status: "failed",
+            errorCode: "runtime_session_resume_rejected",
+          }),
+        );
+        expect(cursorExecute).toHaveBeenCalledTimes(2);
+      }
+    } finally {
+      if (previousGetRuntimeDriver) mockGetRuntimeDriver.mockImplementation(previousGetRuntimeDriver as any);
+      else mockGetRuntimeDriver.mockImplementation(() => null);
+      if (previousEnsureRuntimeBinding) {
+        vi.mocked(nativeSessionModule.ensureRuntimeBinding).mockImplementation(previousEnsureRuntimeBinding as any);
+      } else {
+        vi.mocked(nativeSessionModule.ensureRuntimeBinding).mockImplementation(async () => mockRuntimeBinding as any);
+      }
+      if (previousResolverFactory) {
+        mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockImplementation(previousResolverFactory as any);
+      } else {
+        mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockImplementation(() => () => null);
+      }
+    }
   });
 
   it("uses the preferred agent as the chat speaker and preserves prepared runtime context", async () => {
@@ -2315,9 +2912,18 @@ describe("chatAssistantService operator profile prompt injection", () => {
       contextLinks: [],
     });
 
-    const prompt = mockAdapter.execute.mock.calls.at(-1)?.[0]?.context?.chatPrompt as string;
-    const runtimeConfig = mockAdapter.execute.mock.calls.at(-1)?.[0]?.config;
-    expect(prompt).toContain("You are Builder, handling the current task and communicating with the user through Rudder Chat.");
+    const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
+    const prompt = executeInput?.context?.chatPrompt as string;
+    const nativePrompt = executeInput?.context?.rudderCodexChatPrompt;
+    const runtimeConfig = executeInput?.config;
+    expect(prompt).not.toContain("You are Builder, handling the current task and communicating with the user through Rudder Chat.");
+    expect(prompt).toContain('"currentMessage"');
+    expect(prompt).not.toContain('"recentMessages"');
+    expect(nativePrompt).toMatchObject({ version: 1 });
+    expect((nativePrompt as { developerInstructions: string }).developerInstructions)
+      .toContain("You are Builder, handling the current task and communicating with the user through Rudder Chat.");
+    expect((nativePrompt as { developerInstructions: string }).developerInstructions)
+      .not.toContain("Help me scope this work.");
     expect(prompt).not.toContain("built-in chat assistant");
     expect(runtimeConfig).toEqual(expect.objectContaining({
       instructionsFilePath: "/tmp/builder/AGENTS.md",
@@ -2337,7 +2943,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     });
 
     const executeInput = mockAdapter.execute.mock.calls.at(-1)?.[0];
-    expect(executeInput?.context?.chatPrompt).toEqual(expect.stringContaining("You are Chat Specialist, handling the current task and communicating with the user through Rudder Chat."));
+    expect(combinedChatRuntimePrompt(executeInput?.context)).toContain("You are Chat Specialist, handling the current task and communicating with the user through Rudder Chat.");
     expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
     expect(result).toEqual(expect.objectContaining({
       kind: "message",
@@ -2915,6 +3521,55 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(JSON.stringify(error)).not.toContain(":::rudder-inline-visual");
   });
 
+  it("aborts the provider when the owned run lease is lost and releases its execution registration", async () => {
+    const svc = chatAssistantService({} as any);
+    const lease = new AbortController();
+    const userStop = new AbortController();
+    const release = vi.fn();
+    const deltas: string[] = [];
+    const transcripts: TranscriptEntry[] = [];
+    mockChatAgentRuns.beginOwnedRunExecution.mockReturnValueOnce({ signal: lease.signal, release });
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      expect(ctx.abortSignal.aborted).toBe(false);
+      lease.abort();
+      expect(ctx.abortSignal.aborted).toBe(true);
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", phase: "final_answer", text: "late owner output" },
+        })}\n`,
+      );
+      return {
+        summary: "",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 1,
+        errorMessage: "execution owner lost",
+      };
+    });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      stream: true,
+      abortSignal: userStop.signal,
+      onAssistantDelta: (delta) => deltas.push(delta),
+      onTranscriptEntry: (entry) => transcripts.push(entry),
+    })).resolves.toEqual({ outcome: "stale", reason: "execution_owner_lost" });
+    expect(userStop.signal.aborted).toBe(false);
+    expect(deltas).toEqual([]);
+    expect(transcripts).toEqual([]);
+    expect(mockChatAgentRuns.recordNativeExecutionResult).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.finishRuntimeAttempt).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.finalizeRun).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.beginOwnedRunExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "chat-run-1" }),
+    );
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it("discards an unfinished visual buffer when the Chat run stops", async () => {
     const svc = chatAssistantService({} as any);
     const abortController = new AbortController();
@@ -3269,7 +3924,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
-  it("does not promote progress text to a final reply when there is no terminal result to repair", async () => {
+  it("accepts a native final assistant message without a sentinel or repair", async () => {
     const svc = chatAssistantService({} as any);
 
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
@@ -3277,7 +3932,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         "stdout",
         `${JSON.stringify({
           type: "item.completed",
-          item: { type: "agent_message", text: "I am still working." },
+          item: { type: "agent_message", phase: "final_answer", text: "Native final answer." },
         })}\n`,
       );
       return {
@@ -3293,113 +3948,18 @@ describe("chatAssistantService operator profile prompt injection", () => {
       conversation: makeConversation(),
       messages: makeMessages(),
       contextLinks: [],
-    })).rejects.toMatchObject({
-      message: "Chat adapter completed without the required Rudder result sentinel",
-      errorCode: "chat_result_missing_sentinel",
-      userMessage: "The assistant reply could not be completed. Rudder saved the attempt for diagnostics; retry when ready.",
-      partialBody: "",
-      partialBodyUserVisible: false,
-    });
-    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
-    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
-      "chat-run-1",
-      expect.objectContaining({
-        status: "failed",
-        errorCode: "chat_result_missing_sentinel",
-        resultJson: expect.objectContaining({
-          recoverable: true,
-          fallbackEnvelope: true,
-        }),
-      }),
-    );
-  });
-
-  it("repairs a completed chat reply internally when the adapter exits successfully without the result sentinel", async () => {
-    const browserSkill = { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" };
-    mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
-      resolvedConfig: { model: "gpt-5.4" },
-      runtimeConfig: {
-        model: "gpt-5.4",
-        rudderBrowserEnabled: true,
-        rudderBrowserCapability: { instanceEligible: true, runtimeSkillEntries: [browserSkill] },
-        rudderSkillSync: { desiredSkills: [browserSkill.key] },
-        paperclipSkillSync: { desiredSkills: [browserSkill.key] },
-        rudderRuntimeSkills: [browserSkill],
-        paperclipRuntimeSkills: [browserSkill],
-      },
-      runtimeSkillEntries: [browserSkill],
-      secretKeys: new Set(),
-    });
-    const svc = chatAssistantService({} as any);
-
-    mockAdapter.execute
-      .mockImplementationOnce(async (ctx) => {
-        await ctx.onMeta?.({
-          command: "codex",
-          commandNotes: ["primary chat invocation"],
-          context: { chatMode: true },
-        });
-        return {
-        summary: "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe.",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-        usage: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 },
-        };
-      })
-      .mockImplementationOnce(async (ctx) => {
-        await ctx.onMeta?.({
-          command: "codex",
-          commandNotes: ["repair invocation"],
-          context: { chatMode: true },
-        });
-        return {
-          summary: assistantSummary(ctx, "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe."),
-          resultJson: null,
-          timedOut: false,
-          exitCode: 0,
-          errorMessage: null,
-          usage: { inputTokens: 3, cachedInputTokens: 1, outputTokens: 4 },
-        };
-      });
-    const invocationMeta = vi.fn();
-
-    await expect(svc.streamChatAssistantReply({
-      conversation: makeConversation(),
-      messages: makeMessages(),
-      contextLinks: [],
-      onInvocationMeta: invocationMeta,
     })).resolves.toEqual({
       outcome: "completed",
-      partialBody: "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe.",
+      partialBody: "Native final answer.",
       replyingAgentId: "agent-1",
       reply: {
         kind: "message",
-        body: "I checked the deployment logs. The failing webhook secret has been rotated and the retry is safe.",
+        body: "Native final answer.",
         structuredPayload: null,
         replyingAgentId: "agent-1",
       },
     });
-    expect(mockAdapter.execute).toHaveBeenCalledTimes(2);
-    for (const [input] of mockAdapter.execute.mock.calls) {
-      expect(input.config).not.toHaveProperty("rudderBrowserCapability");
-      expect(input.agent.agentRuntimeConfig).not.toHaveProperty("rudderBrowserCapability");
-      expect(input.config).toMatchObject({
-        rudderBrowserEnabled: true,
-        rudderSkillSync: { desiredSkills: [browserSkill.key] },
-        paperclipSkillSync: { desiredSkills: [browserSkill.key] },
-        rudderRuntimeSkills: [browserSkill],
-        paperclipRuntimeSkills: [browserSkill],
-      });
-      expect(input.agent.agentRuntimeConfig).toEqual(input.config);
-    }
-    expect(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt).toContain("Rudder internal repair request:");
-    expect(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt).toContain("Your previous chat turn ended without the required Rudder result sentinel.");
-    expect(mockAdapter.execute.mock.calls[1]?.[0]?.context).toMatchObject({
-      rudderChatResultRepair: true,
-    });
-    expect(invocationMeta).toHaveBeenCalledTimes(1);
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
     expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
       "chat-run-1",
       expect.objectContaining({
@@ -3407,22 +3967,169 @@ describe("chatAssistantService operator profile prompt injection", () => {
         resultJson: expect.objectContaining({
           outcome: "completed",
           kind: "message",
-          sentinelRepairAttempted: true,
-          sentinelRepairSucceeded: true,
-          repairReason: "missing_result_sentinel",
-        }),
-        usageJson: expect.objectContaining({
-          inputTokens: 13,
-          cachedInputTokens: 3,
-          outputTokens: 9,
-          primary: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 5 },
-          repair: { inputTokens: 3, cachedInputTokens: 1, outputTokens: 4 },
+          body: "Native final answer.",
         }),
       }),
     );
   });
 
-  it("redacts inline visual source before a missing-sentinel repair prompt is invoked or persisted", async () => {
+  it("keeps a bounded Cursor object supplement even when ACP transcript capability is supported", async () => {
+    mockAgentService.getInternalById.mockResolvedValue({
+      id: "agent-1", orgId: "organization-1", name: "Cursor Specialist", status: "idle",
+      agentRuntimeType: "cursor", agentRuntimeConfig: { model: "cursor" }, metadata: null,
+    });
+    mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
+      _runtimeType: string, binding: Record<string, unknown>,
+    ) => ({
+      adapter: { runtimeType: "cursor", transcript: { evidence: {
+        status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
+      } } },
+      binding, profileResolved: true,
+    }));
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", `${JSON.stringify({ type: "item.completed",
+        item: { type: "agent_message", phase: "final_answer", text: "Cursor answer." } })}\n`);
+      return { summary: "", resultJson: null, timedOut: false, exitCode: 0, errorMessage: null };
+    });
+    const conversation = makeConversation({ chatRuntime: {
+      ...makeConversation().chatRuntime!, agentRuntimeType: "cursor",
+    } });
+    await expect(chatAssistantService({} as any).streamChatAssistantReply({
+      conversation, messages: makeMessages(), contextLinks: [],
+    })).resolves.toMatchObject({ outcome: "completed" });
+    expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ kind: "assistant", text: "Cursor answer." }),
+      expect.objectContaining({ source: "native", persistRaw: false, persistSupplement: true }),
+    );
+  });
+
+  it("persists a native Cursor Chat fallback as legacy before streaming CLI output", async () => {
+    mockAgentService.getInternalById.mockResolvedValue({
+      id: "agent-1", orgId: "organization-1", name: "Cursor Specialist", status: "idle",
+      agentRuntimeType: "cursor", agentRuntimeConfig: { model: "cursor" }, metadata: null,
+    });
+    mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
+      _runtimeType: string, binding: Record<string, unknown>,
+    ) => ({
+      adapter: { runtimeType: "cursor", transcript: { evidence: {
+        status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
+      } } },
+      binding, profileResolved: true,
+    }));
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onTranscriptSource?.("legacy");
+      expect(mockChatAgentRuns.markLegacyTranscriptSource).toHaveBeenCalledTimes(1);
+      await ctx.onLog("stdout", "[rudder] Cursor legacy CLI output\n");
+      return {
+        summary: assistantSummary(ctx, "Cursor fallback answer."), resultJson: null,
+        timedOut: false, exitCode: 0, errorMessage: null,
+      };
+    });
+    const conversation = makeConversation({ chatRuntime: {
+      ...makeConversation().chatRuntime!, agentRuntimeType: "cursor",
+    } });
+    await expect(chatAssistantService({} as any).streamChatAssistantReply({
+      conversation, messages: makeMessages(), contextLinks: [],
+    })).resolves.toMatchObject({ outcome: "completed" });
+    expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ text: expect.stringContaining("Cursor legacy CLI output") }),
+      expect.objectContaining({ source: "legacy", persistRaw: true, persistSupplement: false }),
+    );
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(
+      "chat-run-1", expect.objectContaining({
+        resultJson: expect.objectContaining({ retention: { transcriptSource: "legacy" } }),
+      }),
+    );
+  });
+
+  it("recovers a Cursor Run after its legacy marker commits but before CLI output", async () => {
+    mockAgentService.getInternalById.mockResolvedValue({
+      id: "agent-1", orgId: "organization-1", name: "Cursor Specialist", status: "idle",
+      agentRuntimeType: "cursor", agentRuntimeConfig: { model: "cursor" }, metadata: null,
+    });
+    mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
+      _runtimeType: string, binding: Record<string, unknown>,
+    ) => ({
+      adapter: { runtimeType: "cursor", transcript: { evidence: {
+        status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
+      } } }, binding, profileResolved: true,
+    }));
+    mockChatAgentRuns.adoptRecoveredRun.mockResolvedValueOnce({
+      id: "chat-run-1", orgId: "organization-1", agentId: "agent-1", status: "running",
+      runtimeSpanId: "span-1", runtimeSpanOwnerToken: "owner-1", runtimeSpanAttemptEpoch: 1,
+      runtimeAttemptRef: { id: "attempt-1", attemptIndex: 0 },
+      contextSnapshot: { transcriptSource: "legacy" }, resultJson: null,
+    });
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", "[rudder] CLI output after recovery\n");
+      return {
+        summary: assistantSummary(ctx, "Recovered Cursor reply."), resultJson: null,
+        timedOut: false, exitCode: 0, errorMessage: null,
+      };
+    });
+    const conversation = makeConversation({ chatRuntime: {
+      ...makeConversation().chatRuntime!, agentRuntimeType: "cursor",
+    } });
+    await expect(chatAssistantService({} as any).streamChatAssistantReply({
+      conversation, messages: makeMessages(), contextLinks: [],
+      resumeRunId: "chat-run-1", resumeRunOwnerToken: "owner-1",
+    })).resolves.toMatchObject({ outcome: "completed" });
+    expect(mockChatAgentRuns.createRun).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.markLegacyTranscriptSource).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ text: expect.stringContaining("CLI output after recovery") }),
+      expect.objectContaining({ source: "legacy", persistRaw: true, persistSupplement: undefined }),
+    );
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(
+      "chat-run-1", expect.objectContaining({
+        resultJson: expect.objectContaining({ retention: { transcriptSource: "legacy" } }),
+      }),
+    );
+  });
+
+  it("does not promote commentary progress to a final reply when the runtime fails", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", phase: "commentary", text: "I am still working." },
+        })}\n`,
+      );
+      return {
+        summary: "",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 1,
+        errorMessage: "runtime process exited",
+      };
+    });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      message: "runtime process exited",
+      errorCode: "chat_adapter_failed",
+      partialBody: "",
+      partialBodyUserVisible: false,
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        resultJson: expect.objectContaining({
+          outcome: "failed",
+          partialBody: "",
+        }),
+      }),
+    );
+  });
+
+  it("redacts inline visual source from a native final without a repair invocation", async () => {
     const svc = chatAssistantService({} as any);
     const rawPriorText = [
       "Visible answer",
@@ -3431,28 +4138,22 @@ describe("chatAssistantService operator profile prompt injection", () => {
       ":::rudder-inline-visual:end",
     ].join("\n");
 
-    mockAdapter.execute
-      .mockImplementationOnce(async () => ({
-        summary: rawPriorText,
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog(
+        "stdout",
+        `${JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", phase: "final_answer", text: rawPriorText },
+        })}\n`,
+      );
+      return {
+        summary: "",
         resultJson: null,
         timedOut: false,
         exitCode: 0,
         errorMessage: null,
-      }))
-      .mockImplementationOnce(async (ctx) => {
-        await ctx.onMeta?.({
-          agentRuntimeType: "process",
-          command: "repair-process",
-          prompt: String(ctx.context.chatPrompt),
-        });
-        return {
-          summary: assistantSummary(ctx, "Visible answer"),
-          resultJson: null,
-          timedOut: false,
-          exitCode: 0,
-          errorMessage: null,
-        };
-      });
+      };
+    });
 
     await expect(svc.streamChatAssistantReply({
       conversation: makeConversation(),
@@ -3460,116 +4161,13 @@ describe("chatAssistantService operator profile prompt injection", () => {
       contextLinks: [],
     })).resolves.toMatchObject({
       outcome: "completed",
-      reply: { body: "Visible answer" },
+      reply: { body: expect.stringContaining("Visible answer") },
     });
 
-    const repairPrompt = String(mockAdapter.execute.mock.calls[1]?.[0]?.context?.chatPrompt);
-    expect(repairPrompt).toContain("Previous response text:\nVisible answer");
-    expect(repairPrompt).not.toContain("PRIVATE_REPAIR_FRAGMENT");
-    expect(repairPrompt).not.toContain(":::rudder-inline-visual");
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
     const persistedInvoke = JSON.stringify(mockChatAgentRuns.appendAdapterInvoke.mock.calls);
     expect(persistedInvoke).not.toContain("PRIVATE_REPAIR_FRAGMENT");
     expect(persistedInvoke).not.toContain(":::rudder-inline-visual");
-  });
-
-  it("repairs a completed plain-text chat reply with a text result block", async () => {
-    const svc = chatAssistantService({} as any);
-
-    mockAdapter.execute
-      .mockImplementationOnce(async () => ({
-        summary: "OPENCODE_CHAT_OK",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      }))
-      .mockImplementationOnce(async (ctx) => {
-        expect(ctx.context?.chatPrompt).toContain("RUDDER_RESULT_BEGIN");
-        return {
-          summary: "RUDDER_RESULT_BEGIN\nOPENCODE_CHAT_OK\nRUDDER_RESULT_END",
-          resultJson: null,
-          timedOut: false,
-          exitCode: 0,
-          errorMessage: null,
-        };
-      });
-
-    await expect(svc.streamChatAssistantReply({
-      conversation: makeConversation(),
-      messages: makeMessages(),
-      contextLinks: [],
-    })).resolves.toEqual({
-      outcome: "completed",
-      partialBody: "OPENCODE_CHAT_OK",
-      replyingAgentId: "agent-1",
-      reply: {
-        kind: "message",
-        body: "OPENCODE_CHAT_OK",
-        structuredPayload: null,
-        replyingAgentId: "agent-1",
-      },
-    });
-    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
-      "chat-run-1",
-      expect.objectContaining({
-        status: "succeeded",
-        resultJson: expect.objectContaining({
-          sentinelRepairAttempted: true,
-          sentinelRepairSucceeded: true,
-          repairReason: "missing_result_sentinel",
-        }),
-      }),
-    );
-  });
-
-  it("falls back to a plain final summary when an adapter ignores the message result block", async () => {
-    const svc = chatAssistantService({} as any);
-
-    mockAdapter.execute
-      .mockImplementationOnce(async () => ({
-        summary: "OPENCODE_CHAT_OK",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      }))
-      .mockImplementationOnce(async () => ({
-        summary: "",
-        resultJson: null,
-        timedOut: false,
-        exitCode: 0,
-        errorMessage: null,
-      }));
-
-    await expect(svc.streamChatAssistantReply({
-      conversation: makeConversation(),
-      messages: makeMessages(),
-      contextLinks: [],
-    })).resolves.toEqual({
-      outcome: "completed",
-      partialBody: "OPENCODE_CHAT_OK",
-      replyingAgentId: "agent-1",
-      reply: {
-        kind: "message",
-        body: "OPENCODE_CHAT_OK",
-        structuredPayload: null,
-        replyingAgentId: "agent-1",
-      },
-    });
-    expect(mockAdapter.execute).toHaveBeenCalledTimes(2);
-    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
-      "chat-run-1",
-      expect.objectContaining({
-        status: "succeeded",
-        resultJson: expect.objectContaining({
-          outcome: "completed",
-          kind: "message",
-          body: "OPENCODE_CHAT_OK",
-          sentinelRepairAttempted: true,
-          sentinelRepairSucceeded: false,
-        }),
-      }),
-    );
   });
 
   it("classifies malformed result sentinel JSON as a recoverable failed chat result", async () => {
@@ -3654,6 +4252,34 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
+  it("preserves indeterminate Claude fork acceptance instead of suggesting a same-input retry", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockResolvedValueOnce({
+      summary: "",
+      resultJson: { fork: { status: "unknown" } },
+      timedOut: false,
+      exitCode: 1,
+      errorMessage: "Claude deferred fork acceptance is unknown",
+      errorCode: "claude_fork_acceptance_unknown",
+      submissionPhase: "indeterminate",
+    });
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(), messages: makeMessages(), contextLinks: [],
+    })).rejects.toMatchObject({
+      errorCode: "claude_fork_acceptance_unknown",
+      retryable: false,
+      action: "inspect_run",
+      partialBodyUserVisible: false,
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith("chat-run-1", expect.objectContaining({
+      status: "failed",
+      errorCode: "claude_fork_acceptance_unknown",
+      resultJson: expect.objectContaining({
+        retryable: false, action: "inspect_run", submissionPhase: "indeterminate",
+      }),
+    }));
+  });
+
   it("classifies adapter exits before model output as non-retryable runtime boot failures", async () => {
     const svc = chatAssistantService({} as any);
 
@@ -3680,6 +4306,10 @@ describe("chatAssistantService operator profile prompt injection", () => {
       failurePhase: "runtime_boot",
       action: "repair_runtime",
     });
+    expect(mockChatAgentRuns.finishRuntimeAttempt).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ providerThreadId: null, providerTurnId: null }),
+    );
     expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
       "chat-run-1",
       expect.objectContaining({
@@ -3694,6 +4324,69 @@ describe("chatAssistantService operator profile prompt injection", () => {
         }),
       }),
     );
+  });
+
+  it.each(["pre_submission", "indeterminate"] as const)(
+    "preserves a native %s submission failure without claiming acceptance",
+    async (submissionPhase) => {
+      const svc = chatAssistantService({} as any);
+      mockAdapter.execute.mockResolvedValueOnce({
+        summary: "",
+        resultJson: null,
+        timedOut: false,
+        exitCode: 1,
+        errorMessage: "Native transport failed",
+        submissionPhase,
+        providerThreadId: "native-session-1",
+      });
+
+      await expect(svc.streamChatAssistantReply({
+        conversation: makeConversation(),
+        messages: makeMessages(),
+        contextLinks: [],
+      })).rejects.toThrow("Native transport failed");
+      expect(mockChatAgentRuns.finishRuntimeAttempt).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          status: "failed",
+          submissionPhase,
+          providerThreadId: "native-session-1",
+        }),
+      );
+    },
+  );
+
+  it("keeps a pre-submission network suspension retryable without marking acceptance unknown", async () => {
+    const svc = chatAssistantService({} as any);
+    const networkSuspension = {
+      kind: "network_unavailable" as const,
+      submissionPhase: "pre_submission" as const,
+      continuation: "fresh_if_pristine" as const,
+      transport: "connection" as const,
+      modelOutputObserved: false,
+      toolActivityObserved: false,
+      sideEffectRisk: "none" as const,
+      message: "Provider connection unavailable",
+    };
+    mockAdapter.execute.mockResolvedValueOnce({
+      summary: "",
+      resultJson: null,
+      timedOut: false,
+      exitCode: 1,
+      errorMessage: networkSuspension.message,
+      networkSuspension,
+    });
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).resolves.toMatchObject({ outcome: "waiting_for_network" });
+    expect(mockChatAgentRuns.markRuntimeAttemptWaiting).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ submissionPhase: "pre_submission" }),
+    );
+    expect(mockChatAgentRuns.finishRuntimeAttempt).not.toHaveBeenCalled();
   });
 
   it("preserves Codex authentication terminal evidence in the durable Chat run", async () => {
@@ -3812,6 +4505,53 @@ describe("chatAssistantService operator profile prompt injection", () => {
         errorCode: "chat_timed_out",
       }),
     );
+  });
+
+  it("retains only safe Cursor ACP timeout method evidence in the failed Chat Run", async () => {
+    const svc = chatAssistantService({} as any);
+    const secret = "cursor-auth-secret";
+    mockAdapter.execute.mockImplementationOnce(async () => ({
+      summary: "",
+      timedOut: true,
+      exitCode: 1,
+      errorCode: "cursor_native_timeout",
+      errorMessage: "Cursor ACP authenticate timed out after 15000ms.",
+      resultJson: {
+        acpTimeout: { method: "authenticate", timeoutMs: 15_000, durationMs: 15_008, credential: secret },
+        acpRequestTrace: [
+          { method: "initialize", status: "completed", durationMs: 36, params: secret },
+          { method: "authenticate", status: "timed_out", durationMs: 15_008, response: secret },
+          { method: secret, status: "started", durationMs: 0 },
+        ],
+        credential: secret,
+      },
+    }));
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({ errorCode: "chat_timed_out" });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "timed_out",
+        errorCode: "chat_timed_out",
+        resultJson: expect.objectContaining({
+          cursorAcpTimeout: {
+            errorCode: "cursor_native_timeout",
+            method: "authenticate",
+            timeoutMs: 15_000,
+            durationMs: 15_008,
+            requestTrace: [
+              { method: "initialize", status: "completed", durationMs: 36 },
+              { method: "authenticate", status: "timed_out", durationMs: 15_008 },
+            ],
+          },
+        }),
+      }),
+    );
+    expect(JSON.stringify(mockChatAgentRuns.finalizeRun.mock.lastCall)).not.toContain(secret);
   });
 
   it("wraps runtime exceptions as recoverable failed chat results", async () => {

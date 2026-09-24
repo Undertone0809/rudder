@@ -1,21 +1,13 @@
-import { isAgentRuntimeNetworkSuspension, type TranscriptEntry } from "@rudderhq/agent-runtime-utils";
-import {
-  chatMessages,
-  heartbeatRuns,
-  nativeSegments,
-  runRuntimeSpans,
-  runtimeBindings,
-} from "@rudderhq/db";
+import { buildModelAttemptSpecs, isAgentRuntimeNetworkSuspension, type TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
+import { runRuntimeSpans, runtimeBindings } from "@rudderhq/db";
 import type {
-  AgentRuntimeType,
   ChatContextLink,
-  ChatConversation
+  ChatConversation,
 } from "@rudderhq/shared";
 import {
   createRudderInlineVisualStreamSuppressor,
   redactRudderInlineVisualSources,
-  shortRefFor,
   stripRudderInlineVisualPlacements,
 } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
@@ -23,548 +15,79 @@ import { randomUUID } from "node:crypto";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import {
   createProfileBoundRuntimeProviderCapabilityResolverFromConfig,
-  discoverAgentRuntimeModels,
   findServerAdapter,
   getRuntimeDriver,
+  piSessionRpcArgsMatchHostProfile,
 } from "../agent-runtimes/index.js";
+import { prepareRuntimeProviderProfile } from "../agent-runtimes/prepare-runtime-provider-profile.js";
+import { buildRuntimeProviderProfileSnapshot, runtimeConfigFromProviderProfileSnapshot } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
 import type { StorageService } from "../storage/types.js";
-import { agentRunContextService } from "./agent-run-context.js";
-import { agentService } from "./agents.js";
+import { approvalService } from "./approvals.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
-import { asRecord, asString, buildConversationPrompt, CHAT_RESULT_SENTINEL_PREFIX, CHAT_UNSUPPORTED_ADAPTER_TYPES, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, chatExecutionConfig, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, extractRudderInlineVisualArtifacts, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, linkedGoalIdForChat, linkedIssueIdsForChat, linkedProjectIdForChat, maybeEmitAssistantDelta, maybeEmitAssistantState, maybeEmitObservedTranscriptEntry, maybeEmitTranscriptEntry, modelLabel, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, ResolvedChatRuntimeSource, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, summarizeRuntimeSkills, unavailableAgentDescriptor, unconfiguredDescriptor, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { assertClaudeSideChatInputSafe, canRestartPristineClaudeFork, claudeForkFenceForRun, recoverClaudeDeferredForkRun } from "./chat-assistant.claude-fork-recovery.js";
+import { cursorAcpTimeoutEvidence } from "./chat-assistant.cursor-diagnostics.js";
+import {
+  createChatAssistantExecutionOwner,
+  createChatAssistantStopFinalizer,
+  type ChatAssistantStaleOutcome,
+} from "./chat-assistant.execution-owner.js";
+import { asRecord, asString, CHAT_RESULT_SENTINEL_PREFIX, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, maybeEmitAssistantDelta, maybeEmitAssistantState, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { persistChatNativeTransport, resolveChatTranscriptCapability } from "./chat-assistant.native-transcript.js";
 import { userImageContentPathsFromMessages } from "./chat-assistant.proposal-validation.js";
-import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
+import { normalizeReplyInlineVisuals } from "./chat-assistant.reply-artifacts.js";
+import { chatAttemptFailureFinishInput, createChatAssistantRuntimeDriverPorts } from "./chat-assistant.runtime-driver.js";
+import { buildChatAssistantRuntimePrompt } from "./chat-assistant.runtime-prompt.js";
 import {
-  applyChatRuntimeOverrides,
-  chatEffortFromConfig,
-} from "./chat-assistant.runtime-overrides.js";
+  chatRuntimeAvailabilityStreamError,
+  chatRuntimePreparationStreamError,
+  createChatAssistantRuntimeResolution,
+  isAgentRuntimeType,
+} from "./chat-assistant.runtime-resolution.js";
+import { chatProviderResultIds } from "./chat-assistant.runtime-result.js";
+import {
+  chatSessionForCurrentProviderProfile,
+  deriveSideChatContextHandoff,
+  deriveSideChatForkSourceForCurrentProfile,
+  loadSideChatForkSource,
+  resolveChatContinuationSession,
+  sideChatForkBindingMatchesTarget,
+} from "./chat-assistant.side-chat-source.js";
+import { createChatAssistantStdoutBuffer } from "./chat-assistant.stdout-buffer.js";
+import { createChatTranscriptDelivery } from "./chat-assistant.transcript-delivery.js";
+import { admitClaudeDeferredFork, recordClaudeDeferredForkOutcome, reserveClaudeDeferredFork } from "./claude-deferred-fork-admission.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
-import {
-  executeAdapterWithModelFallbacks,
-} from "./runtime-kernel/model-fallback.js";
-import {
-  currentNativeSession,
-  ensureRuntimeBinding,
-  revisionForRuntimeConfig,
-} from "./runtime-kernel/native-session.js";
-import {
-  admitSideChatRuntimeFork,
-  type SideChatForkSource,
-  type SideChatRuntimeAdmission,
-} from "./side-chat-runtime-admission.js";
+import { resolveHeartbeatTranscriptRetention } from "./runtime-kernel/heartbeat-transcript-retention.js";
+import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
+import { executeNativeForkIntent, markNativeForkIntentUnknown } from "./runtime-kernel/native-fork-intent.js";
+import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
+import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
+import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
+import { createRuntimeApprovalBridge } from "./runtime-kernel/runtime-approval.js";
+import { admitSideChatRuntimeFork, type SideChatRuntimeAdmission } from "./side-chat-runtime-admission.js";
+
+export type { ChatAssistantStaleOutcome } from "./chat-assistant.execution-owner.js";
 export * from "./chat-assistant.helpers.js";
 export * from "./chat-assistant.runtime-overrides.js";
 
-function chatRuntimePreparationStreamError(error: unknown) {
-  const rawMessage = error instanceof Error ? error.message : String(error);
-  const safeContextSource = rawMessage.replace(/[?#][^\s]*/g, "");
-  const skillMatch = safeContextSource.match(
-    /\borganization skill\s+["'`]?([a-z0-9][a-z0-9._-]{0,127})/i,
-  );
-  const skill = skillMatch?.[1]?.replace(/[.,:;]+$/, "") || null;
-  const file = /(?:^|[/\\])SKILL\.md(?=$|[\s"'`:),])/i.test(safeContextSource)
-    ? "SKILL.md"
-    : null;
-  const context = skill
-    ? `organization skill "${skill}"${file ? ` file "${file}"` : ""}`
-    : file
-      ? `runtime file "${file}"`
-      : "the configured runtime skills and files";
-  const userMessage = skill
-    ? `Could not prepare organization skill "${skill}"${file ? ` file "${file}"` : ""}. Check that its installed files are available, then retry.`
-    : file
-      ? `Could not prepare runtime file "${file}". Check that the file is available, then retry.`
-      : "Could not prepare the configured runtime skills or files. Check the agent runtime and skill configuration, then retry.";
-  return new ChatAssistantStreamError(
-    `Chat runtime preparation failed for ${context}`,
-    "",
-    [],
-    {
-      errorCode: "chat_runtime_preparation_failed",
-      userMessage,
-      retryable: true,
-      failurePhase: "runtime_boot",
-      action: "retry",
-    },
-  );
-}
-
-function chatRuntimeAvailabilityStreamError(errorMessage?: string | null) {
-  const candidate = errorMessage?.trim() ?? "";
-  const safeKnownMessage = (
-    candidate === "Choose a chat agent before sending messages."
-    || candidate === "The selected chat agent is unavailable. Choose another agent before sending messages."
-    || candidate === "The selected agent runtime is not registered with Rudder Chat."
-    || candidate === "The current user has not configured a chat model yet."
-    || /^Unknown chat adapter type: [a-z0-9_-]+$/i.test(candidate)
-  )
-    ? candidate
-    : "The assistant runtime is not configured or available. Check the selected agent runtime, then retry.";
-  return new ChatAssistantStreamError(
-    safeKnownMessage,
-    "",
-    [],
-    {
-      errorCode: "chat_runtime_boot_failed",
-      userMessage: safeKnownMessage,
-      retryable: false,
-      failurePhase: "runtime_boot",
-      action: "repair_runtime",
-    },
-  );
-}
-
-async function loadSideChatForkSource(
-  db: Db,
-  conversation: Pick<ChatConversation, "orgId" | "forkedFromConversationId" | "forkedFromMessageId">,
-): Promise<SideChatForkSource> {
-  const sourceConversationId = conversation.forkedFromConversationId?.trim() || null;
-  const sourceMessageId = conversation.forkedFromMessageId?.trim() || null;
-  const sourceMessage = sourceConversationId && sourceMessageId
-    ? await db
-      .select({ runId: chatMessages.runId })
-      .from(chatMessages)
-      .where(and(
-        eq(chatMessages.orgId, conversation.orgId),
-        eq(chatMessages.conversationId, sourceConversationId),
-        eq(chatMessages.id, sourceMessageId),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null)
-    : null;
-  const sourceRun = sourceMessage?.runId
-    ? await db
-      .select({ id: heartbeatRuns.id })
-      .from(heartbeatRuns)
-      .where(and(
-        eq(heartbeatRuns.orgId, conversation.orgId),
-        eq(heartbeatRuns.id, sourceMessage.runId),
-        eq(heartbeatRuns.status, "succeeded"),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null)
-    : null;
-  const sourceSpan = sourceRun
-    ? await db
-      .select({
-        id: runRuntimeSpans.id,
-        nativeExecutionRef: runRuntimeSpans.nativeExecutionRef,
-        segmentId: runRuntimeSpans.segmentId,
-      })
-      .from(runRuntimeSpans)
-      .where(and(
-        eq(runRuntimeSpans.orgId, conversation.orgId),
-        eq(runRuntimeSpans.runId, sourceRun.id),
-        eq(runRuntimeSpans.state, "sealed"),
-        eq(runRuntimeSpans.completeness, "complete"),
-      ))
-      .orderBy(desc(runRuntimeSpans.ordinal), desc(runRuntimeSpans.closedAt))
-      .limit(1)
-      .then((rows) => rows[0] ?? null)
-    : null;
-  const sourceSegment = sourceSpan
-    ? await db
-      .select({
-        nativeSessionId: nativeSegments.nativeSessionId,
-        providerStateJson: nativeSegments.providerStateJson,
-        leafId: nativeSegments.leafId,
-        sourceBoundaryRef: nativeSegments.sourceBoundaryRef,
-      })
-      .from(nativeSegments)
-      .where(and(
-        eq(nativeSegments.orgId, conversation.orgId),
-        eq(nativeSegments.id, sourceSpan.segmentId),
-      ))
-      .limit(1)
-      .then((rows) => rows[0] ?? null)
-    : null;
-  const sessionId = sourceSegment?.nativeSessionId?.trim() || null;
-  const sourceBoundaryRef = sourceSpan?.nativeExecutionRef?.trim()
-    || sourceSegment?.leafId?.trim()
-    || sourceSegment?.sourceBoundaryRef?.trim()
-    || null;
-
-  return {
-    sourceConversationId,
-    sourceMessageId,
-    sourceRunId: sourceRun?.id ?? null,
-    sourceBoundaryRef,
-    sourceSpanId: sourceSpan?.id ?? null,
-    session: sessionId
-      ? {
-        sessionId,
-        sessionParams: sourceSegment?.providerStateJson ?? { sessionId },
-        sessionDisplayId: sessionId,
-      }
-      : null,
-  };
-}
-
 export function chatAssistantService(db: Db, storage?: StorageService) {
-  const agentsSvc = agentService(db);
-  const runContextSvc = agentRunContextService(db);
   const chatRunsSvc = chatAgentRunService(db);
+  const approvalsSvc = approvalService(db);
+  const chatDriverPorts = createChatAssistantRuntimeDriverPorts(db);
+  const {
+    enrichConversation,
+    enrichConversations,
+    resolveChatInvocation,
+  } = createChatAssistantRuntimeResolution(db);
 
-  async function resolveChatInvocation(input: {
-    conversation: Pick<ChatConversation, "id" | "orgId" | "preferredAgentId" | "modelOverride" | "effortOverride" | "primaryIssueId" | "contextLinks" | "planMode">;
-    contextLinks: ChatContextLink[];
-    prepareExecutionContext?: boolean;
-    materializeManagedInstructions?: boolean;
-    materializeMissingRuntimeSkills?: boolean;
-    agentIdSnapshot?: string | null;
-    modelSnapshot?: string | null;
-    effortSnapshot?: string | null;
-  }) {
-    const runtimeSource = await resolveConversationRuntime(
-      input.conversation,
-      {
-        prepareRuntimeConfig: input.prepareExecutionContext !== false,
-        materializeManagedInstructions: input.materializeManagedInstructions,
-        materializeMissingRuntimeSkills: input.materializeMissingRuntimeSkills,
-        ...(input.agentIdSnapshot !== undefined ? { agentIdSnapshot: input.agentIdSnapshot } : {}),
-        ...(input.modelSnapshot !== undefined ? { modelSnapshot: input.modelSnapshot } : {}),
-        ...(input.effortSnapshot !== undefined ? { effortSnapshot: input.effortSnapshot } : {}),
-      },
-    );
-    if (!runtimeSource.descriptor.available) {
-      return {
-        runtimeSource,
-        adapter: null,
-        config: null,
-        linkedIssueIds: [] as string[],
-        linkedProjectId: null as string | null,
-        linkedGoalId: null as string | null,
-        resolvedWorkspace: null,
-        sceneContext: null,
-        availabilityError: runtimeSource.descriptor.error ?? "Chat assistant is not configured",
-      };
-    }
-    if (!runtimeSource.agentRuntimeType || !runtimeSource.agentRuntimeConfig || !runtimeSource.runtimeAgent) {
-      return {
-        runtimeSource,
-        adapter: null,
-        config: null,
-        linkedIssueIds: [] as string[],
-        linkedProjectId: null as string | null,
-        linkedGoalId: null as string | null,
-        resolvedWorkspace: null,
-        sceneContext: null,
-        availabilityError: runtimeSource.descriptor.error ?? "Chat runtime is not configured",
-      };
-    }
-
-    const adapter = findServerAdapter(runtimeSource.agentRuntimeType);
-    if (!adapter) {
-      return {
-        runtimeSource,
-        adapter: null,
-        config: null,
-        linkedIssueIds: [] as string[],
-        linkedProjectId: null as string | null,
-        linkedGoalId: null as string | null,
-        resolvedWorkspace: null,
-        sceneContext: null,
-        availabilityError: `Unknown chat adapter type: ${runtimeSource.agentRuntimeType}`,
-      };
-    }
-
-    const config = chatExecutionConfig(
-      input.conversation,
-      runtimeSource.agentRuntimeType,
-      runtimeSource.agentRuntimeConfig,
-    );
-    const linkedIssueIds = linkedIssueIdsForChat(input.conversation, input.contextLinks);
-    const linkedProjectId = linkedProjectIdForChat(input.contextLinks);
-    const linkedGoalId = linkedGoalIdForChat(input.contextLinks);
-    if (input.prepareExecutionContext === false) {
-      return {
-        runtimeSource,
-        adapter,
-        config,
-        linkedIssueIds,
-        linkedProjectId,
-        linkedGoalId,
-        resolvedWorkspace: null,
-        sceneContext: null,
-        availabilityError: null,
-      };
-    }
-    const resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
-      runtimeSource.runtimeAgent,
-      {
-        issueId: input.conversation.primaryIssueId ?? linkedIssueIds[0] ?? null,
-        projectId: linkedProjectId,
-      },
-      null,
-    );
-
-    const sceneContext = await runContextSvc.buildSceneContext({
-      scene: "chat",
-      agent: runtimeSource.runtimeAgent,
-      resolvedWorkspace,
-      runtimeConfig: config,
-      issueId: input.conversation.primaryIssueId ?? linkedIssueIds[0] ?? null,
-      chatConversationId: input.conversation.id,
-    });
-
-    return {
-      runtimeSource,
-      adapter,
-      config,
-      linkedIssueIds,
-      linkedProjectId,
-      linkedGoalId,
-      resolvedWorkspace,
-      sceneContext,
-      availabilityError: null,
-    };
-  }
-
-  async function resolveAgentRuntime(
-    orgId: string,
-    agentId: string,
-    options?: {
-      prepareRuntimeConfig?: boolean;
-      materializeManagedInstructions?: boolean;
-      materializeMissingRuntimeSkills?: boolean;
-    },
-  ): Promise<ResolvedChatRuntimeSource | null> {
-    const agent = await agentsSvc.getInternalById(agentId);
-    if (!agent || agent.orgId !== orgId || agent.status === "terminated") {
-      return {
-        descriptor: unavailableAgentDescriptor({
-          sourceLabel: "Selected agent",
-          runtimeAgentId: null,
-          agentRuntimeType: null,
-          model: null,
-          error: "The selected chat agent is unavailable. Choose another agent before sending messages.",
-        }),
-        runtimeAgent: null,
-        agentRuntimeType: null,
-        agentRuntimeConfig: null,
-        runtimeSkills: [],
-      };
-    }
-
-    const agentAdapterType = agent.agentRuntimeType as AgentRuntimeType;
-    const agentAdapterConfig = asRecord(agent.agentRuntimeConfig) ?? {};
-    const registeredAdapter = findServerAdapter(agentAdapterType);
-
-    if (!registeredAdapter) {
-      return {
-        descriptor: unavailableAgentDescriptor({
-          sourceLabel: agent.name,
-          runtimeAgentId: agent.id,
-          agentRuntimeType: agentAdapterType,
-          model: modelLabel(agentAdapterConfig) ?? null,
-          error: "The selected agent runtime is not registered with Rudder Chat.",
-        }),
-        runtimeAgent: {
-          id: agent.id,
-          orgId: agent.orgId,
-          name: agent.name,
-          agentRuntimeType: agentAdapterType,
-          agentRuntimeConfig: agentAdapterConfig,
-        },
-        agentRuntimeType: agentAdapterType,
-        agentRuntimeConfig: null,
-        runtimeSkills: [],
-      };
-    }
-
-    if (CHAT_UNSUPPORTED_ADAPTER_TYPES.has(agentAdapterType)) {
-      return {
-        descriptor: unavailableAgentDescriptor({
-          sourceLabel: agent.name,
-          runtimeAgentId: agent.id,
-          agentRuntimeType: agentAdapterType,
-          model: modelLabel(agentAdapterConfig) ?? null,
-          error: "The current user has not configured a chat model yet.",
-        }),
-        runtimeAgent: {
-          id: agent.id,
-          orgId: agent.orgId,
-          name: agent.name,
-          agentRuntimeType: agentAdapterType,
-          agentRuntimeConfig: agentAdapterConfig,
-        },
-        agentRuntimeType: agentAdapterType,
-        agentRuntimeConfig: null,
-        runtimeSkills: [],
-      };
-    }
-
-    const shouldPrepareRuntimeConfig = options?.prepareRuntimeConfig !== false;
-    const preparedAgentRuntimeConfig = shouldPrepareRuntimeConfig && options?.materializeManagedInstructions
-      ? await runContextSvc.materializeManagedInstructionsForRun({
-        id: agent.id,
-        orgId: agent.orgId,
-        name: agent.name,
-        role: agent.role,
-        workspaceKey: agent.workspaceKey,
-        status: agent.status,
-        agentRuntimeType: agentAdapterType,
-        agentRuntimeConfig: agentAdapterConfig,
-        metadata: agent.metadata ?? null,
-      })
-      : agentAdapterConfig;
-    const preparedRuntime = shouldPrepareRuntimeConfig
-      ? await runContextSvc.prepareRuntimeConfig({
-        scene: "chat",
-        materializeMissingRuntimeSkills: options?.materializeMissingRuntimeSkills !== false,
-        agent: {
-          id: agent.id,
-          orgId: agent.orgId,
-          name: agent.name,
-          role: agent.role,
-          workspaceKey: agent.workspaceKey,
-          status: agent.status,
-          agentRuntimeType: agentAdapterType,
-          agentRuntimeConfig: preparedAgentRuntimeConfig,
-          metadata: agent.metadata ?? null,
-        },
-      })
-      : null;
-    const runtimeConfig = preparedRuntime?.runtimeConfig ?? preparedAgentRuntimeConfig;
-    const runtimeSkillEntries = preparedRuntime?.runtimeSkillEntries ?? [];
-    return {
-      descriptor: {
-        sourceType: "agent",
-        sourceLabel: agent.name,
-        runtimeAgentId: agent.id,
-        agentRuntimeType: agentAdapterType,
-        model: modelLabel(runtimeConfig) ?? "Default model",
-        effort: chatEffortFromConfig(agentAdapterType, runtimeConfig),
-        available: true,
-        error: null,
-      },
-      runtimeAgent: {
-        id: agent.id,
-        orgId: agent.orgId,
-        name: agent.name,
-        agentRuntimeType: agentAdapterType,
-        agentRuntimeConfig: runtimeConfig,
-      },
-      agentRuntimeType: agentAdapterType,
-      agentRuntimeConfig: runtimeConfig,
-      runtimeSkills: summarizeRuntimeSkills(runtimeSkillEntries),
-    };
-  }
-
-  async function resolveConversationRuntime(
-    conversation: Pick<ChatConversation, "orgId" | "preferredAgentId" | "modelOverride" | "effortOverride">,
-    options?: {
-      prepareRuntimeConfig?: boolean;
-      materializeManagedInstructions?: boolean;
-      materializeMissingRuntimeSkills?: boolean;
-      agentIdSnapshot?: string | null;
-      modelSnapshot?: string | null;
-      effortSnapshot?: string | null;
-    },
-  ) {
-    const preferredAgentId = options && Object.prototype.hasOwnProperty.call(options, "agentIdSnapshot")
-      ? safeTrim(options.agentIdSnapshot)
-      : conversation.preferredAgentId;
-    if (preferredAgentId) {
-      const agentRuntime = await resolveAgentRuntime(
-        conversation.orgId,
-        preferredAgentId,
-        options,
-      );
-      if (
-        agentRuntime?.agentRuntimeType
-        && agentRuntime.agentRuntimeConfig
-        && agentRuntime.runtimeAgent
-      ) {
-        const model = options && Object.prototype.hasOwnProperty.call(options, "modelSnapshot")
-          ? safeTrim(options.modelSnapshot)
-          : safeTrim(conversation.modelOverride);
-        const effort = options && Object.prototype.hasOwnProperty.call(options, "effortSnapshot")
-          ? safeTrim(options.effortSnapshot)
-          : conversation.effortOverride == null
-            ? undefined
-            : safeTrim(conversation.effortOverride);
-        if (!model && effort === undefined) return agentRuntime;
-        const shouldValidateRuntimeEffort = effort !== undefined
-          || chatEffortFromConfig(agentRuntime.agentRuntimeType, agentRuntime.agentRuntimeConfig) !== null;
-        let runtimeModelCatalog: Awaited<ReturnType<typeof discoverAgentRuntimeModels>>;
-        if (
-          shouldValidateRuntimeEffort
-          && ["codex_local", "opencode_local", "pi_local", "cursor"].includes(agentRuntime.agentRuntimeType)
-        ) {
-          try {
-            runtimeModelCatalog = await discoverAgentRuntimeModels(agentRuntime.agentRuntimeType);
-          } catch {
-            // Model discovery is advisory. Preserve the configured runtime when
-            // a local CLI probe is unavailable; the adapter will still validate
-            // against its built-in contract where one exists.
-            runtimeModelCatalog = undefined;
-          }
-        }
-        const derivedConfig = applyChatRuntimeOverrides(
-          agentRuntime.agentRuntimeType,
-          agentRuntime.agentRuntimeConfig,
-          model,
-          effort,
-          runtimeModelCatalog,
-        );
-        return {
-          ...agentRuntime,
-          descriptor: {
-            ...agentRuntime.descriptor,
-            model: model ?? agentRuntime.descriptor.model,
-            effort: chatEffortFromConfig(agentRuntime.agentRuntimeType, derivedConfig),
-          },
-          runtimeAgent: {
-            ...agentRuntime.runtimeAgent,
-            agentRuntimeConfig: derivedConfig,
-          },
-          agentRuntimeConfig: derivedConfig,
-        };
-      }
-      if (agentRuntime) return agentRuntime;
-    }
-
-    return {
-      descriptor: unconfiguredDescriptor("Choose a chat agent before sending messages."),
-      runtimeAgent: null,
-      agentRuntimeType: null,
-      agentRuntimeConfig: null,
-      runtimeSkills: [],
-    } satisfies ResolvedChatRuntimeSource;
-  }
-
-  async function enrichConversation<T extends ChatConversation>(conversation: T): Promise<T> {
-    const resolved = await resolveConversationRuntime(conversation, {
-      materializeMissingRuntimeSkills: false,
-    });
-    let shortRef = conversation.shortRef;
-    if (!shortRef) {
-      try {
-        shortRef = shortRefFor("chat", conversation.id);
-      } catch {
-        shortRef = undefined;
-      }
-    }
-    return {
-      ...conversation,
-      ...(shortRef ? { shortRef } : {}),
-      chatRuntime: resolved.descriptor,
-    };
-  }
-
-  async function enrichConversations<T extends ChatConversation>(conversations: T[]): Promise<T[]> {
-    return enrichConversationRuntimeDescriptors(
-      conversations,
-      async (conversation) => (await resolveConversationRuntime(conversation, {
-        materializeMissingRuntimeSkills: false,
-      })).descriptor,
-    );
-  }
-
+  function streamChatAssistantReply(
+    input: StreamChatAssistantReplyInput & { stream: true },
+  ): Promise<StreamChatAssistantReplyResult | ChatAssistantStaleOutcome>;
+  function streamChatAssistantReply(
+    input: StreamChatAssistantReplyInput,
+  ): Promise<StreamChatAssistantReplyResult>;
   async function streamChatAssistantReply(
     input: StreamChatAssistantReplyInput,
-  ): Promise<StreamChatAssistantReplyResult> {
+  ): Promise<StreamChatAssistantReplyResult | ChatAssistantStaleOutcome> {
     const resolvedInvocation = await resolveChatInvocation({
       conversation: input.conversation,
       contextLinks: input.contextLinks,
@@ -584,7 +107,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const {
       runtimeSource,
       adapter,
-      config,
+      config: rawConfig,
       linkedIssueIds,
       linkedProjectId,
       linkedGoalId,
@@ -592,7 +115,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     } = resolvedInvocation;
     if (
       !adapter ||
-      !config ||
+      !rawConfig ||
       !sceneContext ||
       !runtimeSource.agentRuntimeType ||
       !runtimeSource.descriptor.runtimeAgentId
@@ -603,13 +126,22 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const runtimeAgentId = runtimeSource.descriptor.runtimeAgentId;
     const resultSentinel = `${CHAT_RESULT_SENTINEL_PREFIX}${randomUUID()}__`;
     const workspace = asRecord(sceneContext.rudderWorkspace);
+    const config = await prepareRuntimeProviderProfile({
+      runtimeType: runtimeAgentType,
+      orgId: input.conversation.orgId,
+      agentId: runtimeAgentId,
+      config: rawConfig,
+      workspace,
+    });
     const existingRuntimeBinding = await db
       .select()
       .from(runtimeBindings)
       .where(and(
         eq(runtimeBindings.orgId, input.conversation.orgId),
         eq(runtimeBindings.conversationId, input.conversation.id),
+        eq(runtimeBindings.status, "active"),
       ))
+      .orderBy(desc(runtimeBindings.bindingEpoch))
       .limit(1)
       .then((rows) => rows[0] ?? null);
     const parentRuntimeBinding = input.conversation.forkedFromConversationId
@@ -619,82 +151,70 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         .where(and(
           eq(runtimeBindings.orgId, input.conversation.orgId),
           eq(runtimeBindings.conversationId, input.conversation.forkedFromConversationId),
+          eq(runtimeBindings.status, "active"),
         ))
+        .orderBy(desc(runtimeBindings.bindingEpoch))
         .limit(1)
         .then((rows) => rows[0] ?? null)
       : null;
-    const sideChatFirstSend = input.conversation.conversationKind === "side_chat"
-      && !existingRuntimeBinding;
+    const existingBindingRun = input.conversation.conversationKind === "side_chat" && existingRuntimeBinding
+      ? await db.select({ id: runRuntimeSpans.id }).from(runRuntimeSpans).where(and(
+        eq(runRuntimeSpans.orgId, input.conversation.orgId), eq(runRuntimeSpans.bindingId, existingRuntimeBinding.id),
+      )).limit(1).then((rows) => rows[0] ?? null) : null;
+    const restartPristineFork = Boolean(existingBindingRun && await canRestartPristineClaudeFork({
+      db, binding: existingRuntimeBinding, runtimeType: runtimeAgentType,
+      orgId: input.conversation.orgId, conversationId: input.conversation.id,
+    }));
+    const sideChatFirstSend = input.conversation.conversationKind === "side_chat" && (!existingBindingRun || restartPristineFork);
     const principalScopeRef = input.principalScopeRef
       ?? asString(input.runContext?.principalScopeRef)
       ?? `org:${input.conversation.orgId}`;
     const hostId = asString(config.hostId ?? config.runtimeHostId) || "local";
     const profileId = asString(config.profileId ?? config.profile ?? config.authProfile) || "default";
     const workspaceBindingId = asString(workspace?.workspaceId ?? workspace?.id ?? workspace?.cwd) || null;
-    const providerProfileCwd = asString(workspace?.executionWorkspaceCwd ?? workspace?.cwd ?? workspace?.worktreePath);
+    const providerProfileCwd = asString(config.cwd)
+      || asString(workspace?.executionWorkspaceCwd ?? workspace?.cwd ?? workspace?.worktreePath);
     const capabilityRevision = revisionForRuntimeConfig({
       runtimeType: runtimeAgentType,
       planMode: input.conversation.planMode,
       skills: runtimeSource.runtimeSkills.map((skill) => skill.key),
     });
-    const providerBinding = {
-      orgId: input.conversation.orgId,
-      hostId,
-      profileId,
-      workspaceBindingId,
-      capabilityRevision,
-    };
+    const providerBinding = { orgId: input.conversation.orgId, hostId, profileId, workspaceBindingId, capabilityRevision };
+    const loadedForkSource = sideChatFirstSend || (input.resumeRunId && runtimeAgentType === "claude_local" && input.conversation.conversationKind === "side_chat")
+      ? await loadSideChatForkSource(db, input.conversation) : null;
+    const sourceBinding = loadedForkSource?.sourceBinding;
+    const sourceBindingMatchesTarget = Boolean(loadedForkSource && sideChatForkBindingMatchesTarget(
+      sourceBinding, runtimeAgentType, { ...providerBinding, principalScopeRef },
+    ));
+    const forkSource = loadedForkSource && sourceBindingMatchesTarget
+      ? deriveSideChatForkSourceForCurrentProfile(loadedForkSource, runtimeAgentType, config)
+      : loadedForkSource;
+    const forkProfile = forkSource?.sourceProviderProfile;
+    const historicalForkConfig = forkProfile?.runtimeType === runtimeAgentType
+      ? {
+        ...config,
+        ...runtimeConfigFromProviderProfileSnapshot(forkProfile),
+        ...(["pi_local", "opencode_local"].includes(runtimeAgentType) ? filterNativeTransportProfile(forkProfile) : {}),
+      }
+      : config;
     const providerCapabilityResolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
       runtimeType: runtimeAgentType,
-      runtimeConfig: config,
-      cwd: providerProfileCwd,
+      runtimeConfig: historicalForkConfig,
+      cwd: asString(historicalForkConfig.cwd) || providerProfileCwd,
     });
-    const runtimeDriver = getRuntimeDriver(runtimeAgentType, {
+    const runtimeDriver = getRuntimeDriver(runtimeAgentType, chatDriverPorts.factoryOptions({
       adapter,
       providerCapabilityResolver,
       providerBinding,
-    });
-    const sideChatRuntimeAdmission: SideChatRuntimeAdmission | null = sideChatFirstSend
-      ? await admitSideChatRuntimeFork({
-        driver: runtimeDriver,
-        source: await loadSideChatForkSource(db, input.conversation),
-        targetBinding: providerBinding,
-        signal: input.abortSignal,
-      })
+    }));
+    const nativeDriverRequired = chatDriverPorts.isNativeRuntime(runtimeAgentType);
+    // A native fork is only eligible when its exact sealed span selector was
+    // recovered. Missing selector evidence must use the explicit context
+    // handoff path instead of asking a provider to guess a mutable head.
+    const nativeForkDriver = sourceBindingMatchesTarget && forkSource?.sourceSpanId && forkSource.selectorJson
+      ? runtimeDriver
       : null;
-    const currentUserMessageId = input.userMessageId
-      ?? [...input.messages].reverse().find((message) => message.role === "user")?.id
-      ?? null;
-    const handoffItems = input.conversation.conversationKind === "side_chat"
-      ? input.messages
-        .filter((message) => message.id !== currentUserMessageId)
-        .filter((message) => message.role === "user" || message.role === "assistant")
-        .map((message) => ({
-          role: message.role,
-          kind: message.kind,
-          body: message.body,
-          sourceId: message.id,
-        }))
-      : [];
-    const derivedNativeContextHandoff = (
-      sideChatRuntimeAdmission?.continuity === "context_handoff"
-      || existingRuntimeBinding?.continuity === "context_handoff"
-    )
-      && handoffItems.length > 0
-      ? {
-        sourceConversationId: sideChatRuntimeAdmission?.sourceConversationId
-          ?? input.conversation.forkedFromConversationId
-          ?? input.conversation.id,
-        sourceMessageId: sideChatRuntimeAdmission?.sourceMessageId
-          ?? input.conversation.forkedFromMessageId
-          ?? handoffItems.at(-1)!.sourceId,
-        items: handoffItems,
-      }
-      : null;
-    const nativeContextHandoff = input.nativeContextHandoff ?? derivedNativeContextHandoff;
-    const runtimeContinuity = sideChatRuntimeAdmission?.continuity
-      ?? (input.conversation.conversationKind === "side_chat" ? "context_handoff" : "native");
-    const runtimeBinding = await ensureRuntimeBinding(db, {
+    const bindingInput = {
       orgId: input.conversation.orgId,
       conversationId: input.conversation.id,
       principalScopeRef,
@@ -705,27 +225,151 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       workspaceBindingId,
       instructionsRevision: revisionForRuntimeConfig(config, ["apiKey", "authToken", "token", "password"]),
       capabilityRevision,
+      parentBindingId: forkSource?.sourceBinding?.id ?? parentRuntimeBinding?.id ?? null,
+    };
+    let claudeDeferredFork = sideChatFirstSend && !input.resumeRunId && forkSource && runtimeAgentType === "claude_local"
+      ? await admitClaudeDeferredFork({
+        db, source: forkSource, sourceBindingMatchesTarget, bindingInput, providerBinding, config, conversationId: input.conversation.id,
+      }) : null;
+    const sideChatRuntimeAdmission: SideChatRuntimeAdmission | null = claudeDeferredFork?.admission ?? (sideChatFirstSend && forkSource
+      ? await admitSideChatRuntimeFork({
+        driver: nativeForkDriver,
+        source: forkSource,
+        targetBinding: providerBinding,
+        signal: input.abortSignal,
+        executeFork: async (request) => {
+          if (!runtimeDriver) throw new Error("Native Side Chat runtime driver is unavailable");
+          if (!forkSource.selectorJson) throw new Error("Native Side Chat source selector is unavailable");
+          const sourceBinding = forkSource.sourceBinding;
+          if (!sideChatForkBindingMatchesTarget(
+            sourceBinding, runtimeAgentType, { ...providerBinding, principalScopeRef },
+          )) {
+            throw new Error("Native Side Chat source does not match the authorized target profile");
+          }
+          const { binding: targetBinding, nativeSession: targetSession } = await chatDriverPorts.ensureSession(runtimeDriver, {
+            ...bindingInput, continuity: "native", sourceBoundaryRef: forkSource.sourceBoundaryRef,
+          }, true);
+          const outcome = await executeNativeForkIntent({
+            db,
+            intent: {
+              idempotencyKey: `side-chat:${input.conversation.id}`,
+              source: {
+                orgId: input.conversation.orgId,
+                sourceConversationId: forkSource.sourceConversationId,
+                sourceRunId: forkSource.sourceRunId!,
+                sourceSpanId: forkSource.sourceSpanId!,
+              sourceBoundaryRef: forkSource.sourceBoundaryRef!,
+              selectorJson: forkSource.selectorJson,
+              },
+              targetBinding,
+              targetSegment: targetSession.segment,
+              providerBinding: { ...providerBinding, id: targetBinding.id },
+            },
+            driver: { fork: async (forkRequest) => {
+              // Authorize reading the parent with its own persisted Binding.
+              // Only the independently created child is assigned to the target.
+              const operation = await runtimeDriver.fork({
+                ...forkRequest,
+                selector: forkSource.selectorJson as NativeSpanSelector,
+                binding: sourceBinding,
+              });
+              if (operation.status !== "supported") return operation;
+              if (operation.value.session.sessionId === request.session.sessionId) {
+                throw new Error("Native fork did not create an independent child session");
+              }
+              return { ...operation, value: { ...operation.value, session: {
+                ...operation.value.session,
+                sessionParams: { ...operation.value.session.sessionParams, profileBindingId: targetBinding.id },
+              } } };
+            } },
+            sourceSession: request.session,
+            boundary: forkSource.sourceBoundaryRef!,
+            providerBinding: { ...providerBinding, id: targetBinding.id },
+            signal: input.abortSignal,
+          });
+          if (outcome.status !== "accepted") {
+            throw new Error(`Native Side Chat fork ${outcome.status}; reconciliation is required before retry`);
+          }
+          return { status: "supported", value: outcome.child };
+        },
+      })
+      : null);
+    const nativeContextHandoff = input.nativeContextHandoff
+      ?? deriveSideChatContextHandoff(input, sideChatRuntimeAdmission, existingRuntimeBinding?.continuity);
+    const runtimeContinuity = sideChatRuntimeAdmission?.continuity
+      ?? (input.conversation.conversationKind === "side_chat" ? "context_handoff" : "native");
+    const bindingIntent = {
+      ...bindingInput,
       continuity: runtimeContinuity,
-      parentBindingId: parentRuntimeBinding?.id ?? null,
+      rotateForPristineForkHandoff: restartPristineFork && sideChatRuntimeAdmission?.continuity === "context_handoff",
       sourceBoundaryRef: sideChatRuntimeAdmission
         ? sideChatRuntimeAdmission.sourceBoundaryRef
         : input.conversation.forkedFromMessageId ?? null,
+    };
+    const { binding: runtimeBinding, nativeSession } = await chatDriverPorts.ensureSession(
+      runtimeDriver,
+      bindingIntent,
+      nativeDriverRequired,
+    );
+    await assertClaudeSideChatInputSafe({
+      db, runtimeType: runtimeAgentType, conversationKind: input.conversation.conversationKind,
+      orgId: input.conversation.orgId, conversationId: input.conversation.id,
+      bindingId: runtimeBinding.id, providerState: nativeSession.segment.providerStateJson,
+      firstSend: sideChatFirstSend, resumeRunId: input.resumeRunId, userMessageId: input.userMessageId,
     });
-    const nativeSession = await currentNativeSession(db, runtimeBinding);
     const admittedSession = sideChatRuntimeAdmission?.continuity === "native"
       ? sideChatRuntimeAdmission.session
       : null;
-    const initialSession = admittedSession ?? nativeSession;
-    const sessionIntent = sideChatRuntimeAdmission?.sessionIntent
-      ?? (nativeSession.sessionId
+    const initialSessionBeforeProfile = admittedSession ?? nativeSession;
+    const resolvedContinuation = await resolveChatContinuationSession(db, {
+      runtimeType: runtimeAgentType,
+      config,
+      binding: runtimeBinding,
+      segmentId: nativeSession.segment.id,
+      session: initialSessionBeforeProfile,
+      admittedSession,
+    });
+    const admittedPiTransport = runtimeAgentType === "pi_local" && admittedSession
+      && forkProfile?.runtimeType === "pi_local"
+      ? filterNativeTransportProfile(forkProfile)
+      : null;
+    const continuationTransport = runtimeAgentType === "pi_local"
+      ? admittedPiTransport ?? resolvedContinuation.continuationTransport
+      : resolvedContinuation.continuationTransport;
+    const runtimeExecutionConfig = runtimeAgentType === "pi_local" && admittedSession
+      ? { ...config, ...(admittedPiTransport ?? {}) }
+      : resolvedContinuation.runtimeExecutionConfig;
+    const initialSession = resolvedContinuation.initialSession;
+    const sessionIntent = sideChatRuntimeAdmission?.sessionIntent?.kind === "fork" && initialSession.sessionId
+      ? {
+        ...sideChatRuntimeAdmission.sessionIntent,
+        sessionId: initialSession.sessionId,
+        sessionParams: initialSession.sessionParams ?? { sessionId: initialSession.sessionId },
+      }
+      : sideChatRuntimeAdmission?.sessionIntent ?? (initialSession.sessionId
         ? {
           kind: "resume" as const,
           reuseScope: "explicit" as const,
           sourceRunId: null,
-          sessionId: nativeSession.sessionId,
-          sessionParams: nativeSession.sessionParams,
+          sessionId: initialSession.sessionId,
+          sessionParams: initialSession.sessionParams,
         }
         : { kind: "fresh" as const });
+    const transcriptProviderBinding = runtimeAgentType === "pi_local"
+      ? { ...providerBinding, id: runtimeBinding.id }
+      : providerBinding;
+    const transcriptCapabilityResolution = resolveChatTranscriptCapability({
+      runtimeType: runtimeAgentType, config, continuationTransport, providerProfileCwd,
+      providerCapabilityResolver, binding: transcriptProviderBinding, session: initialSession,
+    });
+    const transcriptEvidence = transcriptCapabilityResolution?.adapter.transcript?.evidence;
+    const transcriptRetention = resolveHeartbeatTranscriptRetention({
+      hasBinding: Boolean(runtimeBinding),
+      bindingContinuity: runtimeBinding.continuity,
+      capabilityStatus: transcriptCapabilityResolution?.profileResolved && transcriptEvidence?.profileBound
+        ? transcriptEvidence.status
+        : "unknown",
+    });
     const recoveredChatRun = input.resumeRunId
       ? await chatRunsSvc.adoptRecoveredRun(
           input.resumeRunId,
@@ -746,6 +390,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           runContext: {
             ...(input.runContext ?? {}),
             managedMcpPolicySnapshot: config.managedExternalMcpBindings ?? [],
+            transcriptSource: transcriptRetention.mode === "legacy" ? "legacy" : "native",
+            // Host-prepared transport identity must survive config changes and
+            // server restarts. Never persist credentials or accept this from
+            // caller context/session metadata.
+            runtimeProviderProfile: buildRuntimeProviderProfileSnapshot(runtimeAgentType, { ...config, cwd: providerProfileCwd }),
           },
           sourceMetadata: sideChatRuntimeAdmission
             ? {
@@ -756,21 +405,29 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 sourceRunId: sideChatRuntimeAdmission.sourceRunId,
                 sourceBoundaryRef: sideChatRuntimeAdmission.sourceBoundaryRef,
                 sourceSpanId: sideChatRuntimeAdmission.sourceSpanId,
+                sourceSelectorJson: forkSource?.selectorJson ?? null,
                 span: {
                   id: sideChatRuntimeAdmission.sourceSpanId,
                   runId: sideChatRuntimeAdmission.sourceRunId,
+                  selectorJson: forkSource?.selectorJson ?? null,
                 },
                 providerCapability: sideChatRuntimeAdmission.providerCapability,
                 downgradeReason: sideChatRuntimeAdmission.downgradeReason,
                 sessionIntent: sideChatRuntimeAdmission.sessionIntent,
+                ...(claudeDeferredFork?.adapterIntent
+                  ? { deferredForkDescriptor: claudeDeferredFork.adapterIntent }
+                  : {}),
               },
             }
             : null,
           runtimeBinding,
           runtimeSegment: nativeSession.segment,
+          sourceRunId: forkSource?.sourceRunId ?? null,
+          sourceSpanId: forkSource?.sourceSpanId ?? null,
+          sourceSelectorJson: forkSource?.selectorJson ?? null,
           nativeSessionId: initialSession.sessionId,
           nativeSessionParams: initialSession.sessionParams,
-          runtimeModel: runtimeSource.descriptor.model,
+          runtimeModel: buildModelAttemptSpecs(runtimeExecutionConfig, runtimeAgentType)[0]?.model ?? null,
           runtimeResumeSource: sideChatRuntimeAdmission
             ? sideChatRuntimeAdmission.continuity === "native" ? "same_session" : "fresh"
             : nativeSession.sessionId ? "same_session" : "fresh",
@@ -783,41 +440,64 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       throw new Error("The waiting Chat run could not be reattached");
     }
     const runId = chatRun.id;
-    const transcriptDelivery = {
-      source: runtimeBinding.continuity === "native" ? "native" as const : "legacy" as const,
-      persistRaw: runtimeBinding.continuity !== "native",
-      runId,
-      spanId: chatRun.runtimeSpanId ?? null,
-    };
     await input.onRunCreated?.(runId);
-    let runFinalized = false;
-    const finalizeChatRun = async (
-      finalState: Parameters<typeof chatRunsSvc.finalizeRun>[1],
-    ) => {
-      const finalized = await chatRunsSvc.finalizeRun(runId, finalState);
-      runFinalized = true;
-      return finalized;
-    };
-    const finalizeUnhandledRunFailure = async (error: unknown) => {
-      if (runFinalized) return;
-      const errorCode = (error as { errorCode?: unknown } | null)?.errorCode;
-      const safeError = redactChatInlineVisualDiagnosticText(
-        error instanceof Error ? error.message : String(error),
-        "Chat runtime failed while handling private presentation data",
-      );
-      await finalizeChatRun({
-        status: "failed",
-        error: safeError,
-        errorCode: typeof errorCode === "string"
-          ? redactChatInlineVisualDiagnosticText(errorCode, "chat_runtime_exception")
-          : "chat_runtime_exception",
-        resultJson: {
-          outcome: "failed",
-          recoverable: true,
-          fallbackEnvelope: true,
+    const ownedExecution = chatRunsSvc.beginOwnedRunExecution(chatRun);
+    const claudeForkRunFence = claudeForkFenceForRun(runtimeAgentType, chatRun);
+    let claudeDeferredForkReference: Awaited<ReturnType<typeof reserveClaudeDeferredFork>> | null = null;
+    const executionSignal = input.abortSignal
+      ? AbortSignal.any([input.abortSignal, ownedExecution.signal])
+      : ownedExecution.signal;
+    const transcript = createChatTranscriptDelivery({
+      retention: transcriptRetention, recoveredRun: recoveredChatRun, runtimeAgentType, runId,
+      spanId: chatRun.runtimeSpanId ?? null,
+      markLegacy: () => chatRunsSvc.markLegacyTranscriptSource(chatRun),
+      isInactive: () => isExecutionInactive(),
+    });
+    const runOwner = createChatAssistantExecutionOwner<
+      Parameters<typeof chatRunsSvc.finalizeRun>[1],
+      Awaited<ReturnType<typeof chatRunsSvc.finalizeRun>>
+    >({
+      ownerSignal: ownedExecution.signal,
+      stopSignal: input.abortSignal,
+      finalize: (finalState) => chatRunsSvc.finalizeRun(runId, {
+        ...finalState, resultJson: transcript.terminalResult(finalState.resultJson),
+        transcriptDelivery: {
+          source: transcript.delivery.source,
+          spanId: chatRun.runtimeSpanId ?? null,
         },
-      });
-    };
+      }),
+      failureState: (error) => {
+        const errorCode = (error as { errorCode?: unknown } | null)?.errorCode;
+        const safeError = redactChatInlineVisualDiagnosticText(
+          error instanceof Error ? error.message : String(error),
+          "Chat runtime failed while handling private presentation data",
+        );
+        return {
+          status: "failed",
+          error: safeError,
+          errorCode: typeof errorCode === "string"
+            ? redactChatInlineVisualDiagnosticText(errorCode, "chat_runtime_exception")
+            : "chat_runtime_exception",
+          resultJson: {
+            outcome: "failed",
+            recoverable: true,
+            fallbackEnvelope: true,
+          },
+        };
+      },
+    });
+    const {
+      finalize: finalizeChatRun,
+      finalizeUnhandledFailure: finalizeUnhandledRunFailure,
+      guard: guardActiveRun,
+      isFinalized: isRunFinalized,
+      isInactive: isExecutionInactive,
+      isOwnerLost: isOwnerExecutionLost,
+      isStopped,
+      ownerLostError,
+      staleOutcome,
+    } = runOwner;
+    const transcriptDelivery = transcript.delivery;
     const assistantTextAccumulator = createAssistantTextAccumulator();
     const finalAssistantTextAccumulator = createAssistantTextAccumulator();
     let hasNativeFinalMessage = false;
@@ -828,18 +508,22 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const transcriptInlineVisualStream = createRudderInlineVisualStreamSuppressor();
     let transcriptDeltaOpen = false;
     let transcriptDeltaCarry = "";
-    let stopCutoffPartialBody: string | null = null;
-    const freezeStopCutoff = () => {
-      if (stopCutoffPartialBody !== null) return;
-      stopCutoffPartialBody = redactRudderInlineVisualSources(
-        partialBodyFromRawAssistantText(
-          hasNativeFinalMessage ? finalAssistantTextAccumulator.fullText : "",
-          resultSentinel,
-        )
-        || (safeTrim(sentinelStream.visibleText) ?? ""),
-      );
-    };
-    const isStopped = () => input.abortSignal?.aborted === true;
+    const { freezeStopCutoff, finalizeStoppedReply } = createChatAssistantStopFinalizer({
+      finalAssistantText: () => finalAssistantTextAccumulator.fullText,
+      hasNativeFinalMessage: () => hasNativeFinalMessage,
+      resultSentinel,
+      visibleText: () => sentinelStream.visibleText,
+      isFinalized: isRunFinalized,
+      finalize: finalizeChatRun,
+      finalState: (partialBody): Parameters<typeof chatRunsSvc.finalizeRun>[1] => ({
+        status: "cancelled",
+        error: "Chat run stopped before completion",
+        errorCode: "chat_stopped",
+        resultJson: { outcome: "stopped", partialBody },
+      }),
+      onAssistantState: input.onAssistantState,
+      replyingAgentId: runtimeAgentId,
+    });
     let removeAbortListener: (() => void) | null = null;
     if (input.abortSignal) {
       const abortSignal = input.abortSignal;
@@ -850,47 +534,19 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         removeAbortListener = () => abortSignal.removeEventListener("abort", freezeStopCutoff);
       }
     }
-    type StoppedReply = Extract<StreamChatAssistantReplyResult, { outcome: "stopped" }>;
-    let stoppedReplyPromise: Promise<StoppedReply> | null = null;
-    const finalizeStoppedReply = (): Promise<StoppedReply> => {
-      if (stoppedReplyPromise) return stoppedReplyPromise;
-      freezeStopCutoff();
-      const partialBody = stopCutoffPartialBody ?? "";
-      stoppedReplyPromise = (async () => {
-        await maybeEmitAssistantState(input.onAssistantState, "stopped");
-        if (!runFinalized) {
-          await finalizeChatRun({
-            status: "cancelled",
-            error: "Chat run stopped before completion",
-            errorCode: "chat_stopped",
-            resultJson: {
-              outcome: "stopped",
-              partialBody,
-            },
-          });
-        }
-        return {
-          outcome: "stopped",
-          partialBody,
-          replyingAgentId: runtimeAgentId,
-        };
-      })();
-      return stoppedReplyPromise;
-    };
-    const guardActiveRun = async <T>(operation: () => T | Promise<T>): Promise<T> => {
-      try {
-        return await operation();
-      } catch (error) {
-        if (isStopped()) throw error;
-        await finalizeUnhandledRunFailure(error);
-        throw error;
-      }
-    };
     let cleanupPreparedAttachments: (() => Promise<void>) | null = null;
     let durableTranscriptImages = new Map<string, { contentPath: string; displayName: string }>();
     try {
+      if (input.resumeRunId && runtimeAgentType === "claude_local" && input.conversation.conversationKind === "side_chat") {
+        claudeDeferredFork = await recoverClaudeDeferredForkRun({
+          db, orgId: input.conversation.orgId, conversationId: input.conversation.id,
+          run: chatRun, bindingId: runtimeBinding.id, segmentId: nativeSession.segment.id,
+          runFence: claudeForkRunFence, allowProviderSubmission: input.resumeRunMaySubmit !== false,
+          source: forkSource, sourceBindingMatchesTarget, bindingInput, providerBinding,
+          config, finalize: finalizeChatRun,
+        });
+      }
       let parser = adapter.parseStdoutLine;
-      let stdoutLineBuffer = "";
       const {
         rudderWorkspace,
         rudderWorkspaces,
@@ -906,6 +562,13 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         lifeDir: asString(rudderWorkspace.lifeDir),
         skillsDir: asString(rudderWorkspace.agentSkillsDir),
       }));
+      if (claudeDeferredFork?.reservation) {
+        const reservation = claudeDeferredFork.reservation;
+        if (!claudeForkRunFence) throw new Error("Claude deferred fork requires an owned Run span before reservation");
+        const runFence = claudeForkRunFence;
+        claudeDeferredForkReference = await guardActiveRun(() =>
+          reserveClaudeDeferredFork(db, reservation, runFence));
+      }
       const currentMessage = input.userMessageId
         ? input.messages.find((message) => message.id === input.userMessageId) ?? null
         : [...input.messages].reverse().find((message) => message.role === "user") ?? null;
@@ -973,22 +636,19 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               : [];
           }),
       );
-      const prompt = await guardActiveRun(() => buildConversationPrompt(
-        promptInput,
-        runtimeSource,
-        resultSentinel,
-        typeof rudderWorkspace.orgResourcesPrompt === "string" ? rudderWorkspace.orgResourcesPrompt : "",
-        preparedAttachments.references,
-        { nativeContinuation: usesNativeRuntimeInput },
-      ));
+      const { prompt, context: chatPromptContext } = await guardActiveRun(() => buildChatAssistantRuntimePrompt({
+        promptInput, runtimeSource, resultSentinel, runtimeAgentType, usesNativeRuntimeInput,
+        orgResourcesPrompt: typeof rudderWorkspace.orgResourcesPrompt === "string" ? rudderWorkspace.orgResourcesPrompt : "",
+        attachmentReferences: preparedAttachments.references,
+      }));
 
       const processTranscriptEntries = async (entries: TranscriptEntry[]) => {
         for (const entry of entries) {
-          if (isStopped()) return;
+          if (isExecutionInactive()) return;
           if (entry.kind !== "init") hasRuntimeOutputEvidence = true;
           if (entry.kind === "tool_call") {
             await maybeEmitAssistantState(input.onAssistantState, "tool_busy");
-            if (isStopped()) return;
+            if (isExecutionInactive()) return;
           }
           if (entry.kind === "assistant") {
             if (entry.phase === "commentary") {
@@ -1008,9 +668,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
               };
               await input.onObservedTranscriptEntry?.(commentaryEntry, transcriptDelivery);
-              if (isStopped()) return;
+              if (isExecutionInactive()) return;
               await input.onTranscriptEntry?.(commentaryEntry, transcriptDelivery);
-              if (isStopped()) return;
+              if (isExecutionInactive()) return;
               await chatRunsSvc.appendTranscriptEntry(chatRun, commentaryEntry, transcriptDelivery);
               continue;
             }
@@ -1032,9 +692,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 delta: true,
               };
               await input.onObservedTranscriptEntry?.(assistantTranscriptEntry, transcriptDelivery);
-              if (isStopped()) return;
+              if (isExecutionInactive()) return;
               await input.onTranscriptEntry?.(assistantTranscriptEntry, transcriptDelivery);
-              if (isStopped()) return;
+              if (isExecutionInactive()) return;
               await chatRunsSvc.appendTranscriptEntry(chatRun, assistantTranscriptEntry, transcriptDelivery);
             }
             continue;
@@ -1229,7 +889,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           ) {
             await input.onObservedTranscriptEntry?.(safeEntry, transcriptDelivery);
           }
-          if (isStopped()) return;
+          if (isExecutionInactive()) return;
           const suppressVisibleEntry = shouldSuppressChatTranscriptEntry(entry, resultSentinel)
             || (
             ("text" in safeEntry && typeof safeEntry.text === "string" && safeEntry.text.length === 0)
@@ -1237,36 +897,25 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             );
           if (!suppressVisibleEntry) {
             await input.onTranscriptEntry?.(safeEntry, transcriptDelivery);
-            if (isStopped()) return;
+            if (isExecutionInactive()) return;
             await chatRunsSvc.appendTranscriptEntry(chatRun, safeEntry, transcriptDelivery);
           }
           if (entry.kind === "tool_result") {
             await maybeEmitAssistantState(input.onAssistantState, "streaming");
-            if (isStopped()) return;
+            if (isExecutionInactive()) return;
           }
         }
       };
 
       const processStdoutLine = async (line: string) => {
-        if (isStopped() || !parser || !line.trim()) return;
+        if (isExecutionInactive() || !parser || !line.trim()) return;
         await processTranscriptEntries(parser(line, new Date().toISOString()));
       };
 
-      const flushStdoutChunk = async (chunk: string, finalize = false) => {
-        if (isStopped()) return;
-        const combined = `${stdoutLineBuffer}${chunk}`;
-        const lines = combined.split(/\r?\n/);
-        stdoutLineBuffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (isStopped()) return;
-          await processStdoutLine(line);
-        }
-        if (!isStopped() && finalize && stdoutLineBuffer.trim()) {
-          const trailing = stdoutLineBuffer;
-          stdoutLineBuffer = "";
-          await processStdoutLine(trailing);
-        }
-      };
+      const stdoutBuffer = createChatAssistantStdoutBuffer({
+        isInactive: isExecutionInactive,
+        processLine: processStdoutLine,
+      });
 
       if (isStopped()) return finalizeStoppedReply();
       await guardActiveRun(() => maybeEmitAssistantState(input.onAssistantState, "streaming"));
@@ -1295,7 +944,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         };
       });
 
-      const resumeSession = input.resumeRunId
+      const resumeSessionBeforeProfile = input.resumeRunId
         ? {
             sessionId: chatRun.sessionIdBefore ?? null,
             sessionParams: recoveredChatRun?.sessionParamsBeforeJson ?? null,
@@ -1306,14 +955,73 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             sessionParams: initialSession.sessionParams,
             sessionDisplayId: initialSession.sessionDisplayId,
           };
+      const resumeSession = chatSessionForCurrentProviderProfile(
+        runtimeAgentType,
+        resumeSessionBeforeProfile,
+        runtimeExecutionConfig,
+        runtimeBinding,
+      );
+
+      let approvalRuntimeType: string = runtimeAgentType;
+      const approvalBridge = createRuntimeApprovalBridge({
+        db,
+        approvals: approvalsSvc,
+        execution: {
+          runId,
+          orgId: input.conversation.orgId,
+          agentId: runtimeAgentId,
+          get runtimeType() {
+            return approvalRuntimeType;
+          },
+          chatConversationId: input.conversation.id,
+          scene: input.conversation.conversationKind === "side_chat" ? "side_chat" : "chat",
+          abortSignal: executionSignal,
+          getFence: () => ({
+            spanId: chatRun.runtimeSpanId ?? null,
+            ownerToken: chatRun.runtimeSpanOwnerToken ?? null,
+            attemptEpoch: chatRun.runtimeSpanAttemptEpoch ?? null,
+            attemptId: chatRun.runtimeAttemptRef?.id ?? null,
+            attemptIndex: chatRun.runtimeAttemptRef?.attemptIndex ?? null,
+          }),
+        },
+        onEvent: async (event) => {
+          if (isExecutionInactive()) return;
+          await chatRunsSvc.appendEvent(chatRun, {
+            eventType: event.eventType,
+            stream: "system",
+            level: "info",
+            message: "agent runtime approval updated",
+            payload: event.payload,
+          });
+        },
+      });
+      const attemptPorts = chatDriverPorts.createAttemptPorts({
+        primaryRuntimeType: runtimeAgentType,
+        providerBinding: { ...providerBinding, id: runtimeBinding.id },
+        cwd: providerProfileCwd,
+        continuationTransport,
+        approvalBridge,
+        runId,
+        initialDriver: runtimeDriver,
+        nativeDriverRequired,
+        getAttemptId: () => chatRun.runtimeAttemptRef?.id,
+        finishAttempt: (failure, phase) => chatRunsSvc.finishRuntimeAttempt(
+          chatRun,
+          chatAttemptFailureFinishInput(failure, phase, resumeSession),
+        ),
+      });
 
       const executeChatAdapter = async (chatPrompt: string) => {
+        if (runtimeAgentType === "pi_local" && resumeSession.sessionId
+          && !piSessionRpcArgsMatchHostProfile(resumeSession.sessionParams, continuationTransport.rpcArgs)) {
+          throw new Error("Pi continuation requires RPC args matching the host-owned transport profile.");
+        }
         return executeAdapterWithModelFallbacks(adapter, {
           runId,
           agent: stubAgent({
             orgId: input.conversation.orgId,
             agentRuntimeType: runtimeAgentType,
-            agentRuntimeConfig: config,
+            agentRuntimeConfig: runtimeExecutionConfig,
             sourceLabel: runtimeSource.descriptor.sourceLabel,
             sourceId: runtimeAgentId,
           }),
@@ -1323,9 +1031,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             sessionDisplayId: resumeSession.sessionDisplayId,
             taskKey: null,
           },
-          config,
+          config: runtimeExecutionConfig,
           context: {
             chatPrompt,
+            ...chatPromptContext,
             chatConversationId: input.conversation.id,
             chatMode: true,
             rudderChatInlineVisualProtocolVersion: 1,
@@ -1334,6 +1043,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             rudderWorkspaces,
             rudderStartupContext,
             rudderStartupContextMetrics,
+            ...(claudeDeferredFork?.adapterIntent ? { rudderNativeForkIntent: claudeDeferredFork.adapterIntent } : {}),
             ...(nativeContextHandoff ? { rudderNativeContextHandoff: nativeContextHandoff } : {}),
             ...(chatAttachments.length > 0 ? { chatAttachments } : {}),
             ...(rudderRuntimeServiceIntents ? { rudderRuntimeServiceIntents } : {}),
@@ -1343,10 +1053,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...(linkedIssueIds.length > 0 ? { issueIds: linkedIssueIds } : {}),
           },
           ...(media.length > 0 ? { media } : {}),
+          onNativeTransportProfile: (profile) => persistChatNativeTransport({
+            db, profile, runtimeType: runtimeAgentType, config, providerProfileCwd,
+            binding: transcriptProviderBinding, continuity: runtimeBinding.continuity,
+            resumeSessionId: resumeSession.sessionId, run: chatRun, transcript,
+            isInactive: isExecutionInactive,
+          }),
+          onTranscriptSource: transcript.onTranscriptSource,
           onMeta: async (meta) => {
-            if (isStopped()) return;
+            if (isExecutionInactive()) return;
             await chatRunsSvc.appendAdapterInvoke(chatRun, meta, runtimeSource.runtimeSkills);
-            if (isStopped()) return;
+            if (isExecutionInactive()) return;
             await input.onInvocationMeta?.({
               ...meta,
               loadedSkills: runtimeSource.runtimeSkills,
@@ -1360,10 +1077,12 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               runId,
             ) ?? undefined
             : undefined,
-          abortSignal: input.abortSignal,
+          abortSignal: executionSignal,
           controlCoordinator: input.controlCoordinator,
+          requestApproval: attemptPorts.requestApproval,
+          waitForApproval: attemptPorts.waitForApproval,
           onLog: async (stream, chunk) => {
-            if (isStopped()) return;
+            if (isExecutionInactive()) return;
             if (stream === "stdout") {
               if (chunk.startsWith("[rudder]")) {
                 await processTranscriptEntries([{
@@ -1373,28 +1092,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
                 }]);
                 return;
               }
-              await flushStdoutChunk(chunk);
+              await stdoutBuffer.append(chunk);
             }
           },
         }, {
           resolveAdapter: findServerAdapter,
-          resolveDriver: (agentRuntimeType, attemptAdapter, attemptContext) => getRuntimeDriver(agentRuntimeType, {
-            adapter: attemptAdapter,
-            providerCapabilityResolver: createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
-              runtimeType: agentRuntimeType,
-              runtimeConfig: asRecord(attemptContext.config) ?? {},
-              cwd: providerProfileCwd,
-            }),
-            providerBinding: {
-              id: runtimeBinding.id,
-              orgId: runtimeBinding.orgId,
-              hostId: runtimeBinding.hostId,
-              profileId: runtimeBinding.profileId,
-              workspaceBindingId: runtimeBinding.workspaceBindingId,
-              capabilityRevision: runtimeBinding.capabilityRevision,
-            },
-          }),
+          resolveDriver: attemptPorts.resolveDriver,
           submitInputThroughDriver: true,
+          nativeDriverRequired,
           createAuthToken: (agentRuntimeType) =>
             createLocalAgentJwt(
               runtimeAgentId,
@@ -1403,26 +1108,59 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               runId,
             ) ?? undefined,
           onAttemptStart: async (attempt, attemptAdapter) => {
+            if (isExecutionInactive()) throw ownerLostError;
+            const attemptRuntimeType = attempt.agentRuntimeType ?? runtimeAgentType;
+            if (!isAgentRuntimeType(attemptRuntimeType)) {
+              throw new Error(`Unsupported Chat runtime type: ${attemptRuntimeType}`);
+            }
+            approvalRuntimeType = attemptRuntimeType;
             parser = attemptAdapter.parseStdoutLine;
             const attemptRef = await chatRunsSvc.beginRuntimeAttempt(chatRun, {
               attemptIndex: attempt.index,
               fallbackIndex: attempt.fallbackIndex,
-              runtimeType: attempt.agentRuntimeType ?? runtimeAgentType,
+              runtimeType: attemptRuntimeType,
               model: attempt.model,
               isFallback: attempt.isFallback,
               resumeSource: resumeSession.sessionId ? "same_session" : "fresh",
             });
             chatRun.runtimeAttemptRef = attemptRef;
           },
+          onAttemptResult: attemptPorts.onAttemptResult,
+          onAttemptFailure: attemptPorts.onAttemptFailure,
         });
       };
 
-      const result = await guardActiveRun(() => executeChatAdapter(prompt));
+      let result: Awaited<ReturnType<typeof executeChatAdapter>>;
+      try {
+        result = await guardActiveRun(() => executeChatAdapter(prompt));
+      } catch (error) {
+        if (claudeDeferredForkReference && claudeForkRunFence) {
+          await markNativeForkIntentUnknown(db, {
+            reference: claudeDeferredForkReference,
+            runFence: claudeForkRunFence,
+            reason: `Claude first-input fork outcome could not be observed: ${error instanceof Error ? error.message : String(error)}`,
+          }).catch(() => undefined);
+        }
+        throw error;
+      }
       const networkSuspension = isAgentRuntimeNetworkSuspension(result.networkSuspension)
         ? result.networkSuspension
         : isAgentRuntimeNetworkSuspension(result.suspension)
           ? result.suspension
           : null;
+      const { providerThreadId, providerTurnId } = chatProviderResultIds(result);
+      if (claudeDeferredForkReference && claudeDeferredFork?.adapterIntent && claudeForkRunFence) {
+        const reference = claudeDeferredForkReference;
+        const intent = claudeDeferredFork.adapterIntent;
+        result = await guardActiveRun(() => recordClaudeDeferredForkOutcome({
+          db,
+          reference,
+          runFence: claudeForkRunFence,
+          intent,
+          result,
+          providerTurnId,
+        }));
+      }
       await guardActiveRun(() => chatRunsSvc.recordNativeExecutionResult(runId, result, {
         orgId: chatRun.orgId,
         spanId: chatRun.runtimeSpanId ?? null,
@@ -1430,23 +1168,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         attemptEpoch: chatRun.runtimeSpanAttemptEpoch,
         suspended: Boolean(networkSuspension),
       }));
-      const resultPayload = asRecord(result.resultJson);
-      const providerThreadId = asString(
-        result.sessionDisplayId
-        ?? result.sessionId
-        ?? resultPayload?.providerSessionId
-        ?? resultPayload?.sessionId
-        ?? resultPayload?.threadId,
-      );
-      const providerTurnId = asString(
-        resultPayload?.providerTurnId
-        ?? resultPayload?.turnId
-        ?? resultPayload?.executionId
-        ?? resultPayload?.messageId,
-      );
       if (networkSuspension) {
         await guardActiveRun(() => chatRunsSvc.markRuntimeAttemptWaiting(chatRun, {
-          submissionPhase: "indeterminate",
+          submissionPhase: networkSuspension.submissionPhase,
           providerThreadId,
           providerTurnId,
           sessionDisplayId: result.sessionDisplayId ?? result.sessionId ?? null,
@@ -1461,7 +1185,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             : (result.exitCode ?? 0) !== 0 || result.errorMessage
               ? "failed"
               : "succeeded",
-          submissionPhase: "accepted",
+          submissionPhase: result.submissionPhase ?? "accepted",
           providerThreadId,
           providerTurnId,
           sessionDisplayId: result.sessionDisplayId ?? result.sessionId ?? null,
@@ -1474,7 +1198,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       }
 
       if (isStopped()) return finalizeStoppedReply();
-      await guardActiveRun(() => flushStdoutChunk("", true));
+      await guardActiveRun(() => stdoutBuffer.flush());
       if (isStopped()) return finalizeStoppedReply();
 
       if (networkSuspension) {
@@ -1485,8 +1209,12 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           )
           || (safeTrim(sentinelStream.visibleText) ?? ""),
         );
-        await chatRunsSvc.markWaitingForNetwork(chatRun, networkSuspension, chatRun.runtimeSpanOwnerToken);
-        await input.onWaitingForNetwork?.(networkSuspension);
+        await guardActiveRun(() => chatRunsSvc.markWaitingForNetwork(
+          chatRun,
+          networkSuspension,
+          chatRun.runtimeSpanOwnerToken,
+        ));
+        await guardActiveRun(() => input.onWaitingForNetwork?.(networkSuspension));
         return {
           outcome: "waiting_for_network",
           partialBody,
@@ -1516,6 +1244,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
 
       if (result.timedOut) {
         const errorCode = "chat_timed_out";
+        const cursorTimeout = cursorAcpTimeoutEvidence(result);
         await finalizeChatRun({
           status: "timed_out",
           error: "Chat request timed out",
@@ -1525,6 +1254,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             recoverable: true,
             fallbackEnvelope: true,
             partialBody: finalPartialBody,
+            ...(cursorTimeout ? { cursorAcpTimeout: cursorTimeout } : {}),
           },
         });
         throw new ChatAssistantStreamError(
@@ -1562,14 +1292,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               : {}),
           }
           : null;
+        const forkAcceptanceUnknown = result.errorCode === "claude_fork_acceptance_unknown";
         const errorCode: ChatRecoverableFailureCode = authProviderFailure
           ? "codex_provider_auth_required"
+          : forkAcceptanceUnknown
+            ? "claude_fork_acceptance_unknown"
           : hasModelOutputEvidence
             ? "chat_adapter_failed"
             : "chat_runtime_boot_failed";
-        const retryable = authProviderFailure ? false : errorCode !== "chat_runtime_boot_failed";
-        const failurePhase = errorCode === "chat_adapter_failed" ? "model_generation" : "runtime_boot";
-        const action = errorCode === "chat_adapter_failed" ? "retry" : "repair_runtime";
+        const retryable = !authProviderFailure && !forkAcceptanceUnknown && errorCode !== "chat_runtime_boot_failed";
+        const failurePhase = forkAcceptanceUnknown || errorCode === "chat_adapter_failed" ? "model_generation" : "runtime_boot";
+        const action = forkAcceptanceUnknown ? "inspect_run" : errorCode === "chat_adapter_failed" ? "retry" : "repair_runtime";
         const adapterErrorMessage = redactChatInlineVisualDiagnosticText(
           result.errorMessage,
           "Chat adapter execution failed while handling private presentation data",
@@ -1587,6 +1320,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             action,
             exitCode: result.exitCode ?? null,
             partialBody: finalPartialBody,
+            ...(forkAcceptanceUnknown ? { submissionPhase: "indeterminate", nativeCompletion: "unknown" } : {}),
             ...(authProviderFailure ? { providerFailure: authProviderFailure } : {}),
           },
         });
@@ -1659,15 +1393,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (!reply) {
         throw new Error("Chat adapter returned an invalid final reply");
       }
-      const runtimeNeutralInlineVisuals = reply.kind === "message"
-        ? extractRudderInlineVisualArtifacts(reply.body, {
-          reservedSlots: inlineVisualArtifacts.inlineVisuals.length,
-        })
-        : {
-          body: redactRudderInlineVisualSources(reply.body),
-          attachments: [],
-          inlineVisualsV1: [],
-        };
+      const runtimeNeutralInlineVisuals = normalizeReplyInlineVisuals(
+        reply, inlineVisualArtifacts.inlineVisuals.length,
+      );
       reply.body = runtimeNeutralInlineVisuals.body;
       generatedAttachments.push(...runtimeNeutralInlineVisuals.attachments);
       const finalBody = reply.body;
@@ -1713,6 +1441,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       };
     } catch (error) {
       if (isStopped()) return finalizeStoppedReply();
+      if (isOwnerExecutionLost() || error === ownerLostError) {
+        if (input.stream === true) return staleOutcome;
+        throw ownerLostError;
+      }
       await finalizeUnhandledRunFailure(error);
       if (error instanceof ChatAssistantStreamError) {
         throw error;
@@ -1733,7 +1465,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       );
     } finally {
       removeAbortListener?.();
-      await cleanupPreparedAttachments?.().catch(() => undefined);
+      ownedExecution.release();
+      // Local attachment removal must not hold the stream after Run finalization.
+      void cleanupPreparedAttachments?.().catch(() => undefined);
     }
   }
 

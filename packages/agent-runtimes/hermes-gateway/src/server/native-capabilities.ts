@@ -8,22 +8,35 @@ import type {
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
-  HERMES_SUPPORTED_VERSIONS,
   baseUrl,
   endpoint,
   hasBearerAuth,
+  HERMES_SUPPORTED_VERSIONS,
   preflightBaseUrl,
 } from "./http.js";
 import {
   forkHermesAcpNativeSession,
   HERMES_ACP_NATIVE_TRANSPORT,
   readHermesAcpNativeTranscript,
-  type HermesAcpBinding,
   type HermesAcpForkResult,
   type HermesAcpProfile,
   type HermesAcpTranscriptResult,
-  type HermesAcpWorkspace,
+  type HermesAcpWorkspace
 } from "./native-protocol.js";
+import {
+  HERMES_PRODUCT_HISTORY_TRANSPORT,
+  HermesProductHistoryError,
+  readHermesProductHistory,
+  type HermesProductHistoryProfile,
+  type HermesProductHistoryRange,
+} from "./product-history.js";
+import {
+  HERMES_PRODUCT_RPC_TRANSPORT,
+  hermesProductRpcProfileEvidence,
+  isHermesProductRpcProfile,
+  validateHermesProductRpcSession,
+  type HermesProductRpcProfile,
+} from "./product-rpc.js";
 
 export type HermesCapabilityStatus = "supported" | "unsupported" | "unknown";
 
@@ -99,6 +112,10 @@ export type HermesGatewayProfileTransport = {
   providerVersion: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  /** Host-authorized read-only Hermes state reader; never inferred from session parameters. */
+  pythonCommand?: string | null;
+  sourcePath?: string | null;
+  hermesHome?: string | null;
   fetch?: typeof fetch;
 };
 
@@ -108,6 +125,7 @@ export type HermesGatewayProfileTransportResolver = (
 
 type HermesRecord = Record<string, unknown>;
 const HERMES_NATIVE_TRANSPORT = "hermes-http-sse";
+const HERMES_ACP_VERIFIED_VERSIONS = ["0.21.0"] as const;
 const TRANSCRIPT_PAGE_SIZE = 100;
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const SENSITIVE_PROVIDER_FIELD = /(?:^|[-_])(?:authorization|proxy[-_]authorization|api[-_]?key|auth[-_]?token|access[-_]?token|refresh[-_]?token|session[-_]?token|token|password|secret|credential|cookie)(?:s|field|value|header)?(?:$|[-_])/i;
@@ -175,6 +193,199 @@ function profileIdentityMatches(params: Record<string, unknown>, binding: Hermes
   const storedProfile = stringValue(params.profileId ?? params.providerProfileId);
   return (!storedHost || storedHost === binding.hostId)
     && (!storedProfile || storedProfile === binding.profileId);
+}
+
+function historyProfileFieldsPresent(profile: HermesGatewayProfileTransport): boolean {
+  return Boolean(stringValue(profile.pythonCommand) || stringValue(profile.sourcePath) || stringValue(profile.hermesHome));
+}
+
+function acpHistoryProfileAvailable(profile: HermesAcpProfileTransport): boolean {
+  return [profile.hermesPythonCommand, profile.hermesSourcePath, profile.hermesHome].every((value) => {
+    const candidate = stringValue(value);
+    return Boolean(candidate && path.isAbsolute(candidate));
+  });
+}
+
+function gatewayProfileForAcpHistory(profile: HermesAcpProfileTransport): HermesGatewayProfileTransport {
+  return {
+    binding: profile.binding,
+    baseUrl: "",
+    providerVersion: profile.providerVersion ?? "",
+    pythonCommand: profile.hermesPythonCommand,
+    sourcePath: profile.hermesSourcePath,
+    hermesHome: profile.hermesHome,
+  };
+}
+
+function historyProfileFromGatewayProfile(profile: HermesGatewayProfileTransport): HermesProductHistoryProfile | null {
+  const pythonCommand = stringValue(profile.pythonCommand);
+  const sourcePath = stringValue(profile.sourcePath);
+  const hermesHome = stringValue(profile.hermesHome);
+  if (
+    !pythonCommand
+    || !sourcePath
+    || !hermesHome
+    || !path.isAbsolute(pythonCommand)
+    || !path.isAbsolute(sourcePath)
+    || !path.isAbsolute(hermesHome)
+  ) return null;
+  return {
+    pythonCommand,
+    sourcePath,
+    hermesHome,
+    providerVersion: profile.providerVersion || null,
+    hostId: profile.binding.hostId,
+    profileId: profile.binding.profileId,
+  };
+}
+
+function historyProfileEvidence(profile: HermesGatewayProfileTransport): HermesCapabilityEvidence {
+  const historyProfile = historyProfileFromGatewayProfile(profile);
+  if (historyProfile) {
+    return {
+      status: "supported",
+      reason: `Hermes ${profile.providerVersion || "unknown"} profile ${profile.binding.hostId}/${profile.binding.profileId} is bound to the host-authorized read-only state.db reader.`,
+      providerVersion: profile.providerVersion || null,
+      transport: HERMES_PRODUCT_HISTORY_TRANSPORT,
+      profileBound: true,
+      profileRequired: true,
+    };
+  }
+  return {
+    status: "unknown",
+    reason: historyProfileFieldsPresent(profile)
+      ? "Hermes history profile is incomplete; pythonCommand, sourcePath, and hermesHome must all be host-authorized before native history can be read."
+      : "Hermes native history requires host-authorized pythonCommand, sourcePath, and hermesHome.",
+    providerVersion: profile.providerVersion || null,
+    transport: HERMES_PRODUCT_HISTORY_TRANSPORT,
+    profileBound: true,
+    profileRequired: true,
+  };
+}
+
+function safeHistoryBoundary(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+type HistoryExecutionRange = { range: HermesProductHistoryRange } | { unknown: true } | null;
+
+function exactHistoryExecutionRange(
+  selector: Record<string, unknown> | null | undefined,
+  sessionId: string,
+): HistoryExecutionRange {
+  if (stringValue(selector?.kind) !== "hermes_execution") return null;
+  const sourceRangeRef = stringValue(selector?.sourceRangeRef);
+  if (!sourceRangeRef) return { unknown: true };
+  try {
+    const value = recordValue(JSON.parse(sourceRangeRef));
+    const startExclusive = safeHistoryBoundary(value?.startExclusive);
+    const endInclusive = safeHistoryBoundary(value?.endInclusive);
+    if (
+      value?.version !== 1
+      || value.status !== "exact"
+      || value.sessionId !== sessionId
+      || startExclusive === undefined
+      || endInclusive === null
+      || endInclusive === undefined
+      || (startExclusive !== null && endInclusive <= startExclusive)
+    ) return { unknown: true };
+    return { range: { startExclusive, endInclusive } };
+  } catch {
+    return { unknown: true };
+  }
+}
+
+function numericHistoryRange(input: HermesNativeTranscriptReadRequest): HermesProductHistoryRange | null | undefined {
+  const range = requestedRange(input);
+  if (!range) return null;
+  const startValue = range.fromExclusive !== undefined ? range.fromExclusive : range.start;
+  const endValue = range.throughInclusive !== undefined ? range.throughInclusive : range.end;
+  const start = startValue === undefined || startValue === null
+    ? null
+    : range.fromExclusive !== undefined
+      ? safeHistoryBoundary(startValue)
+      : (() => {
+        const inclusive = safeHistoryBoundary(startValue);
+        return inclusive === null ? null : inclusive === undefined ? undefined : inclusive === 0 ? null : inclusive - 1;
+      })();
+  const end = endValue === undefined || endValue === null ? null : safeHistoryBoundary(endValue);
+  if (start === undefined || end === undefined || (start !== null && end !== null && end < start)) return undefined;
+  return { startExclusive: start, endInclusive: end };
+}
+
+function intersectHistoryRanges(
+  source: HermesProductHistoryRange,
+  requested: HermesProductHistoryRange | null | undefined,
+): HermesProductHistoryRange | undefined {
+  if (requested === undefined) return undefined;
+  if (!requested) return source;
+  const sourceStart = source.startExclusive ?? null;
+  const requestedStart = requested.startExclusive ?? null;
+  const sourceEnd = source.endInclusive ?? null;
+  const requestedEnd = requested.endInclusive ?? null;
+  const startExclusive = sourceStart === null
+    ? requestedStart
+    : requestedStart === null
+      ? sourceStart
+      : Math.max(sourceStart, requestedStart);
+  const endInclusive = sourceEnd === null
+    ? requestedEnd
+    : requestedEnd === null
+      ? sourceEnd
+      : Math.min(sourceEnd, requestedEnd);
+  if (startExclusive !== null && endInclusive !== null && endInclusive <= startExclusive) return undefined;
+  return { startExclusive, endInclusive };
+}
+
+function historyBoundaryUnknownResult(revision: string): HermesNativeTranscriptReadResult {
+  return {
+    items: [],
+    nextCursor: null,
+    source: "native",
+    revision,
+    availability: "missing",
+    completeness: "unknown",
+  };
+}
+
+async function readProfileProductHistory(
+  request: HermesNativeTranscriptReadRequest,
+  historyProfile: HermesProductHistoryProfile,
+  executionRange: HermesProductHistoryRange | null,
+): Promise<HermesNativeTranscriptReadResult> {
+  const requested = numericHistoryRange(request);
+  const range = executionRange ? intersectHistoryRanges(executionRange, requested) : requested;
+  if (range === undefined) return historyBoundaryUnknownResult("history-range-unknown");
+  try {
+    const result = await readHermesProductHistory({
+      runtimeType: request.runtimeType,
+      sessionId: request.session.sessionId,
+      profile: historyProfile,
+      range,
+      cursor: request.cursor,
+      limit: TRANSCRIPT_PAGE_SIZE,
+      signal: request.signal,
+    });
+    return {
+      items: result.items,
+      nextCursor: result.nextCursor,
+      source: "native",
+      revision: result.revision,
+      availability: result.availability,
+      completeness: result.completeness,
+    };
+  } catch (error) {
+    const code = error instanceof HermesProductHistoryError ? error.code : "helper_failed";
+    return {
+      items: [],
+      nextCursor: null,
+      source: "native",
+      revision: `history-error:${code}`,
+      availability: code === "invalid_profile" || code === "scope_violation" ? "incompatible" : "offline",
+      completeness: "unknown",
+    };
+  }
 }
 
 function textFrom(value: unknown): string | undefined {
@@ -413,39 +624,66 @@ async function readProfileTranscript(
   request: HermesNativeTranscriptReadRequest,
 ): Promise<HermesNativeTranscriptReadResult> {
   const binding = request.binding;
-  const base = profileBaseUrl(profile);
   if (!binding || !binding.hostId.trim() || !binding.profileId.trim()) {
     return { items: [], nextCursor: null, source: "native", revision: "missing-binding", availability: "missing", completeness: "unknown" };
   }
   if (request.runtimeType !== "hermes_gateway") {
     return { items: [], nextCursor: null, source: "native", revision: "runtime-mismatch", availability: "incompatible", completeness: "unknown" };
   }
-  if (!base || !bindingMatches(binding, profile)) {
+  if (!bindingMatches(binding, profile)) {
     return { items: [], nextCursor: null, source: "native", revision: "profile-mismatch", availability: "incompatible", completeness: "unknown" };
-  }
-  const evidence = profileEvidence(profile);
-  if (evidence.status !== "supported") {
-    return { items: [], nextCursor: null, source: "native", revision: "profile-unverified", availability: "incompatible", completeness: "unknown" };
   }
   if (!profileIdentityMatches(request.session.sessionParams, binding)) {
     return { items: [], nextCursor: null, source: "native", revision: "session-profile-mismatch", availability: "incompatible", completeness: "unknown" };
+  }
+  const sessionId = request.session.sessionId.trim();
+  if (!sessionId || stringValue(request.session.sessionParams.hermesSessionId) && stringValue(request.session.sessionParams.hermesSessionId) !== sessionId) {
+    return { items: [], nextCursor: null, source: "native", revision: "session-id-mismatch", availability: "incompatible", completeness: "unknown" };
+  }
+  const storedVersion = stringValue(request.session.sessionParams.hermesProviderVersion);
+  if (storedVersion && storedVersion !== profile.providerVersion) {
+    return { items: [], nextCursor: null, source: "native", revision: "provider-version-mismatch", availability: "incompatible", completeness: "unknown" };
+  }
+  const storedTransport = stringValue(request.session.sessionParams.hermesTransport);
+  if (
+    storedTransport
+    && storedTransport !== HERMES_NATIVE_TRANSPORT
+    && storedTransport !== HERMES_PRODUCT_HISTORY_TRANSPORT
+    && storedTransport !== HERMES_PRODUCT_RPC_TRANSPORT
+  ) {
+    return { items: [], nextCursor: null, source: "native", revision: "transport-mismatch", availability: "incompatible", completeness: "unknown" };
+  }
+
+  // A host-authorized state.db profile is the only source allowed to answer
+  // Run-bound reads. In particular, do not turn a missing/unknown boundary
+  // into a whole-session HTTP read when two Runs share one Hermes session.
+  if (historyProfileFieldsPresent(profile)) {
+    const historyProfile = historyProfileFromGatewayProfile(profile);
+    if (!historyProfile) return historyBoundaryUnknownResult("history-profile-missing");
+    const executionRange = exactHistoryExecutionRange(request.selector, sessionId);
+    if (executionRange && "unknown" in executionRange) return historyBoundaryUnknownResult("execution-boundary-unknown");
+    return readProfileProductHistory(
+      request,
+      historyProfile,
+      executionRange ? executionRange.range : null,
+    );
+  }
+
+  const base = profileBaseUrl(profile);
+  const evidence = profileEvidence(profile);
+  if (!base) {
+    return { items: [], nextCursor: null, source: "native", revision: "profile-mismatch", availability: "incompatible", completeness: "unknown" };
+  }
+  if (evidence.status !== "supported") {
+    return { items: [], nextCursor: null, source: "native", revision: "profile-unverified", availability: "incompatible", completeness: "unknown" };
   }
   const storedUrl = stringValue(request.session.sessionParams.hermesBaseUrl ?? request.session.sessionParams.gatewayUrl);
   const normalizedStoredUrl = storedUrl ? baseUrl(storedUrl)?.toString() : null;
   if (storedUrl && (!normalizedStoredUrl || normalizedStoredUrl !== base.toString())) {
     return { items: [], nextCursor: null, source: "native", revision: "gateway-url-mismatch", availability: "incompatible", completeness: "unknown" };
   }
-  const storedTransport = stringValue(request.session.sessionParams.hermesTransport);
   if (storedTransport && storedTransport !== HERMES_NATIVE_TRANSPORT) {
     return { items: [], nextCursor: null, source: "native", revision: "transport-mismatch", availability: "incompatible", completeness: "unknown" };
-  }
-  const storedVersion = stringValue(request.session.sessionParams.hermesProviderVersion);
-  if (storedVersion && storedVersion !== profile.providerVersion) {
-    return { items: [], nextCursor: null, source: "native", revision: "provider-version-mismatch", availability: "incompatible", completeness: "unknown" };
-  }
-  const sessionId = request.session.sessionId.trim();
-  if (!sessionId || stringValue(request.session.sessionParams.hermesSessionId) && stringValue(request.session.sessionParams.hermesSessionId) !== sessionId) {
-    return { items: [], nextCursor: null, source: "native", revision: "session-id-mismatch", availability: "incompatible", completeness: "unknown" };
   }
   const providerExecutionRef = selectorValue(request.selector, ["providerExecutionRef", "executionRef", "runId"]);
   let rawItems: HermesNativeTranscriptRawItem[] = [];
@@ -760,6 +998,9 @@ function unknownCapabilities(reason: string): HermesRuntimeProviderCapabilityAda
 
 function boundCapabilities(profile: HermesGatewayProfileTransport): HermesRuntimeProviderCapabilityAdapter {
   const evidence = profileEvidence(profile);
+  const transcriptEvidence = historyProfileFieldsPresent(profile)
+    ? historyProfileEvidence(profile)
+    : evidence;
   return {
     runtimeType: "hermes_gateway",
     sessionResume: { evidence },
@@ -771,7 +1012,7 @@ function boundCapabilities(profile: HermesGatewayProfileTransport): HermesRuntim
       },
     },
     transcript: {
-      evidence,
+      evidence: transcriptEvidence,
       readRange: (input) => readProfileTranscript(profile, input),
     },
     fork: { evidence: unsupportedNativeEvidence(profile, "boundary fork") },
@@ -927,6 +1168,26 @@ function acpProfileEvidence(profile: HermesAcpProfileTransport): HermesCapabilit
       profileRequired: true,
     };
   }
+  if (!HERMES_ACP_VERIFIED_VERSIONS.includes(profile.providerVersion as (typeof HERMES_ACP_VERIFIED_VERSIONS)[number])) {
+    return {
+      status: "unknown",
+      reason: `Hermes ACP session capabilities are verified only for ${HERMES_ACP_VERIFIED_VERSIONS.join(", ")}; profile version ${profile.providerVersion} is unverified.`,
+      providerVersion: profile.providerVersion,
+      transport: HERMES_ACP_NATIVE_TRANSPORT,
+      profileBound: true,
+      profileRequired: true,
+    };
+  }
+  if (profile.protocolVersion !== undefined && profile.protocolVersion !== 1) {
+    return {
+      status: "unknown",
+      reason: `Hermes ACP protocol ${profile.protocolVersion} has not been verified; the installed Hermes contract uses protocol 1.`,
+      providerVersion: profile.providerVersion,
+      transport: HERMES_ACP_NATIVE_TRANSPORT,
+      profileBound: true,
+      profileRequired: true,
+    };
+  }
   return {
     status: "supported",
     reason: `Hermes ${profile.providerVersion} exposes ACP initialize, session/new, session/load, session/prompt, session/cancel, and session/fork on the bound stdio profile transport.`,
@@ -980,18 +1241,68 @@ async function forwardAcpInterrupt(input: ProviderControlRequest): Promise<Agent
   return input.handle.interrupt(input.operation.reason);
 }
 
-function boundAcpCapabilities(profile: HermesAcpProfileTransport): HermesAcpRuntimeProviderCapabilityAdapter {
-  const evidence = acpProfileEvidence(profile);
-  const historyProfileAvailable = Boolean(
-    stringValue(profile.hermesPythonCommand)
-      && stringValue(profile.hermesSourcePath)
-      && stringValue(profile.hermesHome),
-  );
+function acpRunHasAssistantOrToolHistory(result: HermesAcpTranscriptResult): boolean {
+  return result.items.some((item) => {
+    const row = recordValue(recordValue(item.payload)?.row);
+    const role = (stringValue(row?.role) ?? item.kind.replace(/^hermes:db:/, "")).toLowerCase();
+    return role === "assistant"
+      || role === "tool"
+      || (Array.isArray(row?.tool_calls) && row.tool_calls.length > 0)
+      || Boolean(stringValue(row?.tool_call_id) || stringValue(row?.tool_name));
+  });
+}
+
+function markAcpRunHistoryIncomplete(result: HermesAcpTranscriptResult): HermesAcpTranscriptResult {
+  if (
+    result.availability !== "available"
+    || result.completeness !== "complete"
+    || acpRunHasAssistantOrToolHistory(result)
+  ) return result;
+  return {
+    ...result,
+    availability: result.items.length === 0 ? "missing" : "available",
+    completeness: "partial",
+    revision: `run-output-missing:${result.revision}`,
+  };
+}
+
+function boundAcpCapabilities(
+  profile: HermesAcpProfileTransport,
+  productRpcProfile?: boolean,
+): HermesAcpRuntimeProviderCapabilityAdapter {
+  const productProfile = productRpcProfile ?? isHermesProductRpcProfile(profile as Partial<HermesProductRpcProfile>);
+  const productEvidence = hermesProductRpcProfileEvidence(profile as Partial<HermesProductRpcProfile>);
+  const evidence: HermesCapabilityEvidence = productProfile
+    ? {
+      ...productEvidence,
+      providerVersion: profile.providerVersion ?? null,
+      transport: HERMES_PRODUCT_RPC_TRANSPORT,
+      profileBound: true,
+      profileRequired: true,
+    }
+    : acpProfileEvidence(profile);
+  const steerEvidence: HermesCapabilityEvidence = productProfile
+    ? {
+      ...evidence,
+      status: evidence.status === "supported" ? "unknown" : evidence.status,
+      reason: evidence.status === "supported"
+        ? "Hermes Product Gateway exposes session.redirect, but active-turn redirect support is model-specific and is confirmed only by the live RPC response."
+        : evidence.reason,
+    }
+    : evidence.status === "supported"
+      ? {
+        ...evidence,
+        status: "unsupported",
+        reason: "Hermes ACP has no native steer method; a concurrent session/prompt is queued as a follow-up.",
+      }
+      : evidence;
+  const historyProfileAvailable = acpHistoryProfileAvailable(profile);
   const readRange = async (input: HermesAcpNativeTranscriptReadRequest): Promise<HermesAcpTranscriptResult> => {
     if (input.runtimeType !== "hermes_gateway") return { items: [], nextCursor: null, source: "native", revision: "runtime-mismatch", availability: "incompatible", completeness: "unknown" };
     if (!input.binding || !acpBindingMatches(input.binding, profile)) return { items: [], nextCursor: null, source: "native", revision: "profile-mismatch", availability: "incompatible", completeness: "unknown" };
     const params = input.session.sessionParams;
-    if (stringValue(params.transport) !== HERMES_ACP_NATIVE_TRANSPORT) return { items: [], nextCursor: null, source: "native", revision: "transport-mismatch", availability: "incompatible", completeness: "unknown" };
+    const transport = stringValue(params.transport);
+    if (transport !== HERMES_ACP_NATIVE_TRANSPORT && transport !== HERMES_PRODUCT_RPC_TRANSPORT) return { items: [], nextCursor: null, source: "native", revision: "transport-mismatch", availability: "incompatible", completeness: "unknown" };
     const range = input.range
       ? {
         ...(acpRangeValue(input.range.start) !== null ? { start: acpRangeValue(input.range.start) } : {}),
@@ -999,7 +1310,22 @@ function boundAcpCapabilities(profile: HermesAcpProfileTransport): HermesAcpRunt
         ...(input.range.itemId ? { itemId: input.range.itemId } : {}),
       }
       : null;
-    return readHermesAcpNativeTranscript({
+    if (productProfile && transport === HERMES_PRODUCT_RPC_TRANSPORT) {
+      const rejection = validateHermesProductRpcSession({
+        sessionId: input.session.sessionId,
+        sessionParams: params,
+        profile: profile as HermesProductRpcProfile,
+      });
+      if (rejection) {
+        return { items: [], nextCursor: null, source: "native", revision: "session-profile-mismatch", availability: "incompatible", completeness: "unknown" };
+      }
+      const history = await readProfileTranscript(gatewayProfileForAcpHistory(profile), input);
+      return history;
+    }
+    if (!profileIdentityMatches(params, profile.binding)) {
+      return { items: [], nextCursor: null, source: "native", revision: "session-profile-mismatch", availability: "incompatible", completeness: "unknown" };
+    }
+    const result = await readHermesAcpNativeTranscript({
       runtimeType: input.runtimeType,
       profile,
       session: input.session,
@@ -1012,6 +1338,10 @@ function boundAcpCapabilities(profile: HermesAcpProfileTransport): HermesAcpRunt
       cursor: input.cursor,
       signal: input.signal,
     });
+    // Session-wide empty history is valid; a Run span promises execution output.
+    return stringValue(input.selector?.kind) === "hermes_execution"
+      ? markAcpRunHistoryIncomplete(result)
+      : result;
   };
   return {
     runtimeType: "hermes_gateway",
@@ -1028,7 +1358,8 @@ function boundAcpCapabilities(profile: HermesAcpProfileTransport): HermesAcpRunt
         ? {
           ...evidence,
           status: "supported",
-          reason: `${evidence.reason} The host-authorized Hermes state.db reader supplies exact ACP Run row ranges when the pre/post prompt tails remain in one session generation.`,
+          transport: HERMES_PRODUCT_HISTORY_TRANSPORT,
+          reason: `${evidence.reason} The host-authorized Hermes state.db reader supplies exact Run row ranges when the pre/post prompt tails remain in one session generation.`,
         }
         : {
           ...evidence,
@@ -1038,20 +1369,29 @@ function boundAcpCapabilities(profile: HermesAcpProfileTransport): HermesAcpRunt
       readRange,
     },
     fork: {
-      evidence: { ...evidence, status: "unsupported", reason: "Hermes ACP session/fork copies the current head; selected historical message boundaries are unsupported." },
-      execute: (input) => forkHermesAcpNativeSession({
-        runtimeType: input.runtimeType,
-        session: input.session,
-        boundary: input.boundary,
-        binding: input.binding,
-        workspace: acpWorkspaceFromSession(input.session),
-        signal: input.signal,
-        profile,
-      }),
+      evidence: {
+        ...evidence,
+        status: "unsupported",
+        reason: productProfile
+          ? "Hermes Product Gateway session.branch only supports the live head; exact selected historical boundaries are not available through the current adapter."
+          : "Hermes ACP session/fork copies the current head; selected historical message boundaries are unsupported.",
+      },
+      execute: (input) => {
+        if (productProfile) throw new Error("Hermes Product Gateway cannot fork an exact selected historical boundary through the current adapter.");
+        return forkHermesAcpNativeSession({
+          runtimeType: input.runtimeType,
+          session: input.session,
+          boundary: input.boundary,
+          binding: input.binding,
+          workspace: acpWorkspaceFromSession(input.session),
+          signal: input.signal,
+          profile,
+        });
+      },
     },
     control: {
       steer: {
-        evidence: { ...evidence, status: "unknown", reason: "Hermes ACP concurrent prompt acceptance and Run ownership are not verified." },
+        evidence: steerEvidence,
         mode: "native",
         requiresHandle: true,
         execute: forwardAcpSteer,
@@ -1068,8 +1408,9 @@ function boundAcpCapabilities(profile: HermesAcpProfileTransport): HermesAcpRunt
 
 export function createHermesAcpProviderCapabilities(
   profile: HermesAcpProfileTransport,
+  options: { productRpcProfile?: boolean } = {},
 ): HermesAcpRuntimeProviderCapabilityAdapter {
-  return boundAcpCapabilities(profile);
+  return boundAcpCapabilities(profile, options.productRpcProfile);
 }
 
 export function createHermesAcpProviderCapabilityResolver(

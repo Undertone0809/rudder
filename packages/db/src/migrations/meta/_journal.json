@@ -1184,6 +1184,34 @@
       "when": 1790101097300,
       "tag": "0168_issue_execution_cancellation_fence",
       "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1790188369991,
+      "tag": "0169_span_supplement_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1790190000000,
+      "tag": "0170_side_chat_provider_cleanup_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 171,
+      "version": "7",
+      "when": 1790191000000,
+      "tag": "0171_side_chat_close_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1790192000000,
+      "tag": "0172_side_chat_provider_cleanup_protection_refs",
+      "breakpoints": true
     }
   ]
 }

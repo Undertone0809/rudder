@@ -63,8 +63,9 @@ import { fileURLToPath } from "node:url";
 import { readOpenCodeLoadedMcpServers } from "./mcp-evidence.js";
 import { validateOpenCodeModelConfig } from "./models.js";
 import {
-  executeOpenCodeNativeChat,
   OpenCodeNativeCapabilityError,
+  executeOpenCodeNativeChat,
+  restoreOpenCodeManagedSessionFlags,
 } from "./native-protocol.js";
 import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl, parseOpenCodeJsonlLine } from "./parse.js";
 import { resolveManagedOpenCodeHomeDir } from "./skills.js";
@@ -100,6 +101,8 @@ const OPENCODE_CONFIG_FILE_CANDIDATES = ["opencode.json", "opencode.jsonc"] as c
 const MANAGED_OPENCODE_CONFIG_FILE = "opencode.json";
 const OPENCODE_PROMPT_FILE_MESSAGE = "Follow the attached Rudder runtime prompt file exactly.";
 const CHAT_MODE_DEFAULT_TIMEOUT_SEC = 60;
+const CHAT_MODE_DEFAULT_MAX_TURN_SEC = 30 * 60;
+const CHAT_MODE_MAX_TURN_LIMIT_SEC = 60 * 60;
 const DEFAULT_STARTUP_IDLE_TIMEOUT_SEC = 90;
 const DEFAULT_TOOL_LOOP_IDLE_TIMEOUT_SEC = 90;
 const MAX_NATIVE_DIAGNOSTIC_CHARS = 2_000;
@@ -169,9 +172,18 @@ function nonEmpty(value: string | undefined): string | null {
 }
 
 function providerProfileIdentity(config: Record<string, unknown>) {
+  const profileBindingId = asString(config.providerBindingId ?? config.bindingId, "").trim();
+  const profileOrgId = asString(config.providerOrgId ?? config.orgId, "").trim();
+  const workspaceBindingId = asString(
+    config.providerWorkspaceBindingId ?? config.workspaceBindingId,
+    "",
+  ).trim();
   return {
     hostId: asString(config.providerHostId ?? config.hostId ?? config.runtimeHostId, "local").trim() || "local",
     profileId: asString(config.providerProfileId ?? config.profileId ?? config.profile ?? config.authProfile, "default").trim() || "default",
+    ...(profileBindingId ? { id: profileBindingId } : {}),
+    ...(profileOrgId ? { orgId: profileOrgId } : {}),
+    ...(workspaceBindingId ? { workspaceBindingId } : {}),
     capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
   };
 }
@@ -193,6 +205,10 @@ function sanitizeNativeResultJson(value: Record<string, unknown> | null | undefi
 function nativeChatLog(onLog: AgentRuntimeExecutionContext["onLog"]): AgentRuntimeExecutionContext["onLog"] {
   return async (stream, chunk) => {
     const text = typeof chunk === "string" ? chunk.trim() : "";
+    if (/^\[rudder\] OpenCode native stream\b/u.test(text)) {
+      await onLog(stream, `${text}\n`);
+      return;
+    }
     if (!/^\[rudder\] OpenCode native chat (?:completed|failed)\b/u.test(text)) return;
     await onLog(stream, `${boundedNativeDiagnostic(text)}\n`);
   };
@@ -894,6 +910,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const timeoutSec = hasChatModeTimeoutFallback
     ? CHAT_MODE_DEFAULT_TIMEOUT_SEC
     : configuredTimeoutSec;
+  const nativeIdleTimeoutSec = Math.max(1, Math.min(CHAT_MODE_MAX_TURN_LIMIT_SEC,
+    asNumber(config.nativeIdleTimeoutSec, CHAT_MODE_DEFAULT_TIMEOUT_SEC)));
+  const nativeMaxTurnSec = configuredTimeoutSec > 0
+    ? Math.max(1, Math.min(CHAT_MODE_MAX_TURN_LIMIT_SEC, configuredTimeoutSec))
+    : Math.max(nativeIdleTimeoutSec, Math.min(CHAT_MODE_MAX_TURN_LIMIT_SEC,
+      asNumber(config.nativeMaxTurnSec, CHAT_MODE_DEFAULT_MAX_TURN_SEC)));
   const toolLoopIdleTimeoutSec = Math.max(
     1,
     asNumber(config.toolLoopIdleTimeoutSec, asNumber(env.RUDDER_OPENCODE_TOOL_LOOP_IDLE_TIMEOUT_SEC, DEFAULT_TOOL_LOOP_IDLE_TIMEOUT_SEC)),
@@ -910,12 +932,25 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     : commandNotes;
 
   if (context.chatMode === true) {
+    const resumedNativeSessionParams = nativeSessionId
+      ? restoreOpenCodeManagedSessionFlags({
+          params: runtimeSessionParams,
+          env: runtimeEnv,
+          runId,
+          verifiedConfigPath: runConfigPath,
+        })
+      : runtimeSessionParams;
     const nativeSessionParams: Record<string, unknown> = {
-      ...(nativeSessionId ? runtimeSessionParams : {}),
+      ...(nativeSessionId ? resumedNativeSessionParams : {}),
       ...(nativeSessionId ? { sessionId: nativeSessionId } : {}),
-      hostId: profileIdentity.hostId,
-      profileId: profileIdentity.profileId,
-      ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+      ...(!nativeSessionId ? {
+        hostId: profileIdentity.hostId,
+        profileId: profileIdentity.profileId,
+        ...(profileIdentity.id ? { profileBindingId: profileIdentity.id } : {}),
+        ...(profileIdentity.orgId ? { profileOrgId: profileIdentity.orgId } : {}),
+        ...(profileIdentity.workspaceBindingId ? { workspaceBindingId: profileIdentity.workspaceBindingId } : {}),
+        ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+      } : {}),
     };
     if (onMeta) {
       await onMeta({
@@ -946,6 +981,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
     try {
       const nativeResult = await executeOpenCodeNativeChat({
+        runId,
+        verifiedConfigPath: runConfigPath,
         command,
         cwd,
         env: runtimeEnv,
@@ -961,11 +998,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           workspaceId: workspaceId || null,
           repoUrl: workspaceRepoUrl || null,
           repoRef: workspaceRepoRef || null,
-          workspaceBindingId: workspaceBindingId || null,
+          workspaceBindingId: workspaceBindingId.trim() || profileIdentity.workspaceBindingId || null,
         },
+        media: ctx.media,
         timeoutSec,
+        idleTimeoutSec: nativeIdleTimeoutSec,
+        maxTurnSec: nativeMaxTurnSec,
         signal: ctx.abortSignal,
+        onNativeTransportProfile: ctx.onNativeTransportProfile,
         onSpawn,
+        controlAttempt: ctx.controlAttempt,
+        requestApproval: ctx.requestApproval,
+        waitForApproval: ctx.waitForApproval,
         onLog: nativeChatLog(onLog),
       });
       return {
@@ -981,16 +1025,23 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     } catch (error) {
       const message = boundedNativeDiagnostic(error);
       const status = error instanceof OpenCodeNativeCapabilityError ? error.status : "unknown";
-      await onLog("stderr", `[rudder] OpenCode native chat failed (${status}): ${message}\n`);
+      const providerFailure = error instanceof OpenCodeNativeCapabilityError && error.source === "provider";
+      const sessionContext = error instanceof OpenCodeNativeCapabilityError ? error.sessionContext : undefined;
+      const timedOut = error instanceof OpenCodeNativeCapabilityError && error.timedOut;
+      const failedSessionId = sessionContext?.sessionId ?? nativeSessionId;
+      await onLog("stderr", `[rudder] OpenCode native chat failed (${providerFailure ? "provider" : status}): ${message}\n`);
       return {
         exitCode: 1,
         signal: null,
-        timedOut: false,
+        timedOut,
+        ...(sessionContext ? { submissionPhase: sessionContext.submissionPhase, providerThreadId: sessionContext.sessionId } : {}),
         errorMessage: message,
-        errorCode: `opencode_native_${status}`,
-        sessionId: nativeSessionId,
-        sessionParams: nativeSessionId ? nativeSessionParams : null,
-        sessionDisplayId: nativeSessionId,
+        errorCode: timedOut
+          ? "opencode_native_timed_out"
+          : providerFailure ? "opencode_native_provider_error" : `opencode_native_${status}`,
+        sessionId: failedSessionId,
+        sessionParams: sessionContext?.sessionParams ?? (nativeSessionId ? nativeSessionParams : null),
+        sessionDisplayId: failedSessionId,
         provider: parseModelProvider(model),
         biller: resolveOpenCodeBiller(runtimeEnv, parseModelProvider(model)),
         model: model || null,
@@ -1000,6 +1051,19 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           nativeSession: true,
           profileId: profileIdentity.profileId,
           hostId: profileIdentity.hostId,
+          ...(sessionContext ? { providerSessionId: sessionContext.sessionId } : {}),
+          ...(sessionContext?.userMessageId ? { userMessageId: sessionContext.userMessageId } : {}),
+          ...(sessionContext?.providerAbortConfirmed !== undefined
+            ? { providerAbortConfirmed: sessionContext.providerAbortConfirmed }
+            : {}),
+          ...(sessionContext?.observedAssistantMessageIds?.length
+            ? {
+              transcriptBoundary: {
+                status: "partial",
+                observedAssistantMessageIds: sessionContext.observedAssistantMessageIds,
+              },
+            }
+            : {}),
         },
         summary: "",
       };

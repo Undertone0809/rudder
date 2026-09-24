@@ -23,10 +23,17 @@ import {
   executeHermesNativeChat,
   HERMES_ACP_NATIVE_TRANSPORT,
   HermesAcpNativeCapabilityError,
+  HermesAcpRpcTimeoutError,
   type HermesAcpBinding,
   type HermesAcpProfile,
   type HermesAcpWorkspace,
 } from "./native-protocol.js";
+import {
+  executeHermesProductRpcChat,
+  HERMES_PRODUCT_RPC_TRANSPORT,
+  isHermesProductRpcProfile,
+  type HermesProductRpcProfile,
+} from "./product-rpc.js";
 
 const MAX_PROJECTED_EVENTS = 200;
 const MAX_PROJECTED_EVENT_BYTES = 64 * 1024;
@@ -487,10 +494,28 @@ function runMessage(
   return [basePrompt, skillPrompt, toolContext].filter(Boolean).join("\n\n");
 }
 
-function hermesAcpChatRequested(context: Record<string, unknown>): boolean {
-  // Chat always uses the native continuous session transport. Existing HTTP
-  // gateway configuration remains available for non-Chat invocations.
-  return context.chatMode === true;
+type HermesChatBackend = "native_product_rpc" | "native_runs_http" | "acp" | null;
+
+function hermesChatBackend(
+  context: Record<string, unknown>,
+  config: Record<string, unknown>,
+  runtimeParams: Record<string, unknown>,
+  hasProductProfile: boolean,
+  hasHttpEndpoint: boolean,
+): HermesChatBackend {
+  if (context.chatMode !== true) return null;
+  const persisted = asString(runtimeParams.transport, "").trim();
+  if (persisted === HERMES_PRODUCT_RPC_TRANSPORT) return "native_product_rpc";
+  if (persisted === HERMES_ACP_NATIVE_TRANSPORT) return "acp";
+  if (persisted === "hermes-http-sse") return "native_runs_http";
+  const configured = asString(config.hermesChatBackend, "").trim().toLowerCase();
+  if (configured === "native_product_rpc") return "native_product_rpc";
+  if (configured === "native_runs_http") return "native_runs_http";
+  if (configured === "acp") return "acp";
+  if (configured) return null;
+  if (hasProductProfile) return "native_product_rpc";
+  if (hasHttpEndpoint) return "native_runs_http";
+  return null;
 }
 
 function hermesAcpBinding(profileIdentity: ReturnType<typeof providerProfileIdentity>): HermesAcpBinding {
@@ -531,6 +556,113 @@ function hermesAcpProfile(
     protocolVersion: protocolVersion > 0 ? protocolVersion : 1,
     ...(authMethodId ? { authMethodId } : {}),
     ...(mcpServers.length > 0 ? { mcpServers } : {}),
+  };
+}
+
+function hermesProductRpcProfile(
+  config: Record<string, unknown>,
+  profileIdentity: ReturnType<typeof providerProfileIdentity>,
+  workspace: HermesWorkspaceIdentity,
+): HermesProductRpcProfile | null {
+  const env = parseObject(config.env) ?? {};
+  const pythonCommand = asString(config.hermesPythonCommand ?? config.hermesHistoryPythonCommand, "").trim();
+  const sourcePath = asString(config.hermesSourcePath ?? config.hermesHistorySourcePath, "").trim();
+  const hermesHome = asString(config.hermesHome ?? env.HERMES_HOME, "").trim();
+  if (!pythonCommand || !sourcePath || !hermesHome) return null;
+  const cwd = workspace.cwd || asString(config.cwd, "").trim() || process.cwd();
+  return {
+    binding: hermesAcpBinding(profileIdentity),
+    command: pythonCommand,
+    args: ["-m", "tui_gateway.entry"],
+    cwd,
+    env: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+    hermesPythonCommand: pythonCommand,
+    hermesSourcePath: sourcePath,
+    hermesHome,
+    providerVersion: asString(config.hermesProviderVersion ?? config.providerVersion, "").trim() || null,
+  };
+}
+
+async function executeHermesProductRpc(
+  ctx: AgentRuntimeExecutionContext,
+  config: Record<string, unknown>,
+  profileIdentity: ReturnType<typeof providerProfileIdentity>,
+  workspace: HermesWorkspaceIdentity,
+  profile: HermesProductRpcProfile,
+): Promise<AgentRuntimeExecutionResult> {
+  let skillProjection: HermesSkillProjection;
+  try {
+    skillProjection = await buildHermesSkillProjection(config);
+  } catch (error) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: error instanceof Error ? error.message : "Hermes skill projection failed.",
+      errorCode: "hermes_gateway_skill_projection_failed",
+    };
+  }
+
+  const runtimeParams = parseObject(ctx.runtime.sessionParams);
+  const sessionId = asString(runtimeParams.hermesSessionId ?? runtimeParams.sessionId, "").trim()
+    || asString(ctx.runtime.sessionId, "").trim()
+    || null;
+  const toolContext = buildToolContextProjection(ctx, sessionId ?? sessionKey(ctx));
+  const nativeWorkspace: HermesAcpWorkspace = {
+    workspaceId: workspace.workspaceId || null,
+    repoUrl: workspace.repoUrl || null,
+    repoRef: workspace.repoRef || null,
+    workspaceBindingId: profile.binding.workspaceBindingId || null,
+  };
+  const prompt = runMessage(ctx, skillProjection.prompt, "");
+  const timeoutMs = positiveMs(config.timeoutMs ?? (asNumber(config.timeoutSec, 120) * 1000), 120_000);
+  if (ctx.onMeta) {
+    await ctx.onMeta({
+      agentRuntimeType: "hermes_gateway",
+      command: profile.hermesPythonCommand,
+      cwd: profile.cwd,
+      commandNotes: [
+        "Using the installed Hermes TUI Product Gateway over newline-delimited JSON-RPC stdio.",
+        "Native session.create/session.resume and prompt.submit own product history; synthetic Rudder tool context is not sent as session continuity.",
+      ],
+      commandArgs: ["-m", "tui_gateway.entry"],
+      env: redactEnvForLogs(profile.env ?? {}),
+      prompt,
+      agentInstructionStack: prompt,
+      promptMetrics: { promptChars: prompt.length, skillCount: skillProjection.skills.length, skillBytes: skillProjection.bytes },
+      loadedSkills: skillProjection.skills,
+      realizedSkills: skillProjection.skills,
+      promptInjectedSkills: skillProjection.skills,
+      context: invocationContext(ctx.context, toolContext, configuredHermesSecrets(config)),
+    });
+  }
+
+  const secrets = [...new Set([...configuredHermesSecrets(config), ...(ctx.authToken ? [ctx.authToken] : [])])];
+  const result = await executeHermesProductRpcChat({
+    profile,
+    sessionId,
+    sessionParams: sessionId ? runtimeParams : null,
+    workspace: nativeWorkspace,
+    prompt,
+    model: asString(config.model, "").trim() || null,
+    timeoutMs,
+    signal: ctx.abortSignal,
+    controlAttempt: ctx.controlAttempt,
+    requestApproval: ctx.requestApproval,
+    waitForApproval: ctx.waitForApproval,
+    onSpawn: ctx.onSpawn,
+    onLog: ctx.onLog,
+    secrets,
+  });
+  return {
+    ...result,
+    resultJson: {
+      ...(result.resultJson ?? {}),
+      nativeSession: true,
+      transport: HERMES_PRODUCT_RPC_TRANSPORT,
+      profileId: profileIdentity.profileId,
+      hostId: profileIdentity.hostId,
+    },
   };
 }
 
@@ -633,18 +765,21 @@ async function executeHermesAcpChat(
       },
     };
   } catch (error) {
-    const status = error instanceof HermesAcpNativeCapabilityError ? error.status : "unknown";
+    const timeoutError = error instanceof HermesAcpRpcTimeoutError ? error : null;
+    const status = timeoutError ? "timeout" : error instanceof HermesAcpNativeCapabilityError ? error.status : "unknown";
     const message = redactDiagnostic(error, configuredHermesSecrets(config));
+    const errorSessionId = timeoutError?.sessionId ?? sessionId;
+    const errorSessionParams = timeoutError?.sessionParams ?? (errorSessionId ? runtimeParams : null);
     await ctx.onLog("stderr", `[rudder] Hermes ACP native chat failed (${status}): ${message}\n`);
     return {
       exitCode: 1,
       signal: null,
-      timedOut: false,
+      timedOut: timeoutError !== null,
       errorMessage: message,
-      errorCode: `hermes_native_${status}`,
-      sessionId,
-      sessionParams: sessionId ? runtimeParams : null,
-      sessionDisplayId: sessionId,
+      errorCode: timeoutError?.errorCode ?? `hermes_native_${status}`,
+      sessionId: errorSessionId,
+      sessionParams: errorSessionParams,
+      sessionDisplayId: errorSessionId,
       provider: "hermes",
       model: asString(config.model, "").trim() || null,
       resultJson: {
@@ -652,6 +787,13 @@ async function executeHermesAcpChat(
         transport: HERMES_ACP_NATIVE_TRANSPORT,
         profileId: profileIdentity.profileId,
         hostId: profileIdentity.hostId,
+        ...(timeoutError ? {
+          timeout: {
+            code: timeoutError.code,
+            method: timeoutError.method,
+            timeoutMs: timeoutError.timeoutMs,
+          },
+        } : {}),
       },
       summary: "",
     };
@@ -750,8 +892,32 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const base = baseUrl(config.url);
   const profileIdentity = providerProfileIdentity(config);
   const workspace = hermesWorkspaceIdentity(ctx);
-  if (hermesAcpChatRequested(ctx.context)) {
+  const runtimeParams = parseObject(ctx.runtime.sessionParams);
+  const productProfile = hermesProductRpcProfile(config, profileIdentity, workspace);
+  const selectedChatBackend = hermesChatBackend(ctx.context, config, runtimeParams, Boolean(productProfile), Boolean(base));
+  if (selectedChatBackend === "native_product_rpc") {
+    if (!productProfile || !isHermesProductRpcProfile(productProfile)) {
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorMessage: "Hermes native_product_rpc requires a host-authorized Hermes Python interpreter, source path, and HERMES_HOME.",
+        errorCode: "hermes_product_rpc_profile_missing",
+      };
+    }
+    return executeHermesProductRpc(ctx, config, profileIdentity, workspace, productProfile);
+  }
+  if (selectedChatBackend === "acp") {
     return executeHermesAcpChat(ctx, config, profileIdentity, workspace);
+  }
+  if (ctx.context.chatMode === true && selectedChatBackend === null) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: "Hermes Chat requires an explicit native_product_rpc, native_runs_http, or acp backend selection.",
+      errorCode: "hermes_chat_backend_unavailable",
+    };
   }
   if (!base) return { exitCode: 1, signal: null, timedOut: false, errorMessage: "Hermes API Server URL is missing or invalid.", errorCode: "hermes_gateway_url_invalid" };
   const endpointPreflight = await preflightBaseUrl(base);

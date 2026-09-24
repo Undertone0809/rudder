@@ -11,12 +11,12 @@ import {
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
-  runtimeBindings,
   issueComments,
   issues,
   organizationSkills,
   organizations,
   requests,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";

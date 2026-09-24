@@ -960,6 +960,10 @@ describe("applyPendingMigrations", () => {
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
           "0168_issue_execution_cancellation_fence.sql",
+          "0169_span_supplement_retention.sql",
+          "0170_side_chat_provider_cleanup_intents.sql",
+          "0171_side_chat_close_intents.sql",
+          "0172_side_chat_provider_cleanup_protection_refs.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1149,6 +1153,10 @@ describe("applyPendingMigrations", () => {
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
           "0168_issue_execution_cancellation_fence.sql",
+          "0169_span_supplement_retention.sql",
+          "0170_side_chat_provider_cleanup_intents.sql",
+          "0171_side_chat_close_intents.sql",
+          "0172_side_chat_provider_cleanup_protection_refs.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1215,11 +1223,12 @@ describe("applyPendingMigrations", () => {
           )
         `);
         await sql.unsafe(`
-          INSERT INTO "heartbeat_runs" ("id", "org_id", "agent_id")
+          INSERT INTO "heartbeat_runs" ("id", "org_id", "agent_id", "result_json")
           VALUES (
             '00000000-0000-0000-0000-000000000105',
             '00000000-0000-0000-0000-000000000103',
-            '00000000-0000-0000-0000-000000000104'
+            '00000000-0000-0000-0000-000000000104',
+            '{"__chatTranscript":[{"kind":"assistant","text":"legacy answer"}]}'::jsonb
           )
         `);
       } finally {
@@ -1235,8 +1244,12 @@ describe("applyPendingMigrations", () => {
           session_params_before_json: Record<string, unknown> | null;
           session_params_after_json: Record<string, unknown> | null;
           session_reuse_scope: string;
+          result_json: Record<string, unknown> | null;
+          scene: string | null;
+          idempotency_key: string | null;
         }[]>(`
-          SELECT session_params_before_json, session_params_after_json, session_reuse_scope
+          SELECT session_params_before_json, session_params_after_json, session_reuse_scope,
+            result_json, scene, idempotency_key
           FROM "heartbeat_runs"
           WHERE "id" = '00000000-0000-0000-0000-000000000105'
         `);
@@ -1244,7 +1257,16 @@ describe("applyPendingMigrations", () => {
           session_params_before_json: null,
           session_params_after_json: null,
           session_reuse_scope: "unknown",
+          result_json: { __chatTranscript: [{ kind: "assistant", text: "legacy answer" }] },
+          scene: null,
+          idempotency_key: null,
         });
+        const [nativeRefs] = await verifySql.unsafe<{ bindings: number; spans: number }[]>(`
+          SELECT
+            (SELECT count(*)::int FROM runtime_bindings WHERE org_id = '00000000-0000-0000-0000-000000000103') AS bindings,
+            (SELECT count(*)::int FROM run_runtime_spans WHERE run_id = '00000000-0000-0000-0000-000000000105') AS spans
+        `);
+        expect(nativeRefs).toEqual({ bindings: 0, spans: 0 });
 
         for (const scope of ["explicit", "task", "none", "unknown"]) {
           await expect(verifySql.unsafe(`
@@ -2024,6 +2046,131 @@ describe("applyPendingMigrations", () => {
         await sql`DELETE FROM runtime_retention_claims WHERE org_id = ${org!.id}`;
         await sql`DELETE FROM chat_conversations WHERE id = ${chat!.id}`;
         expect(await sql`SELECT id FROM runtime_bindings WHERE org_id = ${org!.id}`).toHaveLength(0);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "keeps an incomplete binding target migration pending for manual recovery",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const hash = await migrationHash("0166_runtime_binding_targets.sql");
+        await sql.unsafe(`DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${hash}'`);
+        await sql`DROP INDEX runtime_bindings_org_target_idx`;
+
+        const pending = await inspectMigrations(connectionString);
+        expect(pending).toMatchObject({ status: "needsMigrations", reason: "pending-migrations" });
+        const repair = await reconcilePendingMigrationHistory(connectionString);
+        expect(repair.repairedMigrations).not.toContain("0166_runtime_binding_targets.sql");
+        expect(repair.remainingMigrations).toContain("0166_runtime_binding_targets.sql");
+        expect((await inspectMigrations(connectionString)).status).toBe("needsMigrations");
+        expect(await sql`
+          SELECT indexname FROM pg_indexes
+          WHERE tablename = 'runtime_bindings' AND indexname = 'runtime_bindings_org_target_idx'
+        `).toHaveLength(0);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "adds supplement retention state to an existing span without changing its object reference",
+    async () => {
+      const connectionString = await createTempDatabase();
+      await applyPendingMigrations(connectionString);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Supplement migration', 'supplement-migration', 'SUPP') RETURNING id
+        `;
+        const [agent] = await sql`INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Supplement agent') RETURNING id`;
+        const [chat] = await sql`INSERT INTO chat_conversations (org_id) VALUES (${org!.id}) RETURNING id`;
+        const [binding] = await sql`
+          INSERT INTO runtime_bindings (org_id, conversation_id, principal_scope_ref, agent_id, runtime_type, instructions_revision, capability_revision)
+          VALUES (${org!.id}, ${chat!.id}, 'user:owner', ${agent!.id}, 'cursor', 'instructions-1', 'capability-1') RETURNING id
+        `;
+        const [segment] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type)
+          VALUES (${org!.id}, ${binding!.id}, 'cursor') RETURNING id
+        `;
+        const [run] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'completed') RETURNING id`;
+        const [span] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, supplemental_object_ref)
+          VALUES (${org!.id}, ${run!.id}, ${binding!.id}, ${segment!.id}, 'attempt-1', 'owner-1', 'tobj_v1_11111111-1111-1111-1111-111111111111') RETURNING id
+        `;
+        const hash = await migrationHash("0169_span_supplement_retention.sql");
+        await sql.unsafe(`DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${hash}'`);
+        await sql`ALTER TABLE run_runtime_spans DROP COLUMN supplemental_retention_expired_at`;
+
+        expect(await inspectMigrations(connectionString)).toMatchObject({ status: "needsMigrations" });
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+        expect(await sql`
+          SELECT supplemental_object_ref, supplemental_retention_expired_at
+          FROM run_runtime_spans WHERE id = ${span!.id}
+        `).toEqual([{
+          supplemental_object_ref: "tobj_v1_11111111-1111-1111-1111-111111111111",
+          supplemental_retention_expired_at: null,
+        }]);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(60_000),
+  );
+
+  it(
+    "adds durable close intents without changing existing Side Chat data",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const migrationsThrough0170 = createCurrentMigrationsFolderThrough(170);
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0170 });
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Side close migration', 'side-close-migration', 'SCM') RETURNING id
+        `;
+        const [parent] = await sql`
+          INSERT INTO chat_conversations (org_id, title)
+          VALUES (${org!.id}, 'Parent chat') RETURNING id
+        `;
+        const [side] = await sql`
+          INSERT INTO chat_conversations
+            (org_id, title, conversation_kind, side_chat_state, created_by_user_id, forked_from_conversation_id)
+          VALUES (${org!.id}, 'Existing Side Chat', 'side_chat', 'active', 'owner', ${parent!.id}) RETURNING id
+        `;
+
+        expect(await inspectMigrations(connectionString)).toMatchObject({
+          status: "needsMigrations",
+          pendingMigrations: expect.arrayContaining(["0171_side_chat_close_intents.sql"]),
+        });
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+        expect(await sql`
+          SELECT title, side_chat_state, forked_from_conversation_id
+          FROM chat_conversations WHERE id = ${side!.id}
+        `).toEqual([{
+          title: "Existing Side Chat",
+          side_chat_state: "active",
+          forked_from_conversation_id: parent!.id,
+        }]);
+
+        const [intent] = await sql`
+          INSERT INTO side_chat_close_intents (org_id, conversation_id, owner_user_id)
+          VALUES (${org!.id}, ${side!.id}, 'owner') RETURNING id
+        `;
+        await expect(sql`DELETE FROM organizations WHERE id = ${org!.id}`).rejects.toMatchObject({ code: "23001" });
+        expect(await sql`SELECT id FROM side_chat_close_intents WHERE id = ${intent!.id}`).toHaveLength(1);
       } finally {
         await sql.end();
       }

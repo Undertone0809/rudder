@@ -4,6 +4,7 @@ import {
   AGENT_RUN_LIST_AGENT_LIMIT,
   AGENT_RUN_LIST_DEFAULT_LIMIT,
   AGENT_RUN_LIST_HISTORY_LIMIT,
+  AGENT_RUN_TRANSCRIPT_TURN_LIMIT,
   agentRunsApi,
 } from "./agent-runs";
 import {
@@ -104,6 +105,92 @@ describe("agentRunsApi", () => {
       2,
       `/agent-runs/run-1/events?afterSeq=${AGENT_RUN_EVENTS_PAGE_LIMIT}&limit=${AGENT_RUN_EVENTS_PAGE_LIMIT}`,
     );
+  });
+
+  it("requests the unified transcript projection with an explicit cursor", async () => {
+    clientMocks.get.mockResolvedValueOnce({
+      entries: [],
+      page: { hasMore: false, nextCursor: null, order: "oldest" },
+    });
+
+    await agentRunsApi.transcript("run/1", {
+      cursor: "cursor-1",
+      turnLimit: 12,
+      includeOutput: false,
+      maxChars: 400,
+    });
+
+    expect(clientMocks.get).toHaveBeenCalledWith(
+      "/run-intelligence/runs/run%2F1/transcript?output=full&order=oldest&turnLimit=12&cursor=cursor-1&includeOutput=false&maxChars=400",
+      { cache: "no-store" },
+    );
+  });
+
+  it("follows transcript cursors and deduplicates stable reader items", async () => {
+    clientMocks.get
+      .mockResolvedValueOnce({
+        entries: [{
+          id: "entry-1",
+          entry: { kind: "assistant", ts: "2026-06-19T11:06:00.000Z", text: "first" },
+        }],
+        source: "legacy",
+        revision: "revision-1",
+        availability: "available",
+        completeness: "complete",
+        page: { cursor: null, hasMore: true, nextCursor: "cursor-1", order: "oldest" },
+      })
+      .mockResolvedValueOnce({
+        entries: [
+          {
+            id: "entry-1",
+            entry: { kind: "assistant", ts: "2026-06-19T11:06:00.000Z", text: "first (refreshed)" },
+          },
+          {
+            id: "entry-2",
+            entry: { kind: "assistant", ts: "2026-06-19T11:07:00.000Z", text: "second" },
+          },
+        ],
+        source: "legacy",
+        revision: "revision-1",
+        availability: "available",
+        completeness: "complete",
+        page: { cursor: "cursor-1", hasMore: false, nextCursor: null, order: "oldest" },
+      });
+
+    await expect(agentRunsApi.allTranscript("run-1", { turnLimit: AGENT_RUN_TRANSCRIPT_TURN_LIMIT }))
+      .resolves.toMatchObject({
+        entries: [
+          { sourceEntryId: "entry-1", text: "first (refreshed)" },
+          { sourceEntryId: "entry-2", text: "second" },
+        ],
+        source: "legacy",
+        revision: "revision-1",
+      });
+    expect(clientMocks.get).toHaveBeenNthCalledWith(
+      1,
+      "/run-intelligence/runs/run-1/transcript?output=full&order=oldest&turnLimit=50",
+      { cache: "no-store" },
+    );
+    expect(clientMocks.get).toHaveBeenNthCalledWith(
+      2,
+      "/run-intelligence/runs/run-1/transcript?output=full&order=oldest&turnLimit=50&cursor=cursor-1",
+      { cache: "no-store" },
+    );
+  });
+
+  it("rejects a transcript page whose cursor does not advance", async () => {
+    clientMocks.get
+      .mockResolvedValueOnce({
+        entries: [],
+        page: { hasMore: true, nextCursor: "same-cursor", order: "oldest" },
+      })
+      .mockResolvedValueOnce({
+        entries: [],
+        page: { hasMore: true, nextCursor: "same-cursor", order: "oldest" },
+      });
+
+    await expect(agentRunsApi.allTranscript("run-1"))
+      .rejects.toThrow("non-advancing cursor");
   });
 });
 

@@ -5,6 +5,7 @@ import {
   agents,
   applyPendingMigrations,
   budgetPolicies,
+  chatConversations,
   costMonthlySpendRollups,
   createDb,
   documentRevisions,
@@ -21,6 +22,7 @@ import {
   projectWorkspaces,
   projects,
   requests,
+  sideChatProviderCleanupIntents,
   workspaceOperations,
   workspaceRuntimeServices,
 } from "@rudderhq/db";
@@ -460,6 +462,122 @@ describe("organization service", () => {
     expect(remaining).toBeNull();
     expect(fs.existsSync(resolveOrganizationRoot(orgId))).toBe(false);
     expect(fs.existsSync(legacyProjectsRoot)).toBe(false);
+  });
+
+  it.each(["pending", "claimed", "retry_wait", "review_required"] as const)(
+    "preserves an organization while Side Chat provider cleanup is %s",
+    async (state) => {
+      const orgId = randomUUID();
+      const cleanupIntentId = randomUUID();
+      await db.insert(organizations).values({
+        id: orgId,
+        name: `Cleanup ${state}`,
+        urlKey: deriveOrganizationUrlKey(`Cleanup ${state}`),
+        issuePrefix: `C${state.replaceAll("_", "").slice(0, 5).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(sideChatProviderCleanupIntents).values({
+        id: cleanupIntentId,
+        orgId,
+        conversationId: randomUUID(),
+        ownerUserId: "cleanup-owner",
+        principalScopeRef: "cleanup-scope",
+        bindingId: randomUUID(),
+        bindingEpoch: 0,
+        segmentId: randomUUID(),
+        agentId: randomUUID(),
+        runtimeType: "codex_local",
+        hostId: "local-host",
+        profileId: "default-profile",
+        nativeSessionId: `session-${state}`,
+        state,
+        ...(state === "claimed" ? {
+          leaseOwner: "cleanup-worker",
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        } : {}),
+      });
+
+      await expect(orgSvc.remove(orgId)).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining("Side Chat provider cleanup intents"),
+        details: { unfinishedCleanupIntentCount: 1 },
+      });
+
+      await expect(orgSvc.getById(orgId)).resolves.toMatchObject({ id: orgId });
+      await expect(db.select({ id: sideChatProviderCleanupIntents.id })
+        .from(sideChatProviderCleanupIntents)
+        .where(eq(sideChatProviderCleanupIntents.id, cleanupIntentId)))
+        .resolves.toEqual([{ id: cleanupIntentId }]);
+    },
+  );
+
+  it("fails closed when deleting an organization with an active Side Chat but no cleanup intent", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Active Side Chat Cleanup",
+      urlKey: deriveOrganizationUrlKey("Active Side Chat Cleanup"),
+      issuePrefix: "ASCC",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      title: "Active Side Chat",
+      createdByUserId: "side-chat-owner",
+    });
+
+    await expect(orgSvc.remove(orgId)).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("hidden Side Chats remain"),
+      details: { activeSideChatCount: 1 },
+    });
+    await expect(orgSvc.getById(orgId)).resolves.toMatchObject({ id: orgId });
+    await expect(db.select({ id: chatConversations.id })
+      .from(chatConversations)
+      .where(eq(chatConversations.id, conversationId)))
+      .resolves.toEqual([{ id: conversationId }]);
+    await expect(db.select({ id: sideChatProviderCleanupIntents.id })
+      .from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.orgId, orgId)))
+      .resolves.toEqual([]);
+  });
+
+  it("allows organization deletion after every Side Chat provider cleanup intent is completed", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Completed Side Chat Cleanup",
+      urlKey: deriveOrganizationUrlKey("Completed Side Chat Cleanup"),
+      issuePrefix: "CSCC",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(sideChatProviderCleanupIntents).values({
+      orgId,
+      conversationId: randomUUID(),
+      ownerUserId: "cleanup-owner",
+      principalScopeRef: "cleanup-scope",
+      bindingId: randomUUID(),
+      bindingEpoch: 0,
+      segmentId: randomUUID(),
+      agentId: randomUUID(),
+      runtimeType: "codex_local",
+      hostId: "local-host",
+      profileId: "default-profile",
+      nativeSessionId: "completed-session",
+      state: "completed",
+      completedAt: new Date(),
+    });
+
+    await expect(orgSvc.remove(orgId)).resolves.toMatchObject({ id: orgId });
+    await expect(db.select({ id: sideChatProviderCleanupIntents.id })
+      .from(sideChatProviderCleanupIntents)
+      .where(eq(sideChatProviderCleanupIntents.orgId, orgId)))
+      .resolves.toEqual([]);
   });
 
   it("removes an agent with block audit attempts without deleting the durable request", async () => {

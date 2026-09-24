@@ -17,6 +17,10 @@ export type ChatStreamDraft = {
   // Provisional Side Chats have no backend conversation until their first send is acknowledged.
   chatId: string | null;
   streamKey: string;
+  // The generation epoch that owns this local stream attempt.
+  generationEpoch?: number;
+  // Stable per-message id used to replay a request after a lost stream response.
+  clientMutationId?: string | null;
   userBody: string;
   // Keep pending blobs visible during the optimistic handoff; they are memory-only.
   userFiles?: File[];
@@ -65,10 +69,16 @@ type ChatGenerationContextValue = {
   ) => void;
   setStreamAbortController: (chatId: string, controller: AbortController | null) => void;
   abortChatStream: (chatId: string) => void;
+  clearChatGenerationProviderState: (
+    scopeKey: string,
+    epoch: number,
+    streamKey?: string | null,
+  ) => boolean;
   beginChatGeneration: (scopeKey: string, conversationId: string | null) => ChatGenerationScopeStart;
   tryBeginChatGeneration: (scopeKey: string, conversationId: string | null) => ChatGenerationScopeStart | null;
   rememberChatGenerationConversation: (scopeKey: string, conversationId: string) => void;
   setChatGenerationConversation: (scopeKey: string, epoch: number, conversationId: string) => boolean;
+  getChatGenerationEpoch: (scopeKey: string) => number | null;
   isChatGenerationCurrent: (scopeKey: string, epoch: number) => boolean;
   isChatGenerationClosePending: (scopeKey: string, epoch?: number) => boolean;
   releaseChatGenerationScope: (scopeKey: string, epoch: number) => void;
@@ -89,10 +99,12 @@ type ChatGenerationActions = Pick<
   | "setStreamDraftForChat"
   | "setStreamAbortController"
   | "abortChatStream"
+  | "clearChatGenerationProviderState"
   | "beginChatGeneration"
   | "tryBeginChatGeneration"
   | "rememberChatGenerationConversation"
   | "setChatGenerationConversation"
+  | "getChatGenerationEpoch"
   | "isChatGenerationCurrent"
   | "isChatGenerationClosePending"
   | "releaseChatGenerationScope"
@@ -137,10 +149,12 @@ const defaultValue: ChatGenerationContextValue = {
   setStreamDraftForChat: () => {},
   setStreamAbortController: () => {},
   abortChatStream: () => {},
+  clearChatGenerationProviderState: () => false,
   beginChatGeneration: () => ({ epoch: 0, conversationId: null }),
   tryBeginChatGeneration: () => null,
   rememberChatGenerationConversation: () => {},
   setChatGenerationConversation: () => false,
+  getChatGenerationEpoch: () => null,
   isChatGenerationCurrent: () => false,
   isChatGenerationClosePending: () => false,
   releaseChatGenerationScope: () => {},
@@ -291,6 +305,27 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     streamAbortControllersRef.current[chatId]?.abort();
   }, []);
 
+  const clearChatGenerationProviderState = useCallback((
+    scopeKey: string,
+    epoch: number,
+    expectedStreamKey?: string | null,
+  ) => {
+    const scope = generationScopesRef.current[scopeKey];
+    if (!scope || scope.epoch !== epoch) return false;
+    const currentDraft = streamDraftsRef.current[scopeKey];
+    if (expectedStreamKey && currentDraft && currentDraft.streamKey !== expectedStreamKey) return false;
+
+    streamAbortControllersRef.current[scopeKey]?.abort();
+    setStreamAbortController(scopeKey, null);
+    setChatSendInFlight(scopeKey, false);
+    setStreamDraftForChat(scopeKey, (current) => (
+      expectedStreamKey && current && current.streamKey !== expectedStreamKey
+        ? current
+        : null
+    ));
+    return true;
+  }, [setChatSendInFlight, setStreamAbortController, setStreamDraftForChat]);
+
   const ensureGenerationScope = useCallback((scopeKey: string) => {
     const existing = generationScopesRef.current[scopeKey];
     if (existing) return existing;
@@ -351,6 +386,10 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     scope.conversationId = conversationId;
     return true;
   }, []);
+
+  const getChatGenerationEpoch = useCallback((scopeKey: string) => (
+    generationScopesRef.current[scopeKey]?.epoch ?? null
+  ), []);
 
   const isChatGenerationCurrent = useCallback((scopeKey: string, epoch: number) => {
     const scope = generationScopesRef.current[scopeKey];
@@ -437,7 +476,9 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     abortChatStream,
     beginChatGeneration,
     clearChatGenerationConversation,
+    clearChatGenerationProviderState,
     destroyChatGenerationConversation,
+    getChatGenerationEpoch,
     tryBeginChatGeneration,
     isChatGenerationActive,
     isChatGenerationCurrent,
@@ -454,7 +495,9 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     abortChatStream,
     beginChatGeneration,
     clearChatGenerationConversation,
+    clearChatGenerationProviderState,
     destroyChatGenerationConversation,
+    getChatGenerationEpoch,
     tryBeginChatGeneration,
     isChatGenerationActive,
     isChatGenerationCurrent,
@@ -477,7 +520,9 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       beginChatGeneration,
       tryBeginChatGeneration,
       clearChatGenerationConversation,
+      clearChatGenerationProviderState,
       destroyChatGenerationConversation,
+      getChatGenerationEpoch,
       isChatGenerationActive,
       isChatGenerationCurrent,
       isChatGenerationClosePending,
@@ -496,7 +541,9 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       activeChatIds,
       beginChatGeneration,
       clearChatGenerationConversation,
+      clearChatGenerationProviderState,
       destroyChatGenerationConversation,
+      getChatGenerationEpoch,
       isChatGenerationActive,
       isChatGenerationCurrent,
       isChatGenerationClosePending,

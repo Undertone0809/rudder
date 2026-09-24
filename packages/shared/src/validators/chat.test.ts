@@ -4,10 +4,10 @@ import {
   appendChatGenerationEventSchema,
   chatAskUserRequestFromStructuredPayload,
   chatAskUserRequestSchema,
+  chatAskUserResponseSchema,
   chatAutomationCreateFromStructuredPayload,
   chatControlDispositionSchema,
   chatDraftSchema,
-  forkChatConversationSchema,
   chatIssueProposalFromStructuredPayload,
   chatOperationProposalFromStructuredPayload,
   chatOperationProposalSchema,
@@ -15,6 +15,7 @@ import {
   chatRichReferencesFromStructuredPayload,
   convertChatToIssueSchema,
   createSideChatSchema,
+  forkChatConversationSchema,
   resolveChatOperationProposalSchema,
   sanitizeChatStructuredPayload,
   steerChatQueuedMessageSchema,
@@ -163,7 +164,7 @@ describe("durable chat controls", () => {
 });
 
 describe("chat ask_user request payloads", () => {
-  it("accepts one to three structured questions with two to three options", () => {
+  it("accepts one to four structured questions with two to four options", () => {
     const payload = {
       requestUserInput: {
         questions: [
@@ -185,6 +186,29 @@ describe("chat ask_user request payloads", () => {
     expect(chatAskUserRequestSchema.safeParse(payload.requestUserInput).success).toBe(true);
     expect(chatAskUserRequestFromStructuredPayload(payload)).toEqual(payload.requestUserInput);
     expect(sanitizeChatStructuredPayload(payload)).toEqual(payload);
+  });
+
+  it("validates structured responses by question and option ids", () => {
+    const response = chatAskUserResponseSchema.safeParse({
+      answers: [
+        { questionId: "scope", optionIds: ["narrow"] },
+        { questionId: "notes", optionIds: [], freeformText: "Keep the migration reversible." },
+      ],
+    });
+    expect(response.success).toBe(true);
+
+    expect(chatAskUserResponseSchema.safeParse({
+      answers: [
+        { questionId: "scope", optionIds: ["narrow", "narrow"] },
+      ],
+    }).success).toBe(false);
+
+    expect(chatAskUserResponseSchema.safeParse({
+      answers: [
+        { questionId: "scope", optionIds: [] },
+        { questionId: "scope", optionIds: ["broad"] },
+      ],
+    }).success).toBe(false);
   });
 
   it("rejects unsupported ask_user selection modes", () => {

@@ -32,6 +32,7 @@ export function commentThreadTranscriptRuns(
       agentName: agent?.name ?? run.agentId.slice(0, 8),
       agentRuntimeType: agent?.agentRuntimeType ?? "process",
       issueId: null,
+      contextSnapshot: run.contextSnapshot ?? null,
       resultJson: run.resultJson ?? null,
     };
   });

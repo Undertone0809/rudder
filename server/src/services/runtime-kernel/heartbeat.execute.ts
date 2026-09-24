@@ -8,21 +8,12 @@
  * @see doc/product/domains/agents/instruction-loading.md - AGENT.INSTRUCTIONS.001 runtime instruction frame
  */
 import {
-  buildModelAttemptSpecs,
   isAgentRuntimeNetworkSuspension,
-  type TranscriptEntry,
+  type AgentRuntimeApprovalHandle,
+  type AgentRuntimeApprovalRequest,
+  type TranscriptEntry
 } from "@rudderhq/agent-runtime-utils";
-import {
-  goals,
-  heartbeatRuns,
-  issues,
-  projects,
-  runtimeBindings,
-} from "@rudderhq/db";
-import {
-  resolveAgentRunScene,
-  type HeartbeatRun,
-} from "@rudderhq/shared";
+import { heartbeatRuns } from "@rudderhq/db";
 import { and, eq, sql } from "drizzle-orm";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import type {
@@ -32,22 +23,12 @@ import type {
 import {
   createProfileBoundRuntimeProviderCapabilityResolverFromConfig,
   findServerAdapter,
-  getRuntimeDriver,
   getServerAdapter,
+  NATIVE_CHAT_RUNTIME_TYPES,
 } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
-import {
-  resolveDefaultAgentWorkspaceDir,
-} from "../../home-paths.js";
 import { redactCurrentUserText } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
-import {
-  buildExecutionWorkspaceAdapterConfig,
-  issueExecutionWorkspaceModeForPersistedWorkspace,
-  parseIssueExecutionWorkspaceSettings,
-  parseProjectExecutionWorkspacePolicy,
-  resolveExecutionWorkspaceMode,
-} from "../execution-workspace-policy.js";
 import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
 import { publishLiveEvent } from "../live-events.js";
 import {
@@ -58,62 +39,48 @@ import {
 import { type RunLogHandle } from "../run-log-store.js";
 import {
   buildWorkspaceReadyComment,
-  cleanupExecutionWorkspaceArtifacts,
   ensureRuntimeServicesForRun,
   persistAdapterManagedRuntimeServices,
-  realizeExecutionWorkspace,
   releaseRuntimeServicesForRun
 } from "../workspace-runtime.js";
 import {
   ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
-  createAssignmentRunFailureBudget,
-  formatAssignmentRunGuardrailError,
-  type AssignmentRunGuardrailCheckpoint,
+  formatAssignmentRunGuardrailError
 } from "./assignment-run-guardrail.js";
+import { createCursorTranscriptSupplementCapture } from "./cursor-transcript-supplement.js";
 import {
   beginHeartbeatRunAttempt,
   finishHeartbeatRunAttempt,
   markHeartbeatRunAttemptWaiting,
   type HeartbeatAttemptRef,
 } from "./heartbeat-attempt-ledger.js";
-import { executeAdapterWithModelFallbacks } from "./model-fallback.js";
 import {
-  retainNativeHeartbeatResultJson,
+  boundNativeHeartbeatTranscriptMemory,
   resolveHeartbeatTranscriptRetention,
+  retainNativeHeartbeatResultJson,
   transcriptForHeartbeatRetention,
 } from "./heartbeat-transcript-retention.js";
+import { createHeartbeatRuntimeDriver } from "./heartbeat.admission.js";
+import { prepareHeartbeatRunExecution } from "./heartbeat.execute-context.js";
+import {
+  executeAdapterWithModelFallbacks,
+  resolveExecutionSubmissionPhase,
+} from "./model-fallback.js";
+import { filterNativeTransportProfile, persistNativeTransportProfile } from "./native-transport-profile.js";
+import { createRuntimeApprovalBridge } from "./runtime-approval.js";
+import type { RuntimeDriver } from "./runtime-driver.js";
+import { markLegacyTranscriptSource } from "./transcript-source.js";
+import type { UnifiedAttemptFinishInput } from "./unified-agent-run.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
-const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, networkWaitBackoffMs, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
+const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, networkWaitBackoffMs, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, createHeartbeatTranscriptFinalizer, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
   return sanitizeStartupContextContextForPersistence(context) ?? {};
-}
-
-const MAX_NATIVE_TRANSCRIPT_MEMORY_ENTRIES = 128;
-const MAX_NATIVE_TRANSCRIPT_MEMORY_BYTES = 128 * 1024;
-
-/** Keep execution decisions bounded after the native provider becomes the transcript source. */
-function boundNativeTranscriptMemory(transcript: TranscriptEntry[]) {
-  while (transcript.length > MAX_NATIVE_TRANSCRIPT_MEMORY_ENTRIES) transcript.shift();
-  let bytes = 0;
-  for (let index = transcript.length - 1; index >= 0; index -= 1) {
-    const entry = transcript[index];
-    let entryBytes = 0;
-    try {
-      entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
-    } catch {
-      entryBytes = MAX_NATIVE_TRANSCRIPT_MEMORY_BYTES;
-    }
-    bytes += entryBytes;
-    if (bytes <= MAX_NATIVE_TRANSCRIPT_MEMORY_BYTES) continue;
-    transcript.splice(0, index + 1);
-    break;
-  }
 }
 
 const EXECUTOR_OWNED_CONTEXT_KEYS = [
@@ -133,18 +100,8 @@ const EXECUTOR_OWNED_CONTEXT_KEYS = [
   "managedMcpPolicySnapshot",
 ] as const;
 
-function resolveRuntimeSceneForRun(run: typeof heartbeatRuns.$inferSelect) {
-  return resolveAgentRunScene({
-    ...run,
-    invocationSource: run.invocationSource as HeartbeatRun["invocationSource"],
-    triggerDetail: run.triggerDetail as HeartbeatRun["triggerDetail"],
-    status: run.status as HeartbeatRun["status"],
-    contextSnapshot: run.contextSnapshot as HeartbeatRun["contextSnapshot"],
-  });
-}
-
 export function createHeartbeatExecuteHandlers(context: any) {
-    const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, beforeAssignmentRecoveryEnqueue, ensureCommonRunExecutionBoundary, syncCommonRunOwnerAfterRecovery, resolveHeartbeatNativeResources } = context;
+    const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, beforeAssignmentRecoveryEnqueue, ensureCommonRunExecutionBoundary, resolveHeartbeatNativeResources, unifiedRunAdapter } = context;
 
   async function persistRunningExecutionContext(
     runId: string,
@@ -192,6 +149,25 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let run: Awaited<ReturnType<typeof getRun>>;
     let executionLeaseTimer: ReturnType<typeof setInterval> | null = null;
     let executionOwnerToken: string | null = null;
+    let commonAttemptEpoch = 1;
+    let commonSpanId: string | null = null;
+    let commonOwnerFence: {
+      id: string;
+      ownerToken: string;
+      attemptEpoch: number;
+      leaseExpiresAt: Date;
+    } | null = null;
+    let activeRuntimeDriver: RuntimeDriver | null = null;
+    const inspectUnifiedEntry = async (attemptId?: string | null) => {
+      if (!unifiedRunAdapter) return null;
+      if (activeRuntimeDriver) {
+        const inspection = await activeRuntimeDriver.inspectExecution({ runId, attemptId });
+        return inspection.status === "supported" && inspection.value.state === "found"
+          ? inspection.value.entry ?? null
+          : null;
+      }
+      return unifiedRunAdapter.get(runId);
+    };
     try {
       run = await getRun(runId);
     } catch (error) {
@@ -228,16 +204,140 @@ export function createHeartbeatExecuteHandlers(context: any) {
     const executionAbortController = runAbortControllers.get(run.id) ?? new AbortController();
     runAbortControllers.set(run.id, executionAbortController);
     let activeAttemptRef: HeartbeatAttemptRef | null = null;
+    let adapterResultJsonForTerminal: Record<string, unknown> | null = null;
     let networkSuspended = false;
     const finishActiveAttempt = async (input: Record<string, unknown>) => {
       const ref = activeAttemptRef;
       activeAttemptRef = null;
       if (!ref) return;
+      if (unifiedRunAdapter && commonSpanId && executionOwnerToken) {
+        const current = await inspectUnifiedEntry(ref.id);
+        if (
+          current
+          && current.ownerFence.ownerToken === executionOwnerToken
+          && current.ownerFence.attemptEpoch === commonAttemptEpoch
+          && current.attempt.ref.id === ref.id
+        ) {
+          const { status, ...metadata } = input;
+          const finished = await unifiedRunAdapter.finishAttempt(
+            run.id,
+            current.ownerFence,
+            status,
+            metadata,
+          );
+          if (!finished.ok) throw new Error(`Unified Run ${run.id} attempt finish rejected: ${finished.reason}`);
+          return;
+        }
+      }
       try {
         await finishHeartbeatRunAttempt(db, ref, input as any);
       } catch (error) {
         logger.warn({ err: error, runId: runId, attemptIndex: ref.attemptIndex }, "failed to persist heartbeat attempt terminal state");
       }
+    };
+    const currentUnifiedEntry = async () => {
+      if (!unifiedRunAdapter || !commonSpanId || !executionOwnerToken) return null;
+      const entry = await inspectUnifiedEntry(activeAttemptRef?.id);
+      if (
+        !entry
+        || entry.ownerFence.ownerToken !== executionOwnerToken
+        || entry.ownerFence.attemptEpoch !== commonAttemptEpoch
+      ) return null;
+      return entry;
+    };
+    const providerIdentityFromResult = (result: Record<string, unknown>) => {
+      const payload = result.resultJson && typeof result.resultJson === "object" && !Array.isArray(result.resultJson)
+        ? result.resultJson as Record<string, unknown>
+        : {};
+      const read = (...values: unknown[]) => values.find(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )?.trim() ?? null;
+      return {
+        providerThreadId: read(
+          result.providerThreadId,
+          result.sessionDisplayId,
+          result.sessionId,
+          payload.providerThreadId,
+          payload.providerSessionId,
+          payload.threadId,
+        ),
+        providerTurnId: read(
+          result.providerTurnId,
+          payload.providerTurnId,
+          payload.turnId,
+          payload.executionId,
+          payload.messageId,
+        ),
+      };
+    };
+    const recordUnifiedAttemptResult = async (
+      result: Record<string, unknown>,
+      submissionPhase: "pre_submission" | "accepted" | "indeterminate",
+    ) => {
+      const current = await currentUnifiedEntry();
+      if (!current || current.status !== "running") return;
+      const provider = providerIdentityFromResult(result);
+      const previousSubmission = current.attempt.submission;
+      const resolvesUnknownAcceptance = previousSubmission.state === "acceptance_unknown"
+        && (submissionPhase === "accepted" || submissionPhase === "pre_submission");
+      if (resolvesUnknownAcceptance) {
+        const outcome = {
+          ...provider,
+          submissionKey: previousSubmission.key,
+          state: submissionPhase === "accepted" ? "accepted" as const : "rejected" as const,
+          ...(submissionPhase === "pre_submission"
+            ? { reason: typeof result.errorMessage === "string" ? result.errorMessage : "provider proved the submission was not accepted" }
+            : {}),
+        };
+        if (activeRuntimeDriver) {
+          const reconciled = await activeRuntimeDriver.reconcileExecution({
+            runId: run.id,
+            attemptId: current.attempt.ref.id,
+            fence: current.ownerFence,
+            outcome,
+          });
+          if (reconciled.status !== "supported") {
+            throw new Error(`Unified Run ${run.id} submission reconciliation rejected: ${reconciled.reason}`);
+          }
+          if (!reconciled.value.ok) {
+            throw new Error(`Unified Run ${run.id} submission reconciliation rejected: ${reconciled.value.reason}`);
+          }
+        } else {
+          const reconciled = await unifiedRunAdapter.reconcileAcceptance(run.id, current.ownerFence, outcome);
+          if (!reconciled.ok) throw new Error(`Unified Run ${run.id} submission reconciliation rejected: ${reconciled.reason}`);
+        }
+      } else if (submissionPhase === "accepted") {
+        const accepted = await unifiedRunAdapter.acceptSubmission(run.id, current.ownerFence, provider);
+        if (!accepted.ok) throw new Error(`Unified Run ${run.id} submission acceptance rejected: ${accepted.reason}`);
+      } else if (submissionPhase === "indeterminate") {
+        const unknown = await unifiedRunAdapter.markAcceptanceUnknown(run.id, current.ownerFence, {
+          ...provider,
+          phase: submissionPhase,
+          reason: typeof result.errorMessage === "string" ? result.errorMessage : null,
+        });
+        if (!unknown.ok) throw new Error(`Unified Run ${run.id} submission uncertainty rejected: ${unknown.reason}`);
+      }
+      const suspended = Boolean(result.networkSuspension || result.suspension);
+      if (!suspended) return;
+      const recorded = await unifiedRunAdapter.recordExecutionResult(run.id, current.ownerFence, {
+        spanId: current.span.id,
+        result: result as any,
+        error: Boolean(result.errorMessage) || result.exitCode !== 0 || result.timedOut === true,
+        suspended: true,
+      });
+      if (!recorded.ok) throw new Error(`Unified Run ${run.id} native execution result rejected: ${recorded.reason}`);
+      commonSpanId = recorded.value.id;
+    };
+    const markUnifiedAttemptWaiting = async (input: Record<string, unknown>) => {
+      const ref = activeAttemptRef;
+      activeAttemptRef = null;
+      const current = await currentUnifiedEntry();
+      if (current && ref && current.attempt.ref.id === ref.id) {
+        const waiting = await unifiedRunAdapter.markAttemptWaiting(run.id, current.ownerFence, input);
+        if (!waiting.ok) throw new Error(`Unified Run ${run.id} network wait rejected: ${waiting.reason}`);
+        return;
+      }
+      if (ref) await markHeartbeatRunAttemptWaiting(db, ref, input as any);
     };
     let assignmentContinuationAttempt = Math.max(
       0,
@@ -256,34 +356,60 @@ export function createHeartbeatExecuteHandlers(context: any) {
 
     executionOwnerToken = run.executionOwnerToken;
     if (executionOwnerToken) {
-      const renewed = await renewRunExecutionLease(run.id, executionOwnerToken);
-      if (!renewed) {
+      if (runWasRunningAtEntry) {
+        const current = run.scene || run.targetType || run.idempotencyKey
+          ? await unifiedRunAdapter.get(run.id)
+          : null;
+        if (current) {
+          if (current.ownerFence.ownerToken !== executionOwnerToken) {
+            abortRunExecution(run.id);
+            return;
+          }
+          const renewed = await unifiedRunAdapter.renewOwner(run.id, current.ownerFence);
+          if (!renewed.ok) {
+            abortRunExecution(run.id);
+            return;
+          }
+          commonOwnerFence = renewed.value;
+          commonAttemptEpoch = renewed.value.attemptEpoch;
+        } else if (!await renewRunExecutionLease(run.id, executionOwnerToken)) {
+          abortRunExecution(run.id);
+          return;
+        }
+      } else if (!await renewRunExecutionLease(run.id, executionOwnerToken)) {
         abortRunExecution(run.id);
         return;
       }
       executionLeaseTimer = setInterval(() => {
-        void renewRunExecutionLease(run.id, executionOwnerToken)
+        const renewal = commonOwnerFence
+          ? unifiedRunAdapter.renewOwner(run.id, commonOwnerFence).then((result) => {
+              if (!result.ok) return null;
+              commonOwnerFence = result.value;
+              return result.value;
+            })
+          : renewRunExecutionLease(run.id, executionOwnerToken);
+        void renewal
           .then((renewed) => {
             if (!renewed) abortRunExecution(run.id);
           })
           .catch(() => undefined);
       }, 60_000);
       executionLeaseTimer.unref?.();
-
-      let commonAttemptEpoch = 1;
-      if (runWasRunningAtEntry) {
-        const recovered = await syncCommonRunOwnerAfterRecovery({ run, ownerToken: executionOwnerToken });
-        run = recovered.run;
-        executionOwnerToken = recovered.ownerToken;
-        commonAttemptEpoch = recovered.attemptEpoch ?? commonAttemptEpoch;
-      }
       const commonBoundary = await ensureCommonRunExecutionBoundary(
         db,
         run,
         executionOwnerToken,
         commonAttemptEpoch,
       );
-      if (commonBoundary) activeAttemptRef = commonBoundary.attemptRef;
+      if (commonBoundary) {
+        activeAttemptRef = commonBoundary.attemptRef;
+        commonSpanId = commonBoundary.spanId;
+      }
+      const commonEntry = commonBoundary ? await unifiedRunAdapter.get(run.id) : null;
+      if (commonEntry && commonEntry.ownerFence.ownerToken === executionOwnerToken) {
+        commonOwnerFence = commonEntry.ownerFence;
+        commonAttemptEpoch = commonEntry.ownerFence.attemptEpoch;
+      }
     }
 
     const agent = await getAgent(run.agentId);
@@ -307,9 +433,12 @@ export function createHeartbeatExecuteHandlers(context: any) {
     }
 
     const executionTranscript: TranscriptEntry[] = [];
+    const cursorTranscriptCapture = createCursorTranscriptSupplementCapture(db, undefined,
+      (error) => logger.warn({ err: error, runId }, "failed to seal Cursor transcript supplement"));
     let transcriptRetention = resolveHeartbeatTranscriptRetention({ hasBinding: false });
-    let stdoutTranscriptBuffer = "";
-    let stderrTranscriptBuffer = "";
+    let nativeResources: any = null;
+    const stdoutTranscriptBuffer = { pending: "", droppingOverlongLine: false };
+    const stderrTranscriptBuffer = { pending: "", droppingOverlongLine: false };
     let stdoutTranscriptParser: ((line: string, ts: string) => TranscriptEntry[]) | null = null;
     let transcriptFallbackResult: {
       ts?: string | null;
@@ -329,458 +458,70 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let assignmentRecoveryEligible = false;
     let assignmentRecoveryRequestedAt: Date | null = null;
     let activeAttemptSpec: { index: number; fallbackIndex: number | null } | null = null;
-    const finalizeExecutionTranscript = () => {
-      stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
-        buffer: stdoutTranscriptBuffer,
-        chunk: "",
-        transcript: executionTranscript,
-        parser: stdoutTranscriptParser,
-        finalize: true,
-        kind: "stdout",
-      });
-      stderrTranscriptBuffer = appendTranscriptEntriesFromChunk({
-        buffer: stderrTranscriptBuffer,
-        chunk: "",
-        transcript: executionTranscript,
-        finalize: true,
-        kind: "stderr",
-      });
-    };
-    await ensureRuntimeState(agent);
-    const context = parseObject(run.contextSnapshot);
-    delete context.rudderGitIdentity;
-    assignmentContinuationAttempt = Math.max(
-      0,
-      Math.floor(Number(context.assignmentGuardrailContinuationAttempt) || 0),
-    );
-    const assignmentGuardrailEnabled = run.invocationSource === "assignment"
-      || context.wakeSource === "assignment"
-      || run.invocationSource === "automation"
-      || assignmentContinuationAttempt > 0;
-    const assignmentFailureBudget = assignmentGuardrailEnabled ? createAssignmentRunFailureBudget() : null;
-    let assignmentGuardrailCheckpoint: AssignmentRunGuardrailCheckpoint | null = null;
-    const taskKey = deriveTaskKey(context, null);
-    const sessionCodec = getAgentRuntimeSessionCodec(agent.agentRuntimeType);
-    const issueId = readNonEmptyString(context.issueId);
-    const issueContext = issueId
-      ? await db
-          .select({
-            id: issues.id,
-            identifier: issues.identifier,
-            title: issues.title,
-            description: issues.description,
-            projectId: issues.projectId,
-            projectWorkspaceId: issues.projectWorkspaceId,
-            executionWorkspaceId: issues.executionWorkspaceId,
-            executionWorkspacePreference: issues.executionWorkspacePreference,
-            assigneeAgentId: issues.assigneeAgentId,
-            assigneeAgentRuntimeOverrides: issues.assigneeAgentRuntimeOverrides,
-            executionWorkspaceSettings: issues.executionWorkspaceSettings,
-          })
-          .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.orgId, agent.orgId)))
-          .then((rows) => rows[0] ?? null)
-      : null;
-    const goalId = readNonEmptyString(context.goalId);
-    const goalContext = goalId
-      ? await db
-          .select({
-            id: goals.id,
-            ownerAgentId: goals.ownerAgentId,
-            ownerAgentRuntimeOverrides: goals.ownerAgentRuntimeOverrides,
-          })
-          .from(goals)
-          .where(and(eq(goals.id, goalId), eq(goals.orgId, agent.orgId)))
-          .then((rows) => rows[0] ?? null)
-      : null;
-    const issueAssigneeOverrides =
-      issueContext && issueContext.assigneeAgentId === agent.id
-        ? parseIssueAssigneeAgentRuntimeOverrides(
-            issueContext.assigneeAgentRuntimeOverrides,
-          )
-        : null;
-    const goalOwnerOverrides =
-      goalContext && goalContext.ownerAgentId === agent.id
-        ? parseIssueAssigneeAgentRuntimeOverrides(goalContext.ownerAgentRuntimeOverrides)
-        : null;
-    const runtimeOverrides = issueContext ? issueAssigneeOverrides : goalOwnerOverrides;
-    const issueExecutionWorkspaceSettings = parseIssueExecutionWorkspaceSettings(issueContext?.executionWorkspaceSettings);
-    const contextProjectId = readNonEmptyString(context.projectId);
-    const executionProjectId = issueContext?.projectId ?? contextProjectId;
-    const projectExecutionWorkspacePolicy = executionProjectId
-      ? await db
-          .select({ executionWorkspacePolicy: projects.executionWorkspacePolicy })
-          .from(projects)
-          .where(and(eq(projects.id, executionProjectId), eq(projects.orgId, agent.orgId)))
-          .then((rows) => parseProjectExecutionWorkspacePolicy(rows[0]?.executionWorkspacePolicy))
-      : null;
-    const taskSession = taskKey
-      ? await getTaskSession(agent.orgId, agent.id, agent.agentRuntimeType, taskKey)
-      : null;
-    const resetTaskSession = run.sessionReuseScope === "unknown"
-      ? shouldResetTaskSessionForWake(context)
-      : run.sessionReuseScope === "none" && shouldResetTaskSessionForWake(context);
-    const sessionResetReason = describeSessionResetReason(context);
-    const taskSessionForRun = resetTaskSession ? null : taskSession;
-    const explicitResumeSessionParams = normalizeSessionParams(
-      sessionCodec.deserialize(parseObject(context.resumeSessionParams)),
-    );
-    const explicitResumeSessionDisplayId = truncateDisplayId(
-      readNonEmptyString(context.resumeSessionDisplayId) ??
-        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(explicitResumeSessionParams) : null) ??
-        readNonEmptyString(explicitResumeSessionParams?.sessionId),
-    );
-    const taskSessionParams = normalizeSessionParams(
-      sessionCodec.deserialize(taskSessionForRun?.sessionParamsJson ?? null),
-    );
-    const taskSessionDisplayId = truncateDisplayId(
-      taskSessionForRun?.sessionDisplayId ??
-        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(taskSessionParams) : null) ??
-        readNonEmptyString(taskSessionParams?.sessionId),
-    );
-    const frozenSessionParams = normalizeSessionParams(
-      sessionCodec.deserialize(run.sessionParamsBeforeJson ?? null),
-    );
-    const frozenSessionDisplayId = truncateDisplayId(
-      run.sessionIdBefore ??
-        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(frozenSessionParams) : null) ??
-        readNonEmptyString(frozenSessionParams?.sessionId),
-    );
-    const sessionSelection = run.sessionReuseScope === "unknown"
-      ? selectRunSessionLineage({
-          forceFresh: Boolean(heartbeatSessions.readSessionReuseSuppression(context)),
-          explicitSessionParams: explicitResumeSessionParams,
-          explicitSessionDisplayId: explicitResumeSessionDisplayId,
-          taskSessionParams,
-          taskSessionDisplayId,
-        })
-      : {
-          reuseScope: run.sessionReuseScope,
-          sessionParams: run.sessionReuseScope === "none" ? null : frozenSessionParams,
-          sessionDisplayId: run.sessionReuseScope === "none" ? null : frozenSessionDisplayId,
-        };
-    const previousSessionParams = sessionSelection.sessionParams;
-    const runtimeScene = resolveRuntimeSceneForRun(run);
-    const config = await runContextSvc.materializeManagedInstructionsForRun({
-      ...agent,
-      agentRuntimeConfig: parseObject(agent.agentRuntimeConfig),
-    });
-    const executionWorkspaceMode = resolveExecutionWorkspaceMode({
-      projectPolicy: projectExecutionWorkspacePolicy,
-      issueSettings: issueExecutionWorkspaceSettings,
-      legacyUseProjectWorkspace: runtimeOverrides?.useProjectWorkspace ?? null,
-    });
-    const resolvedWorkspace = await runContextSvc.resolveWorkspaceForRun(
-      agent,
-      context,
-      previousSessionParams,
-      { useProjectWorkspace: executionWorkspaceMode !== "agent_default" },
-    );
-    const workspaceManagedConfig = buildExecutionWorkspaceAdapterConfig({
-      agentConfig: config,
-      projectPolicy: projectExecutionWorkspacePolicy,
-      issueSettings: issueExecutionWorkspaceSettings,
-      mode: executionWorkspaceMode,
-      legacyUseProjectWorkspace: runtimeOverrides?.useProjectWorkspace ?? null,
-    });
-    const mergedConfig = runtimeOverrides?.agentRuntimeConfig
-      ? { ...workspaceManagedConfig, ...runtimeOverrides.agentRuntimeConfig }
-      : workspaceManagedConfig;
-    const { resolvedConfig, runtimeConfig, runtimeSkillEntries, secretKeys } =
-      await runContextSvc.prepareRuntimeConfig({
-        scene: runtimeScene,
-        agent,
-        baseConfig: mergedConfig,
-      });
-    context.managedMcpPolicySnapshot = runtimeConfig.managedExternalMcpBindings ?? [];
-    const issueRef = issueContext
-      ? {
-          id: issueContext.id,
-          identifier: issueContext.identifier,
-          title: issueContext.title,
-          projectId: issueContext.projectId,
-          projectWorkspaceId: issueContext.projectWorkspaceId,
-          executionWorkspaceId: issueContext.executionWorkspaceId,
-          executionWorkspacePreference: issueContext.executionWorkspacePreference,
-        }
-      : null;
-    const existingExecutionWorkspace =
-      issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;
-    const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
-      orgId: agent.orgId,
-      heartbeatRunId: run.id,
-      executionWorkspaceId: existingExecutionWorkspace?.id ?? null,
-    });
-    const executionWorkspace = await realizeExecutionWorkspace({
-      base: {
-        baseCwd: resolvedWorkspace.cwd,
-        source: resolvedWorkspace.source,
-        projectId: resolvedWorkspace.projectId,
-        workspaceId: resolvedWorkspace.workspaceId,
-        repoUrl: resolvedWorkspace.repoUrl,
-        repoRef: resolvedWorkspace.repoRef,
-      },
-      config: runtimeConfig,
-      issue: issueRef,
-      agent: {
-        id: agent.id,
-        name: agent.name,
-        orgId: agent.orgId,
-      },
-      recorder: workspaceOperationRecorder,
-    });
-    const resolvedProjectId = executionWorkspace.projectId ?? issueRef?.projectId ?? executionProjectId ?? null;
-    const resolvedProjectWorkspaceId = issueRef?.projectWorkspaceId ?? resolvedWorkspace.workspaceId ?? null;
-    const shouldReuseExisting =
-      issueRef?.executionWorkspacePreference === "reuse_existing" &&
-      existingExecutionWorkspace &&
-      existingExecutionWorkspace.status !== "archived";
-    let persistedExecutionWorkspace = null;
-    try {
-      persistedExecutionWorkspace = shouldReuseExisting && existingExecutionWorkspace
-        ? await executionWorkspacesSvc.update(existingExecutionWorkspace.id, {
-            cwd: executionWorkspace.cwd,
-            repoUrl: executionWorkspace.repoUrl,
-            baseRef: executionWorkspace.repoRef,
-            branchName: executionWorkspace.branchName,
-            providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
-            providerRef: executionWorkspace.worktreePath,
-            status: "active",
-            lastUsedAt: new Date(),
-            metadata: {
-              ...(existingExecutionWorkspace.metadata ?? {}),
-              source: executionWorkspace.source,
-              createdByRuntime: executionWorkspace.created,
-            },
-          })
-        : resolvedProjectId
-          ? await executionWorkspacesSvc.create({
-              orgId: agent.orgId,
-              projectId: resolvedProjectId,
-              projectWorkspaceId: resolvedProjectWorkspaceId,
-              sourceIssueId: issueRef?.id ?? null,
-              mode:
-                executionWorkspaceMode === "isolated_workspace"
-                  ? "isolated_workspace"
-                  : executionWorkspaceMode === "operator_branch"
-                    ? "operator_branch"
-                    : executionWorkspaceMode === "agent_default"
-                      ? "adapter_managed"
-                      : "shared_workspace",
-              strategyType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "project_primary",
-              name: executionWorkspace.branchName ?? issueRef?.identifier ?? `workspace-${agent.id.slice(0, 8)}`,
-              status: "active",
-              cwd: executionWorkspace.cwd,
-              repoUrl: executionWorkspace.repoUrl,
-              baseRef: executionWorkspace.repoRef,
-              branchName: executionWorkspace.branchName,
-              providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
-              providerRef: executionWorkspace.worktreePath,
-              lastUsedAt: new Date(),
-              openedAt: new Date(),
-              metadata: {
-                source: executionWorkspace.source,
-                createdByRuntime: executionWorkspace.created,
-              },
-            })
-          : null;
-    } catch (error) {
-      if (executionWorkspace.created) {
-        try {
-          await cleanupExecutionWorkspaceArtifacts({
-            workspace: {
-              id: existingExecutionWorkspace?.id ?? `transient-${run.id}`,
-              cwd: executionWorkspace.cwd,
-              providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
-              providerRef: executionWorkspace.worktreePath,
-              branchName: executionWorkspace.branchName,
-              repoUrl: executionWorkspace.repoUrl,
-              baseRef: executionWorkspace.repoRef,
-              projectId: resolvedProjectId,
-              projectWorkspaceId: resolvedProjectWorkspaceId,
-              sourceIssueId: issueRef?.id ?? null,
-              metadata: {
-                createdByRuntime: true,
-                source: executionWorkspace.source,
-              },
-            },
-            projectWorkspace: {
-              cwd: resolvedWorkspace.cwd,
-              cleanupCommand: null,
-            },
-            teardownCommand: projectExecutionWorkspacePolicy?.workspaceStrategy?.teardownCommand ?? null,
-            recorder: workspaceOperationRecorder,
+    const finalizeExecutionTranscript = createHeartbeatTranscriptFinalizer({
+      transcript: executionTranscript,
+      stdoutBuffer: stdoutTranscriptBuffer,
+      stderrBuffer: stderrTranscriptBuffer,
+      stdoutParser: () => stdoutTranscriptParser,
+      appendFinalizedStdoutEntries: async (entries) => {
+        if (agent.agentRuntimeType === "cursor" && transcriptRetention.mode === "native" && nativeResources) {
+          await cursorTranscriptCapture.append({
+            orgId: run.orgId,
+            runId: run.id,
+            spanId: commonSpanId ?? "",
+            ownerToken: executionOwnerToken ?? "",
+            attemptEpoch: commonAttemptEpoch,
+          }, entries).catch((error) => {
+            logger.warn({ err: error, runId }, "failed to append Cursor transcript supplement tail");
           });
-        } catch (cleanupError) {
-          logger.warn(
-            {
-              runId: run.id,
-              issueId,
-              executionWorkspaceCwd: executionWorkspace.cwd,
-              cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-            },
-            "Failed to cleanup realized run workspace after persistence failure",
-          );
         }
-      }
-      throw error;
-    }
-    await workspaceOperationRecorder.attachExecutionWorkspaceId(persistedExecutionWorkspace?.id ?? null);
-    if (
-      existingExecutionWorkspace &&
-      persistedExecutionWorkspace &&
-      existingExecutionWorkspace.id !== persistedExecutionWorkspace.id &&
-      existingExecutionWorkspace.status === "active"
-    ) {
-      await executionWorkspacesSvc.update(existingExecutionWorkspace.id, {
-        status: "idle",
-        cleanupReason: null,
-      });
-    }
-    if (issueId && persistedExecutionWorkspace) {
-      const nextIssueWorkspaceMode = issueExecutionWorkspaceModeForPersistedWorkspace(persistedExecutionWorkspace.mode);
-      const shouldSwitchIssueToExistingWorkspace =
-        issueRef?.executionWorkspacePreference === "reuse_existing" ||
-        executionWorkspaceMode === "isolated_workspace" ||
-        executionWorkspaceMode === "operator_branch";
-      const nextIssuePatch: Record<string, unknown> = {};
-      if (issueRef?.executionWorkspaceId !== persistedExecutionWorkspace.id) {
-        nextIssuePatch.executionWorkspaceId = persistedExecutionWorkspace.id;
-      }
-      if (resolvedProjectWorkspaceId && issueRef?.projectWorkspaceId !== resolvedProjectWorkspaceId) {
-        nextIssuePatch.projectWorkspaceId = resolvedProjectWorkspaceId;
-      }
-      if (shouldSwitchIssueToExistingWorkspace) {
-        nextIssuePatch.executionWorkspacePreference = "reuse_existing";
-        nextIssuePatch.executionWorkspaceSettings = {
-          ...(issueExecutionWorkspaceSettings ?? {}),
-          mode: nextIssueWorkspaceMode,
-        };
-      }
-      if (Object.keys(nextIssuePatch).length > 0) {
-        await issuesSvc.update(issueId, nextIssuePatch);
-      }
-    }
-    if (persistedExecutionWorkspace) {
-      context.executionWorkspaceId = persistedExecutionWorkspace.id;
-      const workspaceContextRun = await persistRunningExecutionContext(run.id, context);
-      if (workspaceContextRun) run = workspaceContextRun;
-    }
-    const runtimeSessionResolution = resolveRuntimeSessionParamsForWorkspace({
-      orgId: agent.orgId,
-      agent,
-      previousSessionParams,
-      resolvedWorkspace: {
-        ...resolvedWorkspace,
-        cwd: resolveDefaultAgentWorkspaceDir(agent.orgId, agent),
-        source: "agent_home",
       },
     });
-    const runtimeSessionParams = runtimeSessionResolution.sessionParams;
-    const runtimeWorkspaceWarnings = [
-      ...resolvedWorkspace.warnings,
-      ...executionWorkspace.warnings,
-      ...(runtimeSessionResolution.warning ? [runtimeSessionResolution.warning] : []),
-      ...(resetTaskSession && sessionResetReason
-        ? [
-            taskKey
-              ? `Skipping saved session resume for task "${taskKey}" because ${sessionResetReason}.`
-              : `Skipping saved session resume because ${sessionResetReason}.`,
-          ]
-        : []),
-    ];
-    const runtimeSceneContext = await runContextSvc.buildSceneContext({
-      scene: runtimeScene,
+    const preparedExecution = await prepareHeartbeatRunExecution({
+      db,
+      run,
       agent,
-      resolvedWorkspace,
-      runtimeConfig,
-      issueId,
-      executionWorkspaceMode,
-      executionWorkspace: {
-        cwd: executionWorkspace.cwd,
-        source: executionWorkspace.source,
-        strategy: executionWorkspace.strategy,
-        projectId: executionWorkspace.projectId,
-        workspaceId: executionWorkspace.workspaceId,
-        repoUrl: executionWorkspace.repoUrl,
-        repoRef: executionWorkspace.repoRef,
-        branchName: executionWorkspace.branchName,
-        worktreePath: executionWorkspace.worktreePath,
-      },
+      assignmentContinuationAttempt,
+      ensureRuntimeState,
+      getTaskSession,
+      evaluateSessionCompaction,
+      runContextSvc,
+      executionWorkspacesSvc,
+      workspaceOperationsSvc,
+      issuesSvc,
+      persistRunningExecutionContext,
     });
-    context.rudderScene = runtimeSceneContext.rudderScene;
-    context.rudderWorkspace = runtimeSceneContext.rudderWorkspace;
-    context.rudderWorkspaces = runtimeSceneContext.rudderWorkspaces;
-    context.rudderStartupContext = runtimeSceneContext.rudderStartupContext;
-    context.rudderStartupContextMetrics = runtimeSceneContext.rudderStartupContextMetrics;
-    if (runtimeSceneContext.rudderRuntimeServiceIntents) {
-      context.rudderRuntimeServiceIntents = runtimeSceneContext.rudderRuntimeServiceIntents;
-    } else {
-      delete context.rudderRuntimeServiceIntents;
-    }
-    if (executionWorkspace.projectId && !readNonEmptyString(context.projectId)) {
-      context.projectId = executionWorkspace.projectId;
-    }
-    let previousSessionDisplayId = truncateDisplayId(
-      sessionSelection.sessionDisplayId ??
-        (sessionCodec.getDisplayId ? sessionCodec.getDisplayId(runtimeSessionParams) : null) ??
-        readNonEmptyString(runtimeSessionParams?.sessionId),
-    );
-    let runtimeSessionIdForAdapter =
-      readNonEmptyString(runtimeSessionParams?.sessionId);
-    let runtimeSessionParamsForAdapter = runtimeSessionParams;
-
-    const sessionCompaction = await evaluateSessionCompaction({
-      agent,
-      sessionId: previousSessionDisplayId ?? runtimeSessionIdForAdapter,
-      issueId,
-    });
-    if (sessionCompaction.rotate) {
-      context.rudderSessionHandoffMarkdown = sessionCompaction.handoffMarkdown;
-      context.rudderSessionRotationReason = sessionCompaction.reason;
-      context.rudderPreviousSessionId = previousSessionDisplayId ?? runtimeSessionIdForAdapter;
-      runtimeSessionIdForAdapter = null;
-      runtimeSessionParamsForAdapter = null;
-      previousSessionDisplayId = null;
-      if (sessionCompaction.reason) {
-        runtimeWorkspaceWarnings.push(
-          `Starting a fresh session because ${sessionCompaction.reason}.`,
-        );
-      }
-    } else {
-      delete context.rudderSessionHandoffMarkdown;
-      delete context.rudderSessionRotationReason;
-      delete context.rudderPreviousSessionId;
-    }
-    const sessionReuseScope = sessionCompaction.rotate ? "none" : sessionSelection.reuseScope;
-
-    const runtimeForAdapter = {
-      sessionId: runtimeSessionIdForAdapter,
-      sessionParams: runtimeSessionParamsForAdapter,
-      sessionDisplayId: previousSessionDisplayId,
+    run = preparedExecution.run;
+    assignmentContinuationAttempt = preparedExecution.assignmentContinuationAttempt;
+    let assignmentGuardrailCheckpoint = preparedExecution.assignmentGuardrailCheckpoint;
+    const {
+      context,
+      assignmentGuardrailEnabled,
+      assignmentFailureBudget,
       taskKey,
-    };
-    const attemptStride = Math.max(1, buildModelAttemptSpecs(runtimeConfig, agent.agentRuntimeType).length);
-    const recoveryAttemptOrdinal = Math.max(0, Math.floor(Number(run.networkWaitAttemptCount) || 0));
-    const attemptResumeSource = recoveryAttemptOrdinal === 0
-      ? "fresh"
-      : run.recoveryCheckpoint?.continuation === "resume_same_session"
-        ? "same_session"
-        : "pristine_replay";
-    const resolveLedgerAttemptIndex = (attempt: { index: number }) =>
-      recoveryAttemptOrdinal * attemptStride + attempt.index;
-    const recoveryStartAttemptIndex = recoveryAttemptOrdinal > 0
-      && typeof run.recoveryCheckpoint?.fallbackIndex === "number"
-      ? Math.max(0, Math.floor(run.recoveryCheckpoint.fallbackIndex))
-      : 0;
-    const persistAttempt = async (label: string, operation: () => Promise<unknown>) => {
-      try {
-        return await operation();
-      } catch (error) {
-        logger.warn({ err: error, runId: run.id, label }, "failed to persist heartbeat attempt ledger state");
-        return null;
-      }
-    };
+      sessionCodec,
+      issueId,
+      taskSession,
+      previousSessionParams,
+      config,
+      resolvedConfig,
+      runtimeConfig,
+      runtimeSkillEntries,
+      secretKeys,
+      issueRef,
+      executionWorkspace,
+      persistedExecutionWorkspace,
+      runtimeWorkspaceWarnings,
+      runtimeSceneContext,
+      previousSessionDisplayId,
+      sessionCompaction,
+      sessionReuseScope,
+      runtimeForAdapter,
+      attemptResumeSource,
+      resolveLedgerAttemptIndex,
+      recoveryStartAttemptIndex,
+      persistAttempt,
+    } = preparedExecution;
 
     let handle: RunLogHandle | null = null;
     let stdoutExcerpt = "";
@@ -844,14 +585,14 @@ export function createHeartbeatExecuteHandlers(context: any) {
       });
       const adapter = getServerAdapter(agent.agentRuntimeType);
       try {
-        const nativeResources = await resolveHeartbeatNativeResources(db, {
+        nativeResources = await resolveHeartbeatNativeResources(db, {
           run,
           runtimeType: agent.agentRuntimeType,
         });
         if (nativeResources) {
           let capabilityStatus: "supported" | "unsupported" | "unknown" = "unknown";
           try {
-            const driver = getRuntimeDriver(agent.agentRuntimeType, {
+            const driver = createHeartbeatRuntimeDriver({ db, unifiedRunAdapter }, agent.agentRuntimeType, {
               adapter,
               providerCapabilityResolver: createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
                 runtimeType: agent.agentRuntimeType,
@@ -883,6 +624,11 @@ export function createHeartbeatExecuteHandlers(context: any) {
       } catch (error) {
         logger.warn({ err: error, runId: run.id }, "native transcript retention identity could not be resolved");
       }
+      // Unified Run identity spans all runtimes; the native chat Driver does not.
+      const executeThroughRuntimeDriver = Boolean(
+        nativeResources
+        && (NATIVE_CHAT_RUNTIME_TYPES as readonly string[]).includes(agent.agentRuntimeType),
+      );
 
       handle = transcriptRetention.persistRawLog
         ? await runLogStore.begin({
@@ -946,14 +692,18 @@ export function createHeartbeatExecuteHandlers(context: any) {
         });
 
         if (stream === "stdout") {
-          stdoutTranscriptBuffer = appendTranscriptEntriesFromChunk({
+          const before = executionTranscript.length;
+          appendTranscriptEntriesFromChunk({
             buffer: stdoutTranscriptBuffer,
             chunk: sanitizedChunk,
             transcript: executionTranscript,
             parser: stdoutTranscriptParser,
             kind: "stdout",
           });
-          if (!transcriptRetention.persistRawTranscript) boundNativeTranscriptMemory(executionTranscript);
+          if (agent.agentRuntimeType === "cursor" && transcriptRetention.mode === "native" && nativeResources) await cursorTranscriptCapture.append({
+            orgId: run.orgId, runId: run.id, spanId: commonSpanId ?? "", ownerToken: executionOwnerToken ?? "", attemptEpoch: commonAttemptEpoch,
+          }, executionTranscript.slice(before));
+          if (!transcriptRetention.persistRawTranscript) boundNativeHeartbeatTranscriptMemory(executionTranscript);
           const checkpoint = assignmentFailureBudget?.observe(executionTranscript) ?? null;
           if (checkpoint && !assignmentGuardrailCheckpoint) {
             const completedWorkSummary = [...executionTranscript]
@@ -980,13 +730,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
           return;
         }
 
-        stderrTranscriptBuffer = appendTranscriptEntriesFromChunk({
+        appendTranscriptEntriesFromChunk({
           buffer: stderrTranscriptBuffer,
           chunk: sanitizedChunk,
           transcript: executionTranscript,
           kind: "stderr",
         });
-        if (!transcriptRetention.persistRawTranscript) boundNativeTranscriptMemory(executionTranscript);
+        if (!transcriptRetention.persistRawTranscript) boundNativeHeartbeatTranscriptMemory(executionTranscript);
       };
       for (const warning of runtimeWorkspaceWarnings) {
         const logEntry = formatRuntimeWorkspaceWarningLog(warning);
@@ -1051,6 +801,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           payload: buildHeartbeatAdapterInvokePayload({
             meta,
             runtimeSkills: runtimeSkillEntries,
+            transcriptRetention,
           }),
         });
       };
@@ -1102,13 +853,79 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const waitForApproval = async (approvalId: string, timeoutMs: number) => {
         const deadline = Date.now() + Math.max(1_000, Math.min(timeoutMs, 30 * 60_000));
         while (Date.now() < deadline) {
+          const currentRun = await getRun(run.id);
+          if (executionAbortController.signal.aborted || currentRun?.status !== "running"
+            || currentRun.executionOwnerToken !== executionOwnerToken) {
+            return { id: approvalId, status: "cancelled" as const, decisionNote: null };
+          }
           const approval = await approvalsSvc.getById(approvalId);
+          if (!approval || approval.orgId !== run.orgId || approval.requestedByAgentId !== agent.id
+            || approval.payload?.runId !== run.id) {
+            return { id: approvalId, status: "cancelled" as const, decisionNote: null };
+          }
           if (approval && approval.status !== "pending" && approval.status !== "revision_requested") {
             return { id: approval.id, status: approval.status, decisionNote: approval.decisionNote };
           }
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
         return { id: approvalId, status: "pending" as const, decisionNote: null };
+      };
+      let approvalRuntimeType = agent.agentRuntimeType;
+      const approvalBridge = commonSpanId ? createRuntimeApprovalBridge({
+        db,
+        approvals: approvalsSvc,
+        execution: {
+          runId: run.id,
+          orgId: run.orgId,
+          agentId: agent.id,
+          get runtimeType() { return approvalRuntimeType; },
+          abortSignal: executionAbortController.signal,
+          getFence: () => ({
+            spanId: commonSpanId,
+            ownerToken: executionOwnerToken,
+            attemptEpoch: commonAttemptEpoch,
+            attemptId: activeAttemptRef?.id ?? null,
+            attemptIndex: activeAttemptRef?.attemptIndex ?? null,
+          }),
+        },
+        onEvent: async (event) => {
+          await appendRunEvent(run, {
+            eventType: event.eventType,
+            stream: "system",
+            level: "info",
+            message: "agent runtime approval updated",
+            payload: event.payload,
+            idempotencyKey: event.idempotencyKey,
+          });
+        },
+      }) : { requestApproval, waitForApproval };
+      const approvalHandleByRequest = new WeakMap<object, AgentRuntimeApprovalHandle>();
+      const pendingApprovalRequests = new Map<string, { request: AgentRuntimeApprovalRequest; driver: RuntimeDriver }>();
+      const driverApprovalBridge = {
+        requestApproval: async (request: AgentRuntimeApprovalRequest) => {
+          const cached = approvalHandleByRequest.get(request);
+          return cached ?? approvalBridge.requestApproval(request);
+        },
+        waitForApproval: (approvalId: string, timeoutMs: number) =>
+          approvalBridge.waitForApproval(approvalId, timeoutMs),
+      };
+      const requestApprovalThroughDriver = async (request: AgentRuntimeApprovalRequest) => {
+        const handle = await approvalBridge.requestApproval(request);
+        if (activeRuntimeDriver) {
+          approvalHandleByRequest.set(request, handle);
+          pendingApprovalRequests.set(handle.id, { request, driver: activeRuntimeDriver });
+        }
+        return handle;
+      };
+      const waitForApprovalThroughDriver = async (approvalId: string, timeoutMs: number) => {
+        const pending = pendingApprovalRequests.get(approvalId);
+        if (!pending) return approvalBridge.waitForApproval(approvalId, timeoutMs);
+        pendingApprovalRequests.delete(approvalId);
+        const response = await pending.driver.respondToRequest(pending.request, timeoutMs);
+        if (response.status === "supported") {
+          return response.value.decision as Awaited<ReturnType<typeof approvalBridge.waitForApproval>>;
+        }
+        return approvalBridge.waitForApproval(approvalId, timeoutMs);
       };
       const adapterResult = await executeAdapterWithModelFallbacks(adapter, {
         runId: run.id,
@@ -1119,6 +936,21 @@ export function createHeartbeatExecuteHandlers(context: any) {
           cwd: executionWorkspace.cwd,
         },
         context,
+        onNativeTransportProfile: async (profile) => {
+          const attempt = activeAttemptRef;
+          if (!commonSpanId || !executionOwnerToken || !attempt?.id || !attempt.attemptEpoch) {
+            throw new Error("Native transport profile cannot be persisted without a fenced Run span and attempt");
+          }
+          await persistNativeTransportProfile(db, {
+            orgId: run.orgId,
+            runId: run.id,
+            spanId: commonSpanId,
+            ownerToken: executionOwnerToken,
+            attemptEpoch: attempt.attemptEpoch,
+            attemptId: attempt.id,
+            profile: filterNativeTransportProfile(profile),
+          });
+        },
         onLog,
         onMeta: onAdapterMeta,
         onSpawn: async (meta) => {
@@ -1126,30 +958,89 @@ export function createHeartbeatExecuteHandlers(context: any) {
         },
         abortSignal: executionAbortController.signal,
         authToken: authToken ?? undefined,
-        requestApproval,
-        waitForApproval,
+        requestApproval: requestApprovalThroughDriver,
+        waitForApproval: waitForApprovalThroughDriver,
       }, {
         startAttemptIndex: recoveryStartAttemptIndex,
         resolveAdapter: findServerAdapter,
+        resolveDriver: (agentRuntimeType, attemptAdapter, attemptContext) => {
+          if (!nativeResources) return null;
+          const driver = createHeartbeatRuntimeDriver({ db, unifiedRunAdapter }, agentRuntimeType, {
+            adapter: attemptAdapter,
+            providerCapabilityResolver: createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+              runtimeType: agentRuntimeType,
+              runtimeConfig: parseObject(attemptContext.config),
+              cwd: executionWorkspace.cwd,
+              resolutionMode: "live",
+            }),
+            providerBinding: {
+              id: nativeResources.binding.id,
+              orgId: nativeResources.binding.orgId,
+              hostId: nativeResources.binding.hostId,
+              profileId: nativeResources.binding.profileId,
+              workspaceBindingId: nativeResources.binding.workspaceBindingId,
+              capabilityRevision: nativeResources.binding.capabilityRevision,
+            },
+            approvalBridge: driverApprovalBridge,
+          });
+          if (driver) activeRuntimeDriver = driver;
+          return driver;
+        },
+        // Every admitted native binding uses the common Driver. Chat and Side
+        // Chat additionally use submitInputThroughDriver in their direct path;
+        // non-Chat runs must not bypass the same Run/Attempt/Span executor.
+        executeThroughDriver: executeThroughRuntimeDriver,
+        nativeDriverRequired: executeThroughRuntimeDriver,
         createAuthToken: (agentRuntimeType) =>
           createLocalAgentJwt(agent.id, agent.orgId, agentRuntimeType, run.id) ?? undefined,
         onAttemptStart: async (attempt, attemptAdapter) => {
+          approvalRuntimeType = attempt.agentRuntimeType ?? agent.agentRuntimeType;
           activeAttemptSpec = {
             index: attempt.index,
             fallbackIndex: attempt.fallbackIndex,
           };
-          activeAttemptRef = await persistAttempt("started", () => beginHeartbeatRunAttempt(db, {
-            orgId: run.orgId,
-            runId: run.id,
-            agentId: run.agentId,
-            attemptIndex: resolveLedgerAttemptIndex(attempt),
-            fallbackIndex: attempt.fallbackIndex,
-            runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
-            model: attempt.model,
-            isFallback: attempt.isFallback,
-            resumeSource: attemptResumeSource,
-          }));
+          const ledgerAttemptIndex = resolveLedgerAttemptIndex(attempt);
+          const current = await currentUnifiedEntry();
+          if (current && unifiedRunAdapter) {
+            let next = current;
+            if (current.attempt.ref.attemptIndex !== ledgerAttemptIndex) {
+              const begun = await unifiedRunAdapter.beginAttempt(run.id, current.ownerFence, {
+                attemptIndex: ledgerAttemptIndex,
+                fallbackIndex: attempt.fallbackIndex,
+                runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
+                model: attempt.model,
+                isFallback: attempt.isFallback,
+                resumeSource: attemptResumeSource,
+              });
+              if (!begun.ok) throw new Error(`Unified Run ${run.id} attempt admission rejected: ${begun.reason}`);
+              next = await inspectUnifiedEntry() ?? next;
+            }
+            commonSpanId = next.span.id;
+            activeAttemptRef = {
+              id: next.attempt.ref.id,
+              attemptIndex: next.attempt.ref.attemptIndex,
+              ownerToken: next.ownerFence.ownerToken,
+              attemptEpoch: next.ownerFence.attemptEpoch,
+            };
+          } else {
+            activeAttemptRef = await persistAttempt("started", () => beginHeartbeatRunAttempt(db, {
+              orgId: run.orgId,
+              runId: run.id,
+              agentId: run.agentId,
+              attemptIndex: ledgerAttemptIndex,
+              fallbackIndex: attempt.fallbackIndex,
+              runtimeType: attempt.agentRuntimeType ?? agent.agentRuntimeType,
+              model: attempt.model,
+              isFallback: attempt.isFallback,
+              resumeSource: attemptResumeSource,
+              ownerToken: executionOwnerToken,
+              attemptEpoch: commonAttemptEpoch,
+            }));
+          }
           stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
+        },
+        onAttemptResult: async (_attempt, result, submissionPhase) => {
+          await recordUnifiedAttemptResult(result as unknown as Record<string, unknown>, submissionPhase);
         },
         onAttemptFailure: async (_attempt, failure) => {
           const failureRecord = failure && typeof failure === "object" ? failure as Record<string, unknown> : null;
@@ -1158,6 +1049,9 @@ export function createHeartbeatExecuteHandlers(context: any) {
             : readNonEmptyString(failureRecord?.errorMessage) ?? "Adapter fallback attempt failed";
           await finishActiveAttempt({
             status: "failed",
+            submissionPhase: failure instanceof Error
+              ? "indeterminate"
+              : resolveExecutionSubmissionPhase(failure as any),
             errorCode: readNonEmptyString(failureRecord?.errorCode) ?? "adapter_failed",
             error: failureMessage,
             usageDeltaJson: failureRecord?.usage,
@@ -1182,6 +1076,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           assignmentGuardrailCheckpoint,
         };
       }
+      adapterResultJsonForTerminal = adapterResult.resultJson ?? null;
       const adapterManagedRuntimeServices = adapterResult.runtimeServices
         ? await persistAdapterManagedRuntimeServices({
             db,
@@ -1275,6 +1170,20 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ?? adapterResult.sessionParams
           ?? runtimeForAdapter.sessionParams
           ?? null;
+        const waitingAttemptInput = {
+          submissionPhase: networkSuspension.submissionPhase,
+          providerThreadId: networkSuspension.providerThreadId ?? adapterResult.providerThreadId,
+          providerTurnId: networkSuspension.providerTurnId ?? adapterResult.providerTurnId,
+          sessionDisplayId: resumedSessionId,
+          sessionParamsJson: resumedSessionParams,
+          checkpointJson: checkpoint,
+          errorCode: networkSuspension.code ?? "provider_transport_unavailable",
+          error: networkSuspension.message ?? null,
+          suspendedAt: now,
+        };
+        // The unified adapter still owns the lease at this point. Mark the
+        // Attempt waiting before releasing the Run owner below.
+        await markUnifiedAttemptWaiting(waitingAttemptInput);
         const waitingRun = await db
           .update(heartbeatRuns)
           .set({
@@ -1302,19 +1211,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
           .then((rows) => rows[0] ?? null);
         if (!waitingRun) return;
         networkSuspended = true;
-        const waitingAttemptRef = activeAttemptRef;
-        activeAttemptRef = null;
-        await persistAttempt("waiting_for_network", () => markHeartbeatRunAttemptWaiting(db, waitingAttemptRef, {
-          submissionPhase: networkSuspension.submissionPhase,
-          providerThreadId: networkSuspension.providerThreadId ?? adapterResult.providerThreadId,
-          providerTurnId: networkSuspension.providerTurnId ?? adapterResult.providerTurnId,
-          sessionDisplayId: resumedSessionId,
-          sessionParamsJson: resumedSessionParams,
-          checkpointJson: checkpoint,
-          errorCode: networkSuspension.code ?? "provider_transport_unavailable",
-          error: networkSuspension.message ?? null,
-          suspendedAt: now,
-        }));
         await appendRunEvent(waitingRun, {
           eventType: "network.waiting",
           stream: "system",
@@ -1345,13 +1241,15 @@ export function createHeartbeatExecuteHandlers(context: any) {
         }
         return;
       }
-      const nextSessionState = resolveNextSessionState({
-        codec: sessionCodec,
-        adapterResult,
-        previousParams: previousSessionParams,
-        previousDisplayId: runtimeForAdapter.sessionDisplayId,
-        previousLegacySessionId: runtimeForAdapter.sessionId,
-      });
+      const nextSessionState = adapterResult.clearSession
+        ? { displayId: null, legacySessionId: null, params: null }
+        : resolveNextSessionState({
+            codec: sessionCodec,
+            adapterResult,
+            previousParams: previousSessionParams,
+            previousDisplayId: runtimeForAdapter.sessionDisplayId,
+            previousLegacySessionId: runtimeForAdapter.sessionId,
+          });
       const rawUsage = normalizeUsageTotals(adapterResult.usage);
       const sessionUsageResolution = await resolveNormalizedUsageForSession({
         agentId: agent.id,
@@ -1394,7 +1292,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             ? "timed_out"
               : "failed";
       const persistedResultJson = transcriptRetention.persistRawResult
-        ? adapterResult.resultJson ?? null
+        ? markLegacyTranscriptSource(adapterResult.resultJson)
         : retainNativeHeartbeatResultJson(adapterResult.resultJson);
       const persistedAdapterResult = transcriptRetention.persistRawResult
         ? adapterResult
@@ -1450,7 +1348,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             } as Record<string, unknown>)
           : null;
 
-      finalizeExecutionTranscript();
+      await finalizeExecutionTranscript();
       const terminalEvidence = {
         finishedAt: new Date(),
         error:
@@ -1477,7 +1375,9 @@ export function createHeartbeatExecuteHandlers(context: any) {
         usageJson,
         resultJson: persistedResultJson,
         resultSummaryJson: persistedResultSummary,
-        sessionIdAfter: nextSessionState.displayId ?? nextSessionState.legacySessionId,
+        sessionIdAfter: adapterResult.clearSession
+          ? null
+          : nextSessionState.displayId ?? nextSessionState.legacySessionId,
         sessionParamsAfterJson: adapterResult.clearSession ? {} : nextSessionState.params,
         stdoutExcerpt,
         stderrExcerpt,
@@ -1488,6 +1388,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const automationTerminalEffect = {
         output: transcriptFallbackResult?.output ?? terminalEvidence.error,
         transcript: transcriptForHeartbeatRetention(transcriptRetention, executionTranscript),
+        transcriptSource: transcriptRetention.mode,
       };
       const terminalEffectsIntent = {
         version: 1 as const,
@@ -1523,14 +1424,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
             }
           : {}),
       };
-      const claimedTerminalRun = await transitionRunToTerminal(run.id, status, terminalEvidence, {
-        terminalEffectsIntent,
-        processExitedAt: new Date(),
-        expectedExecutionOwnerToken: executionOwnerToken,
-      });
-      ownsTerminalState = Boolean(claimedTerminalRun);
-      await finishActiveAttempt({
-        status,
+      const commonAttemptFinished = Boolean(commonSpanId && executionOwnerToken);
+      const terminalAttemptInput: UnifiedAttemptFinishInput = {
         submissionPhase: adapterResult.submissionPhase,
         providerThreadId: adapterResult.providerThreadId,
         providerTurnId: adapterResult.providerTurnId,
@@ -1541,7 +1436,40 @@ export function createHeartbeatExecuteHandlers(context: any) {
         errorCode: terminalEvidence.errorCode,
         error: terminalEvidence.error,
         finishedAt: terminalEvidence.finishedAt,
+      };
+      const claimedTerminalRun = await transitionRunToTerminal(run.id, status, terminalEvidence, {
+        terminalEffectsIntent,
+        processExitedAt: new Date(),
+        expectedExecutionOwnerToken: executionOwnerToken,
+        ...(commonAttemptFinished && commonSpanId
+          ? {
+              nativeExecution: {
+                spanId: commonSpanId,
+                result: adapterResult,
+                error: status !== "succeeded",
+              },
+            }
+          : {}),
+        ...(commonAttemptFinished ? { attempt: terminalAttemptInput } : {}),
       });
+      ownsTerminalState = Boolean(claimedTerminalRun);
+      if (ownsTerminalState) await cursorTranscriptCapture.seal();
+      if (commonAttemptFinished) activeAttemptRef = null;
+      if (!commonAttemptFinished) {
+        await finishActiveAttempt({
+          status,
+          submissionPhase: adapterResult.submissionPhase,
+          providerThreadId: adapterResult.providerThreadId,
+          providerTurnId: adapterResult.providerTurnId,
+          sessionDisplayId: nextSessionState.displayId ?? nextSessionState.legacySessionId,
+          sessionParamsJson: adapterResult.clearSession ? {} : nextSessionState.params,
+          usageDeltaJson: usageJson ?? adapterResult.usage,
+          costUsd: adapterResult.costUsd,
+          errorCode: terminalEvidence.errorCode,
+          error: terminalEvidence.error,
+          finishedAt: terminalEvidence.finishedAt,
+        });
+      }
       if (!claimedTerminalRun) {
         await reconcileRunEvidence(run.id, terminalEvidence);
         await reconcileTerminalEffectsIntent(run.id, {
@@ -1755,16 +1683,23 @@ export function createHeartbeatExecuteHandlers(context: any) {
         error: message,
         errorCode: isWorkspacePreflightFailure ? err.errorCode : "adapter_failed",
         finishedAt: new Date(),
+        ...(transcriptRetention.persistRawResult
+          ? { resultJson: markLegacyTranscriptSource(adapterResultJsonForTerminal ?? run.resultJson) }
+          : {}),
         stdoutExcerpt,
         stderrExcerpt,
         logBytes: logSummary?.bytes,
         logSha256: logSummary?.sha256,
         logCompressed: logSummary?.compressed ?? false,
       };
-      finalizeExecutionTranscript();
+      await finalizeExecutionTranscript();
       const failureIntent = {
         version: 1 as const,
-        automation: { output: message, transcript: executionTranscript },
+        automation: {
+          output: message,
+          transcript: transcriptForHeartbeatRetention(transcriptRetention, executionTranscript),
+          transcriptSource: transcriptRetention.mode,
+        },
         ...(!isWorkspacePreflightFailure
           ? {
               runtime: {
@@ -1794,20 +1729,41 @@ export function createHeartbeatExecuteHandlers(context: any) {
             }
           : {}),
       };
+      const commonAttemptFinished = Boolean(commonSpanId && executionOwnerToken);
+      const currentCommonEntry = commonAttemptFinished
+        ? await currentUnifiedEntry().catch(() => null)
+        : null;
+      const unifiedFailureAttempt: UnifiedAttemptFinishInput = {
+        submissionPhase: isWorkspacePreflightFailure
+          ? "pre_submission"
+          : currentCommonEntry?.attempt.submission.phase ?? "indeterminate",
+        providerThreadId: currentCommonEntry?.attempt.submission.providerThreadId,
+        providerTurnId: currentCommonEntry?.attempt.submission.providerTurnId,
+        sessionDisplayId: previousSessionDisplayId,
+        sessionParamsJson: previousSessionParams,
+        errorCode: failureEvidence.errorCode,
+        error: failureEvidence.error,
+        finishedAt: failureEvidence.finishedAt,
+      };
       const claimedFailedRun = await transitionRunToTerminal(run.id, "failed", failureEvidence, {
         terminalEffectsIntent: failureIntent,
         processExitedAt: new Date(),
         expectedExecutionOwnerToken: executionOwnerToken,
+        ...(commonAttemptFinished ? { attempt: unifiedFailureAttempt } : {}),
       });
       ownsTerminalState = Boolean(claimedFailedRun);
-      await finishActiveAttempt({
-        status: "failed",
-        errorCode: failureEvidence.errorCode,
-        error: failureEvidence.error,
-        sessionDisplayId: previousSessionDisplayId,
-        sessionParamsJson: previousSessionParams,
-        finishedAt: failureEvidence.finishedAt,
-      });
+      if (ownsTerminalState) await cursorTranscriptCapture.seal();
+      if (commonAttemptFinished) activeAttemptRef = null;
+      if (!commonAttemptFinished) {
+        await finishActiveAttempt({
+          status: "failed",
+          errorCode: failureEvidence.errorCode,
+          error: failureEvidence.error,
+          sessionDisplayId: previousSessionDisplayId,
+          sessionParamsJson: previousSessionParams,
+          finishedAt: failureEvidence.finishedAt,
+        });
+      }
       if (!claimedFailedRun) await reconcileRunEvidence(run.id, failureEvidence);
       const failedRun = claimedFailedRun ?? await getRun(run.id);
       if (ownsTerminalState) {
@@ -1844,17 +1800,14 @@ export function createHeartbeatExecuteHandlers(context: any) {
       }
 
     } finally {
-      finalizeExecutionTranscript();
+      await finalizeExecutionTranscript();
       finalRunOutput = transcriptFallbackResult?.output ?? null;
       if (ownsTerminalState || shouldCompleteTerminalEffects) {
         const terminalRun = await getRun(run.id).catch(() => null);
         if (terminalRun?.terminalEffectsPending) {
           await acknowledgeRunProcessExit(terminalRun.id);
           await completeTerminalControlEffects(terminalRun, ownsTerminalState
-            ? {
-                automationOutput: finalRunOutput,
-                automationTranscript: executionTranscript,
-              }
+            ? { automationOutput: finalRunOutput }
             : undefined);
           }
         }

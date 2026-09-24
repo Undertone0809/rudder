@@ -268,6 +268,7 @@ export const runRuntimeSpans = pgTable(
     completeness: text("completeness").$type<"complete" | "partial" | "terminal_only" | "unknown">().notNull().default("unknown"),
     visibilityCutoffRef: text("visibility_cutoff_ref"),
     supplementalObjectRef: text("supplemental_object_ref"),
+    supplementalRetentionExpiredAt: timestamp("supplemental_retention_expired_at", { withTimezone: true }),
     openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

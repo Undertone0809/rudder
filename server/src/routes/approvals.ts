@@ -23,6 +23,13 @@ import {
   logActivity,
   secretService,
 } from "../services/index.js";
+import {
+  assertRuntimeApprovalCurrent,
+  assertRuntimeApprovalVisible,
+  filterRuntimeApprovalsForVisibility,
+  runtimeApprovalPayloadForDecision,
+  type RuntimeApprovalRecord,
+} from "../services/runtime-kernel/runtime-approval.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import {
   wakeIssueAssigneeAfterChatConversion,
@@ -55,6 +62,27 @@ export function approvalRoutes(db: Db) {
   const issuesSvc = issueService(db);
   const secretsSvc = secretService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
+
+  function runtimeApprovalScope(req: Request) {
+    return {
+      sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
+    };
+  }
+
+  async function assertRuntimeApprovalRouteAccess(
+    req: Request,
+    approval: RuntimeApprovalRecord,
+    requireCurrent = false,
+  ) {
+    await assertRuntimeApprovalVisible(db, approval, runtimeApprovalScope(req));
+    if (
+      requireCurrent
+      && approval.type === "agent_runtime"
+      && (approval.status === "pending" || approval.status === "revision_requested")
+    ) {
+      await assertRuntimeApprovalCurrent(db, approval);
+    }
+  }
 
   function proposalAssignsOrReviewsIssue(proposal: Record<string, unknown> | null | undefined) {
     if (!proposal) return false;
@@ -156,7 +184,12 @@ export function approvalRoutes(db: Db) {
     assertCompanyAccess(req, orgId);
     const status = req.query.status as string | undefined;
     const result = await svc.list(orgId, status);
-    res.json(result.map((approval) => redactApprovalPayload(approval)));
+    const visible = await filterRuntimeApprovalsForVisibility(
+      db,
+      result as RuntimeApprovalRecord[],
+      runtimeApprovalScope(req),
+    );
+    res.json(visible.map((approval) => redactApprovalPayload(approval)));
   });
 
   router.get("/approvals/:id", async (req, res) => {
@@ -167,6 +200,7 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, approval.orgId);
+    await assertRuntimeApprovalRouteAccess(req, approval as RuntimeApprovalRecord);
     res.json(redactApprovalPayload(approval));
   });
 
@@ -189,6 +223,17 @@ export function approvalRoutes(db: Db) {
         : approvalInput.payload;
 
     const actor = getActorInfo(req);
+    if (approvalInput.type === "chat_issue_creation" || approvalInput.type === "chat_operation") {
+      await chatsSvc.assertApprovalConversationScope({
+        id: null,
+        orgId,
+        type: approvalInput.type,
+        payload: normalizedPayload,
+        requestedByAgentId: approvalInput.requestedByAgentId
+          ?? (actor.actorType === "agent" ? actor.actorId : null),
+        requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
+      });
+    }
     const approval = await svc.create(orgId, {
       ...approvalInput,
       payload: normalizedPayload,
@@ -247,6 +292,7 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, approval.orgId);
+    await assertRuntimeApprovalRouteAccess(req, approval as RuntimeApprovalRecord);
     const issues = await issueApprovalsSvc.listIssuesForApproval(id);
     res.json(issues);
   });
@@ -256,13 +302,25 @@ export function approvalRoutes(db: Db) {
     const id = req.params.id as string;
     const pendingApproval = await svc.getById(id);
     if (pendingApproval) assertCompanyAccess(req, pendingApproval.orgId);
-    const payloadOverride =
-      pendingApproval?.type === "chat_issue_creation"
-      && req.body.payload
+    if (pendingApproval) {
+      await assertRuntimeApprovalRouteAccess(req, pendingApproval as RuntimeApprovalRecord, true);
+    }
+    const bodyPayload =
+      req.body.payload
       && typeof req.body.payload === "object"
       && !Array.isArray(req.body.payload)
-        ? (req.body.payload as Record<string, unknown>)
+        ? req.body.payload as Record<string, unknown>
         : undefined;
+    const payloadOverride = pendingApproval?.type === "agent_runtime"
+      ? runtimeApprovalPayloadForDecision(pendingApproval as RuntimeApprovalRecord, bodyPayload)
+      : (
+        pendingApproval?.type === "chat_issue_creation" || pendingApproval?.type === "chat_operation"
+          ? bodyPayload
+          : undefined
+      );
+    if (pendingApproval?.type === "chat_issue_creation" || pendingApproval?.type === "chat_operation") {
+      await chatsSvc.assertApprovalConversationScope(pendingApproval, payloadOverride);
+    }
     const approvalForValidation = pendingApproval && payloadOverride
       ? { ...pendingApproval, payload: payloadOverride }
       : pendingApproval;
@@ -610,6 +668,10 @@ export function approvalRoutes(db: Db) {
       assertBoard(req);
       const id = req.params.id as string;
       const existing = await svc.getById(id);
+      if (existing) {
+        assertCompanyAccess(req, existing.orgId);
+        await assertRuntimeApprovalRouteAccess(req, existing as RuntimeApprovalRecord, true);
+      }
       if (existing?.type === "goal_change") {
         throw unprocessable("Reject this Goal update with feedback so the Owner can submit a new proposal");
       }
@@ -641,6 +703,7 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, existing.orgId);
+    await assertRuntimeApprovalRouteAccess(req, existing as RuntimeApprovalRecord, true);
     if (existing.type === "goal_change") {
       throw unprocessable("A rejected Goal update requires a new proposal and approval");
     }
@@ -659,6 +722,9 @@ export function approvalRoutes(db: Db) {
           )
         : req.body.payload
       : undefined;
+    if (existing.type === "chat_issue_creation" || existing.type === "chat_operation") {
+      await chatsSvc.assertApprovalConversationScope(existing, normalizedPayload);
+    }
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {
@@ -682,6 +748,7 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, approval.orgId);
+    await assertRuntimeApprovalRouteAccess(req, approval as RuntimeApprovalRecord);
     const comments = await svc.listComments(id);
     res.json(comments);
   });
@@ -694,6 +761,7 @@ export function approvalRoutes(db: Db) {
       return;
     }
     assertCompanyAccess(req, approval.orgId);
+    await assertRuntimeApprovalRouteAccess(req, approval as RuntimeApprovalRecord);
     const actor = getActorInfo(req);
     const comment = await svc.addComment(id, req.body.body, {
       agentId: actor.agentId ?? undefined,

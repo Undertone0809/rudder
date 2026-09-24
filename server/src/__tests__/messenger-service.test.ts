@@ -19,6 +19,7 @@ import {
   chatGenerationEvents,
   chatGenerations,
   chatMessages,
+  chatMessageTranscriptEntries,
   chatQueuedMessages,
   createDb,
   documents,
@@ -35,10 +36,13 @@ import {
   messengerSavedViewMutations,
   messengerSavedViews,
   messengerThreadUserStates,
+  nativeSegments,
   organizations,
   organizationSecrets,
   productAnalyticsEvents,
   projects,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -70,6 +74,7 @@ import {
 } from "../services/messenger-saved-views.ts";
 import { messengerService } from "../services/messenger.ts";
 import * as productAnalyticsService from "../services/product-analytics.ts";
+import { createTranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -165,6 +170,8 @@ describe("messengerService and issue follows", () => {
   let savedViewsSvc!: ReturnType<typeof messengerSavedViewsService>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  let transcriptObjectDir = "";
+  let previousTranscriptObjectBasePath: string | undefined;
 
   async function insertSavedViewFixture(
     orgId: string,
@@ -219,6 +226,9 @@ describe("messengerService and issue follows", () => {
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
+    transcriptObjectDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-messenger-transcripts-"));
+    previousTranscriptObjectBasePath = process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = transcriptObjectDir;
     chatSvc = chatService(db);
     issueSvc = issueService(db);
     messengerSvc = messengerService(db);
@@ -264,6 +274,9 @@ describe("messengerService and issue follows", () => {
 
   afterAll(async () => {
     await instance?.stop();
+    if (previousTranscriptObjectBasePath === undefined) delete process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH;
+    else process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = previousTranscriptObjectBasePath;
+    if (transcriptObjectDir) fs.rmSync(transcriptObjectDir, { recursive: true, force: true });
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
@@ -7942,7 +7955,9 @@ describe("messengerService and issue follows", () => {
       orgId,
       title: "Side annotation chat",
       conversationKind: "side_chat",
+      messengerVisible: false,
       sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
       forkedFromConversationId: parentConversationId,
       forkedFromMessageId: source.id,
       issueCreationMode: "manual_approval",
@@ -8505,11 +8520,192 @@ describe("messengerService and issue follows", () => {
         generationId,
         generationSeqStart: 1,
         generationSeqEnd: 1,
+        sourceEntryId: `message:${assistantMessage.id}:0`,
       },
-      entries[1],
+      { ...entries[1], sourceEntryId: `message:${assistantMessage.id}:1` },
     ];
     expect(hydrated?.transcript).toEqual(expectedTranscript);
     expect(transcript?.transcript).toEqual(expectedTranscript);
+  });
+
+  it("reads a Run-backed transcript without legacy chat transcript rows and preserves it through a fork", async () => {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const userId = "board-user-run-transcript-reader";
+    const entry = {
+      kind: "assistant" as const,
+      ts: "2026-07-23T09:00:00.000Z",
+      text: "Read from the Run Reader",
+      sourceEntryId: "native-entry-1",
+      payload: {
+        kind: "system",
+        ts: "2026-07-23T08:59:00.000Z",
+        text: "Payload text must not replace the canonical Reader item text",
+        generationId: "native-generation",
+        generationSeqStart: 7,
+        generationSeqEnd: 7,
+      },
+    };
+    const expectedEntry = {
+      kind: "assistant" as const,
+      ts: entry.ts,
+      text: entry.text,
+      generationId: "native-generation",
+      generationSeqStart: 7,
+      generationSeqEnd: 7,
+      sourceEntryId: entry.sourceEntryId,
+    };
+    const cursorChunks = ["Hello ", "world"].map((text, index) => ({
+      kind: "cursor:acp:agent_message_chunk",
+      ts: "2026-07-23T09:00:01.000Z",
+      text: text.trim(),
+      sourceEntryId: `acp:update:chunk-${index}`,
+      payload: {
+        provider: "cursor_agent",
+        transport: "cursor-agent-acp-stdio",
+        method: "session/update",
+        sessionId: "native-reader-session",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      },
+    }));
+    const expectedCursorChunks = cursorChunks.map((chunk, index) => ({
+      kind: "assistant" as const,
+      ts: chunk.ts,
+      text: index === 0 ? "Hello " : "world",
+      delta: true,
+      sourceEntryId: chunk.sourceEntryId,
+    }));
+
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Run Transcript Reader Org",
+      urlKey: deriveOrganizationUrlKey("Run Transcript Reader Org"),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Reader Agent",
+      agentRuntimeType: "process",
+    });
+    await db.insert(chatConversations).values({
+      id: conversationId,
+      orgId,
+      title: "Run transcript reader",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: userId,
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      status: "completed",
+      chatConversationId: conversationId,
+      resultJson: {},
+    });
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const spanId = randomUUID();
+    const ownerToken = "native-reader-owner";
+    const openedAt = new Date("2026-07-23T09:00:00.000Z");
+    const closedAt = new Date("2026-07-23T09:01:00.000Z");
+    await db.insert(runtimeBindings).values({
+      id: bindingId,
+      orgId,
+      conversationId,
+      principalScopeRef: `user:${userId}`,
+      agentId,
+      runtimeType: "process",
+      continuity: "native",
+      status: "active",
+    });
+    await db.insert(nativeSegments).values({
+      id: segmentId,
+      orgId,
+      bindingId,
+      runtimeType: "process",
+      segmentOrdinal: 0,
+      nativeSessionId: "native-reader-session",
+      rootSessionId: "native-reader-session",
+      state: "sealed",
+      createdAt: openedAt,
+      sealedAt: closedAt,
+      updatedAt: closedAt,
+    });
+    await db.insert(runRuntimeSpans).values({
+      id: spanId,
+      orgId,
+      runId,
+      bindingId,
+      segmentId,
+      attemptRef: "native-reader-attempt",
+      attemptEpoch: 1,
+      ownerToken,
+      ordinal: 0,
+      relation: "primary",
+      selectorJson: { kind: "native_execution", runtimeType: "process", runId },
+      state: "sealed",
+      completeness: "complete",
+      openedAt,
+      closedAt,
+      updatedAt: closedAt,
+    });
+    const objectStore = createTranscriptObjectStore(transcriptObjectDir);
+    const objectRef = await objectStore.write({
+      orgId,
+      runId,
+      spanId,
+      ownerToken,
+      entries: [entry, ...cursorChunks],
+    });
+    await db.update(runRuntimeSpans)
+      .set({ supplementalObjectRef: objectRef })
+      .where(eq(runRuntimeSpans.id, spanId));
+    const assistantMessage = await chatSvc.addMessage(conversationId, {
+      orgId,
+      role: "assistant",
+      kind: "message",
+      status: "completed",
+      body: "Final reply",
+      runId,
+      replyingAgentId: agentId,
+    });
+    expect(await db.select().from(chatGenerationEvents).where(eq(chatGenerationEvents.orgId, orgId))).toEqual([]);
+    expect(await db.select().from(chatMessageTranscriptEntries).where(eq(chatMessageTranscriptEntries.orgId, orgId))).toEqual([]);
+
+    const [lightweight] = await chatSvc.listMessages(conversationId, { includeTranscript: false });
+    expect(lightweight?.transcript).toBeUndefined();
+    expect(lightweight?.transcriptSummary).toEqual({
+      entryCount: 3,
+      startedAt: entry.ts,
+      endedAt: cursorChunks[1]!.ts,
+    });
+    const [hydrated] = await chatSvc.listMessages(conversationId, { includeTranscript: true });
+    expect(hydrated?.transcript).toEqual([expectedEntry, ...expectedCursorChunks]);
+    await expect(chatSvc.getMessageTranscript(conversationId, assistantMessage.id)).resolves.toMatchObject({
+      transcript: [expectedEntry, ...expectedCursorChunks],
+    });
+
+    const fork = await chatSvc.forkConversation({
+      sourceConversationId: conversationId,
+      sourceMessageId: assistantMessage.id,
+      orgId,
+      userId,
+      title: "Forked Run transcript",
+      createdByUserId: userId,
+    });
+    const forkedAssistant = (await chatSvc.listMessages(fork.id, { includeTranscript: true }))
+      .find((message) => message.role === "assistant");
+    expect(forkedAssistant?.transcript).toEqual(
+      [expectedEntry, ...expectedCursorChunks].map((item, index) => ({
+        ...item,
+        sourceEntryId: `message:${forkedAssistant?.id}:${index}`,
+      })),
+    );
   });
 
   it("lists only the latest five eligible user messages for title generation", async () => {

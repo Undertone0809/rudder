@@ -1,3 +1,4 @@
+import type { AgentRuntimeControlAttemptLease, AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -52,6 +53,38 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
+const ACP_HISTORY_MOCK = String.raw`
+const fs = require("node:fs");
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+function update(sessionId, text) {
+  send({ method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+}
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes-agent", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "hermes-history" } });
+    else if (message.method === "session/prompt") {
+      const databasePath = require("node:path").join(process.env.HERMES_HOME, "state.db");
+      const database = JSON.parse(fs.readFileSync(databasePath, "utf8"));
+      database.messages["hermes-history"].push(
+        { id: 3, session_id: "hermes-history", role: "user", content: message.params.prompt[0].text, timestamp: 3, active: 1, compacted: 0 },
+        { id: 4, session_id: "hermes-history", role: "assistant", content: "history output", timestamp: 4, active: 1, compacted: 0 },
+      );
+      fs.writeFileSync(databasePath, JSON.stringify(database));
+      update("hermes-history", "history output");
+      send({ id: message.id, result: { stopReason: "end_turn", usage: { inputTokens: 3, outputTokens: 4 } } });
+    }
+  }
+});
+`;
+
 const ACP_MISSING_LOAD_MOCK = String.raw`
 process.stdin.setEncoding("utf8");
 let buffer = "";
@@ -85,8 +118,115 @@ process.stdin.on("data", (chunk) => {
     if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
     else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "hermes-session-provider-error" } });
     else if (message.method === "session/prompt") {
-      send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Error: provider credentials unavailable" } } } });
+      send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "error", error: { code: "provider_error", message: "Provider credentials unavailable" } } } });
       send({ id: message.id, result: { stopReason: "end_turn" } });
+    }
+  }
+});
+`;
+
+const ACP_PROVIDER_HTTP_403_UPDATE_MOCK = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "hermes-session-http-403-update" } });
+    else if (message.method === "session/prompt") {
+      send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "non_retryable_client_error: HTTP 403 subscription required." } } } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+    }
+  }
+});
+`;
+
+const ACP_SUBSCRIPTION_ANSWER_MOCK = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "hermes-session-subscription-answer" } });
+    else if (message.method === "session/prompt") {
+      send({ method: "session/update", params: { sessionId: message.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "The documentation explains what subscription required means for this account; the requested configuration is valid." } } } });
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+    }
+  }
+});
+`;
+
+const ACP_PROVIDER_HTTP_403_RPC_MOCK = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "hermes-session-http-403-rpc" } });
+    else if (message.method === "session/prompt") send({ id: message.id, error: { code: -32000, message: "non_retryable_client_error: HTTP 403 subscription required." } });
+  }
+});
+`;
+
+const ACP_EMPTY_END_TURN_MOCK = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "hermes-session-empty-end-turn" } });
+    else if (message.method === "session/prompt") send({ id: message.id, result: { stopReason: "end_turn" } });
+  }
+});
+`;
+
+const ACP_CONTROL_MOCK = String.raw`
+process.stdin.setEncoding("utf8");
+let buffer = "";
+let promptCount = 0;
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+function update(sessionId, text) {
+  send({ method: "session/update", params: { sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } } } });
+}
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentInfo: { name: "hermes", version: "0.21.0" }, agentCapabilities: { loadSession: true } } });
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "hermes-session-control" } });
+    else if (message.method === "session/prompt") {
+      promptCount += 1;
+      const text = promptCount === 1 ? "original prompt completed" : "unexpected second prompt";
+      setTimeout(() => {
+        update(message.params.sessionId, text);
+        send({ id: message.id, result: { stopReason: "end_turn" } });
+      }, promptCount === 1 ? 250 : 0);
     }
   }
 });
@@ -257,6 +397,44 @@ describe("Hermes ACP native protocol", () => {
     expect(logs.join("")).toContain("Hermes ACP native session started session=hermes-session-new");
   });
 
+  it("uses exact Hermes history rows as the execution reference without inventing a provider turn ID", async () => {
+    const fixture = await historyFixture();
+    try {
+      const result = await executeHermesNativeChat({
+        profile: { ...fixture.profile, args: ["-e", ACP_HISTORY_MOCK] },
+        sessionId: null,
+        sessionParams: null,
+        prompt: "exactly bounded input",
+        timeoutMs: 2_000,
+        onLog: async () => {},
+      });
+      const boundary = result.resultJson?.transcriptBoundary as Record<string, unknown> | undefined;
+
+      expect(result.exitCode).toBe(0);
+      expect(result.resultJson).not.toHaveProperty("providerTurnId");
+      expect(boundary).toMatchObject({ status: "exact", sessionId: "hermes-history", startExclusive: 2, endInclusive: 4 });
+      expect(JSON.parse(String(boundary?.sourceRangeRef))).toMatchObject({
+        version: 1,
+        status: "exact",
+        sessionId: "hermes-history",
+        startExclusive: 2,
+        endInclusive: 4,
+      });
+
+      const transcript = await readHermesAcpNativeTranscript({
+        runtimeType: "hermes_gateway",
+        profile: fixture.profile,
+        session: sessionFrom(result),
+        selector: { kind: "hermes_execution", sourceRangeRef: boundary?.sourceRangeRef },
+      });
+      expect(transcript).toMatchObject({ availability: "available", completeness: "complete" });
+      expect(transcript.items.map((item) => item.sourceEntryId)).toEqual(["3", "4"]);
+      expect(transcript.items.map((item) => item.text)).toEqual(["exactly bounded input", "history output"]);
+    } finally {
+      await fs.rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("authenticates with the explicitly bound ACP method and persists that identity", async () => {
     const result = await executeHermesNativeChat({
       profile: { ...profile(), authMethodId: "hermes-test-auth" },
@@ -269,6 +447,45 @@ describe("Hermes ACP native protocol", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.sessionParams).toMatchObject({ acpAuthMethodId: "hermes-test-auth" });
+  });
+
+  it("does not translate ACP steer into a queued second session/prompt", async () => {
+    let publishHandle!: (handle: AgentRuntimeControlHandle) => void;
+    const handleReady = new Promise<AgentRuntimeControlHandle>((resolve) => { publishHandle = resolve; });
+    let markPromptStarted!: () => void;
+    const promptStarted = new Promise<void>((resolve) => { markPromptStarted = resolve; });
+    const controlAttempt: AgentRuntimeControlAttemptLease = {
+      attemptEpoch: 1,
+      ownerToken: "hermes-control-test",
+      async register(handle) {
+        publishHandle(handle);
+        return { isCurrent: () => true, release: async () => {} };
+      },
+      async complete() {},
+    };
+
+    const execution = executeHermesNativeChat({
+      profile: { ...profile(), args: ["-e", ACP_CONTROL_MOCK] },
+      sessionId: null,
+      sessionParams: null,
+      prompt: "original prompt",
+      timeoutMs: 2_000,
+      controlAttempt,
+      onLog: async (_stream, chunk) => {
+        if (chunk.includes("Hermes ACP native session started")) markPromptStarted();
+      },
+    });
+    const handle = await handleReady;
+    await promptStarted;
+
+    await expect(handle.steer({ text: "steer input", clientMessageId: "message-1" })).resolves.toMatchObject({
+      disposition: "unsupported",
+      reason: expect.stringContaining("queued as a follow-up"),
+    });
+    const result = await execution;
+
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toBe("original prompt completed");
   });
 
   it("does not treat an ACP provider error update as a successful end_turn", async () => {
@@ -286,6 +503,100 @@ describe("Hermes ACP native protocol", () => {
       errorCode: "hermes_native_provider_error",
       errorMessage: "Hermes ACP provider returned an error response.",
       resultJson: { providerError: true },
+    });
+  });
+
+  it("classifies the Hermes 0.21.0 non-retryable subscription HTTP 403 diagnostic and retains session history evidence", async () => {
+    const result = await executeHermesNativeChat({
+      profile: { ...profile(), args: ["-e", ACP_PROVIDER_HTTP_403_UPDATE_MOCK] },
+      sessionId: null,
+      sessionParams: null,
+      prompt: "provider HTTP 403",
+      timeoutMs: 2_000,
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorCode: "hermes_native_provider_error",
+      sessionId: "hermes-session-http-403-update",
+      sessionParams: { sessionId: "hermes-session-http-403-update" },
+      resultJson: {
+        providerError: true,
+        providerHttpStatus: 403,
+        transcriptBoundary: { sessionId: "hermes-session-http-403-update" },
+        updateCount: 1,
+      },
+    });
+  });
+
+  it("does not classify a valid assistant answer that mentions a subscription requirement as a provider error", async () => {
+    const result = await executeHermesNativeChat({
+      profile: { ...profile(), args: ["-e", ACP_SUBSCRIPTION_ANSWER_MOCK] },
+      sessionId: null,
+      sessionParams: null,
+      prompt: "explain subscription wording",
+      timeoutMs: 2_000,
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      summary: "The documentation explains what subscription required means for this account; the requested configuration is valid.",
+      resultJson: { stopReason: "end_turn", providerError: false },
+    });
+    expect(result.errorCode).toBeUndefined();
+    expect(result.resultJson).not.toHaveProperty("providerHttpStatus");
+  });
+
+  it("retains session history evidence when session/prompt returns a provider HTTP 403 RPC error", async () => {
+    const result = await executeHermesNativeChat({
+      profile: { ...profile(), args: ["-e", ACP_PROVIDER_HTTP_403_RPC_MOCK] },
+      sessionId: null,
+      sessionParams: null,
+      prompt: "provider HTTP 403",
+      timeoutMs: 2_000,
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorCode: "hermes_native_provider_error",
+      sessionId: "hermes-session-http-403-rpc",
+      sessionParams: { sessionId: "hermes-session-http-403-rpc" },
+      resultJson: {
+        stopReason: "error",
+        providerError: true,
+        providerHttpStatus: 403,
+        promptFailure: { rpcCode: -32000 },
+        transcriptBoundary: { sessionId: "hermes-session-http-403-rpc" },
+      },
+    });
+  });
+
+  it("rejects end_turn without assistant output instead of completing an empty transcript", async () => {
+    const result = await executeHermesNativeChat({
+      profile: { ...profile(), args: ["-e", ACP_EMPTY_END_TURN_MOCK] },
+      sessionId: null,
+      sessionParams: null,
+      prompt: "empty answer",
+      timeoutMs: 2_000,
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorCode: "hermes_native_empty_response",
+      errorMessage: "Hermes ACP prompt ended without assistant output.",
+      sessionId: "hermes-session-empty-end-turn",
+      sessionParams: { sessionId: "hermes-session-empty-end-turn" },
+      resultJson: {
+        stopReason: "end_turn",
+        providerError: false,
+        emptyResponse: true,
+        updateCount: 0,
+        transcriptBoundary: { sessionId: "hermes-session-empty-end-turn" },
+      },
     });
   });
 

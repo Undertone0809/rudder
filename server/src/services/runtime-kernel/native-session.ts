@@ -31,6 +31,8 @@ export type RuntimeBindingInput = {
   instructionsRevision?: string | null;
   capabilityRevision?: string | null;
   continuity?: "native" | "context_handoff" | "legacy" | null;
+  /** Explicitly retire a pristine native Side Chat fork before context handoff. */
+  rotateForPristineForkHandoff?: boolean;
   parentBindingId?: string | null;
   sourceBoundaryRef?: string | null;
 };
@@ -330,6 +332,8 @@ export function nativeSessionIdFromResult(result: AgentRuntimeExecutionResult) {
 
 function nativeExecutionRefFromResult(result: AgentRuntimeExecutionResult) {
   return providerString(result, [
+    "executionRef",
+    "execution_ref",
     "providerTurnId",
     "turnId",
     "turn_id",
@@ -384,12 +388,32 @@ export function selectorForRuntime(input: {
         };
       }
     case "opencode_local":
-      return {
-        kind: "opencode_input",
-        sessionId: input.sessionId,
-        userMessageId: providerString(input.result, ["userMessageId"]) ?? input.inputCorrelationRef,
-        terminalMessageIds: [input.executionRef ?? terminalRef].filter((value): value is string => Boolean(value)),
-      };
+      {
+        const transcriptBoundary = jsonRecord(providerResult(input.result).transcriptBoundary);
+        const observedAssistantMessageIds = Array.isArray(transcriptBoundary?.observedAssistantMessageIds)
+          ? transcriptBoundary.observedAssistantMessageIds
+            .map(stringValue)
+            .filter((value): value is string => Boolean(value))
+          : [];
+        const providerUserMessageId = providerString(input.result, ["userMessageId"]);
+        const userMessageId = providerUserMessageId ?? input.inputCorrelationRef;
+        if (transcriptBoundary?.status === "partial" && providerUserMessageId && observedAssistantMessageIds.length > 0) {
+          return {
+            kind: "opencode_input",
+            sessionId: input.sessionId,
+            userMessageId: providerUserMessageId,
+            terminalMessageIds: [],
+            observedAssistantMessageIds,
+            completeness: "partial",
+          };
+        }
+        return {
+          kind: "opencode_input",
+          sessionId: input.sessionId,
+          userMessageId,
+          terminalMessageIds: [input.executionRef ?? terminalRef].filter((value): value is string => Boolean(value)),
+        };
+      }
     case "pi_local":
       return {
         kind: "pi_branch_range",
@@ -404,7 +428,12 @@ export function selectorForRuntime(input: {
         kind: "cursor_execution",
         sessionId: input.sessionId,
         executionRef: input.executionRef ?? terminalRef,
-        nativeRangeRef: null,
+        nativeRangeRef: providerString(input.result, [
+          "nativeRangeRef",
+          "native_range_ref",
+          "rangeRef",
+          "range_ref",
+        ]),
         inputCorrelationRef: input.inputCorrelationRef,
       };
     default:
@@ -493,7 +522,19 @@ export async function ensureRuntimeBinding(db: RuntimeDb, input: RuntimeBindingI
     const txDb = tx as unknown as RuntimeDb;
     const existing = await selectBinding(txDb, input, { activeOnly: true });
     const latest = existing ?? await selectBinding(txDb, input);
-    if (existing && !runtimeBindingIdentityChanged(existing, input)) return existing;
+    if (input.rotateForPristineForkHandoff) {
+      if (!existing || existing.continuity !== "native" || input.continuity !== "context_handoff"
+        || !existing.currentSegmentId) throw new Error("Pristine fork handoff requires an active native Binding");
+      const [segment] = await txDb.select().from(nativeSegments).where(and(
+        eq(nativeSegments.id, existing.currentSegmentId), eq(nativeSegments.orgId, input.orgId),
+        eq(nativeSegments.bindingId, existing.id),
+      )).limit(1);
+      if (!segment || segment.state !== "pending" || segment.nativeSessionId
+        || (segment.providerStateJson && Object.keys(segment.providerStateJson).length > 0)) {
+        throw new Error("Pristine fork handoff cannot replace a submitted native Segment");
+      }
+    }
+    if (existing && !runtimeBindingIdentityChanged(existing, input) && !input.rotateForPristineForkHandoff) return existing;
 
     const bindingEpoch = latest ? latest.bindingEpoch + 1 : 0;
     const parentBindingId = existing?.id ?? stringValue(input.parentBindingId);

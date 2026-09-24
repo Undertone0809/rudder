@@ -7,7 +7,6 @@ import {
   chatClientCheckpointSchema,
   chatInlineAnnotationsFromStructuredPayload,
   convertChatToIssueSchema,
-  createChatAttachmentMetadataSchema,
   createChatContextLinkSchema,
   createChatFirstTurnSchema,
   resolveChatOperationProposalSchema,
@@ -24,11 +23,14 @@ import {
 import type { Request } from "express";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
-import { isAllowedContentType, MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
+import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { conflict } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import { chatAssistantErrorForLog } from "../services/chat-assistant.helpers.js";
+import {
+  chatAssistantErrorForLog,
+  type ChatTranscriptDelivery,
+} from "../services/chat-assistant.helpers.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   ChatAssistantStreamError,
@@ -41,12 +43,15 @@ import {
   setActiveChatGenerationId,
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
+import { CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS } from "../services/chat-generation-provenance.js";
 import { replayChatStreamMessage } from "../services/chat-message-mutation-fingerprint.js";
 import { logActivity } from "../services/index.js";
-import { assertCompanyAccess, getActorInfo } from "./authz.js";
+import { getActorInfo } from "./authz.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
+import { registerChatAttachmentRoute } from "./chats.attachment-route.js";
 import { chatRuntimeSnapshot } from "./chats.runtime-controls.js";
 import { registerChatStopRoute } from "./chats.stop-route.js";
+import { createChatStreamGenerationOwner, persistChatStreamGenerationTerminal, persistOwnedChatStreamProjection, retryStoppedChatStreamProjection } from "./chats.stream-generation-owner.js";
 import {
   CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE,
   CHAT_ASSISTANT_STOPPED_FALLBACK_MESSAGE,
@@ -64,11 +69,70 @@ import {
 } from "./chats.stream-support.js";
 import { registerChatUserStateRoutes } from "./chats.user-state-routes.js";
 
+const MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_ENTRIES = CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS.entries;
+const MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES = CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS.bytes;
+
+function chatStreamTranscriptEntryBytes(entry: TranscriptEntry) {
+  try {
+    return Buffer.byteLength(JSON.stringify(entry), "utf8");
+  } catch {
+    return MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES;
+  }
+}
+
+function boundChatStreamTranscriptMemory(transcript: TranscriptEntry[]) {
+  while (transcript.length > MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_ENTRIES) transcript.shift();
+  let bytes = 0;
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    bytes += chatStreamTranscriptEntryBytes(transcript[index]!);
+    if (bytes <= MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES) continue;
+    transcript.splice(0, index + 1);
+    break;
+  }
+}
+
+function boundedChatStreamTranscriptWindow(transcript: readonly TranscriptEntry[]) {
+  const retained: TranscriptEntry[] = [];
+  let bytes = 0;
+  for (
+    let index = transcript.length - 1;
+    index >= 0 && retained.length < MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_ENTRIES;
+    index -= 1
+  ) {
+    const entry = transcript[index]!;
+    const entryBytes = chatStreamTranscriptEntryBytes(entry);
+    if (bytes + entryBytes > MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES) break;
+    retained.push(entry);
+    bytes += entryBytes;
+  }
+  return retained.reverse();
+}
+
+function appendChatStreamTranscriptMemory(transcript: TranscriptEntry[], entry: TranscriptEntry) {
+  const previous = transcript.at(-1);
+  if (previous) {
+    const coalesced = coalesceChatTranscriptTextEntries([
+      previous as ChatStreamTranscriptEntry,
+      entry as ChatStreamTranscriptEntry,
+    ]);
+    if (
+      coalesced.length === 1
+      && chatStreamTranscriptEntryBytes(coalesced[0] as TranscriptEntry) <= MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES
+    ) {
+      transcript[transcript.length - 1] = coalesced[0] as TranscriptEntry;
+    } else {
+      transcript.push(entry);
+    }
+  } else {
+    transcript.push(entry);
+  }
+  boundChatStreamTranscriptMemory(transcript);
+}
+
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const {
     router,
     db,
-    storage,
     svc,
     assistantSvc,
     agentsSvc,
@@ -202,6 +266,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         annotations: parsedBody.data.inlineAnnotations ?? [],
         uploadedFileCount: messageFiles.length,
         editUserMessageId: parsedBody.data.editUserMessageId ?? null,
+        ...(parsedBody.data.inlineAnnotations?.some((annotation) => annotation.surface === "agent_run_transcript")
+          ? { requesterUserId: req.actor.type === "board" ? req.actor.userId ?? null : null }
+          : {}),
       })
       : null;
     let runtimeSnapshot = atomicFirstTurn?.runtimeSnapshot ?? null;
@@ -396,7 +463,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     let { userMessagePersisted, committedUserMessageId } = messagePersistence;
     const persistedUserMessage = messagePersistence.userMessage;
 
-    let generation: { id: string; attemptEpoch?: number; controlVersion?: number } | null = null;
+    let generation: {
+      id: string;
+      attemptEpoch?: number;
+      controlVersion?: number;
+      controlOwnerToken?: string | null;
+    } | null = null;
     try {
       const createdGeneration = await svc.createGeneration(conversation.orgId, conversation.id);
       generation = createdGeneration;
@@ -453,6 +525,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     let generationTerminalStatus: "completed" | "failed" | "stopped" | "aborted" = "failed";
     let generationWaitingForNetwork = false;
     let admittedAssistantBody = "";
+    const generationOwner = createChatStreamGenerationOwner({ conversationId: conversation.id, generation });
     let stopCutoff: { body: string; transcript: TranscriptEntry[] } | null = null;
     let outputAdmissionTail: Promise<void> = Promise.resolve();
     const serializeOutputAdmission = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -464,6 +537,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       if (stopCutoff) return;
       stopCutoff = {
         body: admittedAssistantBody,
+        // Preserve cutoff membership while the bounded live window continues to advance.
         transcript: [...transcript],
       };
     };
@@ -481,9 +555,14 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       fallbackBody: string,
     ): Promise<ChatMessage | null> => {
       if (stoppedPersistencePromise) return stoppedPersistencePromise;
+      const stopFence = generationOwner.capture();
       generationTerminalStatus = "stopped";
       stoppedPersistencePromise = (async () => {
         await outputAdmissionTail;
+        if (generation && !generationOwner.isCurrent(stopFence)) {
+          if (!clientClosed && !res.writableEnded) res.end();
+          return null;
+        }
         let frozen = stoppedState(fallbackBody);
         if (generation) {
           const durableFrozen = await svc.generationProtocol.getFrozenVisibleProjection({
@@ -494,48 +573,41 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
           if (durableFrozen && durableFrozen.generation.acceptedThroughSeq !== null) {
             frozen = {
               body: durableFrozen.projection.body,
-              transcript: durableFrozen.projection.transcript,
+              transcript: boundedChatStreamTranscriptWindow(
+                durableFrozen.projection.transcript as TranscriptEntry[],
+              ),
             };
           }
         }
-        const stoppedBody = frozen.body.trim()
-          ? frozen.body
+        const stoppedBody = frozen.body.trim() ? frozen.body
           : (assistantProgressMessageId ? CHAT_ASSISTANT_STOPPED_FALLBACK_MESSAGE : "");
-        let stoppedMessage: ChatMessage | null = null;
-        let lastProjectionError: unknown;
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
-          try {
-            stoppedMessage = await persistPartialAssistantMessage(
-              stoppedConversation,
-              stoppedBody,
-              "stopped",
-              turnContextForPartial,
-              frozen.transcript,
-              replyingAgentId,
-              assistantProgressMessageId,
-              activeChatRunId,
-              undefined,
-              false,
-            );
-            lastProjectionError = undefined;
-            break;
-          } catch (error) {
-            lastProjectionError = error;
-            logger.warn(
-              { err: error, conversationId: stoppedConversation.id, attempt },
-              "failed to project stopped chat assistant message",
-            );
-            await Promise.resolve();
-          }
-        }
-        if (lastProjectionError) throw lastProjectionError;
-        await linkChatRunMessages(stoppedConversation, activeChatRunId, stoppedMessage ? [stoppedMessage] : []);
-        if (stoppedMessage) {
-          await logChatMessagesAdded(stoppedConversation, [stoppedMessage], {
-            actorType: "system",
-            actorId: "chat-assistant",
-            agentId: replyingAgentId,
-          });
+        const stoppedMessage = await retryStoppedChatStreamProjection<ChatMessage | null>({
+          scope: generation ? {
+            protocol: svc.generationProtocol, orgId: conversation.orgId,
+            conversationId: conversation.id, generationId: generation.id, fence: stopFence,
+          } : null,
+          persist: () => persistPartialAssistantMessage(
+            stoppedConversation, stoppedBody, "stopped", turnContextForPartial,
+            frozen.transcript, replyingAgentId, assistantProgressMessageId,
+            activeChatRunId, undefined, false,
+          ),
+          link: (message) => linkChatRunMessages(stoppedConversation, activeChatRunId, message ? [message] : []),
+          log: (message) => message ? logChatMessagesAdded(stoppedConversation, [message], {
+            actorType: "system", actorId: "chat-assistant", agentId: replyingAgentId,
+          }) : Promise.resolve(),
+          onStale: () => {
+            generationOwner.markStale();
+            if (!clientClosed && !res.writableEnded) res.end();
+          },
+          onRetryError: (error, attempt) => logger.warn(
+            { err: error, conversationId: stoppedConversation.id, attempt },
+            "failed to project stopped chat assistant message",
+          ),
+        });
+        if (generationOwner.stale) return null;
+        if (generation && !generationOwner.isCurrent(stopFence)) {
+          if (!clientClosed && !res.writableEnded) res.end();
+          return null;
         }
         if (!clientClosed) {
           writeStreamEvent(res, {
@@ -654,22 +726,33 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                 activeChatRunId = runId;
               },
               onWaitingForNetwork: async (suspension: AgentRuntimeNetworkSuspension) => {
+                const attemptFence = generationOwner.capture();
+                if (!generationOwner.isCurrent(attemptFence)) return;
                 const markWaiting = (svc.generationProtocol as {
                   markWaitingForNetwork?: (input: {
                     orgId: string;
                     conversationId: string;
                     generationId: string;
                     expectedAttemptEpoch: number;
+                    expectedOwnerToken?: string | null;
                     suspension: AgentRuntimeNetworkSuspension;
                   }) => Promise<{ stopped?: boolean } | unknown>;
                 }).markWaitingForNetwork;
-                const marked = await markWaiting?.({
-                  orgId: conversation.orgId,
-                  conversationId: conversation.id,
-                  generationId: generation!.id,
-                  expectedAttemptEpoch: generation!.attemptEpoch ?? 1,
-                  suspension,
-                });
+                let marked;
+                try {
+                  marked = await markWaiting?.({
+                    orgId: conversation.orgId,
+                    conversationId: conversation.id,
+                    generationId: generation!.id,
+                    expectedAttemptEpoch: attemptFence.attemptEpoch,
+                    expectedOwnerToken: attemptFence.ownerToken,
+                    suspension,
+                  });
+                } catch (error) {
+                  if (generationOwner.rejectFenceError(error)) return;
+                  throw error;
+                }
+                if (!generationOwner.isCurrent(attemptFence)) return;
                 const stopped = Boolean(
                   marked
                   && typeof marked === "object"
@@ -685,7 +768,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                 writeStreamEvent(res, {
                   type: "waiting_for_network",
                   generationId: generation!.id,
-                  attemptEpoch: generation!.attemptEpoch ?? 1,
+                  attemptEpoch: attemptFence.attemptEpoch,
                   generationSeq: admittedAssistantBody ? undefined : 0,
                   bodyHash: hashChatGenerationBody(admittedAssistantBody),
                 });
@@ -704,6 +787,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                       ownerToken,
                       runtimeType: attempt.runtimeType,
                     });
+                    if (generationId === generation?.id) generationOwner.update({ attemptEpoch, ownerToken });
                   },
                   onHandleRegistered: async ({ generationId, attemptEpoch, ownerToken, handle }) => {
                     await svc.markGenerationControlReady({
@@ -727,13 +811,11 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   },
                 },
               ),
-              onAssistantDelta: (delta: string) => serializeOutputAdmission(async () => {
-                if (abortController.signal.aborted) return;
-                const activeControl = getActiveChatGeneration(conversation.id);
-                const attemptEpoch = Math.max(
-                  1,
-                  activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
-                );
+              onAssistantDelta: (delta: string) => {
+                const attemptFence = generationOwner.capture();
+                return serializeOutputAdmission(async () => {
+                if (abortController.signal.aborted || !generationOwner.isCurrent(attemptFence)) return;
+                const attemptEpoch = attemptFence.attemptEpoch;
                 const projectedBody = `${admittedAssistantBody}${delta}`;
                 let committed;
                 try {
@@ -742,6 +824,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                     conversationId: conversation.id,
                     generationId: generation!.id,
                     expectedAttemptEpoch: attemptEpoch,
+                    expectedOwnerToken: attemptFence.ownerToken,
                     eventKind: "assistant_delta",
                     payload: { delta },
                     bodyOffset: admittedAssistantBody.length,
@@ -756,8 +839,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   });
                 } catch (error) {
                   if (outputAdmissionClosed(error)) return;
+                  if (generationOwner.rejectFenceError(error)) return;
                   throw error;
                 }
+                if (!generationOwner.isCurrent(attemptFence)) return;
                 assistantProgressMessageId = committed.message.id;
                 admittedAssistantBody = projectedBody;
                 if (abortController.signal.aborted || clientClosed) return;
@@ -769,29 +854,26 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   generationSeq: committed.event.generationSeq,
                   bodyHash: committed.event.payload.bodyHash,
                 });
-              }),
-              onAssistantState: (state: unknown) => serializeOutputAdmission(async () => {
-                if (abortController.signal.aborted) return;
+                });
+              },
+              onAssistantState: (state: unknown) => {
+                const attemptFence = generationOwner.capture();
+                return serializeOutputAdmission(async () => {
+                if (abortController.signal.aborted || !generationOwner.isCurrent(attemptFence)) return;
                 if (clientClosed) return;
-                const activeControl = getActiveChatGeneration(conversation.id);
-                const attemptEpoch = Math.max(
-                  1,
-                  activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
-                );
                 writeStreamEvent(res, {
                   type: "assistant_state",
                   state,
                   generationId: generation!.id,
-                  attemptEpoch,
+                  attemptEpoch: attemptFence.attemptEpoch,
                 });
-              }),
-              onTranscriptEntry: (entry: TranscriptEntry) => serializeOutputAdmission(async () => {
-                if (abortController.signal.aborted) return;
-                const activeControl = getActiveChatGeneration(conversation.id);
-                const attemptEpoch = Math.max(
-                  1,
-                  activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
-                );
+                });
+              },
+              onTranscriptEntry: (entry: TranscriptEntry, delivery?: ChatTranscriptDelivery) => {
+                const attemptFence = generationOwner.capture();
+                return serializeOutputAdmission(async () => {
+                if (abortController.signal.aborted || !generationOwner.isCurrent(attemptFence)) return;
+                const attemptEpoch = attemptFence.attemptEpoch;
                 let committed;
                 try {
                   committed = await svc.generationProtocol.appendVisibleEventAndProject({
@@ -799,8 +881,16 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                     conversationId: conversation.id,
                     generationId: generation!.id,
                     expectedAttemptEpoch: attemptEpoch,
+                    expectedOwnerToken: attemptFence.ownerToken,
                     eventKind: "transcript",
-                    payload: { entry },
+                    payload: delivery?.source === "native"
+                      ? {
+                        source: "native",
+                        runId: delivery.runId,
+                        spanId: delivery.spanId,
+                      }
+                      : { entry },
+                    transcriptSource: delivery?.source,
                     messageId: assistantProgressMessageId,
                     runId: activeChatRunId,
                     bodyHash: hashChatGenerationBody(admittedAssistantBody),
@@ -811,8 +901,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   });
                 } catch (error) {
                   if (outputAdmissionClosed(error)) return;
+                  if (generationOwner.rejectFenceError(error)) return;
                   throw error;
                 }
+                if (!generationOwner.isCurrent(attemptFence)) return;
                 assistantProgressMessageId = committed.message.id;
                 const durableEntry = withChatTranscriptGenerationProvenance(
                   entry as ChatStreamTranscriptEntry,
@@ -821,15 +913,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                     generationSeq: committed.event.generationSeq,
                   },
                 ) as TranscriptEntry;
-                const normalizedTranscript = coalesceChatTranscriptTextEntries([
-                  ...(transcript as ChatStreamTranscriptEntry[]),
-                  durableEntry as ChatStreamTranscriptEntry,
-                ]);
-                transcript.splice(
-                  0,
-                  transcript.length,
-                  ...(normalizedTranscript as TranscriptEntry[]),
-                );
+                appendChatStreamTranscriptMemory(transcript, durableEntry);
                 if (abortController.signal.aborted || clientClosed) return;
                 writeStreamEvent(res, {
                   type: "transcript_entry",
@@ -839,7 +923,8 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   generationSeq: committed.event.generationSeq,
                   bodyHash: committed.event.payload.bodyHash,
                 });
-              }),
+                });
+              },
             });
 
             if (streamed.outcome === "waiting_for_network" && generationWaitingForNetwork) {
@@ -854,20 +939,23 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               );
               return;
             }
+            if (generationOwner.stale || streamed.outcome === "stale") {
+              generationOwner.markStale();
+              if (!clientClosed && !res.writableEnded) res.end();
+              return;
+            }
 
+            const resultFence = generationOwner.capture();
             const resultAdmission = await serializeOutputAdmission(async () => {
-              if (abortController.signal.aborted) return null;
-              const activeControl = getActiveChatGeneration(conversation.id);
-              const attemptEpoch = Math.max(
-                1,
-                activeControl?.attemptEpoch ?? generation?.attemptEpoch ?? 1,
-              );
+              if (abortController.signal.aborted || !generationOwner.isCurrent(resultFence)) return null;
+              const attemptEpoch = resultFence.attemptEpoch;
               try {
                 const committed = await svc.generationProtocol.appendVisibleEventAndProject({
                   orgId: conversation.orgId,
                   conversationId: conversation.id,
                   generationId: generation!.id,
                   expectedAttemptEpoch: attemptEpoch,
+                  expectedOwnerToken: resultFence.ownerToken,
                   eventKind: "runtime_output",
                   payload: {
                     resultKind: streamed.reply.kind,
@@ -883,15 +971,21 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
                   chatTurnId: turnContextForPartial!.chatTurnId,
                   turnVariant: turnContextForPartial!.turnVariant,
                 });
+                if (!generationOwner.isCurrent(resultFence)) return null;
                 assistantProgressMessageId = committed.message.id;
                 admittedAssistantBody = streamed.reply.body;
                 return committed;
               } catch (error) {
                 if (outputAdmissionClosed(error)) return null;
+                if (generationOwner.rejectFenceError(error)) return null;
                 throw error;
               }
             });
             if (!resultAdmission) {
+              if (generationOwner.stale) {
+                if (!clientClosed && !res.writableEnded) res.end();
+                return;
+              }
               freezeStopCutoff();
               await persistStoppedAssistant(
                 assistantInput.conversation,
@@ -900,26 +994,28 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               );
               return;
             }
+            generationOwner.captureTerminal(resultFence);
 
-            const createdMessages = await persistAssistantReply(
-              req,
-              assistantInput.conversation,
-              actor,
-              streamed.reply,
-              turnContextForPartial!,
-              transcript,
-              streamed.replyingAgentId,
-              assistantProgressMessageId,
-              activeChatRunId,
-              false,
-            );
-            await linkChatRunMessages(assistantInput.conversation, activeChatRunId, createdMessages);
-            generationTerminalStatus = "completed";
-            await logChatMessagesAdded(assistantInput.conversation, createdMessages, {
-              actorType: "system",
-              actorId: "chat-assistant",
-              agentId: streamed.replyingAgentId,
+            const createdMessages = await persistOwnedChatStreamProjection<ChatMessage[]>({
+              scope: {
+                protocol: svc.generationProtocol, orgId: conversation.orgId,
+                conversationId: conversation.id, generationId: generation!.id, fence: resultFence,
+              },
+              projection: "completed",
+              persist: () => persistAssistantReply(
+                req, assistantInput.conversation, actor, streamed.reply, turnContextForPartial!,
+                transcript, streamed.replyingAgentId, assistantProgressMessageId, activeChatRunId, false,
+              ),
+              link: (messages) => linkChatRunMessages(assistantInput.conversation, activeChatRunId, messages),
+              log: (messages) => logChatMessagesAdded(assistantInput.conversation, messages, {
+                actorType: "system", actorId: "chat-assistant", agentId: streamed.replyingAgentId,
+              }),
             });
+            if (!generationOwner.isCurrent(resultFence)) {
+              if (!clientClosed && !res.writableEnded) res.end();
+              return;
+            }
+            generationTerminalStatus = "completed";
             if (!clientClosed) {
               writeStreamEvent(res, {
                 type: "final",
@@ -932,6 +1028,20 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               res.end();
             }
           } catch (error) {
+            generationOwner.rejectFenceError(error);
+            if (outputAdmissionClosed(error)) {
+              freezeStopCutoff();
+              await persistStoppedAssistant(
+                assistantInput.conversation,
+                chatReplyingAgentId(assistantInput.conversation),
+                admittedAssistantBody,
+              );
+              return;
+            }
+            if (generationOwner.stale) {
+              if (!clientClosed && !res.writableEnded) res.end();
+              return;
+            }
             if (!abortController.signal.aborted) {
               generationTerminalStatus = "failed";
             }
@@ -994,6 +1104,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         }
         return;
       }
+      if (generationOwner.stale || (err as { outcome?: unknown } | null)?.outcome === "stale") {
+        generationOwner.markStale();
+        if (!clientClosed && !res.writableEnded) res.end();
+        return;
+      }
+      const failureFence = generationOwner.capture();
       const failurePayload = recoverableFailurePayload(err, activeChatRunId);
       const partialBody =
         userVisiblePartialBodyFromError(err)
@@ -1001,35 +1117,34 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
         || CHAT_ASSISTANT_USER_ERROR_MESSAGE;
       const generatedAttachments = err instanceof ChatAssistantStreamError ? err.generatedAttachments : [];
       const failedReplyingAgentId = chatReplyingAgentId(assistantConversationForPartial);
-      let failedMessage = await persistPartialAssistantMessage(
-        assistantConversationForPartial ?? (conversation as ChatConversation),
-        partialBody,
-        "failed",
-        turnContextForPartial!,
-        transcript,
-        failedReplyingAgentId,
-        assistantProgressMessageId,
-        activeChatRunId,
-        failurePayload,
-        false,
-      ).catch(() => null);
-      await linkChatRunMessages(
-        assistantConversationForPartial ?? (conversation as ChatConversation),
-        activeChatRunId,
-        failedMessage ? [failedMessage as ChatMessage] : [],
-      ).catch(() => {});
-      failedMessage = await attachGeneratedFilesToPartialMessage(
-        assistantConversationForPartial ?? (conversation as ChatConversation),
-        failedMessage as ChatMessage | null,
-        generatedAttachments,
-        failedReplyingAgentId,
-      ).catch(() => failedMessage as ChatMessage | null);
-      if (failedMessage && assistantConversationForPartial) {
-        await logChatMessagesAdded(assistantConversationForPartial, [failedMessage], {
-          actorType: "system",
-          actorId: "chat-assistant",
-          agentId: failedReplyingAgentId,
-        }).catch(() => {});
+      const failedConversation = assistantConversationForPartial ?? (conversation as ChatConversation);
+      const failedMessage = await persistOwnedChatStreamProjection<ChatMessage | null>({
+        scope: generation ? { protocol: svc.generationProtocol, orgId: conversation.orgId,
+          conversationId: conversation.id, generationId: generation.id, fence: failureFence } : null,
+        projection: "failed",
+        persist: async () => {
+          const message = await persistPartialAssistantMessage(
+            failedConversation, partialBody, "failed", turnContextForPartial!, transcript,
+            failedReplyingAgentId, assistantProgressMessageId, activeChatRunId, failurePayload, false,
+          ).catch(() => null);
+          return attachGeneratedFilesToPartialMessage(
+            failedConversation, message, generatedAttachments, failedReplyingAgentId).catch(() => message);
+        },
+        link: (message) => linkChatRunMessages(
+          failedConversation, activeChatRunId, message ? [message] : []).catch(() => {}),
+        log: (message) => message && assistantConversationForPartial
+          ? logChatMessagesAdded(assistantConversationForPartial, [message], {
+            actorType: "system", actorId: "chat-assistant", agentId: failedReplyingAgentId }).catch(() => {})
+          : Promise.resolve(),
+      }).catch((error: unknown) => {
+        if (!generationOwner.rejectFenceError(error)) {
+          logger.warn({ err: error, conversationId: conversation.id }, "failed to project chat assistant failure");
+        }
+        return null;
+      });
+      if (!generationOwner.isCurrent(failureFence)) {
+        if (!clientClosed && !res.writableEnded) res.end();
+        return;
       }
 
       logger.warn({
@@ -1054,40 +1169,19 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       abortController.signal.removeEventListener("abort", freezeStopCutoff);
       req.off("aborted", handleClosed);
       res.off("close", handleClosed);
-      if (generation && !generationWaitingForNetwork) {
-        await (async () => {
-          const latestGeneration = await svc.getLatestGeneration(conversation.id);
-          const expectedAttemptEpoch = latestGeneration?.attemptEpoch
-            ?? generation?.attemptEpoch
-            ?? 1;
-          await svc.generationProtocol.recordRuntimeTerminal({
-            orgId: conversation.orgId,
-            conversationId: conversation.id,
-            generationId: generation!.id,
-            expectedAttemptEpoch,
-            finalStatus: generationTerminalStatus,
-            terminalReason: (generationTerminalStatus as string) === "stopped"
-              ? "operator_stop"
-              : generationTerminalStatus,
-            payload: {
-              assistantMessageId: assistantProgressMessageId,
-              runId: activeChatRunId,
-            },
-          });
-          wakeTerminalProjector();
-        })().catch((error: unknown) => {
-          logger.warn({ err: error, generationId: generation?.id }, "failed to record chat generation terminal evidence");
-        });
-      }
-      if (queuedMessageId && !generationWaitingForNetwork) {
-        await svc.markQueuedMessageDeliveryTerminal({
-          conversationId: conversation.id,
-          itemId: queuedMessageId,
-          status: generationTerminalStatus,
-        }).catch((error: unknown) => {
-          logger.warn({ err: error, queuedMessageId }, "failed to mark queued chat message terminal");
-        });
-      }
+      await persistChatStreamGenerationTerminal({
+        svc,
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        generation,
+        generationWaitingForNetwork,
+        generationOwner,
+        generationTerminalStatus,
+        assistantMessageId: assistantProgressMessageId,
+        runId: activeChatRunId,
+        queuedMessageId,
+        wakeTerminalProjector,
+      });
       if (startingChatGenerationGates.get(conversation.id) === startupGate) {
         startingChatGenerationGates.delete(conversation.id);
       }
@@ -1218,101 +1312,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   });
 
   registerChatStopRoute(ctx);
-
-  router.post("/orgs/:orgId/chats/:chatId/attachments", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    const chatId = req.params.chatId as string;
-    assertCompanyAccess(req, orgId);
-
-    const conversation = await assertConversationAccess(req, chatId);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-    if (conversation.orgId !== orgId) {
-      res.status(422).json({ error: "Chat conversation does not belong to organization" });
-      return;
-    }
-    assertChatLocalMutationAllowed(conversation as ChatConversation);
-    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
-
-    try {
-      await runSingleFileUpload(req, res);
-    } catch (err) {
-      if (err instanceof multer.MulterError) {
-        if (err.code === "LIMIT_FILE_SIZE") {
-          res.status(422).json({ error: `Attachment exceeds ${MAX_ATTACHMENT_BYTES} bytes` });
-          return;
-        }
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      throw err;
-    }
-
-    const file = (req as Request & { file?: { mimetype: string; buffer: Buffer; originalname: string } }).file;
-    if (!file) {
-      res.status(400).json({ error: "Missing file field 'file'" });
-      return;
-    }
-    const contentType = (file.mimetype || "").toLowerCase();
-    if (!isAllowedContentType(contentType)) {
-      res.status(422).json({ error: `Unsupported attachment type: ${contentType || "unknown"}` });
-      return;
-    }
-    if (file.buffer.length <= 0) {
-      res.status(422).json({ error: "Attachment is empty" });
-      return;
-    }
-
-    const parsedMeta = createChatAttachmentMetadataSchema.safeParse(req.body ?? {});
-    if (!parsedMeta.success) {
-      res.status(400).json({ error: "Invalid attachment metadata", details: parsedMeta.error.issues });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    const stored = await storage.putFile({
-      orgId,
-      namespace: `chats/${chatId}`,
-      originalFilename: file.originalname || null,
-      contentType,
-      body: file.buffer,
-    });
-
-    const attachment = await svc.createAttachment({
-      orgId,
-      conversationId: chatId,
-      messageId: parsedMeta.data.messageId,
-      provider: stored.provider,
-      objectKey: stored.objectKey,
-      contentType: stored.contentType,
-      byteSize: stored.byteSize,
-      sha256: stored.sha256,
-      originalFilename: stored.originalFilename,
-      createdByAgentId: actor.agentId,
-      createdByUserId: actor.actorType === "user" ? actor.actorId : null,
-    });
-
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "chat.attachment_added",
-      entityType: "chat",
-      entityId: chatId,
-      details: {
-        attachmentId: attachment.id,
-        messageId: attachment.messageId,
-        originalFilename: attachment.originalFilename,
-        contentType: attachment.contentType,
-      },
-    });
-
-    res.status(201).json(attachment);
-  });
+  registerChatAttachmentRoute(ctx);
 
   router.post("/chats/:id/context-links", validate(createChatContextLinkSchema), async (req, res) => {
     const conversation = await assertConversationAccess(req, req.params.id as string);

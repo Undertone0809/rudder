@@ -65,8 +65,8 @@ vi.mock("@/lib/router", () => ({
   ),
 }));
 
-vi.mock("./transcript/useLiveRunTranscripts", () => ({
-  useLiveRunTranscripts: () => ({
+vi.mock("./transcript/useAgentRunTranscripts", () => ({
+  useAgentRunTranscripts: () => ({
     transcriptByRun: queryMocks.transcriptByRun,
     hasOutputForRun: () => false,
   }),

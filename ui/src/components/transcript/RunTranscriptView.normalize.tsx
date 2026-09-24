@@ -17,6 +17,92 @@ type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
   steerMessage?: ChatMessage;
 };
 
+function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
+  const item = asRecord(entry);
+  if (!item || typeof item.kind !== "string" || !item.kind.startsWith("cursor:acp:")) return null;
+  const kind = item.kind;
+  const payload = asRecord(item.payload);
+  const update = asRecord(payload?.update);
+  const updateKind = kind.slice("cursor:acp:".length);
+  if (
+    payload?.provider !== "cursor_agent"
+    || payload.transport !== "cursor-agent-acp-stdio"
+    || payload.method !== "session/update"
+    || update?.sessionUpdate !== updateKind
+    || typeof item.ts !== "string"
+  ) return null;
+
+  const ts = item.ts;
+  // ACP replay content/window IDs do not identify an occurrence across a
+  // partial replay, so display these entries without annotation anchors.
+  const sourceEntryId = item.origin === "object" && typeof item.sourceEntryId === "string" && item.sourceEntryId.trim()
+    ? item.sourceEntryId : undefined;
+  const source = sourceEntryId ? { sourceEntryId } : {};
+  const content = asRecord(update.content);
+  const text = typeof content?.text === "string"
+    ? content.text : typeof item.text === "string" ? item.text : null;
+  switch (updateKind) {
+    case "agent_message_chunk":
+    case "agent_message":
+    case "agent_thought_chunk":
+    case "agent_thought":
+    case "user_message_chunk":
+    case "user_message": {
+      if (text === null || (content?.type !== undefined && content.type !== "text")) return null;
+      const delta = updateKind.endsWith("_chunk") ? { delta: true } : {};
+      if (updateKind.startsWith("user_message")) {
+        const user = { kind: "user" as const, ts, text, ...delta, ...source };
+        return user;
+      }
+      return updateKind.startsWith("agent_thought")
+        ? { kind: "thinking", ts, text, ...delta, ...source }
+        : { kind: "assistant", ts, text, ...delta, ...source };
+    }
+    case "tool_call":
+    case "tool_call_update": {
+      if (typeof update.toolCallId !== "string" || !update.toolCallId.trim()) return null;
+      const toolName = typeof update.title === "string" && update.title.trim() ? update.title : undefined;
+      if (updateKind === "tool_call" && !toolName) return null;
+      const terminal = update.status === "completed" || update.status === "failed"
+        || update.status === "error" || update.status === "cancelled";
+      if (updateKind === "tool_call" && toolName) {
+        const output = update.rawOutput ?? update.content ?? update;
+        return { kind: "tool_call", ts, name: toolName, toolUseId: update.toolCallId,
+          input: update.rawInput ?? update,
+          ...(terminal ? { status: update.status,
+            result: typeof output === "string" ? output : JSON.stringify(output),
+            isError: update.status !== "completed" } : {}),
+          ...source };
+      }
+      if (terminal) {
+        const output = update.rawOutput ?? update.content ?? update;
+        return { kind: "tool_result", ts, toolUseId: update.toolCallId,
+          ...(toolName ? { toolName } : {}),
+          content: typeof output === "string" ? output : JSON.stringify(output),
+          isError: update.status !== "completed", ...source };
+      }
+      return { kind: "system", ts,
+        text: `Tool ${toolName ?? update.toolCallId}: ${typeof update.status === "string" ? update.status : "updated"}`,
+        ...source };
+    }
+    case "plan": {
+      if (!Array.isArray(update.entries) || update.entries.length === 0) return null;
+      const items: Array<{ text: string; status: "pending" | "in_progress" | "completed" } | null> = update.entries.map((value) => {
+        const planEntry = asRecord(value);
+        if (typeof planEntry?.content !== "string" || !planEntry.content.trim()) return null;
+        const status = planEntry.status;
+        if (status !== "pending" && status !== "in_progress" && status !== "completed") return null;
+        return { text: planEntry.content, status };
+      });
+      if (items.some((value) => value === null)) return null;
+      return { kind: "todo_list", ts,
+        items: items.filter((value): value is NonNullable<typeof value> => value !== null), ...source };
+    }
+    default:
+      return null;
+  }
+}
+
 function transcriptEntryProvenance(entry: ProvenancedTranscriptTextEntry) {
   return typeof entry.generationId === "string"
     && Number.isInteger(entry.generationSeqStart)
@@ -548,7 +634,8 @@ export function normalizeTranscript(
     }
   };
 
-  for (const entry of entries) {
+  for (const rawEntry of entries) {
+    const entry = cursorAcpDisplayEntry(rawEntry) ?? rawEntry;
     const previous = blocks[blocks.length - 1];
 
     if (isInternalTranscriptLifecycleEntry(entry)) {
@@ -607,9 +694,9 @@ export function normalizeTranscript(
         ? transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry)
         : null;
       const isStreaming = streaming && entry.kind === "assistant" && entry.delta === true;
-      const continuesDeltaGroup = entry.kind === "assistant"
-        && entry.delta === true
-        && previousTextEntry?.kind === "assistant"
+      const isDelta = entry.kind === "assistant" ? entry.delta === true : asRecord(entry)?.delta === true;
+      const continuesDeltaGroup = isDelta
+        && previousTextEntry?.kind === entry.kind
         && previousTextEntry.delta
         && !forceTextBoundary;
       if (
@@ -664,7 +751,7 @@ export function normalizeTranscript(
           ...provenance,
         });
       }
-      previousTextEntry = { kind: entry.kind, delta: entry.kind === "assistant" && entry.delta === true };
+      previousTextEntry = { kind: entry.kind, delta: isDelta };
       forceTextBoundary = false;
       continue;
     }
@@ -720,17 +807,24 @@ export function normalizeTranscript(
     forceTextBoundary = false;
 
     if (entry.kind === "tool_call") {
+      const terminalStatus = asRecord(entry)?.status;
+      const terminal = terminalStatus === "completed" || terminalStatus === "failed"
+        || terminalStatus === "error" || terminalStatus === "cancelled";
+      const terminalResult = asRecord(entry)?.result;
       const toolBlock: Extract<TranscriptBlock, { type: "tool" }> = {
         type: "tool",
         ts: entry.ts,
         name: entry.name,
         toolUseId: entry.toolUseId ?? extractToolUseId(entry.input),
         input: entry.input,
-        status: "running",
+        status: terminal ? terminalStatus === "completed" ? "completed" : "error" : "running",
+        ...(terminal ? { endTs: entry.ts,
+          result: typeof terminalResult === "string" ? terminalResult : undefined,
+          isError: terminalStatus !== "completed" } : {}),
         sourceEntryIds: transcriptEntrySourceIds(entry),
       };
       blocks.push(toolBlock);
-      if (toolBlock.toolUseId) {
+      if (toolBlock.toolUseId && !terminal) {
         pendingToolBlocks.set(toolBlock.toolUseId, toolBlock);
       }
       continue;
@@ -739,6 +833,8 @@ export function normalizeTranscript(
     if (entry.kind === "tool_result") {
       const matched =
         pendingToolBlocks.get(entry.toolUseId)
+        ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> =>
+          block.type === "tool" && block.toolUseId === entry.toolUseId)
         ?? [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => block.type === "tool" && block.status === "running");
 
       if (matched) {

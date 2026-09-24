@@ -45,5 +45,9 @@ export function sideChatStartedSystemMessageParts(message: ChatMessage) {
     ?? legacyChatForkSourceTitleFromBody(message.body, sourceConversationId)
     ?? "source chat";
 
-  return { sourceConversationId, sourceConversationTitle };
+  return {
+    sourceConversationId,
+    sourceConversationTitle,
+    sourceMessageId: readStructuredPayloadString(payload, "sourceMessageId"),
+  };
 }

@@ -56,19 +56,6 @@ function manifest(tags, sqlByTag, label) {
 
 describe("release migration compatibility matrix", () => {
   it.each([
-    ["0.7.24", "stable"],
-    ["0.7.24-canary.0", "canary"],
-  ])("accepts %s with the current native-session migration fingerprint", (candidateVersion, channel) => {
-    const result = runCompatibilityPreflight({ candidateVersion, channel });
-    expect(result.candidateFingerprint).toBe(
-      "bdaa2aaac9c6e7b31feae9ff3b27a79caf92adc406d90fe81d21416fadc5f19f",
-    );
-    expect(result.candidateMigrations).toBe(169);
-    expect(result.candidateSqlFiles).toBe(171);
-    expect(result.fixtures[0].version).toBe("0.7.23");
-  }, 60_000);
-
-  it.each([
     ["0.7.23", "stable"],
     ["0.7.23-canary.0", "canary"],
   ])("accepts the frozen %s with its published 0163 migration fingerprint", (candidateVersion, channel) => {
@@ -94,6 +81,11 @@ describe("release migration compatibility matrix", () => {
       "0.7.15",
     ]);
   }, 60_000);
+
+  it("rejects new worktree migrations under the frozen 0.7.24 release identity", () => {
+    expect(() => runCompatibilityPreflight({ candidateVersion: "0.7.24", channel: "stable" }))
+      .toThrow(/candidate migration fingerprint .* but 0\.7\.24 declares/u);
+  });
 
   it("accepts the frozen pre-D1 0.7.21 candidate against the previous stable fixtures", () => {
     const result = preD1CompatibilityPreflight({

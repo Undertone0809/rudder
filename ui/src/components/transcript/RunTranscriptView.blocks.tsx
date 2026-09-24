@@ -336,11 +336,11 @@ export function TranscriptRunAnnotationBlock({
   }, [canSelectText]);
 
   useEffect(() => {
-    if (context?.activeBlockId && context.activeBlockId !== itemInteractionId) {
+    if (!canAnnotate || (context?.activeBlockId && context.activeBlockId !== itemInteractionId)) {
       setPendingAnnotation(null);
       setPendingSelection(null);
     }
-  }, [context?.activeBlockId, itemInteractionId]);
+  }, [canAnnotate, context?.activeBlockId, itemInteractionId]);
 
   if (!context) return children;
 
