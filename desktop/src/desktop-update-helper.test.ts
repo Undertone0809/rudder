@@ -10,9 +10,11 @@ import {
   handoffDesktopUpdateToExternalHelper,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
+  readDesktopUpdateHelperRequest,
   readDesktopUpdateJournal,
   recoverDesktopUpdateWithExternalHelper,
   requestMatchesAutomaticCandidate,
+  resolveDesktopUpdateRuntimeReceipt,
   resolveDesktopUpdateTransactionPaths,
   resolveExternalDesktopUpdateHelperPath,
 } from "./desktop-update-helper.js";
@@ -76,28 +78,38 @@ describe("external Desktop update helper attestation", () => {
         ownerToken: "owner-token-123456",
         transactionId,
         ...paths,
+        statePath: path.join(root, "desktop-auto-update.json"),
         stagedPath: path.join(root, "staged.zip"),
         targetVersion: "0.3.4",
         candidateSha256: "a".repeat(64),
         admission: { closed: true, activeRuns: 0, drainToken: "drain-token-123456" },
         checkpoint: { instanceId: "default", databaseRevision: "db-rev-1", migrationCompatible: true },
+        runtimeReceipt: createRuntimeReceipt(root),
         helper: { path: "/tmp/rudder-update-helper", ownerUid: 501, mode: 0o755, sha256: "b".repeat(64) },
         probation: { executable: path.join(paths.installPath, "Contents/MacOS/Rudder"), args: [], timeoutMs: 10_000 },
       },
     });
     expect(spawnProcess).toHaveBeenCalledWith("/tmp/rudder-update-helper", ["--request", expect.stringContaining(`${transactionId}.journal.json.request.json`)], expect.objectContaining({ detached: true, stdio: ["ignore", "ignore", "ignore"] }));
     const requestPath = spawnProcess.mock.calls[0][1][1] as string;
-    expect(JSON.parse(fs.readFileSync(requestPath, "utf8"))).toMatchObject({ operation: "apply", transactionId, admission: { closed: true, activeRuns: 0 } });
+    expect(JSON.parse(fs.readFileSync(requestPath, "utf8"))).toMatchObject({
+      operation: "apply",
+      transactionId,
+      admission: { closed: true, activeRuns: 0 },
+      runtimeReceipt: createRuntimeReceipt(root),
+    });
+    expect(readDesktopUpdateHelperRequest(requestPath)?.runtimeReceipt).toEqual(createRuntimeReceipt(root));
   });
 
   it("rejects a claimed request bound to a different helper generation", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-update-helper-binding-"));
     const transactionId = "desktop-update-binding";
     const paths = resolveDesktopUpdateTransactionPaths({ userDataPath: root, transactionId });
+    const runtimeReceipt = createRuntimeReceipt(root);
     const helper = { path: "/tmp/rudder-update-helper", ownerUid: 501, mode: 0o755, sha256: "b".repeat(64) };
     const candidate = {
       updateId: transactionId,
       version: "0.3.4",
+      instanceId: "default",
       stagedArtifactPath: path.join(root, "staged.zip"),
       stagedArtifactDigest: "a".repeat(64),
     };
@@ -112,17 +124,37 @@ describe("external Desktop update helper attestation", () => {
       candidateSha256: candidate.stagedArtifactDigest,
       admission: { closed: true, activeRuns: 0, drainToken: "drain-token-123456" },
       checkpoint: { instanceId: "default", databaseRevision: "db-rev-1", migrationCompatible: true },
+      runtimeReceipt,
       helper,
       probation: { executable: path.join(paths.installPath, "Contents/MacOS/Rudder"), args: [], timeoutMs: 10_000 },
     };
 
-    expect(requestMatchesAutomaticCandidate({ request, candidate, statePath: request.statePath, paths, helper })).toBe(true);
+    expect(requestMatchesAutomaticCandidate({ request, candidate, statePath: request.statePath, paths, helper, runtimeReceipt })).toBe(true);
     expect(requestMatchesAutomaticCandidate({
       request,
       candidate,
       statePath: request.statePath,
       paths,
       helper: { ...helper, sha256: "c".repeat(64) },
+      runtimeReceipt,
+    })).toBe(false);
+    expect(requestMatchesAutomaticCandidate({
+      request: { ...request, runtimeReceipt: { ...runtimeReceipt, apiPort: 3201 } },
+      candidate,
+      statePath: request.statePath,
+      paths,
+      helper,
+      runtimeReceipt,
+    })).toBe(false);
+    const missingReceipt = { ...request } as { runtimeReceipt?: typeof runtimeReceipt };
+    delete missingReceipt.runtimeReceipt;
+    expect(requestMatchesAutomaticCandidate({
+      request: missingReceipt as never,
+      candidate,
+      statePath: request.statePath,
+      paths,
+      helper,
+      runtimeReceipt,
     })).toBe(false);
   });
 
@@ -137,6 +169,16 @@ describe("external Desktop update helper attestation", () => {
       recoveryRequired: true,
       recoveryCode: "journal_unreadable",
     });
+    const runtimeReceipt = createRuntimeReceipt(root);
+    fs.writeFileSync(paths.journalPath, JSON.stringify({
+      transactionId,
+      stage: "probation_passed",
+      recoveryRequired: true,
+      runtimeReceipt: { ...runtimeReceipt, postmasterPid: 4242 },
+    }), "utf8");
+    expect(readDesktopUpdateJournal(root, transactionId)).toMatchObject({
+      runtimeReceipt: { ...runtimeReceipt, postmasterPid: 4242 },
+    });
     const result = recoverDesktopUpdateWithExternalHelper({
       helperPath: "/tmp/rudder-update-helper",
       request: {
@@ -149,6 +191,7 @@ describe("external Desktop update helper attestation", () => {
         candidateSha256: "a".repeat(64),
         admission: { closed: true, activeRuns: 0, drainToken: "drain-token-123456" },
         checkpoint: { instanceId: "default", databaseRevision: "db-rev-1", migrationCompatible: true },
+        runtimeReceipt,
         helper: { path: "/tmp/rudder-update-helper", ownerUid: 501, mode: 0o755, sha256: "b".repeat(64) },
         probation: { executable: path.join(paths.installPath, "Contents/MacOS/Rudder"), args: ["--rudder-update-probation"], timeoutMs: 1000 },
       },
@@ -182,4 +225,13 @@ function createInstallKey(userDataPath: string, resourcesPath: string): string {
     .update(path.resolve(resourcesPath, "..", ".."))
     .digest("hex")
     .slice(0, 16);
+}
+
+function createRuntimeReceipt(root: string) {
+  return resolveDesktopUpdateRuntimeReceipt({
+    instanceRoot: path.join(root, "rudder-home", "instances", "default"),
+    instanceId: "default",
+    apiPort: 3200,
+    postgresPort: 54339,
+  });
 }

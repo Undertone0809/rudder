@@ -49,6 +49,7 @@ describe("agent-v1 registry", () => {
       "agent.me",
       "agent.inbox",
       "organization.members.list",
+      "organization.brand_color.update",
       "agent.capabilities",
       "agent.update",
       "agent.skills.create",

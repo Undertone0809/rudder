@@ -35,6 +35,7 @@ async function repositoryCliVersion(): Promise<string> {
 
 const SAMPLE_INPUT_BY_TOOL: Record<string, Record<string, unknown>> = {
   rudder_organization_members_list: { query: "Ada", type: "human", limit: 10, cursor: "next-page" },
+  rudder_organization_brand_color_update: { brandColor: "#123456", idempotencyKey: "brand-color-1" },
   rudder_agent_update: { title: "Runtime Agent" },
   rudder_agent_skills_create: { name: "local-helper", description: "Local helper" },
   rudder_agent_skills_enable: { selectionRefs: ["rudder/rudder-docs"] },
@@ -188,7 +189,7 @@ describe("agent-v1 MCP server", () => {
           }]
         : []
     ));
-    expect(directCapabilities).toHaveLength(49);
+    expect(directCapabilities).toHaveLength(51);
 
     for (const capability of directCapabilities) {
       if (!capability.mcp) throw new Error(`Direct capability lacks MCP descriptor: ${capability.id}`);
@@ -198,6 +199,7 @@ describe("agent-v1 MCP server", () => {
         .replace("{goal}", String(input.goal))
         .replace("{issue}", String(input.issue))
         .replace("{comment}", String(input.comment))
+        .replace("{project}", String(input.project))
         .replace("{run}", String(input.run));
       const requests: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
       const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -1809,6 +1811,156 @@ describe("agent-v1 MCP server", () => {
       },
     });
     expect(JSON.stringify(response)).not.toContain("14ff96a7-2518-456a-8aae-480360f0d9aa");
+  });
+
+  it("keeps organization brand color direct and CLI fallback routes aligned", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_RUN_ID: "runtime-run",
+    });
+    const input = { brandColor: "#123456", idempotencyKey: "brand-color-1" };
+
+    expect(buildAgentV1ToolCallPlan("rudder_organization_brand_color_update", input, env).args).toEqual([
+      "org",
+      "brand-color",
+      "update",
+      "--org-id",
+      "runtime-org",
+      "--brand-color",
+      "#123456",
+      "--idempotency-key",
+      "brand-color-1",
+      "--json",
+    ]);
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (inputUrl, init) => {
+      const url = new URL(String(inputUrl));
+      expect(url.pathname).toBe("/api/orgs/runtime-org/branding");
+      expect(init?.method).toBe("PATCH");
+      expect(init?.headers).toMatchObject({
+        "x-rudder-idempotency-key": "brand-color-1",
+        "x-rudder-agent-id": "runtime-agent",
+        "x-rudder-run-id": "runtime-run",
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({ brandColor: "#123456" });
+      return new Response(JSON.stringify({ id: "org-1", brandColor: "#123456" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "organization-brand-color",
+      method: "tools/call",
+      params: {
+        name: "rudder_organization_brand_color_update",
+        arguments: input,
+      },
+    }, env);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "org-1", brandColor: "#123456" },
+    });
+  });
+
+  it("dispatches Project-Goal project creation directly and fails closed without CLI fallback", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_MCP_RUDDER_BIN: "/missing/rudder-cli",
+    });
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (inputUrl, init) => {
+      const url = new URL(String(inputUrl));
+      expect(url.pathname).toBe("/api/orgs/runtime-org/projects");
+      expect(init?.method).toBe("POST");
+      expect(init?.headers).toMatchObject({
+        "x-rudder-agent-id": "runtime-agent",
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        name: "MCP project with goals",
+        goalId: "goal-primary",
+        goalIds: ["goal-a", "goal-b"],
+      });
+      return new Response(JSON.stringify({ id: "project-1", goalIds: ["goal-a", "goal-b"] }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "project-create",
+      method: "tools/call",
+      params: {
+        name: "rudder_project_create",
+        arguments: {
+          name: "MCP project with goals",
+          goalId: "goal-primary",
+          goalIds: ["goal-a", "goal-b"],
+        },
+      },
+    }, env);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "project-1", goalIds: ["goal-a", "goal-b"] },
+    });
+  });
+
+  it("dispatches Project-Goal updates directly and fails closed without CLI fallback", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "runtime-agent",
+      RUDDER_MCP_RUDDER_BIN: "/missing/rudder-cli",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (inputUrl, init) => {
+      const url = new URL(String(inputUrl));
+      expect(url.pathname).toBe("/api/projects/project-1");
+      expect(url.searchParams.get("orgId")).toBe("runtime-org");
+      expect(init?.method).toBe("PATCH");
+      expect(init?.headers).toMatchObject({
+        "x-rudder-idempotency-key": "project-goal-1",
+        "x-rudder-required-authority": "rust",
+        "x-rudder-agent-id": "runtime-agent",
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({ goalIds: ["goal-a", "goal-b"] });
+      return new Response(JSON.stringify({ id: "project-1", goalIds: ["goal-a", "goal-b"] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "project-goal",
+      method: "tools/call",
+      params: {
+        name: "rudder_project_update",
+        arguments: {
+          project: "project-1",
+          goalIds: ["goal-a", "goal-b"],
+          idempotencyKey: "project-goal-1",
+        },
+      },
+    }, env);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "project-1", goalIds: ["goal-a", "goal-b"] },
+    });
   });
 
   it("keeps bounded oversized errors in the modern result envelope", async () => {

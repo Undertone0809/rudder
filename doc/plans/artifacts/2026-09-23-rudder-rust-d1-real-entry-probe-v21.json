@@ -1,0 +1,99 @@
+{
+  "artifact_kind": "rudder.rust.d1.real-entry-probe",
+  "artifact_version": "v21",
+  "created_at": "2026-09-23",
+  "candidate": {
+    "worktree": "/private/tmp/rudder-rust-mainline-probe-20260923",
+    "branch": "codex/rudder-rust-mainline-probe-20260923",
+    "source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "source_tree": "15c813eb7aff94e87f406e552b8d406e4512a5cd",
+    "dirty_fingerprint": "23552a728d941d02fe1ad75828ddb862bee359027a81b5189c99ea5f7e7d2069",
+    "dirty_fingerprint_scope": "105 source paths excluding doc/plans durable records, delivery packets, and artifacts",
+    "origin_main": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "migration_manifest": {
+      "journal_entries": 175,
+      "sql_files": 177,
+      "fingerprint": "bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7"
+    }
+  },
+  "environment": {
+    "node": "v22.23.1",
+    "pnpm": "9.15.4",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
+    "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)",
+    "embedded_postgresql": "18.1.0-beta.16",
+    "foundation_binary_sha256": "7b88ac79c5d4bb6caf3cad92bc0c1f93c8d3dd25226a7a267098eca69b590025",
+    "migration_preflight_binary_sha256": "040287e9863337d0a536bb8b7179d10aa8395ac9e05f7e4d4767c691b2e2508a"
+  },
+  "attempts": [
+    {
+      "kind": "wrong_workspace_entrypoint",
+      "commands": [
+        "pnpm exec tsx scripts/smoke/rust-project-goal-real-entry.ts",
+        "pnpm exec tsx scripts/smoke/rust-branding-real-entry.ts"
+      ],
+      "result": "NOT_STARTED",
+      "observation": "The root workspace does not expose tsx; both commands exited before importing the smoke scripts and before starting any service."
+    },
+    {
+      "kind": "exact_candidate_real_entry",
+      "commands": [
+        "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts",
+        "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-branding-real-entry.ts"
+      ],
+      "result": "PASS",
+      "branding": {
+        "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+        "data_id": "rust-branding-real-entry-58291",
+        "organization_id": "508df794-f207-4c9a-9fcd-220ef5d83ea9",
+        "migration": "bootstrap_then_current; 175 journal entries; 177 SQL files; manifest bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7",
+        "http": "health 200; organization create 201; branding PATCH 200; restart replay 200",
+        "authority": "rust_invoked=true; response_authority=rust; old_authority_invoked=false; fallback_reason=null",
+        "cli": "exit 0; org brand-color update returned #bada55",
+        "mcp": "exit 0; rudder_organization_brand_color_update returned #c0ffee with missing legacy binary path",
+        "database_readback": "owner=rust; mutation_version=1; fence_epoch=1; receipt=applied; activityCount=1; outbox=pending/0"
+      },
+      "project_goal": {
+        "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+        "data_id": "rust-project-goal-real-entry-58292",
+        "organization_id": "296a2157-97ff-4cb2-a597-e3e81a9c24e7",
+        "other_organization_id": "81cd1b1e-ff3b-4f93-87aa-327814146051",
+        "project_id": "511da299-bba1-4ca9-9004-e41a5d417e9b",
+        "tooling_project_id": "a26a9415-6899-4b0e-9165-f039e40161df",
+        "migration": "bootstrap_then_current; 175 journal entries; 177 SQL files; manifest bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7",
+        "http": "health 200; create-with-goals 201; Rust-owned complete goal-set update 200; restart replay 200",
+        "handoff_and_recovery": "missing allowlist startup rejected before partial handoff; valid two-project allowlist accepted; same-config restart 200; unlisted required write 409",
+        "negative_cases": "mixed update 409; signed idempotency substitution 401; idempotency conflict 409; cross-organization target 422; clear-all 200; Rust-owned organization delete 409",
+        "tooling": "direct CLI exit 0; direct MCP stdio exit 0; missing legacy binary did not select Node fallback",
+        "database_readback": "tooling receipts=2; activities=2; links=0; final receipts=4; activities=2; links=0; mutation_version=2"
+      }
+    }
+  ],
+  "claims": {
+    "branding_real_entry_connected": true,
+    "project_goal_real_entry_connected": true,
+    "default_path_verified": false,
+    "old_authority_retired": false,
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "supporting_checks": {
+    "server_focused": "7 files / 84 tests PASS: config, startup wiring, bridge lifecycle, branding route, project routes, organization fence, Project-Goal fence",
+    "previous_candidate_checks": "cargo workspace check, Rust foundation/D1/auth suites, CLI/MCP, typechecks, Desktop update 62 tests, and release matrix 19 tests all exited 0 before the v21 real-entry rerun",
+    "migration_preflight": "Rust preflight completed before Node migration inspection on bootstrap and current restart; 175 journal entries / 177 SQL files",
+    "git_identity": "source SHA, origin/main SHA, source tree, and 105-path NUL-safe fingerprint captured before and after the smoke runs",
+    "logs": {
+      "branding": "/tmp/rudder-rust-branding-v21.log",
+      "branding_sha256": "8e7bd499565df890d158696e9e2d64f80f8ea913d8ea4070a199bff7ee941d12",
+      "project_goal": "/tmp/rudder-rust-project-goal-v21.log",
+      "project_goal_sha256": "f8a4dff120e76cd5d2fa36c10539d939d5897e43f1550101bd74c032aa057354"
+    },
+    "cleanup": "Both scripts removed disposable homes and stopped Node, Actix, and embedded PostgreSQL processes."
+  },
+  "cleanup": {
+    "disposable_homes": "removed by each smoke script",
+    "server_and_actix_children": "stopped by each smoke script",
+    "production_data_or_traffic": "not touched"
+  }
+}

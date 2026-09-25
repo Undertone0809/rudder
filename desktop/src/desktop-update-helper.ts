@@ -31,6 +31,97 @@ export type HelperAttestation = {
 
 export type DesktopUpdateHelperIdentity = Pick<HelperAttestation, "path" | "ownerUid" | "mode" | "sha256">;
 
+export type DesktopUpdateRuntimeReceipt = {
+  descriptorPath: string;
+  instanceId: string;
+  apiPort: number;
+  postgresDataDir: string;
+  postgresPort: number;
+  /** Native helper may add this after the probation runtime has started. */
+  postmasterPid?: number;
+};
+
+function isRuntimePort(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 1
+    && value <= 65_535;
+}
+
+function isRuntimePath(value: unknown): value is string {
+  return typeof value === "string"
+    && path.isAbsolute(value)
+    && path.normalize(value) === value
+    && !value.split(path.sep).includes("..");
+}
+
+function parseDesktopUpdateRuntimeReceipt(value: unknown): DesktopUpdateRuntimeReceipt | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (!isRuntimePath(candidate.descriptorPath)
+    || typeof candidate.instanceId !== "string"
+    || !/^[A-Za-z0-9_-]+$/u.test(candidate.instanceId)
+    || !isRuntimePort(candidate.apiPort)
+    || !isRuntimePath(candidate.postgresDataDir)
+    || !isRuntimePort(candidate.postgresPort)) {
+    return null;
+  }
+  const postmasterPid = candidate.postmasterPid;
+  if (postmasterPid !== undefined
+    && postmasterPid !== null
+    && (typeof postmasterPid !== "number" || !Number.isSafeInteger(postmasterPid) || postmasterPid < 1)) {
+    return null;
+  }
+  return {
+    descriptorPath: candidate.descriptorPath,
+    instanceId: candidate.instanceId,
+    apiPort: candidate.apiPort,
+    postgresDataDir: candidate.postgresDataDir,
+    postgresPort: candidate.postgresPort,
+    ...(typeof candidate.postmasterPid === "number" ? { postmasterPid: candidate.postmasterPid } : {}),
+  };
+}
+
+export function isDesktopUpdateRuntimeReceipt(value: unknown): value is DesktopUpdateRuntimeReceipt {
+  return parseDesktopUpdateRuntimeReceipt(value) !== null;
+}
+
+export function desktopUpdateRuntimeReceiptsMatch(
+  actual: DesktopUpdateRuntimeReceipt | undefined,
+  expected: DesktopUpdateRuntimeReceipt | undefined,
+): boolean {
+  if (!actual || !expected) return false;
+  const parsedActual = parseDesktopUpdateRuntimeReceipt(actual);
+  const parsedExpected = parseDesktopUpdateRuntimeReceipt(expected);
+  if (!parsedActual || !parsedExpected) return false;
+  return parsedActual.descriptorPath === parsedExpected.descriptorPath
+    && parsedActual.instanceId === parsedExpected.instanceId
+    && parsedActual.apiPort === parsedExpected.apiPort
+    && parsedActual.postgresDataDir === parsedExpected.postgresDataDir
+    && parsedActual.postgresPort === parsedExpected.postgresPort
+    && (parsedExpected.postmasterPid === undefined || parsedActual.postmasterPid === parsedExpected.postmasterPid);
+}
+
+export function resolveDesktopUpdateRuntimeReceipt(options: {
+  instanceRoot: string;
+  instanceId: string;
+  apiPort: number;
+  postgresDataDir?: string;
+  postgresPort: number;
+  postmasterPid?: number;
+}): DesktopUpdateRuntimeReceipt {
+  const receipt: DesktopUpdateRuntimeReceipt = {
+    descriptorPath: path.resolve(options.instanceRoot, "runtime", "server.json"),
+    instanceId: options.instanceId,
+    apiPort: options.apiPort,
+    postgresDataDir: path.resolve(options.postgresDataDir ?? path.join(options.instanceRoot, "db")),
+    postgresPort: options.postgresPort,
+    ...(options.postmasterPid === undefined ? {} : { postmasterPid: options.postmasterPid }),
+  };
+  if (!isDesktopUpdateRuntimeReceipt(receipt)) throw new Error("Invalid Desktop runtime receipt.");
+  return receipt;
+}
+
 export type DesktopUpdateHelperRequest = {
   operation: "apply" | "recover" | "status";
   ownerToken: string;
@@ -55,6 +146,7 @@ export type DesktopUpdateHelperRequest = {
     databaseRevision: string;
     migrationCompatible: boolean;
   };
+  runtimeReceipt: DesktopUpdateRuntimeReceipt;
   helper: DesktopUpdateHelperIdentity;
   probation: {
     executable: string;
@@ -80,6 +172,7 @@ export type DesktopUpdateJournalSnapshot = {
   statePath?: string;
   targetVersion?: string;
   candidateSha256?: string;
+  runtimeReceipt?: DesktopUpdateRuntimeReceipt;
   helper?: DesktopUpdateHelperIdentity;
   admission?: { closed: boolean; activeRuns: number; drainToken: string };
   checkpoint?: { instanceId: string; databaseRevision: string; migrationCompatible: boolean };
@@ -230,6 +323,7 @@ export function readDesktopUpdateJournal(
     if (parsed.transactionId !== transactionId || typeof parsed.stage !== "string") {
       return { transactionId, stage: "invalid", recoveryRequired: true, recoveryCode: "journal_identity_mismatch" };
     }
+    const runtimeReceipt = parseDesktopUpdateRuntimeReceipt(parsed.runtimeReceipt);
     return {
       transactionId,
       ...(typeof parsed.ownerToken === "string" ? { ownerToken: parsed.ownerToken } : {}),
@@ -240,6 +334,7 @@ export function readDesktopUpdateJournal(
       ...(typeof parsed.statePath === "string" ? { statePath: parsed.statePath } : {}),
       ...(typeof parsed.targetVersion === "string" ? { targetVersion: parsed.targetVersion } : {}),
       ...(typeof parsed.candidateSha256 === "string" ? { candidateSha256: parsed.candidateSha256 } : {}),
+      ...(runtimeReceipt ? { runtimeReceipt } : {}),
       ...(parsed.helper && typeof parsed.helper === "object" ? { helper: parsed.helper as DesktopUpdateHelperIdentity } : {}),
       ...(parsed.admission && typeof parsed.admission === "object" ? { admission: parsed.admission as DesktopUpdateJournalSnapshot["admission"] } : {}),
       ...(parsed.checkpoint && typeof parsed.checkpoint === "object" ? { checkpoint: parsed.checkpoint as DesktopUpdateJournalSnapshot["checkpoint"] } : {}),
@@ -272,6 +367,7 @@ export function readDesktopUpdateHelperRequest(requestPath: string): DesktopUpda
     const parsed = JSON.parse(readFileSync(requestPath, "utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const request = parsed as Partial<DesktopUpdateHelperRequest>;
+    const runtimeReceipt = parseDesktopUpdateRuntimeReceipt(request.runtimeReceipt);
     if (request.operation !== "apply"
       || typeof request.ownerToken !== "string"
       || typeof request.transactionId !== "string"
@@ -283,11 +379,12 @@ export function readDesktopUpdateHelperRequest(requestPath: string): DesktopUpda
       || typeof request.statePath !== "string"
       || typeof request.targetVersion !== "string"
       || typeof request.candidateSha256 !== "string"
+      || !runtimeReceipt
       || !request.helper
       || !request.admission
       || !request.checkpoint
       || !request.probation) return null;
-    return request as DesktopUpdateHelperRequest;
+    return { ...request, runtimeReceipt } as DesktopUpdateHelperRequest;
   } catch {
     return null;
   }
@@ -298,17 +395,21 @@ export function requestMatchesAutomaticCandidate(input: {
   candidate: {
     updateId: string;
     version: string;
+    instanceId?: string;
     stagedArtifactPath?: string;
     stagedArtifactDigest?: string;
   };
   statePath: string;
   paths: DesktopUpdateTransactionPaths;
   helper?: DesktopUpdateHelperIdentity;
+  runtimeReceipt?: DesktopUpdateRuntimeReceipt;
 }): boolean {
-  const { request, candidate, statePath, paths, helper } = input;
+  const { request, candidate, statePath, paths, helper, runtimeReceipt } = input;
   return request.operation === "apply"
     && request.transactionId === candidate.updateId
     && request.targetVersion === candidate.version
+    && typeof candidate.instanceId === "string"
+    && candidate.instanceId === runtimeReceipt?.instanceId
     && request.statePath === statePath
     && request.installPath === paths.installPath
     && request.lkgPath === paths.lkgPath
@@ -316,6 +417,7 @@ export function requestMatchesAutomaticCandidate(input: {
     && request.checkpointPath === paths.checkpointPath
     && request.stagedPath === candidate.stagedArtifactPath
     && request.candidateSha256 === candidate.stagedArtifactDigest
+    && desktopUpdateRuntimeReceiptsMatch(request.runtimeReceipt, runtimeReceipt)
     && (!helper || (request.helper.path === helper.path
       && request.helper.ownerUid === helper.ownerUid
       && request.helper.mode === helper.mode
@@ -366,6 +468,9 @@ export function handoffDesktopUpdateToExternalHelper(options: {
 }
 
 export function writeDesktopUpdateHelperRequest(request: DesktopUpdateHelperRequest): string {
+  if (!isDesktopUpdateRuntimeReceipt(request.runtimeReceipt)) {
+    throw new Error("Desktop update runtime receipt is required.");
+  }
   const requestPath = `${request.journalPath}.request.json`;
   const temporaryPath = `${requestPath}.${process.pid}.${Date.now()}.tmp`;
   mkdirSync(path.dirname(requestPath), { recursive: true, mode: 0o700 });
@@ -393,6 +498,9 @@ export function recoverDesktopUpdateWithExternalHelper(options: {
   helperPath: string;
   spawnProcess?: typeof spawnSync;
 }): { ok: boolean; stage?: string; recoveryRequired?: boolean; recoveryCode?: string | null; error?: string } {
+  if (!isDesktopUpdateRuntimeReceipt(options.request.runtimeReceipt)) {
+    return { ok: false, error: "automatic_update_runtime_receipt_invalid" };
+  }
   const spawnProcess = options.spawnProcess ?? spawnSync;
   const requestPath = `${options.request.journalPath}.request.json`;
   try {

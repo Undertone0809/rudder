@@ -11,6 +11,7 @@ import { Command } from "commander";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import pc from "picocolors";
+import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import { openUrl } from "../../client/board-auth.js";
 import { ApiRequestError } from "../../client/http.js";
 import {
@@ -24,6 +25,10 @@ import {
 import { binaryContentTypeByExtension, readZipArchive } from "./zip.js";
 
 interface CompanyCommandOptions extends BaseClientOptions {}
+interface OrganizationBrandColorUpdateOptions extends BaseClientOptions {
+  brandColor: string;
+  idempotencyKey: string;
+}
 interface OrganizationMembersOptions extends BaseClientOptions {
   orgId?: string;
   query?: string;
@@ -1139,6 +1144,32 @@ export function registerCompanyCommands(program: Command): void {
         }
       }),
     { includeCompany: false },
+  );
+
+  const brandColor = company.command("brand-color").description("Organization brand color operations");
+  addCommonClientOptions(
+    brandColor
+      .command("update")
+      .description(getAgentCliCapabilityById("organization.brand_color.update").description)
+      .requiredOption("--brand-color <hex>", "Hex brand color (for example #123456)")
+      .requiredOption("--idempotency-key <key>", "Stable key for safe replay")
+      .action(async (opts: OrganizationBrandColorUpdateOptions) => {
+        try {
+          const ctx = resolveCommandContext(opts, { requireCompany: true });
+          const updated = await ctx.api.patch<Organization>(
+            `/api/orgs/${encodeURIComponent(ctx.orgId!)}/branding`,
+            { brandColor: opts.brandColor.trim() },
+            { headers: {
+              "x-rudder-idempotency-key": opts.idempotencyKey.trim(),
+              "x-rudder-required-authority": "rust",
+            } },
+          );
+          printOutput(updated, { json: ctx.json });
+        } catch (err) {
+          handleCommandError(err);
+        }
+      }),
+    { includeCompany: true },
   );
 
   addCommonClientOptions(

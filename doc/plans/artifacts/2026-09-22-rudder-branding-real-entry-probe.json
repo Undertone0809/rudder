@@ -1,0 +1,90 @@
+{
+  "schema": "rudder.rust-backend-completion.branding-real-entry-probe/v1",
+  "recorded_at": "2026-09-22",
+  "scope": "D1 organization brandColor write through the real Node entry, private Actix bridge, SQLx transaction, outbox, and restart replay",
+  "authorization": "disposable local runtime and embedded PostgreSQL only",
+  "candidate": {
+    "source_sha": "508978ce9f309ac537eb57b03e54b8b44ade8b25",
+    "source_tree": "a31267ba2e619b4169a10fed778bb6875447b397",
+    "plan_descendant": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "dirty_fingerprint": "6067376f97430ae8763e31fda4fecf5c9d8dba9ae5d3498602de87ff5c8dc71e",
+    "branch": "codex/rudder-full-rust-backend-completion-20260921"
+  },
+  "artifacts": {
+    "foundation_path": "native/target/debug/rudder-server-foundation",
+    "foundation_sha256": "70bcfa9c0793e452cf767dfdda906e32f004efe96455f983704ace868f350c67",
+    "migration_preflight_path": "native/target/debug/migration-preflight",
+    "migration_preflight_sha256": "88bb6bfbc1ef4e009c9688fefa0dd869e6b2415996f74ef5ae0499e18a66781f",
+    "runtime": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-actix-debug"
+  },
+  "data": {
+    "instance_id": "rust-branding-real-entry-17303",
+    "home": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-rust-branding-real-entry-FYozZU",
+    "api_port": 65471,
+    "embedded_postgres_port": 65472,
+    "organization_id": "0eeae263-0bef-42af-8527-66525e123f6a",
+    "disposal": "server, bridge children, embedded PostgreSQL, and temporary home disposed after probe"
+  },
+  "startup": {
+    "health_http_status": 200,
+    "migration_preflight": {
+      "first_run": "bootstrap",
+      "restart": "current",
+      "sql_migrations": 171,
+      "journal_entries": 169,
+      "manifest_fingerprint": "6df10b65da8034a116003108d9951d1e119b31be0e979f09874406f87af417da",
+      "node_migration_authority": true
+    },
+    "rust_branding_mode": "required",
+    "node_http_authority": true
+  },
+  "workflow": {
+    "public_request": "PATCH /api/orgs/0eeae263-0bef-42af-8527-66525e123f6a/branding",
+    "idempotency_key": "real-branding-0eeae263-0bef-42af-8527-66525e123f6a",
+    "body": { "brandColor": "#abcdef" },
+    "first_response": {
+      "status": 200,
+      "brandColor": "#abcdef"
+    },
+    "database_readback": {
+      "organization_brand_color": "#abcdef",
+      "mutation_state": {
+        "owner": "rust",
+        "mutation_version": "1",
+        "fence_epoch": "1"
+      },
+      "immutable_receipt": {
+        "outcome": "applied",
+        "resulting_version": "1",
+        "fence_epoch": "1"
+      },
+      "activity_actions": ["organization.branding_updated"],
+      "outbox": {
+        "state": "pending",
+        "attempts": 0
+      }
+    },
+    "restart_replay": {
+      "same_data_identity": true,
+      "status": 200,
+      "brandColor": "#abcdef",
+      "receipt_not_duplicated": true
+    },
+    "marker": "RUST_BRANDING_REAL_ENTRY_PASS"
+  },
+  "claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false,
+    "d1_owner_activation": false,
+    "branding_real_entry_connected": true,
+    "old_authority_retired": false,
+    "production_traffic_changed": false
+  },
+  "supporting_evidence": [
+    "doc/plans/artifacts/2026-09-22-rudder-rust-v9-real-entry-probe.json",
+    "server/src/__tests__/company-branding-route.test.ts",
+    "server/src/services/organization-mutation-outbox.test.ts",
+    "native/bins/rudder-server-foundation/tests/black_box.rs"
+  ]
+}

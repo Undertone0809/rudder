@@ -134,6 +134,59 @@ describe("server config env loading", () => {
     expect(config.databaseUrl).toBe("postgres://cwd-user:cwd-pass@db.example.com:5432/rudder");
   });
 
+  it("defaults the Rust member directory startup bridge to off", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    delete process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE;
+    delete process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE;
+    delete process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE;
+    delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
+    delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.rustFoundationMode).toBe("off");
+    expect(config.rustOrganizationBrandingMode).toBe("off");
+    expect(config.rustProjectGoalSetMode).toBe("off");
+    expect(config.rustFoundationBinaryPath).toBeUndefined();
+    expect(config.rustFoundationActorEnvelopeKey).toBeUndefined();
+  });
+
+  it("parses explicit Rust member directory startup bridge env config", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE = " required ";
+    process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE = " required ";
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = " required ";
+    process.env.RUDDER_SERVER_FOUNDATION_PATH = " /tmp/rudder-server-foundation ";
+    process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = " startup-actor-key ";
+
+    const loadConfig = await importLoadConfig();
+    const config = loadConfig();
+
+    expect(config.rustFoundationMode).toBe("required");
+    expect(config.rustOrganizationBrandingMode).toBe("required");
+    expect(config.rustProjectGoalSetMode).toBe("required");
+    expect(config.rustFoundationBinaryPath).toBe("/tmp/rudder-server-foundation");
+    expect(config.rustFoundationActorEnvelopeKey).toBe("startup-actor-key");
+  });
+
+  it("rejects an unsupported Rust member directory startup bridge mode", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
+    process.chdir(tempDir);
+    writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
+    process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE = "node-fallback";
+
+    const loadConfig = await importLoadConfig();
+
+    expect(() => loadConfig()).toThrow(
+      "RUDDER_RUST_MEMBER_DIRECTORY_MODE must be off, shadow, or required; received node-fallback",
+    );
+  });
+
   it("defaults automatic database backup guard to 256 MiB", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
     const projectDir = path.join(tempDir, "repo");

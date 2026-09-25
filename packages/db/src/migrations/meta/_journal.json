@@ -1184,6 +1184,48 @@
       "when": 1790101097300,
       "tag": "0168_issue_execution_cancellation_fence",
       "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1790101098300,
+      "tag": "0169_organization_mutation_state_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1790101098400,
+      "tag": "0170_project_goal_set_receipt_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 171,
+      "version": "7",
+      "when": 1790101098500,
+      "tag": "0171_organization_mutation_state_provisioning",
+      "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1790101098600,
+      "tag": "0172_organization_mutation_fence_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1790101098700,
+      "tag": "0173_organization_branding_mutation_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1790101098800,
+      "tag": "0174_project_goal_mutation_authority",
+      "breakpoints": true
     }
   ]
 }

@@ -259,7 +259,12 @@ function createGoalDb(initialGoal = makeGoal()) {
     select: () => selectBuilder(),
     insert: (table: unknown) => insertBuilder(table),
     update: (table: unknown) => updateBuilder(table),
-    execute: async () => [],
+    execute: async () => [{
+      owner: "node",
+      mutation_version: "0",
+      fence_epoch: "0",
+      fence_token: "11111111-1111-4111-8111-111111111111",
+    }],
     transaction: async (callback: (tx: any) => unknown) => callback(db),
   };
   return { db, state };

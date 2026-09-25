@@ -43,6 +43,7 @@ pub struct DirectRequest {
     pub method: HttpMethod,
     pub path: String,
     pub query: Vec<(String, String)>,
+    pub headers: Vec<(String, String)>,
     pub body: Option<Value>,
     pub context: RequiredContext,
     pub response_limit: usize,
@@ -152,6 +153,13 @@ fn map_request(
                 None,
             )
         }
+        "organization.brand_color.update" => (
+            HttpMethod::Patch,
+            format!("/api/orgs/{}/branding", encode_path_segment(org())),
+            Some(json!({
+                "brandColor": s("brandColor")?
+            })),
+        ),
         "goal.list" => {
             query.push(("lifecycle".into(), string_or(&input, "lifecycle", "active")));
             query.push(("limit".into(), positive(input.get("limit"), 20).to_string()));
@@ -516,11 +524,20 @@ fn map_request(
         browser if browser.starts_with("browser.") => map_browser(browser, &input)?,
         _ => unreachable!("every direct capability is mapped"),
     };
+    let headers = if id == "organization.brand_color.update" {
+        vec![
+            ("x-rudder-idempotency-key".into(), s("idempotencyKey")?),
+            ("x-rudder-required-authority".into(), "rust".into()),
+        ]
+    } else {
+        Vec::new()
+    };
     Ok(DirectRequest {
         capability_id: id.into(),
         method,
         path,
         query,
+        headers,
         body,
         context,
         response_limit: if id.starts_with("browser.") {

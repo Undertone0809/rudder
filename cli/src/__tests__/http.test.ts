@@ -56,6 +56,32 @@ describe("RudderApiClient", () => {
     expect(headers["content-type"]).toBe("application/json");
   });
 
+  it("preserves operation-specific headers alongside agent context", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new RudderApiClient({
+      apiBase: "http://localhost:3100",
+      agentId: "agent-123",
+      runId: "run-abc",
+    });
+
+    await client.patch(
+      "/api/orgs/org-123/branding",
+      { brandColor: "#123456" },
+      { headers: { "x-rudder-idempotency-key": "brand-color-1" } },
+    );
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(call[1].headers).toMatchObject({
+      "x-rudder-idempotency-key": "brand-color-1",
+      "x-rudder-agent-id": "agent-123",
+      "x-rudder-run-id": "run-abc",
+    });
+  });
+
   it("does not attach agent context headers on read requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200 }),

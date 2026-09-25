@@ -4,6 +4,7 @@ import {
   createDb,
   ensurePostgresDatabase,
   goals,
+  organizationMutationState,
   organizationResources,
   organizations,
   projectResourceAttachments,
@@ -20,6 +21,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { resolveOrganizationWorkspaceRoot, resolveProjectLibraryDir } from "../home-paths.js";
 import { projectService } from "../services/projects.js";
+import { resourceCatalogService } from "../services/resource-catalog.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -96,6 +98,11 @@ describe("project service workspace resolution", () => {
   const originalRudderHome = process.env.RUDDER_HOME;
   const originalRudderInstanceId = process.env.RUDDER_INSTANCE_ID;
 
+  async function provisionNodeMutationState(orgIds: string | string[]) {
+    const ids = Array.isArray(orgIds) ? orgIds : [orgIds];
+    await db.insert(organizationMutationState).values(ids.map((orgId) => ({ orgId }))).onConflictDoNothing();
+  }
+
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
@@ -142,6 +149,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "SWO",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
 
     const created = await projectSvc.create(orgId, {
       name: "Rudder",
@@ -188,6 +196,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "RWO",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
 
     const created = await projectSvc.create(orgId, {
       name: "Repairable Project",
@@ -219,6 +228,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "NWO",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
 
     const created = await projectSvc.create(orgId, {
       name: "Original Project",
@@ -256,6 +266,7 @@ describe("project service workspace resolution", () => {
         requireBoardApprovalForNewAgents: false,
       },
     ]);
+    await provisionNodeMutationState([orgId, otherOrgId]);
     const otherGoal = await db.insert(goals).values({
       orgId: otherOrgId,
       title: "Other org goal",
@@ -290,6 +301,7 @@ describe("project service workspace resolution", () => {
         requireBoardApprovalForNewAgents: false,
       },
     ]);
+    await provisionNodeMutationState([orgId, otherOrgId]);
     const otherGoal = await db.insert(goals).values({
       orgId: otherOrgId,
       title: "Other org legacy goal",
@@ -326,6 +338,7 @@ describe("project service workspace resolution", () => {
         requireBoardApprovalForNewAgents: false,
       },
     ]);
+    await provisionNodeMutationState([orgId, otherOrgId]);
     const project = await projectSvc.create(orgId, {
       name: "Goal Update Project",
       status: "planned",
@@ -362,6 +375,7 @@ describe("project service workspace resolution", () => {
         requireBoardApprovalForNewAgents: false,
       },
     ]);
+    await provisionNodeMutationState([orgId, otherOrgId]);
     const otherAgent = await db.insert(agents).values({
       orgId: otherOrgId,
       name: "Other Agent",
@@ -397,6 +411,7 @@ describe("project service workspace resolution", () => {
         requireBoardApprovalForNewAgents: false,
       },
     ]);
+    await provisionNodeMutationState([orgId, otherOrgId]);
     const project = await projectSvc.create(orgId, {
       name: "Owned Project",
       status: "planned",
@@ -428,6 +443,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "LWO",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
 
     const created = await projectSvc.create(orgId, {
       name: "Legacy Project",
@@ -459,6 +475,69 @@ describe("project service workspace resolution", () => {
     expect(reloaded?.workspaces.map((workspace) => workspace.id)).toEqual([workspaceId]);
   });
 
+  it("fails closed before the first workspace write when organization mutation authority is rust", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Workspace Fence rust",
+      urlKey: deriveOrganizationUrlKey("Workspace Fence rust"),
+      issuePrefix: "RWF",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await provisionNodeMutationState(orgId);
+    const project = await projectSvc.create(orgId, {
+      name: "Workspace Fence Project rust",
+      status: "planned",
+    });
+    await db
+      .update(organizationMutationState)
+      .set({ owner: "rust", fenceEpoch: 1n, fenceToken: randomUUID() })
+      .where(eq(organizationMutationState.orgId, orgId));
+
+    await expect(projectSvc.createWorkspace(project.id, {
+      cwd: "/tmp/rudder-workspace-fence-create",
+      isPrimary: true,
+    })).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(eq(projectWorkspaces.projectId, project.id))).toEqual([]);
+
+    const workspaceId = randomUUID();
+    await db.insert(projectWorkspaces).values({
+      id: workspaceId,
+      orgId,
+      projectId: project.id,
+      name: "Existing workspace",
+      sourceType: "local_path",
+      cwd: "/tmp/rudder-existing-workspace",
+      isPrimary: true,
+    });
+
+    await expect(projectSvc.updateWorkspace(project.id, workspaceId, {
+      name: "Updated workspace",
+    })).rejects.toMatchObject({
+      status: 409,
+    });
+    const afterUpdate = await db
+      .select({ name: projectWorkspaces.name, isPrimary: projectWorkspaces.isPrimary })
+      .from(projectWorkspaces)
+      .where(eq(projectWorkspaces.id, workspaceId))
+      .then((rows) => rows[0]);
+    expect(afterUpdate).toEqual({ name: "Existing workspace", isPrimary: true });
+
+    await expect(projectSvc.removeWorkspace(project.id, workspaceId)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(eq(projectWorkspaces.id, workspaceId))).toEqual([{ id: workspaceId }]);
+  });
+
   it("creates and returns project resource attachments from existing and inline org resources", async () => {
     const orgId = randomUUID();
     await db.insert(organizations).values({
@@ -468,6 +547,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "RES",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
 
     const existingResource = await db.insert(organizationResources).values({
       orgId,
@@ -546,6 +626,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "RRO",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
 
     const existingResource = await db.insert(organizationResources).values({
       orgId,
@@ -588,6 +669,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "PRO",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
     const primaryResource = await db.insert(organizationResources).values({
       orgId,
       name: "Primary repo",
@@ -632,6 +714,7 @@ describe("project service workspace resolution", () => {
       issuePrefix: "PIO",
       requireBoardApprovalForNewAgents: false,
     });
+    await provisionNodeMutationState(orgId);
     const resources = await db.insert(organizationResources).values([
       { orgId, name: "Repo A", kind: "directory", sourceType: "external", locator: "/tmp/repo-a" },
       { orgId, name: "Repo B", kind: "directory", sourceType: "external", locator: "/tmp/repo-b" },
@@ -649,5 +732,94 @@ describe("project service workspace resolution", () => {
       status: 400,
       message: "A project can have at most one primary source.",
     });
+  });
+
+  it("rejects cross-organization resource attachments without deleting existing links", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      {
+        id: orgId,
+        name: "Resource Ownership Org",
+        urlKey: deriveOrganizationUrlKey("Resource Ownership Org"),
+        issuePrefix: "ROO",
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: otherOrgId,
+        name: "Other Resource Ownership Org",
+        urlKey: deriveOrganizationUrlKey("Other Resource Ownership Org"),
+        issuePrefix: "ORO",
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await provisionNodeMutationState([orgId, otherOrgId]);
+
+    const project = await db.insert(projects).values({
+      orgId,
+      name: "Resource Ownership Project",
+      status: "planned",
+    }).returning().then((rows) => rows[0]!);
+    const localResource = await db.insert(organizationResources).values({
+      orgId,
+      name: "Local resource",
+      kind: "file",
+      sourceType: "external",
+      locator: "/tmp/local-resource",
+    }).returning().then((rows) => rows[0]!);
+    const foreignResource = await db.insert(organizationResources).values({
+      orgId: otherOrgId,
+      name: "Foreign resource",
+      kind: "file",
+      sourceType: "external",
+      locator: "/tmp/foreign-resource",
+    }).returning().then((rows) => rows[0]!);
+    const existingAttachment = await db.insert(projectResourceAttachments).values({
+      orgId,
+      projectId: project.id,
+      resourceId: localResource.id,
+      role: "reference",
+    }).returning().then((rows) => rows[0]!);
+
+    const resources = resourceCatalogService(db);
+    await expect(resources.replaceProjectResourceAttachments({
+      orgId: otherOrgId,
+      projectId: project.id,
+      attachments: [],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Project must belong to same organization",
+    });
+    await expect(resources.replaceProjectResourceAttachments({
+      orgId,
+      projectId: project.id,
+      attachments: [{ resourceId: foreignResource.id }],
+    })).rejects.toMatchObject({
+      status: 422,
+      message: "Project resources must belong to same organization",
+    });
+
+    expect(await db
+      .select({ id: projectResourceAttachments.id, resourceId: projectResourceAttachments.resourceId })
+      .from(projectResourceAttachments)
+      .where(eq(projectResourceAttachments.projectId, project.id))).toEqual([{
+      id: existingAttachment.id,
+      resourceId: localResource.id,
+    }]);
+
+    const corruptAttachment = await db.insert(projectResourceAttachments).values({
+      orgId,
+      projectId: project.id,
+      resourceId: foreignResource.id,
+      role: "reference",
+    }).returning().then((rows) => rows[0]!);
+    await expect(resources.updateProjectResourceAttachment(project.id, corruptAttachment.id, {
+      note: "must not cross organization boundary",
+    })).resolves.toBeNull();
+    await expect(resources.removeProjectResourceAttachment(project.id, corruptAttachment.id)).resolves.toBeNull();
+    expect(await db
+      .select({ id: projectResourceAttachments.id })
+      .from(projectResourceAttachments)
+      .where(eq(projectResourceAttachments.id, corruptAttachment.id))).toEqual([{ id: corruptAttachment.id }]);
   });
 });
