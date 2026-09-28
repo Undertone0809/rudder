@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,8 @@ const childProcessMock = vi.hoisted(() => ({
   stdout: "provider 3.14.15\n",
   stderr: "",
   error: null as Error | null,
+  realPython: false,
+  installedVersion: "0.21.0\n",
 }));
 
 vi.mock("node:child_process", () => ({
@@ -19,12 +21,30 @@ vi.mock("node:child_process", () => ({
     ) => {
       childProcessMock.calls.push({ command, args, options });
       if (childProcessMock.error) throw childProcessMock.error;
+      if (args[0] === "-I") {
+        if (childProcessMock.realPython) {
+          const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+          return new Promise((resolve, reject) => {
+            actual.execFile(command, args, options, (error, stdout, stderr) => {
+              if (error) reject(error);
+              else resolve({ stdout, stderr });
+            });
+          });
+        }
+        return { stdout: childProcessMock.installedVersion, stderr: "" };
+      }
       return { stdout: childProcessMock.stdout, stderr: childProcessMock.stderr };
     },
   }),
 }));
 
 import { prepareOtherRuntimeProviderProfile, versionFromOutput } from "./prepare-other-runtime-provider-profile.js";
+
+const actualChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+const pythonDiscovery = actualChildProcess.spawnSync("python3", ["-I", "-S", "-c", "import sys; print(sys.executable)"], {
+  encoding: "utf8", timeout: 5_000,
+});
+const installedPython = pythonDiscovery.status === 0 ? pythonDiscovery.stdout.trim() : null;
 
 describe("other runtime provider profile preparation", () => {
   let root: string;
@@ -37,10 +57,112 @@ describe("other runtime provider profile preparation", () => {
     childProcessMock.stdout = "provider 3.14.15\n";
     childProcessMock.stderr = "";
     childProcessMock.error = null;
+    childProcessMock.realPython = false;
+    childProcessMock.installedVersion = "0.21.0\n";
   });
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  async function hermesProfile(versionSource = '__version__ = "0.21.0"\n') {
+    const hermesHome = path.join(root, "hermes-home");
+    const sourcePath = path.join(hermesHome, "hermes-agent");
+    await mkdir(path.join(sourcePath, "hermes_cli"), { recursive: true });
+    await writeFile(path.join(sourcePath, "hermes_state.py"), "");
+    await writeFile(path.join(sourcePath, "hermes_cli", "__init__.py"), versionSource);
+    return {
+      cwd, hermesHome, hermesSourcePath: sourcePath,
+      hermesPythonCommand: installedPython ?? process.execPath,
+      hermesChatBackend: "native_product_rpc",
+      hermesAcpCommand: "/a/different/hermes",
+      hermesProviderVersion: "99.0.0", providerVersion: "99.0.0",
+    };
+  }
+
+  const prepareHermes = (config: Record<string, unknown>) => prepareOtherRuntimeProviderProfile({
+    runtimeType: "hermes_gateway", orgId: "org", agentId: "agent", config,
+  });
+
+  it.runIf(installedPython)("reads the selected installed source without importing Hermes or trusting supplied versions", async () => {
+    const sideEffect = path.join(root, "must-not-execute");
+    const config = await hermesProfile(`"""\n__version__ = "88.0.0"\n"""\n__version__ = "0.21.0"\nopen(${JSON.stringify(sideEffect)}, "w").write("executed")\n`);
+    childProcessMock.realPython = true;
+    const result = await prepareHermes(config);
+    expect(result).toMatchObject({ providerVersion: "0.21.0", hermesProviderVersion: "0.21.0", hermesSourcePath: config.hermesSourcePath });
+    expect(config.providerVersion).toBe("99.0.0");
+    await expect(access(sideEffect)).rejects.toThrow();
+    expect(childProcessMock.calls).toHaveLength(1);
+    expect(childProcessMock.calls[0]).toMatchObject({
+      command: config.hermesPythonCommand,
+      options: { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024 },
+    });
+    expect(childProcessMock.calls[0].args.slice(0, 4)).toEqual(["-I", "-S", "-B", "-c"]);
+    expect(childProcessMock.calls[0].args.at(-1)).toBe(config.hermesSourcePath);
+  });
+
+  it("uses installed source discovery for the implicitly selected Product RPC backend", async () => {
+    const config = await hermesProfile();
+    const result = await prepareHermes({ ...config, hermesChatBackend: undefined });
+    expect(result.hermesProviderVersion).toBe("0.21.0");
+    expect(childProcessMock.calls[0].command).toBe(config.hermesPythonCommand);
+  });
+
+  it.each(["acp", "native_runs_http"])("preserves the executable version probe for explicit %s even with an unrelated source", async (backend) => {
+    const config = await hermesProfile();
+    const result = await prepareHermes({ ...config, hermesChatBackend: backend });
+    expect(result.hermesProviderVersion).toBe("3.14.15");
+    expect(childProcessMock.calls).toEqual([expect.objectContaining({
+      command: config.hermesAcpCommand, args: ["--version"], options: expect.objectContaining({ timeout: 15_000 }),
+    })]);
+  });
+
+  it.each(["hermesPythonCommand", "hermesSourcePath"])("rejects missing or relative %s rather than trusting a supplied version or another home", async (field) => {
+    const config = await hermesProfile();
+    for (const value of [path.join(root, "missing"), "relative/path"]) {
+      await expect(prepareHermes({ ...config, [field]: value })).rejects.toThrow("requires an available absolute");
+    }
+    expect(childProcessMock.calls).toHaveLength(0);
+  });
+
+  it.runIf(installedPython).each([
+    ["absent declaration", "# __version__ = '9.9.9'\n"],
+    ["dynamic declaration", "__version__ = str(21)\n"],
+    ["duplicate declaration", "__version__ = '0.21.0'\n__version__ = '9.9.9'\n"],
+    ["invalid version", "__version__ = 'unavailable'\n"],
+    ["oversized module", "#".repeat(65_537)],
+  ])("fails closed for an %s in the selected source", async (_name, content) => {
+    childProcessMock.realPython = true;
+    await expect(prepareHermes(await hermesProfile(content))).rejects.toThrow("installed version discovery failed");
+    expect(childProcessMock.calls).toHaveLength(1);
+    expect(childProcessMock.calls[0].args).not.toContain("--version");
+  });
+
+  it.runIf(installedPython)("rejects a missing version module and one linked to a different installation", async () => {
+    const config = await hermesProfile();
+    const modulePath = path.join(config.hermesSourcePath, "hermes_cli", "__init__.py");
+    await rm(modulePath);
+    childProcessMock.realPython = true;
+    await expect(prepareHermes(config)).rejects.toThrow("installed version discovery failed");
+    const otherModule = path.join(root, "other-init.py");
+    await writeFile(otherModule, '__version__ = "9.9.9"');
+    await symlink(otherModule, modulePath);
+    await expect(prepareHermes(config)).rejects.toThrow("escapes selected source");
+  });
+
+  it("fails closed on a timed-out selected Python probe without a heavy CLI fallback", async () => {
+    childProcessMock.error = new Error("ETIMEDOUT");
+    await expect(prepareHermes(await hermesProfile())).rejects.toThrow("installed version discovery failed");
+    expect(childProcessMock.calls).toHaveLength(1);
+    expect(childProcessMock.calls[0].options).toMatchObject({ timeout: 5_000, killSignal: "SIGKILL" });
+    expect(childProcessMock.calls[0].args).not.toContain("--version");
+  });
+
+  it("keeps custom ACP timeout failures on the bounded executable path", async () => {
+    childProcessMock.error = new Error("ETIMEDOUT");
+    await expect(prepareHermes({ ...await hermesProfile(), hermesChatBackend: "acp" })).rejects.toThrow("provider version discovery failed");
+    expect(childProcessMock.calls).toHaveLength(1);
+    expect(childProcessMock.calls[0]).toMatchObject({ args: ["--version"], options: { timeout: 15_000 } });
   });
 
   it("parses semver and Cursor date-style installed versions without accepting arbitrary text", () => {

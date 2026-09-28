@@ -244,6 +244,62 @@ async function discoverProviderVersion(input: {
   return version;
 }
 
+// Parse the selected Product RPC source without importing Hermes (or its CLI
+// startup hooks). -I/-S also exclude cwd, PYTHONPATH and site customization.
+const HERMES_INSTALLED_VERSION_SCRIPT = `
+import ast, os, pathlib, stat, sys
+source = pathlib.Path(sys.argv[1]).resolve(strict=True)
+module = (source / "hermes_cli" / "__init__.py").resolve(strict=True)
+if source not in module.parents:
+    raise ValueError("Hermes version module escapes selected source")
+fd = os.open(module, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+with os.fdopen(fd, "rb") as stream:
+    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+        raise ValueError("Hermes version module must be a regular file")
+    content = stream.read(65537)
+if len(content) > 65536:
+    raise ValueError("Hermes version module exceeds size limit")
+declarations = []
+for node in ast.parse(content).body:
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if any(isinstance(target, ast.Name) and target.id == "__version__" for target in targets):
+            declarations.append(node)
+if len(declarations) != 1:
+    raise ValueError("Hermes requires one installed version declaration")
+node = declarations[0]
+if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.value, ast.Constant) or not isinstance(node.value.value, str):
+    raise ValueError("Hermes installed version must be a literal string")
+print(node.value.value)
+`;
+
+async function discoverHermesProductVersion(input: {
+  pythonCommand: string;
+  sourcePath: string;
+  cwd: string;
+  env: Record<string, string>;
+}): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(input.pythonCommand, [
+      "-I", "-S", "-B", "-c", HERMES_INSTALLED_VERSION_SCRIPT, input.sourcePath,
+    ], {
+      cwd: input.cwd,
+      env: input.env,
+      timeout: 5_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+    });
+    const version = stdout.trim();
+    if (!version || versionFromOutput(version) !== version) {
+      throw new Error("no parseable installed version");
+    }
+    return version;
+  } catch (error) {
+    throw new Error(`hermes_gateway installed version discovery failed for ${input.sourcePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function withProviderVersion(
   config: Record<string, unknown>,
   providerVersion: string,
@@ -294,7 +350,6 @@ export async function prepareOtherRuntimeProviderProfile(
   if (input.runtimeType === "hermes_gateway") {
     const command = firstString(config.hermesAcpCommand, config.acpCommand, config.command) ?? "hermes";
     const args = readStringArray(config.hermesAcpArgs ?? config.acpArgs ?? config.args) ?? ["acp"];
-    const providerVersion = await discoverProviderVersion({ runtimeType: input.runtimeType, command, cwd, env: probeEnv });
     const protocolVersion = readPositiveNumber(
       config.hermesAcpProtocolVersion,
       config.acpProtocolVersion,
@@ -302,6 +357,23 @@ export async function prepareOtherRuntimeProviderProfile(
     ) ?? 1;
     const hermesHome = absolutePath(firstString(config.hermesHome, configuredEnv.HERMES_HOME));
     const historyProfile = await resolveHermesHistoryProfile(config, configuredEnv, hermesHome);
+    const backend = firstString(config.hermesChatBackend)?.toLowerCase();
+    const hasProductProfile = Boolean(hermesHome && historyProfile.pythonCommand && historyProfile.sourcePath);
+    const useProductVersion = backend === "native_product_rpc" || (!backend && hasProductProfile);
+    if (useProductVersion) {
+      const configuredPaths = [
+        firstString(config.hermesPythonCommand, config.hermesHistoryPythonCommand, configuredEnv.HERMES_PYTHON),
+        firstString(config.hermesSourcePath, config.hermesHistorySourcePath, configuredEnv.HERMES_SOURCE),
+      ];
+      if (!hasProductProfile || configuredPaths.some((value) => value && !path.isAbsolute(value))) {
+        throw new Error("hermes_gateway native_product_rpc requires an available absolute Python, source, and Hermes home profile");
+      }
+    }
+    const providerVersion = useProductVersion
+      ? await discoverHermesProductVersion({
+        pythonCommand: historyProfile.pythonCommand!, sourcePath: historyProfile.sourcePath!, cwd, env: probeEnv,
+      })
+      : await discoverProviderVersion({ runtimeType: input.runtimeType, command, cwd, env: probeEnv });
     return {
       ...withProviderVersion(config, providerVersion, "hermesProviderVersion"),
       hermesAcpCommand: command,
