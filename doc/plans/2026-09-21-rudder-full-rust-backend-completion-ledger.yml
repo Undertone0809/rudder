@@ -2,6 +2,17 @@ schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-29
 source:
+  candidate_sha: 8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0
+  candidate_tree: 7b02b6a6412130a5461042216ad15093806465ac
+  source_fingerprint: 4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f
+  main_base_sha: f6eab53c3cee4385e36da60098a83cbd8734e32f
+  merged_sha: e14771c4a0ed642bafd478c18dd1278855be89c5
+  merged_tree: 7b02b6a6412130a5461042216ad15093806465ac
+  merged_at: '2026-09-28T22:22:31Z'
+  acceptance: Newton_stage_accept_Hubble_verifier_PASS_Newton_final_accept_exact8c_CI_PASS_PR233_MERGED
+  receipt_packet: doc/plans/2026-09-29-rudder-member-default-delivery-packet-v25.json
+  row_refresh_scope: organization_member_directory_default_only_other_rows_retain_named_D1_audit_provenance
+historical_d1_source:
   candidate_sha: 948929b25251183bd552fc8e893a121fa878d860
   candidate_tree: 51c885ef86d2c8cbbb5ebc6d063add4a9169ac41
   dirty_fingerprint: bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410
@@ -23,14 +34,14 @@ source:
   runtime_equivalence: foundation_API_CLI_MCP_unchanged_from_frozen_945a0d5d4
   pending_worktree_patch: none_code_fence_fix_committed
   authority_row_provenance: Pasteur_read_only_source_and_existing_evidence_audit_of_948_tree_identical_to_merged_e2
-pending_candidate:
-  source_sha: 1c387d7c1fdcce841a98d8928e80795d5e7feb95
-  source_fingerprint: 91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed
+accepted_member_candidate:
+  source_sha: 8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0
+  source_fingerprint: 4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f
   pr: https://github.com/Undertone0809/rudder/pull/233
-  review: integrated_stage_accept_independent_verifier_and_final_review_pending
+  review: integrated_stage_accept_Hubble_independent_verifier_PASS_Newton_final_accept_exact_CI_PASS_merged_e147
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
-  evidence: author_host_installed_API_CLI_MCP_PASS_not_independent_acceptance
-  authority_effect: none_until_candidate_gates_pass_current_rows_remain_bound_to_accepted_Main_source
+  evidence: Hubble_normal_prepack_fresh_install_default_API_CLI_MCP_recovery_off_tamper_bounds_PASS_actual_artifact939_runtime1c_equivalent8c
+  authority_effect: member_directory_default_verified_Node_explicit_off_reader_and_public_listener_not_retired
 authority_audit:
   source_sha: e2e603f07c7d4b7410fea7792b9a4d0667d3777e
   source_tree: 51c885ef86d2c8cbbb5ebc6d063add4a9169ac41
@@ -39,7 +50,7 @@ authority_audit:
   capability_semantics: whole_row_booleans_exclude_named_partial_subcapabilities_no_percentage_rollup
   evidence_base: artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json
   exclusions: unmerged_default_read_work_and_private_implementations_on_other_branches_are_not_current_Main_authority
-current_checkout:
+historical_d1_checkout:
   worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
   branch: codex/rudder-d1-candidate-20260928
   origin_main_observed: 66b500aef009a0554ebf658de4fca6ddfa8466f1
@@ -330,23 +341,23 @@ authority_rows:
   - id: read.organization_member_directory
     domain: organization_read
     authority_kind: rust_product_runtime
-    current_authority: Node_default_member_read_opt_in_SQLx_via_private_Actix
+    current_authority: required_SQLx_read_via_private_Actix_by_default_Node_public_auth_entry_and_explicit_off_reader_remain
     rust_asset: native/crates/server-foundation/src/lib.rs
-    public_entrypoint: Node supported startup -> private authenticated Actix member-directory read route; CLI/MCP consumers remain to be connected
+    public_entrypoint: installed_generic_API_CLI_MCP_default_Node_authenticated_entry_to_private_Actix
     auth_scope: server-issued actor envelope, organization, session, audience, request binding
     transaction_boundary: bounded SQLx read queries for count and ordered page
     audit_side_effects: none; read receipt and process identity only
     recovery: bounded query, cursor replay, restart, missing database, explicit auth failure
-    cli_mcp: existing organization member-directory contract requires differential parity before connection
+    cli_mcp: independent_installed_default_pagination_and_auth_scope_parity_PASS
     fence: no business mutation fence; auth/session epoch and private bridge lease required
-    status: real_entry_connected
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    default_path_scope: no_current_candidate_default_receipt_following_slice_in_progress
-    evidence_status: opt_in_public_Node_API_to_Actix_read_existing_tests_historical_default_receipt_not_bound_to_948
+    status: default_path_verified
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: true, old_authority_retired: false}
+    default_path_scope: installed_generic_API_CLI_MCP_macOS_arm64_verified_at8c_equivalent_merged_e147_six_target_builds_not_six_target_runtime_claim
+    evidence_status: artifacts/2026-09-29-rudder-member-default-independent-verifier-v25.json
     historical_evidence: artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json
-    acceptance_limit: historical_other_lineage_default_receipt_is_not_current_acceptance
+    acceptance_limit: Node_public_listener_auth_CLI_MCP_runtime_and_explicit_off_reader_remain_no_whole_backend_retirement
     retirement_gate: exact public/default route and CLI/MCP read parity with Node route, then Node read path retirement
-    next_action: complete_generic_installed_API_CLI_MCP_default_slice_then_independent_exact_candidate_acceptance
+    next_action: preserve_verified_default_while_migrating_public_listener_auth_and_retiring_explicit_off_reader_with_installed_negative_proof
   - id: security.actor_envelope_and_private_bridge
     domain: identity_boundary
     authority_kind: rust_product_runtime
