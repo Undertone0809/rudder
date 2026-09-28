@@ -576,6 +576,26 @@ describe("runtime driver facade", () => {
       capabilityRevision: binding.capabilityRevision,
     });
 
+    const cursorCapabilities = nativeResolver("cursor", binding);
+    expect(cursorCapabilities).not.toBeNull();
+    expect(cursorCapabilities!.sessionResume.evidence.status).toBe("unknown");
+    await cursorCapabilities!.transcript.readRange({
+      runtimeType: "cursor",
+      session: {
+        sessionId: "driver-acp-session",
+        sessionParams: first.sessionParams ?? {},
+        sessionDisplayId: "driver-acp-session",
+      },
+      binding,
+      workspace: { workspaceBindingId: binding.workspaceBindingId },
+    });
+    expect(cursorCapabilities!.sessionResume.evidence).toMatchObject({
+      status: "supported",
+      profileBound: true,
+      transport: "cursor-agent-acp-stdio",
+    });
+    expect(firstFixture.requests.map((request) => request.method)).toContain("session/load");
+
     const resumed = driver.resume({ sessionParams: first.sessionParams });
     expect(resumed).toMatchObject({ status: "supported", value: { sessionId: "driver-acp-session" } });
     if (resumed.status !== "supported") throw new Error("Cursor ACP session was not admitted for resume.");
