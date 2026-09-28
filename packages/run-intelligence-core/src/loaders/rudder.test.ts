@@ -209,6 +209,7 @@ describe("Rudder summary loaders", () => {
     await expect(loadObservedRunDetail("http://localhost:3100/api", "run-1")).resolves.toMatchObject({
       transcript: [{ kind: "assistant", text: "reader" }],
       events: [expect.objectContaining({ eventType: "transcript.entry" })],
+      logContent: JSON.stringify({ ts: "2026-06-17T09:00:01.000Z", stream: "system", chunk: "fallback" }),
       logChunks: [expect.objectContaining({ chunk: "fallback" })],
     });
     await expect(getRunTranscript("http://localhost:3100/api", "run-1")).resolves.toEqual([
@@ -217,7 +218,7 @@ describe("Rudder summary loaders", () => {
     expect(fetchMock.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith("/transcript"))).toBe(true);
   });
 
-  it("keeps an empty native transcript separate from a stale compatibility log", async () => {
+  it("keeps an empty native transcript canonical and does not request a stale compatibility log", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/run-native-empty") && !url.pathname.endsWith("/transcript")) {
@@ -253,14 +254,14 @@ describe("Rudder summary loaders", () => {
 
     await expect(loadObservedRunDetail("http://localhost:3100/api", "run-native-empty")).resolves.toMatchObject({
       transcript: [],
-      logContent: "",
+      logContent: null,
       logChunks: [],
       events: [expect.objectContaining({ eventType: "transcript.entry" })],
     });
-    expect(fetchMock.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith("/log"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith("/log"))).toBe(false);
   });
 
-  it("does not rebuild a transcript from diagnostics when the Reader endpoint is unavailable", async () => {
+  it("surfaces a missing Reader endpoint instead of rebuilding a transcript from diagnostics", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname.endsWith("/run-2") && !url.pathname.endsWith("/transcript")) {
@@ -289,11 +290,72 @@ describe("Rudder summary loaders", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(loadObservedRunDetail("http://localhost:3100/api", "run-2")).resolves.toMatchObject({
-      transcript: [],
-      events: [expect.objectContaining({ eventType: "transcript.entry" })],
-      logChunks: [expect.objectContaining({ chunk: "legacy log" })],
+    await expect(loadObservedRunDetail("http://localhost:3100/api", "run-2"))
+      .rejects.toThrow("Request failed (404)");
+  });
+
+  it("surfaces native Reader failures without requesting legacy logs", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/run-native-reader-failure") && !url.pathname.endsWith("/transcript")) {
+        return new Response(JSON.stringify({
+          run: makeRun({
+            id: "run-native-reader-failure",
+            resultJson: { retention: { transcriptSource: "native" } },
+            logStore: "local_file",
+            logRef: "stale-native-run.ndjson",
+          }),
+          agentName: "Native Agent",
+          orgName: "Org",
+          issue: null,
+          bundle,
+        }), { status: 200 });
+      }
+      if (url.pathname.endsWith("/events")) {
+        return new Response(JSON.stringify({ items: [], page: { hasMore: false, nextCursor: null } }), { status: 200 });
+      }
+      if (url.pathname.endsWith("/transcript")) return new Response(null, { status: 500 });
+      return new Response(null, { status: 404 });
     });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadObservedRunDetail("http://localhost:3100/api", "run-native-reader-failure"))
+      .rejects.toThrow("Request failed (500)");
+    expect(fetchMock.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith("/log"))).toBe(false);
+  });
+
+  it("preserves raw-log loading when an explicit legacy marker overrides native identity fields", async () => {
+    const rawLog = "legacy stdout bytes\n";
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/run-explicit-legacy") && !url.pathname.endsWith("/transcript")) {
+        return new Response(JSON.stringify({
+          run: makeRun({
+            id: "run-explicit-legacy",
+            contextSnapshot: { transcriptSource: "legacy", runtimeBindingId: "stale-binding" },
+          }),
+          agentName: "Legacy Agent",
+          orgName: "Org",
+          issue: null,
+          bundle,
+        }), { status: 200 });
+      }
+      if (url.pathname.endsWith("/events")) {
+        return new Response(JSON.stringify({ items: [], page: { hasMore: false, nextCursor: null } }), { status: 200 });
+      }
+      if (url.pathname.endsWith("/log")) {
+        return new Response(JSON.stringify({ content: rawLog, page: { eof: true, nextOffset: null } }), { status: 200 });
+      }
+      if (url.pathname.endsWith("/transcript")) {
+        return new Response(JSON.stringify({ entries: [], page: { hasMore: false, nextCursor: null } }), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(loadObservedRunDetail("http://localhost:3100/api", "run-explicit-legacy"))
+      .resolves.toMatchObject({ logContent: rawLog });
+    expect(fetchMock.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith("/log"))).toBe(true);
   });
 
   it("does not hide Reader authorization failures behind an empty transcript", async () => {

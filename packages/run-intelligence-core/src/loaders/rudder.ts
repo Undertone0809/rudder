@@ -152,25 +152,37 @@ export async function findObservedRunSummaryByPrefix(apiBaseUrl: string, runIdPr
 }
 
 export async function loadObservedRunDetail(apiBaseUrl: string, runId: string): Promise<ObservedRunDetail> {
-  const [observedRun, events, log, transcript] = await Promise.all([
-    getObservedRun(apiBaseUrl, runId),
+  const observedRun = await getObservedRun(apiBaseUrl, runId);
+  const nativeBacked = isNativeBackedRun(observedRun.run);
+  const [events, log, transcript] = await Promise.all([
     getRunEvents(apiBaseUrl, runId),
-    getRunLog(apiBaseUrl, runId).catch(() => ({ content: "" })),
-    getRunTranscript(apiBaseUrl, runId).catch((error: unknown) => {
-      // A newer client can still inspect diagnostics against an older server
-      // that does not expose the Reader endpoint. Authorization and server
-      // errors must remain visible instead of becoming an empty transcript.
-      if (error instanceof RudderApiError && error.status === 404) return [];
-      throw error;
-    }),
+    nativeBacked ? Promise.resolve(null) : getRunLog(apiBaseUrl, runId),
+    getRunTranscript(apiBaseUrl, runId),
   ]);
+  const logContent = log?.content ?? null;
   return {
     ...observedRun,
     events,
-    logContent: log.content,
-    logChunks: parseNdjsonLog(log.content),
+    logContent,
+    logChunks: parseNdjsonLog(logContent),
     transcript,
   };
+}
+
+function hasNativeIdentityMarker(value: unknown): boolean {
+  const record = objectValue(value);
+  if (!record) return false;
+  return ["runtimeBindingId", "nativeBindingId", "runtimeSegmentId", "nativeSegmentId"]
+    .some((key) => typeof record[key] === "string" && (record[key] as string).trim().length > 0);
+}
+
+function isNativeBackedRun(run: HeartbeatRun): boolean {
+  const context = objectValue(run.contextSnapshot);
+  const retention = objectValue(objectValue(run.resultJson)?.retention);
+  if (context?.transcriptSource === "legacy" || retention?.transcriptSource === "legacy") return false;
+  if (context?.transcriptSource === "native" || context?.transcriptSource === "native_plus_objects"
+    || retention?.transcriptSource === "native" || retention?.transcriptSource === "native_plus_objects") return true;
+  return hasNativeIdentityMarker(context) || hasNativeIdentityMarker(context?.unifiedAgentRun);
 }
 
 export async function diagnoseObservedRun(
