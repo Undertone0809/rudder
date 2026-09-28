@@ -133,6 +133,7 @@ fn expected_path(
         ("issue", arguments["issue"].as_str().unwrap_or_default()),
         ("comment", arguments["comment"].as_str().unwrap_or_default()),
         ("run", arguments["run"].as_str().unwrap_or_default()),
+        ("project", arguments["project"].as_str().unwrap_or_default()),
     ] {
         path = path.replace(&format!("{{{placeholder}}}"), &encode_path_segment(value));
     }
@@ -175,7 +176,7 @@ fn every_contract_direct_descriptor_has_a_complete_representative_plan() {
         .collect();
     assert_eq!(
         direct.len(),
-        50,
+        51,
         "new direct descriptors require parity coverage"
     );
     let managed_runtime = runtime(true);
@@ -230,6 +231,69 @@ fn every_contract_direct_descriptor_has_a_complete_representative_plan() {
             }
         );
     }
+}
+
+#[test]
+fn project_update_preserves_payload_context_and_retry_authority() {
+    let args = json!({"project":" project /雪 ","name":"Keep spaces  ","goalIds":[],"idempotencyKey":" retry-1 "});
+    let PlanOutcome::Direct(plan) =
+        plan_request("project.update", args.clone(), &runtime(false)).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(plan.method, HttpMethod::Patch);
+    assert_eq!(plan.path, "/api/projects/project%20%2F%E9%9B%AA");
+    assert_eq!(plan.query, vec![("orgId".into(), "org /雪".into())]);
+    assert_eq!(
+        plan.body,
+        Some(json!({"name":"Keep spaces  ","goalIds":[]}))
+    );
+    assert_eq!(
+        plan.headers,
+        vec![
+            ("x-rudder-idempotency-key".into(), "retry-1".into()),
+            ("x-rudder-required-authority".into(), "rust".into())
+        ]
+    );
+    assert_eq!(
+        PlanOutcome::Direct(plan),
+        plan_request("project.update", args, &runtime(false)).unwrap()
+    );
+    for goal in [
+        json!({"project":"p","goalId":"g"}),
+        json!({"project":"p","goalIds":[]}),
+    ] {
+        assert!(matches!(
+            plan_request("project.update", goal, &runtime(false)),
+            Err(PlanError::InvalidArgument { .. })
+        ));
+    }
+    let PlanOutcome::Direct(scalar) = plan_request(
+        "project.update",
+        json!({"project":"p","description":"text","idempotencyKey":"scalar-1"}),
+        &ManagedRuntimeIdentity::default(),
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert!(scalar.query.is_empty());
+    assert_eq!(
+        scalar.headers,
+        vec![("x-rudder-idempotency-key".into(), "scalar-1".into())]
+    );
+    let generated = || {
+        let PlanOutcome::Direct(p) = plan_request(
+            "project.update",
+            json!({"project":"p","name":"n"}),
+            &runtime(false),
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert_eq!(p.headers.len(), 1);
+        uuid::Uuid::parse_str(&p.headers[0].1).unwrap()
+    };
+    assert_ne!(generated(), generated());
 }
 
 #[test]

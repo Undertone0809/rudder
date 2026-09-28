@@ -1,4 +1,4 @@
-//! Pure request planning for the direct Agent v1 MCP capabilities.
+//! Request planning for the direct Agent v1 MCP capabilities.
 //!
 //! Authentication and HTTP execution deliberately live outside this crate. The
 //! caller supplies trusted runtime identity; model arguments can never replace it.
@@ -160,6 +160,30 @@ fn map_request(
                 "brandColor": s("brandColor")?
             })),
         ),
+        "project.update" => {
+            if let Some(org_id) = runtime_string(runtime.organization_id.as_deref()) {
+                query.push(("orgId".into(), org_id.into()));
+            }
+            (
+                HttpMethod::Patch,
+                format!("/api/projects/{}", encode_path_segment(&s("project")?)),
+                Some(project(
+                    &input,
+                    &[
+                        "name",
+                        "description",
+                        "status",
+                        "goalId",
+                        "goalIds",
+                        "leadAgentId",
+                        "targetDate",
+                        "color",
+                        "archivedAt",
+                    ],
+                    &[],
+                )),
+            )
+        }
         "goal.list" => {
             query.push(("lifecycle".into(), string_or(&input, "lifecycle", "active")));
             query.push(("limit".into(), positive(input.get("limit"), 20).to_string()));
@@ -529,6 +553,18 @@ fn map_request(
             ("x-rudder-idempotency-key".into(), s("idempotencyKey")?),
             ("x-rudder-required-authority".into(), "rust".into()),
         ]
+    } else if id == "project.update" {
+        let has_goal_mutation = input.contains_key("goalId") || input.contains_key("goalIds");
+        let key = if has_goal_mutation || input.contains_key("idempotencyKey") {
+            s("idempotencyKey")?
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
+        let mut headers = vec![("x-rudder-idempotency-key".into(), key)];
+        if has_goal_mutation {
+            headers.push(("x-rudder-required-authority".into(), "rust".into()));
+        }
+        headers
     } else {
         Vec::new()
     };
