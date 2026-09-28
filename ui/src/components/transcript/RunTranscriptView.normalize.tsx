@@ -591,7 +591,7 @@ export function segmentTranscriptEntriesByTurn(entries: TranscriptEntry[]): {
 export function normalizeTranscript(
   entries: TranscriptEntry[],
   streaming: boolean,
-  options?: { showDeveloperDiagnostics?: boolean },
+  options?: { showDeveloperDiagnostics?: boolean; hideUserMessages?: boolean },
 ): TranscriptBlock[] {
   const blocks: TranscriptBlock[] = [];
   const pendingToolBlocks = new Map<string, Extract<TranscriptBlock, { type: "tool" }>>();
@@ -690,6 +690,10 @@ export function normalizeTranscript(
         }
       }
 
+      // Native user inputs also contain harness instructions. They are not
+      // Agent activity; retain skill evidence and explicit steer interjections.
+      if (entry.kind === "user" && options?.hideUserMessages && entry.source !== "steer") continue;
+
       const provenance = entry.kind === "assistant"
         ? transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry)
         : null;
@@ -702,6 +706,7 @@ export function normalizeTranscript(
       if (
         previous?.type === "message"
         && previous.role === entry.kind
+        && previous.phase === (entry.kind === "assistant" ? entry.phase : undefined)
         && previous.source === (entry.kind === "user" ? entry.source : undefined)
         && previous.messageId === (entry.kind === "user" ? entry.messageId : undefined)
         && canMergeTranscriptProvenance(
@@ -737,6 +742,7 @@ export function normalizeTranscript(
         blocks.push({
           type: "message",
           role: entry.kind,
+          ...(entry.kind === "assistant" && entry.phase ? { phase: entry.phase } : {}),
           ...(entry.kind === "user" && entry.source ? {
             source: entry.source,
             messageId: entry.messageId,
@@ -1067,7 +1073,7 @@ export function summarizeChatTurn(blocks: TranscriptBlock[]): string | null {
 export function normalizeChatTranscriptTurns(
   entries: TranscriptEntry[],
   streaming: boolean,
-  options?: { showDeveloperDiagnostics?: boolean },
+  options?: { showDeveloperDiagnostics?: boolean; hideUserMessages?: boolean },
 ): {
   preludeBlocks: TranscriptBlock[];
   turns: ChatTranscriptTurn[];

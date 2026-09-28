@@ -128,8 +128,9 @@ function RunTranscriptViewContent({
   const blocks = useMemo(
     () => normalizeTranscript(renderableEntries, streaming, {
       showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+      hideUserMessages: presentation === "chat",
     }),
-    [effectiveShowDeveloperDiagnostics, renderableEntries, streaming],
+    [effectiveShowDeveloperDiagnostics, presentation, renderableEntries, streaming],
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
   const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);

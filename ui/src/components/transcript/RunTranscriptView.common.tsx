@@ -247,6 +247,7 @@ export type TranscriptBlock =
   | {
       type: "message";
       role: "assistant" | "user";
+      phase?: "commentary" | "final_answer";
       source?: "steer";
       messageId?: string;
       controlActionId?: string;
@@ -612,6 +613,7 @@ export function isInternalAgentInstructionText(text: string): boolean {
   if (firstLine === "<rudder_agent_instruction>") return true;
   if (firstLine === "<rudder_agent_operating_contract>") return true;
   if (firstLine === "rudder agent operating contract") return true;
+  if (firstLine === "conversation input:" && /"currentMessage"\s*:/.test(trimmed)) return true;
   if (normalized.includes("rudder protocol by delivering a progress update")) return true;
   if (
     normalized.includes("your home directory is $agent_home")

@@ -575,7 +575,8 @@ export function TranscriptMessageBlock({
   const compact = density === "compact";
   const isUser = block.role === "user";
   const isSteer = block.source === "steer";
-  const showRoleLabel = isUser && presentation !== "detail";
+  const showRoleLabel = isUser || presentation === "detail";
+  const roleLabel = isUser ? "User" : block.phase === "final_answer" ? "Final response" : "Assistant";
   const [open, setOpen] = useState(true);
   const steerAnnotations = block.steerMessage
     ? chatInlineAnnotationsFromStructuredPayload(block.steerMessage.structuredPayload)
@@ -647,8 +648,8 @@ export function TranscriptMessageBlock({
       <div title={getTranscriptTimestampTitle(block.ts)}>
         {showRoleLabel && (
           <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
-            <User className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
-            <span>User</span>
+            {isUser && <User className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />}
+            <span>{roleLabel}</span>
           </div>
         )}
         {body}

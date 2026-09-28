@@ -70,7 +70,7 @@ export function TranscriptChatTimeline({
     [entries, hideAssistantMessages, hiddenAssistantMessageText, streaming],
   );
   const { preludeBlocks, turns } = useMemo(
-    () => normalizeChatTranscriptTurns(timelineEntries, streaming, { showDeveloperDiagnostics }),
+    () => normalizeChatTranscriptTurns(timelineEntries, streaming, { showDeveloperDiagnostics, hideUserMessages: true }),
     [timelineEntries, streaming, showDeveloperDiagnostics],
   );
 
