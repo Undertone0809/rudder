@@ -21,6 +21,7 @@ import { replaceDetachedChatTranscript } from "./chat-transcript-persistence.js"
 import { chatTranscriptEntryFromReaderItem } from "./chat-transcript-reader-item.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
 import { assertChatWriteAdmitted } from "./chats.side-chat-write-admission.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
 import type { TranscriptItem } from "./runtime-kernel/transcript-reader.js";
 
@@ -209,6 +210,7 @@ export function createChatAnnotationMessagePersistence(
     options: AddUserChatMessageOptions = {},
   ) {
     const persist = () => db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, orgId);
       const isSideChat = await assertChatWriteAdmitted(tx, orgId, conversationId);
       const firstInputIntent = isSideChat
         ? await tx.select().from(sideChatFirstInputs).where(and(

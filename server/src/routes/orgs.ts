@@ -17,9 +17,7 @@ import {
   restoreLibraryDocumentRevisionSchema,
   restoreWorkspaceBackupSchema,
   updateLibraryDocumentSchema,
-  updateOrganizationBrandingSchema,
   updateOrganizationResourceSchema,
-  updateOrganizationSchema,
   updateOrganizationWorkspaceFileSchema,
   upsertOrganizationIntelligenceProfileSchema,
 } from "@rudderhq/shared";
@@ -38,7 +36,6 @@ import {
   organizationExportJobService,
   organizationIntelligenceProfileService,
   organizationIntelligenceRuntimeChainService,
-  organizationMemberService,
   organizationPortabilityService,
   organizationService,
   organizationSkillService,
@@ -48,9 +45,17 @@ import {
 } from "../services/index.js";
 import { libraryEntryService } from "../services/library-entries.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import {
+  assertOrganizationBrandingCreateAllowed,
+  handoffRequiredOrganizationBranding,
+  registerOrganizationRustFoundationRoutes,
+  type OrganizationRouteOptions,
+} from "./organization-rust-foundation-routes.js";
+export type { RustFoundationProbeReceipt } from "./organization-rust-foundation-routes.js";
 
 const EMBEDDED_IMAGE_DATA_URL_RE = /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*,/i;
 const EMBEDDED_IMAGE_DATA_URL_ERROR =
@@ -114,14 +119,17 @@ export function organizationRoutes(
   db: Db,
   storage?: StorageService,
   workspacePreview?: WorkspaceWebPreviewRuntime,
+  rustFoundationBridge?: RustFoundationBridge,
+  options: OrganizationRouteOptions = {},
 ) {
   const router = Router();
   const svc = organizationService(db);
   const agents = agentService(db);
-  const portability = organizationPortabilityService(db, storage);
+  const portability = organizationPortabilityService(db, storage, {
+    organizationBrandingMode: rustFoundationBridge?.organizationBrandingMode,
+  });
   const organizationSkills = organizationSkillService(db);
   const intelligenceProfiles = organizationIntelligenceProfileService(db);
-  const members = organizationMemberService(db);
   const access = accessService(db);
   const budgets = budgetService(db);
   const resources = resourceCatalogService(db);
@@ -133,20 +141,6 @@ export function organizationRoutes(
   const secrets = secretService(db);
   const strictSecretsMode = process.env.RUDDER_SECRETS_STRICT_MODE === "true";
   const runtimeChain = organizationIntelligenceRuntimeChainService(db, { strictSecretsMode });
-
-  async function assertCanUpdateBranding(req: Request, orgId: string) {
-    assertCompanyAccess(req, orgId);
-    if (req.actor.type === "board") return;
-    if (!req.actor.agentId) throw forbidden("Agent authentication required");
-
-    const actorAgent = await agents.getById(req.actor.agentId);
-    if (!actorAgent || actorAgent.orgId !== orgId) {
-      throw forbidden("Agent key cannot access another organization");
-    }
-    if (actorAgent.role !== "ceo") {
-      throw forbidden("Only CEO agents can update organization branding");
-    }
-  }
 
   async function assertCanManagePortability(req: Request, orgId: string, capability: "imports" | "exports") {
     assertCompanyAccess(req, orgId);
@@ -248,27 +242,6 @@ export function organizationRoutes(
       return;
     }
     res.json(organization);
-  });
-
-  router.get("/:orgId/members/directory", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-    const rawType = typeof req.query.type === "string" ? req.query.type.trim().toLowerCase() : "all";
-    if (rawType !== "all" && rawType !== "human" && rawType !== "agent") {
-      throw unprocessable("Member directory type must be all, human, or agent.");
-    }
-    const rawLimit = typeof req.query.limit === "string" && req.query.limit.trim()
-      ? Number(req.query.limit)
-      : undefined;
-    const page = await members.list({
-      orgId,
-      query: typeof req.query.query === "string" ? req.query.query : null,
-      type: rawType,
-      limit: rawLimit,
-      cursor: typeof req.query.cursor === "string" ? req.query.cursor : null,
-      fullIds: req.query.fullIds === "true" || req.query.fullIds === "1",
-    });
-    res.json(page);
   });
 
   router.get("/:orgId/library/documents", async (req, res) => {
@@ -1069,6 +1042,7 @@ export function organizationRoutes(
     }
     const actor = getActorInfo(req);
     const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null);
+    await handoffRequiredOrganizationBranding(db, rustFoundationBridge, result.organization.id);
     await logActivity(db, {
       orgId: result.organization.id,
       actorType: actor.actorType,
@@ -1187,6 +1161,7 @@ export function organizationRoutes(
       mode: "agent_safe",
       sourceOrganizationId: orgId,
     });
+    await handoffRequiredOrganizationBranding(db, rustFoundationBridge, result.organization.id);
     await logActivity(db, {
       orgId: result.organization.id,
       actorType: actor.actorType,
@@ -1212,7 +1187,9 @@ export function organizationRoutes(
     if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
       throw forbidden("Instance admin required");
     }
+    assertOrganizationBrandingCreateAllowed(rustFoundationBridge, req.body.brandColor);
     const organization = await svc.create({ ...req.body, analytics: { creationPath: "manual", isUserInitiated: true } });
+    await handoffRequiredOrganizationBranding(db, rustFoundationBridge, organization.id);
     await access.ensureMembership(organization.id, "user", req.actor.userId ?? "local-board", "owner", "active");
     await logActivity(db, {
       orgId: organization.id,
@@ -1236,71 +1213,6 @@ export function organizationRoutes(
       );
     }
     res.status(201).json(organization);
-  });
-
-  router.patch("/:orgId", async (req, res) => {
-    const orgId = req.params.orgId as string;
-    assertCompanyAccess(req, orgId);
-
-    const actor = getActorInfo(req);
-    let body: Record<string, unknown>;
-
-    if (req.actor.type === "agent") {
-      // Only CEO agents may update organization branding fields
-      const agentSvc = agentService(db);
-      const actorAgent = req.actor.agentId ? await agentSvc.getById(req.actor.agentId) : null;
-      if (!actorAgent || actorAgent.role !== "ceo") {
-        throw forbidden("Only CEO agents or board users may update organization settings");
-      }
-      if (actorAgent.orgId !== orgId) {
-        throw forbidden("Agent key cannot access another organization");
-      }
-      body = updateOrganizationBrandingSchema.parse(req.body);
-    } else {
-      assertBoard(req);
-      body = updateOrganizationSchema.parse(req.body);
-    }
-
-    const organization = await svc.update(orgId, body);
-    if (!organization) {
-      res.status(404).json({ error: "Organization not found" });
-      return;
-    }
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "organization.updated",
-      entityType: "organization",
-      entityId: orgId,
-      details: body,
-    });
-    res.json(organization);
-  });
-
-  router.patch("/:orgId/branding", validate(updateOrganizationBrandingSchema), async (req, res) => {
-    const orgId = req.params.orgId as string;
-    await assertCanUpdateBranding(req, orgId);
-    const organization = await svc.update(orgId, req.body);
-    if (!organization) {
-      res.status(404).json({ error: "Organization not found" });
-      return;
-    }
-    const actor = getActorInfo(req);
-    await logActivity(db, {
-      orgId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "organization.branding_updated",
-      entityType: "organization",
-      entityId: orgId,
-      details: req.body,
-    });
-    res.json(organization);
   });
 
   router.post("/:orgId/archive", async (req, res) => {
@@ -1335,5 +1247,6 @@ export function organizationRoutes(
     res.json({ ok: true });
   });
 
+  registerOrganizationRustFoundationRoutes(router, db, rustFoundationBridge, options);
   return router;
 }

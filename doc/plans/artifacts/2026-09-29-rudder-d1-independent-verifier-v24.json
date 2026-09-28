@@ -1,0 +1,177 @@
+{
+  "schema": "rudder.d1.independent-verification/v1",
+  "verdict": "PASS",
+  "verifier": "01a0e90e-d2df-7092-a9a6-4ac0e3d80c1f",
+  "packet": "v24.2",
+  "runtime_source": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+  "head_at_lease_recheck": "5fa6f66b8a3be69026e81f143673eb6a5ea04f4b",
+  "equivalence": "Only docs, CI and private request-planner changed after frozen runtime; planner is outside executed API/CLI/MCP path.",
+  "foundation_sha256": "ab2037ad26350518277177e43d8b911750f297329ad6f49e7df3fd49926a9b03",
+  "preflight_sha256": "96d26f7b274854800d6666dae420ab857d154c9f7ec722a03d58af35637a6d70",
+  "runtime": {
+    "node": "v22.23.1",
+    "tsx": "4.21.0",
+    "fixtures": "disposable_and_cleaned"
+  },
+  "workflows": {
+    "branding": {
+      "log": "/tmp/rudder-d1-branding.6ebNyh",
+      "sha256": "3de14eeaab6c9879d420fbb5a57437047d44d728d9c6395178148cd43e212397",
+      "terminal": {
+        "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+        "instanceId": "rust-branding-real-entry-97769",
+        "apiPort": 63495,
+        "databasePort": 63496,
+        "organizationId": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56",
+        "unlistedOrganizationId": "3b25376f-b067-4f48-ac36-3215e2d1f100",
+        "firstPatchStatus": 200,
+        "replayStatus": 200,
+        "auditFailureStatus": 500,
+        "auditRetryStatus": 200,
+        "cliStatus": 0,
+        "mcpStatus": 0,
+        "cliBrandColor": "#bada55",
+        "mcpBrandColor": "#c0ffee",
+        "state": {
+          "owner": "rust",
+          "mutation_version": "1",
+          "fence_epoch": "1"
+        },
+        "unlistedOwnerAfterRestart": "node",
+        "receipt": {
+          "outcome": "applied",
+          "resulting_version": "1",
+          "fence_epoch": "1"
+        },
+        "activityCount": 1,
+        "outbox": {
+          "state": "pending",
+          "attempts": 0
+        },
+        "outboxRecovery": {
+          "state": "published",
+          "attempts": 2,
+          "last_error": null
+        }
+      }
+    },
+    "project_goal": {
+      "log": "/tmp/rudder-d1-project-goal.7av4T9",
+      "sha256": "3d2cc817e094ec924d7f42166caf1a0d9bd8592d312d9a5aa84badfd064e5732",
+      "terminal": {
+        "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+        "instanceId": "rust-project-goal-real-entry-967",
+        "apiPort": 64018,
+        "databasePort": 64019,
+        "organizationId": "941a21f2-cb76-47d6-9b44-f359e095f606",
+        "otherOrganizationId": "108ade7c-33c6-4a85-b2ae-3daec1192e56",
+        "projectId": "2c7ca502-94c4-4f01-94bd-823be46551da",
+        "createWithGoalsProjectId": "fc61b77e-3c07-422b-b49f-16adf35ae3ff",
+        "goalIds": [
+          "042fa96e-d001-493b-ade6-c88d8b6892f7",
+          "45e1538d-3916-4fe4-914e-5edbcfd42995"
+        ],
+        "mixedProjectId": "20aa83fd-10ff-4926-9d6f-87684e923722",
+        "toolingProjectId": "d81fde91-31ba-46bd-b182-ea14bc6a2ba7",
+        "agentId": "983dd60f-2655-4c43-aa66-5b6036f08558",
+        "cliStatus": 0,
+        "mcpStatus": 0,
+        "cliMixedKey": "cli-d81fde91-31ba-46bd-b182-ea14bc6a2ba7",
+        "cliMixedActivityId": "9b5c1680-a7d0-4c32-8419-b413d35d1528",
+        "mcpMixedKey": "mcp-d81fde91-31ba-46bd-b182-ea14bc6a2ba7",
+        "mcpMixedActivityId": "a728e65e-19db-4952-bfc7-aaf02b5a71d3",
+        "cliScalarName": "CLI scalar Project update",
+        "cliScalarReplayExitCode": 0,
+        "mcpScalarName": "MCP scalar Project update",
+        "mcpScalarReplayExitCode": 0,
+        "createWithGoalsStatus": 201,
+        "mixedUpdateStatus": 200,
+        "mixedPublicReadbackStatus": 200,
+        "mixedProjectFields": {
+          "name": "Rust required-mode mixed patch",
+          "status": "in_progress",
+          "leadAgentId": "47e1235d-ed15-463b-9788-0cf2a89fd900",
+          "targetDate": "2026-10-01",
+          "goalIds": [
+            "042fa96e-d001-493b-ade6-c88d8b6892f7",
+            "45e1538d-3916-4fe4-914e-5edbcfd42995"
+          ]
+        },
+        "mixedResourceCount": 2,
+        "mixedActivityCount": 1,
+        "mixedOutboxCount": 1,
+        "mixedReplayStatus": 200,
+        "mixedReplayCounts": {
+          "receipts": "1",
+          "activities": "1",
+          "outbox": "1",
+          "links": "2",
+          "attachments": "2",
+          "resources": "2",
+          "version": "1"
+        },
+        "mixedAuditFailureStatus": 500,
+        "mixedAuditRetryStatus": 200,
+        "mixedRollbackReadback": {
+          "owner": "rust",
+          "mutation_version": "1",
+          "fence_epoch": "1"
+        },
+        "mixedRetryReadback": {
+          "owner": "rust",
+          "mutation_version": "2",
+          "fence_epoch": "1"
+        },
+        "mixedReplayAfterRestartStatus": 200,
+        "mixedRestartCounts": {
+          "receipts": "7",
+          "activities": "4",
+          "outbox": "4",
+          "links": "0",
+          "attachments": "1"
+        },
+        "omittedGoalUpdateStatus": 200,
+        "omittedGoalLinkCount": "1",
+        "goalIdNullClearStatus": 200,
+        "goalIdNullClearReadback": {
+          "goal_id": null,
+          "link_count": "0"
+        },
+        "auditFailureStatus": 500,
+        "signedIdempotencySubstitutionStatus": 401,
+        "rustOwnedOrganizationDeleteStatus": 200,
+        "allowlistStartupRejected": true,
+        "allowlistProjectIds": [
+          "2c7ca502-94c4-4f01-94bd-823be46551da",
+          "d81fde91-31ba-46bd-b182-ea14bc6a2ba7",
+          "20aa83fd-10ff-4926-9d6f-87684e923722"
+        ],
+        "sameConfigRestartHealthStatus": 200,
+        "unlistedProjectId": "d8aeb4d1-15ba-41b3-9e85-6d11ff701334",
+        "unlistedProjectStatus": 503,
+        "toolingCounts": {
+          "receipts": "4",
+          "activities": "4",
+          "links": "0"
+        },
+        "firstStatus": 200,
+        "replayStatus": 200,
+        "idempotencyConflictStatus": 409,
+        "crossOrganizationStatus": 422,
+        "emptyStatus": 200,
+        "replayAfterRestartStatus": 200,
+        "finalCounts": {
+          "receipts": "2",
+          "activities": "2",
+          "links": "0",
+          "version": "2"
+        }
+      }
+    }
+  },
+  "claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  }
+}

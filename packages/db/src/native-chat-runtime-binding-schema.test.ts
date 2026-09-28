@@ -43,7 +43,7 @@ const migrationSql = readFileSync(
   "utf8",
 );
 const writerFenceMigrationSql = readFileSync(
-  fileURLToPath(new URL("./migrations/0174_native_resource_writer_fencing.sql", import.meta.url)),
+  fileURLToPath(new URL("./migrations/0180_native_resource_writer_fencing.sql", import.meta.url)),
   "utf8",
 );
 

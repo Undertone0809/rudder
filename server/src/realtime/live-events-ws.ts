@@ -233,6 +233,7 @@ export function setupLiveEventsWebSocketServer(
   const cleanupByClient = new Map<WsSocket, () => void>();
   const contextByClient = new Map<WsSocket, UpgradeContext>();
   const aliveByClient = new Map<WsSocket, boolean>();
+  const seenDedupeKeysByClient = new Map<WsSocket, Set<string>>();
   const pendingUpgradeSockets = new Set<Duplex>();
   let closing = false;
   let closeInFlight: Promise<void> | null = null;
@@ -242,6 +243,7 @@ export function setupLiveEventsWebSocketServer(
     cleanupByClient.delete(socket);
     contextByClient.delete(socket);
     aliveByClient.delete(socket);
+    seenDedupeKeysByClient.delete(socket);
     try {
       cleanup?.();
     } catch (err) {
@@ -279,6 +281,16 @@ export function setupLiveEventsWebSocketServer(
     let pendingEvents = 0;
     const unsubscribe = subscribeCompanyLiveEvents(context.orgId, (event) => {
       if (socket.readyState !== WebSocket.OPEN) return;
+      if (event.dedupeKey) {
+        const seen = seenDedupeKeysByClient.get(socket) ?? new Set<string>();
+        if (seen.has(event.dedupeKey)) return;
+        seen.add(event.dedupeKey);
+        if (seen.size > 1024) {
+          const oldest = seen.values().next().value;
+          if (typeof oldest === "string") seen.delete(oldest);
+        }
+        seenDedupeKeysByClient.set(socket, seen);
+      }
       if (pendingEvents >= 500) {
         socket.close(1013, "event stream requires resync");
         return;

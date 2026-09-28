@@ -960,13 +960,19 @@ describe("applyPendingMigrations", () => {
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
           "0168_issue_execution_cancellation_fence.sql",
-          "0169_span_supplement_retention.sql",
-          "0170_side_chat_provider_cleanup_intents.sql",
-          "0171_side_chat_close_intents.sql",
-          "0172_side_chat_provider_cleanup_protection_refs.sql",
-          "0173_side_chat_first_inputs.sql",
-          "0174_native_resource_writer_fencing.sql",
-          "0175_side_chat_first_input_generation.sql",
+          "0169_organization_mutation_state_backfill.sql",
+          "0170_project_goal_set_receipt_kind.sql",
+          "0171_organization_mutation_state_provisioning.sql",
+          "0172_organization_mutation_fence_token.sql",
+          "0173_organization_branding_mutation_authority.sql",
+          "0174_project_goal_mutation_authority.sql",
+          "0175_span_supplement_retention.sql",
+          "0176_side_chat_provider_cleanup_intents.sql",
+          "0177_side_chat_close_intents.sql",
+          "0178_side_chat_provider_cleanup_protection_refs.sql",
+          "0179_side_chat_first_inputs.sql",
+          "0180_native_resource_writer_fencing.sql",
+          "0181_side_chat_first_input_generation.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1156,13 +1162,19 @@ describe("applyPendingMigrations", () => {
           "0166_runtime_binding_targets.sql",
           "0167_delegation_run_scene.sql",
           "0168_issue_execution_cancellation_fence.sql",
-          "0169_span_supplement_retention.sql",
-          "0170_side_chat_provider_cleanup_intents.sql",
-          "0171_side_chat_close_intents.sql",
-          "0172_side_chat_provider_cleanup_protection_refs.sql",
-          "0173_side_chat_first_inputs.sql",
-          "0174_native_resource_writer_fencing.sql",
-          "0175_side_chat_first_input_generation.sql",
+          "0169_organization_mutation_state_backfill.sql",
+          "0170_project_goal_set_receipt_kind.sql",
+          "0171_organization_mutation_state_provisioning.sql",
+          "0172_organization_mutation_fence_token.sql",
+          "0173_organization_branding_mutation_authority.sql",
+          "0174_project_goal_mutation_authority.sql",
+          "0175_span_supplement_retention.sql",
+          "0176_side_chat_provider_cleanup_intents.sql",
+          "0177_side_chat_close_intents.sql",
+          "0178_side_chat_provider_cleanup_protection_refs.sql",
+          "0179_side_chat_first_inputs.sql",
+          "0180_native_resource_writer_fencing.sql",
+          "0181_side_chat_first_input_generation.sql",
         ],
         reason: "pending-migrations",
       });
@@ -2113,7 +2125,7 @@ describe("applyPendingMigrations", () => {
           INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, supplemental_object_ref)
           VALUES (${org!.id}, ${run!.id}, ${binding!.id}, ${segment!.id}, 'attempt-1', 'owner-1', 'tobj_v1_11111111-1111-1111-1111-111111111111') RETURNING id
         `;
-        const hash = await migrationHash("0169_span_supplement_retention.sql");
+        const hash = await migrationHash("0175_span_supplement_retention.sql");
         await sql.unsafe(`DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = '${hash}'`);
         await sql`ALTER TABLE run_runtime_spans DROP COLUMN supplemental_retention_expired_at`;
 
@@ -2438,7 +2450,7 @@ describe("applyPendingMigrations", () => {
 
         expect(await inspectMigrations(connectionString)).toMatchObject({
           status: "needsMigrations",
-          pendingMigrations: expect.arrayContaining(["0171_side_chat_close_intents.sql"]),
+          pendingMigrations: expect.arrayContaining(["0177_side_chat_close_intents.sql"]),
         });
         await applyPendingMigrations(connectionString);
         expect((await inspectMigrations(connectionString)).status).toBe("upToDate");

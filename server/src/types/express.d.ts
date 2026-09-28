@@ -15,6 +15,8 @@ type RequestActor = {
   agentId?: string | undefined;
   companyId?: string | undefined;
   keyId?: string | undefined;
+  sessionId?: string | undefined;
+  authEpoch?: number | undefined;
   runId?: string | undefined;
   adapterType?: string | undefined;
 };

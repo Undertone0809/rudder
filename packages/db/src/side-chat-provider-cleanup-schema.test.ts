@@ -7,7 +7,7 @@ import { sideChatProviderCleanupIntents } from "./schema/side_chat_provider_clea
 
 const table = getTableConfig(sideChatProviderCleanupIntents);
 const migrationSql = readFileSync(
-  fileURLToPath(new URL("./migrations/0170_side_chat_provider_cleanup_intents.sql", import.meta.url)),
+  fileURLToPath(new URL("./migrations/0176_side_chat_provider_cleanup_intents.sql", import.meta.url)),
   "utf8",
 );
 const journal = JSON.parse(readFileSync(
@@ -50,7 +50,7 @@ describe("Side Chat Provider cleanup outbox schema", () => {
     ]);
     expect(migrationSql).toContain('"fork_run_id" uuid');
     expect(migrationSql).toContain('"side_chat_provider_cleanup_resource_uq"');
-    expect(journal.entries.some((entry) => entry.idx === 170
-      && entry.tag === "0170_side_chat_provider_cleanup_intents")).toBe(true);
+    expect(journal.entries.some((entry) => entry.idx === 176
+      && entry.tag === "0176_side_chat_provider_cleanup_intents")).toBe(true);
   });
 });

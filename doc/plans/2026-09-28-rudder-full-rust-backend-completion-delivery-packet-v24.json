@@ -1,0 +1,473 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-full-rust-backend-completion-v24-d1-branding-project-goal",
+  "status": "delivered",
+  "owner": {
+    "root_id": "rudder-full-rust-backend-completion-2026-09-21",
+    "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
+  },
+  "intent": {
+    "raw_request": "/goal 2026-09-21-rudder-full-rust-backend-completion-plan.md，\n完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。\n\n最终目标不是 Node orchestration + Rust sidecar，而是：\nActix Web 接管核心 HTTP/WebSocket 服务；SQLx 接管 PostgreSQL 查询、\n事务和迁移；第一方业务服务、鉴权/session、调度器、workers、\nAgent Run、Chat/Side Chat、Automation、provider adapters、常用后端\n组件、CLI 和 MCP 均由 Rust 实现，对应 Node 后端退出运行时。\n\n同时纳入第一方 identity、analytics collector、managed MCP、\n嵌入式 PostgreSQL 生命周期，以及拥有产品状态的维护和更新恢复工具。\n不能因为它们不在 server 目录，就把它们排除。\n\n保留 React、前端工具、Electron shell，以及用户选择的外部\nprovider CLI、MCP、Local App 和插件组件。允许短生命周期安装入口，\n但不能用这些例外保留第一方 Node 业务、迁移、调度或常驻工具运行时。\n\n先读取当前 AGENTS.md、完整计划、原始迁移方案和实际实现/测试。\n保护已有未提交工作，使用独立迁移 worktree，不把当前代码 reset\n回计划中的旧 SHA。复用已有 Rust 实现，不无审查合并历史大 PR。\n\n刷新完整能力与 authority 清单，区分：\n已实现、私有验证、真实入口接入、默认路径验证、旧实现退出。\n持续维护计划指定的 ledger 和 status 文件，不沿用聊天中的估算百分比。\n\n按 Phase 0–7 连续推进，优先接通已有 Actix/read 能力；\n第一个完整写入切片优先完成现有 D1 组织 branding 与 Project–Goal link。\n每个切片都包括真实入口、鉴权、事务、审计、副作用、恢复、\n相关 CLI/MCP 和旧 writer 的退出，而不是只迁移文件或新增 crate。\n\n保持现有功能和行为，尤其保留 Side Chat 临时/过期/转永久、\n消息历史、stream/cancel/reconnect 和受支持的会话连续性。\n不要强迫 Chat 依赖 Issue，不要借迁移删功能或进行未授权产品重设计。\n\n禁止生产双写、陈旧 writer 继续写入、静默 Node fallback、\n用 Node 子进程包装旧实现，以及把后端业务转移进 Electron/bootstrap。\n迁移事务关联单元前，必须确保所有旧 writer 也遵守 ownership/fence。\n\n每个切片按当前仓库规则完成测试、reviewer、精确候选冻结、\n独立真实工作流 verifier 和最终 reviewer 验收。\n通过后提交合格增量并继续下一切片，不等我再次说“继续”。\n\n最终必须证明：移除旧第一方 Node 后端资产后，安装后的\nUI/API/CLI/MCP、数据库升级、调度、执行、恢复和支持平台仍通过验收。\n私有 Rust 测试通过、Actix 能启动或单个 PR 合并，都不代表总目标完成。\n\n你被授权在隔离本地环境、测试数据库和正常开发/CI 范围实施、\n测试、制作候选产物，并按仓库规则提交和更新 PR。\n未经额外授权，不删除真实用户数据、不迁移生产数据库、不发布 stable、不切换生产流量、不购买服务。\n\n缺少凭证、签名、平台环境或生产授权时，只阻塞受影响步骤，\n继续其他可执行工作，并明确记录缺口。\n分别报告 implementation_complete、release_ready 和 production_verified；\n没有实际生产证据，不得声称已上线完成。\n\n如因上下文、额度或环境中断，持久化精确提交、已通过检查、\n剩余任务、阻塞和下一条可执行步骤，保持未完成状态以便恢复。\n不要因为完成一个小切片或一个 PR 就结束整个目标。\n\n开始推进",
+    "corrections": [
+      "The plan must be persisted under doc/plans and remain the durable source of truth.",
+      "Use staged real-environment integration and CI feedback; do not wait to integrate every Rust surface at once.",
+      "Reconcile Rust work with new Main changes as Main advances.",
+      "Use gpt-6-luna with max reasoning for spawned agents, and use parallel agents for critical review where useful.",
+      "Converge one coherent vertical slice per PR, commit accepted checkpoints, and continue the overall migration after each merge.",
+      "This packet covers only the D1 organization branding and Project-Goal authority slice; Chat and unrelated update-recovery experiments remain separate and incomplete.",
+      "2026-09-29, verbatim: 对了，记得先把这个 plan 写进 doc/plans",
+      "2026-09-29, verbatim: 我觉得你的开发节奏可以再快一点。比如你现在生产环境好多地方都还没真实接入，其实完全可以现在就逐步接进去，不需要一口气全部接完。很多部分完全可以一边接一边测试，并不影响的。建议你调整一下策略，让开发更快一点：很多真实环境可以先迁移进来，因为单纯离线测试和真正切进来测试完全是不一样的。你可以持续地、一点一点把这些功能先接入到生产环境里，逐步替换掉。按原始授权边界，目前先使用 disposable real-entry 环境与正常 CI；未经额外授权不切生产流量、不迁移生产数据库。",
+      "2026-09-29, verbatim: 需要说明的是，重构的过程中 Main 分支时不时会有新功能或者修改进来，你的 rust 也要对应去做好适配。这个你自己调度分析就好。",
+      "2026-09-29, verbatim: spawn agent luna max or luna extra high 呀，no luna medium",
+      "2026-09-29, verbatim: 继续推进呀。给你一些反馈，我感觉你做太久了，适当的做一些部分，你就commit一些功能直接merge进来。对，很多重构，我觉得你有很多分支可以扔上去去测试，不需要全部都在本地上测试，你不是可以跑CI/CD吗？所以我觉得你有很多rust的东西，你是可以放到PR上面，你反正是开一堆分支嘛，所以我觉得你可以放在上面。我觉得你要阶段性收敛，不然有的分支，因为我看你这几天开了特别多分支，但我基本没有看到几个合并的，所以我觉得你需要去做一下阶段性的一些合并，好深刻的反思一下这个问题，你看一下如何做的更好优化开始推。继续推进吧"
+    ],
+    "non_goals": [
+      "This bounded packet does not claim the full Phase 0-7 migration, a public Actix listener, SQLx migration-apply authority, all first-party Node writer retirement, release readiness, or production verification.",
+      "No production data, production database migration, stable publication, unrestricted traffic switch, or destructive user-data action."
+    ],
+    "authorization": "The user authorized isolated implementation, disposable local real-entry testing, normal CI, PR updates, and incremental protected-main integration. Production migration, stable release, production traffic switching, and destructive user-data operations remain unauthorized."
+  },
+  "candidate": {
+    "runtime_verified_source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+    "runtime_content_equivalence": "Through 9df1d85b9, public API/CLI/MCP and foundation runtime are unchanged. Later deltas are docs, CI, private request planner (Newton stage accept, 18 tests and Clippy), and three test expectations. Hubble observed runtime equivalence at 5fa6f66b8; final reviewer must validate the delivery candidate. At8512, Newton confirmed the only non-plan deltas since443 are two fence test files; executed production runtime is unchanged.",
+    "branch": "codex/rudder-d1-candidate-20260928",
+    "source_ref": "refs/heads/codex/rudder-d1-candidate-20260928",
+    "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
+    "source_tree": "51c885ef86d2c8cbbb5ebc6d063add4a9169ac41",
+    "dirty_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
+    "dirty_fingerprint_method": "SHA-256 of git diff --binary origin/main...HEAD excluding doc/plans records; source changes are committed and this packet is maintained separately.",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/rust-d1-real-entry.yml",
+      "cli/src/__tests__/agent-v1-mcp-d1-capabilities.test.ts",
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/__tests__/agent-v1-registry.test.ts",
+      "cli/src/__tests__/http.test.ts",
+      "cli/src/__tests__/organization-brand-color.test.ts",
+      "cli/src/__tests__/project-command.test.ts",
+      "cli/src/__tests__/worktree-merge-history.test.ts",
+      "cli/src/agent-v1-capabilities.generated.ts",
+      "cli/src/agent-v1-mcp-d1-capabilities.ts",
+      "cli/src/agent-v1-mcp-server.ts",
+      "cli/src/client/http.ts",
+      "cli/src/commands/client/company-brand-color.ts",
+      "cli/src/commands/client/company-get.ts",
+      "cli/src/commands/client/company.ts",
+      "cli/src/commands/client/project.ts",
+      "cli/src/commands/worktree-merge.ts",
+      "contracts/rudder-agent-contract/v1.json",
+      "desktop/scripts/stage-native.mjs",
+      "desktop/scripts/stage-native.test.mjs",
+      "native/Cargo.lock",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/agent-contract-core/src/contract.generated.json",
+      "native/crates/agent-contract-core/src/lib.rs",
+      "native/crates/agent-request-planner/Cargo.toml",
+      "native/crates/agent-request-planner/src/bin/agent-request-planner-differential.rs",
+      "native/crates/agent-request-planner/src/lib.rs",
+      "native/crates/agent-request-planner/tests/planner.rs",
+      "native/crates/auth-core/src/lib.rs",
+      "native/crates/auth-core/tests/protocol.rs",
+      "native/crates/d1-persistence/src/branding.rs",
+      "native/crates/d1-persistence/src/goal_sets.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/links.rs",
+      "native/crates/d1-persistence/src/project_patches.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/d1-persistence/tests/support/mod.rs",
+      "native/crates/migration-core/tests/validation.rs",
+      "native/crates/project-goal-link-core/Cargo.toml",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/server-foundation/Cargo.toml",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-000.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-001.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-002.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-003.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-004.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-005.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-006.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-agent-contract-capabilities-007.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-mcp-tool-descriptors-000.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-mcp-tool-descriptors-001.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-mcp-tool-descriptors-002.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-mcp-tool-descriptors-003.ts",
+      "packages/agent-runtime-utils/src/contract-shards/rudder-mcp-tool-descriptors-004.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.generated.ts",
+      "packages/agent-runtime-utils/src/rudder-agent-contract.test.ts",
+      "packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts",
+      "packages/db/src/client.test.ts",
+      "packages/db/src/migrations/0169_organization_mutation_state_backfill.sql",
+      "packages/db/src/migrations/0170_project_goal_set_receipt_kind.sql",
+      "packages/db/src/migrations/0171_organization_mutation_state_provisioning.sql",
+      "packages/db/src/migrations/0172_organization_mutation_fence_token.sql",
+      "packages/db/src/migrations/0173_organization_branding_mutation_authority.sql",
+      "packages/db/src/migrations/0174_project_goal_mutation_authority.sql",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/schema/index.ts",
+      "packages/db/src/schema/organization_branding_mutations.ts",
+      "packages/db/src/schema/organization_mutations.ts",
+      "packages/db/src/schema/project_goal_mutations.ts",
+      "packages/shared/src/constants.ts",
+      "packages/shared/src/types/live.ts",
+      "scripts/architecture-audit-baseline.json",
+      "scripts/generate-rudder-mcp-tool-descriptors.ts",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "scripts/smoke/rust-branding-real-entry.ts",
+      "scripts/smoke/rust-project-goal-real-entry.ts",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
+      "server/src/__tests__/app-lifecycle.test.ts",
+      "server/src/__tests__/budgets-service.test.ts",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/company-portability.test.ts",
+      "server/src/__tests__/config-env-loading.test.ts",
+      "server/src/__tests__/goals-contract.test.ts",
+      "server/src/__tests__/issues-helpers.test.ts",
+      "server/src/__tests__/organization-mutation-fence.test.ts",
+      "server/src/__tests__/organization-row-writer-fence.test.ts",
+      "server/src/__tests__/orgs-service.test.ts",
+      "server/src/__tests__/project-ownership-caller-regression.test.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/__tests__/projects-service.test.ts",
+      "server/src/__tests__/resource-catalog-service.test.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "server/src/app.ts",
+      "server/src/bootstrap/create-http-app.ts",
+      "server/src/bootstrap/register-api-routes.ts",
+      "server/src/bootstrap/types.ts",
+      "server/src/config.ts",
+      "server/src/index.ts",
+      "server/src/middleware/auth.ts",
+      "server/src/realtime/live-events-ws.ts",
+      "server/src/routes/onboarding.ts",
+      "server/src/routes/organization-rust-foundation-routes.ts",
+      "server/src/routes/orgs.ts",
+      "server/src/routes/projects.ts",
+      "server/src/services/assets.ts",
+      "server/src/services/budgets.ts",
+      "server/src/services/chats.annotation-persistence.ts",
+      "server/src/services/chats.helpers.ts",
+      "server/src/services/chats.queued-message-create.ts",
+      "server/src/services/chats.ts",
+      "server/src/services/costs.ts",
+      "server/src/services/goal-public-contract.test.ts",
+      "server/src/services/goal-public-contract.ts",
+      "server/src/services/goals.ts",
+      "server/src/services/index.ts",
+      "server/src/services/issues.comments-attachments.ts",
+      "server/src/services/issues.helpers.ts",
+      "server/src/services/issues.ts",
+      "server/src/services/knowledge-portability/organization-portability.import.ts",
+      "server/src/services/knowledge-portability/organization-portability.ts",
+      "server/src/services/live-events.ts",
+      "server/src/services/organization-branding-fence.test.ts",
+      "server/src/services/organization-branding-fence.ts",
+      "server/src/services/organization-mutation-fence.ts",
+      "server/src/services/organization-mutation-outbox.test.ts",
+      "server/src/services/organization-mutation-outbox.ts",
+      "server/src/services/orgs.ts",
+      "server/src/services/project-goal-mutation-fence.test.ts",
+      "server/src/services/project-goal-mutation-fence.ts",
+      "server/src/services/projects.ts",
+      "server/src/services/resource-catalog.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts",
+      "server/src/services/side-chats.ts",
+      "server/src/types/express.d.ts",
+      "tests/e2e/workspace-backups.spec.ts",
+      "ui/src/api/client.ts",
+      "ui/src/api/projects.test.ts",
+      "ui/src/api/projects.ts"
+    ],
+    "build": {
+      "id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
+      "artifact_hash": "ab2037ad26350518277177e43d8b911750f297329ad6f49e7df3fd49926a9b03;96d26f7b274854800d6666dae420ab857d154c9f7ec722a03d58af35637a6d70",
+      "verification": "Locked Cargo build completed at c8c8e5b2a. Hubble independently verified binary hashes and both real-entry workflows on the equivalent frozen runtime; the 9df1d85b9 delivery delta does not change executed foundation/API/CLI/MCP code."
+    },
+    "runtime": {
+      "id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
+      "topology": "Node public API listener -> private Actix/SQLx authority for D1 -> CLI/MCP through public HTTP; other domains remain Node-owned"
+    },
+    "organization_data": {
+      "organization_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606"
+    },
+    "workload_fixture": "Fresh disposable embedded PostgreSQL bootstrap/current/restart workflows for scalar organization branding and Project-Goal mutations, authenticated API, private Actix, SQLx transactions, CLI/MCP subprocesses, audit rollback, idempotency conflict/replay, organization isolation, ownership fencing, and outbox recovery.",
+    "budget_lease": {
+      "id": "parent-goal-active",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "v24.2",
+      "fingerprint": "v24.2-d1-branding-project-goal-deletion-fence-945a0d5d4-main-66b500a",
+      "criteria": [
+        "The shared organization deletion path locks the organization fence, then every Project-Goal mutation-state row in deterministic project order; it validates scope, owner, nonnegative counters, and fencing tokens before deleting linked Projects and Goals.",
+        "A disposable organization containing Rust-owned Project-Goal components is deleted through the authenticated public API after final readback; stale Node Project-Goal writers are rejected by the component fence. Broad organization mutation authority remains Node-owned.",
+        "The clean candidate is exactly reconciled with origin/main 66b500aef009a0554ebf658de4fca6ddfa8466f1.",
+        "Fresh embedded PostgreSQL bootstrap and restart preflight match the 175-entry journal, 177 SQL files, and migration manifest.",
+        "Authenticated organization branding and Project-Goal public mutations invoke the private Rust/SQLx authority with organization scope, persisted ownership/fence, transactional receipt/activity/outbox behavior, and no silent fallback.",
+        "Project create-with-goals compatibility, scalar and link mutations, CLI/MCP dispatch, cross-process idempotent replay, ownership allowlist, cross-organization rejection, and restart recovery have terminal evidence.",
+        "Injected audit failure leaves Project fields, goal links, resources, receipts, activity, outbox, and mutation version unchanged; same-key retry commits once.",
+        "Branding replay does not duplicate receipt/activity; audit failure rolls back and persisted outbox delivery recovers after restart.",
+        "Desktop updater files remain byte-equivalent to Main; unrelated receipt extraction is excluded. Foundation packaging remains in scope.",
+        "Only bounded real-entry-connected claims are made; default Rust path, full Node writer retirement, implementation_complete, release_ready, and production_verified remain false."
+      ],
+      "state_inventory": [
+        "Startup: disposable embedded PostgreSQL bootstrap/current state, Rust migration preflight, Node public API health.",
+        "Authority: public authenticated Node routes reach private Actix/SQLx for branding and Project-Goal; other domains remain Node-owned.",
+        "Mutation: scalar and goal-link Project PATCH, create-with-goals compatibility, resource attachment operations, branding PATCH, and receipt/activity/outbox readback.",
+        "Failure: audit-triggered 500 with no partial commit, same-key retry, idempotency conflict, cross-org denial, signed/header substitution denial, and stale owner rejection.",
+        "Tooling: direct CLI plus MCP subprocess calls with explicit idempotency keys and no missing-legacy-executable fallback.",
+        "Continuity: restart replay for Project-Goal and branding, plus persisted outbox claim recovery.",
+        "Deferred: installed/default Rust path, sole listener, SQLx migration apply authority, all-writer retirement, full migration, and production evidence.",
+        "Organization deletion: lock-order/fence validation, linked Project-Goal cleanup ordering, Rust-owned final readback, stale-writer rejection, and fail-closed invalid mutation-state rows.",
+        "Delivery convergence: one existing protected PR for the coherent D1 slice; exact-head CI and required review/verifier gates before merge; no parallel D1 PR authority."
+      ]
+    }
+  },
+  "post_verifier_checks": {
+    "native_workspace": {
+      "passed": 362,
+      "failed": 0,
+      "ignored": 2,
+      "ignored_reason": "Optional migration-history database tests require RUDDER_MIGRATION_HISTORY_POSTGRES_TEST_DATABASE_URL; real D1 bootstrap/restart preflight is independently verified.",
+      "log": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-native-tests.Pvm3P8hV1j",
+      "sha256": "e3d81dd27d5254d8bb27b11381d37daaf8a83d9f1a91e696cbe7fbe1a53eec8a"
+    },
+    "portability_focused_tests": "Newton independently reran company-portability.test.ts on 44366d918: 29 passed. This direct reviewer result supersedes the earlier broader 33-test author summary whose command/log was not retained in this packet. No runtime edit.",
+    "workspace_backup_e2e": {
+      "passed": 2,
+      "mode": "Rust required",
+      "log": "/private/tmp/rudder-backup-e2e.1nXiS4/playwright.log",
+      "sha256": "05038e2b880fcce72e7ec5eb906bce710cbe5c1af7d90eaec2e27f14a2b09953",
+      "scope": "Browse, download, restore, delete and failed backup handling. Actual trace shows pre/code, superseding the initial incorrect generic-Markdown heading assumption. Original CI text-lookup failure root cause is not established."
+    },
+    "fence_fixture_repairs": {
+      "author_tests": "PASS_85_across_8_suites",
+      "reviewer_tests": "PASS_26_fence_tests",
+      "runtime_changes": false
+    },
+    "hermetic_bridge": {
+      "tests": "PASS_10_author_and_independent_reviewer",
+      "runtime_changes": false
+    },
+    "local_packaged": "PASS separate packaged stages; full desktop:verifyFAIL and dev clean rerunFAIL, independently assessed apparently unrelated. See artifacts/2026-09-29-rudder-d1-local-packaged-verification.json."
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "level": "stage_verdict",
+      "scope": "Whole D1 stage acceptance confirmed by Newton for frozen8512; two fence test repairs accepted, no runtime change.",
+      "candidate_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
+      "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+      "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+      "packet_version": "v24.2"
+    },
+    "verifier": {
+      "original_receipt_source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "rebind_basis": "Unchanged executed runtime; original independent evidence artifact and hashes preserved. Final reviewer validates delivery-head delta.",
+      "verdict": "PASS",
+      "agent_id": "01a0e90e-d2df-7092-a9a6-4ac0e3d80c1f",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json",
+      "lease_recheck": "current: Newton exact948 final review confirms unchanged production runtime and original Hubble evidence; additional changes are tests/docs only.",
+      "candidate_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
+      "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+      "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+      "packet_version": "v24.2"
+    },
+    "final_review": {
+      "verdict": "accept",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "level": "final_handoff_verdict",
+      "evidence": "Newton final accept exact948 SHA/tree/fingerprint; sole non-plan delta from accepted8512 is hermetic bridge-test repair, independently10PASS. Hubble runtime evidence unchanged, packagedPASS applicable. Full desktop:verifyFAIL remains apparently unrelated Terminal layout, not Main-reproduced. Generic runner uncommitted changes excluded. Current948 CI gates merge.",
+      "candidate_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
+      "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+      "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+      "packet_version": "v24.2"
+    },
+    "history": [
+      {
+        "verdict": "accept",
+        "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+        "level": "final_handoff_verdict",
+        "evidence": "Newton verified exact8512 SHA/tree/fingerprint, independently ran26 fence tests and confirmed Hubble PASS runtime-content equivalence. Euler reports85 tests across8 suites. No blocking bounded D1 findings; current CI and local packaged verification remain separate integration gates.",
+        "candidate_fingerprint": "cd2aedaf822bd394cf8d0fd547eb54d9c4de18dd7a44a5d41a21bdbd73947f0f",
+        "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+        "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+        "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+        "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+        "packet_version": "v24.2"
+      },
+      {
+        "verdict": "accept",
+        "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+        "level": "final_handoff_verdict",
+        "evidence": "Newton inspected exact443 tree and source fingerprint, reconciled Hubble PASS and runtime equivalence, checked actual backup E2E/native log hashes and counts, and independently reran portability29. No blocking findings. CI and merge remain separate gates.",
+        "candidate_fingerprint": "8446909887b2b54956a9993f18e6212e43beeca9ac5d083505fb84dcacaa34a8",
+        "source_sha": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
+        "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+        "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+        "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+        "packet_version": "v24.2"
+      },
+      {
+        "candidate_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+        "verdict": "accept",
+        "level": "stage_verdict_updater_compatibility_only",
+        "reviewer": "Newton",
+        "reason": "Prior sole blocker was legacy journals without runtimeReceipt. Five updater files now exactly match Main; two receipt files removed. Whole-D1 stage confirmation pending, not a final handoff."
+      },
+      {
+        "candidate_sha": "29f4002ce3345c323cbb98f79ce16b00f8c6c243",
+        "verdict": "invalidated",
+        "reviewer": "Bohr",
+        "reason": "Candidate changed after organization-delete repair and shared-fence coverage; do not reuse earlier stage verdict."
+      }
+    ]
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      {
+        "from_source_sha": "2c0d5125eedbb577f73c4be4fabcfcb296602909",
+        "to_source_sha": "6bd497ca9cc2aadc7e44b4e0915debcb5511b8c5",
+        "from_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "to_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "reason": "The v23 dirty source scope was reconciled into one clean checkpoint; incomplete Chat and superseded v23 evidence were preserved separately.",
+        "affected_receipts": [
+          "v23.stage_review",
+          "v23.verifier",
+          "v23.final_review"
+        ]
+      },
+      {
+        "from_source_sha": "6bd497ca9cc2aadc7e44b4e0915debcb5511b8c5",
+        "to_source_sha": "29f4002ce3345c323cbb98f79ce16b00f8c6c243",
+        "from_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "to_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "reason": "Author real-entry smoke exposed a stale unlisted-project expectation and an organization deletion foreign-key ordering bug; the candidate now fail-closes the unlisted mutation, deletes projects before goals, and verifies Rust-owned organization deletion after final readback.",
+        "affected_receipts": [
+          "v24.reviewer",
+          "v24.verifier",
+          "v24.final_review"
+        ]
+      },
+      {
+        "from_source_sha": "dd02646c2f2e1be5ec3c04edd0d349486dcedb46",
+        "to_source_sha": "c8c8e5b2a049c8b7cc02998f7e719882a64c7035",
+        "from_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "to_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "reason": "The shared deletion-fence fix was followed by a docs-only ledger/status rebind; source behavior and scoped source fingerprint remain content-equivalent.",
+        "affected_receipts": [
+          "v24.pre_docs_rebind_stage_review"
+        ]
+      },
+      {
+        "from_source_sha": "29f4002ce3345c323cbb98f79ce16b00f8c6c243",
+        "to_source_sha": "dd02646c2f2e1be5ec3c04edd0d349486dcedb46",
+        "from_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "to_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "reason": "Extracted existing organization-first and ordered Project-Goal row locks into a shared helper and added scope, counter, and token validation. The prior candidate already acquired those locks; the earlier claim that it omitted the fence was incorrect.",
+        "affected_receipts": [
+          "v24.review_29f4002ce",
+          "v24.verifier_29f4002ce",
+          "v24.final_review_29f4002ce"
+        ]
+      },
+      {
+        "from_source_sha": "dd02646c2f2e1be5ec3c04edd0d349486dcedb46",
+        "to_source_sha": "c8c8e5b2a049c8b7cc02998f7e719882a64c7035",
+        "from_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "to_main_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+        "reason": "Only migration status/ledger plan records changed after the shared-fence source commit; the 145-path source fingerprint is unchanged.",
+        "affected_receipts": [
+          "v24.pre_docs_rebind_stage_review"
+        ]
+      }
+    ],
+    "invalidated_receipts": [],
+    "historical_superseded_receipts": [
+      "v23.stage_review",
+      "v23.verifier",
+      "v23.final_review",
+      "v22.reviewer",
+      "v22.verifier",
+      "v22.final_review",
+      "v24.review_29f4002ce",
+      "v24.verifier_29f4002ce",
+      "v24.final_review_29f4002ce",
+      "v24.pre_docs_rebind_stage_review"
+    ]
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "delivery_pr": 225,
+    "base_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+    "branch_refs": [
+      "refs/heads/codex/rudder-d1-candidate-20260928@948929b25251183bd552fc8e893a121fa878d860",
+      "refs/remotes/origin/codex/rudder-rust-mainline-probe-20260923@948929b25251183bd552fc8e893a121fa878d860",
+      "refs/remotes/origin/main@66b500aef009a0554ebf658de4fca6ddfa8466f1"
+    ],
+    "pr_remote_head_observed": "948929b25251183bd552fc8e893a121fa878d860",
+    "pr_remote_base_observed": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss",
+    "patch_tree_sha": "51c885ef86d2c8cbbb5ebc6d063add4a9169ac41",
+    "expected_old_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+    "cas": {
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+      "delivered_sha": "e2e603f07c7d4b7410fea7792b9a4d0667d3777e",
+      "mechanism": "Protected PR squash with --match-head-commit 948929b25251183bd552fc8e893a121fa878d860; base checked before merge, resulting tree exactly equals accepted candidate."
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "Original checkout /Users/zeeland/.codex/worktrees/7b2a/rudder-oss remained untouched.",
+      "Other managed migration worktrees and the incomplete Chat/Desktop experiments were preserved; Chat and superseded v23 evidence are in named git stashes."
+    ],
+    "index_fingerprint_before": "917f4a8434d07a4e1a10479cc93a7ee6b6a1c77987d1c6beabbf6c8b8e3297c7",
+    "index_fingerprint_after": "917f4a8434d07a4e1a10479cc93a7ee6b6a1c77987d1c6beabbf6c8b8e3297c7",
+    "worktree_fingerprint_before": "38cffb9d1aaae437829d6ce7240ee002fa7f7e37c849606ac83af225ab569602",
+    "worktree_fingerprint_after": "38cffb9d1aaae437829d6ce7240ee002fa7f7e37c849606ac83af225ab569602",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "The original dirty checkout was fingerprinted before candidate work and matches after candidate commit preparation.",
+      "The candidate is isolated at the clean checkpoint SHA and no live index update was used for integration.",
+      "The v23 packet, author probe, incomplete Chat experiment, and earlier Desktop experiment remain recoverable in named stashes."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": "refs/heads/main",
+    "delivered_sha": "e2e603f07c7d4b7410fea7792b9a4d0667d3777e",
+    "delivered_tree_sha": "51c885ef86d2c8cbbb5ebc6d063add4a9169ac41",
+    "timestamp": "2026-09-28T19:55:54Z",
+    "proof": [
+      "PR225 MERGED after all applicable checks including Qualification summary PASS; no unresolved review threads.",
+      "Full CI run 36471765185 and real-entry run 36471764896 passed at accepted source 948929b25.",
+      "Fetched Main e2e603f07 has exactly the accepted candidate tree; git diff 948929b25 origin/main is empty.",
+      "Only this bounded D1 bridge increment is delivered. Default public Rust listener, Node writer retirement and complete migration remain incomplete."
+    ]
+  }
+}

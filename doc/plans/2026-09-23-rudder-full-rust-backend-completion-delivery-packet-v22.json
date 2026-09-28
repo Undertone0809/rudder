@@ -1,0 +1,312 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-full-rust-backend-completion-v22-d1-real-entry-recovery",
+  "status": "integration_pending",
+  "owner": {
+    "root_id": "rudder-full-rust-backend-completion-2026-09-21",
+    "agent_id": "codex-implementation-agent"
+  },
+  "intent": {
+    "raw_request": "Complete Rudder's first-party backend and Agent tooling migration to Rust across Actix HTTP/WebSocket, SQLx PostgreSQL, first-party services, auth/session, schedulers, workers, Agent Runs, Chat/Side Chat, Automation, provider adapters, CLI, MCP, identity, analytics, managed MCP, embedded PostgreSQL, and state-owning update/recovery tools while preserving React, frontend tooling, Electron shell, and user-selected external processes.",
+    "corrections": [
+      "Persist the plan under doc/plans before implementation.",
+      "Connect each safe slice to the narrowest authorized real environment incrementally; offline tests are not a substitute for real-entry observation.",
+      "Refresh and reconcile origin/main before every candidate because Main may add features or change contracts during the migration.",
+      "This v22 packet covers only the branding and Project-Goal real-entry slice, including public audit rollback and persisted outbox restart recovery; all three terminal claims remain false.",
+      "Keep the existing create-with-goals and Side Chat/Chat behavior; do not claim Node retirement from a private bridge.",
+      "Do not use production dual write, stale writers, silent Node fallback, Node subprocess wrapping, or Electron business logic."
+    ],
+    "non_goals": [
+      "full Phase 0-7 completion",
+      "public Actix listener cutover, SQLx migration authority, identity/session authority, or all-writer retirement",
+      "production traffic/database changes, stable publication, or deletion of real user data"
+    ],
+    "authorization": "isolated local and CI implementation plus disposable real-entry verification; no production deployment, stable publication, production database migration, or traffic switch"
+  },
+  "predecessor": {
+    "packet": "2026-09-23-rudder-full-rust-backend-completion-delivery-packet-v21.json",
+    "replacement_reason": "The v21 candidate added public audit-failure and persisted outbox recovery assertions; the exact current source/runtime/data tuple is rebound here after both real-entry workflows passed."
+  },
+  "candidate": {
+    "branch": "codex/rudder-rust-mainline-probe-20260923",
+      "source_ref": "refs/heads/codex/rudder-rust-mainline-probe-20260923@8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c committed migration slice",
+    "source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+    "source_tree": "d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3",
+    "dirty_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+    "fingerprint_method": "NUL-safe SHA-256 of sorted path plus committed blob content pairs for the same 105 source paths; doc/plans durable records, delivery packets, and artifacts excluded; content-equivalent to the precommit candidate fingerprint",
+    "changed_paths_scope": "cli, agent contract, desktop native staging/update receipt, native auth/project-goal/D1/server-foundation, SQL migrations/schema, shared contracts, smoke probes, and server bridge/fence/service paths",
+    "changed_paths": [
+      "cli/**",
+      "contracts/rudder-agent-contract/v1.json",
+      "desktop/**",
+      "native/Cargo.lock",
+      "native/bins/rudder-server-foundation/**",
+      "native/crates/agent-contract-core/**",
+      "native/crates/agent-request-planner/**",
+      "native/crates/auth-core/**",
+      "native/crates/d1-persistence/**",
+      "native/crates/project-goal-link-core/**",
+      "native/crates/server-foundation/**",
+      "packages/agent-runtime-utils/**",
+      "packages/db/src/client.test.ts",
+      "packages/db/src/migrations/**",
+      "packages/db/src/schema/**",
+      "packages/shared/**",
+      "scripts/release-compatibility-matrix.*",
+      "scripts/smoke/rust-*-real-entry.ts",
+      "server/resources/bundled-skills/rudder-docs/references/cli-reference.md",
+      "server/src/bootstrap/**",
+      "server/src/config.ts",
+      "server/src/index.ts",
+      "server/src/middleware/auth.ts",
+      "server/src/realtime/live-events-ws.ts",
+      "server/src/routes/{orgs,projects}.ts",
+      "server/src/services/**",
+      "server/src/types/express.d.ts"
+    ],
+    "build": {
+      "id": "rudder-foundation-7b88ac79c5d4-preflight-040287e98633-source-8e5b3fff-clean-ffe4c709",
+      "source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+      "artifact_hash": "7b88ac79c5d4bb6caf3cad92bc0c1f93c8d3dd25226a7a267098eca69b590025"
+    },
+    "runtime": {
+      "id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-foundation-7b88ac79-preflight-040287e9-source-8e5b3fff-clean-ffe4c709",
+      "source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c"
+    },
+    "organization_data": {
+      "organization_id": "cfdb61ea-9b81-44af-9e74-f920d0d361c0;a3de549c-9f40-4022-a289-b11c27d3d126",
+      "data_id": "rust-branding-real-entry-9655;rust-project-goal-real-entry-12056",
+      "previous_author_observation": {
+        "organization_id": "88ce1ff0-b7d6-4ef7-8c93-78be2b991d47;290f2aaa-7df7-4812-8b36-7eff066ca40d",
+        "data_id": "rust-branding-real-entry-74945;rust-project-goal-real-entry-74946"
+      }
+    },
+    "workload_fixture": "Disposable embedded PostgreSQL first-run and restart workflows for scalar branding and complete Project-Goal replacement, with HTTP, auth/fence, audit/receipt/outbox, CLI, MCP, negative, and recovery assertions.",
+    "budget_lease": {
+      "id": "current-local-run",
+      "fingerprint": "not_applicable",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "v22",
+      "fingerprint": "v22-d1-branding-project-goal-real-entry-recovery-ffe4c709",
+      "criteria": [
+        "Candidate origin/main reconciliation is recorded and affected historical receipts are invalidated.",
+        "Required-mode startup runs Rust migration preflight before Node migration inspection over 175 journal entries and 177 SQL files.",
+        "Branding HTTP mutation invokes Rust authority with actor binding, SQLx transaction, receipt, activity, outbox, SQL readback, and idempotent restart replay.",
+      "Project-Goal complete replacement preserves create-with-goals compatibility, enforces explicit allowlist ownership, organization scope, signed idempotency binding, receipt/activity, and restart recovery.",
+      "CLI and MCP exercise the same supported HTTP authority and missing legacy runtime paths fail explicitly without Node fallback.",
+      "The v22 exact-candidate logs bind both real-entry markers, migration preflight, SQL readback, CLI/MCP results, negative cases, public audit rollback, outbox retry after restart, and restart recovery to the current source/runtime/data tuple.",
+      "Default Rust listener authority, all legacy writer retirement, full first-party Rust migration, release readiness, and production verification remain unclaimed."
+      ],
+      "state_inventory": [
+        "Startup: disposable embedded PostgreSQL bootstrap/current, Rust preflight, server health 200, private Actix bridge.",
+        "Authority: branding Rust receipt; Project-Goal invalid/valid allowlist and unlisted fail-closed ownership.",
+        "Writes: create-with-goals 201 compatibility; complete goal-set replacement 200; signed substitution 401; mixed update 409.",
+        "Recovery: replay, idempotency conflict, cross-organization rejection, clear-all, deletion fence, restart readback.",
+        "Tooling: direct CLI and MCP exits 0 through the same HTTP authority; no missing-binary Node fallback.",
+      "Failure recovery: public audit failure returns 500 with no business/receipt/activity/outbox partial commit; the persisted claimed outbox row is published after restart with attempts incremented and error cleared.",
+      "Deferred: public Actix listener, identity/session/revocation, remaining writers, migration apply authority, packaged/default path, and production evidence."
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "accept",
+      "level": "stage_verdict",
+      "agent_id": "01a0cba6-9d65-79c0-8d84-472a00b51ab5",
+      "reviewed_at": "2026-09-23T00:48:31Z",
+      "candidate_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+      "source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+      "build_id": "rudder-foundation-7b88ac79c5d4-preflight-040287e98633-source-8e5b3fff-clean-ffe4c709",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-foundation-7b88ac79-preflight-040287e9-source-8e5b3fff-clean-ffe4c709",
+      "data_id": "rust-branding-real-entry-9655;rust-project-goal-real-entry-12056",
+      "packet_version": "v22",
+      "evidence": "Committed-candidate stage rebind accept: Hegel confirmed exact byte/content equivalence across the same 105 source paths, no source behavior changed, and the current packet/runtime/build/log/data tuple aligns. Findings none; default listener, legacy writer retirement, full migration, release, and production claims remain false."
+    },
+    "verifier": {
+      "verdict": "PASS",
+      "agent_id": "01a0cb8d-0c38-7471-9085-e162e9414a74",
+      "verified_at": "2026-09-23T00:42:29Z",
+      "candidate_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+      "source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+      "build_id": "rudder-foundation-7b88ac79c5d4-preflight-040287e98633-source-8e5b3fff-clean-ffe4c709",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-foundation-7b88ac79-preflight-040287e9-source-8e5b3fff-clean-ffe4c709",
+      "data_id": "rust-branding-real-entry-9655;rust-project-goal-real-entry-12056",
+      "packet_version": "v22",
+      "terminal_markers": [
+        "RUST_BRANDING_REAL_ENTRY_PASS",
+        "RUST_PROJECT_GOAL_REAL_ENTRY_PASS"
+      ],
+      "evidence": "Committed-candidate rebind PASS: the new commit is the direct child of the previously verified candidate and the committed 105-path blob hash stream is byte/content-equivalent. Existing independent real-entry logs still bind the same build/runtime/data and contain both terminal markers, migration preflight, SQL readbacks, audit rollback, actor binding, fences, organization scope, idempotency/replay/restart, CLI/MCP, missing legacy path fail-closed behavior, and persisted outbox restart retry. No smoke rerun was needed; lease recheck is current and resources were cleaned.",
+      "binary_sha256": {
+        "rudder_server_foundation": "7b88ac79c5d4bb6caf3cad92bc0c1f93c8d3dd25226a7a267098eca69b590025",
+        "migration_preflight": "040287e9863337d0a536bb8b7179d10aa8395ac9e05f7e4d4767c691b2e2508a"
+      },
+      "runtime_observation": {
+        "branding": {
+          "instance_id": "rust-branding-real-entry-9655",
+          "api_port": 61102,
+          "database_port": 61103,
+          "organization_id": "cfdb61ea-9b81-44af-9e74-f920d0d361c0",
+          "disposable_home": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-rust-branding-real-entry-fgDZes"
+        },
+        "project_goal": {
+          "instance_id": "rust-project-goal-real-entry-12056",
+          "api_port": 61227,
+          "database_port": 61228,
+          "organization_id": "a3de549c-9f40-4022-a289-b11c27d3d126",
+          "other_organization_id": "a26dcee3-02d0-4c5f-b1da-734fceb2b6a4",
+          "project_id": "6c4cfa2b-2ae4-4027-b1aa-cb0ee81ceb78",
+          "disposable_home": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-rust-project-goal-real-entry-ZibMSK"
+        },
+        "resource_cleanup": "Both disposable homes were removed; candidate-specific server, Actix, and embedded PostgreSQL processes were absent at lease recheck."
+      },
+      "evidence_logs": [
+        {
+          "path": "/tmp/rudder-v22-independent-branding.log",
+          "sha256": "287db1dba74140406ad9c01f86db29597f4ff8d653e7ac2dd10a8df103eacdb1",
+          "terminal_marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+          "lines": 51
+        },
+        {
+          "path": "/tmp/rudder-v22-independent-project-goal.log",
+          "sha256": "207ad99233a2674fb39003465ae420e0f2ca3819a69ae4f4d015184bea7191c8",
+          "terminal_marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+          "lines": 71
+        }
+      ],
+      "lease_recheck": "current"
+    },
+    "final_review": {
+      "verdict": "accept",
+      "level": "final_handoff_verdict",
+      "agent_id": "01a0cb9b-6f37-7472-b20c-000c1f618e05",
+      "reviewed_at": "2026-09-23T00:54:16Z",
+      "candidate_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+      "source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+      "build_id": "rudder-foundation-7b88ac79c5d4-preflight-040287e98633-source-8e5b3fff-clean-ffe4c709",
+      "runtime_id": "node-v22.23.1-pnpm-9.15.4-rustc-1.93.0-cargo-1.93.0-embedded-postgres-18.1.0-beta.16-foundation-7b88ac79-preflight-040287e9-source-8e5b3fff-clean-ffe4c709",
+      "data_id": "rust-branding-real-entry-9655;rust-project-goal-real-entry-12056",
+      "packet_version": "v22",
+      "evidence": "Committed-candidate final handoff review returned accept with no findings. The 105-path committed blob content is equivalent to the reviewed candidate; Boyle stage accept and Hegel committed-candidate PASS are current for the same source/build/runtime/data/packet tuple. The bounded v22 slice is ready for scoped push and PR; default listener, remaining legacy writers, full migration, release, and production claims remain deferred."
+    }
+  },
+  "precommit_receipt_history": {
+    "candidate_source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "candidate_tree": "15c813eb7aff94e87f406e552b8d406e4512a5cd",
+    "candidate_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+    "content_equivalent_to_committed_source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+    "receipts": {
+      "reviewer": {"agent_id": "01a0cba6-9d65-79c0-8d84-472a00b51ab5", "verdict": "accept", "reviewed_at": "2026-09-23T00:28:51Z"},
+      "verifier": {"agent_id": "01a0cb8d-0c38-7471-9085-e162e9414a74", "verdict": "PASS", "verified_at": "2026-09-23T00:08:36Z"},
+      "final_review": {"agent_id": "01a0cb9b-6f37-7472-b20c-000c1f618e05", "verdict": "accept", "reviewed_at": "2026-09-23T00:32:30Z"}
+    },
+    "rebind_reason": "The committed source tree contains the same 105 source blob contents as the accepted dirty candidate; issuing agents must rebind receipts to the new commit identity before push."
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      {
+        "from_packet": "v16",
+        "from_source_sha": "fc73374bb15933ef5bad7f3056336c87e455cee0",
+        "to_source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+        "reason": "origin/main moved and the current desktop/native/schema/route overlap was reconciled in isolated worktree /private/tmp/rudder-rust-mainline-probe-20260923",
+        "affected_receipts": ["v16.reviewer", "v16.verifier", "v16.final_review"]
+      },
+      {
+        "from_packet": "v20",
+        "from_source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+        "to_source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+        "from_dirty_fingerprint": "7a57b77dd8bd48b41b0c8acbb00e56684713da197c137925faf37c12dbe22511",
+        "to_dirty_fingerprint": "23552a728d941d02fe1ad75828ddb862bee359027a81b5189c99ea5f7e7d2069",
+        "reason": "The branding real-entry source was modified after v20; the exact NUL-safe fingerprint changed and both disposable smoke workflows were rerun on the current content.",
+        "affected_receipts": ["v20.reviewer", "v20.verifier", "v20.final_review"]
+      },
+      {
+        "from_packet": "v21",
+        "from_source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+        "to_source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+        "from_dirty_fingerprint": "23552a728d941d02fe1ad75828ddb862bee359027a81b5189c99ea5f7e7d2069",
+        "to_dirty_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+        "reason": "The real-entry scripts were corrected to install disposable audit triggers, use the actual receipt schema, reconnect SQL after restart, and prove persisted outbox recovery; both workflows were rerun.",
+        "affected_receipts": ["v21.reviewer", "v21.verifier", "v21.final_review"]
+      },
+      {
+        "from_data_id": "rust-branding-real-entry-74945;rust-project-goal-real-entry-74946",
+        "to_data_id": "rust-branding-real-entry-9655;rust-project-goal-real-entry-12056",
+        "from_organization_id": "88ce1ff0-b7d6-4ef7-8c93-78be2b991d47;290f2aaa-7df7-4812-8b36-7eff066ca40d",
+        "to_organization_id": "cfdb61ea-9b81-44af-9e74-f920d0d361c0;a3de549c-9f40-4022-a289-b11c27d3d126",
+        "reason": "Final review found that the verifier used fresh disposable fixtures whose concrete organization/data identity was recorded only in runtime_observation; the packet candidate is rebound to those exact fixtures. The old stage reviewer receipt is invalidated and must be reissued.",
+        "affected_receipts": ["v22.reviewer"]
+      },
+      {
+        "from_source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+        "to_source_sha": "8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+        "from_source_tree": "15c813eb7aff94e87f406e552b8d406e4512a5cd",
+        "to_source_tree": "d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3",
+        "from_dirty_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+        "to_content_fingerprint": "ffe4c7093515753d914553547b3a343a70e714ed894c62e2b4d63e199ae2f161",
+        "reason": "The reviewed dirty candidate was committed as 8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c. A 105-path committed-blob hash stream is byte/content-equivalent, but source identity changed; all three receipts are invalidated pending issuing-agent rebind.",
+        "affected_receipts": ["v22.precommit.reviewer", "v22.precommit.verifier", "v22.precommit.final_review"]
+      }
+    ],
+    "invalidated_receipts": ["v16.reviewer", "v16.verifier", "v16.final_review", "v20.reviewer", "v20.verifier", "v20.final_review", "v21.reviewer", "v21.verifier", "v21.final_review", "v22.reviewer", "v22.precommit.reviewer", "v22.precommit.verifier", "v22.precommit.final_review"],
+    "invalidated_receipt_observations": {
+      "v22.reviewer": {
+        "agent_id": "01a0cb80-5946-76a2-a88c-4ac3fcdeb144",
+        "verdict": "accept",
+        "reviewed_at": "2026-09-22T23:50:51Z",
+        "data_id": "rust-branding-real-entry-74945;rust-project-goal-real-entry-74946",
+        "reason": "Concrete reviewer data identity did not match the independent verifier fixture; no code change is implied, but the receipt cannot be reused for the rebound tuple."
+      }
+    }
+  },
+  "integration": {
+    "authorized": false,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "branch_refs": [
+      "refs/heads/codex/rudder-rust-mainline-probe-20260923@8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c",
+      "refs/remotes/origin/main@cf131c6de87ac7d29ad4acbda3da6729dc2c52a4"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/private/tmp/rudder-rust-mainline-probe-20260923",
+    "patch_tree_sha": "d9ad1738ec9752cf07a279aa55f2ff1d98bc38b3",
+    "expected_old_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "The original /Users/zeeland/.codex/worktrees/7b2a/rudder-oss checkout retained its pre-existing staged and unstaged changes; all candidate changes stayed in the isolated worktree."
+    ],
+    "index_fingerprint_before": "488a589d2c3f481b1adba793a509ef61512cab7a39f525f3f95b406bc3c0e3b0",
+    "index_fingerprint_after": "488a589d2c3f481b1adba793a509ef61512cab7a39f525f3f95b406bc3c0e3b0",
+    "worktree_fingerprint_before": "019393e18f927f4064582d78bf17bcc1636e165af611729f59598dd16256ed8d",
+    "worktree_fingerprint_after": "019393e18f927f4064582d78bf17bcc1636e165af611729f59598dd16256ed8d",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "No reset, checkout, or live-index replacement was used on the original dirty checkout.",
+      "The candidate used a separate temporary worktree and its own staged index.",
+      "Both real-entry scripts disposed their temporary homes, embedded PostgreSQL instances, server processes, Actix children, and ports."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  }
+}

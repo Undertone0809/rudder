@@ -983,7 +983,7 @@ describe("organization portability", () => {
         defaultMode: "shared_workspace",
         defaultProjectWorkspaceId: "workspace-imported",
       }),
-    }));
+    }), { allowScalarUpdateWhenProjectGoalOwned: true });
     expect(issueSvc.create).toHaveBeenCalledWith("organization-imported", expect.objectContaining({
       projectId: "project-imported",
       projectWorkspaceId: "workspace-imported",

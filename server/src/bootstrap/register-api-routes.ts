@@ -39,6 +39,7 @@ import { sideChatProviderCleanupRoutes } from "../routes/side-chat-provider-clea
 import { sidebarBadgeRoutes } from "../routes/sidebar-badges.js";
 import { websiteMetadataRoutes } from "../routes/website-metadata.js";
 import { rudderPluginService } from "../services/rudder-plugins.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
 import type { RudderAppOptions } from "./types.js";
 
@@ -47,6 +48,7 @@ export function registerApiRoutes(
   opts: RudderAppOptions,
   workspacePreview?: WorkspaceWebPreviewRuntime,
   chatBackgroundRuntime?: ChatBackgroundRuntime,
+  rustFoundationBridge?: RustFoundationBridge,
 ) {
   const api = Router();
   const pluginMcpOptions = {
@@ -81,13 +83,16 @@ export function registerApiRoutes(
       runtimeOwnerKind: opts.runtimeOwnerKind,
     }),
   );
-  api.use("/orgs", organizationRoutes(db, opts.storageService, workspacePreview));
+  api.use(
+    "/orgs",
+    organizationRoutes(db, opts.storageService, workspacePreview, rustFoundationBridge),
+  );
   api.use("/orgs", aiSearchRoutes(db));
   api.use(organizationSkillRoutes(db));
   api.use(agentRoutes(db, opts.storageService));
   api.use(managedMcpAgentBindingRoutes(db));
   api.use(assetRoutes(db, opts.storageService));
-  api.use(projectRoutes(db));
+  api.use(projectRoutes(db, rustFoundationBridge));
   api.use(appBuilderRoutes(db, {
     onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId),
   }));

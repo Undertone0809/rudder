@@ -1,0 +1,145 @@
+{
+  "schema": "rudder.rust-backend-completion.project-goal-real-entry-probe/v1",
+  "scope": "Project-Goal complete goal-set replacement through the supported Node HTTP entry, private Actix bridge, SQLx transaction, first-party CLI, first-party MCP, deletion fence, and restart replay",
+  "recorded_at": "2026-09-22T14:25:43+08:00",
+  "authorization": {
+    "target": "disposable local embedded PostgreSQL and local-trusted startup",
+    "production": false,
+    "traffic_switch": false,
+    "production_database": false,
+    "stable_publication": false,
+    "real_user_data": false
+  },
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "origin_main_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "migration_base_sha": "c54001819ca38079b627994557db0a18ed278fc0",
+    "tree_sha": "f972acbfc4807b20c9a2eece1f5a3f4f0a4d3e39",
+    "dirty_fingerprint": "5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91",
+    "dirty_fingerprint_scope": "sorted current worktree diff and untracked source paths excluding durable plan records, delivery packets, and artifacts",
+    "changed_paths": [
+      "cli/src/agent-v1-mcp-server.ts",
+      "cli/src/client/http.ts",
+      "cli/src/commands/client/project.ts",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/project-goal-link-core/src/lib.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/db/src/migrations/0169_project_goal_mutation_authority.sql",
+      "packages/db/src/schema/project_goal_mutations.ts",
+      "scripts/smoke/rust-project-goal-real-entry.ts",
+      "server/src/routes/projects.ts",
+      "server/src/services/project-goal-mutation-fence.ts",
+      "server/src/services/rust-foundation-bridge.ts"
+    ]
+  },
+  "runtime": {
+    "node": "v22.23.1",
+    "package_manager": "pnpm 9.15.4",
+    "rust": "rustc 1.93.0",
+    "cargo": "cargo 1.93.0",
+    "embedded_postgres": "18.1.0-beta.16",
+    "api_url": "http://127.0.0.1:54242",
+    "api_port": 54242,
+    "embedded_postgres_port": 54243,
+    "server_listener": "Node Express supported local-trusted listener; Actix is a private route-scoped child",
+    "foundation_binary_sha256": "dd16bd30aef8342f4db3455e149a75e958eccc61ef3295282a4fc4255e3efcb3",
+    "migration_preflight_binary_sha256": "d6f6bb0c0a37aef7fd0e0f65bee53c97600e7be785080a22f4015fb367faab1b"
+  },
+  "data": {
+    "instance_id": "rust-project-goal-real-entry-41908",
+    "organization_id": "5340a4a9-9ff5-47e5-b8eb-a74034b30b54",
+    "other_organization_id": "79753639-e5ea-4714-be37-6dc6d41c02ee",
+    "project_id": "d2a131b7-d232-46e9-9a22-fec3c3d742c0",
+    "tooling_project_id": "75fc56a7-51a2-4e0a-adbf-6c89f03eadfe",
+    "goal_ids": [
+      "c5fa9bc5-1357-4012-afc1-2732bcde5a9b",
+      "da381b6a-9312-414e-9ee6-558547449d9e"
+    ],
+    "agent_id": "ece0f665-d4bd-4ebc-a5fa-953dee2bdbd7",
+    "lifecycle": "temporary organization, projects, goals, agent, API key, embedded database, and server were disposed after the probe"
+  },
+  "migration": {
+    "first_start": "bootstrap",
+    "restart": "current",
+    "journal_entries": 170,
+    "sql_files": 172,
+    "legacy_unjournaled_sql_files": [
+      "0055_illegal_sheva_callister.sql",
+      "0128_modern_jetstream.sql"
+    ],
+    "manifest_fingerprint": "ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812",
+    "latest_authority": "Node still applies migrations; Rust preflight is real-entry supporting evidence, not migration-authority retirement"
+  },
+  "checks": {
+    "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+    "health": "HTTP 200; status=ok",
+    "node_http_create": "organization, two goals, two projects, agent, and agent API key created through the supported HTTP API",
+    "cli": {
+      "command": "project update <project> --goal-ids <goalA>,<goalB> --idempotency-key <key> --json --full-ids",
+      "exit_code": 0,
+      "terminal_effect": "tooling project goalIds read back as [goalA, goalB]"
+    },
+    "mcp": {
+      "transport": "stdio JSON-RPC tools/call",
+      "tool": "rudder_project_update",
+      "exit_code": 0,
+      "terminal_effect": "tooling project goalIds read back as []",
+      "missing_legacy_binary": "RUDDER_MCP_RUDDER_BIN pointed at a missing path; MCP still completed through direct HTTP dispatch with no Node CLI fallback"
+    },
+    "http_rust_required": {
+      "route": "PATCH /api/projects/:id",
+      "mode": "RUDDER_RUST_PROJECT_GOAL_SET_MODE=required",
+      "status": 200,
+      "terminal_effect": "complete goal set [goalA, goalB] atomically replaced and primary projection set to goalA"
+    },
+    "database_readback": {
+      "owner": "rust",
+      "first_mutation_version": "1",
+      "first_fence_epoch": "1",
+      "project_primary_goal": "goalA",
+      "project_goal_links": "[goalA, goalB]",
+      "receipt": "project_goal_set_replacement/applied",
+      "activity": "one project.updated row",
+      "outbox": "one pending or published row"
+    },
+    "deletion_fence": {
+      "route": "DELETE /api/orgs/:orgId",
+      "status": 409,
+      "reason": "Rust-owned Project-Goal rows prevent organization deletion"
+    },
+    "negative_cases": {
+      "same_key_replay": "HTTP 200; one receipt, one activity, one outbox row",
+      "same_key_different_payload": "HTTP 409 mutation_idempotency_conflict",
+      "cross_organization_goal": "HTTP 422 project_goal_set_invalid; mutation version unchanged",
+      "empty_goal_set": "HTTP 200; primary projection null and links empty"
+    },
+    "restart_recovery": {
+      "action": "stop and dispose server, restart against the same embedded PostgreSQL data, replay empty-set idempotency key",
+      "status": 200,
+      "final_readback": "primary project receipts=4, activities=2, links=0, mutation_version=2; tooling project receipts=2, activities=2, links=0"
+    },
+    "source_path_authority": {
+      "project_goal_route": "required-mode branch invokes RustFoundationBridge.projectGoalSet; legacy project service is not called as the goal-set writer",
+      "cli_mcp": "CLI and MCP use direct HTTP dispatch for rudder_project_update; missing legacy CLI binary did not trigger fallback",
+      "limit": "the probe does not prove complete global Node writer retirement, sole public Actix listener, or default-mode activation"
+    }
+  },
+  "claims": {
+    "project_goal_real_entry_connected": true,
+    "project_goal_default_path_verified": false,
+    "project_goal_old_authority_retired": false,
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "limits": [
+    "local disposable evidence only; no production credentials, traffic, database, or stable release was used",
+    "Node remains the supported HTTP listener and migration authority",
+    "the signed bridge is a transitional private bridge; full Rust identity/session authority is later work",
+    "unfenced Goal route/issue projection and other legacy writer families still block D1 owner activation",
+    "independent stage review, exact-candidate product verifier PASS, and final reviewer accept are not yet recorded"
+  ],
+  "command": "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts"
+}

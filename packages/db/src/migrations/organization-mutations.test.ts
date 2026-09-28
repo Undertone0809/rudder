@@ -20,6 +20,9 @@ import { applyPendingMigrations, ensurePostgresDatabase } from "../client.js";
 
 const migrations = path.dirname(fileURLToPath(import.meta.url));
 const originalOrg = randomUUID();
+const originalProject = randomUUID();
+const catchupOrg = randomUUID();
+const catchupProject = randomUUID();
 let root = "";
 let instance: EmbeddedPostgres | undefined;
 let db: postgres.Sql;
@@ -43,7 +46,12 @@ async function organization(): Promise<string> {
   const id = randomUUID();
   await db`INSERT INTO organizations (id, url_key, name, issue_prefix)
     VALUES (${id}, ${id}, 'Synthetic D1 organization', ${id})`;
-  await db`INSERT INTO organization_mutation_state (org_id) VALUES (${id})`;
+  return id;
+}
+
+async function insertProject(org: string, id = randomUUID()): Promise<string> {
+  await db`INSERT INTO projects (id, org_id, name)
+    VALUES (${id}, ${org}, 'Synthetic D1 project')`;
   return id;
 }
 
@@ -59,18 +67,22 @@ async function receipt(
   org: string,
   audit: string,
   key = "synthetic-command",
+  commandKind: "organization_branding" | "project_goal_link" = "organization_branding",
+  fenceEpoch = 0,
 ) {
   return sql.unsafe(
     `INSERT INTO organization_mutation_receipts
       (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
        resulting_version, fence_epoch, activity_id, result)
-      VALUES ($1, $2, 'organization_branding', $3, 'applied', 1, 0, $4, $5::jsonb)`,
+      VALUES ($1, $2, $3, $4, 'applied', 1, $5, $6, $7::jsonb)`,
     [
       org,
       key,
+      commandKind,
       "a".repeat(64),
+      fenceEpoch,
       audit,
-      JSON.stringify({ organization_id: org, version: 1, fence_epoch: 0 }),
+      JSON.stringify({ organization_id: org, version: 1, fence_epoch: fenceEpoch }),
     ],
   );
 }
@@ -95,27 +107,43 @@ beforeAll(async () => {
   const url = `postgres://rudder:rudder@127.0.0.1:${port}/rudder`;
   db = postgres(url, { max: 3, onnotice: () => {} });
 
-  const prior = path.join(root, "prior-migrations");
-  mkdirSync(path.join(prior, "meta"), { recursive: true });
   const journal = JSON.parse(
     readFileSync(path.join(migrations, "meta/_journal.json"), "utf8"),
   );
-  journal.entries = journal.entries.filter(
-    (entry: { idx: number }) => entry.idx <= 162,
-  );
-  for (const entry of journal.entries) {
-    copyFileSync(
-      path.join(migrations, `${entry.tag}.sql`),
-      path.join(prior, `${entry.tag}.sql`),
+  const migrationSnapshot = (name: string, maxIdx: number) => {
+    const folder = path.join(root, name);
+    mkdirSync(path.join(folder, "meta"), { recursive: true });
+    const entries = journal.entries.filter(
+      (entry: { idx: number }) => entry.idx <= maxIdx,
     );
-  }
-  writeFileSync(
-    path.join(prior, "meta/_journal.json"),
-    JSON.stringify(journal),
-  );
+    for (const entry of entries) {
+      copyFileSync(
+        path.join(migrations, `${entry.tag}.sql`),
+        path.join(folder, `${entry.tag}.sql`),
+      );
+    }
+    writeFileSync(
+      path.join(folder, "meta/_journal.json"),
+      JSON.stringify({ ...journal, entries }),
+    );
+    return folder;
+  };
+
+  const prior = migrationSnapshot("prior-migrations", 162);
   await migrate(drizzle(db), { migrationsFolder: prior });
   await db`INSERT INTO organizations (id, url_key, name, issue_prefix)
     VALUES (${originalOrg}, ${originalOrg}, 'Before D1', ${originalOrg})`;
+  await insertProject(originalOrg, originalProject);
+
+  const throughInitialBackfill = migrationSnapshot("through-0169", 169);
+  await migrate(drizzle(db), { migrationsFolder: throughInitialBackfill });
+  await db`INSERT INTO organizations (id, url_key, name, issue_prefix)
+    VALUES (${catchupOrg}, ${catchupOrg}, 'After initial D1 backfill', ${catchupOrg})`;
+  await insertProject(catchupOrg, catchupProject);
+  expect(
+    await db`SELECT org_id FROM organization_mutation_state WHERE org_id = ${catchupOrg}`,
+  ).toHaveLength(0);
+
   await applyPendingMigrations(url);
   await applyPendingMigrations(url);
 }, 120_000);
@@ -127,13 +155,29 @@ afterAll(async () => {
 });
 
 describe("D1 durable mutation schema on real PostgreSQL", () => {
-  it("upgrades without activating Rust or changing old Node organization writes", async () => {
+  it("backfills Node-owned baselines without activating Rust or changing old writes", async () => {
     expect(
       await db`SELECT name FROM organizations WHERE id = ${originalOrg}`,
     ).toMatchObject([{ name: "Before D1" }]);
     expect(
-      await db`SELECT * FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
-    ).toHaveLength(0);
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_branding_mutation_state WHERE org_id = ${originalOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    expect(
+      await db`SELECT org_id, owner, mutation_version::text, fence_epoch::text
+        FROM project_goal_mutation_state WHERE project_id = ${originalProject}`,
+    ).toEqual([
+      {
+        org_id: originalOrg,
+        owner: "node",
+        mutation_version: "0",
+        fence_epoch: "0",
+      },
+    ]);
     await db`UPDATE organizations SET name = 'Node still writes' WHERE id = ${originalOrg}`;
     const org = await organization();
     const [row] =
@@ -146,14 +190,262 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     });
   });
 
+  it("catches up organizations and projects created after the initial backfill", async () => {
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${catchupOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_branding_mutation_state WHERE org_id = ${catchupOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    expect(
+      await db`SELECT org_id, owner, mutation_version::text, fence_epoch::text
+        FROM project_goal_mutation_state WHERE project_id = ${catchupProject}`,
+    ).toEqual([
+      {
+        org_id: catchupOrg,
+        owner: "node",
+        mutation_version: "0",
+        fence_epoch: "0",
+      },
+    ]);
+  });
+
+  it("provisions the Node-owned baseline for new organizations and projects", async () => {
+    const id = randomUUID();
+    await db`INSERT INTO organizations (id, url_key, name, issue_prefix)
+      VALUES (${id}, ${id}, 'Trigger-provisioned organization', ${id})`;
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${id}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    const [state] = await db`SELECT fence_token::text
+      FROM organization_mutation_state WHERE org_id = ${id}`;
+    expect(state.fence_token).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_branding_mutation_state WHERE org_id = ${id}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
+    const projectId = await insertProject(id);
+    expect(
+      await db`SELECT org_id, owner, mutation_version::text, fence_epoch::text
+        FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
+    ).toEqual([
+      {
+        org_id: id,
+        owner: "node",
+        mutation_version: "0",
+        fence_epoch: "0",
+      },
+    ]);
+  });
+
+  it("rejects Project authority rows with a mismatched organization", async () => {
+    const projectOrg = await organization();
+    const otherOrg = await organization();
+    const projectId = await insertProject(projectOrg);
+
+    await expect(db`INSERT INTO project_goal_mutation_state (project_id, org_id)
+      VALUES (${projectId}, ${otherOrg})`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`UPDATE project_goal_mutation_state SET org_id = ${otherOrg}
+      WHERE project_id = ${projectId}`).rejects.toMatchObject({ code: "23514" });
+    expect(
+      await db`SELECT org_id FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
+    ).toEqual([{ org_id: projectOrg }]);
+  });
+
+  it("rejects deleting live Project authority and keeps its fence intact", async () => {
+    const org = await organization();
+    const projectId = await insertProject(org);
+    await db`UPDATE project_goal_mutation_state
+      SET owner = 'rust', mutation_version = 9, fence_epoch = 1,
+          fence_token = gen_random_uuid()
+      WHERE project_id = ${projectId}`;
+
+    await expect(db`DELETE FROM project_goal_mutation_state
+      WHERE project_id = ${projectId}`).rejects.toMatchObject({ code: "23514" });
+    expect(
+      await db`SELECT org_id, owner, mutation_version::text, fence_epoch::text
+        FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
+    ).toEqual([
+      {
+        org_id: org,
+        owner: "rust",
+        mutation_version: "9",
+        fence_epoch: "1",
+      },
+    ]);
+  });
+
+  it("cascades Project authority when its parent Project is deleted", async () => {
+    const org = await organization();
+    const projectId = await insertProject(org);
+
+    await db`DELETE FROM projects WHERE id = ${projectId}`;
+    expect(
+      await db`SELECT * FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
+    ).toHaveLength(0);
+    expect(
+      await db`SELECT * FROM projects WHERE id = ${projectId}`,
+    ).toHaveLength(0);
+    expect(await db`SELECT * FROM organizations WHERE id = ${org}`).toHaveLength(1);
+  });
+
+  it("cascades Rust-owned Project authority only with deletion of its parent Project", async () => {
+    const org = await organization();
+    const projectId = await insertProject(org);
+    await db`UPDATE project_goal_mutation_state
+      SET owner = 'rust', mutation_version = 9, fence_epoch = 1,
+          fence_token = gen_random_uuid()
+      WHERE project_id = ${projectId}`;
+
+    await db`DELETE FROM projects WHERE id = ${projectId}`;
+
+    expect(
+      await db`SELECT * FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
+    ).toHaveLength(0);
+    expect(await db`SELECT * FROM projects WHERE id = ${projectId}`).toHaveLength(0);
+    expect(await db`SELECT * FROM organizations WHERE id = ${org}`).toHaveLength(1);
+  });
+
+  it("keeps scalar branding ownership monotonic across handoff epochs", async () => {
+    const org = await organization();
+    await expect(
+      db`UPDATE organization_branding_mutation_state SET owner = 'rust' WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await db`UPDATE organization_branding_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
+    await db`UPDATE organization_branding_mutation_state
+      SET mutation_version = 2 WHERE org_id = ${org}`;
+    await expect(
+      db`UPDATE organization_branding_mutation_state
+        SET mutation_version = 1 WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_branding_mutation_state
+        SET fence_token = gen_random_uuid() WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_branding_mutation_state
+        SET fence_epoch = 2 WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await db`UPDATE organization_branding_mutation_state
+      SET fence_epoch = 2, fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
+  });
+
+  it("keeps branding receipts and live-event outbox rows bound to one activity", async () => {
+    const org = await organization();
+    const audit = await activity(org);
+    const result = { organization_id: org, version: 1, fence_epoch: 0 };
+    await db.unsafe(
+      `INSERT INTO organization_branding_mutation_receipts
+        (org_id, idempotency_key, command_fingerprint, outcome, resulting_version,
+         fence_epoch, activity_id, result)
+       VALUES ($1, 'branding-receipt', $2, 'applied', 1, 0, $3, $4::jsonb)`,
+      [org, "a".repeat(64), audit, JSON.stringify(result)],
+    );
+    await db.unsafe(
+      `INSERT INTO organization_mutation_outbox
+        (org_id, activity_id, event_type, payload)
+       VALUES ($1, $2, 'activity.logged', $3::jsonb)`,
+      [org, audit, JSON.stringify({ action: "organization.branding_updated" })],
+    );
+    expect(
+      await db`SELECT idempotency_key, resulting_version::text
+        FROM organization_branding_mutation_receipts WHERE org_id = ${org}`,
+    ).toEqual([{ idempotency_key: "branding-receipt", resulting_version: "1" }]);
+    expect(
+      await db`SELECT event_type, state, attempts
+        FROM organization_mutation_outbox WHERE org_id = ${org}`,
+    ).toEqual([{ event_type: "activity.logged", state: "pending", attempts: 0 }]);
+    await expect(
+      db`INSERT INTO organization_mutation_outbox
+        (org_id, activity_id, event_type, payload)
+        VALUES (${org}, ${randomUUID()}, 'activity.logged', '{}'::jsonb)`,
+    ).rejects.toMatchObject({ code: "23503" });
+  });
+
+  it("serializes a Node business transaction before a Rust ownership handoff", async () => {
+    const org = await organization();
+    let releaseNodeTransaction!: () => void;
+    const nodeTransactionMayCommit = new Promise<void>((resolve) => {
+      releaseNodeTransaction = resolve;
+    });
+    let nodeFenceLocked!: () => void;
+    const nodeFenceIsLocked = new Promise<void>((resolve) => {
+      nodeFenceLocked = resolve;
+    });
+
+    const nodeTransaction = db.begin(async (tx) => {
+      await tx.unsafe(
+        "SELECT org_id FROM organization_mutation_state WHERE org_id = $1 FOR UPDATE",
+        [org],
+      );
+      nodeFenceLocked();
+      await tx.unsafe(
+        "UPDATE organizations SET name = 'Node transaction owns the fence' WHERE id = $1",
+        [org],
+      );
+      await nodeTransactionMayCommit;
+    });
+    await nodeFenceIsLocked;
+
+    await expect(
+      db.begin(async (tx) => {
+        await tx.unsafe("SET LOCAL lock_timeout = '50ms'");
+        await tx.unsafe(
+          "SELECT org_id FROM organization_mutation_state WHERE org_id = $1 FOR UPDATE",
+          [org],
+        );
+      }),
+    ).rejects.toMatchObject({ code: "55P03" });
+
+    releaseNodeTransaction();
+    await nodeTransaction;
+
+    await db.begin(async (tx) => {
+      await tx.unsafe(
+        "UPDATE organization_mutation_state "
+          + "SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid() "
+          + "WHERE org_id = $1",
+        [org],
+      );
+    });
+
+    await expect(
+      db.begin(async (tx) => {
+        const [state] = await tx.unsafe<{ owner: string }[]>(
+          "SELECT owner FROM organization_mutation_state WHERE org_id = $1 FOR UPDATE",
+          [org],
+        );
+        if (state.owner !== "node") {
+          throw new Error("Node authority is no longer owned by Node");
+        }
+        await tx.unsafe(
+          "UPDATE organizations SET name = 'stale Node writer' WHERE id = $1",
+          [org],
+        );
+      }),
+    ).rejects.toThrow("Node authority is no longer owned by Node");
+    expect(await db`SELECT name FROM organizations WHERE id = ${org}`).toEqual([
+      { name: "Node transaction owns the fence" },
+    ]);
+  });
+
   it("does not grant Rust authority with an unfenced initial row", async () => {
-    await expect(db`INSERT INTO organization_mutation_state (org_id, owner)
-      VALUES (${originalOrg}, 'rust')`).rejects.toMatchObject({
+    await expect(db`UPDATE organization_mutation_state
+      SET owner = 'rust' WHERE org_id = ${originalOrg}`).rejects.toMatchObject({
       code: "23514",
     });
     expect(
-      await db`SELECT * FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
-    ).toHaveLength(0);
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${originalOrg}`,
+    ).toEqual([{ owner: "node", mutation_version: "0", fence_epoch: "0" }]);
   });
 
   it("requires the receipt activity to belong to the same organization", async () => {
@@ -183,8 +475,31 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
 
   it("preserves the old activity-first organization deletion transaction", async () => {
     const org = await organization();
-    await receipt(db, org, await activity(org));
+    const audit = await activity(org);
+    await receipt(db, org, audit);
+    await db.unsafe(
+      `INSERT INTO organization_branding_mutation_receipts
+        (org_id, idempotency_key, command_fingerprint, outcome, resulting_version,
+         fence_epoch, activity_id, result)
+       VALUES ($1, 'branding-delete', $2, 'applied', 1, 0, $3, $4::jsonb)`,
+      [
+        org,
+        "b".repeat(64),
+        audit,
+        JSON.stringify({ organization_id: org, version: 1, fence_epoch: 0 }),
+      ],
+    );
+    await db.unsafe(
+      `INSERT INTO organization_mutation_outbox
+        (org_id, activity_id, event_type, payload)
+       VALUES ($1, $2, 'activity.logged', '{}'::jsonb)`,
+      [org, audit],
+    );
     await db.begin(async (tx) => {
+      // The supported delete path removes activity before the organization.
+      // Organization-owned receipts and outbox rows cascade after the parent
+      // disappears, preserving the immutable-receipt guard while the deferred
+      // activity foreign keys remain valid until commit.
       await tx.unsafe("DELETE FROM activity_log WHERE org_id = $1", [org]);
       await tx.unsafe("DELETE FROM organizations WHERE id = $1", [org]);
     });
@@ -193,6 +508,9 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     ).toHaveLength(0);
     expect(
       await db`SELECT * FROM organization_mutation_state WHERE org_id = ${org}`,
+    ).toHaveLength(0);
+    expect(
+      await db`SELECT * FROM organization_branding_mutation_state WHERE org_id = ${org}`,
     ).toHaveLength(0);
   });
 
@@ -214,9 +532,21 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     await expect(
       db`UPDATE organization_mutation_state SET owner = 'rust' WHERE org_id = ${org}`,
     ).rejects.toMatchObject({ code: "23514" });
-    await db`UPDATE organization_mutation_state SET owner = 'rust', fence_epoch = 1 WHERE org_id = ${org}`;
+    await db`UPDATE organization_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
     await expect(
       db`UPDATE organization_mutation_state SET fence_epoch = 0 WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_mutation_state
+        SET fence_epoch = 2
+        WHERE org_id = ${org}`,
+    ).rejects.toMatchObject({ code: "23514" });
+    await expect(
+      db`UPDATE organization_mutation_state
+        SET fence_token = gen_random_uuid()
+        WHERE org_id = ${org}`,
     ).rejects.toMatchObject({ code: "23514" });
   });
 
@@ -232,6 +562,72 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     await expect(
       db`DELETE FROM organization_mutation_receipts WHERE org_id = ${org}`,
     ).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("blocks TRUNCATE and CASCADE from erasing Rust authority or receipt history", async () => {
+    const org = await organization();
+    const projectId = await insertProject(org);
+    const audit = await activity(org);
+
+    await db`UPDATE organization_mutation_state
+      SET owner = 'rust', mutation_version = 1, fence_epoch = 1,
+          fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
+    await db`UPDATE organization_branding_mutation_state
+      SET owner = 'rust', mutation_version = 1, fence_epoch = 1,
+          fence_token = gen_random_uuid()
+      WHERE org_id = ${org}`;
+    await db`UPDATE project_goal_mutation_state
+      SET owner = 'rust', mutation_version = 1, fence_epoch = 1,
+          fence_token = gen_random_uuid()
+      WHERE project_id = ${projectId}`;
+    await receipt(db, org, audit, "rust-project-goal-command", "project_goal_link", 1);
+    await db.unsafe(
+      `INSERT INTO organization_branding_mutation_receipts
+        (org_id, idempotency_key, command_fingerprint, outcome, resulting_version,
+         fence_epoch, activity_id, result)
+       VALUES ($1, 'rust-branding-command', $2, 'applied', 1, 1, $3, $4::jsonb)`,
+      [
+        org,
+        "b".repeat(64),
+        audit,
+        JSON.stringify({ organization_id: org, version: 1, fence_epoch: 1 }),
+      ],
+    );
+
+    for (const statement of [
+      "TRUNCATE TABLE organization_mutation_state CASCADE",
+      "TRUNCATE TABLE organization_mutation_receipts",
+      "TRUNCATE TABLE organization_branding_mutation_state CASCADE",
+      "TRUNCATE TABLE organization_branding_mutation_receipts",
+      "TRUNCATE TABLE project_goal_mutation_state CASCADE",
+      "TRUNCATE TABLE organizations CASCADE",
+    ]) {
+      await expect(db.unsafe(statement)).rejects.toMatchObject({ code: "23514" });
+    }
+
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_mutation_state WHERE org_id = ${org}`,
+    ).toEqual([{ owner: "rust", mutation_version: "1", fence_epoch: "1" }]);
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM organization_branding_mutation_state WHERE org_id = ${org}`,
+    ).toEqual([{ owner: "rust", mutation_version: "1", fence_epoch: "1" }]);
+    expect(
+      await db`SELECT owner, mutation_version::text, fence_epoch::text
+        FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
+    ).toEqual([{ owner: "rust", mutation_version: "1", fence_epoch: "1" }]);
+    expect(
+      await db`SELECT idempotency_key, command_kind
+        FROM organization_mutation_receipts WHERE org_id = ${org}`,
+    ).toEqual([
+      { idempotency_key: "rust-project-goal-command", command_kind: "project_goal_link" },
+    ]);
+    expect(
+      await db`SELECT idempotency_key, resulting_version::text
+        FROM organization_branding_mutation_receipts WHERE org_id = ${org}`,
+    ).toEqual([{ idempotency_key: "rust-branding-command", resulting_version: "1" }]);
   });
 
   it("supports signed BIGINT bounds and rejects invalid receipt envelopes", async () => {

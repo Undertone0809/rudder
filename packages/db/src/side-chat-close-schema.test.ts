@@ -7,7 +7,7 @@ import { sideChatCloseIntents } from "./schema/side_chat_close_intents.js";
 
 const table = getTableConfig(sideChatCloseIntents);
 const migrationSql = readFileSync(
-  fileURLToPath(new URL("./migrations/0171_side_chat_close_intents.sql", import.meta.url)),
+  fileURLToPath(new URL("./migrations/0177_side_chat_close_intents.sql", import.meta.url)),
   "utf8",
 );
 const journal = JSON.parse(readFileSync(
@@ -35,7 +35,7 @@ describe("Side Chat close intent schema", () => {
     ]);
     expect(migrationSql).toContain('ON DELETE RESTRICT');
     expect(migrationSql).toContain('"attachments_json" jsonb');
-    expect(journal.entries.some((entry) => entry.idx === 171
-      && entry.tag === "0171_side_chat_close_intents")).toBe(true);
+    expect(journal.entries.some((entry) => entry.idx === 177
+      && entry.tag === "0177_side_chat_close_intents")).toBe(true);
   });
 });

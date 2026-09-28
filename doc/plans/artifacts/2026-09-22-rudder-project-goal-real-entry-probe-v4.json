@@ -1,0 +1,114 @@
+{
+  "schema": "rudder.rust-backend-completion.project-goal-real-entry-probe/v1",
+  "supersedes": "2026-09-22-rudder-project-goal-real-entry-probe-v3.json",
+  "scope": "Project-Goal real entry after atomic allowlist handoff and direct MCP project creation",
+  "recorded_at": "2026-09-22T17:16:47+08:00",
+  "authorization": {
+    "target": "disposable local embedded PostgreSQL and local-trusted startup",
+    "production": false,
+    "traffic_switch": false,
+    "production_database": false,
+    "stable_publication": false,
+    "real_user_data": false
+  },
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "source_tree_sha": "f972acbfc4807b20c9a2eece1f5a3f4f0a4d3e39",
+    "dirty_candidate_tree_sha": "378dd7fa328e08d992180b165c8164e830fd376f",
+    "origin_main_sha": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced",
+    "migration_base_sha": "c54001819ca38079b627994557db0a18ed278fc0",
+    "dirty_fingerprint": "28ac0ab35f06b70a382b81e7f3a91067c31d0dcb0c84c5a710735e5655554074",
+    "dirty_fingerprint_scope": "sorted current worktree diff and untracked source paths excluding doc/plans durable records, delivery packets, and artifacts",
+    "scope_repair": {
+      "project_allowlist_env": "RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS",
+      "handoff_atomicity": "all allowlisted UUIDs are discovered, organization locks are acquired, every component row is re-read and validated, then one batch update is issued",
+      "local_new_project_env": "RUDDER_RUST_PROJECT_GOAL_ALLOW_NEW_PROJECTS=true with RUDDER_DEPLOYMENT_MODE=local_trusted",
+      "unlisted_existing_projects": "remain Node-owned and fail closed under Rust required mode"
+    }
+  },
+  "build_artifacts": {
+    "rudder_server_foundation_sha256": "49e5915d66749c942378b7bca5878151bfe33df6e94ccf1f06a2ddeda88f17b9",
+    "migration_preflight_sha256": "8bf7fc7fed4916d151b9f03b83b3f4a064e13c812a9e5505a3f8367922999665"
+  },
+  "runtime": {
+    "node": "v22.23.1",
+    "package_manager": "pnpm 9.15.4",
+    "rust": "rustc 1.93.0",
+    "cargo": "cargo 1.93.0",
+    "embedded_postgres": "18.1.0-beta.16",
+    "api_url": "http://127.0.0.1:64910",
+    "api_port": 64910,
+    "embedded_postgres_port": 64911,
+    "server_listener": "Node Express supported local-trusted listener; Actix is a private route-scoped child"
+  },
+  "data": {
+    "instance_id": "rust-project-goal-real-entry-12294",
+    "organization_id": "85af7487-a15f-4f2b-a676-791137053dd9",
+    "other_organization_id": "f25355d1-e441-4fbb-b4aa-0cac83899eb3",
+    "project_id": "9ef30928-28a5-4e52-b392-03fb588ff9a4",
+    "tooling_project_id": "48373483-46d9-4eb4-a077-8c818281e2ff",
+    "create_with_goals_project_id": "f37b7889-7678-4324-a9c8-35a94dbe55b4",
+    "goal_ids": [
+      "4c4aa293-5263-49da-91ed-32d8c2cd12b4",
+      "f4d487c3-aa81-4386-a46b-6d732af46b05"
+    ],
+    "agent_id": "7f0bfe5d-5097-4ee0-96b1-615f32deecc2",
+    "lifecycle": "temporary organization, projects, goals, agent, API key, embedded database, and server were disposed after the probe"
+  },
+  "migration": {
+    "first_start": "bootstrap",
+    "restart": "current",
+    "journal_entries": 170,
+    "sql_files": 172,
+    "manifest_fingerprint": "ef0e77440109ccb4a82ac49777fac785413aefe58b0881e89cba97be0939f812",
+    "latest_authority": "Node still applies migrations; Rust preflight is real-entry supporting evidence, not migration-authority retirement"
+  },
+  "checks": {
+    "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+    "health": "HTTP 200; status=ok",
+    "create_with_goals": "HTTP 201; Rust-owned project_goal_mutation_state and consistent project_goals/projects.goal_id projections",
+    "cli": "exit 0; tooling project goalIds read back as [goalA, goalB]",
+    "mcp": "exit 0; missing legacy binary path completed through direct HTTP dispatch with no Node CLI fallback",
+    "http_rust_required": "PATCH /api/projects/:id returned 200 through the private Actix transaction",
+    "database_readback": "owner=rust; first mutation version=1; first fence epoch=1; one receipt, one activity, one outbox row",
+    "deletion_fence": "DELETE /api/orgs/:orgId returned 409 while Rust-owned Project-Goal rows existed",
+    "negative_cases": {
+      "same_key_replay": 200,
+      "same_key_different_payload": 409,
+      "cross_organization_goal": 422,
+      "empty_goal_set": 200,
+      "mixed_project_and_goal_update": 409,
+      "missing_rust_binary": "binary_unavailable fail-closed tests pass",
+      "batch_handoff_missing_target": "focused fence test rejects before the update statement",
+      "batch_handoff_owner_validation": "focused fence test validates every locked owner before the update statement"
+    },
+    "restart_recovery": "same data identity and empty-set idempotency replay returned 200; final primary receipts=4, activities=2, links=0, mutation_version=2",
+    "supporting_checks": {
+      "focused_vitest": "2 files / 86 tests PASS",
+      "d1_postgres": "25/25 PASS from exact candidate revalidation",
+      "actix_black_box": "10/10 PASS from exact candidate revalidation",
+      "project_goal_core": "33/33 PASS from exact candidate revalidation",
+      "server_typecheck": "PASS",
+      "cli_typecheck": "PASS",
+      "git_diff_check": "PASS"
+    }
+  },
+  "claims": {
+    "project_goal_real_entry_connected": true,
+    "project_goal_default_path_verified": false,
+    "project_goal_old_authority_retired": false,
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "limits": [
+    "local disposable evidence only; no production credentials, traffic, database, or stable release was used",
+    "Node remains the supported HTTP listener and migration authority",
+    "required startup handoff is now scoped to explicit project UUIDs and atomic across the allowlist; local new-project handoff is explicitly restricted to local_trusted runs",
+    "unfenced Goal route/issue projection, worktree merge, Project delete, and other legacy writer families still block D1 owner activation",
+    "outbox row creation is verified; publisher crash/retry and consumer dedupe are not independently verified",
+    "independent stage review, exact-candidate product verifier PASS, and final reviewer accept are not yet recorded"
+  ],
+  "command": "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts"
+}

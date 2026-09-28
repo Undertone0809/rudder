@@ -1,0 +1,92 @@
+name: Rust D1 real-entry smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/rust-d1-real-entry.yml"
+      - "native/**"
+      - "server/**"
+      - "packages/**"
+      - "cli/**"
+      - "scripts/smoke/rust-branding-real-entry.ts"
+      - "scripts/smoke/rust-project-goal-real-entry.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig*.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-d1-real-entry-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  real-entry:
+    name: Rust D1 real-entry smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: true
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Capture bounded failure log
+        run: touch "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Install JavaScript prerequisites
+        run: |
+          set -o pipefail
+          pnpm install --frozen-lockfile 2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Build Rust server foundation and migration preflight
+        run: |
+          set -o pipefail
+          cargo build --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation --bin rudder-server-foundation \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          cargo build --locked --manifest-path native/Cargo.toml \
+            --package rudder-migration-service --bin migration-preflight \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          test -x native/target/debug/rudder-server-foundation
+          test -x native/target/debug/migration-preflight
+
+      - name: Smoke Rust organization branding real entry
+        run: |
+          set -o pipefail
+          node cli/node_modules/tsx/dist/cli.mjs \
+            scripts/smoke/rust-branding-real-entry.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Smoke Rust project goal real entry
+        run: |
+          set -o pipefail
+          node cli/node_modules/tsx/dist/cli.mjs \
+            scripts/smoke/rust-project-goal-real-entry.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-d1-real-entry-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rust-d1-real-entry.log
+          if-no-files-found: ignore
+          retention-days: 3

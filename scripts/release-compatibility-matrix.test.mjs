@@ -88,10 +88,10 @@ describe("release migration compatibility matrix", () => {
   ])("accepts %s with the current native-chat migration fingerprint", (candidateVersion, channel) => {
     const result = runCompatibilityPreflight({ candidateVersion, channel });
     expect(result.candidateFingerprint).toBe(
-      "c4ad4f6d1b344be46b1e1563d3f866cb1af4d95411cef3eff52853003eb0774c",
+      "8e0a8051a74f55fd82bbd56fe321342043f57af2eeab3adfafe460e8d6528f2c",
     );
-    expect(result.candidateMigrations).toBe(176);
-    expect(result.candidateSqlFiles).toBe(178);
+    expect(result.candidateMigrations).toBe(182);
+    expect(result.candidateSqlFiles).toBe(184);
     expect(result.fixtures[0].version).toBe("0.7.23");
   }, 60_000);
 
