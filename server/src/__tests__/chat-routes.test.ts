@@ -3006,10 +3006,23 @@ describe("chat routes", { retry: 2 }, () => {
       .mockRejectedValueOnce(new Error("simulated message transaction failure"))
       .mockResolvedValueOnce(userMessage);
     mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
     mockSideChatService.claimFirstInput
       .mockResolvedValueOnce({ kind: "claimed", claimToken: "first-claim" })
       .mockResolvedValueOnce({ kind: "claimed", claimToken: "retry-claim" })
       .mockResolvedValueOnce({ kind: "replay", userMessageId: userMessage.id });
+    mockChatService.ensureSideChatFirstInputGeneration
+      .mockResolvedValueOnce({
+        generation: { id: "generation-side-chat-first", attemptEpoch: 1 },
+        executionAdmitted: false,
+      })
+      .mockResolvedValueOnce({
+        generation: { id: "generation-side-chat-first", attemptEpoch: 1 },
+        executionAdmitted: true,
+      });
     mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
       outcome: "completed",
       partialBody: assistantMessage.body,
@@ -3045,6 +3058,8 @@ describe("chat routes", { retry: 2 }, () => {
       expect.objectContaining({ id: userMessage.id, role: "user" }),
     ]);
     expect(mockSideChatService.claimFirstInput).toHaveBeenCalledTimes(3);
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledTimes(2);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
     const claimInputs = mockSideChatService.claimFirstInput.mock.calls.map(([input]) => input);
     expect(claimInputs).toEqual([
       expect.objectContaining({
@@ -3183,7 +3198,7 @@ describe("chat routes", { retry: 2 }, () => {
     );
   });
 
-  it("repairs a failed Side Chat first-message activity write on the accepted-key replay", async () => {
+  it("admits one Generation and Run when retrying an accepted Side Chat input after a pre-assistant failure", async () => {
     const conversation = createConversation({
       conversationKind: "side_chat",
       messengerVisible: false,
@@ -3199,9 +3214,20 @@ describe("chat routes", { retry: 2 }, () => {
       "message",
       "Retry the first send after its audit write failed",
     );
+    const assistantMessage = createMessage(
+      "message-side-chat-audit-retry-reply",
+      "assistant",
+      "message",
+      "Recovered execution completed.",
+    );
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
     mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
     mockSideChatService.claimFirstInput
       .mockResolvedValueOnce({ kind: "claimed", claimToken: "audit-retry-claim" })
       .mockResolvedValueOnce({
@@ -3209,20 +3235,57 @@ describe("chat routes", { retry: 2 }, () => {
         userMessageId: userMessage.id,
         activityLogged: false,
       });
+    mockChatService.ensureSideChatFirstInputGeneration.mockResolvedValueOnce({
+      generation: { id: "generation-non-stream-recovery", attemptEpoch: 1 },
+      executionAdmitted: false,
+    });
     mockLogActivity
       .mockRejectedValueOnce(new Error("simulated activity store failure"))
       .mockResolvedValue(undefined);
+    const createdRunIds: string[] = [];
+    mockChatAssistantService.streamChatAssistantReply.mockImplementationOnce(async (input: {
+      onRunCreated?: (runId: string) => void;
+    }) => {
+      input.onRunCreated?.("run-non-stream-recovery");
+      createdRunIds.push("run-non-stream-recovery");
+      return {
+        outcome: "completed",
+        partialBody: assistantMessage.body,
+        replyingAgentId: "agent-1",
+        reply: {
+          kind: "message",
+          body: assistantMessage.body,
+          structuredPayload: null,
+          replyingAgentId: "agent-1",
+        },
+      };
+    });
 
     const send = () => request(createApp())
       .post("/api/chats/chat-1/messages")
       .send({ body: userMessage.body, clientMutationId: "audit-recovery-key" });
     const failed = await send();
-    const replayed = await send();
+    const recovered = await send();
 
     expect(failed.status).toBe(502);
-    expect(replayed.status).toBe(200);
-    expect(replayed.body.messages).toEqual([expect.objectContaining({ id: userMessage.id })]);
+    expect(recovered.status).toBe(201);
+    expect(recovered.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: userMessage.id, role: "user" }),
+      expect.objectContaining({ role: "assistant", body: "Recovered execution completed." }),
+    ]));
     expect(mockChatService.addUserChatMessage).toHaveBeenCalledOnce();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledOnce();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      userMessageId: userMessage.id,
+    });
+    expect(createdRunIds).toEqual(["run-non-stream-recovery"]);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
+    expect(mockChatAssistantService.streamChatAssistantReply.mock.calls[0]?.[0].runContext).toEqual({
+      chatMode: "non_stream",
+      chatGenerationId: "generation-non-stream-recovery",
+    });
     const messageActivities = mockLogActivity.mock.calls
       .map(([, activity]) => activity)
       .filter((activity) => (

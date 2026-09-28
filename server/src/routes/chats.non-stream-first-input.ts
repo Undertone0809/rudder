@@ -1,5 +1,5 @@
 import type { ChatConversation, ChatMessage } from "@rudderhq/shared";
-import type { Request, Response } from "express";
+import type { Request } from "express";
 import { conflict } from "../errors.js";
 import { chatMessageMutationFingerprint } from "../services/chat-message-mutation-fingerprint.js";
 import type { sideChatService } from "../services/side-chats.js";
@@ -14,7 +14,6 @@ type SideChatFirstInputService = Pick<
 export async function admitNonStreamChatSideChatFirstInput(input: {
   conversation: ChatConversation;
   request: Request;
-  response: Response;
   actor: ReturnType<typeof getActorInfo>;
   clientMutationId: string | null;
   clientMutationFingerprint: string | null;
@@ -36,6 +35,7 @@ export async function admitNonStreamChatSideChatFirstInput(input: {
   claimToken: string | null;
   requestFingerprint: string | null;
   replayed: boolean;
+  userMessage: ChatMessage | null;
   releaseClaim: (() => Promise<void>) | null;
 }> {
   const { conversation, sideChats } = input;
@@ -45,6 +45,7 @@ export async function admitNonStreamChatSideChatFirstInput(input: {
       claimToken,
       requestFingerprint: null,
       replayed: false,
+      userMessage: null,
       releaseClaim: null,
     };
   }
@@ -93,11 +94,11 @@ export async function admitNonStreamChatSideChatFirstInput(input: {
         input.actor,
       );
     }
-    input.response.status(200).json({ messages: [firstUserMessage] });
     return {
       claimToken,
       requestFingerprint,
       replayed: true,
+      userMessage: firstUserMessage,
       releaseClaim: null,
     };
   }
@@ -106,6 +107,7 @@ export async function admitNonStreamChatSideChatFirstInput(input: {
     claimToken,
     requestFingerprint,
     replayed: false,
+    userMessage: null,
     releaseClaim: claimToken
       ? async () => sideChats.releaseFirstInputClaim({
         conversationId: conversation.id,

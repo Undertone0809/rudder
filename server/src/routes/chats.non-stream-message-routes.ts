@@ -15,7 +15,7 @@ import {
   userVisiblePartialBodyFromError,
   type chatAssistantService,
 } from "../services/chat-assistant.js";
-import { claimChatGeneration, getActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { claimChatGeneration, getActiveChatGeneration, setActiveChatGenerationId } from "../services/chat-generation-locks.js";
 import type { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
 import { chatMessageMutationFingerprint, replayChatMessageMutation } from "../services/chat-message-mutation-fingerprint.js";
 import {
@@ -107,19 +107,27 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
       const clientMutationFingerprint = req.body.clientMutationId
         ? chatMessageMutationFingerprint({ body: req.body.body, editUserMessageId: req.body.editUserMessageId ?? null, inlineAnnotationsProvided, inlineAnnotations: req.body.inlineAnnotations, modelOverride: req.body.modelOverride ?? null, effortOverride: req.body.effortOverride ?? null, files: [] })
         : null;
-      const replayedUserMessage = await replayChatMessageMutation(svc.getUserMessageMutationByClientMutationId, {
-        orgId: conversation.orgId,
-        conversationId: conversation.id,
-        clientMutationId: req.body.clientMutationId,
-        body: req.body.body,
-        fingerprint: clientMutationFingerprint,
-      });
+      const deferAcceptedSideChatFirstInputReplay = conversation.conversationKind === "side_chat"
+        && await sideChats.hasAcceptedFirstInputMutation({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          clientMutationId: req.body.clientMutationId ?? null,
+        });
+      const replayedUserMessage = deferAcceptedSideChatFirstInputReplay
+        ? null
+        : await replayChatMessageMutation(svc.getUserMessageMutationByClientMutationId, {
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          clientMutationId: req.body.clientMutationId,
+          body: req.body.body,
+          fingerprint: clientMutationFingerprint,
+        });
       if (replayedUserMessage) {
         res.status(200).json({ messages: [replayedUserMessage] });
         return;
       }
 
-      const preparedAnnotations = inlineAnnotationsProvided
+      const preparedAnnotations = inlineAnnotationsProvided && !deferAcceptedSideChatFirstInputReplay
         ? await inlineAnnotations.prepare({
           orgId: conversation.orgId,
           conversationId: conversation.id,
@@ -140,7 +148,6 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
       const sideChatFirstInput = await admitNonStreamChatSideChatFirstInput({
         conversation: conversation as ChatConversation,
         request: req,
-        response: res,
         actor,
         clientMutationId: req.body.clientMutationId ?? null,
         clientMutationFingerprint,
@@ -155,10 +162,14 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
         getMessage: (conversationId, messageId) => svc.getMessage(conversationId, messageId),
         recoverSideChatFirstInputActivity,
       });
-      if (sideChatFirstInput.replayed) return;
 
       const releaseGeneration = claimChatGeneration(conversation.id, null, null);
       if (!releaseGeneration) {
+        if (sideChatFirstInput.replayed) {
+          throw conflict("The accepted Side Chat first input is already executing", {
+            code: "side_chat_first_input_in_progress",
+          });
+        }
         if (sideChatFirstInput.releaseClaim) {
           await sideChatFirstInput.releaseClaim();
           throw conflict("A Side Chat response is already being generated", {
@@ -198,27 +209,56 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
       }
 
       try {
-        const persistence = await addUserMessage(
-          conversation as ChatConversation,
-          req.body.body,
-          actor,
-          req.body.editUserMessageId ?? null,
-          {
-            provided: inlineAnnotationsProvided,
-            prepared: preparedAnnotations,
-            clientMutationId: req.body.clientMutationId ?? null,
-            clientMutationFingerprint,
-            sideChatFirstInputClaimToken: sideChatFirstInput.claimToken,
-            sideChatFirstInputFingerprint: sideChatFirstInput.requestFingerprint,
-          },
-        );
-        const userMessage = persistence.message;
-        if (!persistence.accepted) {
-          res.status(200).json({ messages: [userMessage] });
-          return;
+        let userMessage: ChatMessage;
+        if (sideChatFirstInput.replayed) {
+          const acceptedMessage = sideChatFirstInput.userMessage;
+          if (!acceptedMessage) {
+            throw conflict("Accepted Side Chat first input is no longer readable", {
+              code: "side_chat_first_input_readback_missing",
+            });
+          }
+          userMessage = acceptedMessage;
+        } else {
+          const persistence = await addUserMessage(
+            conversation as ChatConversation,
+            req.body.body,
+            actor,
+            req.body.editUserMessageId ?? null,
+            {
+              provided: inlineAnnotationsProvided,
+              prepared: preparedAnnotations,
+              clientMutationId: req.body.clientMutationId ?? null,
+              clientMutationFingerprint,
+              sideChatFirstInputClaimToken: sideChatFirstInput.claimToken,
+              sideChatFirstInputFingerprint: sideChatFirstInput.requestFingerprint,
+            },
+          );
+          userMessage = persistence.message;
+          if (!persistence.accepted) {
+            res.status(200).json({ messages: [userMessage] });
+            return;
+          }
         }
-        await touchSideChat(req, conversation as ChatConversation);
-        if (!req.body.editUserMessageId) {
+
+        let firstInputGenerationId: string | null = null;
+        if (sideChatFirstInput.claimToken || sideChatFirstInput.replayed) {
+          const admission = await svc.ensureSideChatFirstInputGeneration({
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            userMessageId: userMessage.id,
+          });
+          firstInputGenerationId = admission.generation.id;
+          setActiveChatGenerationId(conversation.id, firstInputGenerationId);
+          if (admission.executionAdmitted) {
+            res.status(200).json({ messages: [userMessage] });
+            return;
+          }
+        }
+
+        if (!sideChatFirstInput.replayed) {
+          await touchSideChat(req, conversation as ChatConversation);
+        }
+        if (!sideChatFirstInput.replayed && !req.body.editUserMessageId) {
           startChatTitleGeneration(conversation as ChatConversation, userMessage);
         }
         const turnContext = turnContextFromUserMessage(userMessage);
@@ -236,7 +276,10 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
               userMessageId: userMessage.id,
               chatTurnId: turnContext.chatTurnId,
               turnVariant: turnContext.turnVariant,
-              runContext: { chatMode: "non_stream" },
+              runContext: {
+                chatMode: "non_stream",
+                ...(firstInputGenerationId ? { chatGenerationId: firstInputGenerationId } : {}),
+              },
               stream: false,
               onRunCreated: (runId) => {
                 activeChatRunId = runId;
