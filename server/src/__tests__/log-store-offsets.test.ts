@@ -4,7 +4,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const tempRoots: string[] = [];
-const initialNativeMode = process.env.RUDDER_NATIVE_MODE;
+const initialEnv = Object.fromEntries([
+  "RUDDER_NATIVE_MODE",
+  "RUN_LOG_BASE_PATH",
+  "RUDDER_NATIVE_RUN_EVIDENCE_INDEX",
+  "RUDDER_NATIVE_EVIDENCE_INDEX_PATH",
+  "RUDDER_NATIVE_EVIDENCE_READ_TIMEOUT_MS",
+  "WORKSPACE_OPERATION_LOG_BASE_PATH",
+].map((key) => [key, process.env[key]]));
+const pendingErrorScenarios = new Map<AbortController, Promise<void>>();
 
 type EvidenceReadFixture = {
   source: string;
@@ -25,13 +33,15 @@ async function makeTempRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
-  if (initialNativeMode === undefined) delete process.env.RUDDER_NATIVE_MODE;
-  else process.env.RUDDER_NATIVE_MODE = initialNativeMode;
-  delete process.env.RUN_LOG_BASE_PATH;
-  delete process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX;
-  delete process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH;
-  delete process.env.RUDDER_NATIVE_EVIDENCE_READ_TIMEOUT_MS;
-  delete process.env.WORKSPACE_OPERATION_LOG_BASE_PATH;
+  // Vitest timeout does not cancel the test body. Drain owned work before
+  // restoring shared environment or removing files used by a native child.
+  for (const controller of pendingErrorScenarios.keys()) controller.abort();
+  await Promise.allSettled(pendingErrorScenarios.values());
+  pendingErrorScenarios.clear();
+  for (const [key, value] of Object.entries(initialEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   vi.resetModules();
   await Promise.all(tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
@@ -247,36 +257,41 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     await expect(result).rejects.toThrow(/cancelled/);
   });
 
-  it("preserves structured native errors and auto fallback semantics", async () => {
-    const root = await makeTempRoot("rudder-run-log-native-read-errors-");
-    process.env.RUN_LOG_BASE_PATH = path.join(root, "run-logs");
-    process.env.RUDDER_NATIVE_MODE = "required";
-    process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX = "1";
-    process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = await writeNativeIndexFixture(root, "not-found");
-    vi.resetModules();
-    let module = await import("../services/run-log-store.js");
-    let store = module.getRunLogStore();
-    let handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-missing" });
-    await fs.rm(path.join(process.env.RUN_LOG_BASE_PATH, handle.logRef));
-    await expect(store.read(handle, { offset: 0, limitBytes: 4 })).rejects.toMatchObject({ status: 404 });
-
-    process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = await writeNativeIndexFixture(root, "invalid-utf8");
-    vi.resetModules();
-    module = await import("../services/run-log-store.js");
-    store = module.getRunLogStore();
-    handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-invalid" });
-    await expect(store.read(handle, { offset: 0, limitBytes: 4 })).rejects.toThrow("evidence_read_invalid_utf8");
-
-    process.env.RUDDER_NATIVE_MODE = "auto";
-    vi.resetModules();
-    module = await import("../services/run-log-store.js");
-    store = module.getRunLogStore();
-    handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-fallback" });
-    await fs.writeFile(path.join(process.env.RUN_LOG_BASE_PATH, handle.logRef), "node-fallback");
-    await expect(store.read(handle, { offset: 0, limitBytes: 64 })).resolves.toMatchObject({
-      content: "node-fallback",
-      eof: true,
-    });
+  it.each([
+    { scenario: "preserves native not-found as 404", mode: "required", fixture: "not-found" },
+    { scenario: "preserves native invalid-UTF8 errors", mode: "required", fixture: "invalid-utf8" },
+    { scenario: "falls back to Node for native errors in auto mode", mode: "auto", fixture: "invalid-utf8" },
+  ] as const)("$scenario", async ({ mode, fixture }) => {
+    const controller = new AbortController();
+    const task = (async () => {
+      const root = await makeTempRoot("rudder-run-log-native-read-errors-");
+      const basePath = path.join(root, "run-logs");
+      const binary = await writeNativeIndexFixture(root, fixture);
+      controller.signal.throwIfAborted();
+      process.env.RUN_LOG_BASE_PATH = basePath;
+      process.env.RUDDER_NATIVE_MODE = mode;
+      process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX = "1";
+      process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = binary;
+      vi.resetModules();
+      const { getRunLogStore } = await import("../services/run-log-store.js");
+      controller.signal.throwIfAborted();
+      const store = getRunLogStore();
+      const handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-error-scenario" });
+      const logPath = path.join(basePath, handle.logRef);
+      if (fixture === "not-found") await fs.rm(logPath);
+      if (mode === "auto") await fs.writeFile(logPath, "node-fallback");
+      controller.signal.throwIfAborted();
+      const result = store.read(handle, { offset: 0, limitBytes: mode === "auto" ? 64 : 4, signal: controller.signal });
+      if (mode === "auto") {
+        await expect(result).resolves.toMatchObject({ content: "node-fallback", eof: true });
+      } else if (fixture === "not-found") {
+        await expect(result).rejects.toMatchObject({ status: 404 });
+      } else {
+        await expect(result).rejects.toThrow("evidence_read_invalid_utf8");
+      }
+    })();
+    pendingErrorScenarios.set(controller, task);
+    await task;
   });
 
   it("keeps oversized non-surface readers on Node authority in required mode", async () => {
