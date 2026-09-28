@@ -4,6 +4,7 @@ import type {
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlHandle,
 } from "@rudderhq/agent-runtime-utils";
+import { hasConfirmedNativeWriterQuiescence } from "@rudderhq/agent-runtime-utils";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -701,12 +702,16 @@ describe("Hermes Product Gateway RPC", () => {
       expect(result).toMatchObject({
         exitCode: 0,
         provider: "hermes",
+        nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
         sessionId: "hermes-product-session",
         sessionParams: { transport: HERMES_PRODUCT_RPC_TRANSPORT },
         usage: { inputTokens: 8, outputTokens: 3 },
         summary: "Hermes product response",
         resultJson: { backend: "native_product_rpc", nativeSession: true },
       });
+      expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
+      // A settled turn can release its writer without claiming an exact range.
+      expect(result.resultJson?.executionRef).toBeNull();
       expect(gateway.calls.map(({ method }) => method)).toEqual(expect.arrayContaining([
         "gateway.capabilities",
         "session.create",
@@ -787,8 +792,10 @@ describe("Hermes Product Gateway RPC", () => {
               endInclusive: 1,
             }),
           },
+          executionRef: `hermes:db:${sessionId}:1`,
         },
       });
+      expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
       expect(historyReadCount).toBe(2);
     } finally {
       await fixture.cleanup();
@@ -1114,8 +1121,10 @@ describe("Hermes Product Gateway RPC", () => {
             endInclusive: 44,
             sourceRangeRef: expectedRangeRef,
           },
+          executionRef: `hermes:db:${sessionId}:44`,
         },
       });
+      expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
       expect(interleavedWriterResult).toBe("blocked");
       expect(nativePromptWriteResult).toBe("inserted");
       expect(order).toEqual(["before-history-tail", "prompt-submit", "after-history-tail"]);
@@ -1873,7 +1882,9 @@ describe("Hermes Product Gateway RPC", () => {
         signal: "SIGTERM",
         errorCode: "hermes_product_rpc_interrupted",
         resultJson: { control: { interruptRequested: true, stopConfirmed: true } },
+        nativeWriterQuiescence: { status: "confirmed", source: "provider_stop_ack" },
       });
+      expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
     } finally {
       await fixture.cleanup();
     }
@@ -1900,12 +1911,14 @@ describe("Hermes Product Gateway RPC", () => {
         exitCode: 1,
         timedOut: true,
         errorCode: "hermes_product_rpc_cancel_unverified",
+        nativeWriterQuiescence: { status: "unconfirmed", reason: expect.any(String) },
         resultJson: {
           transcriptBoundary: { status: "unknown", sourceRangeRef: null },
           transcriptSupplement: { completeness: "partial", eventCount: 1 },
           control: { interruptRequested: true, stopConfirmed: false },
         },
       });
+      expect(hasConfirmedNativeWriterQuiescence(result)).toBe(false);
     } finally {
       await fixture.cleanup();
     }

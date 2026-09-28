@@ -2072,6 +2072,7 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
             exitCode: 1,
             signal: "SIGTERM",
             timedOut: false,
+            nativeWriterQuiescence: { status: "unconfirmed", reason: "Hermes turn did not reach a settled terminal state after interruption." },
             errorCode: sensitiveInputFailureCode() ?? "hermes_product_rpc_cancel_unverified",
             errorMessage: sensitiveInputError ?? "Hermes stop was requested but terminal state was not verified.",
             ...(sessionId ? { sessionId, sessionDisplayId: sessionId } : {}),
@@ -2122,6 +2123,11 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
         transport: HERMES_PRODUCT_RPC_TRANSPORT,
         sessionId,
         transcriptBoundary,
+        // Hermes has no separate turn ID. The proven terminal SessionDB row is
+        // the execution reference; never substitute a mutable session head.
+        executionRef: transcriptBoundary.status === "exact"
+          ? `hermes:db:${sessionId}:${transcriptBoundary.endInclusive}`
+          : null,
         transcriptSupplement: runTranscriptSupplement({
           settled: turnSettledObserved,
           eventCount: recordedEventCount,
@@ -2152,6 +2158,10 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
         exitCode: completed && !cancelled && !interactionError && !approvalError && !sensitiveInputError ? 0 : 1,
         signal: cancelled ? "SIGTERM" : null,
         timedOut: false,
+        // turnSettled requires message.complete followed by running=false for
+        // this accepted turn. A successful reply or interrupt ACK alone is not
+        // enough to release the common kernel's native writer lease.
+        nativeWriterQuiescence: { status: "confirmed", source: stopConfirmed ? "provider_stop_ack" : "provider_terminal" },
         sessionId,
         sessionParams,
         sessionDisplayId: sessionId,
@@ -2218,6 +2228,9 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
       signal: stopRequested ? "SIGTERM" : null,
       timedOut,
       submissionPhase: promptAccepted ? "accepted" : promptSubmissionStarted ? "indeterminate" : "pre_submission",
+      nativeWriterQuiescence: turnSettledObserved && (stopConfirmed || !timedOut)
+        ? { status: "confirmed", source: stopConfirmed ? "provider_stop_ack" : "provider_terminal" }
+        : { status: "unconfirmed", reason: "Hermes native writer termination was not observed." },
       errorMessage: sensitiveInputError ?? (cancelUnverified ? "Hermes stop was requested but terminal state was not verified." : message),
       errorCode: inputFailureCode ?? (cancelUnverified ? "hermes_product_rpc_cancel_unverified" : timedOut ? "hermes_product_rpc_timeout" : "hermes_product_rpc_failed"),
       ...(sessionId ? { sessionId, sessionDisplayId: sessionId } : {}),
