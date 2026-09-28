@@ -1,26 +1,17 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rmdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { cleanupStaleSysvSharedMemorySegments } from "../packages/db/src/embedded-postgres-recovery.js";
+import type { TestProject } from "vitest/node";
 
 const execFile = promisify(execFileCallback);
 const temporaryDirectory = path.resolve(os.tmpdir());
-const ownedDataDirectoryPrefix = `${temporaryDirectory}${path.sep}rudder-`;
-const registryPath = path.join(temporaryDirectory, "rudder-vitest-postgres-runs.json");
-const registryLockPath = `${registryPath}.lock`;
 
 type PostgresProcess = {
   pid: number;
   parentPid: number;
   dataDirectory: string;
-};
-
-type VitestRun = {
-  token: string;
-  pid: number;
 };
 
 function isRunning(pid: number): boolean {
@@ -32,77 +23,15 @@ function isRunning(pid: number): boolean {
   }
 }
 
-async function readRuns(): Promise<VitestRun[]> {
-  try {
-    const value = JSON.parse(await readFile(registryPath, "utf8")) as unknown;
-    if (!Array.isArray(value)) return [];
-    return value.filter(
-      (run): run is VitestRun =>
-        typeof run === "object" &&
-        run !== null &&
-        typeof (run as VitestRun).token === "string" &&
-        Number.isInteger((run as VitestRun).pid) &&
-        (run as VitestRun).pid > 0 &&
-        isRunning((run as VitestRun).pid),
-    );
-  } catch {
-    return [];
-  }
-}
-
-async function writeRuns(runs: VitestRun[]): Promise<void> {
-  if (runs.length === 0) {
-    await rm(registryPath, { force: true });
-    return;
-  }
-  await writeFile(registryPath, `${JSON.stringify(runs)}\n`, "utf8");
-}
-
-async function withRegistryLock<T>(action: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + 10_000;
-  while (true) {
-    try {
-      await mkdir(registryLockPath);
-      await writeFile(path.join(registryLockPath, "pid"), String(process.pid), "utf8");
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let stale = false;
-      try {
-        const lockPid = Number(await readFile(path.join(registryLockPath, "pid"), "utf8"));
-        stale = !isRunning(lockPid);
-      } catch {
-        try {
-          const lockStats = await stat(registryLockPath);
-          stale = Date.now() - lockStats.mtimeMs > 10_000;
-        } catch {
-          stale = false;
-        }
-      }
-      if (stale) {
-        await rm(registryLockPath, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() >= deadline) throw new Error("Timed out waiting for the Vitest PostgreSQL cleanup lock");
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-  try {
-    return await action();
-  } finally {
-    await rm(registryLockPath, { recursive: true, force: true });
-  }
-}
-
-function postgresDataDirectory(command: string): string | null {
+function postgresDataDirectory(command: string, ownedRoot: string): string | null {
   if (!/(?:^|\s)(?:\S+\/)?postgres(?:\s|$)/.test(command)) return null;
   const match = command.match(/\s-D\s+(\S+)/);
   const dataDirectory = match?.[1];
-  if (!dataDirectory || !dataDirectory.startsWith(ownedDataDirectoryPrefix)) return null;
+  if (!dataDirectory || !dataDirectory.startsWith(`${ownedRoot}${path.sep}`)) return null;
   return dataDirectory;
 }
 
-async function listOwnedPostgresProcesses(): Promise<PostgresProcess[]> {
+async function listOwnedPostgresProcesses(ownedRoot: string): Promise<PostgresProcess[]> {
   let stdout = "";
   try {
     ({ stdout } = await execFile("ps", ["-axo", "pid=,ppid=,command="], { timeout: 2_000 }));
@@ -117,7 +46,7 @@ async function listOwnedPostgresProcesses(): Promise<PostgresProcess[]> {
       if (!match) return [];
       const pid = Number(match[1]);
       const parentPid = Number(match[2]);
-      const dataDirectory = postgresDataDirectory(match[3]);
+      const dataDirectory = postgresDataDirectory(match[3], ownedRoot);
       return dataDirectory
         && Number.isInteger(pid)
         && pid > 0
@@ -195,8 +124,8 @@ async function stopProcess(processInfo: PostgresProcess): Promise<boolean> {
   return waitForExit(processInfo.pid, 2_000);
 }
 
-async function cleanupOwnedPostgres(): Promise<void> {
-  const processes = await listOwnedPostgresProcesses();
+async function cleanupOwnedPostgres(ownedRoot: string): Promise<void> {
+  const processes = await listOwnedPostgresProcesses(ownedRoot);
   const results = await Promise.allSettled(processes.map(stopProcess));
   const stopped = results.filter((result) => result.status === "fulfilled" && result.value).length;
   const survivors = results.length - stopped;
@@ -207,36 +136,28 @@ async function cleanupOwnedPostgres(): Promise<void> {
     throw new Error(`Could not stop ${survivors} test PostgreSQL process(es) during Vitest teardown.`);
   }
 
-  const remaining = await listOwnedPostgresProcesses();
+  const remaining = await listOwnedPostgresProcesses(ownedRoot);
   if (remaining.length > 0) {
     throw new Error(
       `Vitest teardown left ${remaining.length} owned PostgreSQL process(es) running: ${remaining.map(({ pid, dataDirectory }) => `${pid} (${dataDirectory})`).join(", ")}`,
     );
   }
 
-  const { removedIds, skippedIds } = await cleanupStaleSysvSharedMemorySegments();
-  if (removedIds.length > 0) {
-    console.log(`Removed ${removedIds.length} stale SysV shared-memory segment(s) after Vitest teardown.`);
-  }
-  if (skippedIds.length > 0) {
-    throw new Error(`Could not remove ${skippedIds.length} stale SysV shared-memory segment(s) after Vitest teardown.`);
-  }
 }
 
-export default async function globalSetup(): Promise<() => Promise<void>> {
-  const token = `${process.pid}-${randomUUID()}`;
-  await withRegistryLock(async () => {
-    const runs = await readRuns();
-    if (runs.length === 0) await cleanupOwnedPostgres();
-    runs.push({ token, pid: process.pid });
-    await writeRuns(runs);
-  });
+export default async function globalSetup(project: TestProject): Promise<() => Promise<void>> {
+  // Each project owns a fresh directory. A shared "rudder-*" prefix is not
+  // ownership: concurrently running E2E, acceptance, and dev databases use it.
+  const ownedRoot = await realpath(await mkdtemp(path.join(temporaryDirectory, "rudder-vitest-")));
+  // Configure workers rather than mutating the coordinator's environment, so
+  // parallel Vitest projects cannot inherit one another's temporary root.
+  project.config.env = { ...project.config.env, TMPDIR: ownedRoot, TMP: ownedRoot, TEMP: ownedRoot };
 
   return async () => {
-    await withRegistryLock(async () => {
-      const runs = (await readRuns()).filter((run) => run.token !== token);
-      await writeRuns(runs);
-      if (runs.length === 0) await cleanupOwnedPostgres();
+    await cleanupOwnedPostgres(ownedRoot);
+    // Preserve test evidence and any remaining data. Only remove an empty root.
+    await rmdir(ownedRoot).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOTEMPTY" && error.code !== "EEXIST" && error.code !== "ENOENT") throw error;
     });
   };
 }
