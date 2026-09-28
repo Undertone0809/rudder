@@ -277,7 +277,9 @@ function redactProviderValue(value: unknown, secrets: readonly string[]): unknow
 
 function diagnosticText(value: unknown, secrets: readonly string[] = []): string {
   const text = value instanceof Error ? value.message : String(value);
-  return String(redactProviderValue(text, secrets)).slice(0, 2_000);
+  return String(redactProviderValue(text, secrets))
+    .replace(/https?:\/\/[^\s"'<>]+/giu, "[URL REDACTED]")
+    .slice(0, 2_000);
 }
 
 function safeAuthMethodDiagnostic(
@@ -754,6 +756,8 @@ type CursorAcpRequestDiagnostic = {
   method: CursorAcpRequestMethod;
   status: "started" | "completed" | "failed" | "timed_out";
   durationMs: number;
+  errorCode?: number | string | null;
+  errorMessage?: string;
   advertisedAuthMethodIds?: string[];
   chosenAuthMethodId?: string | null;
 };
@@ -825,6 +829,10 @@ class CursorAcpClient {
         chosenAuthMethodId: authMethodDiagnostic.chosenAuthMethodId,
       } : {}),
     };
+    const captureError = (error: unknown) => {
+      diagnostic.errorCode = error instanceof CursorAcpRpcError ? error.code : null;
+      diagnostic.errorMessage = diagnosticText(error, profileSecrets(this.profile));
+    };
     this.requestDiagnostics.push(diagnostic);
     if (this.requestDiagnostics.length > 16) this.requestDiagnostics.shift();
     return new Promise((resolve, reject) => {
@@ -834,13 +842,15 @@ class CursorAcpClient {
       };
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        const error = new CursorAcpTimeoutError(method, timeoutMs);
+        captureError(error);
         finish("timed_out");
-        reject(new CursorAcpTimeoutError(method, timeoutMs));
+        reject(error);
       }, timeoutMs);
       this.pending.set(id, {
         method,
         resolve: (value) => { finish("completed"); resolve(value); },
-        reject: (error) => { finish("failed"); reject(error); },
+        reject: (error) => { captureError(error); finish("failed"); reject(error); },
         timer,
       });
       try {
@@ -848,8 +858,10 @@ class CursorAcpClient {
       } catch (error) {
         clearTimeout(timer);
         this.pending.delete(id);
+        const failure = normalizeRpcFailure(error, method, profileSecrets(this.profile));
+        captureError(failure);
         finish("failed");
-        reject(normalizeRpcFailure(error, method, profileSecrets(this.profile)));
+        reject(failure);
       }
     });
   }

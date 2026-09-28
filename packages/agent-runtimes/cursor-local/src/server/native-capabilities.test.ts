@@ -9,6 +9,7 @@ import {
   createCursorLocalProviderCapabilityResolver,
   executeCursorNativeChat,
   normalizeCursorAcpMcpServers,
+  probeCursorAcpAuthentication,
   type CursorLocalProfileTransport,
   type CursorNativeTranscriptReadRequest,
   type CursorProviderBindingRef,
@@ -481,6 +482,41 @@ describe("Cursor ACP native capabilities", () => {
     expect(fixture.requests.map((request) => request.method)).toEqual(["initialize", "initialized", "authenticate"]);
   });
 
+  it("retains sanitized provider error code and message in authentication diagnostics", async () => {
+    const secret = "cursor-auth-probe-test-secret";
+    const authState = "cursor-auth-probe-private-state";
+    const message = "Authentication required. apiKey=" + secret
+      + ". Visit https://cursor.example/login?state=" + authState + "&token=" + secret;
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([{ id: "cursor_login", name: "Cursor Login" }]) }) + "\n");
+      } else if (request.method === "authenticate") {
+        output.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message } }) + "\n");
+      }
+    });
+    const diagnostic = await probeCursorAcpAuthentication({
+      ...profile(fixture.spawn),
+      env: { CURSOR_API_KEY: secret },
+    });
+    const serializedDiagnostic = JSON.stringify(diagnostic);
+
+    expect(diagnostic).toMatchObject({
+      status: "failed",
+      requestTrace: [
+        { method: "initialize", status: "completed" },
+        {
+          method: "authenticate",
+          status: "failed",
+          errorCode: -32000,
+          errorMessage: "Authentication required. apiKey=[REDACTED] Visit [URL REDACTED]",
+        },
+      ],
+    });
+    expect(serializedDiagnostic).not.toContain(secret);
+    expect(serializedDiagnostic).not.toContain(authState);
+    expect(serializedDiagnostic).not.toContain("https://cursor.example");
+  });
+
   it("uses a configured alternative authentication method when advertised", async () => {
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {
@@ -741,6 +777,8 @@ describe("Cursor ACP native capabilities", () => {
           method: "authenticate",
           status: "timed_out",
           durationMs: expect.any(Number),
+          errorCode: null,
+          errorMessage: "Cursor ACP authenticate timed out after 250ms.",
           advertisedAuthMethodIds: ["cursor_login", "workspace_sso"],
           chosenAuthMethodId: "cursor_login",
         },
