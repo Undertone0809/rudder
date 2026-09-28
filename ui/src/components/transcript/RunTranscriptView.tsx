@@ -3,6 +3,7 @@ import { useOptionalToast } from "../../context/ToastContext";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
+import { filterChatAssistantTranscriptEntries } from "./RunTranscriptView.chat";
 import { TranscriptChatTimeline } from "./RunTranscriptView.chat-timeline";
 import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
@@ -126,11 +127,18 @@ function RunTranscriptViewContent({
     [effectiveShowDeveloperDiagnostics, entries, presentation],
   );
   const blocks = useMemo(
-    () => normalizeTranscript(renderableEntries, streaming, {
+    () => normalizeTranscript(presentation === "chat"
+      ? filterChatAssistantTranscriptEntries(renderableEntries, {
+        hideAssistantMessages,
+        hiddenAssistantMessageText,
+        streaming,
+        preserveLifecycleBoundaries: true,
+      })
+      : renderableEntries, streaming, {
       showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
       hideUserMessages: presentation === "chat",
     }),
-    [effectiveShowDeveloperDiagnostics, presentation, renderableEntries, streaming],
+    [effectiveShowDeveloperDiagnostics, hiddenAssistantMessageText, hideAssistantMessages, presentation, renderableEntries, streaming],
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
   const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);

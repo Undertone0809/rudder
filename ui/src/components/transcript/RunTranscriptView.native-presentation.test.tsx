@@ -14,7 +14,12 @@ const input: TranscriptEntry = {
 describe("native transcript presentation", () => {
   it("leaves an empty Chat process empty when the runtime only echoes user input", () => {
     const html = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
-      presentation="chat" entries={[input, { kind: "user", ts, text: "what skills do you have?" }]}
+      presentation="chat" entries={[
+        input,
+        { kind: "user", ts, text: "what skills do you have?" },
+        { kind: "system", ts, text: "reasoning completed" },
+        { kind: "assistant", ts, text: "Available skills: browser.", phase: "final_answer" },
+      ]} hideAssistantMessages
     /></ThemeProvider>);
     expect(html).toBe("");
   });
