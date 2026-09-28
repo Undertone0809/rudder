@@ -11,6 +11,7 @@ import {
   issueDocuments,
   issues,
   organizations,
+  projectGoals,
   projectWorkspaces,
   projects
 } from "@rudderhq/db";
@@ -750,6 +751,11 @@ export async function applyMergePlan(input: {
           .update(projects)
           .set({ goalId: project.targetGoalId })
           .where(and(eq(projects.id, project.source.id), eq(projects.orgId, orgId)));
+        await tx.insert(projectGoals).values({
+          projectId: project.source.id,
+          goalId: project.targetGoalId,
+          orgId,
+        });
       }
       insertedProjects += 1;
 

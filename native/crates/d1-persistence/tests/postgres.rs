@@ -237,6 +237,72 @@ async fn seed_project_resource_attachment(database: &Database) {
     .unwrap();
 }
 
+async fn project_resource_attachment_snapshot(
+    database: &Database,
+    attachment_id: &str,
+) -> serde_json::Value {
+    let row = sqlx::query(
+        "SELECT a.id::text AS attachment_id,
+                a.org_id::text AS attachment_org_id,
+                a.project_id::text AS project_id,
+                a.resource_id::text AS resource_id,
+                a.role,
+                a.note,
+                a.sort_order,
+                a.is_primary,
+                to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS attachment_created_at,
+                to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS attachment_updated_at,
+                r.org_id::text AS resource_org_id,
+                r.name AS resource_name,
+                r.kind AS resource_kind,
+                r.source_type AS resource_source_type,
+                r.locator AS resource_locator,
+                r.description AS resource_description,
+                r.metadata::text AS resource_metadata,
+                to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS resource_created_at,
+                to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS resource_updated_at
+         FROM project_resource_attachments a
+         JOIN organization_resources r
+           ON r.org_id=a.org_id AND r.id=a.resource_id
+         WHERE a.org_id=$1::uuid AND a.project_id=$2::uuid AND a.id::text=$3",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(attachment_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let resource_metadata: Option<String> = row.try_get("resource_metadata").unwrap();
+    let resource_metadata = resource_metadata
+        .map(|metadata| serde_json::from_str(&metadata).unwrap())
+        .unwrap_or(serde_json::Value::Null);
+
+    json!({
+        "id": row.try_get::<String, _>("attachment_id").unwrap(),
+        "orgId": row.try_get::<String, _>("attachment_org_id").unwrap(),
+        "projectId": row.try_get::<String, _>("project_id").unwrap(),
+        "resourceId": row.try_get::<String, _>("resource_id").unwrap(),
+        "role": row.try_get::<String, _>("role").unwrap(),
+        "note": row.try_get::<Option<String>, _>("note").unwrap(),
+        "sortOrder": row.try_get::<i32, _>("sort_order").unwrap(),
+        "isPrimary": row.try_get::<bool, _>("is_primary").unwrap(),
+        "resource": {
+            "id": row.try_get::<String, _>("resource_id").unwrap(),
+            "orgId": row.try_get::<String, _>("resource_org_id").unwrap(),
+            "name": row.try_get::<String, _>("resource_name").unwrap(),
+            "kind": row.try_get::<String, _>("resource_kind").unwrap(),
+            "sourceType": row.try_get::<String, _>("resource_source_type").unwrap(),
+            "locator": row.try_get::<String, _>("resource_locator").unwrap(),
+            "description": row.try_get::<Option<String>, _>("resource_description").unwrap(),
+            "metadata": resource_metadata,
+            "createdAt": row.try_get::<String, _>("resource_created_at").unwrap(),
+            "updatedAt": row.try_get::<String, _>("resource_updated_at").unwrap(),
+        },
+        "createdAt": row.try_get::<String, _>("attachment_created_at").unwrap(),
+        "updatedAt": row.try_get::<String, _>("attachment_updated_at").unwrap(),
+    })
+}
+
 async fn project_primary(database: &Database) -> Option<String> {
     sqlx::query_scalar("SELECT goal_id::text FROM projects WHERE id=$1::uuid AND org_id=$2::uuid")
         .bind(PROJECT)
@@ -1072,6 +1138,249 @@ async fn mixed_project_patch_preserves_goal_omission_and_nullable_scalar_semanti
     assert_eq!(preserved_color.as_deref(), Some("#123abc"));
     assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
     assert_eq!(database.counts().await, (5, 5, 5));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dedicated_project_resource_operations_preserve_identity_and_replay_atomically() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+    sqlx::query(
+        "INSERT INTO organization_resources
+           (id, org_id, name, kind, source_type, locator)
+         VALUES ($1::uuid, $2::uuid, 'New reference', 'file', 'external', 'https://example.test/new')",
+    )
+    .bind(ASSET)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    let before_attach: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_resource_attachments
+         WHERE org_id=$1::uuid AND project_id=$2::uuid AND resource_id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(ASSET)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(before_attach, 0);
+
+    let attach_key = "project-resource-attach";
+    let attach_command = project_patch_command(
+        json!({
+            "resourceAttachmentOperation": {
+                "kind": "attach",
+                "resourceId": ASSET,
+                "role": "deliverable",
+                "note": "Created through the public Project resource route",
+                "sortOrder": 4,
+                "isPrimary": true
+            }
+        }),
+        0,
+        attach_key,
+    );
+    let attached = store.project_patch(attach_command.clone()).await.unwrap();
+    assert!(!attached.replayed);
+    assert_eq!(attached.receipt.version, 1);
+    let attached_row = sqlx::query(
+        "SELECT id::text AS id, role, note, sort_order, is_primary
+         FROM project_resource_attachments
+         WHERE org_id=$1::uuid AND project_id=$2::uuid AND resource_id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(ASSET)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let attachment_id: String = attached_row.try_get("id").unwrap();
+    assert_eq!(
+        attached_row.try_get::<String, _>("role").unwrap(),
+        "deliverable"
+    );
+    assert_eq!(
+        attached_row.try_get::<Option<String>, _>("note").unwrap(),
+        Some("Created through the public Project resource route".to_owned())
+    );
+    assert_eq!(attached_row.try_get::<i32, _>("sort_order").unwrap(), 4);
+    assert!(attached_row.try_get::<bool, _>("is_primary").unwrap());
+    let attached_snapshot = project_resource_attachment_snapshot(&database, &attachment_id).await;
+
+    let update_key = "project-resource-update";
+    let update_command = project_patch_command(
+        json!({
+            "resourceAttachmentOperation": {
+                "kind": "update",
+                "attachmentId": attachment_id,
+                "role": "deliverable",
+                "note": null,
+                "isPrimary": false
+            }
+        }),
+        1,
+        update_key,
+    );
+    let updated = store.project_patch(update_command.clone()).await.unwrap();
+    assert!(!updated.replayed);
+    assert_eq!(updated.receipt.version, 2);
+    let updated_row = sqlx::query(
+        "SELECT id::text AS id, role, note, is_primary
+         FROM project_resource_attachments
+         WHERE org_id=$1::uuid AND project_id=$2::uuid AND resource_id=$3::uuid",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(ASSET)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        updated_row.try_get::<String, _>("id").unwrap(),
+        attachment_id
+    );
+    assert_eq!(
+        updated_row.try_get::<String, _>("role").unwrap(),
+        "deliverable"
+    );
+    assert_eq!(
+        updated_row.try_get::<Option<String>, _>("note").unwrap(),
+        None
+    );
+    assert!(!updated_row.try_get::<bool, _>("is_primary").unwrap());
+    let updated_snapshot = project_resource_attachment_snapshot(&database, &attachment_id).await;
+
+    let remove_key = "project-resource-remove";
+    let remove_command = project_patch_command(
+        json!({
+            "resourceAttachmentOperation": {
+                "kind": "remove",
+                "attachmentId": attachment_id
+            }
+        }),
+        2,
+        remove_key,
+    );
+    let remove_snapshot = project_resource_attachment_snapshot(&database, &attachment_id).await;
+    assert_eq!(remove_snapshot, updated_snapshot);
+    let removed = store.project_patch(remove_command.clone()).await.unwrap();
+    assert!(!removed.replayed);
+    assert_eq!(removed.receipt.version, 3);
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_resource_attachments
+         WHERE org_id=$1::uuid AND project_id=$2::uuid AND id::text=$3",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(&attachment_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0);
+
+    let attach_replay = store.project_patch(attach_command).await.unwrap();
+    let update_replay = store.project_patch(update_command).await.unwrap();
+    let remove_replay = store.project_patch(remove_command).await.unwrap();
+
+    for (key, replay, original, expected_action, expected_status, expected_snapshot) in [
+        (
+            attach_key,
+            &attach_replay,
+            &attached,
+            "project.resource.attached",
+            201,
+            &attached_snapshot,
+        ),
+        (
+            update_key,
+            &update_replay,
+            &updated,
+            "project.resource.updated",
+            200,
+            &updated_snapshot,
+        ),
+        (
+            remove_key,
+            &remove_replay,
+            &removed,
+            "project.resource.detached",
+            200,
+            &remove_snapshot,
+        ),
+    ] {
+        assert!(replay.replayed);
+        let persisted_receipt_json: String = sqlx::query_scalar(
+            "SELECT result::text FROM organization_mutation_receipts
+             WHERE org_id=$1::uuid AND idempotency_key=$2",
+        )
+        .bind(ORG)
+        .bind(key)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        let mut persisted_value: serde_json::Value =
+            serde_json::from_str(&persisted_receipt_json).unwrap();
+        let resource_response = persisted_value
+            .as_object_mut()
+            .and_then(|value| value.remove("resource_attachment_response"))
+            .unwrap();
+        assert_eq!(
+            resource_response,
+            json!({
+                "status": expected_status,
+                "body": expected_snapshot,
+            })
+        );
+        let persisted_receipt: Receipt = serde_json::from_value(persisted_value).unwrap();
+        assert_eq!(&persisted_receipt, &original.receipt);
+        assert_eq!(&replay.receipt, &persisted_receipt);
+
+        let (action, entity_type, entity_id): (String, String, String) = sqlx::query_as(
+            "SELECT action, entity_type, entity_id FROM activity_log
+             WHERE org_id=$1::uuid AND id=$2::uuid",
+        )
+        .bind(ORG)
+        .bind(&original.receipt.activity_id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        assert_eq!(action, expected_action);
+        assert_eq!(entity_type, "project_resource_attachment");
+        assert_eq!(entity_id, attachment_id);
+
+        let activity_outbox_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM organization_mutation_outbox
+             WHERE org_id=$1::uuid AND activity_id=$2::uuid",
+        )
+        .bind(ORG)
+        .bind(&original.receipt.activity_id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+        assert_eq!(activity_outbox_count, 1);
+        assert_eq!(database.counts().await, (3, 3, 3));
+    }
+
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 3);
+    let project_version: i64 = sqlx::query_scalar(
+        "SELECT mutation_version FROM project_goal_mutation_state
+         WHERE org_id=$1::uuid AND project_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(project_version, 3);
 }
 
 #[tokio::test(flavor = "multi_thread")]

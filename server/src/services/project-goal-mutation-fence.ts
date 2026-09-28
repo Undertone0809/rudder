@@ -54,6 +54,22 @@ export async function lockNodeProjectGoalMutationAuthority(
   organizationId: string,
   projectId: string,
 ): Promise<ProjectGoalMutationStateRow> {
+  const row = await lockProjectGoalMutationAuthorityForDelete(tx, organizationId, projectId);
+  if (row.owner !== "node") {
+    throw conflict("Project goal mutation authority is owned by Rust");
+  }
+  return row;
+}
+
+/**
+ * Lock the Project-Goal component for deletion in the normal organization-then-component
+ * order. Parent deletion cascades this state row, including when Rust owns it.
+ */
+export async function lockProjectGoalMutationAuthorityForDelete(
+  tx: TransactionClient,
+  organizationId: string,
+  projectId: string,
+): Promise<ProjectGoalMutationStateRow> {
   await lockNodeMutationAuthority(tx, organizationId);
   const result = await tx.execute(sql`
     SELECT project_id, org_id, mutation_version, fence_epoch, fence_token, owner
@@ -76,8 +92,8 @@ export async function lockNodeProjectGoalMutationAuthority(
   if (!UUID_PATTERN.test(row.fence_token)) {
     throw conflict("Project goal mutation fencing token is invalid");
   }
-  if (row.owner !== "node") {
-    throw conflict("Project goal mutation authority is owned by Rust");
+  if (row.owner !== "node" && row.owner !== "rust") {
+    throw conflict("Project goal mutation authority has an invalid owner");
   }
   return row;
 }

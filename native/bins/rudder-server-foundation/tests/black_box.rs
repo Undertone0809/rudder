@@ -256,14 +256,16 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     let body = br##"{"brandColor":"#336699"}"##;
 
     let missing_key = signed_patch_request(
-        bound_addr,
-        &route,
-        ORG,
-        SECRET,
-        "branding-missing-key",
-        "branding-missing-key",
-        body,
-        false,
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "branding-missing-key",
+            "branding-missing-key",
+            body,
+        )
+        .without_idempotency_key(),
     );
     assert!(missing_key.starts_with("HTTP/1.1 400"), "{missing_key}");
     assert!(
@@ -271,7 +273,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "{missing_key}"
     );
 
-    let first = signed_patch_request(
+    let first = signed_patch_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -279,8 +281,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "branding-first",
         "branding-first",
         body,
-        true,
-    );
+    ));
     assert!(first.starts_with("HTTP/1.1 200"), "{first}");
     let first_json = response_json(&first);
     assert_eq!(first_json["version"], 1);
@@ -288,16 +289,17 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     let activity_id = first_json["activity_id"].as_str().expect("activity id");
 
     let mismatched_idempotency = signed_patch_request_with_action_and_signed_key(
-        bound_addr,
-        &route,
-        ORG,
-        SECRET,
-        "branding-idempotency-mismatch",
-        "branding-header-key",
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "branding-idempotency-mismatch",
+            "branding-header-key",
+            body,
+        ),
         Some("branding-signed-key"),
         ORGANIZATION_BRANDING_ACTION,
-        body,
-        true,
     );
     assert!(
         mismatched_idempotency.starts_with("HTTP/1.1 401"),
@@ -308,7 +310,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "{mismatched_idempotency}"
     );
 
-    let replay = signed_patch_request(
+    let replay = signed_patch_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -316,13 +318,12 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "branding-replay",
         "branding-first",
         body,
-        true,
-    );
+    ));
     assert!(replay.starts_with("HTTP/1.1 200"), "{replay}");
     assert_eq!(response_json(&replay), first_json);
 
     let conflict_body = br##"{"brandColor":"#663399"}"##;
-    let conflict = signed_patch_request(
+    let conflict = signed_patch_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -330,8 +331,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "branding-conflict",
         "branding-first",
         conflict_body,
-        true,
-    );
+    ));
     assert!(conflict.starts_with("HTTP/1.1 409"), "{conflict}");
     assert!(
         conflict.contains("mutation_idempotency_conflict"),
@@ -348,7 +348,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     .await
     .expect("install branding audit failure");
     let rollback_body = br##"{"brandColor":"#112233"}"##;
-    let rollback = signed_patch_request(
+    let rollback = signed_patch_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -356,8 +356,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "branding-rollback",
         "branding-rollback",
         rollback_body,
-        true,
-    );
+    ));
     assert!(rollback.starts_with("HTTP/1.1 500"), "{rollback}");
     let persisted_color: Option<String> =
         sqlx::query_scalar("SELECT brand_color FROM organizations WHERE id=$1::uuid")
@@ -381,7 +380,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
     .execute(&pool)
     .await
     .expect("move branding fixture to node owner");
-    let node_owned = signed_patch_request(
+    let node_owned = signed_patch_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -389,12 +388,11 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "branding-node-owned",
         "branding-node-owned",
         br##"{"brandColor":"#445566"}"##,
-        true,
-    );
+    ));
     assert!(node_owned.starts_with("HTTP/1.1 409"), "{node_owned}");
     assert!(node_owned.contains("mutation_not_owned"), "{node_owned}");
 
-    let wrong_secret = signed_patch_request(
+    let wrong_secret = signed_patch_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -402,11 +400,10 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "branding-wrong-secret",
         "branding-wrong-secret",
         body,
-        true,
-    );
+    ));
     assert!(wrong_secret.starts_with("HTTP/1.1 401"), "{wrong_secret}");
 
-    let cross_org = signed_patch_request(
+    let cross_org = signed_patch_request(SignedRequestOptions::new(
         bound_addr,
         &format!("/api/orgs/{OTHER_ORG}/branding"),
         ORG,
@@ -414,8 +411,7 @@ async fn organization_branding_mutation_is_request_bound_fenced_and_atomic() {
         "branding-cross-org",
         "branding-cross-org",
         body,
-        true,
-    );
+    ));
     assert!(cross_org.starts_with("HTTP/1.1 401"), "{cross_org}");
 
     assert!(!activity_id.is_empty());
@@ -453,14 +449,16 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     let first_body = br#"{"goalIds":["20000000-0000-0000-0000-000000000001","20000000-0000-0000-0000-000000000002"],"primaryGoalId":"20000000-0000-0000-0000-000000000002"}"#;
 
     let missing_key = signed_goal_set_request(
-        bound_addr,
-        &route,
-        ORG,
-        SECRET,
-        "goal-set-missing-key",
-        "goal-set-missing-key",
-        first_body,
-        false,
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "goal-set-missing-key",
+            "goal-set-missing-key",
+            first_body,
+        )
+        .without_idempotency_key(),
     );
     assert!(missing_key.starts_with("HTTP/1.1 400"), "{missing_key}");
     assert!(
@@ -468,7 +466,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "{missing_key}"
     );
 
-    let first = signed_goal_set_request(
+    let first = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -476,8 +474,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-first",
         "goal-set-first",
         first_body,
-        true,
-    );
+    ));
     assert!(first.starts_with("HTTP/1.1 200"), "{first}");
     let first_json = response_json(&first);
     assert_eq!(first_json["version"], 1);
@@ -492,16 +489,17 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     assert_eq!(first_json["result"]["state"]["primaryGoalAfter"], GOAL_TWO);
 
     let mismatched_idempotency = signed_patch_request_with_action_and_signed_key(
-        bound_addr,
-        &route,
-        ORG,
-        SECRET,
-        "goal-set-idempotency-mismatch",
-        "goal-set-header-key",
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "goal-set-idempotency-mismatch",
+            "goal-set-header-key",
+            first_body,
+        ),
         Some("goal-set-signed-key"),
         PROJECT_GOAL_SET_ACTION,
-        first_body,
-        true,
     );
     assert!(
         mismatched_idempotency.starts_with("HTTP/1.1 401"),
@@ -528,7 +526,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
             .expect("read first primary goal");
     assert_eq!(primary.as_deref(), Some(GOAL_TWO));
 
-    let replay = signed_goal_set_request(
+    let replay = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -536,12 +534,11 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-replay",
         "goal-set-first",
         first_body,
-        true,
-    );
+    ));
     assert!(replay.starts_with("HTTP/1.1 200"), "{replay}");
     assert_eq!(response_json(&replay), first_json);
 
-    let conflict = signed_goal_set_request(
+    let conflict = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -549,15 +546,14 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-conflict",
         "goal-set-first",
         br#"{"goalIds":["20000000-0000-0000-0000-000000000001"],"primaryGoalId":"20000000-0000-0000-0000-000000000001"}"#,
-        true,
-    );
+    ));
     assert!(conflict.starts_with("HTTP/1.1 409"), "{conflict}");
     assert!(
         conflict.contains("mutation_idempotency_conflict"),
         "{conflict}"
     );
 
-    let invalid_target = signed_goal_set_request(
+    let invalid_target = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -565,8 +561,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-invalid-target",
         "goal-set-invalid-target",
         br#"{"goalIds":["20000000-0000-0000-0000-000000000004"],"primaryGoalId":"20000000-0000-0000-0000-000000000004"}"#,
-        true,
-    );
+    ));
     assert!(
         invalid_target.starts_with("HTTP/1.1 422"),
         "{invalid_target}"
@@ -586,7 +581,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     .await
     .expect("install goal-set audit failure");
     let rollback_body = br#"{"goalIds":["20000000-0000-0000-0000-000000000001"],"primaryGoalId":"20000000-0000-0000-0000-000000000001"}"#;
-    let rollback = signed_goal_set_request(
+    let rollback = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -594,8 +589,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-rollback",
         "goal-set-rollback",
         rollback_body,
-        true,
-    );
+    ));
     assert!(rollback.starts_with("HTTP/1.1 500"), "{rollback}");
     let version: i64 = sqlx::query_scalar(
         "SELECT mutation_version FROM project_goal_mutation_state WHERE project_id=$1::uuid",
@@ -636,7 +630,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     .await
     .expect("remove goal-set audit failure");
 
-    let recovered = signed_goal_set_request(
+    let recovered = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -644,8 +638,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-recovery",
         "goal-set-rollback",
         rollback_body,
-        true,
-    );
+    ));
     assert!(recovered.starts_with("HTTP/1.1 200"), "{recovered}");
     assert_eq!(response_json(&recovered)["version"], 2);
     let recovered_primary: Option<String> =
@@ -656,7 +649,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
             .expect("read recovered primary goal");
     assert_eq!(recovered_primary.as_deref(), Some(GOAL_ONE));
 
-    let foreign_org = signed_goal_set_request(
+    let foreign_org = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &format!("/api/orgs/{OTHER_ORG}/projects/{OTHER_PROJECT}/goal-set"),
         ORG,
@@ -664,8 +657,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-cross-org",
         "goal-set-cross-org",
         first_body,
-        true,
-    );
+    ));
     assert!(foreign_org.starts_with("HTTP/1.1 401"), "{foreign_org}");
 
     sqlx::query(
@@ -675,7 +667,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     .execute(&pool)
     .await
     .expect("move goal-set fixture to node owner");
-    let node_owned = signed_goal_set_request(
+    let node_owned = signed_goal_set_request(SignedRequestOptions::new(
         bound_addr,
         &route,
         ORG,
@@ -683,8 +675,7 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
         "goal-set-node-owned",
         "goal-set-node-owned",
         first_body,
-        true,
-    );
+    ));
     assert!(node_owned.starts_with("HTTP/1.1 409"), "{node_owned}");
     assert!(node_owned.contains("mutation_not_owned"), "{node_owned}");
 
@@ -692,93 +683,226 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
     stop_server(child, stdout);
 }
 
-fn signed_patch_request(
-    addr: SocketAddr,
-    route: &str,
-    claimed_org_id: &str,
-    secret: &str,
-    nonce: &str,
-    idempotency_key: &str,
-    body: &[u8],
-    include_idempotency_key: bool,
-) -> String {
-    signed_patch_request_with_action(
-        addr,
-        route,
-        claimed_org_id,
-        secret,
-        nonce,
-        idempotency_key,
-        ORGANIZATION_BRANDING_ACTION,
-        body,
-        include_idempotency_key,
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn project_patch_accepts_user_wire_board_actor_for_resource_attachment() {
+    const ORG: &str = "00000000-0000-0000-0000-000000000001";
+    const PROJECT: &str = "10000000-0000-0000-0000-000000000001";
+    const RESOURCE: &str = "60000000-0000-0000-0000-000000000001";
+    const SECRET: &str = "project-patch-board-actor-test-secret";
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&postgres.url)
+        .await
+        .expect("connect project-patch fixture PostgreSQL");
+    sqlx::raw_sql(BRANDING_MUTATION_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install project-patch mutation fixture");
+    sqlx::raw_sql(
+        "ALTER TABLE projects
+           ADD COLUMN name text NOT NULL DEFAULT 'Project',
+           ADD COLUMN description text,
+           ADD COLUMN status text NOT NULL DEFAULT 'backlog',
+           ADD COLUMN lead_agent_id uuid,
+           ADD COLUMN target_date date,
+           ADD COLUMN color text,
+           ADD COLUMN icon text,
+           ADD COLUMN execution_workspace_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
+           ADD COLUMN archived_at timestamptz;
+         CREATE TABLE organization_resources (
+           id uuid PRIMARY KEY,
+           org_id uuid NOT NULL,
+           name text NOT NULL,
+           kind text NOT NULL,
+           source_type text NOT NULL,
+           locator text NOT NULL,
+           description text,
+           metadata jsonb,
+           created_at timestamptz NOT NULL DEFAULT now(),
+           updated_at timestamptz NOT NULL DEFAULT now()
+         );
+         CREATE TABLE project_resource_attachments (
+           id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+           org_id uuid NOT NULL,
+           project_id uuid NOT NULL,
+           resource_id uuid NOT NULL,
+           role text NOT NULL DEFAULT 'reference',
+           note text,
+           sort_order integer NOT NULL DEFAULT 0,
+           is_primary boolean NOT NULL DEFAULT false,
+           created_at timestamptz NOT NULL DEFAULT now(),
+           updated_at timestamptz NOT NULL DEFAULT now()
+         );
+         INSERT INTO organization_resources
+           (id, org_id, name, kind, source_type, locator, description, metadata)
+         VALUES
+           ($$60000000-0000-0000-0000-000000000001$$::uuid,
+            $$00000000-0000-0000-0000-000000000001$$::uuid,
+            'Board attachment', 'file', 'external', 'https://example.test/board-attachment',
+            'Public Project-Patch fixture', '{}'::jsonb);",
     )
-}
+    .execute(&pool)
+    .await
+    .expect("install project resource fixture");
 
-fn signed_goal_set_request(
-    addr: SocketAddr,
-    route: &str,
-    claimed_org_id: &str,
-    secret: &str,
-    nonce: &str,
-    idempotency_key: &str,
-    body: &[u8],
-    include_idempotency_key: bool,
-) -> String {
-    signed_patch_request_with_action(
-        addr,
-        route,
-        claimed_org_id,
-        secret,
-        nonce,
-        idempotency_key,
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
+    ]);
+    let route = format!("/api/orgs/{ORG}/projects/{PROJECT}/goal-set");
+    let body = br#"{"projectPatch":{"resourceAttachmentOperation":{"kind":"attach","resourceId":"60000000-0000-0000-0000-000000000001","role":"reference","note":"attached through public Project-Patch","sortOrder":4,"isPrimary":true}}}"#;
+    let response = signed_patch_request_with_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-patch-board-user-wire-kind",
+            "project-patch-board-user-wire-kind",
+            body,
+        ),
         PROJECT_GOAL_SET_ACTION,
-        body,
-        include_idempotency_key,
+    );
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let receipt = response_json(&response);
+    assert_eq!(receipt["version"], 1);
+    assert_eq!(receipt["outcome"], "applied");
+    assert_eq!(receipt["result"]["kind"], "project_patch");
+    assert_eq!(receipt["result"]["project_id"], PROJECT);
+
+    let attachment: (String, Option<String>, i32, bool, String) = sqlx::query_as(
+        "SELECT a.role, a.note, a.sort_order, a.is_primary, r.name
+         FROM project_resource_attachments a
+         JOIN organization_resources r ON r.org_id=a.org_id AND r.id=a.resource_id
+         WHERE a.org_id=$1::uuid AND a.project_id=$2::uuid AND a.resource_id=$3::uuid",
     )
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(RESOURCE)
+    .fetch_one(&pool)
+    .await
+    .expect("read attached project resource");
+    assert_eq!(
+        attachment,
+        (
+            "reference".to_owned(),
+            Some("attached through public Project-Patch".to_owned()),
+            4,
+            true,
+            "Board attachment".to_owned(),
+        )
+    );
+
+    let activity: (String, String, String, String) = sqlx::query_as(
+        "SELECT actor_type, actor_id, action, id::text
+         FROM activity_log
+         WHERE org_id=$1::uuid AND id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(
+        receipt["activity_id"]
+            .as_str()
+            .expect("receipt activity id"),
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read project-patch activity");
+    assert_eq!(activity.0, "user");
+    assert_eq!(activity.1, "board-user");
+    assert_eq!(activity.2, "project.resource.attached");
+    assert_eq!(activity.3, receipt["activity_id"]);
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox
+         WHERE org_id=$1::uuid AND activity_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(
+        receipt["activity_id"]
+            .as_str()
+            .expect("receipt activity id"),
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read project-patch outbox entry");
+    assert_eq!(outbox_count, 1);
+
+    pool.close().await;
+    stop_server(child, stdout);
 }
 
-fn signed_patch_request_with_action(
+struct SignedRequestOptions<'a> {
     addr: SocketAddr,
-    route: &str,
-    claimed_org_id: &str,
-    secret: &str,
-    nonce: &str,
-    idempotency_key: &str,
-    action: &str,
-    body: &[u8],
+    route: &'a str,
+    claimed_org_id: &'a str,
+    secret: &'a str,
+    nonce: &'a str,
+    idempotency_key: &'a str,
+    body: &'a [u8],
     include_idempotency_key: bool,
-) -> String {
-    signed_patch_request_with_action_and_signed_key(
-        addr,
-        route,
-        claimed_org_id,
-        secret,
-        nonce,
-        idempotency_key,
-        if include_idempotency_key {
-            Some(idempotency_key)
-        } else {
-            None
-        },
-        action,
-        body,
-        include_idempotency_key,
-    )
+}
+
+impl<'a> SignedRequestOptions<'a> {
+    fn new(
+        addr: SocketAddr,
+        route: &'a str,
+        claimed_org_id: &'a str,
+        secret: &'a str,
+        nonce: &'a str,
+        idempotency_key: &'a str,
+        body: &'a [u8],
+    ) -> Self {
+        Self {
+            addr,
+            route,
+            claimed_org_id,
+            secret,
+            nonce,
+            idempotency_key,
+            body,
+            include_idempotency_key: true,
+        }
+    }
+
+    fn without_idempotency_key(mut self) -> Self {
+        self.include_idempotency_key = false;
+        self
+    }
+}
+
+fn signed_patch_request(options: SignedRequestOptions<'_>) -> String {
+    signed_patch_request_with_action(options, ORGANIZATION_BRANDING_ACTION)
+}
+
+fn signed_goal_set_request(options: SignedRequestOptions<'_>) -> String {
+    signed_patch_request_with_action(options, PROJECT_GOAL_SET_ACTION)
+}
+
+fn signed_patch_request_with_action(options: SignedRequestOptions<'_>, action: &str) -> String {
+    let signed_idempotency_key = options
+        .include_idempotency_key
+        .then_some(options.idempotency_key);
+    signed_patch_request_with_action_and_signed_key(options, signed_idempotency_key, action)
 }
 
 fn signed_patch_request_with_action_and_signed_key(
-    addr: SocketAddr,
-    route: &str,
-    claimed_org_id: &str,
-    secret: &str,
-    nonce: &str,
-    idempotency_key: &str,
+    options: SignedRequestOptions<'_>,
     signed_idempotency_key: Option<&str>,
     action: &str,
-    body: &[u8],
-    include_idempotency_key: bool,
 ) -> String {
+    let SignedRequestOptions {
+        addr,
+        route,
+        claimed_org_id,
+        secret,
+        nonce,
+        idempotency_key,
+        body,
+        include_idempotency_key,
+    } = options;
     let request_id = format!("request-{nonce}");
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

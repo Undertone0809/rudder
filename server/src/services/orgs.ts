@@ -61,7 +61,10 @@ import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
-import { lockNodeOrganizationBrandingAuthority } from "./organization-branding-fence.js";
+import {
+  lockNodeOrganizationBrandingAuthority,
+  lockOrganizationBrandingAuthorityForDeletion,
+} from "./organization-branding-fence.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { recordProductAnalyticsEvent } from "./product-analytics.js";
@@ -489,7 +492,7 @@ export function organizationService(db: Db) {
 
     remove: (id: string) =>
       db.transaction(async (tx) => {
-        await lockNodeOrganizationBrandingAuthority(tx, id);
+        await lockOrganizationBrandingAuthorityForDeletion(tx, id);
         await lockNodeMutationAuthority(tx, id);
         const projectGoalStates = await tx.execute(sql`
           SELECT project_id, owner
@@ -501,8 +504,8 @@ export function organizationService(db: Db) {
         const projectGoalRows = Array.isArray(projectGoalStates)
           ? projectGoalStates
           : projectGoalStates.rows ?? [];
-        if (projectGoalRows.some((row) => row.owner === "rust")) {
-          throw conflict("Organization deletion is unavailable while Rust Project-Goal authority is active");
+        if (projectGoalRows.some((row) => row.owner !== "node" && row.owner !== "rust")) {
+          throw conflict("Project goal mutation authority has an invalid owner");
         }
         // Delete from child tables in dependency order
         await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.orgId, id));

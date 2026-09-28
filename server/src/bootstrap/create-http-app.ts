@@ -15,7 +15,10 @@ import { logger } from "../middleware/logger.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";
 import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { llmRoutes } from "../routes/llms.js";
-import { handoffOrganizationBrandingAuthorityInTransaction } from "../services/organization-branding-fence.js";
+import {
+  configuredOrganizationBrandingOrgIds,
+  handoffOrganizationBrandingAuthorityInTransaction,
+} from "../services/organization-branding-fence.js";
 import {
   configuredProjectGoalMutationProjectIds,
   handoffProjectGoalMutationAuthorityInTransaction,
@@ -244,14 +247,14 @@ export async function createHttpApp(
 
   try {
     app.use(errorHandler);
+    const organizationBrandingOrgIds = configuredOrganizationBrandingOrgIds();
     if (rustFoundationBridge.requiresStartup) {
-      // Keep ownership changes in one transaction after all other app startup
-      // work has succeeded. Re-running required startup is idempotent for
-      // already Rust-owned rows, and a failed handoff cannot leave a partial
-      // organization/component ownership transfer behind.
+      // Only explicitly selected organizations are handed off at startup.
+      // With no allowlist, each organization is handed off on its first Rust
+      // write through the authenticated route.
       await db.transaction(async (tx) => {
-        if (rustFoundationBridge.organizationBrandingMode === "required") {
-          await handoffOrganizationBrandingAuthorityInTransaction(tx);
+        if (rustFoundationBridge.organizationBrandingMode === "required" && organizationBrandingOrgIds.length > 0) {
+          await handoffOrganizationBrandingAuthorityInTransaction(tx, organizationBrandingOrgIds);
         }
         if (rustFoundationBridge.projectGoalSetMode === "required") {
           await handoffProjectGoalMutationAuthorityInTransaction(

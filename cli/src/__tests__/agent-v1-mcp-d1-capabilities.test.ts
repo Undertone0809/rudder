@@ -74,7 +74,7 @@ describe("D1 MCP capability dispatch", () => {
     });
   });
 
-  it("requires Rust authority and idempotency only when Project goals change", async () => {
+  it("always sends idempotency and requires Rust authority only when Project goals change", async () => {
     const api = createApi();
 
     await dispatchD1CapabilityDirectly("project.update", {
@@ -102,7 +102,11 @@ describe("D1 MCP capability dispatch", () => {
       project: "project-1",
       status: "active",
     }, {}, api as never, { requiredRuntimeString, requiredString, optionalString });
-    expect(api.patch).toHaveBeenCalledWith("/api/projects/project-1", { status: "active" }, undefined);
+    const scalarCall = api.patch.mock.calls[0] as unknown as [string, unknown, { headers: Record<string, string> }];
+    expect(scalarCall[0]).toBe("/api/projects/project-1");
+    expect(scalarCall[1]).toEqual({ status: "active" });
+    expect(scalarCall[2].headers["x-rudder-idempotency-key"]).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(scalarCall[2].headers["x-rudder-required-authority"]).toBeUndefined();
 
     api.patch.mockClear();
     await dispatchD1CapabilityDirectly("project.update", {

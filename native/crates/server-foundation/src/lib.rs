@@ -1495,7 +1495,11 @@ impl AppState {
             let command = ProjectPatchCommand {
                 organization_id: org_id.to_owned(),
                 project_id: project_id.to_owned(),
-                actor_kind: actor.actor().kind.to_owned(),
+                actor_kind: match actor.actor().kind.as_str() {
+                    "user" => "board",
+                    kind => kind,
+                }
+                .to_owned(),
                 actor_id: actor.actor().id.clone(),
                 run_id,
                 idempotency_key: idempotency_key.to_owned(),

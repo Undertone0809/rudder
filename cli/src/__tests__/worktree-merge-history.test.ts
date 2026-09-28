@@ -1,5 +1,133 @@
-import { describe, expect, it } from "vitest";
+import { createDb, ensurePostgresDatabase, projectGoals, projects } from "@rudderhq/db";
+import { eq, sql } from "drizzle-orm";
+import EmbeddedPostgres from "embedded-postgres";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { applyMergePlan } from "../commands/worktree-merge.js";
 import { buildWorktreeMergePlan, parseWorktreeMergeScopes } from "../commands/worktree-merge-history-lib.js";
+
+async function availablePostgresPort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not allocate PostgreSQL port")));
+        return;
+      }
+      server.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
+}
+
+const worktreeMergeTestSchema = [
+  `CREATE TABLE organizations (
+    id uuid PRIMARY KEY,
+    url_key text NOT NULL,
+    name text NOT NULL,
+    issue_prefix text NOT NULL,
+    issue_counter integer NOT NULL DEFAULT 0
+  )`,
+  `CREATE TABLE goals (
+    id uuid PRIMARY KEY,
+    org_id uuid NOT NULL REFERENCES organizations(id),
+    title text NOT NULL
+  )`,
+  `CREATE TABLE organization_mutation_state (
+    org_id uuid PRIMARY KEY REFERENCES organizations(id),
+    mutation_version bigint NOT NULL DEFAULT 0,
+    fence_epoch bigint NOT NULL DEFAULT 0,
+    fence_token uuid NOT NULL DEFAULT gen_random_uuid(),
+    owner text NOT NULL DEFAULT 'node'
+  )`,
+  `CREATE TABLE projects (
+    id uuid PRIMARY KEY,
+    org_id uuid NOT NULL REFERENCES organizations(id),
+    goal_id uuid REFERENCES goals(id),
+    name text NOT NULL,
+    description text,
+    status text NOT NULL,
+    lead_agent_id uuid,
+    target_date date,
+    color text,
+    icon text,
+    pause_reason text,
+    paused_at timestamptz,
+    execution_workspace_policy jsonb,
+    archived_at timestamptz,
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL
+  )`,
+  `CREATE TABLE project_goals (
+    project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    goal_id uuid NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+    org_id uuid NOT NULL REFERENCES organizations(id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (project_id, goal_id)
+  )`,
+  `CREATE TABLE project_goal_mutation_state (
+    project_id uuid PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    org_id uuid NOT NULL REFERENCES organizations(id),
+    mutation_version bigint NOT NULL DEFAULT 0,
+    fence_epoch bigint NOT NULL DEFAULT 0,
+    fence_token uuid NOT NULL DEFAULT gen_random_uuid(),
+    owner text NOT NULL DEFAULT 'node'
+  )`,
+  `CREATE TABLE project_goal_owner_seed (
+    project_id uuid PRIMARY KEY,
+    owner text NOT NULL
+  )`,
+  `CREATE FUNCTION provision_test_project_goal_mutation_state() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    DECLARE requested_owner text;
+    BEGIN
+      SELECT owner INTO requested_owner
+      FROM project_goal_owner_seed
+      WHERE project_id = NEW.id;
+      requested_owner := COALESCE(requested_owner, 'node');
+      INSERT INTO project_goal_mutation_state (
+        project_id, org_id, mutation_version, fence_epoch, fence_token, owner
+      ) VALUES (
+        NEW.id, NEW.org_id, 0,
+        CASE WHEN requested_owner = 'rust' THEN 1 ELSE 0 END,
+        gen_random_uuid(), requested_owner
+      );
+      RETURN NEW;
+    END;
+    $$`,
+  `CREATE TRIGGER projects_test_project_goal_state
+    AFTER INSERT ON projects
+    FOR EACH ROW EXECUTE FUNCTION provision_test_project_goal_mutation_state()`,
+  `CREATE TABLE issue_attachments (id uuid PRIMARY KEY, org_id uuid NOT NULL)`,
+];
+
+function makeGoalImportPlan(orgId: string, projectId: string, goalId: string) {
+  return buildWorktreeMergePlan({
+    orgId,
+    companyName: "Rudder",
+    issuePrefix: "PAP",
+    previewIssueCounterStart: 0,
+    scopes: ["issues"],
+    sourceIssues: [],
+    targetIssues: [],
+    sourceComments: [],
+    targetComments: [],
+    sourceProjects: [makeProject({ id: projectId, orgId, goalId })],
+    sourceProjectWorkspaces: [],
+    targetAgents: [],
+    targetProjects: [],
+    targetProjectWorkspaces: [],
+    targetGoals: [{ id: goalId, orgId }] as any,
+    importProjectIds: [projectId],
+  });
+}
 
 function makeIssue(overrides: Record<string, unknown> = {}) {
   return {
@@ -510,6 +638,150 @@ describe("worktree merge history planner", () => {
       action: "insert",
       targetIssueCommentId: null,
       targetCreatedByAgentId: null,
+    });
+  });
+});
+
+describe("worktree merge Goal persistence", () => {
+  let testRoot = "";
+  let postgresInstance: EmbeddedPostgres | undefined;
+  let postgresStarted = false;
+  let testDb: ReturnType<typeof createDb> | undefined;
+
+  beforeAll(async () => {
+    testRoot = mkdtempSync(path.join(os.tmpdir(), "rudder-worktree-merge-"));
+    const port = await availablePostgresPort();
+    postgresInstance = new EmbeddedPostgres({
+      databaseDir: path.join(testRoot, "postgres"),
+      user: "rudder",
+      password: "rudder",
+      port,
+      persistent: true,
+      initdbFlags: ["--encoding=UTF8", "--locale=C", "--lc-messages=C"],
+      onLog: () => {},
+      onError: () => {},
+    });
+    await postgresInstance.initialise();
+    await postgresInstance.start();
+    postgresStarted = true;
+
+    const adminUrl = `postgres://rudder:rudder@127.0.0.1:${port}/postgres`;
+    await ensurePostgresDatabase(adminUrl, "rudder");
+    testDb = createDb(`postgres://rudder:rudder@127.0.0.1:${port}/rudder`);
+    for (const statement of worktreeMergeTestSchema) {
+      await testDb.execute(sql.raw(statement));
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    await testDb?.$client.end({ timeout: 5 });
+    if (postgresStarted) await postgresInstance?.stop();
+    if (testRoot) rmSync(testRoot, { recursive: true, force: true });
+  });
+
+  async function seedGoalImport(owner?: "rust") {
+    if (!testDb) throw new Error("Test database did not start");
+    const orgId = randomUUID();
+    const projectId = randomUUID();
+    const goalId = randomUUID();
+    await testDb.$client.unsafe(
+      `INSERT INTO organizations (id, url_key, name, issue_prefix)
+       VALUES ($1::uuid, $2, 'Worktree Merge Test', $3)`,
+      [orgId, orgId, `WT${orgId.slice(0, 5)}`],
+    );
+    await testDb.$client.unsafe(
+      "INSERT INTO goals (id, org_id, title) VALUES ($1::uuid, $2::uuid, 'Imported Goal')",
+      [goalId, orgId],
+    );
+    await testDb.execute(sql`
+      INSERT INTO organization_mutation_state (org_id)
+      VALUES (${orgId}::uuid)
+    `);
+    if (owner) {
+      await testDb.execute(sql`
+        INSERT INTO project_goal_owner_seed (project_id, owner)
+        VALUES (${projectId}::uuid, ${owner})
+      `);
+    }
+    return { orgId, projectId, goalId };
+  }
+
+  async function applyGoalImport(input: { orgId: string; projectId: string; goalId: string }) {
+    if (!testDb) throw new Error("Test database did not start");
+    return await applyMergePlan({
+      sourceStorages: [],
+      targetStorage: {} as never,
+      targetDb: testDb as never,
+      company: { id: input.orgId, name: "Worktree Merge Test", issuePrefix: "WT" },
+      plan: makeGoalImportPlan(input.orgId, input.projectId, input.goalId),
+    });
+  }
+
+  it("reads back matching legacy and canonical Goal links after an import", async () => {
+    if (!testDb) throw new Error("Test database did not start");
+    const identity = await seedGoalImport();
+
+    const result = await applyGoalImport(identity);
+
+    expect(result.insertedProjects).toBe(1);
+    const projectRows = await testDb
+      .select({ goalId: projects.goalId })
+      .from(projects)
+      .where(eq(projects.id, identity.projectId));
+    const canonicalLinks = await testDb
+      .select({ orgId: projectGoals.orgId, goalId: projectGoals.goalId })
+      .from(projectGoals)
+      .where(eq(projectGoals.projectId, identity.projectId));
+    expect(projectRows).toEqual([{ goalId: identity.goalId }]);
+    expect(canonicalLinks).toEqual([{ orgId: identity.orgId, goalId: identity.goalId }]);
+
+    const [authority] = await testDb.$client.unsafe(
+      `SELECT owner, mutation_version::text AS mutation_version,
+              fence_epoch::text AS fence_epoch
+       FROM project_goal_mutation_state WHERE project_id = $1::uuid`,
+      [identity.projectId],
+    );
+    expect(authority).toMatchObject({
+      owner: "node",
+      mutation_version: "0",
+      fence_epoch: "0",
+    });
+  });
+
+  it("rejects Rust-owned project Goal authority and rolls back the import", async () => {
+    if (!testDb) throw new Error("Test database did not start");
+    const identity = await seedGoalImport("rust");
+
+    await expect(applyGoalImport(identity)).rejects.toThrow(
+      "Project goal mutation authority is owned by Rust",
+    );
+
+    const projectRows = await testDb
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, identity.projectId));
+    const canonicalLinks = await testDb
+      .select({ projectId: projectGoals.projectId })
+      .from(projectGoals)
+      .where(eq(projectGoals.projectId, identity.projectId));
+    const ownerRows = await testDb.$client.unsafe(
+      "SELECT project_id FROM project_goal_mutation_state WHERE project_id = $1::uuid",
+      [identity.projectId],
+    );
+    expect(projectRows).toEqual([]);
+    expect(canonicalLinks).toEqual([]);
+    expect(ownerRows).toEqual([]);
+
+    const [organizationAuthority] = await testDb.$client.unsafe(
+      `SELECT owner, mutation_version::text AS mutation_version,
+              fence_epoch::text AS fence_epoch
+       FROM organization_mutation_state WHERE org_id = $1::uuid`,
+      [identity.orgId],
+    );
+    expect(organizationAuthority).toMatchObject({
+      owner: "node",
+      mutation_version: "0",
+      fence_epoch: "0",
     });
   });
 });

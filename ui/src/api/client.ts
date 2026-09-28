@@ -25,6 +25,7 @@ export class ApiTimeoutError extends Error {
 export type ApiRequestOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
+  headers?: HeadersInit;
 };
 
 type RequestSignal = {
@@ -100,6 +101,7 @@ function readErrorMessage(body: unknown, fallback: string): string {
 
 async function request<T>(path: string, init?: RequestInit, options: ApiRequestOptions = {}): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
+  new Headers(options.headers ?? undefined).forEach((value, name) => headers.set(name, value));
   const body = init?.body;
   if (!(body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -112,9 +114,9 @@ async function request<T>(path: string, init?: RequestInit, options: ApiRequestO
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
-      headers,
       credentials: "include",
       ...init,
+      headers,
       signal: requestSignal.signal,
     });
   } catch (error) {

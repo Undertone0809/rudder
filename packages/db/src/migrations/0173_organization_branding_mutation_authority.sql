@@ -17,12 +17,6 @@ ALTER TABLE "organization_branding_mutation_state"
   ADD CONSTRAINT "organization_branding_mutation_state_org_id_organizations_id_fk"
   FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;
 --> statement-breakpoint
--- Provision historical organizations before enabling the insert trigger.
-INSERT INTO "organization_branding_mutation_state" ("org_id")
-SELECT "id"
-FROM "organizations"
-ON CONFLICT ("org_id") DO NOTHING;
---> statement-breakpoint
 CREATE FUNCTION "provision_organization_branding_mutation_state"() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -36,6 +30,12 @@ $$;
 CREATE TRIGGER "organizations_branding_mutation_state_provisioning"
 AFTER INSERT ON "organizations"
 FOR EACH ROW EXECUTE FUNCTION "provision_organization_branding_mutation_state"();
+--> statement-breakpoint
+-- Reconcile existing organizations after provisioning is active.
+INSERT INTO "organization_branding_mutation_state" ("org_id")
+SELECT "id"
+FROM "organizations"
+ON CONFLICT ("org_id") DO NOTHING;
 --> statement-breakpoint
 CREATE FUNCTION "guard_organization_branding_mutation_state"() RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -139,3 +139,26 @@ ALTER TABLE "organization_mutation_outbox"
 --> statement-breakpoint
 CREATE INDEX "organization_mutation_outbox_claim_idx"
   ON "organization_mutation_outbox" ("state", "next_attempt_at", "created_at");
+--> statement-breakpoint
+CREATE FUNCTION "deny_d1_mutation_truncate"() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'cannot truncate D1 mutation authority or receipt history' USING ERRCODE = '23514';
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER "organization_mutation_state_truncate_guard"
+BEFORE TRUNCATE ON "organization_mutation_state"
+FOR EACH STATEMENT EXECUTE FUNCTION "deny_d1_mutation_truncate"();
+--> statement-breakpoint
+CREATE TRIGGER "organization_mutation_receipts_truncate_guard"
+BEFORE TRUNCATE ON "organization_mutation_receipts"
+FOR EACH STATEMENT EXECUTE FUNCTION "deny_d1_mutation_truncate"();
+--> statement-breakpoint
+CREATE TRIGGER "organization_branding_mutation_state_truncate_guard"
+BEFORE TRUNCATE ON "organization_branding_mutation_state"
+FOR EACH STATEMENT EXECUTE FUNCTION "deny_d1_mutation_truncate"();
+--> statement-breakpoint
+CREATE TRIGGER "organization_branding_mutation_receipts_truncate_guard"
+BEFORE TRUNCATE ON "organization_branding_mutation_receipts"
+FOR EACH STATEMENT EXECUTE FUNCTION "deny_d1_mutation_truncate"();

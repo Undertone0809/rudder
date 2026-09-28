@@ -72,7 +72,7 @@ describe("project command", () => {
     expect(JSON.parse(output)).toEqual(expect.objectContaining({ id: "project-1", name: "New Launch" }));
   });
 
-  it("updates projects by shortname with org context for resolution", async () => {
+  it("updates projects by shortname with org context and an idempotency key", async () => {
     const fetchMock = vi.fn(async () => new Response(
       JSON.stringify({
         id: "project-1",
@@ -113,7 +113,7 @@ describe("project command", () => {
     expect(requestedUrl.searchParams.get("orgId")).toBe("org-1");
     expect(init.method).toBe("PATCH");
     const headers = new Headers(init.headers);
-    expect(headers.get("x-rudder-idempotency-key")).toBeNull();
+    expect(headers.get("x-rudder-idempotency-key")).toMatch(/^[0-9a-f-]{36}$/u);
     expect(headers.get("x-rudder-required-authority")).toBeNull();
     expect(JSON.parse(String(init.body))).toEqual({
       name: "Renamed Launch",

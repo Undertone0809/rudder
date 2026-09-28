@@ -94,6 +94,7 @@ async function main() {
     RUDDER_NATIVE_ACTOR_ENVELOPE_KEY: actorEnvelopeKey,
     RUDDER_RUST_MEMBER_DIRECTORY_MODE: "required",
     RUDDER_RUST_ORGANIZATION_BRANDING_MODE: "required",
+    RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS: "",
     RUDDER_OPEN_ON_LISTEN: "false",
   });
 
@@ -128,6 +129,16 @@ async function main() {
     assert.equal(created.status, 201);
     const organizationId = String((created.body as { id?: string }).id);
     assert.match(organizationId, /^[0-9a-f-]{36}$/u);
+    process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS = organizationId;
+
+    const unlistedCreated = await readResponse(await fetch(`${current.apiUrl}/api/orgs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Rust branding unlisted real entry", issuePrefix: "RBU" }),
+    }));
+    assert.equal(unlistedCreated.status, 201);
+    const unlistedOrganizationId = String((unlistedCreated.body as { id?: string }).id);
+    assert.match(unlistedOrganizationId, /^[0-9a-f-]{36}$/u);
 
     const idempotencyKey = `real-branding-${organizationId}`;
     const patch = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
@@ -140,6 +151,14 @@ async function main() {
     }));
     assert.equal(patch.status, 200);
     assert.equal((patch.body as { brandColor?: string }).brandColor, "#abcdef");
+
+    const unlistedPatch = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${unlistedOrganizationId}/branding`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ brandColor: "#123456" }),
+    }));
+    assert.equal(unlistedPatch.status, 200);
+    assert.equal((unlistedPatch.body as { brandColor?: string }).brandColor, "#123456");
 
     sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     const organizationRows = await sql.unsafe(
@@ -167,6 +186,11 @@ async function main() {
     );
     assert.equal(organizationRows[0]?.brand_color, "#abcdef");
     assert.deepEqual(stateRows[0], { owner: "rust", mutation_version: "1", fence_epoch: "1" });
+    const unlistedStateRows = await sql.unsafe(
+      "SELECT owner FROM organization_branding_mutation_state WHERE org_id = $1",
+      [unlistedOrganizationId],
+    );
+    assert.deepEqual(unlistedStateRows, [{ owner: "node" }]);
     assert.deepEqual(receiptRows[0], { outcome: "applied", resulting_version: "1", fence_epoch: "1" });
     assert.deepEqual(Array.from(activityRows), [{ action: "organization.branding_updated" }]);
     assert.equal(outboxRows.length, 1);
@@ -178,6 +202,11 @@ async function main() {
     await current.dispose();
     current = await start();
     sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    const unlistedRestartStateRows = await sql.unsafe(
+      "SELECT owner FROM organization_branding_mutation_state WHERE org_id = $1",
+      [unlistedOrganizationId],
+    );
+    assert.deepEqual(unlistedRestartStateRows, [{ owner: "node" }]);
 
     const replay = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
       method: "PATCH",
@@ -323,21 +352,40 @@ async function main() {
     assert.equal(mcpBody.result?.isError, false);
     assert.equal(mcpBody.result?.structuredContent?.brandColor, "#c0ffee");
 
-    // Leave a claimed outbox row in its persisted retry window, interrupt the
-    // server process cleanly, then prove the restarted publisher completes it.
+    // Seed a delayed, previously claimed row so the live publisher cannot race
+    // the simulated process interruption by finishing an in-flight delivery.
     sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
-    const recoveryCandidateRows = await sql.unsafe(
-      "SELECT id::text AS id FROM organization_mutation_outbox "
-        + "WHERE org_id = $1 ORDER BY created_at DESC LIMIT 1",
-      [organizationId],
+    const recoveryActivityRows = await sql.unsafe(
+      "INSERT INTO activity_log "
+        + "(org_id, actor_type, actor_id, action, entity_type, entity_id, details) "
+        + "VALUES ($1::uuid, 'user', $1::text, 'organization.branding_updated', "
+        + "'organization', $1::text, $2::jsonb) RETURNING id::text AS id",
+      [organizationId, { recoveryProbe: true }],
     );
-    const recoveryOutboxId = String(recoveryCandidateRows[0]?.id);
+    const recoveryActivityId = String(recoveryActivityRows[0]?.id);
+    assert.match(recoveryActivityId, /^[0-9a-f-]{36}$/u);
+    const recoveryPayload = {
+      actorType: "user",
+      actorId: organizationId,
+      action: "organization.branding_updated",
+      entityType: "organization",
+      entityId: organizationId,
+      details: { recoveryProbe: true },
+    };
+    const recoveryOutboxRows = await sql.unsafe(
+      "INSERT INTO organization_mutation_outbox "
+        + "(org_id, activity_id, event_type, payload, state, attempts, next_attempt_at, last_error) "
+        + "VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb, 'pending', 1, "
+        + "now() + interval '1 hour', $4) RETURNING id::text AS id, state, attempts, last_error",
+      [
+        organizationId,
+        recoveryActivityId,
+        recoveryPayload,
+        "simulated process interruption before publication",
+      ],
+    );
+    const recoveryOutboxId = String(recoveryOutboxRows[0]?.id);
     assert.match(recoveryOutboxId, /^[0-9a-f-]{36}$/u);
-    await sql.unsafe(
-      "UPDATE organization_mutation_outbox SET state='pending', attempts=1, "
-        + "next_attempt_at=now() + interval '1 hour', last_error=$2 WHERE id=$1::uuid",
-      [recoveryOutboxId, "simulated process interruption before publication"],
-    );
     const interruptedOutboxRows = await sql.unsafe(
       "SELECT state, attempts, last_error FROM organization_mutation_outbox WHERE id=$1::uuid",
       [recoveryOutboxId],
@@ -376,6 +424,7 @@ async function main() {
       apiPort,
       databasePort,
       organizationId,
+      unlistedOrganizationId,
       firstPatchStatus: patch.status,
       replayStatus: replay.status,
       auditFailureStatus: auditFailure.status,
@@ -385,6 +434,7 @@ async function main() {
       cliBrandColor: cliBody.brandColor,
       mcpBrandColor: mcpBody.result?.structuredContent?.brandColor,
       state: stateRows[0],
+      unlistedOwnerAfterRestart: unlistedRestartStateRows[0]?.owner,
       receipt: receiptRows[0],
       activityCount: activityRows.length,
       outbox: outboxRows[0],

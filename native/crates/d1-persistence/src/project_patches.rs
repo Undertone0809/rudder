@@ -3,7 +3,7 @@ use crate::{
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::collections::HashSet;
@@ -22,6 +22,7 @@ pub(crate) struct Patch {
     pub(crate) goal_ids: Option<Vec<String>>,
     pub(crate) resource_attachments: Option<Vec<ResourceAttachmentInput>>,
     pub(crate) new_resources: Option<Vec<InlineResourceInput>>,
+    resource_attachment_operation: Option<ResourceAttachmentOperation>,
     fingerprint: String,
 }
 
@@ -51,6 +52,29 @@ pub(crate) struct InlineResourceInput {
 }
 
 #[derive(Clone, Debug)]
+enum ResourceAttachmentOperation {
+    Attach(ResourceAttachmentInput),
+    Update {
+        attachment_id: String,
+        role: Option<String>,
+        note: Option<Option<String>>,
+        sort_order: Option<u64>,
+        is_primary: Option<bool>,
+    },
+    Remove {
+        attachment_id: String,
+    },
+}
+
+struct ResourceAttachmentActivity {
+    action: &'static str,
+    entity_id: String,
+    details: Value,
+    response_status: u16,
+    response: Value,
+}
+
+#[derive(Clone, Debug)]
 struct Attachment {
     resource_id: String,
     role: String,
@@ -74,6 +98,7 @@ impl Patch {
             "icon",
             "executionWorkspacePolicy",
             "resourceAttachments",
+            "resourceAttachmentOperation",
             "newResources",
             "archivedAt",
         ];
@@ -116,6 +141,18 @@ impl Patch {
         let resource_attachments: Option<Vec<ResourceAttachmentInput>> =
             parse_field(object, "resourceAttachments")?;
         let new_resources: Option<Vec<InlineResourceInput>> = parse_field(object, "newResources")?;
+        let resource_attachment_operation = object
+            .get("resourceAttachmentOperation")
+            .cloned()
+            .map(parse_resource_attachment_operation)
+            .transpose()?;
+        if resource_attachment_operation.is_some()
+            && object
+                .keys()
+                .any(|key| key != "resourceAttachmentOperation")
+        {
+            return Err(StoreError::InvalidInput);
+        }
         for attachment in resource_attachments.iter().flatten() {
             validate_attachment_role(attachment.role.as_deref())?;
             if attachment
@@ -143,6 +180,7 @@ impl Patch {
             goal_ids,
             resource_attachments,
             new_resources,
+            resource_attachment_operation,
             fingerprint: hex_digest(Sha256::digest(
                 serde_json::to_vec(value).map_err(|_| StoreError::InvalidInput)?,
             )),
@@ -164,6 +202,83 @@ fn parse_field<T: DeserializeOwned>(
         .map(serde_json::from_value)
         .transpose()
         .map_err(|_| StoreError::InvalidInput)
+}
+
+fn parse_resource_attachment_operation(
+    value: Value,
+) -> Result<ResourceAttachmentOperation, StoreError> {
+    let object = value.as_object().ok_or(StoreError::InvalidInput)?;
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or(StoreError::InvalidInput)?;
+    match kind {
+        "attach" => {
+            const ALLOWED: &[&str] = &[
+                "kind",
+                "resourceId",
+                "role",
+                "note",
+                "sortOrder",
+                "isPrimary",
+            ];
+            if object.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
+                return Err(StoreError::InvalidInput);
+            }
+            let mut input = object.clone();
+            input.remove("kind");
+            let input: ResourceAttachmentInput = serde_json::from_value(Value::Object(input))
+                .map_err(|_| StoreError::InvalidInput)?;
+            validate_attachment_role(input.role.as_deref())?;
+            if input
+                .sort_order
+                .is_some_and(|value| value > i32::MAX as u64)
+            {
+                return Err(StoreError::InvalidInput);
+            }
+            Ok(ResourceAttachmentOperation::Attach(input))
+        }
+        "update" => {
+            const ALLOWED: &[&str] = &[
+                "kind",
+                "attachmentId",
+                "role",
+                "note",
+                "sortOrder",
+                "isPrimary",
+            ];
+            if object.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
+                return Err(StoreError::InvalidInput);
+            }
+            let attachment_id =
+                parse_field::<String>(object, "attachmentId")?.ok_or(StoreError::InvalidInput)?;
+            let role = parse_field::<String>(object, "role")?;
+            let note = parse_field::<Option<String>>(object, "note")?;
+            let sort_order = parse_field::<u64>(object, "sortOrder")?;
+            let is_primary = parse_field::<bool>(object, "isPrimary")?;
+            validate_attachment_role(role.as_deref())?;
+            if sort_order.is_some_and(|value| value > i32::MAX as u64) {
+                return Err(StoreError::InvalidInput);
+            }
+            Ok(ResourceAttachmentOperation::Update {
+                attachment_id,
+                role,
+                note,
+                sort_order,
+                is_primary,
+            })
+        }
+        "remove" => {
+            const ALLOWED: &[&str] = &["kind", "attachmentId"];
+            if object.keys().any(|key| !ALLOWED.contains(&key.as_str())) {
+                return Err(StoreError::InvalidInput);
+            }
+            let attachment_id =
+                parse_field::<String>(object, "attachmentId")?.ok_or(StoreError::InvalidInput)?;
+            Ok(ResourceAttachmentOperation::Remove { attachment_id })
+        }
+        _ => Err(StoreError::InvalidInput),
+    }
 }
 
 fn validate_attachment_role(role: Option<&str>) -> Result<(), StoreError> {
@@ -274,6 +389,7 @@ pub(crate) async fn apply(
         .clone()
         .unwrap_or_else(|| existing_goal_ids.clone());
     let primary_after = next_primary.clone().unwrap_or(current_primary.clone());
+    let touch_project = patch.resource_attachment_operation.is_none();
 
     sqlx::query(
         "UPDATE projects SET
@@ -287,7 +403,7 @@ pub(crate) async fn apply(
            execution_workspace_policy=CASE WHEN $17 THEN $18::jsonb ELSE execution_workspace_policy END,
            archived_at=CASE WHEN $19 THEN $20::timestamptz ELSE archived_at END,
            goal_id=CASE WHEN $21 THEN $22::uuid ELSE goal_id END,
-           updated_at=now()
+           updated_at=CASE WHEN $23 THEN now() ELSE updated_at END
          WHERE id=$1::uuid AND org_id=$2::uuid",
     )
     .bind(&command.project_id)
@@ -320,6 +436,7 @@ pub(crate) async fn apply(
     .bind(patch.archived_at.clone().flatten())
     .bind(patch.goal_ids.is_some())
     .bind(next_primary.clone().flatten())
+    .bind(touch_project)
     .execute(&mut **tx)
     .await?;
 
@@ -345,9 +462,14 @@ pub(crate) async fn apply(
         }
     }
 
-    if patch.resource_attachments.is_some() || patch.new_resources.is_some() {
-        replace_resources(tx, &command, &patch).await?;
-    }
+    let resource_activity = if let Some(operation) = patch.resource_attachment_operation.as_ref() {
+        Some(apply_resource_attachment_operation(tx, &command, operation).await?)
+    } else {
+        if patch.resource_attachments.is_some() || patch.new_resources.is_some() {
+            replace_resources(tx, &command, &patch).await?;
+        }
+        None
+    };
 
     let patch_fingerprint = patch.fingerprint().to_owned();
     let state_integrity = transaction::project_patch_state_integrity(
@@ -356,7 +478,13 @@ pub(crate) async fn apply(
         &next_goal_ids,
         primary_after.as_deref(),
     )?;
-    transaction::persist(
+    let resource_attachment_response = resource_activity.as_ref().map(|activity| {
+        json!({
+            "status": activity.response_status,
+            "body": activity.response,
+        })
+    });
+    transaction::persist_project_patch(
         tx,
         metadata,
         &scope,
@@ -374,9 +502,19 @@ pub(crate) async fn apply(
                 primary_goal_after: primary_after,
                 state_integrity,
             },
-            entity_id: command.project_id,
-            details: command.patch,
+            entity_id: resource_activity
+                .as_ref()
+                .map(|activity| activity.entity_id.clone())
+                .unwrap_or_else(|| command.project_id.clone()),
+            activity_action: resource_activity.as_ref().map(|activity| activity.action),
+            activity_entity_type: resource_activity
+                .as_ref()
+                .map(|_| "project_resource_attachment"),
+            details: resource_activity
+                .map(|activity| activity.details)
+                .unwrap_or(command.patch),
         },
+        resource_attachment_response,
     )
     .await
 }
@@ -609,6 +747,327 @@ async fn replace_resources(
         .await?;
     }
     Ok(())
+}
+
+async fn apply_resource_attachment_operation(
+    tx: &mut transaction::Tx<'_>,
+    command: &ProjectPatchCommand,
+    operation: &ResourceAttachmentOperation,
+) -> Result<ResourceAttachmentActivity, StoreError> {
+    match operation {
+        ResourceAttachmentOperation::Attach(input) => {
+            let resource_exists = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(
+                   SELECT 1 FROM organization_resources
+                   WHERE org_id=$1::uuid AND id::text=$2
+                 )",
+            )
+            .bind(&command.organization_id)
+            .bind(&input.resource_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            if !resource_exists {
+                return Err(StoreError::NotFound);
+            }
+
+            let existing = sqlx::query(
+                "SELECT id::text AS attachment_id, role, note, sort_order, is_primary
+                 FROM project_resource_attachments
+                 WHERE org_id=$1::uuid AND project_id=$2::uuid AND resource_id::text=$3
+                 FOR UPDATE",
+            )
+            .bind(&command.organization_id)
+            .bind(&command.project_id)
+            .bind(&input.resource_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+
+            let (attachment_id, role, is_primary) = if let Some(existing) = existing {
+                let attachment_id: String = existing.try_get("attachment_id")?;
+                let current_role: String = existing.try_get("role")?;
+                let current_note: Option<String> = existing.try_get("note")?;
+                let current_sort_order: i32 = existing.try_get("sort_order")?;
+                let current_is_primary: bool = existing.try_get("is_primary")?;
+                let role = input.role.clone().unwrap_or(current_role);
+                let note = normalize_nullable_text(input.note.as_deref()).or(current_note);
+                let sort_order = input
+                    .sort_order
+                    .map(i32::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::InvalidInput)?
+                    .unwrap_or(current_sort_order);
+                let is_primary = input.is_primary.unwrap_or(current_is_primary);
+                if is_primary {
+                    sqlx::query(
+                        "UPDATE project_resource_attachments
+                         SET is_primary=false, updated_at=now()
+                         WHERE org_id=$1::uuid AND project_id=$2::uuid AND is_primary=true
+                           AND id::text<>$3",
+                    )
+                    .bind(&command.organization_id)
+                    .bind(&command.project_id)
+                    .bind(&attachment_id)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                sqlx::query(
+                    "UPDATE project_resource_attachments
+                     SET role=$4, note=$5, sort_order=$6, is_primary=$7, updated_at=now()
+                     WHERE org_id=$1::uuid AND project_id=$2::uuid AND id::text=$3",
+                )
+                .bind(&command.organization_id)
+                .bind(&command.project_id)
+                .bind(&attachment_id)
+                .bind(&role)
+                .bind(&note)
+                .bind(sort_order)
+                .bind(is_primary)
+                .execute(&mut **tx)
+                .await?;
+                (attachment_id, role, is_primary)
+            } else {
+                let sort_order = match input.sort_order {
+                    Some(sort_order) => {
+                        i32::try_from(sort_order).map_err(|_| StoreError::InvalidInput)?
+                    }
+                    None => {
+                        sqlx::query_scalar::<_, i32>(
+                            "SELECT COALESCE(MAX(sort_order), -1) + 1
+                         FROM project_resource_attachments
+                         WHERE org_id=$1::uuid AND project_id=$2::uuid",
+                        )
+                        .bind(&command.organization_id)
+                        .bind(&command.project_id)
+                        .fetch_one(&mut **tx)
+                        .await?
+                    }
+                };
+                let role = input.role.clone().unwrap_or_else(|| "reference".to_owned());
+                let note = normalize_nullable_text(input.note.as_deref());
+                let is_primary = input.is_primary.unwrap_or(false);
+                if is_primary {
+                    sqlx::query(
+                        "UPDATE project_resource_attachments
+                         SET is_primary=false, updated_at=now()
+                         WHERE org_id=$1::uuid AND project_id=$2::uuid AND is_primary=true",
+                    )
+                    .bind(&command.organization_id)
+                    .bind(&command.project_id)
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                let attachment_id: String = sqlx::query_scalar(
+                    "INSERT INTO project_resource_attachments
+                       (org_id, project_id, resource_id, role, note, sort_order, is_primary)
+                     VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7)
+                     RETURNING id::text",
+                )
+                .bind(&command.organization_id)
+                .bind(&command.project_id)
+                .bind(&input.resource_id)
+                .bind(&role)
+                .bind(&note)
+                .bind(sort_order)
+                .bind(is_primary)
+                .fetch_one(&mut **tx)
+                .await?;
+                (attachment_id, role, is_primary)
+            };
+            let response = read_resource_attachment_response(tx, command, &attachment_id).await?;
+
+            Ok(ResourceAttachmentActivity {
+                action: "project.resource.attached",
+                entity_id: attachment_id,
+                details: json!({
+                    "projectId": command.project_id,
+                    "resourceId": input.resource_id,
+                    "role": role,
+                    "isPrimary": is_primary,
+                }),
+                response_status: 201,
+                response,
+            })
+        }
+        ResourceAttachmentOperation::Update {
+            attachment_id,
+            role,
+            note,
+            sort_order,
+            is_primary,
+        } => {
+            let existing = sqlx::query(
+                "SELECT role, note, sort_order, is_primary
+                 FROM project_resource_attachments
+                 WHERE org_id=$1::uuid AND project_id=$2::uuid AND id::text=$3
+                 FOR UPDATE",
+            )
+            .bind(&command.organization_id)
+            .bind(&command.project_id)
+            .bind(attachment_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or(StoreError::NotFound)?;
+            let current_role: String = existing.try_get("role")?;
+            let current_note: Option<String> = existing.try_get("note")?;
+            let current_sort_order: i32 = existing.try_get("sort_order")?;
+            let current_is_primary: bool = existing.try_get("is_primary")?;
+            let next_role = role.clone().unwrap_or(current_role);
+            let next_note = match note {
+                Some(note) => normalize_nullable_text(note.as_deref()),
+                None => current_note,
+            };
+            let next_sort_order = sort_order
+                .map(i32::try_from)
+                .transpose()
+                .map_err(|_| StoreError::InvalidInput)?
+                .unwrap_or(current_sort_order);
+            let next_is_primary = is_primary.unwrap_or(current_is_primary);
+            if next_is_primary {
+                sqlx::query(
+                    "UPDATE project_resource_attachments
+                     SET is_primary=false, updated_at=now()
+                     WHERE org_id=$1::uuid AND project_id=$2::uuid AND is_primary=true
+                       AND id::text<>$3",
+                )
+                .bind(&command.organization_id)
+                .bind(&command.project_id)
+                .bind(attachment_id)
+                .execute(&mut **tx)
+                .await?;
+            }
+            sqlx::query(
+                "UPDATE project_resource_attachments
+                 SET role=$4, note=$5, sort_order=$6, is_primary=$7, updated_at=now()
+                 WHERE org_id=$1::uuid AND project_id=$2::uuid AND id::text=$3",
+            )
+            .bind(&command.organization_id)
+            .bind(&command.project_id)
+            .bind(attachment_id)
+            .bind(&next_role)
+            .bind(&next_note)
+            .bind(next_sort_order)
+            .bind(next_is_primary)
+            .execute(&mut **tx)
+            .await?;
+            let response = read_resource_attachment_response(tx, command, attachment_id).await?;
+
+            let mut details = Map::new();
+            if let Some(role) = role {
+                details.insert("role".to_owned(), Value::String(role.clone()));
+            }
+            if let Some(note) = note {
+                details.insert(
+                    "note".to_owned(),
+                    note.clone().map(Value::String).unwrap_or(Value::Null),
+                );
+            }
+            if let Some(sort_order) = sort_order {
+                details.insert("sortOrder".to_owned(), json!(sort_order));
+            }
+            if let Some(is_primary) = is_primary {
+                details.insert("isPrimary".to_owned(), Value::Bool(*is_primary));
+            }
+            Ok(ResourceAttachmentActivity {
+                action: "project.resource.updated",
+                entity_id: attachment_id.clone(),
+                details: Value::Object(details),
+                response_status: 200,
+                response,
+            })
+        }
+        ResourceAttachmentOperation::Remove { attachment_id } => {
+            let response = read_resource_attachment_response(tx, command, attachment_id).await?;
+            let resource_id = response
+                .get("resourceId")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidProjection)?;
+            sqlx::query(
+                "DELETE FROM project_resource_attachments
+                 WHERE org_id=$1::uuid AND project_id=$2::uuid AND id::text=$3",
+            )
+            .bind(&command.organization_id)
+            .bind(&command.project_id)
+            .bind(attachment_id)
+            .execute(&mut **tx)
+            .await?;
+            Ok(ResourceAttachmentActivity {
+                action: "project.resource.detached",
+                entity_id: attachment_id.clone(),
+                details: json!({ "resourceId": resource_id }),
+                response_status: 200,
+                response,
+            })
+        }
+    }
+}
+
+async fn read_resource_attachment_response(
+    tx: &mut transaction::Tx<'_>,
+    command: &ProjectPatchCommand,
+    attachment_id: &str,
+) -> Result<Value, StoreError> {
+    let row = sqlx::query(
+        "SELECT a.id::text AS attachment_id,
+                a.org_id::text AS attachment_org_id,
+                a.project_id::text AS project_id,
+                a.resource_id::text AS resource_id,
+                a.role,
+                a.note,
+                a.sort_order,
+                a.is_primary,
+                to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS attachment_created_at,
+                to_char(a.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS attachment_updated_at,
+                r.org_id::text AS resource_org_id,
+                r.name AS resource_name,
+                r.kind AS resource_kind,
+                r.source_type AS resource_source_type,
+                r.locator AS resource_locator,
+                r.description AS resource_description,
+                r.metadata::text AS resource_metadata,
+                to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS resource_created_at,
+                to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS resource_updated_at
+         FROM project_resource_attachments a
+         JOIN organization_resources r
+           ON r.org_id=a.org_id AND r.id=a.resource_id
+         WHERE a.org_id=$1::uuid AND a.project_id=$2::uuid AND a.id::text=$3
+         FOR UPDATE OF a",
+    )
+    .bind(&command.organization_id)
+    .bind(&command.project_id)
+    .bind(attachment_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or(StoreError::NotFound)?;
+    let resource_metadata: Option<String> = row.try_get("resource_metadata")?;
+    let resource_metadata = resource_metadata
+        .map(|metadata| serde_json::from_str(&metadata).map_err(|_| StoreError::InvalidProjection))
+        .transpose()?
+        .unwrap_or(Value::Null);
+
+    Ok(json!({
+        "id": row.try_get::<String, _>("attachment_id")?,
+        "orgId": row.try_get::<String, _>("attachment_org_id")?,
+        "projectId": row.try_get::<String, _>("project_id")?,
+        "resourceId": row.try_get::<String, _>("resource_id")?,
+        "role": row.try_get::<String, _>("role")?,
+        "note": row.try_get::<Option<String>, _>("note")?,
+        "sortOrder": row.try_get::<i32, _>("sort_order")?,
+        "isPrimary": row.try_get::<bool, _>("is_primary")?,
+        "resource": {
+            "id": row.try_get::<String, _>("resource_id")?,
+            "orgId": row.try_get::<String, _>("resource_org_id")?,
+            "name": row.try_get::<String, _>("resource_name")?,
+            "kind": row.try_get::<String, _>("resource_kind")?,
+            "sourceType": row.try_get::<String, _>("resource_source_type")?,
+            "locator": row.try_get::<String, _>("resource_locator")?,
+            "description": row.try_get::<Option<String>, _>("resource_description")?,
+            "metadata": resource_metadata,
+            "createdAt": row.try_get::<String, _>("resource_created_at")?,
+            "updatedAt": row.try_get::<String, _>("resource_updated_at")?,
+        },
+        "createdAt": row.try_get::<String, _>("attachment_created_at")?,
+        "updatedAt": row.try_get::<String, _>("attachment_updated_at")?,
+    }))
 }
 
 async fn read_existing_attachments(

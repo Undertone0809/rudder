@@ -74,6 +74,8 @@ pub(crate) async fn apply(
                 state: next,
             },
             entity_id: metadata.org.clone(),
+            activity_action: None,
+            activity_entity_type: None,
             details,
         },
     )

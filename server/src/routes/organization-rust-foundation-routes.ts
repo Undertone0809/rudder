@@ -17,6 +17,10 @@ import {
   type RustFoundationMode,
   type RustFoundationResponse,
 } from "../services/rust-foundation-bridge.js";
+import {
+  configuredOrganizationBrandingOrgIds,
+  organizationBrandingOrgIsSelected,
+} from "../services/organization-branding-fence.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export type RustFoundationProbeReceipt = {
@@ -39,7 +43,9 @@ export function assertOrganizationBrandingCreateAllowed(
   bridge: RustFoundationBridge | undefined,
   brandColor: unknown,
 ) {
-  if (bridge?.organizationBrandingMode === "required" && brandColor != null) {
+  if (bridge?.organizationBrandingMode === "required"
+    && configuredOrganizationBrandingOrgIds().length === 0
+    && brandColor != null) {
     throw conflict("Organization creation with brandColor is unavailable while Rust branding authority is required; create the organization first, then use the Rust branding endpoint");
   }
 }
@@ -49,7 +55,7 @@ export async function handoffRequiredOrganizationBranding(
   bridge: RustFoundationBridge | undefined,
   orgId: string,
 ) {
-  if (bridge?.organizationBrandingMode === "required") {
+  if (bridge?.organizationBrandingMode === "required" && organizationBrandingOrgIsSelected(orgId)) {
     await handoffOrganizationBrandingAuthority(db, orgId);
   }
 }
@@ -173,9 +179,17 @@ function scalarBrandColorPatchOnly(body: Record<string, unknown>) {
   return keys.length === 1 && keys[0] === "brandColor";
 }
 
-function rustBrandingRequiredForRequest(req: Request, bridge: RustFoundationBridge | undefined) {
-  return bridge?.organizationBrandingMode === "required"
-    || req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+function rustBrandingRequiredForRequest(
+  req: Request,
+  bridge: RustFoundationBridge | undefined,
+  orgId: string,
+) {
+  const explicitlyRequired = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+  const selected = organizationBrandingOrgIsSelected(orgId, configuredOrganizationBrandingOrgIds());
+  if (explicitlyRequired && bridge?.organizationBrandingMode === "required" && !selected) {
+    throw conflict("Organization is outside the Rust branding rollout allowlist");
+  }
+  return explicitlyRequired || (bridge?.organizationBrandingMode === "required" && selected);
 }
 
 function requireBrandingIdempotencyKey(req: Request) {
@@ -352,7 +366,8 @@ export function registerOrganizationRustFoundationRoutes(
       body = updateOrganizationSchema.parse(req.body);
     }
 
-    if (rustBrandingRequiredForRequest(req, bridge) && Object.prototype.hasOwnProperty.call(body, "brandColor")) {
+    const rustBrandingRequired = rustBrandingRequiredForRequest(req, bridge, orgId);
+    if (rustBrandingRequired && Object.prototype.hasOwnProperty.call(body, "brandColor")) {
       if (!scalarBrandColorPatchOnly(body)) {
         throw conflict("Organization branding and non-branding updates must use separate requests while Rust branding authority is enabled");
       }
@@ -402,13 +417,27 @@ export function registerOrganizationRustFoundationRoutes(
       entityId: orgId,
       details: body,
     });
+    if (bridge?.organizationBrandingMode === "required"
+      && Object.prototype.hasOwnProperty.call(body, "brandColor")) {
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "required",
+        rustInvoked: false,
+        responseAuthority: "node",
+        fallbackReason: "organization_outside_rollout_allowlist",
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: 200,
+      }, req, options, "organization branding");
+    }
     res.json(organization);
   });
 
   router.patch("/:orgId/branding", validate(updateOrganizationBrandingSchema), async (req, res) => {
     const orgId = req.params.orgId as string;
     await assertCanUpdateBranding(req, orgId, agents);
-    if (rustBrandingRequiredForRequest(req, bridge) && Object.prototype.hasOwnProperty.call(req.body, "brandColor")) {
+    const rustBrandingRequired = rustBrandingRequiredForRequest(req, bridge, orgId);
+    if (rustBrandingRequired && Object.prototype.hasOwnProperty.call(req.body, "brandColor")) {
       if (!scalarBrandColorPatchOnly(req.body)) {
         throw conflict("Only scalar brandColor updates are currently Rust-authoritative; migrate other branding fields separately");
       }
@@ -450,6 +479,19 @@ export function registerOrganizationRustFoundationRoutes(
       entityId: orgId,
       details: req.body,
     });
+    if (bridge?.organizationBrandingMode === "required"
+      && Object.prototype.hasOwnProperty.call(req.body, "brandColor")) {
+      emitRustFoundationProbeReceipt({
+        orgId,
+        probeMode: "required",
+        rustInvoked: false,
+        responseAuthority: "node",
+        fallbackReason: "organization_outside_rollout_allowlist",
+        oldAuthority: "node",
+        oldAuthorityInvoked: true,
+        status: 200,
+      }, req, options, "organization branding");
+    }
     res.json(organization);
   });
 }

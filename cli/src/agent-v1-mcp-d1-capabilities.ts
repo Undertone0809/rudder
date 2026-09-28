@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { RudderApiClient } from "./client/http.js";
 
 type D1RuntimeEnv = { RUDDER_ORG_ID?: string };
@@ -49,10 +50,11 @@ export async function dispatchD1CapabilityDirectly(
         if (input[key] !== undefined) payload[key] = input[key];
       }
       const hasGoalMutation = input.goalIds !== undefined || input.goalId !== undefined;
-      const headers: Record<string, string> = {};
-      if (hasGoalMutation || input.idempotencyKey !== undefined) {
-        headers["x-rudder-idempotency-key"] = requiredString(input, "idempotencyKey");
-      }
+      const headers: Record<string, string> = {
+        "x-rudder-idempotency-key": hasGoalMutation || input.idempotencyKey !== undefined
+          ? requiredString(input, "idempotencyKey")
+          : randomUUID(),
+      };
       if (hasGoalMutation) {
         headers["x-rudder-required-authority"] = "rust";
       }

@@ -27,11 +27,6 @@ CREATE UNIQUE INDEX "project_goal_mutation_state_org_project_uq"
 CREATE UNIQUE INDEX "project_goal_mutation_state_fence_token_uq"
   ON "project_goal_mutation_state" ("fence_token");
 --> statement-breakpoint
-INSERT INTO "project_goal_mutation_state" ("project_id", "org_id")
-SELECT "id", "org_id"
-FROM "projects"
-ON CONFLICT ("project_id") DO NOTHING;
---> statement-breakpoint
 CREATE FUNCTION "provision_project_goal_mutation_state"() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -46,30 +41,53 @@ CREATE TRIGGER "projects_goal_mutation_state_provisioning"
 AFTER INSERT ON "projects"
 FOR EACH ROW EXECUTE FUNCTION "provision_project_goal_mutation_state"();
 --> statement-breakpoint
+-- Reconcile projects after provisioning is active.
+INSERT INTO "project_goal_mutation_state" ("project_id", "org_id")
+SELECT "id", "org_id"
+FROM "projects"
+ON CONFLICT ("project_id") DO NOTHING;
+--> statement-breakpoint
 CREATE FUNCTION "guard_project_goal_mutation_state"() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF EXISTS (
+      SELECT 1 FROM "projects"
+      WHERE "id" = OLD."project_id" AND "org_id" = OLD."org_id"
+    ) THEN
+      RAISE EXCEPTION 'cannot reset live project goal mutation authority' USING ERRCODE = '23514';
+    END IF;
+    RETURN OLD;
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM "projects"
     WHERE "id" = NEW."project_id" AND "org_id" = NEW."org_id"
   ) THEN
     RAISE EXCEPTION 'project goal mutation state has an invalid project organization' USING ERRCODE = '23514';
   END IF;
-  IF NEW."project_id" <> OLD."project_id"
-    OR NEW."org_id" <> OLD."org_id"
-    OR NEW."mutation_version" < OLD."mutation_version"
-    OR NEW."fence_epoch" < OLD."fence_epoch"
-    OR NEW."fence_token" IS NULL
-    OR (NEW."fence_epoch" > OLD."fence_epoch" AND NEW."fence_token" = OLD."fence_token")
-    OR (NEW."fence_token" <> OLD."fence_token" AND NEW."fence_epoch" <= OLD."fence_epoch")
-    OR (NEW."owner" <> OLD."owner"
-      AND (NEW."fence_epoch" <= OLD."fence_epoch" OR NEW."fence_token" = OLD."fence_token")) THEN
-    RAISE EXCEPTION 'project goal mutation version or ownership fence regressed' USING ERRCODE = '23514';
+
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW."project_id" <> OLD."project_id"
+      OR NEW."org_id" <> OLD."org_id"
+      OR NEW."mutation_version" < OLD."mutation_version"
+      OR NEW."fence_epoch" < OLD."fence_epoch"
+      OR NEW."fence_token" IS NULL
+      OR (NEW."fence_epoch" > OLD."fence_epoch" AND NEW."fence_token" = OLD."fence_token")
+      OR (NEW."fence_token" <> OLD."fence_token" AND NEW."fence_epoch" <= OLD."fence_epoch")
+      OR (NEW."owner" <> OLD."owner"
+        AND (NEW."fence_epoch" <= OLD."fence_epoch" OR NEW."fence_token" = OLD."fence_token")) THEN
+      RAISE EXCEPTION 'project goal mutation version or ownership fence regressed' USING ERRCODE = '23514';
+    END IF;
   END IF;
   RETURN NEW;
 END;
 $$;
 --> statement-breakpoint
 CREATE TRIGGER "project_goal_mutation_state_guard"
-BEFORE UPDATE ON "project_goal_mutation_state"
+BEFORE INSERT OR UPDATE OR DELETE ON "project_goal_mutation_state"
 FOR EACH ROW EXECUTE FUNCTION "guard_project_goal_mutation_state"();
+--> statement-breakpoint
+CREATE TRIGGER "project_goal_mutation_state_truncate_guard"
+BEFORE TRUNCATE ON "project_goal_mutation_state"
+FOR EACH STATEMENT EXECUTE FUNCTION "deny_d1_mutation_truncate"();

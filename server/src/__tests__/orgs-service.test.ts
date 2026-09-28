@@ -40,6 +40,7 @@ import {
 import { agentService } from "../services/agents.js";
 import { issueService } from "../services/issues.js";
 import { organizationService } from "../services/orgs.js";
+import { projectService } from "../services/projects.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -460,6 +461,36 @@ describe("organization service", () => {
     expect(remaining).toBeNull();
     expect(fs.existsSync(resolveOrganizationRoot(orgId))).toBe(false);
     expect(fs.existsSync(legacyProjectsRoot)).toBe(false);
+  });
+
+  it("preserves organization deletion after Rust owns branding and Project-Goal state", async () => {
+    const organization = await orgSvc.create({
+      name: "Rust-Owned Organization Removal",
+      issuePrefix: "ROR",
+      requireBoardApprovalForNewAgents: false,
+    });
+    const projectsSvc = projectService(db);
+    const project = await projectsSvc.create(organization.id, {
+      name: "Rust-Owned Project Removal",
+      description: "",
+      goalIds: [],
+    });
+    await db.execute(sql`
+      UPDATE organization_branding_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE org_id = ${organization.id}::uuid
+    `);
+    await db.execute(sql`
+      UPDATE project_goal_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE project_id = ${project.id}::uuid
+    `);
+
+    const removed = await orgSvc.remove(organization.id);
+
+    expect(removed?.id).toBe(organization.id);
+    expect(await orgSvc.getById(organization.id)).toBeNull();
+    expect(await projectsSvc.getById(project.id)).toBeNull();
   });
 
   it("removes an agent with block audit attempts without deleting the durable request", async () => {

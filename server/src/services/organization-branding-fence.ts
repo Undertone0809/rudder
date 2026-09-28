@@ -15,12 +15,30 @@ type BrandingMutationStateRow = {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/**
- * Serialize every legacy brandColor writer with the component-level Rust
- * ownership handoff. This lock must be acquired before the organization-wide
- * fence so a Rust branding transaction and a Node update cannot cross locks.
- */
-export async function lockNodeOrganizationBrandingAuthority(
+export function configuredOrganizationBrandingOrgIds(
+  rawValue = process.env.RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS,
+): string[] {
+  const values = (rawValue ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const invalid = values.find((value) => !UUID_PATTERN.test(value));
+  if (invalid) {
+    throw new Error(
+      `RUDDER_RUST_ORGANIZATION_BRANDING_ORG_IDS must contain UUIDs; received ${invalid}`,
+    );
+  }
+  return [...new Set(values)];
+}
+
+export function organizationBrandingOrgIsSelected(
+  organizationId: string,
+  organizationIds = configuredOrganizationBrandingOrgIds(),
+): boolean {
+  return organizationIds.length === 0 || organizationIds.includes(organizationId);
+}
+
+async function lockOrganizationBrandingMutationState(
   tx: TransactionClient,
   organizationId: string,
 ): Promise<BrandingMutationStateRow> {
@@ -44,10 +62,34 @@ export async function lockNodeOrganizationBrandingAuthority(
   if (!UUID_PATTERN.test(row.fence_token)) {
     throw conflict("Organization branding mutation fencing token is invalid");
   }
+  if (row.owner !== "node" && row.owner !== "rust") {
+    throw conflict("Organization branding mutation authority has an invalid owner");
+  }
+  return row;
+}
+
+/**
+ * Serialize every legacy brandColor writer with the component-level Rust
+ * ownership handoff. This lock must be acquired before the organization-wide
+ * fence so a Rust branding transaction and a Node update cannot cross locks.
+ */
+export async function lockNodeOrganizationBrandingAuthority(
+  tx: TransactionClient,
+  organizationId: string,
+): Promise<BrandingMutationStateRow> {
+  const row = await lockOrganizationBrandingMutationState(tx, organizationId);
   if (row.owner !== "node") {
     throw conflict("Organization branding mutation authority is owned by Rust");
   }
   return row;
+}
+
+/** Serialize organization deletion with a branding mutation without changing its owner. */
+export async function lockOrganizationBrandingAuthorityForDeletion(
+  tx: TransactionClient,
+  organizationId: string,
+): Promise<BrandingMutationStateRow> {
+  return lockOrganizationBrandingMutationState(tx, organizationId);
 }
 
 /**
@@ -58,13 +100,18 @@ export async function lockNodeOrganizationBrandingAuthority(
  */
 export async function handoffOrganizationBrandingAuthorityInTransaction(
   tx: TransactionClient,
-  organizationId?: string,
+  organizationIds?: readonly string[],
 ) {
+  const selectedIds = organizationIds ? [...new Set(organizationIds)] : null;
+  if (selectedIds?.length === 0) return;
+  const scope = selectedIds
+    ? sql`AND org_id IN (${sql.join(selectedIds.map((id) => sql`${id}::uuid`), sql`, `)})`
+    : sql``;
   const invalid = await tx.execute(sql`
     SELECT org_id
     FROM organization_branding_mutation_state
     WHERE owner NOT IN ('node', 'rust')
-      ${organizationId ? sql`AND org_id = ${organizationId}::uuid` : sql``}
+      ${scope}
     LIMIT 1
   `) as { rows?: Array<{ org_id: string }> };
   if (invalid.rows?.[0]) {
@@ -77,7 +124,7 @@ export async function handoffOrganizationBrandingAuthorityInTransaction(
         fence_token = gen_random_uuid(),
         updated_at = now()
     WHERE owner = 'node'
-      ${organizationId ? sql`AND org_id = ${organizationId}::uuid` : sql``}
+      ${scope}
   `);
 }
 
@@ -86,6 +133,9 @@ export async function handoffOrganizationBrandingAuthority(
   organizationId?: string,
 ) {
   await db.transaction(async (tx) => {
-    await handoffOrganizationBrandingAuthorityInTransaction(tx, organizationId);
+    await handoffOrganizationBrandingAuthorityInTransaction(
+      tx,
+      organizationId === undefined ? undefined : [organizationId],
+    );
   });
 }

@@ -89,7 +89,10 @@ import {
 import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
-  desktopUpdateRuntimeReceiptsMatch,
+  createBoundDesktopUpdateRecoveryRequest,
+  resolveDesktopUpdateRuntimeReceiptForProfile,
+} from "./desktop-update-runtime-receipt.js";
+import {
   ensureExternalDesktopUpdateHelper,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
@@ -97,11 +100,8 @@ import {
   readDesktopUpdateJournal,
   recoverDesktopUpdateWithExternalHelper,
   requestMatchesAutomaticCandidate,
-  resolveDesktopUpdateRuntimeReceipt,
   resolveDesktopUpdateTransactionPaths,
   spawnDesktopUpdateHelper,
-  type DesktopUpdateHelperRequest,
-  type DesktopUpdateRuntimeReceipt,
 } from "./desktop-update-helper.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
 import { resolveDesktopUpdateTrustKeys } from "./desktop-update-trust.js";
@@ -910,17 +910,11 @@ function resolveSharedInstancePaths(instanceId: string): NonNullable<BootState["
   };
 }
 
-function resolveCurrentDesktopUpdateRuntimeReceipt(): DesktopUpdateRuntimeReceipt {
+function resolveCurrentDesktopUpdateRuntimeReceipt() {
   const profile = resolveDesktopLocalEnvProfile();
   const instanceRoot = currentBootState.paths?.instanceRoot
     ?? resolveSharedInstancePaths(profile.instanceId).instanceRoot!;
-  const ownedPorts = resolveDesktopOwnedPorts(profile);
-  return resolveDesktopUpdateRuntimeReceipt({
-    instanceRoot,
-    instanceId: profile.instanceId,
-    apiPort: Number(ownedPorts.port),
-    postgresPort: Number(ownedPorts.embeddedPostgresPort),
-  });
+  return resolveDesktopUpdateRuntimeReceiptForProfile(profile, instanceRoot);
 }
 
 function resolveDesktopRuntimeIconPath(profile: LocalEnvProfile): string | null {
@@ -3148,30 +3142,17 @@ async function bootstrap(): Promise<void> {
         }
       } else if (journal && (journal.recoveryRequired || journal.stage === "previous_moved")) {
         const helper = getDesktopUpdateHelperAttestation();
-        const journalHelper = journal.helper;
         const runtimeReceipt = resolveCurrentDesktopUpdateRuntimeReceipt();
-        const expectedTransactionPaths = resolveDesktopUpdateTransactionPaths({
+        const recoveryRequest = createBoundDesktopUpdateRecoveryRequest({
+          journal,
+          candidate,
+          helper,
           userDataPath: app.getPath("userData"),
-          transactionId: journal.transactionId,
           resourcesPath: process.resourcesPath,
           execPath: process.execPath,
+          runtimeReceipt,
         });
-        const helperMatchesJournal = Boolean(helper && journalHelper
-          && helper.path === journalHelper.path
-          && helper.ownerUid === journalHelper.ownerUid
-          && helper.mode === journalHelper.mode
-          && helper.sha256 === journalHelper.sha256);
-        const journalPathsMatch = journal.installPath === expectedTransactionPaths.installPath
-          && journal.lkgPath === expectedTransactionPaths.lkgPath
-          && journal.checkpointPath === expectedTransactionPaths.checkpointPath
-          && journal.stagedPath === candidate.stagedArtifactPath;
-        const journalCandidateMatch = journal.candidateSha256 === candidate.stagedArtifactDigest
-          && journal.targetVersion === candidate.version;
-        const journalRuntimeReceiptMatch = desktopUpdateRuntimeReceiptsMatch(journal.runtimeReceipt, runtimeReceipt);
-        if (!helper || !helperMatchesJournal || !journalPathsMatch || !journalCandidateMatch || !journal.ownerToken
-          || !journal.admission || !journal.checkpoint || !journal.installPath
-          || !journal.stagedPath || !journal.lkgPath || !journal.checkpointPath || !journalRuntimeReceiptMatch
-          || !journal.targetVersion || !journal.candidateSha256) {
+        if (!recoveryRequest) {
           autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
             const current = readDesktopAutoUpdateState(autoUpdateStatePath);
             const next = {
@@ -3183,31 +3164,10 @@ async function bootstrap(): Promise<void> {
             return next;
           });
         } else {
-          const recoveryRequest: DesktopUpdateHelperRequest = {
-            operation: "recover",
-            ownerToken: journal.ownerToken,
-            transactionId: journal.transactionId,
-            ...{
-              installPath: journal.installPath,
-              stagedPath: journal.stagedPath,
-              lkgPath: journal.lkgPath,
-              journalPath: expectedTransactionPaths.journalPath,
-            checkpointPath: journal.checkpointPath,
-            ...(journal.statePath ? { statePath: journal.statePath } : {}),
-            },
-            targetVersion: journal.targetVersion,
-            candidateSha256: journal.candidateSha256,
-            admission: journal.admission,
-            checkpoint: journal.checkpoint,
-            runtimeReceipt: journal.runtimeReceipt!,
-            helper: journalHelper!,
-            probation: {
-              executable: path.join(journal.installPath, "Contents", "MacOS", "Rudder"),
-              args: ["--rudder-update-probation"],
-              timeoutMs: 10_000,
-            },
-          };
-          const recovery = recoverDesktopUpdateWithExternalHelper({ request: recoveryRequest, helperPath: helper.path });
+          const recovery = recoverDesktopUpdateWithExternalHelper({
+            request: recoveryRequest,
+            helperPath: recoveryRequest.helper.path,
+          });
           if (recovery.recoveryRequired || !recovery.stage || !["rolled_back", "committed"].includes(recovery.stage)) {
             autoUpdateState = withAutomaticUpdateStateLock(autoUpdateStatePath, () => {
               const current = readDesktopAutoUpdateState(autoUpdateStatePath);

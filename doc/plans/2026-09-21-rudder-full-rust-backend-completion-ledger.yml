@@ -1,6 +1,6 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-23
+updated_at: 2026-09-28
 source:
   candidate_sha: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
   candidate_tree: 15c813eb7aff94e87f406e552b8d406e4512a5cd
@@ -626,3 +626,50 @@ authority_rows:
     evidence_status: blocked until all prior rows accepted
     retirement_gate: static negative scan plus real installed workflow proof
     next_action: phase_7 only
+
+current_integration_checkpoint_2026_09_28:
+  candidate:
+    worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
+    source_sha: 2c0d5125eedbb577f73c4be4fabcfcb296602909
+    source_tree: 394ef4132ad4061373fdb97e25b3d18fc79b85fe
+    source_fingerprint: 3d9aace8bf1eb4db2e48f05185509b92d913c268eb7e7976f75fbbb59eaff95d
+    source_fingerprint_scope: exact_five_dirty_source_paths_sha256_of_git_diff_binary
+    observed_main: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+    migration_manifest: {journal_entries: 175, sql_files: 177, fingerprint: bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7}
+    changed_scope: 167_committed_paths_from_current_Main_plus_5_dirty_source_paths; see git diff origin/main...HEAD and current-source-refresh
+  refreshed_structural_inventory:
+    route_source_files: 48
+    route_declaration_hits: 513
+    transaction_source_files_including_tests: 65
+    transaction_hits_including_tests: 224
+    transaction_source_files_excluding_tests: 54
+    transaction_hits_excluding_tests: 203
+    cli_capabilities: 119
+    cli_agent_v1_capabilities: 108
+    cli_compatibility_capabilities: 11
+    canonical_mcp_descriptors: 108
+    interpretation: structural_counts_only_semantic_route_writer_process_reconciliation_remains_incomplete
+  slice:
+    organization_branding: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    project_goal_link: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    author_evidence: doc/plans/artifacts/2026-09-28-rudder-rust-d1-real-entry-probe-v23-author.json
+    cli_focused_tests: 13_of_13_pass
+    independent_stage_review: pending
+    independent_real_entry_verifier: pending
+    final_reviewer: pending
+  integration:
+    existing_pr: https://github.com/Undertone0809/rudder/pull/225
+    remote_head_observed: 9f1afa0e1ce65b89969382191e0c5f268591ea43
+    remote_base_observed: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
+    current_main: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+    historical_checks: 7_failed_6_passed_1_skipped_on_old_head_not_current_evidence
+    convergence: update_existing_PR_225_after_exact_review_verification; no_duplicate_D1_PR
+    merge_gate: exact_candidate_reviewer_accept_verifier_PASS_final_reviewer_accept_required_CI_and_protected_main
+  authority_boundary:
+    public_actix_listener: false
+    sqlx_migration_apply_authority: false
+    all_legacy_writers_fenced_or_retired: false
+    implementation_complete: false
+    release_ready: false
+    production_verified: false
+  next_executable: obtain_fresh_stage_review_for_v23_candidate_then_freeze_and_run_independent_verifier

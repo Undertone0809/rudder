@@ -4,6 +4,7 @@ import {
   type Project,
 } from "@rudderhq/shared";
 import { Command } from "commander";
+import { randomUUID } from "node:crypto";
 import { getAgentCliCapabilityById } from "../../agent-v1-registry.js";
 import {
   addCommonClientOptions,
@@ -176,17 +177,15 @@ export function registerProjectCommands(program: Command): void {
             archivedAt: parseNullableOption(opts.archivedAt),
           });
           const hasGoalMutation = opts.goalIds !== undefined || opts.goalId !== undefined;
-          const idempotencyKey = projectUpdateIdempotencyKey(opts.idempotencyKey);
-          if (hasGoalMutation && !idempotencyKey) {
+          const providedIdempotencyKey = projectUpdateIdempotencyKey(opts.idempotencyKey);
+          if (hasGoalMutation && !providedIdempotencyKey) {
             throw new Error("--idempotency-key is required when updating Project-Goal links");
           }
-          const headers = idempotencyKey
-            ? {
-              "x-rudder-idempotency-key": idempotencyKey,
-              ...(hasGoalMutation ? { "x-rudder-required-authority": "rust" } : {}),
-            }
-            : undefined;
-          const updated = await ctx.api.patch<Project>(projectPath(projectRef, ctx.orgId), payload, headers ? { headers } : undefined);
+          const headers = {
+            "x-rudder-idempotency-key": providedIdempotencyKey ?? randomUUID(),
+            ...(hasGoalMutation ? { "x-rudder-required-authority": "rust" } : {}),
+          };
+          const updated = await ctx.api.patch<Project>(projectPath(projectRef, ctx.orgId), payload, { headers });
           printOutput(updated, { json: ctx.json });
         } catch (err) {
           handleCommandError(err);

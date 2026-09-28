@@ -1,7 +1,7 @@
 schema: rudder.rust-backend-completion-current-source-refresh/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-23
-current_rebind:
+updated_at: 2026-09-28
+historical_v22_rebind:
   source_sha: 8e5b3fff1b8b377cdf1ec64cac2c33ed32d9b36c
   branch: codex/rudder-rust-mainline-probe-20260923
   worktree: /private/tmp/rudder-rust-mainline-probe-20260923
@@ -17,7 +17,7 @@ current_rebind:
   logs: {branding: /tmp/rudder-rust-branding-v25.log, project_goal: /tmp/rudder-rust-project-goal-v25.log, branding_sha256: 9de84789a079b32b6912baacbcaa382a8c5e1558094da22dff82294745221946, project_goal_sha256: 852d78bc2c79eb4cb7531e01e1ddc31cf726a39fef15bdb17d4141159075b343}
   authority: {default_rust_listener: false, first_party_node_writers_retired: false, full_rust_migration: false}
   next: push_committed_branch_open_pr_then_reconcile_new_origin_main_before_next_slice
-candidate:
+historical_v16_candidate:
   source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
   branch: codex/rudder-full-rust-backend-completion-20260921
   worktree: /Users/zeeland/.codex/worktrees/rudder-rust-backend-completion-2026-09-21/rudder-oss
@@ -28,7 +28,7 @@ candidate:
   dirty_fingerprint_status: exact_clean_commit_fc733_project_goal_real_entry_probe_v10_complete_negative_coverage
   scan_status: current_counts_refreshed_after_main_0_7_24_reconciliation_and_project_goal_real_entry_probe_v10_semantic_reconciliation_blocked
   semantic_rows: partial_with_current_writer_audit
-main_adaptation:
+historical_main_adaptation_cf131:
   migration_base_sha: c54001819ca38079b627994557db0a18ed278fc0
   latest_observed_main_sha: d1f55c5c180901392804178aa44b3ba3f077a6cb
   commits_ahead_of_migration_base: 15
@@ -53,7 +53,7 @@ scan_commands:
   migration_journal_scan: "JSON.parse(packages/db/src/migrations/meta/_journal.json).entries.length"
   cli_capability_scan: "rg -o '\"id\": \"[^\"]+\"' cli/src/agent-v1-capabilities.generated.ts"
   mcp_descriptor_scan: "rg -o '\"capabilityId\": \"[^\"]+\"' packages/agent-runtime-utils/src/rudder-mcp-tool-descriptors.generated.ts"
-counts:
+historical_counts_cf131:
   route_source_files_with_declarations: 47
   route_declaration_scan_hits: 513
   transaction_source_files: 62
@@ -142,7 +142,7 @@ semantic_scan_gaps:
   - the signed actor envelope verifier currently relies on a trusted signer/bridge contract; session membership and revocation integration are not yet a real Actix authority
   - the current writer audit confirms unresolved Goal, approval, issue comment, attachment/avatar storage, Side Chat/inline visual, portability, onboarding, skills/plugins, budget/settings, automation, heartbeat, workspace/runtime, and background side effects; selected existing fences now validate owner, epoch, and persisted fencing token, but coverage is not uniform
   - the new goal-set route has a supported Node bridge and direct CLI/MCP real-entry evidence, but installed/default startup, full session/revocation authority, old-writer retirement, and sole-listener proof remain open
-current_writer_audit:
+historical_writer_audit_v22:
   candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
   verdict: needs_more_evidence
   activation: blocked
@@ -193,7 +193,7 @@ next_actions:
   - fence or retire every current writer row before activating the Rust D1 owner
   - obtain independent stage review and verifier PASS for the exact Project-Goal candidate before default-path owner integration
 
-project_goal_real_entry_probe:
+historical_project_goal_real_entry_probe_v10:
   artifact: doc/plans/artifacts/2026-09-22-rudder-project-goal-real-entry-probe-v10.json
   candidate_source_sha: fc73374bb15933ef5bad7f3056336c87e455cee0
   candidate_fingerprint: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
@@ -259,7 +259,7 @@ supporting_branding_real_entry_historical:
     delivery_packet_validation: pass
   claims: local_real_entry_only; branding_real_entry_connected=true; old_authority_retired=false; implementation_complete=false; release_ready=false; production_verified=false
 
-active_candidate_rebind:
+historical_active_candidate_rebind_cf131:
   worktree: /private/tmp/rudder-rust-mainline-probe-20260923
   branch: codex/rudder-rust-mainline-probe-20260923
   origin_main_sha: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
@@ -276,3 +276,89 @@ active_candidate_rebind:
   repair: cargo_build_rudder_migration_service_migration_preflight_only_local_artifact
   claims: {real_entry_connected: true, default_path_verified: false, old_authority_retired: false, implementation_complete: false, release_ready: false, production_verified: false}
   next_action: independent_stage_review_then_same_candidate_black_box_verifier
+
+current_rebind:
+  observed_at: 2026-09-28
+  worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
+  branch: detached_candidate_for_existing_PR_225
+  pr_branch: codex/rudder-rust-mainline-probe-20260923
+  source_sha: 2c0d5125eedbb577f73c4be4fabcfcb296602909
+  source_tree_sha: 394ef4132ad4061373fdb97e25b3d18fc79b85fe
+  dirty_fingerprint: 3d9aace8bf1eb4db2e48f05185509b92d913c268eb7e7976f75fbbb59eaff95d
+  dirty_fingerprint_method: sha256_of_git_diff_binary_over_exact_five_changed_paths; excludes doc/plans records and ignored build output
+  changed_paths:
+    - cli/src/__tests__/agent-v1-mcp-d1-capabilities.test.ts
+    - cli/src/__tests__/project-command.test.ts
+    - cli/src/agent-v1-mcp-d1-capabilities.ts
+    - cli/src/commands/client/project.ts
+    - scripts/smoke/rust-project-goal-real-entry.ts
+  origin_main_sha: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+  main_reconciliation: candidate_merge_2c0d_is_descendant_of_PR_225_head_9f1afa0e_and_contains_current_origin_main; preserves_four_main_commits_including_ui_src_pages_Chat_overlap
+  migration_manifest: {journal_entries: 175, sql_files: 177, fingerprint: bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7}
+  source_counts: {route_files: 48, route_declaration_hits: 513, transaction_files_all: 65, transaction_hits_all: 224, transaction_files_non_test: 54, transaction_hits_non_test: 203, cli_capabilities_total: 119, cli_agent_v1: 108, cli_compat: 11, canonical_mcp_descriptors: 108}
+  semantic_inventory: current_rows_retained_with_existing_unresolved_writer_families; structural_counts_do_not_prove_complete_route_writer_or_process_authority
+  author_probe:
+    artifact: doc/plans/artifacts/2026-09-28-rudder-rust-d1-real-entry-probe-v23-author.json
+    status: PASS
+    data_id: rust-project-goal-real-entry-41171
+    organization_id: e4571ceb-4cb5-438f-99a0-1294b118d652
+    project_id: 24f21c88-e277-46ca-85ba-62df583c35e2
+    migration_preflight: bootstrap_then_current; 175_journal_entries; 177_sql_files; fingerprint_bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7
+    binaries: {rudder_server_foundation_sha256: 8f35a932ff2cf1225e6da4917cc4c8f59e0a860cdc2541526c6665bcd05cd06b, migration_preflight_sha256: e53d4bcd2798606ae955a2fb81110cbc81f7192d786fba53af1197fe1cf18ccd}
+    cli_mcp_scalar_replay: both_same_explicit_key_across_processes; final_tooling_mutation_version_4; receipts_4; activities_4; outbox_4
+    mixed_patch_recovery: public_audit_failure_500_rolled_back_project_links_resources_receipt_activity_outbox_and_version; same_key_retry_committed_once; restart_replay_preserved_state
+    other_negatives: cross_org_422; idempotency_conflict_409; missing_legacy_binary_fail_closed; signed_header_substitution_401_without_write; Rust_owned_org_delete_409
+    cli_tests: 13_of_13
+    runtime: {node: v22.23.1, pnpm: 9.15.4, rust: 1.93.0, cargo: 1.93.0, embedded_postgres: 18.1.0-beta.16}
+    target: disposable_embedded_postgres_and_local_node_api_private_actix_sqlx_cli_mcp
+    production_data_or_traffic: none
+  author_probe_rerun_2026_09_28:
+    status: PASS
+    observed_at: 2026-09-28T15:08:00+08:00
+    candidate_source_sha: 2c0d5125eedbb577f73c4be4fabcfcb296602909
+    source_fingerprint: 3d9aace8bf1eb4db2e48f05185509b92d913c268eb7e7976f75fbbb59eaff95d
+    project_goal:
+      instance_id: rust-project-goal-real-entry-89061
+      organization_id: 91d8a237-7a80-404b-b04f-3fba652d9744
+      other_organization_id: 90e3131a-0ef2-40c2-96ad-b78bd1170712
+      project_id: 0f2cef78-59d6-4ba2-bd73-17275575832a
+      api_port: 64601
+      database_port: 64602
+      log: /tmp/rudder-rust-project-goal-v23-author.log
+      log_sha256: 07406c6deb0d5b3221fd757bd920d9d546def2ac67d3b9bfa62dd80967bb89f5
+      terminal_marker: RUST_PROJECT_GOAL_REAL_ENTRY_PASS
+      observations: bootstrap_and_current_preflight_175_journal_177_sql; CLI_and_MCP_scalar_same_key_cross_process_replay; mixed_Project_audit_failure_rollback_and_same_key_retry; restart_replay; cross_org_422; signed_header_substitution_401; missing_legacy_binary_fails_closed
+    branding:
+      instance_id: rust-branding-real-entry-93985
+      organization_id: a74aea91-1124-49fd-9e6d-b6c7a3f3101f
+      api_port: 65122
+      database_port: 65123
+      log: /tmp/rudder-rust-branding-v23-author.log
+      log_sha256: 5fea2a3f92d1015b434f883939990095aaeb0fa9ce7f985064bed08e708535fb
+      terminal_marker: RUST_BRANDING_REAL_ENTRY_PASS
+      observations: branding_PATCH_replay_audit_rollback_retry; CLI_and_MCP_updates; Rust_owner_version_1_fence_epoch_1; persisted_outbox_recovered_after_restart_attempts_2
+    focused_cli_tests:
+      command: pnpm_exec_vitest_run_agent_v1_mcp_d1_capabilities_and_project_command
+      result: 13_of_13_PASS
+      log: /tmp/rudder-rust-d1-cli-v23-tests.log
+      log_sha256: bb50cca4eecc53e8bf2cd701bc18835a5636908bba61ca3081cf3f8f9e9456ab
+    runtime: {node: v22.23.1, pnpm: 9.15.4, rustc: 1.93.0, cargo: 1.93.0, embedded_postgres: 18.1.0-beta.16}
+    binary_sha256: {rudder_server_foundation: 8f35a932ff2cf1225e6da4917cc4c8f59e0a860cdc2541526c6665bcd05cd06b, migration_preflight: e53d4bcd2798606ae955a2fb81110cbc81f7192d786fba53af1197fe1cf18ccd}
+    cleanup: disposable_homes_removed; candidate_ports_closed; no_candidate_server_or_postgres_processes
+    production_data_or_traffic: none
+  prior_stage_review:
+    agent_id: 01a0e6a5-7e20-76e2-879a-1a5cf48fdd8e
+    verdict: needs_more_evidence
+    reviewed_fingerprint: 0319b52b1a016481024ed0354fb338db2c267fe1fcf11b9758e9475807b35920
+    findings: [stale_v22_packet_and_ledger, scalar_cli_mcp_cross_call_replay_not_demonstrated]
+    resolution: refreshed_v23_records_and_added_author_real_entry_same_key_replay_assertions; new stage review required
+  current_receipts: {stage_reviewer: pending, independent_verifier: pending, final_reviewer: pending, github_ci: not_started_for_current_candidate}
+  claims: {implementation_complete: false, release_ready: false, production_verified: false, default_path_verified: false, old_authority_retired: false}
+  integration:
+    existing_pr: 225
+    remote_head: 9f1afa0e1ce65b89969382191e0c5f268591ea43
+    remote_base: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
+    old_checks: 7_failed_6_passed_1_skipped_historical_only
+    convergence_decision: update_existing_PR_225_after_fresh_review_verifier_final_review; do_not_create_duplicate_D1_PR
+    PR_226: separate_Draft_Native_Chat; untouched
+  next_action: validate_v23_packet_and_refresh_ledger_status_then_request_fresh_stage_review_on_exact_source_fingerprint

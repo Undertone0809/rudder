@@ -6,17 +6,137 @@ import {
   updateProjectResourceAttachmentSchema,
   updateProjectSchema,
 } from "@rudderhq/shared";
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
+import { sql } from "drizzle-orm";
 import { badRequest, conflict } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, projectService, resourceCatalogService } from "../services/index.js";
-import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { configuredProjectGoalMutationProjectIds } from "../services/project-goal-mutation-fence.js";
+import type { RustFoundationBridge, RustFoundationResponse } from "../services/rust-foundation-bridge.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
+
+type ProjectResourceAttachmentReceiptResponse = {
+  status: 200 | 201;
+  body: Record<string, unknown>;
+};
+
+function parseProjectResourceAttachmentReceiptResponse(
+  value: unknown,
+): ProjectResourceAttachmentReceiptResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Rust Project resource attachment receipt is invalid");
+  }
+  const response = value as Record<string, unknown>;
+  if ((response.status !== 200 && response.status !== 201)
+    || !response.body
+    || typeof response.body !== "object"
+    || Array.isArray(response.body)) {
+    throw new Error("Rust Project resource attachment receipt is invalid");
+  }
+  return {
+    status: response.status,
+    body: response.body as Record<string, unknown>,
+  };
+}
+
+function queryRows<T>(result: unknown): T[] {
+  if (Array.isArray(result)) return result as T[];
+  return ((result as { rows?: T[] }).rows ?? []) as T[];
+}
 
 export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = projectService(db);
   const resources = resourceCatalogService(db);
+  const rustProjectGoalProjectIds = new Set(configuredProjectGoalMutationProjectIds());
+
+  async function readResourceAttachmentReceiptResponse(
+    req: Request,
+    orgId: string,
+  ): Promise<ProjectResourceAttachmentReceiptResponse> {
+    const idempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
+    if (!idempotencyKey) {
+      throw badRequest("x-rudder-idempotency-key is required for Rust Project updates");
+    }
+    const result = await db.execute(sql<{ resource_attachment_response: unknown }>`
+      SELECT result->'resource_attachment_response' AS resource_attachment_response
+      FROM organization_mutation_receipts
+      WHERE org_id = ${orgId}::uuid
+        AND idempotency_key = ${idempotencyKey}
+        AND command_kind = 'project_goal_set_replacement'
+      LIMIT 1
+    `);
+    const row = queryRows<{ resource_attachment_response: unknown }>(result)[0];
+    return parseProjectResourceAttachmentReceiptResponse(row?.resource_attachment_response);
+  }
+
+  type ProjectPatchForward =
+    | { kind: "node" }
+    | { kind: "missing_idempotency_key" }
+    | { kind: "unavailable"; code: string }
+    | { kind: "rust"; response: RustFoundationResponse };
+
+  async function forwardRustOwnedProjectPatch(
+    req: Request,
+    orgId: string,
+    projectId: string,
+    patch: Record<string, unknown>,
+    forceRust: boolean,
+  ): Promise<ProjectPatchForward> {
+    const owner = await svc.getMutationOwner(orgId, projectId);
+    const allowlisted = rustProjectGoalProjectIds.has(projectId);
+    if ((owner === "rust" || forceRust) && !allowlisted) {
+      return { kind: "unavailable", code: "rust_foundation_project_goal_set_not_allowlisted" };
+    }
+    if (forceRust && owner !== "rust") {
+      return { kind: "unavailable", code: "rust_foundation_project_goal_set_not_owned" };
+    }
+    if (owner !== "rust") return { kind: "node" };
+    if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+      return { kind: "unavailable", code: "rust_foundation_project_goal_set_disabled" };
+    }
+    if (!req.header("x-rudder-idempotency-key")?.trim()) {
+      return { kind: "missing_idempotency_key" };
+    }
+    const requestPath = `/api/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectId)}/goal-set`;
+    try {
+      const response = await rustFoundationBridge.projectGoalSet(
+        req,
+        orgId,
+        projectId,
+        Buffer.from(JSON.stringify({
+          projectPatch: patch,
+          runId: req.actor.runId ?? null,
+        }), "utf8"),
+        requestPath,
+      );
+      return { kind: "rust", response };
+    } catch (error) {
+      return {
+        kind: "unavailable",
+        code: `rust_foundation_project_goal_set_${error instanceof Error ? "request_failed" : "unavailable"}`,
+      };
+    }
+  }
+
+  function sendProjectPatchForwardError(
+    result: Exclude<ProjectPatchForward, { kind: "node" } | { kind: "rust" }>,
+    res: Response,
+  ) {
+    if (result.kind === "missing_idempotency_key") {
+      throw badRequest("x-rudder-idempotency-key is required for Rust Project updates");
+    }
+    res.status(503).json({
+      error: result.code === "rust_foundation_project_goal_set_disabled"
+        ? "Rust Project-Goal authority is not enabled"
+        : result.code === "rust_foundation_project_goal_set_not_allowlisted"
+          ? "Rust Project-Goal authority is not allowlisted for this Project"
+          : result.code === "rust_foundation_project_goal_set_not_owned"
+            ? "Rust does not own this Project-Goal authority"
+            : "Rust Project-Goal authority is unavailable",
+      code: result.code,
+    });
+  }
 
   async function resolveOrgIdForProjectReference(req: Request) {
     const orgIdQuery = req.query.orgId;
@@ -125,19 +245,27 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     const nonGoalKeys = Object.keys(body).filter((key) => key !== "goalIds" && key !== "goalId");
     const goalSetOnly = hasGoalMutation && nonGoalKeys.length === 0;
     const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
-    const rustRequiredForRequest = rustFoundationBridge?.projectGoalSetMode === "required" || rustRequiredHeader;
     const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
     const rustOwnsProject = mutationOwner === "rust";
+    const allowlisted = rustProjectGoalProjectIds.has(id);
 
-    if (rustOwnsProject && rustFoundationBridge?.projectGoalSetMode !== "required") {
+    if ((rustOwnsProject || rustRequiredHeader) && !allowlisted) {
       res.status(503).json({
-        error: "Rust Project-Goal authority is not enabled",
-        code: "rust_foundation_project_goal_set_disabled",
+        error: "Rust Project-Goal authority is not allowlisted for this Project",
+        code: "rust_foundation_project_goal_set_not_allowlisted",
       });
       return;
     }
 
-    if ((hasGoalMutation && rustRequiredForRequest) || rustOwnsProject || rustRequiredHeader) {
+    if (rustRequiredHeader && !rustOwnsProject) {
+      res.status(503).json({
+        error: "Rust does not own this Project-Goal authority",
+        code: "rust_foundation_project_goal_set_not_owned",
+      });
+      return;
+    }
+
+    if (rustOwnsProject || rustRequiredHeader) {
       if (rustFoundationBridge?.projectGoalSetMode !== "required") {
         res.status(503).json({
           error: "Rust Project-Goal authority is not enabled",
@@ -221,6 +349,31 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
       return;
     }
     assertCompanyAccess(req, project.orgId);
+
+    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+    const forwarded = await forwardRustOwnedProjectPatch(
+      req,
+      project.orgId,
+      id,
+      { resourceAttachmentOperation: { kind: "attach", ...req.body } },
+      rustRequiredHeader,
+    );
+    if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
+      sendProjectPatchForwardError(forwarded, res);
+      return;
+    }
+    if (forwarded.kind === "rust") {
+      if (forwarded.response.status < 200 || forwarded.response.status >= 300) {
+        res.status(forwarded.response.status)
+          .set("content-type", forwarded.response.contentType)
+          .send(forwarded.response.body);
+        return;
+      }
+      const stored = await readResourceAttachmentReceiptResponse(req, project.orgId);
+      res.status(stored.status).json(stored.body);
+      return;
+    }
+
     const attachment = await resources.createProjectResourceAttachment(id, req.body);
     if (!attachment) {
       res.status(404).json({ error: "Resource not found" });
@@ -260,6 +413,36 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
         return;
       }
       assertCompanyAccess(req, project.orgId);
+
+      const existingAttachment = project.resources.find((resource) => resource.id === attachmentId);
+      const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+      const forwarded = await forwardRustOwnedProjectPatch(
+        req,
+        project.orgId,
+        id,
+        { resourceAttachmentOperation: { kind: "update", attachmentId, ...req.body } },
+        rustRequiredHeader,
+      );
+      if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
+        sendProjectPatchForwardError(forwarded, res);
+        return;
+      }
+      if (forwarded.kind === "rust") {
+        if (forwarded.response.status < 200 || forwarded.response.status >= 300) {
+          res.status(forwarded.response.status)
+            .set("content-type", forwarded.response.contentType)
+            .send(forwarded.response.body);
+          return;
+        }
+        const stored = await readResourceAttachmentReceiptResponse(req, project.orgId);
+        res.status(stored.status).json(stored.body);
+        return;
+      }
+
+      if (!existingAttachment) {
+        res.status(404).json({ error: "Project resource attachment not found" });
+        return;
+      }
       const attachment = await resources.updateProjectResourceAttachment(id, attachmentId, req.body);
       if (!attachment) {
         res.status(404).json({ error: "Project resource attachment not found" });
@@ -292,6 +475,36 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
       return;
     }
     assertCompanyAccess(req, project.orgId);
+
+    const existingAttachment = project.resources.find((resource) => resource.id === attachmentId);
+    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+    const forwarded = await forwardRustOwnedProjectPatch(
+      req,
+      project.orgId,
+      id,
+      { resourceAttachmentOperation: { kind: "remove", attachmentId } },
+      rustRequiredHeader,
+    );
+    if (forwarded.kind === "missing_idempotency_key" || forwarded.kind === "unavailable") {
+      sendProjectPatchForwardError(forwarded, res);
+      return;
+    }
+    if (forwarded.kind === "rust") {
+      if (forwarded.response.status < 200 || forwarded.response.status >= 300) {
+        res.status(forwarded.response.status)
+          .set("content-type", forwarded.response.contentType)
+          .send(forwarded.response.body);
+        return;
+      }
+      const stored = await readResourceAttachmentReceiptResponse(req, project.orgId);
+      res.status(stored.status).json(stored.body);
+      return;
+    }
+
+    if (!existingAttachment) {
+      res.status(404).json({ error: "Project resource attachment not found" });
+      return;
+    }
     const attachment = await resources.removeProjectResourceAttachment(id, attachmentId);
     if (!attachment) {
       res.status(404).json({ error: "Project resource attachment not found" });

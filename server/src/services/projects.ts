@@ -28,6 +28,7 @@ import {
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import {
+  lockProjectGoalMutationAuthorityForDelete,
   lockNodeProjectGoalMutationAuthority,
 } from "./project-goal-mutation-fence.js";
 import {
@@ -612,6 +613,7 @@ export function projectService(db: Db) {
         resourceAttachments?: ProjectResourceAttachmentInput[];
         newResources?: CreateProjectInlineResourceInput[];
       },
+      options?: { allowScalarUpdateWhenProjectGoalOwned?: boolean },
     ): Promise<ProjectWithGoals | null> => {
       const {
         goalIds: inputGoalIds,
@@ -659,9 +661,16 @@ export function projectService(db: Db) {
           byProjectId.get(id) ?? [],
         )
         : [];
+      const writesProjectGoalComponent = ids !== undefined
+        || resourceAttachments !== undefined
+        || newResources !== undefined;
 
       const row = await db.transaction(async (tx) => {
-        await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
+        if (writesProjectGoalComponent || !options?.allowScalarUpdateWhenProjectGoalOwned) {
+          await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
+        } else {
+          await lockNodeMutationAuthority(tx, existingProject.orgId);
+        }
         const updatedRow = await tx
           .update(projects)
           .set(updates)
@@ -708,7 +717,7 @@ export function projectService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
-        await lockNodeProjectGoalMutationAuthority(tx, existing.orgId, id);
+        await lockProjectGoalMutationAuthorityForDelete(tx, existing.orgId, id);
         const row = await tx
           .delete(projects)
           .where(eq(projects.id, id))

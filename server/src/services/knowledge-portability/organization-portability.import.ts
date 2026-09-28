@@ -445,7 +445,9 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
 
         let projectId: string | null = null;
         if (planProject.action === "update" && planProject.existingProjectId) {
-          const updated = await projects.update(planProject.existingProjectId, projectPatch);
+          const updated = await projects.update(planProject.existingProjectId, projectPatch, {
+            allowScalarUpdateWhenProjectGoalOwned: true,
+          });
           if (!updated) {
             warnings.push(`Skipped update for missing project ${planProject.existingProjectId}.`);
             resultProjects.push({
@@ -513,7 +515,7 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
         if (hydratedProjectExecutionWorkspacePolicy) {
           await projects.update(projectId, {
             executionWorkspacePolicy: hydratedProjectExecutionWorkspacePolicy,
-          });
+          }, { allowScalarUpdateWhenProjectGoalOwned: true });
         }
       }
     }

@@ -1,6 +1,6 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-23
+updated_at: 2026-09-28
 status: in_progress
 current_main_reconciliation:
   worktree: /Users/zeeland/.codex/worktrees/7b2a/rudder-oss
@@ -554,3 +554,41 @@ interrupt_resume:
   prior_accepted_candidate: none_in_this_checkout_imported_receipts_historical
   remaining_work: current_dirty_slice_checks_main_overlap_review_verifier_commit_push_then_next_authority_slice
   next_command: run_focused_rust_cli_server_desktop_checks_and_reconcile_origin_main_overlap
+
+current_candidate_2026_09_28:
+  authority: overrides older active_candidate entries; prior receipts remain historical unless explicitly rebound
+  worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
+  candidate_sha: 2c0d5125eedbb577f73c4be4fabcfcb296602909
+  candidate_tree: 394ef4132ad4061373fdb97e25b3d18fc79b85fe
+  source_fingerprint: 3d9aace8bf1eb4db2e48f05185509b92d913c268eb7e7976f75fbbb59eaff95d
+  origin_main: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+  existing_pr: 225
+  author_checks:
+    cli_unit_tests: 13_of_13_pass
+    project_goal_real_entry: PASS_same_key_cli_mcp_replay_public_audit_rollback_retry_restart_replay
+    organization_branding_real_entry: PASS_audit_rollback_retry_cli_mcp_outbox_restart_recovery
+    migration_preflight: 175_journal_177_sql_manifest_match
+    evidence: doc/plans/artifacts/2026-09-28-rudder-rust-d1-real-entry-probe-v23-author.json
+  receipts:
+    prior_stage_review: needs_more_evidence_stale_v22_packet_and_scalar_cli_mcp_replay_gap; resolved_by_v23_artifact_packet_and_fresh_same_key_probe; not_reused
+    stage_review: pending
+    independent_verifier: pending
+    final_review: pending
+    current_github_ci: not_started_until_authorized_candidate_push
+    old_pr_ci: 7_failed_6_passed_1_skipped_historical_only
+  claims:
+    branding_real_entry_connected: true
+    project_goal_link_real_entry_connected: true
+    default_path_verified: false
+    old_authority_retired: false
+    implementation_complete: false
+    release_ready: false
+    production_verified: false
+  preservation:
+    original_checkout: /Users/zeeland/.codex/worktrees/7b2a/rudder-oss
+    index_sha256_before: b7c63f571dc8eb30ef5477e5ae15a2555fb6cc129df062460e2035cce7d3abca
+    unstaged_diff_sha256_before: 4556961111d72336340731bf1997e52cf6baae0fb77b6b8e550bb137734618dd
+    staged_diff_sha256_before: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    porcelain_sha256_before: 060a515dbdc6179062e5eb8774fe9574af332620c1c563e7cb719929274d34da
+    final_recheck: pending
+  next_executable: independent_stage_review_on_packet_v23_then_candidate_freeze_and_independent_verifier

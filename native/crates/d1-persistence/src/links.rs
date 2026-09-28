@@ -231,6 +231,8 @@ pub(crate) async fn apply(
                 target_integrity: context.state_integrity().to_owned(),
             },
             entity_id: project_id.to_owned(),
+            activity_action: None,
+            activity_entity_type: None,
             details,
         },
     )

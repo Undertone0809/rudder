@@ -13,3 +13,9 @@ $$;
 CREATE TRIGGER "organizations_mutation_state_provisioning"
 AFTER INSERT ON "organizations"
 FOR EACH ROW EXECUTE FUNCTION "provision_organization_mutation_state"();
+--> statement-breakpoint
+-- Reconcile organizations created after migration 0169's initial backfill.
+INSERT INTO "organization_mutation_state" ("org_id")
+SELECT "id"
+FROM "organizations"
+ON CONFLICT ("org_id") DO NOTHING;

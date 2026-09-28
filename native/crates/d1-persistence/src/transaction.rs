@@ -56,7 +56,15 @@ pub(crate) enum ExpectedReceipt {
         patch_fingerprint: String,
         goal_ids: Option<Vec<String>>,
         primary_goal_after: Option<Option<String>>,
+        resource_attachment_operation: Option<ProjectResourceAttachmentOperationIdentity>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectResourceAttachmentOperationIdentity {
+    Attach { resource_id: String },
+    Update { attachment_id: String },
+    Remove { attachment_id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -278,6 +286,7 @@ impl Metadata {
         let patch_fingerprint = hex_digest(Sha256::digest(
             serde_json::to_vec(&command.patch).map_err(|_| StoreError::InvalidInput)?,
         ));
+        let resource_attachment_operation = project_resource_attachment_operation(&command.patch)?;
         let identity = json!({
             "adapter_format": 1,
             "kind": project_goal_set_kind(),
@@ -319,8 +328,13 @@ impl Metadata {
                     .goal_ids
                     .as_ref()
                     .map(|goal_ids| goal_ids.first().cloned()),
+                resource_attachment_operation: resource_attachment_operation.clone(),
             },
-            receipt_format: 2,
+            receipt_format: if resource_attachment_operation.is_some() {
+                3
+            } else {
+                2
+            },
         })
     }
 
@@ -335,12 +349,57 @@ impl Metadata {
     }
 }
 
+fn project_resource_attachment_operation(
+    patch: &Value,
+) -> Result<Option<ProjectResourceAttachmentOperationIdentity>, StoreError> {
+    let Some(operation) = patch.get("resourceAttachmentOperation") else {
+        return Ok(None);
+    };
+    let operation = operation.as_object().ok_or(StoreError::InvalidInput)?;
+    let kind = operation
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or(StoreError::InvalidInput)?;
+    match kind {
+        "attach" => {
+            let resource_id = operation
+                .get("resourceId")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidInput)?;
+            uuid(resource_id)?;
+            Ok(Some(ProjectResourceAttachmentOperationIdentity::Attach {
+                resource_id: resource_id.to_owned(),
+            }))
+        }
+        "update" | "remove" => {
+            let attachment_id = operation
+                .get("attachmentId")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidInput)?;
+            uuid(attachment_id)?;
+            let identity = if kind == "update" {
+                ProjectResourceAttachmentOperationIdentity::Update {
+                    attachment_id: attachment_id.to_owned(),
+                }
+            } else {
+                ProjectResourceAttachmentOperationIdentity::Remove {
+                    attachment_id: attachment_id.to_owned(),
+                }
+            };
+            Ok(Some(identity))
+        }
+        _ => Err(StoreError::InvalidInput),
+    }
+}
+
 pub(crate) struct Effect {
     pub version: u64,
     pub fence_epoch: u64,
     pub outcome: Outcome,
     pub result: ResultState,
     pub entity_id: String,
+    pub activity_action: Option<&'static str>,
+    pub activity_entity_type: Option<&'static str>,
     pub details: Value,
 }
 
@@ -596,10 +655,14 @@ pub(crate) async fn replay(
     };
     let stored_value: Value =
         serde_json::from_str(&result_text).map_err(|_| StoreError::InvalidReceipt)?;
+    let mut receipt_value = stored_value.clone();
+    let resource_attachment_response = receipt_value
+        .as_object_mut()
+        .and_then(|object| object.remove("resource_attachment_response"));
     let receipt: Receipt =
-        serde_json::from_value(stored_value.clone()).map_err(|_| StoreError::InvalidReceipt)?;
+        serde_json::from_value(receipt_value.clone()).map_err(|_| StoreError::InvalidReceipt)?;
     let canonical_value = serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
-    if canonical_value != stored_value {
+    if canonical_value != receipt_value {
         return Err(StoreError::InvalidReceipt);
     }
     let resulting_version = unsigned(row.try_get::<i64, _>("resulting_version")?)?;
@@ -615,6 +678,7 @@ pub(crate) async fn replay(
         return Err(StoreError::InvalidReceipt);
     }
     validate_receipt_result(metadata, &receipt)?;
+    validate_project_resource_attachment_response(metadata, resource_attachment_response.as_ref())?;
     Ok(Some(CommittedMutation {
         replayed: true,
         receipt,
@@ -685,6 +749,33 @@ pub(crate) async fn persist(
     scope: &LockedScope,
     effect: Effect,
 ) -> Result<CommittedMutation, StoreError> {
+    persist_with_resource_attachment_response(tx, metadata, scope, effect, None).await
+}
+
+pub(crate) async fn persist_project_patch(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+    scope: &LockedScope,
+    effect: Effect,
+    resource_attachment_response: Option<Value>,
+) -> Result<CommittedMutation, StoreError> {
+    persist_with_resource_attachment_response(
+        tx,
+        metadata,
+        scope,
+        effect,
+        resource_attachment_response,
+    )
+    .await
+}
+
+async fn persist_with_resource_attachment_response(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+    scope: &LockedScope,
+    effect: Effect,
+    resource_attachment_response: Option<Value>,
+) -> Result<CommittedMutation, StoreError> {
     signed(effect.version)?;
     signed(effect.fence_epoch)?;
     if effect.fence_epoch < scope.fence_epoch
@@ -703,9 +794,16 @@ pub(crate) async fn persist(
         result: effect.result,
     };
     validate_receipt_result(metadata, &receipt)?;
+    validate_project_resource_attachment_response(metadata, resource_attachment_response.as_ref())?;
 
-    let result_without_activity =
+    let mut result_without_activity =
         serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    if let Some(response) = &resource_attachment_response {
+        result_without_activity
+            .as_object_mut()
+            .ok_or(StoreError::InvalidReceipt)?
+            .insert("resource_attachment_response".to_owned(), response.clone());
+    }
     ensure_json_size(&result_without_activity, MAX_RESULT_BYTES)?;
 
     let project_id = metadata
@@ -739,6 +837,8 @@ pub(crate) async fn persist(
     }
 
     let details = serde_json::to_string(&effect.details).map_err(|_| StoreError::InvalidReceipt)?;
+    let activity_action = effect.activity_action.unwrap_or("project.updated");
+    let activity_entity_type = effect.activity_entity_type.unwrap_or("project");
     let activity_id: String = sqlx::query_scalar(
         "INSERT INTO activity_log
           (org_id, actor_type, actor_id, action, entity_type, entity_id,
@@ -753,16 +853,8 @@ pub(crate) async fn persist(
         "agent"
     })
     .bind(&metadata.actor.principal_id)
-    .bind(if metadata.kind == branding_kind() {
-        "organization.branding_updated"
-    } else {
-        "project.updated"
-    })
-    .bind(if metadata.kind == branding_kind() {
-        "organization"
-    } else {
-        "project"
-    })
+    .bind(activity_action)
+    .bind(activity_entity_type)
     .bind(&effect.entity_id)
     .bind(metadata.actor.agent_id.as_deref())
     .bind(metadata.run_id.as_deref())
@@ -773,10 +865,17 @@ pub(crate) async fn persist(
 
     let mut receipt = receipt;
     receipt.activity_id = activity_id;
-    let receipt_json = serde_json::to_string(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
-    if receipt_json.len() > MAX_RESULT_BYTES {
-        return Err(StoreError::InvalidInput);
+    let mut receipt_value =
+        serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    if let Some(response) = resource_attachment_response {
+        receipt_value
+            .as_object_mut()
+            .ok_or(StoreError::InvalidReceipt)?
+            .insert("resource_attachment_response".to_owned(), response);
     }
+    ensure_json_size(&receipt_value, MAX_RESULT_BYTES)?;
+    let receipt_json =
+        serde_json::to_string(&receipt_value).map_err(|_| StoreError::InvalidReceipt)?;
     sqlx::query(
         "INSERT INTO organization_mutation_receipts
           (org_id, idempotency_key, command_kind, command_fingerprint,
@@ -805,8 +904,8 @@ pub(crate) async fn persist(
     let event_payload = json!({
         "actorType": actor_type,
         "actorId": metadata.actor.principal_id,
-        "action": "project.updated",
-        "entityType": "project",
+        "action": activity_action,
+        "entityType": activity_entity_type,
         "entityId": effect.entity_id,
         "agentId": metadata.actor.agent_id,
         "runId": metadata.run_id,
@@ -1227,6 +1326,7 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 patch_fingerprint: expected_patch_fingerprint,
                 goal_ids: expected_goal_ids,
                 primary_goal_after: expected_primary_goal_after,
+                ..
             } = &metadata.expected_receipt
             else {
                 return Err(StoreError::InvalidReceipt);
@@ -1251,6 +1351,133 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
             }
         }
         _ => return Err(StoreError::InvalidReceipt),
+    }
+    Ok(())
+}
+
+fn validate_project_resource_attachment_response(
+    metadata: &Metadata,
+    response: Option<&Value>,
+) -> Result<(), StoreError> {
+    let expected_operation = match &metadata.expected_receipt {
+        ExpectedReceipt::ProjectPatch {
+            resource_attachment_operation,
+            ..
+        } => resource_attachment_operation.as_ref(),
+        _ => None,
+    };
+    match (expected_operation, response) {
+        (None, None) => return Ok(()),
+        (Some(_), None) | (None, Some(_)) => return Err(StoreError::InvalidReceipt),
+        (Some(operation), Some(response)) => {
+            let response = response.as_object().ok_or(StoreError::InvalidReceipt)?;
+            if response.len() != 2 {
+                return Err(StoreError::InvalidReceipt);
+            }
+            let status = response
+                .get("status")
+                .and_then(Value::as_u64)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let expected_status = match operation {
+                ProjectResourceAttachmentOperationIdentity::Attach { .. } => 201,
+                ProjectResourceAttachmentOperationIdentity::Update { .. }
+                | ProjectResourceAttachmentOperationIdentity::Remove { .. } => 200,
+            };
+            if status != expected_status {
+                return Err(StoreError::InvalidReceipt);
+            }
+            let body = response
+                .get("body")
+                .and_then(Value::as_object)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let body_id = body
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let organization_id = body
+                .get("orgId")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let project_id = body
+                .get("projectId")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let resource_id = body
+                .get("resourceId")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let role = body
+                .get("role")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let sort_order = body
+                .get("sortOrder")
+                .and_then(Value::as_i64)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let is_primary = body.get("isPrimary").and_then(Value::as_bool);
+            for key in ["createdAt", "updatedAt"] {
+                if body.get(key).and_then(Value::as_str).is_none() {
+                    return Err(StoreError::InvalidReceipt);
+                }
+            }
+            if !body
+                .get("note")
+                .is_some_and(|value| value.is_null() || value.is_string())
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            uuid(body_id)?;
+            uuid(organization_id)?;
+            uuid(project_id)?;
+            uuid(resource_id)?;
+            if organization_id != metadata.org
+                || metadata.project_id.as_deref() != Some(project_id)
+                || role.is_empty()
+                || sort_order < 0
+                || is_primary.is_none()
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            match operation {
+                ProjectResourceAttachmentOperationIdentity::Attach {
+                    resource_id: expected_resource_id,
+                } if resource_id != expected_resource_id => {
+                    return Err(StoreError::InvalidReceipt);
+                }
+                ProjectResourceAttachmentOperationIdentity::Update { attachment_id }
+                | ProjectResourceAttachmentOperationIdentity::Remove { attachment_id }
+                    if body_id != attachment_id =>
+                {
+                    return Err(StoreError::InvalidReceipt);
+                }
+                _ => {}
+            }
+            let resource = body
+                .get("resource")
+                .and_then(Value::as_object)
+                .ok_or(StoreError::InvalidReceipt)?;
+            if resource.get("id").and_then(Value::as_str) != Some(resource_id)
+                || resource.get("orgId").and_then(Value::as_str) != Some(metadata.org.as_str())
+                || [
+                    "name",
+                    "kind",
+                    "sourceType",
+                    "locator",
+                    "createdAt",
+                    "updatedAt",
+                ]
+                .iter()
+                .any(|key| resource.get(*key).and_then(Value::as_str).is_none())
+                || !resource
+                    .get("description")
+                    .is_some_and(|value| value.is_null() || value.is_string())
+                || !resource
+                    .get("metadata")
+                    .is_some_and(|value| value.is_null() || value.is_object())
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+        }
     }
     Ok(())
 }

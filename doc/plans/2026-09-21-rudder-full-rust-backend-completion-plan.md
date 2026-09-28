@@ -36,12 +36,80 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-09-23
+updated_at: 2026-09-28
 ---
 
 # Purpose and terminal outcome
 
-## Active checkout (2026-09-23)
+## Active checkpoint (2026-09-28)
+
+The active D1 integration candidate is in the isolated worktree
+`/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss`. It starts from
+checkpoint `2c0d5125eedbb577f73c4be4fabcfcb296602909` (tree
+`394ef4132ad4061373fdb97e25b3d18fc79b85fe`), which contains the two follow-up
+D1 commits `ee74301c9` and `6c6d4829c` and merges the observed current
+`origin/main` `66b500aef009a0554ebf658de4fca6ddfa8466f1`. The candidate is a
+descendant of the existing PR #225 head `9f1afa0e1ce65b89969382191e0c5f268591ea43`;
+it is not based on a reset of the migration checkout. Its current five-path
+source diff fingerprint is
+`3d9aace8bf1eb4db2e48f05185509b92d913c268eb7e7976f75fbbb59eaff95d`.
+
+The current source scan observes 48 route files / 513 route declaration hits,
+54 non-test transaction files / 203 non-test transaction hits (65 / 224 when
+tests are included), 175 migration journal entries / 177 SQL files, 108
+Agent-v1 capabilities plus 11 compatibility capabilities, and 108 canonical
+MCP descriptors. These are structural counts, not a complete semantic
+authority proof; all state-owning identity, analytics, managed MCP, embedded
+PostgreSQL, update/recovery, worker, and legacy-writer rows remain in the
+ledger. The migration manifest is
+`bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7`.
+
+The author-run disposable real-entry probe passed against embedded PostgreSQL
+18.1.0-beta.16 after building the missing local `migration-preflight` and
+`rudder-server-foundation` artifacts. It observed bootstrap and current
+preflight before Node migration inspection, Node API -> private Actix/SQLx,
+auth and organization fencing, CLI/MCP scalar and mixed Project updates,
+same-key CLI/MCP replay, public audit rollback and retry, outbox/restart
+replay, cross-organization rejection, and final persisted receipt/activity
+counts. The exact current author rerun used Project data
+`rust-project-goal-real-entry-89061` and branding data
+`rust-branding-real-entry-93985`; fixture IDs, binary hashes, and log hashes
+are recorded in the v23 author probe artifact. Earlier author data from the
+first v23 attempt is historical and not reused because its logs were not
+present in this environment. This remains author evidence; stage review,
+independent verifier, and final review for this candidate are pending. Default
+Rust path, old-authority retirement outside the fenced Rust-owned records, full
+migration, release readiness, and production verification remain false.
+
+### Delivery convergence (2026-09-28)
+
+Use one integration PR per coherent authority slice. For this D1 slice, update
+the existing PR #225 branch; do not create another D1 PR or merge the separate
+Native Chat draft PR #226 into it. Keep independent implementation lanes only
+when their write sets and authority units are disjoint, and require one named
+integration owner to reconcile Main and converge each lane before starting a
+successor PR.
+
+After a slice passes focused checks, current real-entry observation, stage
+review, exact-candidate verifier, and final review, push that same candidate to
+its PR and use required GitHub CI for the repository-wide and platform matrix.
+Repair failures on the same PR, invalidate only evidence affected by changed
+source/runtime/criteria, and merge through protected-main rules as soon as all
+required checks and review gates pass. Immediately observe the merged Main SHA
+and reconcile it before the next slice. CI is a fast feedback and integration
+gate; it does not replace the real-entry verifier or authorize bypassing
+branch protection. Do not leave a completed slice parked on a private branch
+while opening parallel PRs for dependent work.
+
+At this checkpoint PR #225 is still OPEN on old head `9f1afa0e`, based on
+`cf131c6`; its old run had 7 failures, 6 successes, and 1 skipped check and is
+not evidence for the current candidate. Current Main is four commits ahead and
+includes a `ui/src/pages/Chat.tsx` overlap which the candidate preserves. PR
+#226 remains a separate Draft Native Chat proposal and is not changed by this
+delivery. The new candidate has no current GitHub CI until it is accepted and
+published to the existing #225 branch.
+
+## Historical active checkout (2026-09-23)
 
 This plan is now persisted in the migration checkout
 `/Users/zeeland/.codex/worktrees/7b2a/rudder-oss` on branch
@@ -879,3 +947,58 @@ nevertheless invalidated until their issuing agents rebind them to the new
 commit identity. Hegel then returned committed-candidate `PASS`, Boyle
 reissued stage `accept`, and Jason reissued final `accept` with no findings on
 the committed tuple. The next gate is the protected-branch PR handoff.
+
+## 2026-09-28 Mainline-adapted D1 replay checkpoint
+
+The current checkpoint contains Main `66b500aef009a0554ebf658de4fca6ddfa8466f1`
+and the D1 follow-up commits `ee74301c9` and `6c6d4829c` over the existing
+PR #225 history. The current dirty source scope is limited to the CLI Project
+update and MCP D1 dispatch key handling, their focused tests, and the
+Project-Goal real-entry smoke. The smoke repeats scalar CLI and MCP updates in
+separate processes using the same explicit caller-supplied idempotency key for
+each path; SQL readback confirms one receipt/activity per operation and no
+extra owner-version advance on replay.
+
+The exact local author run passed with data identity
+`rust-project-goal-real-entry-41171`, organization
+`e4571ceb-4cb5-438f-99a0-1294b118d652`, and Project
+`24f21c88-e277-46ca-85ba-62df583c35e2`. It also injected a public Project audit
+failure and observed rollback of Project fields, goal links, resources,
+receipts, activity, outbox, and mutation version; retry with the same key then
+committed once. Restart replay preserved Project state and 4/4
+receipt/activity/outbox counts. The full author observation is
+`doc/plans/artifacts/2026-09-28-rudder-rust-d1-real-entry-probe-v23-author.json`.
+
+The previous v22 reviewer/verifier/final-review receipts are historical and
+invalid for Main `66b500a` and this source diff. The first v23 stage review
+returned `needs more evidence` for the stale packet identity and missing
+same-key scalar CLI/MCP replay evidence; the source-refresh records both
+findings and their resolution. A fresh stage review must inspect the updated
+v23 packet before independent acceptance. This checkpoint is still
+real-entry-connected only: it does not establish an installed default Rust
+path, remove all Node writers, or complete any top-level migration, release,
+or production claim.
+
+## 2026-09-28 Delivery convergence cadence
+
+Use one integration candidate and one existing or newly authorized PR per
+coherent vertical authority slice. Concurrent agents contribute disjoint,
+reviewable file scopes to that candidate; do not create a PR per agent or let
+parallel branches become separate acceptance authorities. Keep unrelated
+migration slices, including Native Chat, on their own PRs.
+
+After a slice is implemented, reconcile it with the latest `origin/main`, run
+focused local tests and one disposable real-entry workflow, and obtain stage
+review plus independent acceptance for the frozen candidate. Then publish the
+accepted candidate to its PR and use exact-head GitHub CI for the broad and
+cross-platform matrix. Do not repeat the entire local baseline when the same
+required checks are running on that exact PR head; record any CI coverage gap
+and run only the missing local check. Merge promptly after the verifier,
+final-review, and required CI gates pass, then refresh `origin/main` before
+starting the next slice.
+
+Preserve historical refs and dirty worktrees unless their ownership and lack of
+active work are established. PR count, branch-ref count, implementation
+completion, release readiness, and production verification are separate
+signals; a merged D1 slice does not complete Phase 0-7 or authorize production
+traffic changes.
