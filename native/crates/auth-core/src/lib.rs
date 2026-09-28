@@ -19,8 +19,11 @@ use zeroize::Zeroizing;
 pub const PROTOCOL_VERSION: u16 = 2;
 /// Stable protocol name used as domain separation in the signing bytes.
 pub const PROTOCOL_SCHEMA: &str = "rudder.actor-envelope.v2";
-/// Maximum size of a textual protocol field in bytes.
+/// Maximum size of an identity or other non-path textual protocol field in bytes.
 pub const MAX_FIELD_BYTES: usize = 256;
+/// Bound the signed HTTP request target independently from identity fields.
+/// Pagination cursors are part of this target and routinely exceed 256 bytes.
+pub const MAX_PATH_BYTES: usize = 8 * 1024;
 /// Maximum lifetime of an envelope, in Unix seconds.
 pub const MAX_ENVELOPE_LIFETIME_SECONDS: u64 = 300;
 /// Number of bytes in a SHA-256 digest.
@@ -757,9 +760,17 @@ fn validate_auth_epoch(auth_epoch: u64) -> Result<(), AuthError> {
 }
 
 fn validate_text(value: &str, field: &'static str) -> Result<(), AuthError> {
+    validate_text_with_limit(value, field, MAX_FIELD_BYTES)
+}
+
+fn validate_text_with_limit(
+    value: &str,
+    field: &'static str,
+    max_bytes: usize,
+) -> Result<(), AuthError> {
     if value.is_empty()
         || value.trim().is_empty()
-        || value.len() > MAX_FIELD_BYTES
+        || value.len() > max_bytes
         || value
             .bytes()
             .any(|byte| byte == 0 || byte.is_ascii_control())
@@ -770,7 +781,7 @@ fn validate_text(value: &str, field: &'static str) -> Result<(), AuthError> {
 }
 
 fn validate_path(path: &str) -> Result<(), AuthError> {
-    validate_text(path, "path")?;
+    validate_text_with_limit(path, "path", MAX_PATH_BYTES)?;
     if !path.starts_with('/') {
         return Err(AuthError::InvalidField { field: "path" });
     }

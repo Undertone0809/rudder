@@ -1,4 +1,7 @@
-use rudder_auth_core::{ActorEnvelope, ActorIdentity, NonceReplayGuard, RequestContext};
+use rudder_auth_core::{
+    ActorEnvelope, ActorIdentity, AuthError, NonceReplayGuard, RequestContext,
+    UnsignedActorEnvelope,
+};
 
 const SECRET: &[u8] = b"deterministic-test-secret";
 const BODY: &[u8] = br#"{"message":"hello"}"#;
@@ -21,6 +24,201 @@ fn context<'a>(actor: &'a ActorIdentity) -> RequestContext<'a> {
         "request-1",
         1_005,
     )
+}
+
+fn member_envelope(path: &str) -> Result<UnsignedActorEnvelope, AuthError> {
+    ActorEnvelope::new(
+        actor(),
+        "87654321-4321-4321-8321-cba987654321",
+        "session-1",
+        7,
+        "rudder-server-foundation",
+        "GET",
+        path,
+        "organization.members.directory.read",
+        b"",
+        "request-members-page-2",
+        "nonce-members-page-2",
+        1_000,
+        1_010,
+    )
+}
+
+fn member_context<'a>(actor: &'a ActorIdentity, path: &'a str) -> RequestContext<'a> {
+    RequestContext::new(
+        actor,
+        "87654321-4321-4321-8321-cba987654321",
+        "session-1",
+        7,
+        "rudder-server-foundation",
+        "GET",
+        path,
+        "organization.members.directory.read",
+        b"",
+        "request-members-page-2",
+        1_005,
+    )
+}
+
+#[test]
+fn member_cursor_url_over_256_bytes_verifies_and_rejects_query_tampering() {
+    // Base64url JSON with the real cursor fields: name, type, and principalId.
+    // The name is a long but ordinary member display name, not padding.
+    let cursor = "eyJuYW1lIjoicGxhdGZvcm0gZW5naW5lZXJpbmcgYW5kIGRldmVsb3BlciBleHBlcmllbmNlIG9wZXJhdGlvbnMgcmVnaW9uYWwgY29vcmRpbmF0aW9uIG1lbWJlciBkaXJlY3RvcnkgcGFnaW5hdGlvbiByZWdyZXNzaW9uIiwidHlwZSI6ImFnZW50IiwicHJpbmNpcGFsSWQiOiIxMjM0NTY3OC0xMjM0LTQyMzQtODIzNC0xMjM0NTY3ODlhYmMifQ";
+    let path = format!(
+        "/api/orgs/87654321-4321-4321-8321-cba987654321/members?type=all&limit=25&cursor={cursor}"
+    );
+    assert!(path.len() > 256);
+    let envelope = member_envelope(&path)
+        .expect("page-two request target")
+        .sign(SECRET)
+        .expect("signed page-two request");
+    let wire = serde_json::to_string(&envelope).expect("serialize");
+    let decoded: ActorEnvelope = serde_json::from_str(&wire).expect("deserialize");
+    let request_actor = actor();
+    let tampered_path = path.replace("limit=25", "limit=26");
+    let mut replay = NonceReplayGuard::new();
+
+    assert_eq!(
+        decoded.verify(
+            SECRET,
+            &member_context(&request_actor, &tampered_path),
+            &mut replay
+        ),
+        Err(AuthError::PathMismatch)
+    );
+    let mut tampered_envelope = decoded.clone();
+    tampered_envelope.path = tampered_path.clone();
+    assert_eq!(
+        tampered_envelope.verify(
+            SECRET,
+            &member_context(&request_actor, &tampered_path),
+            &mut replay,
+        ),
+        Err(AuthError::InvalidSignature)
+    );
+    assert!(replay.is_empty());
+    decoded
+        .verify(SECRET, &member_context(&request_actor, &path), &mut replay)
+        .expect("original cursor remains valid after rejected tampering");
+    assert_eq!(replay.len(), 1);
+}
+
+#[test]
+fn request_target_accepts_exactly_8192_bytes_and_rejects_8193() {
+    let prefix = "/api/orgs/org-1/members?cursor=";
+    let path = format!("{prefix}{}", "a".repeat(8192 - prefix.len()));
+    assert_eq!(path.len(), 8192);
+    let envelope = member_envelope(&path)
+        .expect("8192-byte target")
+        .sign(SECRET)
+        .expect("sign maximum target");
+    let request_actor = actor();
+    let oversized = format!("{path}a");
+    assert_eq!(oversized.len(), 8193);
+    assert_eq!(
+        member_envelope(&oversized).expect_err("oversized constructor target"),
+        AuthError::InvalidField { field: "path" }
+    );
+    let mut replay = NonceReplayGuard::new();
+    assert_eq!(
+        envelope.verify(
+            SECRET,
+            &member_context(&request_actor, &oversized),
+            &mut replay
+        ),
+        Err(AuthError::InvalidField { field: "path" })
+    );
+    let mut malformed = envelope.clone();
+    malformed.path = oversized;
+    assert_eq!(
+        malformed.verify(SECRET, &member_context(&request_actor, &path), &mut replay),
+        Err(AuthError::InvalidField { field: "path" })
+    );
+    assert!(replay.is_empty());
+    envelope
+        .verify(SECRET, &member_context(&request_actor, &path), &mut replay)
+        .expect("8192-byte target verifies");
+}
+
+#[test]
+fn non_path_text_fields_keep_the_256_byte_limit() {
+    let unsigned = member_envelope("/api/orgs/org-1/members")
+        .expect("member envelope")
+        .with_idempotency_key("key-1")
+        .expect("idempotency claim");
+    let baseline = serde_json::to_value(unsigned).expect("serialize claims");
+    for (pointer, field) in [
+        ("/actor/kind", "actorKind"),
+        ("/actor/id", "actorId"),
+        ("/organizationId", "organizationId"),
+        ("/sessionId", "sessionId"),
+        ("/audience", "audience"),
+        ("/method", "method"),
+        ("/action", "action"),
+        ("/requestId", "requestId"),
+        ("/nonce", "nonce"),
+        ("/idempotencyKey", "idempotencyKey"),
+    ] {
+        // Multibyte text ensures this stays a byte limit, not a character limit.
+        let mut claims = baseline.clone();
+        *claims.pointer_mut(pointer).expect("claim field") = "é".repeat(128).into();
+        let at_limit: UnsignedActorEnvelope =
+            serde_json::from_value(claims.clone()).expect("claims");
+        let signed = at_limit.sign(SECRET).expect("256-byte field accepted");
+        let oversized = format!("{}a", "é".repeat(128));
+        *claims.pointer_mut(pointer).expect("claim field") = oversized.clone().into();
+        let over_limit: UnsignedActorEnvelope = serde_json::from_value(claims).expect("claims");
+        assert_eq!(
+            over_limit
+                .sign(SECRET)
+                .expect_err("257-byte field rejected"),
+            AuthError::InvalidField { field },
+            "{field} signing limit"
+        );
+        let mut wire = serde_json::to_value(signed).expect("signed claims");
+        *wire.pointer_mut(pointer).expect("claim field") = oversized.into();
+        let malformed: ActorEnvelope = serde_json::from_value(wire).expect("wire envelope");
+        let mut replay = NonceReplayGuard::new();
+        assert_eq!(
+            malformed.verify(SECRET, &context(&actor()), &mut replay),
+            Err(AuthError::InvalidField { field }),
+            "{field} verification limit"
+        );
+        assert!(replay.is_empty());
+    }
+}
+
+#[test]
+fn long_path_limit_still_rejects_relative_and_control_character_targets() {
+    let valid = format!("/api/orgs/org-1/members?cursor={}", "a".repeat(300));
+    let envelope = member_envelope(&valid)
+        .expect("long target")
+        .sign(SECRET)
+        .expect("sign");
+    let request_actor = actor();
+    let mut invalid_paths = vec![String::new(), valid.trim_start_matches('/').to_owned()];
+    for control in ['\0', '\r', '\n', '\t', '\u{7f}'] {
+        invalid_paths.push(format!("{valid}{control}"));
+    }
+    for path in invalid_paths {
+        assert_eq!(
+            member_envelope(&path).expect_err("invalid target"),
+            AuthError::InvalidField { field: "path" }
+        );
+        let mut replay = NonceReplayGuard::new();
+        assert_eq!(
+            envelope.verify(SECRET, &member_context(&request_actor, &path), &mut replay),
+            Err(AuthError::InvalidField { field: "path" })
+        );
+        let mut malformed = envelope.clone();
+        malformed.path = path;
+        assert_eq!(
+            malformed.verify(SECRET, &member_context(&request_actor, &valid), &mut replay),
+            Err(AuthError::InvalidField { field: "path" })
+        );
+        assert!(replay.is_empty());
+    }
 }
 
 #[test]

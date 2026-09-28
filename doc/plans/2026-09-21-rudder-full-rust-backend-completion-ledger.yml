@@ -22,7 +22,23 @@ source:
   post_freeze_delta: private_planner_Newton_stage_accept_18_tests_clippy_PASS_then_test_CI_only_fixes_native_362_PASS
   runtime_equivalence: foundation_API_CLI_MCP_unchanged_from_frozen_945a0d5d4
   pending_worktree_patch: none_code_fence_fix_committed
-  authority_row_provenance: imported_rows_are_historical_until_rebound_to_current_checkout
+  authority_row_provenance: Pasteur_read_only_source_and_existing_evidence_audit_of_948_tree_identical_to_merged_e2
+pending_candidate:
+  source_sha: 1c387d7c1fdcce841a98d8928e80795d5e7feb95
+  source_fingerprint: 91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed
+  pr: https://github.com/Undertone0809/rudder/pull/233
+  review: integrated_stage_accept_independent_verifier_and_final_review_pending
+  worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
+  evidence: author_host_installed_API_CLI_MCP_PASS_not_independent_acceptance
+  authority_effect: none_until_candidate_gates_pass_current_rows_remain_bound_to_accepted_Main_source
+authority_audit:
+  source_sha: e2e603f07c7d4b7410fea7792b9a4d0667d3777e
+  source_tree: 51c885ef86d2c8cbbb5ebc6d063add4a9169ac41
+  reviewer: Pasteur_01a0e98d_5e4a_7982_8f23_b522444e886e
+  method: source_inspection_existing_tests_and_receipts_no_new_suite_execution
+  capability_semantics: whole_row_booleans_exclude_named_partial_subcapabilities_no_percentage_rollup
+  evidence_base: artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json
+  exclusions: unmerged_default_read_work_and_private_implementations_on_other_branches_are_not_current_Main_authority
 current_checkout:
   worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
   branch: codex/rudder-d1-candidate-20260928
@@ -203,7 +219,9 @@ historical_v16_source:
     - doc/plans/2026-08-28-rust-migration-g0-current-source-delta.yml
     - doc/plans/2026-09-21-rudder-full-rust-backend-completion-current-source-refresh.yml
 status_vocabulary:
-  implemented: Rust code or contract exists
+  not_started: no_current_Rust_implementation_for_this_authority_row
+  partially_implemented: named_subcapability_exists_recorded_separately_whole_row_booleans_remain_false
+  implemented: Rust implementation exists for the declared row scope; protocol artifacts alone do not prove a product runtime
   private_verified: focused private tests or differential evidence pass
   real_entry_connected: installed or user-facing entry invokes Rust
   default_path_verified: clean supported default path uses Rust
@@ -267,8 +285,8 @@ authority_rows:
     cli_mcp: no_Rust_public_bridge_caller_established
     fence: no_write_authority_transfer
     status: implemented
-    capabilities: {implemented: true, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: current_source_presence_only_no_current_independent_public_read_receipt
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: existing_foundation_private_tests_and_948_native_CI_PASS_public_orgs_backup_GETs_still_Node_no_public_read_receipt
     retirement_gate: connect_supported_public_read_paths_preserve_shape_auth_limits_errors_and_artifact_safety_then_default_and_old_reader_negative_checks
     next_action: bind_existing_Actix_read_handlers_to_reviewed_real_entry_after_current_D1_write_dependency
   - id: runtime.http_public_listener
@@ -283,9 +301,11 @@ authority_rows:
     recovery: drain, restart, request cancellation, private bridge fail-closed
     cli_mcp: shared Rust contract service
     fence: listener and route authority epoch
-    status: private_verified
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: historical_private_foundation_only
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_scope: private_Actix_HTTP_foundation_only_not_public_HTTP_WebSocket_authority
+    evidence_status: existing_private_HTTP_foundation_tests_and_948_CI_do_not_prove_public_HTTP_or_WebSocket_cutover
     retirement_gate: Actix sole listener, all route rows accepted, no Node listener
     next_action: phase_1_public_health_and_read_entry
   - id: runtime.sqlx_database_authority
@@ -300,15 +320,17 @@ authority_rows:
     recovery: advisory lock, backup, journal/invariant recovery
     cli_mcp: shared application services
     fence: persisted owner, epoch, token
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: source inspection/private D1 only
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: selected_D1_SQLx_transactions_not_general_database_authority
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: historical migrations and old-version compatibility accepted
     next_action: phase_0_query/writer inventory then phase_6 migration authority
   - id: read.organization_member_directory
     domain: organization_read
     authority_kind: rust_product_runtime
-    current_authority: installed_Desktop_default_SQLx_read_via_Node_auth_and_private_Actix_bridge
+    current_authority: Node_default_member_read_opt_in_SQLx_via_private_Actix
     rust_asset: native/crates/server-foundation/src/lib.rs
     public_entrypoint: Node supported startup -> private authenticated Actix member-directory read route; CLI/MCP consumers remain to be connected
     auth_scope: server-issued actor envelope, organization, session, audience, request binding
@@ -317,14 +339,14 @@ authority_rows:
     recovery: bounded query, cursor replay, restart, missing database, explicit auth failure
     cli_mcp: existing organization member-directory contract requires differential parity before connection
     fence: no business mutation fence; auth/session epoch and private bridge lease required
-    status: default_path_verified
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: true, old_authority_retired: false}
-    default_path_scope: unsigned_local_installed_macOS_arm64_Desktop_only_generic_server_CLI_off_and_explicit_off_shadow_remain_Node
-    evidence_status: independent_Peirce_v19_ceB08_PASS_default_read_pagination_foreign403_invalid_query_Rust_only_receipt_child_replacement_full_restart_and_missing_asset_fail_closed
-    evidence: artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json
-    acceptance_limit: bounded_workflow_PASS_final_handoff_pending_standard_packaged_account_gate_and_final_reviewer
+    status: real_entry_connected
+    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    default_path_scope: no_current_candidate_default_receipt_following_slice_in_progress
+    evidence_status: opt_in_public_Node_API_to_Actix_read_existing_tests_historical_default_receipt_not_bound_to_948
+    historical_evidence: artifacts/2026-09-23-rudder-main-lineage-verifier-ceb08.json
+    acceptance_limit: historical_other_lineage_default_receipt_is_not_current_acceptance
     retirement_gate: exact public/default route and CLI/MCP read parity with Node route, then Node read path retirement
-    next_action: finish_current_handoff_then_provision_generic_server_CLI_native_assets_and_retire_explicit_legacy_read_paths_under_separate_gate
+    next_action: complete_generic_installed_API_CLI_MCP_default_slice_then_independent_exact_candidate_acceptance
   - id: security.actor_envelope_and_private_bridge
     domain: identity_boundary
     authority_kind: rust_product_runtime
@@ -354,9 +376,11 @@ authority_rows:
     recovery: idempotent provisioning, missing-row repair, failed deletion rollback
     cli_mcp: shared application service where organization lifecycle is exposed
     fence: baseline mutation version, owner, epoch, token
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: 0164 backfill, transactional new-organization provisioning, migration guard tests, and organization deletion cascade; lifecycle recovery/default handoff remains unverified
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: D1_fence_state_consumption_not_Rust_org_create_delete_lifecycle
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: all existing and new organizations have a verified baseline row before D1 handoff
     next_action: phase_0 state-row inventory and provisioning contract
   - id: audit.activity_outbox_terminal_effects
@@ -371,9 +395,11 @@ authority_rows:
     recovery: rollback, dedupe, replay, delivery retry, poison-event handling
     cli_mcp: shared service attribution and bounded receipts
     fence: effect writer epoch and idempotency receipt
-    status: not_started
+    status: partially_implemented
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: Node writers are split from some business transactions
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: D1_atomic_receipts_activity_outbox_recovery_not_all_mutators_workers
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: per-slice atomicity and recovery evidence plus no old effect writer
     next_action: phase_0 effect-writer inventory
   - id: domain.organization_branding
@@ -388,11 +414,13 @@ authority_rows:
     recovery: rollback on audit failure, idempotent replay, stale fence rejection
     cli_mcp: required parity inventory before activation
     fence: organization_mutation_state owner/epoch/fence
-    status: real_entry_connected
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: native PostgreSQL 25/25 serial, Actix black-box 10/10, server branding/bridge/outbox checks 51/51, and disposable Node API -> private Actix -> SQLx branding PATCH/replay probe passed with owner/version/fence/receipt/activity/outbox readback; default path, full session authority, and old writer retirement remain unproven
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: scalar_brandColor_only_name_logo_and_other_writers_remain_Node
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: real Actix/API path plus old writer fence/exit and verifier PASS
-    next_action: current stage review and independent verifier PASS, then complete writer/token fence and default-path decision
+    next_action: default_D1_writer_handoff_and_old_writer_negative_proof_after_member_default_slice
   - id: domain.project_goal_link
     domain: organization_goal_project
     authority_kind: rust_product_runtime
@@ -405,11 +433,13 @@ authority_rows:
     recovery: replay/conflict, cancel/detach, stale version/fence, rollback
     cli_mcp: Project-Goal CLI and MCP operations use the same HTTP authority; complete first-party Rust CLI/MCP migration remains open
     fence: organization_mutation_state owner/epoch/fence
-    status: real_entry_connected
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: native PostgreSQL goal-set replacement and project-goal core tests pass; exact v10 clean-commit Node API -> Actix -> SQLx probe after d1f55c5 Main reconciliation plus signed idempotency binding, create-with-goals compatibility, mixed-update rejection, explicit allowlist rejection/success, unlisted fail-closed, direct CLI/MCP, replay/conflict/target-isolation/clear-all/restart checks pass; installed/default startup and old-writer retirement remain unproven
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: D1_project_goal_operations_only_not_all_link_writers
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: real Actix/API path plus all Node link writers fenced/retired
-    next_action: push v16, then actor/session bridge hardening, full writer/token inventory, and old-writer negative test
+    next_action: default_D1_writer_handoff_and_complete_link_writer_fence_exit_inventory
   - id: domain.project_goal_set_replacement
     domain: organization_goal_project
     authority_kind: rust_product_runtime
@@ -424,9 +454,9 @@ authority_rows:
     fence: organization_mutation_state owner/version/epoch/fence_token
     status: real_entry_connected
     capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: exact v10 clean-commit Node API -> private Actix -> SQLx workflow after latest Main reconciliation, explicit allowlist and unlisted fail-closed startup evidence, Node create-with-goals compatibility, mixed-update 409, signed idempotency-key/header comparison, direct CLI and MCP dispatch including direct MCP project creation, replay/conflict/cross-organization/clear-all/restart and final readback passed; installed/default startup, signed session authority, and old-writer retirement remain unproven
+    evidence_status: Hubble_v24_2_PASS_accepted948_equivalent_runtime_Node_API_CLI_MCP_to_Actix_SQLx_replay_conflict_scope_clear_all_restart_audit_rollback_outbox_recovery_Default_and_Node_retirement_not_proven
     retirement_gate: supported API/default path plus all project goal-set writers fenced/retired and verifier PASS
-    next_action: continue writer/token fence and signed actor/session bridge blockers after v16 PR integration
+    next_action: default_D1_writer_ownership_and_old_writer_negative_proof_after_member_default_slice
   - id: runtime.migration_journal_authority
     domain: database_lifecycle
     authority_kind: rust_product_runtime
@@ -439,9 +469,11 @@ authority_rows:
     recovery: pre-mutation backup, crash resume, checksum mismatch stop, rollback boundary
     cli_mcp: Rust preflight and bounded migration command; no Node migration fallback
     fence: migration runner lock and schema/journal epoch
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    evidence_status: current required-mode Node startup invoked Rust preflight before Node migration inspection and returned bootstrap/current with the exact 0.7.24 manifest; Node still applies migrations and remains authority
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: read_only_Rust_preflight_not_migration_apply_or_journal_ownership
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: historical journal, upgrade, recovery and packaged startup matrix passes
     next_action: phase_0 migration/lifecycle inventory
   - id: runtime.first_party_cli_and_mcp_dispatch
@@ -456,9 +488,11 @@ authority_rows:
     recovery: cancellation, reconnect, bounded output, process restart, explicit failure
     cli_mcp: canonical Rust contract, generated schema, human/JSON output and exit status
     fence: tool runtime identity and command server epoch
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: contract artifacts; current Node dispatch and fallback remain active
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: selected_D1_operations_via_Node_clients_not_Rust_CLI_or_MCP_runtime
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: installed CLI/MCP workflow and missing-Rust-binary negative proof
     next_action: phase_0 capability and fallback inventory
   - id: runtime.first_party_node_fallback_guards
@@ -473,9 +507,11 @@ authority_rows:
     recovery: unavailable binary, corrupt payload, restart, timeout, cancellation
     cli_mcp: no first-party Node subprocess and no silent compatibility fallback
     fence: release/runtime epoch
-    status: not_started
+    status: partially_implemented
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: current sources still select bundled Node in non-required paths
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: selected_required_mode_operations_only_other_Node_paths_remain
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: static scan and packaged runtime negative proof show explicit failure
     next_action: phase_0 fallback scan and negative-test contract
   - id: runtime.electron_backend_attachment
@@ -490,9 +526,11 @@ authority_rows:
     recovery: crash, stale process, failed readiness, last-known-good rollback
     cli_mcp: bounded installer/launcher only; no business state in bootstrap
     fence: profile/process/update epoch
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: Electron shell retained; Node lifecycle attachments not retired
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_scope: foundation_binary_staging_only_public_backend_still_Node
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: packaged desktop and recovery matrix proves Rust backend identity
     next_action: phase_0 desktop attachment inventory
   - id: domain.identity_session
@@ -561,9 +599,9 @@ authority_rows:
     recovery: shared memory/pipe cleanup, last-known-good, restart
     cli_mcp: CLI bootstrap identity where applicable
     fence: profile/process ownership epoch
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: helper/private tests only
+    status: not_started
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    evidence_status: generic_Rust_process_helpers_do_not_implement_PostgreSQL_lifecycle_Node_still_owns_init_start_readiness_recovery_stop
     retirement_gate: packaged startup and recovery with no Node lifecycle authority
     next_action: phase_0 desktop/process authority scan
   - id: runtime.update_recovery
@@ -578,9 +616,13 @@ authority_rows:
     recovery: crash, failed probe, rollback, stale release
     cli_mcp: installer and CLI entrypoint only as bounded launcher
     fence: active slot/update epoch
-    status: implemented
-    capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: private helper tests; packaged/default path not proven
+    status: partially_implemented
+    capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: Rust_update_helper_not_all_install_update_rollback_repair_or_Electron_product_state
+    partial_default_scope: local_packaged_macOS_arm64_auto_update_workflow_PASS_not_full_signed_platform_matrix
+    evidence_status: Desktop_update_flow_spawns_Rust_helper_packaged_auto_update_PASS_runtime_content_equivalent_to948_Electron_still_owns_orchestration_state
+    evidence: artifacts/2026-09-29-rudder-d1-local-packaged-verification.json
     retirement_gate: signed packaged update/rollback matrix and Node state owner exit
     next_action: phase_0 release/lifecycle inventory
   - id: workflow.agent_run_chat_side_chat
@@ -595,9 +637,11 @@ authority_rows:
     recovery: stream/cancel/reconnect, temporary/expired/promoted Side Chat, restart
     cli_mcp: shared Rust services and canonical contracts
     fence: run/chat owner and terminal-effect epoch
-    status: not_started
+    status: partially_implemented
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: Node current authority
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
+    partial_scope: run_evidence_read_index_only_execution_Chat_Side_Chat_remain_Node
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     retirement_gate: public workflow and full continuity/recovery verifier PASS
     next_action: phase_0 route/writer/workflow inventory
   - id: runtime.scheduler_workers_adapters
@@ -611,9 +655,11 @@ authority_rows:
     audit_side_effects: automation/run/activity/cost/budget
     recovery: fence, retry, dedupe, drain, restart
     cli_mcp: tool/run attribution and shared command contract
-    status: not_started
+    status: partially_implemented
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: Node current authority
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_scope: private_attempt_process_primitives_only_no_scheduler_worker_entry
+    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
     fence: persisted worker owner/epoch/token
     retirement_gate: no Node scheduler/worker/adapter process in default receipts
     next_action: phase_0 background-writer/process inventory
@@ -635,7 +681,7 @@ authority_rows:
     retirement_gate: static negative scan plus real installed workflow proof
     next_action: phase_7 only
 
-current_integration_checkpoint_2026_09_28:
+historical_integration_checkpoint_2026_09_28:
   candidate:
     worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
     source_sha: 2c0d5125eedbb577f73c4be4fabcfcb296602909

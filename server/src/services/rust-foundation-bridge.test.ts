@@ -1,3 +1,4 @@
+import { resolveRudderNativeTarget } from "@rudderhq/shared";
 import type { Request } from "express";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createRustActorEnvelope,
   createRustFoundationBridge,
   type RustFoundationBridge,
 } from "./rust-foundation-bridge.js";
@@ -66,7 +68,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/branding") || req.url?.includes("/goal-set")) {
+    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set")) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -140,14 +142,34 @@ function createBridge(
   const bridge = createRustFoundationBridge({
     databaseUrl: "postgres://bridge-test",
     mode: options.mode ?? "required",
-    organizationBrandingMode: options.organizationBrandingMode,
-    projectGoalSetMode: options.projectGoalSetMode,
+    organizationBrandingMode: options.organizationBrandingMode ?? "off",
+    projectGoalSetMode: options.projectGoalSetMode ?? "off",
     binaryPath: fixture.binaryPath,
     actorEnvelopeKey: "bridge-test-secret",
     requestTimeoutMs: 25,
   });
   activeBridges.add(bridge);
   return bridge;
+}
+
+type ExpectedEnvelopeInput = Omit<
+  Parameters<typeof createRustActorEnvelope>[0],
+  "secret" | "requestId" | "nonce" | "nowSeconds"
+>;
+
+function expectEnvelopeSignedWith(
+  captured: Awaited<ReturnType<Fixture["readRequest"]>>,
+  expected: ExpectedEnvelopeInput,
+  secret: string,
+) {
+  const envelope = JSON.parse(String(captured.headers["x-rudder-actor-envelope"]));
+  expect(envelope).toEqual(createRustActorEnvelope({
+    ...expected,
+    secret,
+    requestId: envelope.requestId,
+    nonce: envelope.nonce,
+    nowSeconds: envelope.expiresAt - 60,
+  }));
 }
 
 async function waitForProcessExit(pid: number, timeoutMs = 3_000) {
@@ -171,6 +193,39 @@ afterEach(async () => {
 });
 
 describe("rust foundation bridge lifecycle", () => {
+  it("defaults only member directory reads to required and preserves explicit off", () => {
+    const names = [
+      "RUDDER_RUST_MEMBER_DIRECTORY_MODE",
+      "RUDDER_RUST_ORGANIZATION_BRANDING_MODE",
+      "RUDDER_RUST_PROJECT_GOAL_SET_MODE",
+    ] as const;
+    const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    for (const name of names) delete process.env[name];
+
+    try {
+      const defaultBridge = createRustFoundationBridge({ databaseUrl: "postgres://bridge-test" });
+      activeBridges.add(defaultBridge);
+      expect(defaultBridge.mode).toBe("required");
+      expect(defaultBridge.organizationBrandingMode).toBe("off");
+      expect(defaultBridge.projectGoalSetMode).toBe("off");
+      expect(defaultBridge.requiresStartup).toBe(true);
+
+      const disabledBridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "off",
+      });
+      activeBridges.add(disabledBridge);
+      expect(disabledBridge.mode).toBe("off");
+      expect(disabledBridge.requiresStartup).toBe(false);
+    } finally {
+      for (const name of names) {
+        const value = previous[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
   it("passes only the foundation startup environment to the child", async () => {
     const previousEnv = {
       AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
@@ -260,6 +315,16 @@ describe("rust foundation bridge lifecycle", () => {
     await mkdir(debugDirectory, { recursive: true });
     await copyFile(fixture.binaryPath, defaultDebugBinary);
     await chmod(defaultDebugBinary, 0o755);
+    const target = resolveRudderNativeTarget();
+    expect(target).not.toBeNull();
+    const installedDirectory = join(root, "server", "resources", "native", target!);
+    await mkdir(installedDirectory, { recursive: true });
+    const installedBinaryPath = join(
+      installedDirectory,
+      process.platform === "win32" ? "rudder-server-foundation.exe" : "rudder-server-foundation",
+    );
+    await copyFile(fixture.binaryPath, installedBinaryPath);
+    await chmod(installedBinaryPath, 0o755);
 
     const originalFileURLToPath = vi.mocked(fileURLToPath).getMockImplementation()!;
     const bridgeModuleUrl = new URL("./rust-foundation-bridge.ts", import.meta.url).href;
@@ -272,6 +337,7 @@ describe("rust foundation bridge lifecycle", () => {
 
     try {
       delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
+      await rm(installedBinaryPath);
       const fallbackBridge = createRustFoundationBridge({
         databaseUrl: "postgres://bridge-test",
         mode: "required",
@@ -284,6 +350,8 @@ describe("rust foundation bridge lifecycle", () => {
       await fallbackBridge.close();
       await waitForProcessExit(fallbackPid);
 
+      await copyFile(fixture.binaryPath, installedBinaryPath);
+      await chmod(installedBinaryPath, 0o755);
       vi.mocked(fileURLToPath).mockClear();
       process.env.RUDDER_SERVER_FOUNDATION_PATH = join(root, "rudder-server-foundation-missing");
       const bridge = createRustFoundationBridge({
@@ -300,6 +368,238 @@ describe("rust foundation bridge lifecycle", () => {
       vi.mocked(fileURLToPath).mockImplementation(originalFileURLToPath);
       if (previousPath === undefined) delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
       else process.env.RUDDER_SERVER_FOUNDATION_PATH = previousPath;
+    }
+  });
+
+  it("uses only the packaged asset in compiled server layouts and fails closed without it", async () => {
+    const fixture = await createFixture("ready");
+    const target = resolveRudderNativeTarget();
+    expect(target).not.toBeNull();
+    const serverPackageRoot = join(dirname(fixture.binaryPath), "bundle", "server");
+    const serverTsconfig = JSON.parse(await readFile(new URL("../../tsconfig.json", import.meta.url), "utf8")) as {
+      compilerOptions: { outDir: string };
+    };
+    const bundledModulePath = join(
+      serverPackageRoot,
+      serverTsconfig.compilerOptions.outDir,
+      "services",
+      "rust-foundation-bridge.js",
+    );
+    const binaryName = process.platform === "win32"
+      ? "rudder-server-foundation.exe"
+      : "rudder-server-foundation";
+    const installedBinaryPath = join(serverPackageRoot, "resources", "native", target!, binaryName);
+    await mkdir(dirname(installedBinaryPath), { recursive: true });
+    await copyFile(fixture.binaryPath, installedBinaryPath);
+    await chmod(installedBinaryPath, 0o755);
+    const ancestorDebugBinaryPath = join(
+      dirname(serverPackageRoot),
+      "native",
+      "target",
+      "debug",
+      binaryName,
+    );
+    const ancestorFixture = await createFixture("ready");
+    await mkdir(dirname(ancestorDebugBinaryPath), { recursive: true });
+    await copyFile(ancestorFixture.binaryPath, ancestorDebugBinaryPath);
+    await chmod(ancestorDebugBinaryPath, 0o755);
+
+    const originalFileURLToPath = vi.mocked(fileURLToPath).getMockImplementation()!;
+    const bridgeModuleUrl = new URL("./rust-foundation-bridge.ts", import.meta.url).href;
+    const previousPath = process.env.RUDDER_SERVER_FOUNDATION_PATH;
+
+    try {
+      delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
+      vi.mocked(fileURLToPath).mockImplementation((path, options) => (
+        path.toString() === bridgeModuleUrl
+          ? bundledModulePath
+          : originalFileURLToPath(path, options)
+      ));
+
+      const bridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "required",
+        actorEnvelopeKey: "bridge-test-secret",
+      });
+      activeBridges.add(bridge);
+      await expect(bridge.start()).resolves.toBeUndefined();
+      const pid = await fixture.readPid();
+      await expect(readFile(ancestorFixture.pidPath, "utf8")).rejects.toThrow();
+      await bridge.close();
+      await waitForProcessExit(pid);
+      expect(fileURLToPath).toHaveBeenCalledWith(bridgeModuleUrl);
+
+      await rm(installedBinaryPath);
+      const missingAssetBridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "required",
+        actorEnvelopeKey: "bridge-test-secret",
+      });
+      activeBridges.add(missingAssetBridge);
+      await expect(missingAssetBridge.start()).rejects.toMatchObject({ code: "binary_unavailable" });
+      await expect(readFile(ancestorFixture.pidPath, "utf8")).rejects.toThrow();
+    } finally {
+      vi.mocked(fileURLToPath).mockImplementation(originalFileURLToPath);
+      if (previousPath === undefined) delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
+      else process.env.RUDDER_SERVER_FOUNDATION_PATH = previousPath;
+    }
+  });
+
+  it("captures one generated signer for child startup and every signed request", async () => {
+    const previousKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+    delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+
+    try {
+      const fixture = await createFixture("ready");
+      const bridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "required",
+        organizationBrandingMode: "required",
+        projectGoalSetMode: "required",
+        binaryPath: fixture.binaryPath,
+        requestTimeoutMs: 25,
+      });
+      activeBridges.add(bridge);
+      process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = "changed-after-bridge-creation";
+
+      await bridge.start();
+      const signer = (await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      expect(signer).toMatch(/^[a-f0-9]{64}$/);
+      expect(signer).not.toBe(process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY);
+
+      const readActor = {
+        type: "agent" as const,
+        source: "agent_key" as const,
+        agentId: "agent-1",
+        orgId: "org-1",
+        sessionId: "member-directory-session",
+        authEpoch: 3,
+      };
+      const memberPath = "/api/orgs/org-1/members/directory?limit=25";
+      const readResponse = await bridge.memberDirectory({
+        actor: readActor,
+        originalUrl: memberPath,
+        header: () => undefined,
+      } as unknown as Request, "org-1");
+      expect(readResponse.status).toBe(200);
+      expectEnvelopeSignedWith(await fixture.readRequest(), {
+        actor: readActor,
+        organizationId: "org-1",
+        method: "GET",
+        path: memberPath,
+        action: "organization.members.directory.read",
+        body: Buffer.alloc(0),
+      }, signer);
+
+      const brandingBody = Buffer.from(JSON.stringify({ name: "Rudder" }), "utf8");
+      const brandingPath = "/api/orgs/org-1/branding";
+      const brandingActor = {
+        type: "board" as const,
+        source: "local_implicit" as const,
+        userId: "user-1",
+        sessionId: "branding-session",
+        authEpoch: 4,
+      };
+      const brandingRequest = {
+        actor: brandingActor,
+        originalUrl: brandingPath,
+        header(name: string) {
+          return name.toLowerCase() === "x-rudder-idempotency-key"
+            ? "branding-client-key"
+            : "application/json";
+        },
+      } as unknown as Request;
+      await bridge.organizationBranding(brandingRequest, "org-1", brandingBody);
+      expectEnvelopeSignedWith(await fixture.readRequest(), {
+        actor: brandingActor,
+        organizationId: "org-1",
+        method: "PATCH",
+        path: brandingPath,
+        action: "organization.branding.update",
+        body: brandingBody,
+        idempotencyKey: "branding-client-key",
+      }, signer);
+
+      const goalSetBody = Buffer.from(JSON.stringify({ goalIds: ["goal-1"] }), "utf8");
+      const goalSetPath = "/api/orgs/org-1/projects/project-1/goal-set";
+      const goalSetActor = {
+        type: "agent" as const,
+        source: "agent_key" as const,
+        agentId: "agent-1",
+        orgId: "org-1",
+        sessionId: "goal-set-session",
+        authEpoch: 5,
+      };
+      const goalSetRequest = {
+        actor: goalSetActor,
+        originalUrl: "/api/projects/project-1",
+        header(name: string) {
+          return name.toLowerCase() === "x-rudder-idempotency-key"
+            ? "goal-set-client-key"
+            : "application/json";
+        },
+      } as unknown as Request;
+      await bridge.projectGoalSet(
+        goalSetRequest,
+        "org-1",
+        "project-1",
+        goalSetBody,
+        goalSetPath,
+      );
+      expectEnvelopeSignedWith(await fixture.readRequest(), {
+        actor: goalSetActor,
+        organizationId: "org-1",
+        method: "PATCH",
+        path: goalSetPath,
+        action: "project.goal_set.replace",
+        body: goalSetBody,
+        idempotencyKey: "goal-set-client-key",
+      }, signer);
+
+      process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = "changed-before-bridge-restart";
+      await bridge.close();
+      await bridge.start();
+      expect((await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY).toBe(signer);
+    } finally {
+      if (previousKey === undefined) delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      else process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = previousKey;
+    }
+  });
+
+  it("rotates the generated signer for each bridge instance", async () => {
+    const previousKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+    delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+
+    try {
+      const fixture = await createFixture("ready");
+      const firstBridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "required",
+        binaryPath: fixture.binaryPath,
+      });
+      activeBridges.add(firstBridge);
+      process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = "late-first-instance-key";
+      await firstBridge.start();
+      const firstSigner = (await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      expect(firstSigner).not.toBe("late-first-instance-key");
+      await firstBridge.close();
+
+      delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      const secondBridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "required",
+        binaryPath: fixture.binaryPath,
+      });
+      activeBridges.add(secondBridge);
+      process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = "late-second-instance-key";
+      await secondBridge.start();
+      const secondSigner = (await fixture.readEnv()).RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      expect(secondSigner).toMatch(/^[a-f0-9]{64}$/);
+      expect(secondSigner).not.toBe(firstSigner);
+      expect(secondSigner).not.toBe("late-second-instance-key");
+    } finally {
+      if (previousKey === undefined) delete process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY;
+      else process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = previousKey;
     }
   });
 

@@ -33,6 +33,9 @@ const opts = {
   bindHost: "127.0.0.1",
   authReady: false,
   companyDeletionEnabled: false,
+  rustFoundationMode: "off",
+  rustOrganizationBrandingMode: "off",
+  rustProjectGoalSetMode: "off",
 } as const;
 
 describe("createRudderApp lifecycle", () => {
@@ -40,11 +43,17 @@ describe("createRudderApp lifecycle", () => {
     vi.clearAllMocks();
   });
 
-  it("propagates HTTP app creation failures", async () => {
-    const startupError = new Error("HTTP app creation failed");
+  it("propagates required runtime startup failures before returning an app", async () => {
+    const startupError = new Error("Rust foundation startup failed");
     mocks.createHttpApp.mockRejectedValueOnce(startupError);
 
-    await expect(createRudderApp({} as never, opts as never)).rejects.toBe(startupError);
+    await expect(createRudderApp({} as never, {
+      ...opts,
+      rustFoundationMode: "required",
+    } as never)).rejects.toBe(startupError);
+    expect(mocks.createHttpApp).toHaveBeenCalledWith({}, expect.objectContaining({
+      rustFoundationMode: "required",
+    }));
   });
 
   it("shares one ordered cleanup across concurrent and repeated close calls", async () => {

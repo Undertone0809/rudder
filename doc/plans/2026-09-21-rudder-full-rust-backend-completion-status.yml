@@ -2,6 +2,33 @@ schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-29
 status: in_progress
+current_candidate:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
+  branch: codex/member-directory-default-20260929
+  source_sha: 1c387d7c1fdcce841a98d8928e80795d5e7feb95
+  source_tree: f451fca2351a7121a85799905255d21c4909f213
+  source_fingerprint: 91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed
+  equivalence: cb9_import_order_and1c387_CI_linker_only_runtime_binary_and_harness_logic_unchanged_since9d
+  origin_main: f6eab53c3cee4385e36da60098a83cbd8734e32f
+  state: source_frozen_author_host_workflow_PASS_independent_integrated_gates_pending
+  packet: doc/plans/2026-09-29-rudder-member-default-delivery-packet-v25.json
+  author_log: /tmp/rudder-member-installed.g3wrD0/smoke-authenticated.log
+  author_log_sha256: e81f4ec6b8d189c93c9b66347f863af00ea594dd50b3fc931899c46fe4afea97
+  author_scope: relocated_macOS_arm64_host_only_npm_install_not_six_target_release_proof
+  checks: runtime38_server41_CLI_MCP85_harness3_packaging9_auth17_actionlint_CI_contract4_release_contract24_PASS
+  regressions_fixed: npm_exec_mode_normalization_and_342_byte_cursor_URL_rejected_by_actor_envelope
+  preserved_contracts: local_trusted_implicit_board_authenticated_agent_keys_MCP_short_refs_API_CLI_full_UUIDs
+  reviewer: Newton_integrated_stage_accept_at5f_plus_cb9_import_and1c387_linker_delta_accept
+  full_workspace_typecheck: PASS_19_packages
+  lint: candidate_three_paths_fixed_scoped_PASS_six_remaining_findings_identical_to_Main
+  verifier: pending_no_author_result_promoted
+  final_reviewer: pending
+  pr: https://github.com/Undertone0809/rudder/pull/233
+  published_head: 5f7a6b1ef07f79e8eef6f41378082591bdf83371
+  publication: draft_for_early_CI_not_accepted
+  ci: {matrix: 36482464814, D1_regression: 36482464800, status: WindowsARM64_linker_failed_fixed1c387_fresh_CI_pending_D1_PASS}
+  next_executable: reconcile_integrated_Newton_stage_review_and_CI_then_freeze_six_target_package_for_independent_installed_verifier
+  terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 historical_d1_fence_reconciliation:
   worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
   branch: codex/rudder-d1-candidate-20260928
@@ -33,7 +60,7 @@ historical_d1_fence_checkout:
     direct_preserved_target_probation: PASS_exit0_4451ms_existing_fixture
     limitation: diagnostic_artifact_not_final_e739_package_unexplained_helper_failure_still_blocks_update_acceptance
   packaging_stage_review: Arendt_accept_ed1fed27700df2ea84fa2855fc55f39538a7ab51_no_final_handoff_claim
-current_candidate:
+delivered_d1_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
   branch: codex/rudder-d1-candidate-20260928
   tested_commit: c8c8e5b2a049c8b7cc02998f7e719882a64c7035
@@ -61,19 +88,40 @@ current_candidate:
   backup_E2E: {verdict: PASS_2, mode: Rust_required, log: /private/tmp/rudder-backup-e2e.1nXiS4/playwright.log, sha256: 05038e2b880fcce72e7ec5eb906bce710cbe5c1af7d90eaec2e27f14a2b09953}
   backup_test_correction: actual_backup_preview_is_pre_code_heading_assumption_superseded_by_real_trace_and_E2E
   native_workspace_tests: {suites: 46, passed: 362, failed: 0, ignored: 2, ignored_reason: optional_history_DB_URL_unset, log_sha256: e3d81dd27d5254d8bb27b11381d37daaf8a83d9f1a91e696cbe7fbe1a53eec8a}
-  origin_main: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+  origin_main: f6eab53c3cee4385e36da60098a83cbd8734e32f
   scope_correction: updater_files_equal_Main_receipt_experiment_removed_foundation_staging_retained
   updater_checks: {focused_tests: PASS_62, desktop_typecheck: PASS, architecture_ratchet: PASS_no_regressions}
   ci: PASS_948_all_four_native_packaged_Mac_Windows_Ubuntu_full_baseline_and_qualification_summary
   previous_ci: final443_all_four_native_Desktop_packaged_Mac_Windows_verify_PASS_Ubuntu_failed_fixed_fence_fixture
-  active_workers:
-    Gibbs: {agent: 01a0e984-d4c4-7c10-a6c4-76b132ab0799, scope: following_member_default_runtime_config_bridge_tests}
-    Maxwell: {agent: 01a0e984-d600-78a0-945c-696d40476c17, scope: following_member_default_generic_package_assets_and_CI}
-    Sagan: {agent: 01a0e984-d6bc-7b31-be56-433668d1a1f6, scope: following_member_default_API_CLI_MCP_installed_workflow_tests}
+  workstream_workers:
+    Gibbs: {agent: 01a0e984-d4c4-7c10-a6c4-76b132ab0799, scope: following_member_default_runtime_config_bridge_tests, state: completed_closed_892be5367}
+    Maxwell: {agent: 01a0e984-d600-78a0-945c-696d40476c17, scope: following_member_default_server_package_staging_and_tests}
+    Sagan: {agent: 01a0e984-d6bc-7b31-be56-433668d1a1f6, scope: following_member_default_API_CLI_MCP_installed_workflow_tests, state: completed_closed_bcfac8994}
+    Noether: {agent: 01a0e9ab-72e3-7021-baab-782370b8aafc, scope: following_member_default_six_target_CI_and_release_workflow_only}
   following_slice_checkout: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   following_slice_branch: codex/member-directory-default-20260929
   following_slice_base: 948929b25251183bd552fc8e893a121fa878d860
+  following_runtime_checkpoint: 892be5367e589716659397b0d56d98f4adedb102
+  following_runtime_review: Newton_accept_runtime_config_subscope_only_38_author_tests_typecheck_imports_PASS_installed_acceptance_pending
+  following_runtime_worker: Gibbs_completed_and_closed_six_owned_files_committed_without_other_worker_edits
+  following_workflow_checkpoint: bcfac8994b47f4c2f800789ebeea46180ac64b81
+  following_host_build: host_native_stage_and_15_package_server_CLI_dependency_build_and_fresh_UI_build_PASS
+  following_host_fixture: /tmp/rudder-member-installed.g3wrD0/install
+  following_host_fixture_scope: host_only_development_tarballs_not_qualified_six_target_candidate
+  following_host_install: npm_install_15_local_tarballs_PASS_352_dependencies
+  following_host_smoke: FAIL_before_DB_start_packaged_native_binary_mode644_EACCES_source_mode755
+  following_host_smoke_log: /tmp/rudder-member-installed.g3wrD0/smoke.log
+  following_host_repair: Maxwell_install_hook_restore_execution_mode_and_real_pack_install_regression_no_manual_fixture_chmod
+  following_package_checkpoint: 89f70ee60_host_stage_and_real_pack_install_mode_repair_9_author_tests_PASS
+  following_ci_checkpoint: c3b1c85ab_six_target_artifacts_actionlint_ci_contract4_release_contract24_PASS_builds_pending_CI
+  following_installed_mode_fix: PASS_fresh_npm_install_restores755_352_dependencies
+  following_installed_pagination: first_page_PASS_second_page401_actor_envelope_invalid_due_to_auth_core_256_byte_path_limit_parent_fix8192_path_bound_in_progress_identity_fields_remain256
+  following_pagination_regression_worker: Gibbs_01a0e984_d4c4_7c10_a6c4_76b132ab0799_tests_protocol_rs_only
+  following_installed_current_log: /tmp/rudder-member-installed.g3wrD0/smoke-pagination.log
   following_slice_state: implementation_started_during_frozen_D1_CI_no_acceptance_or_authority_claim
+  following_slice_focused_checks: author_runtime_four_suites_and_server_typecheck_PASS_workflow_harness3_server41_CLI_MCP85_PASS_installed_DB_smoke_not_yet_run
+  authority_audit: Pasteur_22_rows_at948_equivalent_merged_e2_source_and_existing_evidence_only_parent_ledger_reconciliation_in_review
+  authority_audit_corrections: historical_member_default_not_current_embedded_PG_not_implemented_D1_broad_rows_partial_update_helper_real_entry_connected_no_Node_retirement
   following_slice_design_review: Newton_needs_more_evidence_boundaries_assigned_to_workers_before_implementation_acceptance
   following_slice_contract: member_read_default_only_writer_defaults_unchanged_explicit_off_legacy_reads_retained_not_retired
   following_slice_signer_contract: one_captured_key_per_bridge_instance_for_child_and_all_signed_requests_restart_reuses_new_instance_rotates_no_environment_drift
@@ -97,6 +145,12 @@ current_candidate:
   next_executable: integrate_member_default_workers_then_reconcile_onto_merged_Main_freeze_and_independently_verify_installed_API_CLI_MCP
   ci_tooling_reconciled_head: 27c46377a1a175f867eb93fbc7cb5f91ba2106c2
   ci_tooling_reconciliation: merged_e2_Main_without_rewriting_history_tooling_blobs_unchanged_pushed_for_fresh_CI
+  delivery_metadata_merged: {pr: 232, sha: a2a077b778cc53ae7907bd366be7cefbaaeb20b2, reviewer: Newton_accept_298dea6d1, ci: PASS_36476135828}
+  ci_tooling_current_run: 36475761775
+  ci_tooling_windows_failure: job109109034202_direct_Vitest_CLI_start_test_temp_install_lock_rmdir_EPERM_unchanged_test_runtime_and_workflow_runner_not_used
+  ci_tooling_windows_next: completed_PASS_retry_and_summary
+  ci_tooling_windows_retry: failed_job109109034202_rerun_requested_after_matrix_complete_other_jobs_PASS_same_source27c46377a
+  ci_tooling_merged: {pr: 231, sha: f6eab53c3cee4385e36da60098a83cbd8734e32f, timestamp: '2026-09-28T20:44:13Z', ci: PASS_36475761775_attempt2, main_drift: docs_only_since_e2_runtime_unchanged}
   metadata_checkpoint: 7a83351ec_published_in_2e8_ancestry_after_test_fix_required_new_CI_run
   next_slice_preparation: generic_startup_signer_absent_package_foundation_payload_missing_resolver_lacks_installed_path_and_Windows_exe
   next_slice_ownership: runtime_config_bridge_bootstrap__packaging_server_assets_supported_platforms__workflow_default_API_CLI_MCP_outage_and_no_repo_binaries

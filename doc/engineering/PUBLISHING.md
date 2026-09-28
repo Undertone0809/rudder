@@ -29,6 +29,48 @@ The CLI package, `@rudderhq/cli`, imports code from workspace packages such as:
 
 Those workspace references are valid in development but not in a publishable npm package. The release flow builds a publishable CLI bundle from the committed semver metadata, and only rewrites versions temporarily for canary prereleases.
 
+## Server Foundation Payload
+
+The published `@rudderhq/server` package includes its generic Rust foundation
+payloads under `resources/native/<target>/`. This six-target npm set is
+independent of the smaller Desktop packaging matrix:
+
+- `aarch64-apple-darwin/rudder-server-foundation`
+- `x86_64-apple-darwin/rudder-server-foundation`
+- `aarch64-unknown-linux-gnu/rudder-server-foundation`
+- `x86_64-unknown-linux-gnu/rudder-server-foundation`
+- `aarch64-pc-windows-msvc/rudder-server-foundation.exe`
+- `x86_64-pc-windows-msvc/rudder-server-foundation.exe`
+
+For local development, the server package's `dev` and `build` lifecycle hooks
+run Cargo before staging the current host executable. Cargo's incremental
+freshness checks apply, and `CARGO_TARGET_DIR` is honored for shared caches.
+Installing an already-built npm package does not invoke Cargo. Because npm
+tarball extraction can normalize executable files to mode `0644`, the package's
+postinstall restores execute bits on the current Unix host binary before
+running the existing PostgreSQL compatibility hook. It does not compile or
+download Rust assets; a missing foundation payload remains a startup error.
+
+Release packaging supplies a complete, immutable artifact root with this
+layout:
+
+```text
+<artifact-root>/<target>/rudder-server-foundation[.exe]
+```
+
+Stage and validate all six assets without compiling Rust:
+
+```sh
+RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR=/path/to/artifacts \
+  pnpm --filter @rudderhq/server run stage:native
+```
+
+The `prepack` hook requires the same artifact directory, validates every file's
+executable format and target architecture, stages it under `server/resources`,
+and verifies all six packaged files have executable mode on Unix before
+preparing the UI assets. `resources` is explicitly included by the server
+package's npm `files` whitelist, including the generated native payloads.
+
 ## `build-npm.sh`
 
 Run:
