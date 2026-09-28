@@ -291,7 +291,7 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
   });
 
   function bridge(
-    mode: "shadow" | "required",
+    mode: "off" | "shadow" | "required",
     response: unknown,
     organizationBrandingMode: "off" | "shadow" | "required" = "off",
   ): RustFoundationBridge {
@@ -375,6 +375,39 @@ describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
       fallbackReason: "required_bridge_request_failed",
       oldAuthorityInvoked: false,
       status: null,
+    })]);
+  });
+
+  it("retains explicit off as the scoped Node compatibility path", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    mockOrganizationMemberService.list.mockResolvedValueOnce(page);
+    const rustBridge = bridge("off", null);
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory?type=agent&limit=2");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(page);
+    expect(mockOrganizationMemberService.list).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      query: null,
+      type: "agent",
+      limit: 2,
+      cursor: null,
+      fullIds: false,
+    });
+    expect(rustBridge.memberDirectory).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "off",
+      responseAuthority: "node",
+      fallbackReason: "mode_off",
+      oldAuthorityInvoked: true,
+      status: 200,
     })]);
   });
 

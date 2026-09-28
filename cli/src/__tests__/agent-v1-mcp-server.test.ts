@@ -1779,11 +1779,12 @@ describe("agent-v1 MCP server", () => {
         cursor: "next-page",
       });
       expect(init?.method).toBe("GET");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer runtime-key");
       return new Response(JSON.stringify({
         total: 1,
         items: [{ name: "Ada", type: "human", role: "operator", ref: "usr_14ff96a7" }],
-        nextCursor: null,
-        hasMore: false,
+        nextCursor: "next-page-2",
+        hasMore: true,
       }), { status: 200, headers: { "content-type": "application/json" } });
     });
 
@@ -1808,9 +1809,42 @@ describe("agent-v1 MCP server", () => {
       structuredContent: {
         total: 1,
         items: [{ name: "Ada", type: "human", role: "operator", ref: "usr_14ff96a7" }],
+        nextCursor: "next-page-2",
+        hasMore: true,
       },
     });
     expect(JSON.stringify(response)).not.toContain("14ff96a7-2518-456a-8aae-480360f0d9aa");
+  });
+
+  it("returns the required-directory outage as a tool error without trying a CLI fallback", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      error: "Rust member directory is unavailable",
+      code: "rust_foundation_member_directory_unavailable",
+    }), { status: 503, headers: { "content-type": "application/json" } }));
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "organization-members-outage",
+      method: "tools/call",
+      params: {
+        name: "rudder_organization_members_list",
+        arguments: { type: "agent", limit: 2 },
+      },
+    }, buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_AGENT_ID: "11111111-1111-4111-8111-111111111111",
+    }));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        code: "rust_foundation_member_directory_unavailable",
+        details: { status: 503 },
+      },
+    });
   });
 
   it("keeps organization brand color direct and CLI fallback routes aligned", async () => {
