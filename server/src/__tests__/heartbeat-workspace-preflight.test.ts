@@ -22,10 +22,11 @@ import {
   projectResourceAttachments,
   projectWorkspaces,
   projects,
+  runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey, shortRefFor } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -45,6 +46,8 @@ const mockChildProcess = vi.hoisted(() => ({
 }));
 
 const mockRuntimeAdapter = vi.hoisted(() => ({
+  activeExecutions: 0,
+  executedRunIds: new Set<string>(),
   pendingResolve: null as ((value: Record<string, unknown>) => void) | null,
   pendingPromise: null as Promise<Record<string, unknown>> | null,
   execute: vi.fn(async function () {
@@ -68,6 +71,7 @@ const mockRuntimeAdapter = vi.hoisted(() => ({
     mockRuntimeAdapter.pendingPromise = null;
   },
   reset() {
+    mockRuntimeAdapter.executedRunIds.clear();
     mockRuntimeAdapter.pendingResolve = null;
     mockRuntimeAdapter.pendingPromise = null;
     mockRuntimeAdapter.execute.mockImplementation(async () => {
@@ -115,6 +119,31 @@ vi.mock("node:child_process", async (importOriginal) => {
 
 vi.mock("../agent-runtimes/index.ts", async () => {
   const actual = await vi.importActual("../agent-runtimes/index.ts");
+  const executeMockRuntimeAdapter = async (context: unknown) => {
+    const execute = mockRuntimeAdapter.execute as unknown as (
+      input: unknown,
+    ) => Promise<Record<string, unknown>>;
+    mockRuntimeAdapter.activeExecutions += 1;
+    mockRuntimeAdapter.executedRunIds.add((context as { runId: string }).runId);
+    let result: Record<string, unknown>;
+    try {
+      result = await execute(context);
+    } finally {
+      mockRuntimeAdapter.activeExecutions -= 1;
+    }
+    if (
+      result.nativeWriterQuiescence
+      || result.timedOut === true
+      || typeof result.exitCode !== "number"
+      || result.networkSuspension
+    ) {
+      return result;
+    }
+    return {
+      ...result,
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    };
+  };
   const parseTestToolResult = (line: string, ts: string) => {
     const isPatchDrift = line.startsWith("TEST_PATCH_DRIFT:");
     if (!isPatchDrift && !line.startsWith("TEST_TOOL_ERROR:")) return [];
@@ -144,13 +173,13 @@ vi.mock("../agent-runtimes/index.ts", async () => {
       type: "codex_local",
       supportsLocalAgentJwt: false,
       parseStdoutLine: parseTestToolResult,
-      execute: mockRuntimeAdapter.execute,
+      execute: executeMockRuntimeAdapter,
     })),
     findServerAdapter: vi.fn(() => ({
       type: "codex_local",
       supportsLocalAgentJwt: false,
       parseStdoutLine: parseTestToolResult,
-      execute: mockRuntimeAdapter.execute,
+      execute: executeMockRuntimeAdapter,
     })),
     runningProcesses: new Map(),
   };
@@ -315,6 +344,26 @@ describe("heartbeat managed workspace preflight", () => {
   });
 
   afterEach(async () => {
+    mockRuntimeAdapter.resolve({
+      summary: "fixture drained",
+      exitCode: 0,
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    });
+    await waitForCondition(async () => {
+      if (mockRuntimeAdapter.activeExecutions !== 0) return false;
+      const runs = await db.select().from(heartbeatRuns);
+      return runs.filter((run) => mockRuntimeAdapter.executedRunIds.has(run.id))
+        .every((run) => run.status !== "running"
+        && run.executionOwnerToken === null && !run.terminalEffectsPending);
+    });
+    // Throw/timeout cases intentionally leave production writer proof unknown.
+    // Only after all synthetic adapters and orchestration settle may this
+    // disposable fixture close its remaining spans for database teardown.
+    await db.update(runRuntimeSpans).set({
+      state: "unresolved",
+      closedAt: new Date(),
+      writerLeaseReleasedAt: new Date(),
+    }).where(isNull(runRuntimeSpans.writerLeaseReleasedAt));
     await db.delete(agentTaskSessions);
     await db.delete(costEvents);
     await db.delete(costMonthlySpendRollups);
@@ -1612,35 +1661,29 @@ describe("heartbeat managed workspace preflight", () => {
       return current?.status === "running" && mockRuntimeAdapter.execute.mock.calls.length > 0;
     });
 
-    const staleAt = new Date();
-    const sleepRecoveredAt = new Date(staleAt.getTime() + 31 * 60 * 1000);
-    await db.update(heartbeatRuns).set({ updatedAt: staleAt }).where(eq(heartbeatRuns.id, run!.id));
+    const timedOutAt = new Date();
+    const staleAt = new Date(timedOutAt.getTime() - 31 * 60 * 1000);
+    await db.update(heartbeatRuns).set({
+      createdAt: staleAt,
+      startedAt: staleAt,
+      updatedAt: staleAt,
+    }).where(eq(heartbeatRuns.id, run!.id));
     await db
       .update(heartbeatRunEvents)
       .set({ createdAt: staleAt })
       .where(eq(heartbeatRunEvents.runId, run!.id));
 
-    const recovered = await watchdog.reapInactiveRuns({
-      maxInactivityMs: 30 * 60 * 1000,
-      now: sleepRecoveredAt,
-    });
-    expect(recovered).toEqual({ timedOut: 0, runIds: [] });
-
-    // Sleep recovery renews the run's activity watermark. Re-seed a stale
-    // watermark after that recovery so this assertion covers the real timeout
-    // path instead of treating the recovery grace as a terminal timeout.
-    await db.update(heartbeatRuns).set({ updatedAt: sleepRecoveredAt }).where(eq(heartbeatRuns.id, run!.id));
-    await db
-      .update(heartbeatRunEvents)
-      .set({ createdAt: sleepRecoveredAt })
-      .where(eq(heartbeatRunEvents.runId, run!.id));
-
-    const timedOutAt = new Date(sleepRecoveredAt.getTime() + 31 * 60 * 1000);
+    // Age activity without jumping the watchdog clock: clock jumps exercise
+    // host-sleep recovery instead of this test's terminal-ownership race.
     const reaped = await watchdog.reapInactiveRuns({
       maxInactivityMs: 30 * 60 * 1000,
       now: timedOutAt,
     });
     expect(reaped).toEqual({ timedOut: 1, runIds: [run!.id] });
+    expect(mockRuntimeAdapter.activeExecutions).toBe(1);
+    const [unreleasedSpan] = await db.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.runId, run!.id));
+    expect(unreleasedSpan.writerLeaseReleasedAt).toBeNull();
     const watchdogRun = await heartbeat.getRun(run!.id);
     expect(watchdogRun).toMatchObject({
       status: "timed_out",

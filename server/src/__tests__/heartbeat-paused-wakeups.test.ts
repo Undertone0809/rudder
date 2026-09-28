@@ -915,6 +915,7 @@ describe("heartbeat paused wakeups", () => {
         pauseReason: null,
       })
       .where(eq(agents.id, agentId));
+    await seedRunningBlocker({ orgId, agentId, taskKey: "blocker-task" });
 
     await heartbeat.resumeDeferredWakeupsForAgent(agentId);
 
