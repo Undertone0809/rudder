@@ -82,10 +82,18 @@ describe("release migration compatibility matrix", () => {
     ]);
   }, 60_000);
 
-  it("rejects new worktree migrations under the frozen 0.7.24 release identity", () => {
-    expect(() => runCompatibilityPreflight({ candidateVersion: "0.7.24", channel: "stable" }))
-      .toThrow(/candidate migration fingerprint .* but 0\.7\.24 declares/u);
-  });
+  it.each([
+    ["0.7.24", "stable"],
+    ["0.7.24-canary.0", "canary"],
+  ])("accepts %s with the current native-chat migration fingerprint", (candidateVersion, channel) => {
+    const result = runCompatibilityPreflight({ candidateVersion, channel });
+    expect(result.candidateFingerprint).toBe(
+      "c4ad4f6d1b344be46b1e1563d3f866cb1af4d95411cef3eff52853003eb0774c",
+    );
+    expect(result.candidateMigrations).toBe(176);
+    expect(result.candidateSqlFiles).toBe(178);
+    expect(result.fixtures[0].version).toBe("0.7.23");
+  }, 60_000);
 
   it("accepts the frozen pre-D1 0.7.21 candidate against the previous stable fixtures", () => {
     const result = preD1CompatibilityPreflight({
