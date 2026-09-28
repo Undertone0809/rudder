@@ -48,7 +48,6 @@ import {
   type ChatGeneratedAttachment
 } from "../services/chat-assistant.js";
 import {
-  cancelAndReleaseActiveChatGeneration,
   claimChatGeneration,
   createChatRuntimeControlCoordinator,
   getActiveChatGeneration,
@@ -104,6 +103,11 @@ import {
   turnContextFromUserMessage,
   type ChatTurnContext,
 } from "./chats.annotation-routes.js";
+import {
+  chatWriterQuiescenceConflict,
+  isActiveNativeWriterDeleteConstraint,
+  waitForChatDeletionQuiescence,
+} from "./chats.deletion.js";
 import { registerChatForkSideChatRoutes } from "./chats.fork-side-chat-routes.js";
 import { attachGeneratedChatFiles } from "./chats.generated-attachments.js";
 import {
@@ -2441,15 +2445,44 @@ export function chatRoutes(
     ) {
       throw conflict("Close the Side Chat tab to destroy this temporary chat");
     }
-    if (hasActiveChatGeneration(existing.id)) {
-      if (req.query.cancelActive === "true") {
-        cancelAndReleaseActiveChatGeneration(existing.id);
-      } else {
-        throw conflict("Cannot delete a chat while a reply is in progress");
+    const cancelActive = req.query.cancelActive === "true";
+    const hasLocalGeneration = hasActiveChatGeneration(existing.id);
+    if (hasLocalGeneration && !cancelActive) {
+      throw conflict("Cannot delete a chat while a reply is in progress");
+    }
+    if (cancelActive) {
+      if (hasLocalGeneration) {
+        // Interrupt is only a request. Keep the generation owner and native
+        // writer fence intact until their durable execution path actually settles.
+        void interruptActiveChatGeneration(existing.id, "operator_stop");
       }
+      const quiesced = await waitForChatDeletionQuiescence({
+        db,
+        orgId: existing.orgId,
+        conversationId: existing.id,
+        getLatestActiveGeneration: (conversationId) => svc.getLatestActiveGeneration(conversationId),
+        waitForOtherOwners: hasLocalGeneration,
+      });
+      if (!quiesced) throw chatWriterQuiescenceConflict();
     }
     const attachments = await svc.listAttachmentsForConversation(existing.id);
-    const deleted = await svc.remove(existing.id);
+    let deleted: Awaited<ReturnType<typeof svc.remove>>;
+    try {
+      deleted = await svc.remove(existing.id);
+    } catch (error) {
+      if (isActiveNativeWriterDeleteConstraint(error)) throw chatWriterQuiescenceConflict();
+      if (cancelActive) {
+        const quiesced = await waitForChatDeletionQuiescence({
+          db,
+          orgId: existing.orgId,
+          conversationId: existing.id,
+          getLatestActiveGeneration: (conversationId) => svc.getLatestActiveGeneration(conversationId),
+          waitForOtherOwners: false,
+        });
+        if (!quiesced) throw chatWriterQuiescenceConflict();
+      }
+      throw error;
+    }
     if (!deleted) {
       res.status(404).json({ error: "Chat conversation not found" });
       return;

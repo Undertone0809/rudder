@@ -8,6 +8,7 @@ import { conflict, unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { requestBodyForLogs } from "../middleware/logger.js";
 import { createChatBackgroundRuntime, type ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
+import { waitForChatDeletionQuiescence } from "../routes/chats.deletion.js";
 import { chatRoutes } from "../routes/chats.js";
 import { createChatStreamGenerationOwner, persistChatStreamGenerationTerminal } from "../routes/chats.stream-generation-owner.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
@@ -426,6 +427,7 @@ function createApp(
   backgroundRuntime?: ChatBackgroundRuntime,
   registerNetworkWaitingRunHandler?: (handler: (run: any) => Promise<boolean>) => void,
   captureRequestBodyForLogs?: (body: unknown) => void,
+  db: unknown = {},
 ) {
   const runtime = backgroundRuntime ?? createChatBackgroundRuntime();
   testBackgroundRuntimes.add(runtime);
@@ -448,7 +450,7 @@ function createApp(
   });
   app.use(
     "/api",
-    chatRoutes({} as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler),
+    chatRoutes(db as any, mockStorage as any, runtime, registerNetworkWaitingRunHandler),
   );
   app.use(errorHandler);
   return app;
@@ -467,6 +469,22 @@ async function waitUntil(assertion: () => void, timeoutMs = 1000) {
     }
   }
   throw lastError;
+}
+
+function createChatWriterLookupDb(hasActiveWriter: () => boolean, neverResolve = false) {
+  return {
+    select: vi.fn(() => ({
+      from: () => ({
+        innerJoin: () => ({
+          where: () => ({
+            limit: () => neverResolve
+              ? new Promise<{ id: string }[]>(() => undefined)
+              : Promise.resolve(hasActiveWriter() ? [{ id: "active-writer-span" }] : []),
+          }),
+        }),
+      }),
+    })),
+  };
 }
 
 describe("chat routes", { retry: 2 }, () => {
@@ -1912,23 +1930,142 @@ describe("chat routes", { retry: 2 }, () => {
   it("cancels and deletes an active chat conversation when explicitly requested", async () => {
     const conversation = createConversation({ title: "Generating chat" });
     const abortController = new AbortController();
+    let activeWriter = true;
+    let activeGeneration: { id: string } | null = { id: "generation-1" };
+    let release: (() => void) | null = null;
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
-    mockChatService.remove.mockResolvedValue(conversation);
-    const release = claimChatGeneration(conversation.id, abortController);
+    mockChatService.getLatestActiveGeneration.mockImplementation(async () => activeGeneration);
+    abortController.signal.addEventListener("abort", () => {
+      setTimeout(() => {
+        activeGeneration = null;
+      }, 25);
+      setTimeout(() => {
+        release?.();
+      }, 75);
+      setTimeout(() => {
+        activeWriter = false;
+      }, 250);
+    }, { once: true });
+    mockChatService.remove.mockImplementation(async () => {
+      expect(activeGeneration).toBeNull();
+      expect(activeWriter).toBe(false);
+      expect(hasActiveChatGeneration(conversation.id)).toBe(false);
+      return conversation;
+    });
+    release = claimChatGeneration(conversation.id, abortController);
+    const db = createChatWriterLookupDb(() => activeWriter);
 
     try {
-      const res = await request(createApp())
+      const res = await request(createApp(undefined, undefined, undefined, undefined, db))
         .delete("/api/chats/chat-1?cancelActive=true");
 
       expect(res.status).toBe(200);
       expect(abortController.signal.aborted).toBe(true);
       expect(hasActiveChatGeneration(conversation.id)).toBe(false);
+      expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledWith(conversation.id);
       expect(mockChatService.listAttachmentsForConversation).toHaveBeenCalledWith("chat-1");
       expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
     } finally {
       release?.();
     }
+  });
+
+  it("refuses cancel-and-delete while another process still owns a chat writer", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue({ id: "generation-remote" });
+    const db = createChatWriterLookupDb(() => true);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(res.status).toBe(409);
+    expect(res.body.details.code).toBe("chat_writer_quiescence_pending");
+    expect(mockChatService.listAttachmentsForConversation).not.toHaveBeenCalled();
+    expect(mockChatService.remove).not.toHaveBeenCalled();
+  });
+
+  it("bounds quiescence proof when a persistence query never resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = waitForChatDeletionQuiescence({
+        db: createChatWriterLookupDb(() => false, true) as any,
+        orgId: "organization-1",
+        conversationId: "chat-deletion-stalled-query",
+        getLatestActiveGeneration: () => new Promise<null>(() => undefined),
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(pending).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns 409 when a generation wins the race with cancel-and-delete", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    let generationBecameActive = false;
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockImplementation(async () => (
+      generationBecameActive ? { id: "generation-racing-delete" } : null
+    ));
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockChatService.remove.mockImplementation(async () => {
+      generationBecameActive = true;
+      throw Object.assign(new Error("foreign key violation"), { code: "23503" });
+    });
+    const db = createChatWriterLookupDb(() => false);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(res.status).toBe(409);
+    expect(res.body.details.code).toBe("chat_writer_quiescence_pending");
+    expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("returns 409 for the active-writer delete constraint after the lease quiesces", async () => {
+    const conversation = createConversation({ title: "Generating chat" });
+    let activeWriter = false;
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue(null);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockChatService.remove.mockImplementation(async () => {
+      activeWriter = true;
+      await Promise.resolve();
+      activeWriter = false;
+      throw new Error("Drizzle transaction failed", {
+        cause: {
+          code: "23514",
+          constraint: "run_runtime_spans_active_writer_delete_check",
+        },
+      });
+    });
+    const db = createChatWriterLookupDb(() => activeWriter);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(res.status).toBe(409);
+    expect(res.body.details.code).toBe("chat_writer_quiescence_pending");
+    expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledTimes(1);
+    expect(mockChatService.remove).toHaveBeenCalledWith("chat-1");
+  });
+
+  it("preserves unrelated cancel-and-delete failures after quiescence is confirmed", async () => {
+    const conversation = createConversation({ title: "Delete failed" });
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue(null);
+    mockChatService.listAttachmentsForConversation.mockResolvedValue([]);
+    mockChatService.remove.mockRejectedValue(new Error("unrelated delete failure"));
+    const db = createChatWriterLookupDb(() => false);
+
+    const res = await request(createApp(undefined, undefined, undefined, undefined, db))
+      .delete("/api/chats/chat-1?cancelActive=true");
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Internal server error");
   });
 
   it("creates a conversation with the organization default agent and issue creation mode", async () => {
