@@ -30,8 +30,28 @@ const pythonCommand = (() => {
 const HISTORY_FENCE_SEED_SCRIPT = [
   "import sqlite3, sys",
   "connection = sqlite3.connect(sys.argv[1])",
+  "connection.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY)')",
   "connection.execute('CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL)')",
+  "connection.execute('INSERT INTO sessions (id) VALUES (?)', (sys.argv[2],))",
   "connection.execute('INSERT INTO messages (id, session_id) VALUES (?, ?)', (40, sys.argv[2]))",
+  "connection.commit()",
+  "connection.close()",
+].join("\n");
+
+const HISTORY_FENCE_EMPTY_DB_SCRIPT = [
+  "import sqlite3, sys",
+  "connection = sqlite3.connect(sys.argv[1])",
+  "connection.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY)')",
+  "connection.execute('CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL)')",
+  "connection.commit()",
+  "connection.close()",
+].join("\n");
+
+const HISTORY_FENCE_PERSIST_SESSION_SCRIPT = [
+  "import sqlite3, sys",
+  "connection = sqlite3.connect(sys.argv[1])",
+  "connection.execute('INSERT INTO sessions (id) VALUES (?)', (sys.argv[2],))",
+  "connection.execute('INSERT INTO messages (id, session_id) VALUES (?, ?)', (1, sys.argv[2]))",
   "connection.commit()",
   "connection.close()",
 ].join("\n");
@@ -703,6 +723,210 @@ describe("Hermes Product Gateway RPC", () => {
         payload: { protocol: "native_product_rpc", requestId: "approval-provider-17" },
         inputRequest: { questions: [{ id: "hermes_product_approval" }] },
       });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it.skipIf(!pythonCommand)("proves an empty first-turn baseline from the native fence before Hermes persists the session", async () => {
+    const fixture = await makeProfile();
+    try {
+      const sessionId = "hermes-product-session";
+      const statePath = path.join(fixture.profile.hermesHome, "state.db");
+      execFileSync(pythonCommand!, ["-c", HISTORY_FENCE_EMPTY_DB_SCRIPT, statePath], { encoding: "utf8" });
+      const profile = { ...fixture.profile, hermesPythonCommand: pythonCommand! };
+      let historyReadCount = 0;
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async (_profile, requestedSessionId) => {
+        expect(requestedSessionId).toBe(sessionId);
+        if (historyReadCount++ === 0) {
+          return { availability: "missing", tailRowId: null, relation: "unknown", successorSessionId: null };
+        }
+        const tailRowId = Number(execFileSync(pythonCommand!, [
+          "-c",
+          HISTORY_FENCE_READ_TAIL_SCRIPT,
+          statePath,
+          sessionId,
+        ], { encoding: "utf8" }).trim());
+        return { availability: "available", tailRowId, relation: "none", successorSessionId: null };
+      };
+      const gateway = mockGateway(async (method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        const registryPath = path.join(profile.hermesHome, "runtime", "active_sessions.json");
+        await fs.mkdir(path.dirname(registryPath), { recursive: true });
+        await fs.writeFile(registryPath, JSON.stringify({ entries: [{
+          lease_id: "test-lease",
+          session_id: sessionId,
+          surface: "desktop",
+          pid: process.pid,
+          metadata: { live_session_id: "hermes-product-runtime-1" },
+        }] }), "utf8");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        execFileSync(pythonCommand!, ["-c", HISTORY_FENCE_PERSIST_SESSION_SCRIPT, statePath, sessionId], { encoding: "utf8" });
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "streaming" };
+      });
+
+      const result = await executeHermesProductRpcChat({
+        ...runInput(profile, gateway.createClient, readHistoryTail, { acquireHistoryFence: undefined }),
+      });
+
+      expect(result).toMatchObject({
+        exitCode: 0,
+        resultJson: {
+          transcriptBoundary: {
+            status: "exact",
+            sessionId,
+            startExclusive: null,
+            endInclusive: 1,
+            sourceRangeRef: JSON.stringify({
+              version: 1,
+              status: "exact",
+              sessionId,
+              startExclusive: null,
+              endInclusive: 1,
+            }),
+          },
+        },
+      });
+      expect(historyReadCount).toBe(2);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it.each([
+    ["an older fence mock without the session flag", undefined],
+    ["a fence that reports a session row", true],
+  ] as const)("does not infer an empty first-turn baseline from %s", async (_case, sessionExists) => {
+    const fixture = await makeProfile();
+    try {
+      const tails = [
+        { availability: "missing" as const, tailRowId: null, relation: "unknown" as const, successorSessionId: null },
+        { availability: "available" as const, tailRowId: 1, relation: "none" as const, successorSessionId: null },
+      ];
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => tails.shift() ?? null;
+      const gateway = mockGateway((method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "streaming" };
+      });
+      const result = await executeHermesProductRpcChat({
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
+          acquireHistoryFence: async () => ({
+            tailRowId: null,
+            ...(sessionExists === undefined ? {} : { sessionExists }),
+            isHeld: () => true,
+            release: async () => undefined,
+          }),
+        }),
+      });
+
+      expect(result).toMatchObject({ exitCode: 0, resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } } });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("does not apply the fresh-session exception when a resumed session is missing", async () => {
+    const fixture = await makeProfile();
+    try {
+      const sessionId = "hermes-product-session";
+      const tails = [
+        { availability: "missing" as const, tailRowId: null, relation: "unknown" as const, successorSessionId: null },
+        { availability: "available" as const, tailRowId: 1, relation: "none" as const, successorSessionId: null },
+      ];
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => tails.shift() ?? null;
+      const gateway = mockGateway((method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "streaming" };
+      });
+      const result = await executeHermesProductRpcChat({
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
+          acquireHistoryFence: async () => ({
+            tailRowId: null,
+            sessionExists: false,
+            isHeld: () => true,
+            release: async () => undefined,
+          }),
+        }),
+        sessionId,
+        sessionParams: buildHermesProductRpcSessionParams({ sessionId, profile: fixture.profile }),
+      });
+
+      expect(result).toMatchObject({ exitCode: 0, resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } } });
+      expect(gateway.calls.some(({ method }) => method === "session.resume")).toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("keeps a fresh first-turn boundary unknown when the read-only tail disagrees with the fence", async () => {
+    const fixture = await makeProfile();
+    try {
+      const tails = [
+        { availability: "available" as const, tailRowId: 40, relation: "none" as const, successorSessionId: null },
+        { availability: "available" as const, tailRowId: 41, relation: "none" as const, successorSessionId: null },
+      ];
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => tails.shift() ?? null;
+      const gateway = mockGateway((method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "streaming" };
+      });
+      const result = await executeHermesProductRpcChat({
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
+          acquireHistoryFence: async () => ({
+            tailRowId: null,
+            sessionExists: false,
+            isHeld: () => true,
+            release: async () => undefined,
+          }),
+        }),
+      });
+
+      expect(result).toMatchObject({ exitCode: 0, resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } } });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it("keeps a fresh first-turn boundary unknown when the writer fence expires before lease proof", async () => {
+    const fixture = await makeProfile();
+    try {
+      let held = true;
+      const tails = [
+        { availability: "missing" as const, tailRowId: null, relation: "unknown" as const, successorSessionId: null },
+        { availability: "available" as const, tailRowId: 1, relation: "none" as const, successorSessionId: null },
+      ];
+      const readHistoryTail: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]> = async () => tails.shift() ?? null;
+      const gateway = mockGateway(async (method, _params, emit) => {
+        if (method !== "prompt.submit") return undefined;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        emit("message.start");
+        emitTurnComplete(emit);
+        return { status: "streaming" };
+      });
+      const result = await executeHermesProductRpcChat({
+        ...runInput(fixture.profile, gateway.createClient, readHistoryTail, {
+          acquireHistoryFence: async () => ({
+            tailRowId: null,
+            sessionExists: false,
+            isHeld: () => held,
+            release: async () => { held = false; },
+          }),
+          waitForSessionLease: async () => {
+            held = false;
+            return true;
+          },
+        }),
+      });
+
+      expect(result).toMatchObject({ exitCode: 0, resultJson: { transcriptBoundary: { status: "unknown", sourceRangeRef: null } } });
     } finally {
       await fixture.cleanup();
     }

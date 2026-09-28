@@ -44,6 +44,7 @@ type HermesProductRpcHistoryTail = {
 };
 type HermesProductRpcHistoryFence = {
   tailRowId: number | null;
+  sessionExists?: boolean;
   isHeld(): boolean;
   release(): Promise<void>;
 };
@@ -858,7 +859,10 @@ try:
     tail = row[0] if row else None
     if tail is not None and (isinstance(tail, bool) or not isinstance(tail, int) or tail < 1):
         raise RuntimeError("Hermes SessionDB returned an invalid message row ID")
-    print(json.dumps({"locked": True, "tailRowId": tail}), flush=True)
+    session = connection.execute(
+        "SELECT 1 FROM sessions WHERE id = ? LIMIT 1", (sys.argv[2],)).fetchone()
+    session_exists = session is not None
+    print(json.dumps({"locked": True, "tailRowId": tail, "sessionExists": session_exists}), flush=True)
     for line in sys.stdin:
         if line.strip() == "release":
             break
@@ -920,7 +924,7 @@ async function acquireHermesProductRpcHistoryFence(input: {
       await closedPromise;
     }
   };
-  const ready = new Promise<{ tailRowId: number | null }>((resolve, reject) => {
+  const ready = new Promise<{ tailRowId: number | null; sessionExists?: boolean }>((resolve, reject) => {
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
@@ -934,7 +938,13 @@ async function acquireHermesProductRpcHistoryFence(input: {
         if (tailRowId !== null && (!Number.isSafeInteger(tailRowId) || (tailRowId as number) < 1)) {
           throw new Error("Hermes SessionDB returned an invalid message row ID.");
         }
-        resolve({ tailRowId: tailRowId as number | null });
+        if (result.sessionExists !== undefined && typeof result.sessionExists !== "boolean") {
+          throw new Error("Hermes SessionDB returned an invalid session existence flag.");
+        }
+        resolve({
+          tailRowId: tailRowId as number | null,
+          ...(result.sessionExists === undefined ? {} : { sessionExists: result.sessionExists }),
+        });
       } catch (error) {
         reject(error);
       }
@@ -943,7 +953,7 @@ async function acquireHermesProductRpcHistoryFence(input: {
     child.once("close", (code) => reject(new Error(`Hermes history fence helper exited before locking (${code ?? "signal"}).`)));
   });
 
-  let locked: { tailRowId: number | null };
+  let locked: { tailRowId: number | null; sessionExists?: boolean };
   try {
     locked = await withTimeout(ready, timeoutMs, "Hermes SessionDB history writer fence timed out.");
   } catch {
@@ -971,6 +981,7 @@ async function acquireHermesProductRpcHistoryFence(input: {
 
   return {
     tailRowId: locked.tailRowId,
+    ...(locked.sessionExists === undefined ? {} : { sessionExists: locked.sessionExists }),
     isHeld: () => !closed,
     release,
   };
@@ -1248,6 +1259,7 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
   let historyFenceTailRowId: number | null = null;
   let historyFenceTailMatches = false;
   let historyFenceLeaseProven = false;
+  let createdFreshSession = false;
   let gatewayPid: number | null = null;
   let client: HermesProductRpcClient | null = null;
   let controlLease: AgentRuntimeControlHandleLease | null = null;
@@ -1870,6 +1882,7 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
       if (!gatewaySessionId) throw new Error("Hermes Product Gateway session.create returned no native session_id.");
       if (!storedSessionId) throw new Error("Hermes Product Gateway session.create returned no persisted stored_session_id.");
       sessionId = storedSessionId;
+      createdFreshSession = true;
       sessionParams = buildHermesProductRpcSessionParams({ sessionId, profile, workspace: input.workspace });
     }
     selectedSessionId = gatewaySessionId;
@@ -1889,6 +1902,21 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
       Math.min(input.timeoutMs, HISTORY_FENCE_MAX_HOLD_MS),
       input.signal,
     ).catch(() => null);
+    if (
+      createdFreshSession
+      && historyFence?.isHeld()
+      && historyFence.sessionExists === false
+      && historyFence.tailRowId === null
+      && historyBefore?.availability === "missing"
+      && historyBefore.tailRowId === null
+    ) {
+      historyBefore = {
+        availability: "available",
+        tailRowId: null,
+        relation: "none",
+        successorSessionId: null,
+      };
+    }
     historyFenceTailMatches = Boolean(
       historyFence?.isHeld()
       && historyBefore?.availability === "available"

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-export const HERMES_PRODUCT_HISTORY_HELPER_VERSION = "rudder-hermes-product-history-v2";
+export const HERMES_PRODUCT_HISTORY_HELPER_VERSION = "rudder-hermes-product-history-v3";
 export const HERMES_PRODUCT_HISTORY_TRANSPORT = "hermes-session-db-read-only";
 const HERMES_RUNTIME_TYPE = "hermes_gateway";
 const DEFAULT_PAGE_SIZE = 100;
@@ -219,7 +219,7 @@ def main():
     try:
         session = db.get_session(session_id)
         if session is None:
-            emit({"ok": True, "helperVersion": HELPER_VERSION, "sessionId": session_id, "session": None, "rows": [], "tailRowId": None, "compressionTipSessionId": None, "resolvedResumeSessionId": None, "successorSession": None})
+            emit({"ok": False, "helperVersion": HELPER_VERSION, "error": {"code": "session_missing", "message": "Hermes history session does not exist."}})
             return
 
         # The official API forbids after_id with include_compacted.  The raw

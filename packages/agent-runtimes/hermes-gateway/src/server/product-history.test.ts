@@ -174,6 +174,23 @@ describe("Hermes product history", () => {
       profile: { pythonCommand: "python3", sourcePath: "/tmp/source", hermesHome: "/tmp/home" },
     })).rejects.toMatchObject({ name: "HermesProductHistoryError", code: "invalid_profile" });
   });
+
+  it.skipIf(!pythonCommand)("reports an absent session as missing instead of an available empty history", async () => {
+    const fixtureData = await fixture();
+    const result = await readHermesProductHistory({
+      runtimeType: "hermes_gateway",
+      sessionId: "session-not-persisted",
+      profile: fixtureData.profile,
+    });
+
+    expect(result).toMatchObject({
+      availability: "missing",
+      completeness: "unknown",
+      items: [],
+      nextCursor: null,
+      metadata: { tailRowId: null, session: null },
+    });
+  });
 });
 
 const providerDescribe = pythonCommand ? describe : describe.skip;
