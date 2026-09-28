@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
 import {
   chmodSync,
   mkdirSync,
@@ -9,6 +8,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { afterEach, describe, it } from "node:test";
 import {
   buildServerEnvironment,
   inspectInstalledPrefix,

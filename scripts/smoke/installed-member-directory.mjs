@@ -1,20 +1,18 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
-  chmod,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   realpath,
   rename,
-  rm,
-  stat,
+  rm
 } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import os from "node:os";

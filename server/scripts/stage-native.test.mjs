@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { chmod, unlink } from "node:fs/promises";
-import { chmodSync, copyFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   FOUNDATION_TARGETS,
-  foundationBinaryName,
   checkPackagedFoundationArtifacts,
+  foundationBinaryName,
   resolveCargoFoundationExecutable,
   resolveFoundationTarget,
   stageFoundationArtifacts,
