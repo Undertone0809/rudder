@@ -55,8 +55,8 @@ import {
   sideChatForkBindingMatchesTarget,
 } from "./chat-assistant.side-chat-source.js";
 import { createChatAssistantStdoutBuffer } from "./chat-assistant.stdout-buffer.js";
-import { createChatAssistantTranscriptProcessor } from "./chat-assistant.transcript-processor.js";
 import { createChatTranscriptDelivery } from "./chat-assistant.transcript-delivery.js";
+import { createChatAssistantTranscriptProcessor } from "./chat-assistant.transcript-processor.js";
 import { admitClaudeDeferredFork, recordClaudeDeferredForkOutcome, reserveClaudeDeferredFork } from "./claude-deferred-fork-admission.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import { resolveHeartbeatTranscriptRetention } from "./runtime-kernel/heartbeat-transcript-retention.js";

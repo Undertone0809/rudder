@@ -1,12 +1,12 @@
 import type { Db } from "@rudderhq/db";
 import type { Request, Router } from "express";
 import { redactCurrentUserText } from "../log-redaction.js";
+import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.js";
 import {
   assertRunIntelligenceAccess,
   resolveRunIdReferenceForScope,
   type RunIntelligenceAccessScope,
 } from "../services/run-intelligence-access.js";
-import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.js";
 import type { StorageService } from "../storage/types.js";
 import { assertCompanyAccess } from "./authz.js";
 

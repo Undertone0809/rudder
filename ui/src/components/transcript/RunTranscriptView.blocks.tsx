@@ -21,8 +21,7 @@ import { useScrollbarActivityRef } from "../../hooks/useScrollbarActivityRef";
 import {
   CHAT_ANNOTATION_BLOCK_ATTRIBUTE,
   CHAT_ANNOTATION_SOURCE_ATTRIBUTE,
-  registerChatAnnotationSourceText,
-  shouldAutoFocusChatAnnotationToolbar,
+  registerChatAnnotationSourceText
 } from "../../lib/chat-response-annotation-selection";
 import { readDesktopShell } from "../../lib/desktop-shell";
 import { cn } from "../../lib/utils";

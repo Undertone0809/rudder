@@ -24,7 +24,7 @@ import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { notFound } from "../errors.js";
-import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
+import { redactCurrentUserValue } from "../log-redaction.js";
 import { validate } from "../middleware/validate.js";
 import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
