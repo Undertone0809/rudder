@@ -28,6 +28,7 @@ import { useToast } from "../context/ToastContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useOrganizationPageMemory } from "../hooks/useOrganizationPageMemory";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { useWorkspaceContextSidebarLayout } from "../hooks/useWorkspaceSidebarLayout";
 import { readDesktopShell } from "../lib/desktop-shell";
 import {
   normalizeRememberedSettingsPath,
@@ -59,9 +60,7 @@ import {
   resolveProportionalSidePanelWidth,
   resolveSidePanelCollapseWidth,
   resolveSidePanelDragWidth,
-  shouldAutoCollapseContextSidebar,
   shouldAutoExpandSidePanel,
-  shouldShowContextSidebar,
   useAutoCollapseWorkspaceWidth,
   useViewportResizeTransition,
   widthRatio,
@@ -879,9 +878,6 @@ export function Layout() {
   const {
     sidebarOpen,
     setSidebarOpen,
-    contextSidebarExpandedByUser,
-    setContextSidebarExpandedByUser,
-    openSidebarByUser,
     toggleSidebar,
     isMobile,
   } = useSidebar();
@@ -896,7 +892,6 @@ export function Layout() {
   const {
     contextKey: sidePanelContextKey,
     displayedContextHold,
-    hidePanel,
     open: sidePanelOpen,
   } = useSidePanel();
   const {
@@ -1000,38 +995,18 @@ export function Layout() {
   );
   const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
-  const autoCollapseContextSidebar = shouldAutoCollapseContextSidebar({
-    isMobile,
+  const {
+    autoCollapseContextSidebar,
+    autoCollapseContextSidebarOnOpen,
+    autoCollapseContextSidebarKey,
+    contextSidebarVisible,
+    openWorkspaceSidebar,
+  } = useWorkspaceContextSidebarLayout({
     relativePath: relativeBoardPath,
+    contextKey: displayedSidePanelContext.contextKey,
     sidePanelOpen,
     sidePanelContextReady,
-    viewportWidth,
   });
-  const autoCollapseContextSidebarOnOpen = shouldAutoCollapseContextSidebar({
-    isMobile,
-    relativePath: relativeBoardPath,
-    sidePanelOpen: true,
-    sidePanelContextReady,
-    viewportWidth,
-  });
-  const autoCollapseContextSidebarKey = autoCollapseContextSidebarOnOpen
-    ? `${relativeBoardPath}:${displayedSidePanelContext.contextKey}`
-    : null;
-  const contextSidebarVisible = shouldShowContextSidebar({
-    sidebarOpen,
-    autoCollapseContextSidebar,
-    expandedByUser: contextSidebarExpandedByUser,
-  });
-  const openWorkspaceSidebar = useCallback(() => {
-    if (autoCollapseContextSidebar && isMessengerRoute) {
-      openSidebarByUser();
-    } else if (autoCollapseContextSidebar) {
-      hidePanel();
-      setSidebarOpen(true);
-    } else {
-      setSidebarOpen(true);
-    }
-  }, [autoCollapseContextSidebar, hidePanel, isMessengerRoute, openSidebarByUser, setSidebarOpen]);
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1157,10 +1132,6 @@ export function Layout() {
   useLayoutEffect(() => {
     if (!sidePanelOpen) setDesktopSidePanelExpanded(false);
   }, [sidePanelOpen]);
-
-  useEffect(() => {
-    setContextSidebarExpandedByUser(false);
-  }, [relativeBoardPath, sidePanelOpen]);
 
   useEffect(() => {
     rememberPrimaryRailPath(matchedOrganization?.id, relativeBoardUrl);
