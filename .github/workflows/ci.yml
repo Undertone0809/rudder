@@ -25,6 +25,32 @@ defaults:
     shell: bash
 
 jobs:
+  regenerate-lockfile:
+    name: Regenerate main dependency lockfile
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+      - name: Regenerate lockfile without install scripts
+        run: pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile
+      - name: Retain generated lockfile for the exact main commit
+        uses: actions/upload-artifact@v7
+        with:
+          name: pnpm-lock-${{ github.sha }}
+          path: pnpm-lock.yaml
+          if-no-files-found: error
+          retention-days: 30
+
   plan:
     name: Plan qualification profile
     runs-on: ubuntu-latest
