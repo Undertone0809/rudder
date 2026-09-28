@@ -71,13 +71,19 @@ function asNonNegativeInteger(value: unknown, fallback: number) {
 }
 
 function clipText(value: string, maxChars: number) {
-  if (value.length <= maxChars) {
-    return { text: value, clipped: false, originalLength: value.length };
+  let originalLength = 0;
+  let prefixEnd = 0;
+  for (const codePoint of value) {
+    if (originalLength < maxChars - 1) prefixEnd += codePoint.length;
+    originalLength += 1;
+  }
+  if (originalLength <= maxChars) {
+    return { text: value, clipped: false, originalLength };
   }
   return {
-    text: `${value.slice(0, Math.max(0, maxChars - 1))}…`,
+    text: `${value.slice(0, prefixEnd)}…`,
     clipped: true,
-    originalLength: value.length,
+    originalLength,
   };
 }
 

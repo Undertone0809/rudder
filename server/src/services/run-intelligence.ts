@@ -227,6 +227,7 @@ type RunRow = typeof heartbeatRuns.$inferSelect & {
   orgName: string | null;
   issueId: string | null;
   diagnosticResultJsonOmitted?: boolean;
+  diagnosticContextTranscriptOmitted?: boolean;
   diagnosticErrorOriginalLength?: number | null;
 };
 
@@ -845,6 +846,17 @@ async function loadRunRowById(
     'targetType', ${heartbeatRuns.contextSnapshot}->'targetType',
     'targetId', ${heartbeatRuns.contextSnapshot}->'targetId'
   ))`.as("contextSnapshot");
+  const contextTranscriptArrayOmitted = (key: string) => sql`case
+    when jsonb_typeof(${heartbeatRuns.contextSnapshot}->${key}) = 'array'
+      then jsonb_array_length(${heartbeatRuns.contextSnapshot}->${key}) > 0
+    else false
+  end`;
+  const diagnosticContextTranscriptOmitted = sql<boolean>`(
+    ${contextTranscriptArrayOmitted("__chatTranscript")}
+    or ${contextTranscriptArrayOmitted("transcript")}
+    or ${contextTranscriptArrayOmitted("entries")}
+    or ${contextTranscriptArrayOmitted("items")}
+  )`.as("diagnosticContextTranscriptOmitted");
   const diagnosticResultJson = sql<Record<string, unknown> | null>`null::jsonb`.as("resultJson");
   const diagnosticOmitted = sql<boolean>`coalesce(${heartbeatRuns.resultJson} <> '{}'::jsonb, false)`.as("diagnosticResultJsonOmitted");
   const diagnosticError = sql<string | null>`left(${heartbeatRuns.error}, 8_192)`.as("error");
@@ -893,6 +905,7 @@ async function loadRunRowById(
       contextSnapshot: options.diagnosticProjection ? diagnosticContextSnapshot : heartbeatRuns.contextSnapshot,
       ...(options.diagnosticProjection ? {
         diagnosticResultJsonOmitted: diagnosticOmitted,
+        diagnosticContextTranscriptOmitted,
         diagnosticErrorOriginalLength: diagnosticErrorLength,
       } : {}),
       createdAt: heartbeatRuns.createdAt,
@@ -972,6 +985,14 @@ function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | 
         .filter(([, length]) => typeof length === "number" && Number.isFinite(length) && length > 0),
     );
     if (Object.keys(validLengths).length > 0) projected.__rudderOriginalLengths = validLengths;
+  }
+  const truncatedFields = source?.__rudderTruncatedFields;
+  if (Array.isArray(truncatedFields)) {
+    const validFields = truncatedFields
+      .filter((field): field is string => typeof field === "string" && field.length > 0)
+      .slice(0, 32)
+      .map((field) => field.slice(0, 128));
+    if (validFields.length > 0) projected.__rudderTruncatedFields = validFields;
   }
 
   // Native items carry useful structured data outside the legacy entry shape.
@@ -1405,7 +1426,10 @@ export async function getObservedRunDiagnosticDetail(
   const revisionsByAgentId = new Map<string, Array<typeof agentConfigRevisions.$inferSelect>>([[row.agentId, []]]);
   const observedRun = await serializeRunRow(row, new Map(), revisionsByAgentId);
   const reader = await createHistoricalRunTranscriptReader(db, row, { diagnosticProjection: true });
-  const omittedSources = row.diagnosticResultJsonOmitted ? ["resultJson"] : [];
+  const omittedSources = [
+    ...(row.diagnosticResultJsonOmitted ? ["resultJson"] : []),
+    ...(row.diagnosticContextTranscriptOmitted ? ["contextSnapshot.transcriptCandidates"] : []),
+  ];
   const transcript = await readBoundedRunDiagnosticTranscript({
     readPage: (cursor, limit) => reader.readRun({
       orgId: runAccess.orgId,

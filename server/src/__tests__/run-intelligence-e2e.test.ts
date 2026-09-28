@@ -553,7 +553,8 @@ describe("run intelligence real route workflow", () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
     const runId = randomUUID();
-    const originalError = "single-error-marker:" + "E".repeat(20_000);
+    const runError = "run-error-😀:" + "R".repeat(20_000);
+    const originalError = "single-error-😀-marker:" + "E".repeat(20_000);
     await db.insert(organizations).values({
       id: orgId,
       name: "Single Error Projection",
@@ -577,42 +578,121 @@ describe("run intelligence real route workflow", () => {
       invocationSource: "on_demand",
       triggerDetail: "manual",
       status: "failed",
+      error: runError,
     });
-    await db.insert(heartbeatRunEvents).values(transcriptEvent({
-      orgId,
-      runId,
-      agentId,
-      seq: 1,
-      payload: {
-        kind: "result",
-        ts: "2026-09-29T10:00:01.000Z",
-        text: "",
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedTokens: 0,
-        costUsd: 0,
-        isError: true,
-        subtype: "error",
-        errors: [originalError],
-      },
-    }));
+    await db.insert(heartbeatRunEvents).values([
+      transcriptEvent({
+        orgId,
+        runId,
+        agentId,
+        seq: 1,
+        payload: {
+          kind: "result",
+          ts: "2026-09-29T10:00:01.000Z",
+          text: "",
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          costUsd: 0,
+          isError: true,
+          subtype: "error",
+          errors: [originalError],
+        },
+      }),
+      transcriptEvent({
+        orgId,
+        runId,
+        agentId,
+        seq: 2,
+        payload: {
+          kind: "result",
+          ts: "2026-09-29T10:00:02.000Z",
+          text: "",
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          costUsd: 0,
+          isError: true,
+          subtype: "error",
+          errors: ["short-error"],
+          futureDiagnosticField: "not returned by bounded projection",
+        },
+      }),
+    ]);
 
     const app = await createApp(db, orgId);
     const response = await request(app)
       .get(`/api/run-intelligence/runs/${runId}/errors`)
       .query({ maxChars: "80" });
     expect(response.status).toBe(200);
-    expect(response.body.errors).toHaveLength(1);
+    expect(response.body.errors).toHaveLength(3);
     expect(response.body.errors[0]).toMatchObject({
+      id: "run-error",
+      output: { clipped: true, originalLength: Array.from(runError).length },
+    });
+    expect(response.body.errors[1]).toMatchObject({
       id: "step-1",
-      output: { clipped: true, originalLength: "Errors:\n".length + originalError.length },
+      output: { clipped: true, originalLength: Array.from("Errors:\n").length + Array.from(originalError).length },
+    });
+    expect(response.body.errors[2]).toMatchObject({
+      id: "step-2",
     });
     expect(response.body.projection).toMatchObject({
       completeness: "partial",
-      truncatedItems: 1,
+      truncatedItems: 2,
       readFailure: false,
     });
     expect(JSON.stringify(response.body)).not.toContain("E".repeat(10_000));
+    expect(JSON.stringify(response.body)).not.toContain("R".repeat(10_000));
+    expect(JSON.stringify(response.body)).not.toContain("not returned by bounded projection");
+  });
+
+  it("marks omitted context snapshot transcript candidates as partial", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Context Transcript Omission",
+      urlKey: deriveOrganizationUrlKey(`Context Transcript Omission ${orgId}`),
+      issuePrefix: "CTO",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Context Omission Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+      contextSnapshot: {
+        transcript: [{
+          kind: "result",
+          ts: "2026-09-29T10:00:01.000Z",
+          isError: true,
+          errors: ["hidden-context-error"],
+        }],
+      },
+    });
+
+    const app = await createApp(db, orgId);
+    const response = await request(app).get(`/api/run-intelligence/runs/${runId}/errors`);
+    expect(response.status).toBe(200);
+    expect(response.body.errors).toEqual([]);
+    expect(response.body.projection).toMatchObject({
+      completeness: "partial",
+      omittedSources: ["contextSnapshot.transcriptCandidates"],
+    });
+    expect(JSON.stringify(response.body)).not.toContain("hidden-context-error");
   });
 
   it("continues errors past the 2 MiB diagnostic chunk without duplicates", async () => {
