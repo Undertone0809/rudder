@@ -317,6 +317,21 @@ describe("heartbeat run concurrency", () => {
   }, 15_000);
 
   afterEach(async () => {
+    // Finish this fixture's queue before releasing its running adapters. Their
+    // completion may otherwise promote queued work into the next test's mock.
+    if (testAgentIds.size > 0) {
+      const cleanupAt = new Date();
+      await db.update(heartbeatRuns).set({
+        status: "cancelled",
+        finishedAt: cleanupAt,
+        processExitedAt: cleanupAt,
+        terminalEffectsPending: false,
+        updatedAt: cleanupAt,
+      }).where(and(
+        inArray(heartbeatRuns.agentId, [...testAgentIds]),
+        eq(heartbeatRuns.status, "queued"),
+      ));
+    }
     const deadline = Date.now() + 10_000;
     let observedState: unknown = null;
     while (Date.now() < deadline) {
