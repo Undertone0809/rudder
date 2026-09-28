@@ -51,6 +51,12 @@ pub(crate) enum ExpectedReceipt {
         goal_ids: Vec<String>,
         primary_goal_after: Option<String>,
     },
+    ProjectPatch {
+        project_id: String,
+        patch_fingerprint: String,
+        goal_ids: Option<Vec<String>>,
+        primary_goal_after: Option<Option<String>>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -250,6 +256,74 @@ impl Metadata {
         })
     }
 
+    pub fn project_patch(
+        command: &crate::ProjectPatchCommand,
+        patch: &crate::project_patches::Patch,
+    ) -> Result<Self, StoreError> {
+        let actor_kind = match command.actor_kind.as_str() {
+            "board" => "board",
+            "agent" => "agent",
+            "ceo_agent" => "ceo_agent",
+            _ => return Err(StoreError::Unauthorized),
+        };
+        let actor = actor_metadata(actor_kind, &command.actor_id)?;
+        let org = uuid(&command.organization_id)?.to_owned();
+        let project_id = uuid(&command.project_id)?.to_owned();
+        let key = bounded_text(&command.idempotency_key, false)?;
+        let run_id = command
+            .run_id
+            .as_deref()
+            .map(|value| uuid(value).map(str::to_owned))
+            .transpose()?;
+        let patch_fingerprint = hex_digest(Sha256::digest(
+            serde_json::to_vec(&command.patch).map_err(|_| StoreError::InvalidInput)?,
+        ));
+        let identity = json!({
+            "adapter_format": 1,
+            "kind": project_goal_set_kind(),
+            "organization_id": org,
+            "project_id": project_id,
+            "actor_kind": actor.kind,
+            "actor_id": actor.principal_id,
+            "run_id": run_id,
+            "idempotency_key": key,
+            "patch_fingerprint": patch_fingerprint,
+        });
+        ensure_json_size(&identity, MAX_COMMAND_BYTES)?;
+        let fingerprint = hex_digest(Sha256::digest(
+            serde_json::to_vec(&identity).map_err(|_| StoreError::InvalidInput)?,
+        ));
+        signed(command.expected_version)?;
+        signed(command.fence_epoch)?;
+        if patch_fingerprint != patch.fingerprint() {
+            return Err(StoreError::InvalidInput);
+        }
+
+        Ok(Self {
+            org,
+            key,
+            kind: project_goal_set_kind(),
+            fingerprint,
+            expected_version: command.expected_version,
+            fence_epoch: command.fence_epoch,
+            actor,
+            run_id,
+            project_id: Some(project_id.clone()),
+            goal_id: None,
+            link_identifier: None,
+            expected_receipt: ExpectedReceipt::ProjectPatch {
+                project_id,
+                patch_fingerprint,
+                goal_ids: patch.goal_ids.clone(),
+                primary_goal_after: patch
+                    .goal_ids
+                    .as_ref()
+                    .map(|goal_ids| goal_ids.first().cloned()),
+            },
+            receipt_format: 2,
+        })
+    }
+
     pub fn check_fresh(&self, version: u64, fence_epoch: u64) -> Result<(), StoreError> {
         if self.expected_version != version {
             return Err(StoreError::StaleVersion);
@@ -301,6 +375,21 @@ pub(crate) async fn finish(
 pub(crate) async fn lock_scope(
     tx: &mut Tx<'_>,
     metadata: &Metadata,
+) -> Result<LockedScope, StoreError> {
+    lock_scope_with_agent_policy(tx, metadata, false).await
+}
+
+pub(crate) async fn lock_scope_for_project_patch(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+) -> Result<LockedScope, StoreError> {
+    lock_scope_with_agent_policy(tx, metadata, true).await
+}
+
+async fn lock_scope_with_agent_policy(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+    allow_non_ceo_agent: bool,
 ) -> Result<LockedScope, StoreError> {
     let organization_state = sqlx::query(
         "SELECT owner, mutation_version, fence_epoch, fence_token::text AS fence_token
@@ -377,7 +466,7 @@ pub(crate) async fn lock_scope(
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(StoreError::Unauthorized)?;
-        if agent.try_get::<String, _>("role")? != "ceo"
+        if (!allow_non_ceo_agent && agent.try_get::<String, _>("role")? != "ceo")
             || matches!(
                 agent.try_get::<String, _>("status")?.as_str(),
                 "terminated" | "pending_approval"
@@ -1101,6 +1190,66 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
             }
             state.validate_persisted()?;
         }
+        (
+            ResultState::ProjectPatch {
+                project_id,
+                patch_fingerprint,
+                goal_ids,
+                primary_goal_after,
+                state_integrity,
+            },
+            kind,
+        ) if *kind == *project_goal_set_kind() => {
+            if Some(project_id) != metadata.project_id.as_ref()
+                || !is_sha256_hex(patch_fingerprint)
+                || !is_sha256_hex(state_integrity)
+                || project_patch_state_integrity(
+                    project_id,
+                    patch_fingerprint,
+                    goal_ids,
+                    primary_goal_after.as_deref(),
+                )? != *state_integrity
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+            uuid(project_id)?;
+            if let Some(primary) = primary_goal_after {
+                uuid(primary)?;
+                if !goal_ids.iter().any(|goal_id| goal_id == primary) {
+                    return Err(StoreError::InvalidReceipt);
+                }
+            }
+            for goal_id in goal_ids {
+                uuid(goal_id)?;
+            }
+            let ExpectedReceipt::ProjectPatch {
+                project_id: expected_project_id,
+                patch_fingerprint: expected_patch_fingerprint,
+                goal_ids: expected_goal_ids,
+                primary_goal_after: expected_primary_goal_after,
+            } = &metadata.expected_receipt
+            else {
+                return Err(StoreError::InvalidReceipt);
+            };
+            let expected_version = metadata
+                .expected_version
+                .checked_add(1)
+                .ok_or(StoreError::InvalidReceipt)?;
+            if receipt.outcome != Outcome::Applied
+                || receipt.version != expected_version
+                || receipt.fence_epoch != metadata.fence_epoch
+                || expected_project_id != project_id
+                || expected_patch_fingerprint != patch_fingerprint
+                || expected_goal_ids
+                    .as_ref()
+                    .is_some_and(|expected| expected != goal_ids)
+                || expected_primary_goal_after
+                    .as_ref()
+                    .is_some_and(|expected| expected.as_deref() != primary_goal_after.as_deref())
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+        }
         _ => return Err(StoreError::InvalidReceipt),
     }
     Ok(())
@@ -1146,6 +1295,25 @@ pub(crate) fn branding_state_integrity(
     let value = json!({
         "schema": "rudder.d1.organization-branding-state.v1",
         "state": state,
+    });
+    ensure_json_size(&value, MAX_RESULT_BYTES)?;
+    Ok(hex_digest(Sha256::digest(
+        serde_json::to_vec(&value).map_err(|_| StoreError::InvalidReceipt)?,
+    )))
+}
+
+pub(crate) fn project_patch_state_integrity(
+    project_id: &str,
+    patch_fingerprint: &str,
+    goal_ids: &[String],
+    primary_goal_after: Option<&str>,
+) -> Result<String, StoreError> {
+    let value = json!({
+        "schema": "rudder.d1.project-patch-state.v1",
+        "project_id": project_id,
+        "patch_fingerprint": patch_fingerprint,
+        "goal_ids": goal_ids,
+        "primary_goal_after": primary_goal_after,
     });
     ensure_json_size(&value, MAX_RESULT_BYTES)?;
     Ok(hex_digest(Sha256::digest(

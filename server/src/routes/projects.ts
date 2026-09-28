@@ -127,11 +127,7 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     const rustRequiredForRequest = rustFoundationBridge?.projectGoalSetMode === "required"
       || req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
 
-    if (rustRequiredForRequest && hasGoalMutation && !goalSetOnly) {
-      throw conflict("Project-Goal replacement and other Project fields must use separate requests while Rust Project-Goal authority is enabled");
-    }
-
-    if (goalSetOnly && rustRequiredForRequest) {
+    if (hasGoalMutation && rustRequiredForRequest) {
       if (rustFoundationBridge?.projectGoalSetMode !== "required") {
         res.status(503).json({
           error: "Rust Project-Goal authority is not enabled",
@@ -142,16 +138,17 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
       if (!req.header("x-rudder-idempotency-key")?.trim()) {
         throw badRequest("x-rudder-idempotency-key is required for Rust Project-Goal replacement");
       }
-      const goalIds = body.goalIds !== undefined
-        ? body.goalIds
-        : body.goalId
-          ? [body.goalId]
-          : [];
-      const rustBody = {
-        goalIds,
-        primaryGoalId: goalIds[0] ?? null,
-        runId: req.actor.runId ?? null,
-      };
+      const goalIds = body.goalIds !== undefined ? body.goalIds : body.goalId ? [body.goalId] : [];
+      const rustBody = goalSetOnly
+        ? {
+          goalIds,
+          primaryGoalId: goalIds[0] ?? null,
+          runId: req.actor.runId ?? null,
+        }
+        : {
+          projectPatch: body,
+          runId: req.actor.runId ?? null,
+        };
       const requestPath = `/api/orgs/${encodeURIComponent(existing.orgId)}/projects/${encodeURIComponent(id)}/goal-set`;
       let response;
       try {

@@ -1,6 +1,8 @@
 mod support;
 
-use rudder_d1_persistence::{MutationStore, Outcome, Receipt, ResultState, StoreError};
+use rudder_d1_persistence::{
+    MutationStore, Outcome, ProjectPatchCommand, Receipt, ResultState, StoreError,
+};
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
     ActorAuthority, ActorBinding, GoalSetTargetVerifier, Operation, ProjectGoalLinkCommand,
@@ -9,8 +11,9 @@ use rudder_project_goal_link_core::{
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use sqlx::Row;
 use support::{
-    CEO, Database, FOREIGN_ASSET, FOREIGN_GOAL, FOREIGN_PROJECT, GOAL, GOAL_TWO, ORG, OTHER,
+    ASSET, CEO, Database, FOREIGN_ASSET, FOREIGN_GOAL, FOREIGN_PROJECT, GOAL, GOAL_TWO, ORG, OTHER,
     PROJECT,
 };
 
@@ -160,6 +163,78 @@ fn project_goal_set_command(
     )
     .unwrap();
     ProjectGoalSetReplacementCommand::from_validated_context(context, version, 7, key)
+}
+
+const PATCH_AGENT: &str = "50000000-0000-4000-8000-000000000002";
+
+fn project_patch_command(patch: serde_json::Value, version: u64, key: &str) -> ProjectPatchCommand {
+    ProjectPatchCommand {
+        organization_id: ORG.to_owned(),
+        project_id: PROJECT.to_owned(),
+        actor_kind: "agent".to_owned(),
+        actor_id: PATCH_AGENT.to_owned(),
+        run_id: None,
+        idempotency_key: key.to_owned(),
+        expected_version: version,
+        fence_epoch: 7,
+        patch,
+    }
+}
+
+async fn seed_patch_agent(database: &Database) {
+    sqlx::query(
+        "INSERT INTO agents (id, org_id, name, role, status)
+         VALUES ($1::uuid, $2::uuid, 'Project editor', 'engineer', 'idle')",
+    )
+    .bind(PATCH_AGENT)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+}
+
+async fn seed_project_goal_projection(database: &Database, goal_id: &str) {
+    sqlx::query("UPDATE projects SET goal_id=$2::uuid WHERE id=$1::uuid AND org_id=$3::uuid")
+        .bind(PROJECT)
+        .bind(goal_id)
+        .bind(ORG)
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO project_goals (project_id, goal_id, org_id)
+         VALUES ($1::uuid, $2::uuid, $3::uuid)",
+    )
+    .bind(PROJECT)
+    .bind(goal_id)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+}
+
+async fn seed_project_resource_attachment(database: &Database) {
+    sqlx::query(
+        "INSERT INTO organization_resources
+           (id, org_id, name, kind, source_type, locator)
+         VALUES ($1::uuid, $2::uuid, 'Existing reference', 'file', 'external', 'https://example.test/existing')",
+    )
+    .bind(ASSET)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO project_resource_attachments
+           (org_id, project_id, resource_id, role, note, sort_order, is_primary)
+         VALUES ($1::uuid, $2::uuid, $3::uuid, 'reference', 'Existing note', 0, false)",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .bind(ASSET)
+    .execute(&database.pool)
+    .await
+    .unwrap();
 }
 
 async fn project_primary(database: &Database) -> Option<String> {
@@ -737,6 +812,384 @@ async fn project_goal_set_replacement_rolls_back_business_projection_receipt_and
         .unwrap();
     assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
     assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mixed_project_patch_updates_project_goals_resources_and_activity_atomically() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+    seed_project_resource_attachment(&database).await;
+    let patch = json!({
+        "goalIds": [GOAL, GOAL_TWO],
+        "name": "Mixed transaction project",
+        "description": "Updated with Goal links and resources",
+        "status": "in_progress",
+        "leadAgentId": CEO,
+        "targetDate": "2026-10-01",
+        "color": "#123abc",
+        "icon": "folder",
+        "executionWorkspacePolicy": {"enabled": true, "defaultMode": "shared_workspace"},
+        "resourceAttachments": [{
+            "resourceId": ASSET,
+            "role": "reference",
+            "note": " Existing reference ",
+            "sortOrder": 2,
+            "isPrimary": false
+        }],
+        "newResources": [{
+            "name": "Inline brief",
+            "kind": "file",
+            "sourceType": "external",
+            "locator": "https://example.test/brief.md",
+            "description": "Generated in the same transaction",
+            "metadata": {"origin": "project-patch-test"},
+            "role": "deliverable",
+            "note": " Current brief ",
+            "sortOrder": 4,
+            "isPrimary": true
+        }],
+        "archivedAt": "2026-09-28T10:30:00Z"
+    });
+
+    let committed = store
+        .project_patch(project_patch_command(
+            patch.clone(),
+            0,
+            "project-patch-mixed",
+        ))
+        .await
+        .unwrap();
+
+    assert!(!committed.replayed);
+    assert_eq!(committed.receipt.version, 1);
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
+    assert_eq!(
+        project_goals(&database).await,
+        vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
+    );
+    let project = sqlx::query(
+        "SELECT name, description, status, lead_agent_id::text AS lead_agent_id,
+                target_date::text AS target_date, color, icon,
+                execution_workspace_policy::text AS execution_workspace_policy,
+                archived_at::text AS archived_at
+         FROM projects WHERE id=$1::uuid AND org_id=$2::uuid",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        project.try_get::<String, _>("name").unwrap(),
+        "Mixed transaction project"
+    );
+    assert_eq!(
+        project.try_get::<String, _>("description").unwrap(),
+        "Updated with Goal links and resources"
+    );
+    assert_eq!(
+        project.try_get::<String, _>("status").unwrap(),
+        "in_progress"
+    );
+    assert_eq!(project.try_get::<String, _>("lead_agent_id").unwrap(), CEO);
+    assert_eq!(
+        project.try_get::<String, _>("target_date").unwrap(),
+        "2026-10-01"
+    );
+    assert_eq!(
+        project
+            .try_get::<Option<String>, _>("color")
+            .unwrap()
+            .as_deref(),
+        Some("#123abc")
+    );
+    assert_eq!(
+        project
+            .try_get::<Option<String>, _>("icon")
+            .unwrap()
+            .as_deref(),
+        Some("folder")
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(
+            &project
+                .try_get::<String, _>("execution_workspace_policy")
+                .unwrap()
+        )
+        .unwrap(),
+        json!({"enabled": true, "defaultMode": "shared_workspace"})
+    );
+    assert!(
+        project
+            .try_get::<String, _>("archived_at")
+            .unwrap()
+            .starts_with("2026-09-28 10:30:00")
+    );
+    let attached: Vec<(String, String, Option<String>, i32, bool)> = sqlx::query_as(
+        "SELECT r.name, a.role, a.note, a.sort_order, a.is_primary
+         FROM project_resource_attachments a
+         JOIN organization_resources r ON r.id=a.resource_id AND r.org_id=a.org_id
+         WHERE a.org_id=$1::uuid AND a.project_id=$2::uuid
+         ORDER BY a.sort_order, a.created_at",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .fetch_all(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(attached.len(), 2);
+    assert_eq!(
+        attached[0],
+        (
+            "Existing reference".to_owned(),
+            "reference".to_owned(),
+            Some("Existing reference".to_owned()),
+            2,
+            false
+        )
+    );
+    assert_eq!(attached[1].0, "Inline brief");
+    assert_eq!(attached[1].1, "deliverable");
+    assert_eq!(attached[1].2.as_deref(), Some("Current brief"));
+    assert_eq!(attached[1].3, 4);
+    assert!(attached[1].4);
+    assert_eq!(
+        project_details(&database, &committed.receipt.activity_id).await,
+        patch
+    );
+    assert_eq!(database.counts().await, (1, 1, 1));
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mixed_project_patch_preserves_omitted_goals_and_honors_clear_and_goal_ids_precedence() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+    seed_project_goal_projection(&database, GOAL).await;
+
+    store
+        .project_patch(project_patch_command(
+            json!({"description": "Non-goal Project field changed"}),
+            0,
+            "project-patch-omitted-goals",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
+    assert_eq!(project_goals(&database).await, vec![GOAL.to_owned()]);
+
+    store
+        .project_patch(project_patch_command(
+            json!({"goalId": GOAL, "goalIds": [GOAL_TWO]}),
+            1,
+            "project-patch-goal-precedence",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
+    assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
+
+    store
+        .project_patch(project_patch_command(
+            json!({"goalId": null}),
+            2,
+            "project-patch-clear-goals",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(project_primary(&database).await, None);
+    assert!(project_goals(&database).await.is_empty());
+    assert_eq!(database.counts().await, (3, 3, 3));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mixed_project_patch_rejects_unauthorized_and_cross_organization_targets() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+
+    let mut unauthorized = project_patch_command(
+        json!({"name": "Unauthorized mutation"}),
+        0,
+        "project-patch-unauthorized",
+    );
+    unauthorized.actor_id = "60000000-0000-4000-8000-000000000001".to_owned();
+    assert!(matches!(
+        store.project_patch(unauthorized).await,
+        Err(StoreError::Unauthorized)
+    ));
+
+    let mut foreign_project = project_patch_command(
+        json!({"name": "Cross-organization mutation"}),
+        0,
+        "project-patch-foreign-project",
+    );
+    foreign_project.project_id = FOREIGN_PROJECT.to_owned();
+    assert!(matches!(
+        store.project_patch(foreign_project).await,
+        Err(StoreError::NotFound)
+    ));
+
+    assert!(matches!(
+        store
+            .project_patch(project_patch_command(
+                json!({"goalIds": [FOREIGN_GOAL]}),
+                0,
+                "project-patch-foreign-goal",
+            ))
+            .await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert_eq!(database.counts().await, (0, 0, 0));
+    assert_eq!(project_primary(&database).await, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mixed_project_patch_replay_returns_original_receipt_without_reapplying_resources() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+    let original_command = project_patch_command(
+        json!({
+            "goalIds": [GOAL],
+            "name": "Original patch",
+            "newResources": [{
+                "name": "Replay resource",
+                "kind": "file",
+                "sourceType": "external",
+                "locator": "https://example.test/replay"
+            }]
+        }),
+        0,
+        "project-patch-replay",
+    );
+    let original = store.project_patch(original_command.clone()).await.unwrap();
+    store
+        .project_patch(project_patch_command(
+            json!({"name": "Later mutation"}),
+            1,
+            "project-patch-later",
+        ))
+        .await
+        .unwrap();
+
+    let replay = store.project_patch(original_command).await.unwrap();
+
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, original.receipt);
+    let current_name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+        .bind(PROJECT)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(current_name, "Later mutation");
+    let resource_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_resources WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(resource_count, 1);
+    assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mixed_project_patch_rolls_back_fields_goals_resources_fence_audit_and_outbox() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+    seed_project_goal_projection(&database, GOAL).await;
+    seed_project_resource_attachment(&database).await;
+    database
+        .sql(
+            "CREATE FUNCTION fail_mixed_patch_activity() RETURNS trigger
+             LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test mixed patch audit failure'; END; $$;
+             CREATE TRIGGER fail_mixed_patch_activity_trigger
+             BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_mixed_patch_activity();",
+        )
+        .await;
+
+    let command = project_patch_command(
+        json!({
+            "goalIds": [GOAL_TWO],
+            "name": "Must roll back",
+            "resourceAttachments": [],
+            "newResources": [{
+                "name": "Must roll back too",
+                "kind": "file",
+                "sourceType": "external",
+                "locator": "https://example.test/rollback"
+            }]
+        }),
+        0,
+        "project-patch-rollback",
+    );
+    assert!(matches!(
+        store.project_patch(command.clone()).await,
+        Err(StoreError::Database(_))
+    ));
+
+    let current_name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+        .bind(PROJECT)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(current_name, "Synthetic project");
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
+    assert_eq!(project_goals(&database).await, vec![GOAL.to_owned()]);
+    let resource_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_resources WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    let attachment_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_resource_attachments WHERE org_id=$1::uuid AND project_id=$2::uuid",
+    )
+    .bind(ORG)
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(resource_count, 1);
+    assert_eq!(attachment_count, 1);
+    assert_eq!(database.counts().await, (0, 0, 0));
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 0);
+
+    database
+        .sql(
+            "DROP TRIGGER fail_mixed_patch_activity_trigger ON activity_log;
+             DROP FUNCTION fail_mixed_patch_activity();",
+        )
+        .await;
+    let retry = store.project_patch(command).await.unwrap();
+    assert_eq!(retry.receipt.version, 1);
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
+    assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
+    let resource_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_resources WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(resource_count, 2);
+    assert_eq!(database.counts().await, (1, 1, 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]

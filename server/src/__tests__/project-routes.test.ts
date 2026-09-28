@@ -423,25 +423,71 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(bridge.projectGoalSet).not.toHaveBeenCalled();
   });
 
-  it("fails closed for a mixed Project and Project-Goal update", async () => {
-    mockProjectService.getById.mockResolvedValue(createProject());
+  it("routes a mixed Project and Project-Goal patch to Rust without splitting its fields", async () => {
+    const existing = createProject();
+    const updated = { ...existing, name: "Renamed project", goalIds: [] };
+    mockProjectService.getById.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
     const bridge = {
       projectGoalSetMode: "required",
-      projectGoalSet: vi.fn(),
+      projectGoalSet: vi.fn().mockResolvedValue({
+        status: 200,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify({ result: { kind: "project_patch" } })),
+      }),
     } as unknown as RustFoundationBridge;
     const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
 
+    const projectPatch = {
+      goalIds: [],
+      name: "Renamed project",
+      description: "Updated through the Rust transaction",
+      status: "planned",
+      leadAgentId: null,
+      targetDate: "2026-10-01",
+      color: "#123abc",
+      icon: "folder",
+      executionWorkspacePolicy: null,
+      resourceAttachments: [{
+        resourceId: "40000000-0000-4000-8000-000000000001",
+        role: "reference",
+        note: "Design source",
+        sortOrder: 3,
+        isPrimary: true,
+      }],
+      newResources: [{
+        name: "Inline brief",
+        kind: "file",
+        locator: "https://example.test/brief.md",
+        role: "deliverable",
+        note: "Current brief",
+        sortOrder: 4,
+        isPrimary: false,
+      }],
+      archivedAt: null,
+    };
     const res = await request(app)
       .patch("/api/projects/project-1")
+      .set("x-rudder-idempotency-key", "project-mixed-patch-1")
       .send({
-        goalIds: [],
-        name: "Project renamed separately",
+        ...projectPatch,
       });
 
-    expect(res.status).toBe(409);
-    expect(res.body.error).toContain("separate requests");
-    expect(bridge.projectGoalSet).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe(updated.name);
+    expect(bridge.projectGoalSet).toHaveBeenCalledWith(
+      expect.objectContaining({ originalUrl: "/api/projects/project-1" }),
+      "organization-1",
+      "project-1",
+      expect.any(Buffer),
+      "/api/orgs/organization-1/projects/project-1/goal-set",
+    );
+    const rustBody = JSON.parse((bridge.projectGoalSet as ReturnType<typeof vi.fn>).mock.calls[0][3].toString("utf8"));
+    expect(rustBody).toEqual({ projectPatch: { ...projectPatch, newResources: [{
+      ...projectPatch.newResources[0],
+      sourceType: "external",
+    }] }, runId: null });
     expect(mockProjectService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("rejects a legacy Project delete after Rust owns the Project-Goal fence", async () => {

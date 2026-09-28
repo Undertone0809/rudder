@@ -9,7 +9,7 @@ use actix_web::{
 use base64::Engine;
 pub use rudder_auth_core::{ActorEnvelope, ActorIdentity, VerifiedActor};
 use rudder_auth_core::{NonceReplayGuard, RequestContext, SigningKey};
-use rudder_d1_persistence::{MutationStore, StoreError};
+use rudder_d1_persistence::{MutationStore, ProjectPatchCommand, StoreError};
 use rudder_organization_mutation_core::{Actor as OrganizationActor, OrganizationBrandingPatch};
 use rudder_project_goal_link_core::{
     GoalSetTargetVerifier, ProjectGoalSetReplacementCommand, ValidatedGoalSetContext,
@@ -261,11 +261,14 @@ struct MemberDirectoryPage {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct ProjectGoalSetRequest {
-    goal_ids: Vec<String>,
+    #[serde(default)]
+    goal_ids: Option<Vec<String>>,
     #[serde(default, alias = "primaryGoalAfter")]
     primary_goal_id: Option<String>,
     #[serde(default)]
     run_id: Option<String>,
+    #[serde(default)]
+    project_patch: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -289,9 +292,9 @@ const MAX_MEMBER_DIRECTORY_LIMIT: i64 = 100;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MemberDirectoryQueryError {
-    InvalidType,
-    InvalidLimit,
-    InvalidCursor,
+    Type,
+    Limit,
+    Cursor,
 }
 
 fn parse_member_directory_query(
@@ -303,7 +306,7 @@ fn parse_member_directory_query(
         .trim()
         .to_ascii_lowercase();
     if !matches!(member_type.as_str(), "all" | "human" | "agent") {
-        return Err(MemberDirectoryQueryError::InvalidType);
+        return Err(MemberDirectoryQueryError::Type);
     }
 
     let limit = match query.limit.as_deref().map(str::trim) {
@@ -312,7 +315,7 @@ fn parse_member_directory_query(
             let parsed = parse_member_directory_number(value)
                 .filter(|parsed| parsed.is_finite() && parsed.fract() == 0.0)
                 .filter(|parsed| (1.0..=MAX_MEMBER_DIRECTORY_LIMIT as f64).contains(parsed))
-                .ok_or(MemberDirectoryQueryError::InvalidLimit)?;
+                .ok_or(MemberDirectoryQueryError::Limit)?;
             parsed as i64
         }
     };
@@ -366,13 +369,13 @@ fn decode_member_cursor(value: &str) -> Result<MemberCursor, MemberDirectoryQuer
     let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(value)
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(value))
-        .map_err(|_| MemberDirectoryQueryError::InvalidCursor)?;
+        .map_err(|_| MemberDirectoryQueryError::Cursor)?;
     let cursor: MemberCursor =
-        serde_json::from_slice(&decoded).map_err(|_| MemberDirectoryQueryError::InvalidCursor)?;
+        serde_json::from_slice(&decoded).map_err(|_| MemberDirectoryQueryError::Cursor)?;
     if !matches!(cursor.member_type.as_str(), "human" | "agent")
         || cursor.principal_id.trim().is_empty()
     {
-        return Err(MemberDirectoryQueryError::InvalidCursor);
+        return Err(MemberDirectoryQueryError::Cursor);
     }
     Ok(cursor)
 }
@@ -985,9 +988,10 @@ impl AppState {
             StoreError::NotFound => (StatusCode::NOT_FOUND, "mutation_target_not_found"),
             StoreError::NotOwned => (StatusCode::CONFLICT, "mutation_not_owned"),
             StoreError::Unauthorized => (StatusCode::FORBIDDEN, "mutation_unauthorized"),
-            StoreError::InvalidInput | StoreError::Branding(_) | StoreError::Link(_) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "mutation_invalid")
-            }
+            StoreError::InvalidInput
+            | StoreError::InvalidResource
+            | StoreError::Branding(_)
+            | StoreError::Link(_) => (StatusCode::UNPROCESSABLE_ENTITY, "mutation_invalid"),
             StoreError::InvalidProjection => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "mutation_invalid_projection",
@@ -1184,16 +1188,16 @@ impl AppState {
 
         let options = match parse_member_directory_query(query) {
             Ok(options) => options,
-            Err(MemberDirectoryQueryError::InvalidType) => {
+            Err(MemberDirectoryQueryError::Type) => {
                 return self.json_error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "member_directory_invalid_type",
                 );
             }
-            Err(MemberDirectoryQueryError::InvalidLimit) => {
+            Err(MemberDirectoryQueryError::Limit) => {
                 return self.json_error(StatusCode::BAD_REQUEST, "member_directory_invalid_limit");
             }
-            Err(MemberDirectoryQueryError::InvalidCursor) => {
+            Err(MemberDirectoryQueryError::Cursor) => {
                 return self.json_error(StatusCode::BAD_REQUEST, "member_directory_invalid_cursor");
             }
         };
@@ -1450,6 +1454,64 @@ impl AppState {
         let DatabaseState::Configured(pool) = &self.database else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
+        if let Some(patch) = input.project_patch {
+            let run_id = if let Some(run_id) = input.run_id.as_deref() {
+                let valid = if actor.actor().kind == "agent" {
+                    sqlx::query_scalar::<_, bool>(
+                        "SELECT EXISTS(
+                           SELECT 1 FROM heartbeat_runs
+                           WHERE id=$1::uuid AND org_id=$2::uuid AND agent_id=$3::uuid
+                         )",
+                    )
+                    .bind(run_id)
+                    .bind(org_id)
+                    .bind(&actor.actor().id)
+                    .fetch_one(pool)
+                    .await
+                } else {
+                    sqlx::query_scalar::<_, bool>(
+                        "SELECT EXISTS(
+                           SELECT 1 FROM heartbeat_runs
+                           WHERE id=$1::uuid AND org_id=$2::uuid
+                         )",
+                    )
+                    .bind(run_id)
+                    .bind(org_id)
+                    .fetch_one(pool)
+                    .await
+                };
+                match valid {
+                    Ok(true) => Some(run_id.to_owned()),
+                    Ok(false) | Err(_) => {
+                        return self.json_error(
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            "project_goal_set_invalid",
+                        );
+                    }
+                }
+            } else {
+                None
+            };
+            let command = ProjectPatchCommand {
+                organization_id: org_id.to_owned(),
+                project_id: project_id.to_owned(),
+                actor_kind: actor.actor().kind.to_owned(),
+                actor_id: actor.actor().id.clone(),
+                run_id,
+                idempotency_key: idempotency_key.to_owned(),
+                expected_version: scope.version,
+                fence_epoch: scope.fence_epoch,
+                patch,
+            };
+            return match store.project_patch(command).await {
+                Ok(committed) => bounded_json(
+                    StatusCode::OK,
+                    &committed.receipt,
+                    self.config.max_response_bytes,
+                ),
+                Err(error) => self.mutation_error(error),
+            };
+        }
         let project_exists = match sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(
                SELECT 1 FROM projects WHERE id=$1::uuid AND org_id=$2::uuid
@@ -1466,7 +1528,10 @@ impl AppState {
         if !project_exists {
             return self.json_error(StatusCode::NOT_FOUND, "project_not_found");
         }
-        let goals_exist = if input.goal_ids.is_empty() {
+        let Some(goal_ids) = input.goal_ids else {
+            return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
+        };
+        let goals_exist = if goal_ids.is_empty() {
             true
         } else {
             match sqlx::query_scalar::<_, i64>(
@@ -1475,11 +1540,11 @@ impl AppState {
                  WHERE org_id=$1::uuid AND id=ANY($2::text[]::uuid[])",
             )
             .bind(org_id)
-            .bind(&input.goal_ids)
+            .bind(&goal_ids)
             .fetch_one(pool)
             .await
             {
-                Ok(count) => count == input.goal_ids.len() as i64,
+                Ok(count) => count == goal_ids.len() as i64,
                 Err(_) => {
                     return self
                         .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
@@ -1494,7 +1559,7 @@ impl AppState {
             &target,
             org_id.to_owned(),
             project_id.to_owned(),
-            input.goal_ids,
+            goal_ids,
             input.primary_goal_id,
         ) {
             Ok(context) => context,

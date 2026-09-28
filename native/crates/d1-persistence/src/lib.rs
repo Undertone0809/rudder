@@ -8,6 +8,7 @@
 mod branding;
 mod goal_sets;
 mod links;
+mod project_patches;
 mod transaction;
 
 use rudder_organization_mutation_core::{
@@ -17,6 +18,7 @@ use rudder_project_goal_link_core::{
     Operation, ProjectGoalLinkCommand, ProjectGoalLinkState, ProjectGoalSetState,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{PgPool, Row};
 use thiserror::Error;
 
@@ -69,6 +71,26 @@ pub enum ResultState {
         primary_goal_after: Option<String>,
         state_integrity: String,
     },
+    ProjectPatch {
+        project_id: String,
+        patch_fingerprint: String,
+        goal_ids: Vec<String>,
+        primary_goal_after: Option<String>,
+        state_integrity: String,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectPatchCommand {
+    pub organization_id: String,
+    pub project_id: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub run_id: Option<String>,
+    pub idempotency_key: String,
+    pub expected_version: u64,
+    pub fence_epoch: u64,
+    pub patch: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -108,6 +130,8 @@ pub enum StoreError {
     Unauthorized,
     #[error("invalid bounded command input")]
     InvalidInput,
+    #[error("invalid project resource input")]
+    InvalidResource,
     #[error("legacy primary-goal projection is inconsistent")]
     InvalidProjection,
     #[error("organization mutation version is stale")]
@@ -360,6 +384,19 @@ impl MutationStore {
         let metadata = transaction::Metadata::project_goal_set(&command)?;
         let mut tx = transaction::begin(&self.pool).await?;
         let result = goal_sets::apply(&mut tx, command, &metadata).await;
+        transaction::finish(tx, result).await
+    }
+
+    /// Apply a complete Project PATCH and its optional Goal replacement under
+    /// the already-owned per-Project Goal fence and one PostgreSQL transaction.
+    pub async fn project_patch(
+        &self,
+        command: ProjectPatchCommand,
+    ) -> Result<CommittedMutation, StoreError> {
+        let patch = project_patches::Patch::parse(&command.patch)?;
+        let metadata = transaction::Metadata::project_patch(&command, &patch)?;
+        let mut tx = transaction::begin(&self.pool).await?;
+        let result = project_patches::apply(&mut tx, command, patch, &metadata).await;
         transaction::finish(tx, result).await
     }
 }
