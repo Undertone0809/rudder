@@ -15,10 +15,11 @@ import {
   issues,
   organizations,
   organizationSkills,
+  runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -124,6 +125,51 @@ function spawnAliveProcess() {
   });
 }
 
+function waitForChildExitEvent(child: ChildProcess, timeoutMs: number) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Child process ${child.pid ?? "unknown"} did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      resolve({ code, signal });
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off("exit", onExit);
+      child.off("error", onError);
+    };
+    child.once("exit", onExit);
+    child.once("error", onError);
+  });
+}
+
+async function spawnExitedProcessEvidence(childProcesses: Set<ChildProcess>) {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  childProcesses.add(child);
+  const processPid = child.pid;
+  if (typeof processPid !== "number") throw new Error("Failed to spawn exit-evidence child process");
+  const exit = await waitForChildExitEvent(child, 3_000);
+  childProcesses.delete(child);
+  if (exit.code !== 0 || exit.signal !== null) {
+    throw new Error(`Exit-evidence child ended unexpectedly (code=${exit.code}, signal=${exit.signal})`);
+  }
+  return { processPid, processExitedAt: new Date() };
+}
+
+async function terminateChildAndWait(child: ChildProcess) {
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  await waitForChildExitEvent(child, 5_000);
+}
+
 async function waitForProcessExit(pid: number, timeoutMs = 3_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -140,6 +186,16 @@ async function waitForProcessExit(pid: number, timeoutMs = 3_000) {
   return false;
 }
 
+async function waitForTrackedChild(runId: string, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const child = runningProcesses.get(runId)?.child;
+    if (child && typeof child.pid === "number") return child;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Run ${runId} did not start a tracked child within ${timeoutMs}ms`);
+}
+
 describe("heartbeat orphaned process recovery", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -154,11 +210,85 @@ describe("heartbeat orphaned process recovery", () => {
   }, 20_000);
 
   afterEach(async () => {
-    runningProcesses.clear();
-    for (const child of childProcesses) {
-      child.kill("SIGKILL");
+    const heartbeat = heartbeatService(db);
+    const processEntries = [...runningProcesses.entries()];
+    const ownedRunIds = new Set(processEntries.map(([runId]) => runId));
+    const ownedChildren = new Set([
+      ...childProcesses,
+      ...processEntries.map(([, entry]) => entry.child),
+    ]);
+    const ownedPids = new Set(
+      [...ownedChildren]
+        .map((child) => child.pid)
+        .filter((pid): pid is number => typeof pid === "number"),
+    );
+    const activeWriterSpans = await db
+      .select({ runId: runRuntimeSpans.runId })
+      .from(runRuntimeSpans)
+      .where(isNull(runRuntimeSpans.writerLeaseReleasedAt));
+    for (const span of activeWriterSpans) ownedRunIds.add(span.runId);
+    const activeRuns = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status, processPid: heartbeatRuns.processPid })
+      .from(heartbeatRuns)
+      .where(inArray(heartbeatRuns.status, ["queued", "running"]));
+    for (const run of activeRuns) {
+      if (run.processPid !== null && ownedPids.has(run.processPid)) ownedRunIds.add(run.id);
+      if (run.status === "queued" || ownedRunIds.has(run.id)) {
+        await heartbeat.cancelRun(run.id, "Test teardown");
+      }
+    }
+
+    for (const child of ownedChildren) await terminateChildAndWait(child);
+    for (const [runId, entry] of processEntries) {
+      if (ownedChildren.has(entry.child) && (entry.child.exitCode !== null || entry.child.signalCode !== null)) {
+        runningProcesses.delete(runId);
+      }
     }
     childProcesses.clear();
+
+    const ownedRunIdList = [...ownedRunIds];
+    const drainDeadline = Date.now() + 4_000;
+    let stableDrainObservations = 0;
+    let observedDrainState: unknown = null;
+    while (Date.now() < drainDeadline) {
+      const ownedRuns = ownedRunIdList.length > 0
+        ? await db
+          .select({ id: heartbeatRuns.id })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.id, ownedRunIdList))
+        : [];
+      const activeOwners = ownedRuns.length > 0
+        ? await db
+          .select({ id: heartbeatRuns.id })
+          .from(heartbeatRuns)
+          .where(and(
+            inArray(heartbeatRuns.id, ownedRunIdList),
+            isNotNull(heartbeatRuns.executionOwnerToken),
+          ))
+        : [];
+      const activeSpans = ownedRunIdList.length > 0
+        ? await db
+          .select({ id: runRuntimeSpans.id })
+          .from(runRuntimeSpans)
+          .where(and(
+            inArray(runRuntimeSpans.runId, ownedRunIdList),
+            isNull(runRuntimeSpans.writerLeaseReleasedAt),
+          ))
+        : [];
+      observedDrainState = {
+        ownedRunIds: ownedRunIdList,
+        activeOwners: activeOwners.map((run) => run.id),
+        activeSpanIds: activeSpans.map((span) => span.id),
+      };
+      if (activeOwners.length === 0 && activeSpans.length === 0) stableDrainObservations += 1;
+      else stableDrainObservations = 0;
+      if (stableDrainObservations >= 3) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (stableDrainObservations < 3) {
+      throw new Error(`Test-owned runtime executions did not drain: ${JSON.stringify(observedDrainState)}`);
+    }
+
     for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         await db.delete(issues);
@@ -184,11 +314,8 @@ describe("heartbeat orphaned process recovery", () => {
   });
 
   afterAll(async () => {
-    for (const child of childProcesses) {
-      child.kill("SIGKILL");
-    }
+    for (const child of childProcesses) await terminateChildAndWait(child);
     childProcesses.clear();
-    runningProcesses.clear();
     await instance?.stop();
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
@@ -953,10 +1080,11 @@ describe("heartbeat orphaned process recovery", () => {
 
   it("persists Agent Issue settlement when immediate and first replay settlement both fail", async () => {
     const requestId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence(childProcesses);
     const { orgId, agentId, runId, issueId } = await seedRunFixture({
-      processPid: null,
-      processExitedAt: new Date("2026-03-19T00:00:00.000Z"),
+      ...exitedWriter,
       includeIssue: false,
+      processLossRetryCount: 1,
       contextSnapshot: {
         agentIssueCreationRequestId: requestId,
         agentIssueCreationRequest: { id: requestId },
@@ -1344,6 +1472,7 @@ describe("heartbeat orphaned process recovery", () => {
     expect(child.pid).toBeTypeOf("number");
 
     const { agentId, runId, wakeupRequestId } = await seedRunFixture({
+      agentStatus: "paused",
       processPid: child.pid ?? null,
       includeIssue: false,
     });
@@ -1377,9 +1506,10 @@ describe("heartbeat orphaned process recovery", () => {
 
   it("routes an orphaned Claude Side Chat fork to its owned recovery handler", async () => {
     const conversationId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence(childProcesses);
     const { runId } = await seedRunFixture({
       agentRuntimeType: "claude_local", chatConversationId: conversationId, includeIssue: false,
-      processExitedAt: new Date("2026-03-19T00:00:00.000Z"),
+      ...exitedWriter,
       contextSnapshot: { sideChatRuntimeAdmission: { deferredForkDescriptor: { version: 1 } } },
     });
     await db.update(heartbeatRuns).set({
@@ -1443,7 +1573,7 @@ describe("heartbeat orphaned process recovery", () => {
     const child = spawnAliveProcess();
     childProcesses.add(child);
     expect(child.pid).toBeTypeOf("number");
-    const { runId } = await seedRunFixture({
+    const { agentId, runId } = await seedRunFixture({
       runStatus: "failed",
       runErrorCode: "provider_error",
       runError: "Provider transport failed",
@@ -1452,13 +1582,31 @@ describe("heartbeat orphaned process recovery", () => {
     });
     runningProcesses.set(runId, { child, graceSec: 1 });
 
-    const retried = await heartbeatService(db).retryRun(runId, {
+    const heartbeat = heartbeatService(db, {
+      beforeRunClaim: async (queuedRun) => {
+        if (queuedRun.retryOfRunId !== runId) return;
+        await db.update(agents).set({
+          agentRuntimeType: "process",
+          agentRuntimeConfig: {
+            command: process.execPath,
+            args: ["-e", "setInterval(() => {}, 1000)"],
+            graceSec: 1,
+          },
+        }).where(eq(agents.id, agentId));
+      },
+    });
+    const retried = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
       now: new Date("2026-03-19T00:05:00.000Z"),
     });
 
     expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
+    const retryChild = await waitForTrackedChild(retried.id);
+    childProcesses.add(retryChild);
+    expect(retryChild.pid).not.toBe(child.pid);
+    expect(retryChild.exitCode).toBeNull();
+    expect(retryChild.signalCode).toBeNull();
     const source = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
     expect(source?.processExitedAt).not.toBeNull();
     expect(retried.retryOfRunId).toBe(runId);
