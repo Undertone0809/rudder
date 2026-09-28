@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 
+import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { ThemeProvider } from "../../context/ThemeContext";
-import { TranscriptLocalFilePreview } from "./TranscriptLocalFilePreview";
 import { RunTranscriptView } from "./RunTranscriptView";
+import { TranscriptLocalFilePreview } from "./TranscriptLocalFilePreview";
 
 Object.defineProperty(window, "matchMedia", {
   configurable: true,

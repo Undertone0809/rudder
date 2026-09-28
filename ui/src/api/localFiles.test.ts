@@ -4,8 +4,8 @@ import type {
 } from "@rudderhq/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readAuthorizedLocalFilePreview } from "./localFiles";
-import { organizationsApi } from "./orgs";
 import { organizationSkillsApi } from "./organizationSkills";
+import { organizationsApi } from "./orgs";
 
 vi.mock("./orgs", () => ({
   organizationsApi: {

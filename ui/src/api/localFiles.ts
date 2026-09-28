@@ -3,9 +3,9 @@ import type {
   OrganizationSkillListItem,
   OrganizationWorkspaceFileDetail,
 } from "@rudderhq/shared";
-import { organizationsApi } from "./orgs";
-import { organizationSkillsApi } from "./organizationSkills";
 import { resolveLocalFileDisplayTarget } from "../lib/local-file-targets";
+import { organizationSkillsApi } from "./organizationSkills";
+import { organizationsApi } from "./orgs";
 
 function normalizeAbsolutePath(value: string) {
   if (value.includes("\0")) return null;

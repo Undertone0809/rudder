@@ -1,4 +1,3 @@
-import { useCallback, useEffect } from "react";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useSidebar } from "@/context/SidebarContext";
 import {
@@ -6,6 +5,7 @@ import {
   shouldAutoCollapseContextSidebar,
   shouldShowContextSidebar,
 } from "@/lib/workspace-shell-layout";
+import { useCallback, useEffect } from "react";
 
 export function useWorkspaceContextSidebarLayout({
   relativePath,

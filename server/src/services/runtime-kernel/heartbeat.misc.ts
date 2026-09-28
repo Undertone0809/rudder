@@ -13,7 +13,6 @@ import type {
   AgentSkillTelemetryEvidenceCounts
 } from "@rudderhq/shared";
 import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
-import { getServerAdapter } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { conflict, notFound } from "../../errors.js";
 import { type BudgetEnforcementScope } from "../budgets.js";
