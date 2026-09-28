@@ -54,6 +54,34 @@ describe("Metadata recovery public route contract", () => {
     expect(response.status).toBe(404);
     expect(response.headers["cache-control"]).toContain("no-store");
   });
+  it.each([
+    ["JSON api_key", '{"api_key":"synthetic-review-secret"}'],
+    ["quoted JSON escapes", '{"api_key":"synthetic-review-secret\\\"suffix"}'],
+    ["environment assignment", "OPENAI_API_KEY=synthetic-review-secret"],
+    ["export and quoted spaces", "export OPENAI_API_KEY='synthetic-review-secret with spaces'"],
+    ["AWS secret", "AWS_SECRET_ACCESS_KEY=synthetic-review-secret"],
+    ["refresh token", '{"refresh_token": "synthetic-review-secret"}'],
+    ["client secret", '{"clientSecret": "synthetic-review-secret"}'],
+    ["HTTP Basic", "Authorization: Basic synthetic-review-secret"],
+    ["HTTP Bearer", "Authorization: Bearer synthetic-review-secret"],
+    ["cookies", "Cookie: first=synthetic-review-secret; second=synthetic-review-secret"],
+    ["database URL", "postgres://operator:synthetic-review-secret@localhost/database"],
+    ["private key", "-----BEGIN PRIVATE KEY-----\nsynthetic-review-secret\n-----END PRIVATE KEY-----"],
+  ])("redacts recovered %s while preserving original digest metadata", async (_name, text) => {
+    vi.mocked(readRecoveredRunDeveloperInstructions).mockResolvedValue({
+      source: "codex_native_rollout", completeness: "partial", snapshotStatus: "missing",
+      developerInstructions: `Keep ordinary instruction text.\n${text}`,
+      sha256: "b".repeat(64), byteSize: 123,
+      spanId: "span", sessionId: "session", turnId: "turn",
+    });
+    const response = await request(appFor()).get(url);
+    expect(response.status).toBe(200);
+    expect(JSON.stringify(response.body)).not.toContain("synthetic-review-secret");
+    expect(response.body.developerInstructions).toContain("Keep ordinary instruction text.");
+    expect(response.body.developerInstructions).toContain("REDACTED");
+    expect(response.body).toMatchObject({ sha256: "b".repeat(64), byteSize: 123, completeness: "partial" });
+    expect(response.body).not.toHaveProperty("agentInstructionStack");
+  });
   it("rejects cross-organization access before any instruction read", async () => {
     const response = await request(appFor("other-org")).get(url);
     expect(response.status).toBe(403);

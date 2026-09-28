@@ -49,7 +49,7 @@ export async function readRecoveredRunDeveloperInstructions(input: {
     || typeof payload.invocationAttemptId !== "string" || typeof payload.invocationSpanId !== "string") return null;
   const [row] = await input.db.select({
     agentId: heartbeatRuns.agentId, context: heartbeatRuns.contextSnapshot,
-    sessionIntent: heartbeatRuns.sessionIntentJson,
+    attempt: heartbeatRunAttempts,
     binding: runtimeBindings, segment: nativeSegments, span: runRuntimeSpans,
   }).from(heartbeatRuns)
     .innerJoin(runRuntimeSpans, and(eq(runRuntimeSpans.runId, heartbeatRuns.id), eq(runRuntimeSpans.orgId, heartbeatRuns.orgId)))
@@ -64,24 +64,29 @@ export async function readRecoveredRunDeveloperInstructions(input: {
   if (!row) return null;
   const context = asRecord(row.context);
   const admission = asRecord(context?.unifiedAgentRun);
-  const intent = asRecord(row.sessionIntent);
-  const params = asRecord(intent?.sessionParams);
+  // Incoming session intent describes the previous turn's instructions. Only
+  // this exact completed Attempt can attest the revision used by this turn.
+  // The Segment's provider state may already describe a later continuation.
+  const params = asRecord(row.attempt.sessionParamsJson);
   const profile = asRecord(context?.runtimeProviderProfile);
   const selector = asRecord(row.span.selectorJson);
   const revision = params?.rudderChatDeveloperInstructionsRevision;
   if (row.binding.agentId !== row.agentId || row.binding.runtimeType !== "codex_local"
     || row.binding.continuity !== "native" || row.binding.hostId !== "local"
     || row.segment.runtimeType !== "codex_local" || row.span.relation === "native_subagent"
+    || row.attempt.agentId !== row.agentId || row.attempt.runtimeType !== "codex_local"
+    || !row.attempt.finishedAt || !["succeeded", "failed", "cancelled", "timed_out"].includes(row.attempt.status)
+    || row.attempt.submissionPhase !== "accepted"
     || admission?.runtimeBindingId !== row.binding.id || admission.runtimeSegmentId !== row.segment.id
     || context?.runtimeBindingId !== row.binding.id || context.runtimeSegmentId !== row.segment.id
     || admission.runtimeType !== "codex_local" || admission.agentId !== row.agentId
-    || JSON.stringify(asRecord(admission.sessionIntent)) !== JSON.stringify(intent)
     || params?.transport !== "codex_app_server" || params.profileOrgId !== input.orgId
     || params.profileBindingId !== row.binding.id || params.profileHostId !== row.binding.hostId
     || params.profileId !== row.binding.profileId || params.workspaceBindingId !== row.binding.workspaceBindingId
     || params.capabilityRevision !== row.binding.capabilityRevision
     || selector?.kind !== "codex_turn" || selector.runId !== input.runId
-    || selector.threadId !== row.segment.nativeSessionId || intent?.sessionId !== selector.threadId
+    || selector.threadId !== row.segment.nativeSessionId
+    || row.attempt.providerThreadId !== selector.threadId || row.attempt.providerTurnId !== selector.turnId
     || params.threadId !== selector.threadId || params.sessionId !== selector.threadId
     || typeof selector.threadId !== "string" || typeof selector.turnId !== "string"
     || profile?.runtimeType !== "codex_local" || typeof profile.codexHome !== "string"

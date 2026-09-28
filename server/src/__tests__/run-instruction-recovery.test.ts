@@ -29,6 +29,18 @@ describe("bounded historical Codex developer instruction recovery", () => {
   it("returns only the unique hash-matched block before the exact native turn", async () => {
     await expect(recover()).resolves.toEqual({ text, sha256, byteSize: Buffer.byteLength(text) });
   });
+  it("recovers B for the resulting revision after an A to B update in the same session", async () => {
+    const textB = "updated developer instructions B";
+    const revisionB = createHash("sha256").update(textB).digest("hex");
+    const updated = { ...message, payload: { ...message.payload, content: [{ type: "input_text", text: textB }] } };
+    await writeFile(file, [rows[0], message,
+      { type: "turn_context", payload: { turn_id: "01a0e914-025a-7a91-8d01-510c230b8630" } },
+      updated, rows[2],
+    ].map((row) => JSON.stringify(row)).join("\n"));
+    await expect(recoverCodexDeveloperInstructions({
+      managedRoot: root, managedHome: home, persistedHome: home, sessionId, turnId, sha256: revisionB,
+    })).resolves.toEqual({ text: textB, sha256: revisionB, byteSize: Buffer.byteLength(textB) });
+  });
   it.each([
     ["wrong session", [{ type: "session_meta", payload: { id: turnId } }, ...rows.slice(1)]],
     ["missing turn", rows.slice(0, 2)],

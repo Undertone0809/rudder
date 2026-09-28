@@ -15,6 +15,10 @@ function fixture() {
   } };
   return {
     agentId: "agent", sessionIntent,
+    attempt: { id: "attempt", agentId: "agent", runtimeType: "codex_local", status: "succeeded", finishedAt: new Date(),
+      submissionPhase: "accepted", providerThreadId: "session", providerTurnId: "turn",
+      sessionParamsJson: { ...sessionIntent.sessionParams },
+    },
     context: { runtimeBindingId: "binding", runtimeSegmentId: "segment",
       runtimeProviderProfile: { runtimeType: "codex_local", codexHome: "/profile" },
       unifiedAgentRun: { runtimeBindingId: "binding", runtimeSegmentId: "segment", runtimeType: "codex_local", agentId: "agent", sessionIntent },
@@ -57,8 +61,8 @@ describe("historical instruction recovery binding", () => {
   it.each(["org", "binding", "agent", "session", "run", "profile", "runtime", "segment", "revision", "host"])("rejects mismatched %s identity before filesystem access", async (field) => {
     const row = fixture();
     switch (field) {
-      case "org": row.sessionIntent.sessionParams.profileOrgId = "other"; break;
-      case "binding": row.sessionIntent.sessionParams.profileBindingId = "other"; break;
+      case "org": row.attempt.sessionParamsJson.profileOrgId = "other"; break;
+      case "binding": row.attempt.sessionParamsJson.profileBindingId = "other"; break;
       case "agent": row.binding.agentId = "other"; break;
       case "session": row.span.selectorJson.threadId = "other"; break;
       case "run": row.span.selectorJson.runId = "other"; break;
@@ -68,6 +72,33 @@ describe("historical instruction recovery binding", () => {
       case "revision": row.binding.capabilityRevision = "other"; break;
       case "host": row.binding.hostId = "remote"; break;
     }
+    expect(await read(dbFor(row))).toBeNull();
+    expect(recoverCodexDeveloperInstructions).not.toHaveBeenCalled();
+  });
+  it("uses revision B from the exact resulting Attempt after same-session A to B instructions", async () => {
+    const row = fixture();
+    const revisionB = "b".repeat(64);
+    row.attempt.sessionParamsJson.rudderChatDeveloperInstructionsRevision = revisionB;
+    // Incoming intent still records A; a later Segment can already hold C.
+    Object.assign(row.segment, { providerStateJson: { rudderChatDeveloperInstructionsRevision: "c".repeat(64) } });
+    await read(dbFor(row));
+    expect(recoverCodexDeveloperInstructions).toHaveBeenCalledWith(expect.objectContaining({ sha256: revisionB, sessionId: "session", turnId: "turn" }));
+    expect(row.sessionIntent.sessionParams.rudderChatDeveloperInstructionsRevision).toBe(revision);
+  });
+  it.each([
+    ["result params", { sessionParamsJson: null }],
+    ["result revision", { sessionParamsJson: { ...fixture().attempt.sessionParamsJson, rudderChatDeveloperInstructionsRevision: undefined } }],
+    ["provider session", { providerThreadId: "other" }],
+    ["provider turn", { providerTurnId: "other" }],
+    ["missing provider turn", { providerTurnId: null }],
+    ["attempt runtime", { runtimeType: "claude_local" }],
+    ["attempt agent", { agentId: "other" }],
+    ["unfinished attempt", { finishedAt: null }],
+    ["running attempt", { status: "started" }],
+    ["unaccepted attempt", { submissionPhase: "indeterminate" }],
+  ])("fails closed without exact Attempt authority: %s", async (_name, patch) => {
+    const row = fixture();
+    Object.assign(row.attempt, patch);
     expect(await read(dbFor(row))).toBeNull();
     expect(recoverCodexDeveloperInstructions).not.toHaveBeenCalled();
   });

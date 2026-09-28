@@ -1,7 +1,7 @@
 import type { Db } from "@rudderhq/db";
 import type { Request, Router } from "express";
 import { redactCurrentUserText } from "../log-redaction.js";
-import { redactSensitiveText } from "../redaction.js";
+import { redactRecoveredInstructionText } from "../services/run-instruction-recovery-redaction.js";
 import { readRecoveredRunDeveloperInstructions, readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.js";
 import {
   assertRunIntelligenceAccess,
@@ -57,7 +57,7 @@ export function registerAgentInvocationInstructionsRoute(input: {
       });
       if (recovered) {
         const redaction = await input.getCurrentUserRedactionOptions();
-        res.json({ ...recovered, developerInstructions: redactCurrentUserText(redactSensitiveText(recovered.developerInstructions), redaction) });
+        res.json({ ...recovered, developerInstructions: redactCurrentUserText(redactRecoveredInstructionText(recovered.developerInstructions), redaction) });
         return;
       }
       res.status(404).json({ error: "Invocation instruction snapshot not found" });
