@@ -1,6 +1,6 @@
 import type { Db } from "@rudderhq/db";
-import { sql } from "drizzle-orm";
 import { LIVE_EVENT_TYPES, type LiveEventType } from "@rudderhq/shared";
+import { sql } from "drizzle-orm";
 import { logger } from "../middleware/logger.js";
 import { publishLiveEvent } from "./live-events.js";
 

@@ -7,8 +7,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { applyMergePlan } from "../commands/worktree-merge.js";
 import { buildWorktreeMergePlan, parseWorktreeMergeScopes } from "../commands/worktree-merge-history-lib.js";
+import { applyMergePlan } from "../commands/worktree-merge.js";
 
 async function availablePostgresPort(): Promise<number> {
   return await new Promise((resolve, reject) => {

@@ -1,8 +1,8 @@
 import type { Db } from "@rudderhq/db";
 import type express from "express";
-import type { Config } from "./config.js";
 import { createHttpApp } from "./bootstrap/create-http-app.js";
 import type { RudderAppOptions } from "./bootstrap/types.js";
+import type { Config } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
 import { configureBrowserCapabilityDeployment } from "./services/browser-capability.js";

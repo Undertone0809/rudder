@@ -6,8 +6,8 @@ import {
   updateProjectResourceAttachmentSchema,
   updateProjectSchema,
 } from "@rudderhq/shared";
-import { Router, type Request, type Response } from "express";
 import { sql } from "drizzle-orm";
+import { Router, type Request, type Response } from "express";
 import { badRequest, conflict } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, projectService, resourceCatalogService } from "../services/index.js";

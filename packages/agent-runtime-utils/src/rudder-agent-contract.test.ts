@@ -6,13 +6,13 @@ import {
   RUDDER_AGENT_CONTRACT_HASH,
   normalizeRudderAgentContractValue,
 } from "./rudder-agent-contract.js";
+import { fingerprintRudderMcpToolManifest, stableRudderMcpContractJson } from "./rudder-mcp-fingerprint.js";
 import {
   GENERATED_RUDDER_AGENT_CONTRACT_HASH,
   GENERATED_RUDDER_BROWSER_MCP_CONTRACT_HASH,
   GENERATED_RUDDER_CORE_MCP_CONTRACT_HASH,
   RUDDER_MCP_TOOL_DESCRIPTORS,
 } from "./rudder-mcp-tool-descriptors.generated.js";
-import { fingerprintRudderMcpToolManifest, stableRudderMcpContractJson } from "./rudder-mcp-fingerprint.js";
 
 const SOURCE_CONTRACT = JSON.parse(readFileSync(
   new URL("../../../contracts/rudder-agent-contract/v1.json", import.meta.url),

@@ -12,15 +12,15 @@ import {
   organizationService,
 } from "../services/index.js";
 import {
+  configuredOrganizationBrandingOrgIds,
+  organizationBrandingOrgIsSelected,
+} from "../services/organization-branding-fence.js";
+import {
   RustFoundationBridgeError,
   type RustFoundationBridge,
   type RustFoundationMode,
   type RustFoundationResponse,
 } from "../services/rust-foundation-bridge.js";
-import {
-  configuredOrganizationBrandingOrgIds,
-  organizationBrandingOrgIsSelected,
-} from "../services/organization-branding-fence.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export type RustFoundationProbeReceipt = {

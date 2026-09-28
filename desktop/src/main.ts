@@ -89,10 +89,6 @@ import {
 import { DESKTOP_BUG_REPORT_URL, DESKTOP_FEEDBACK_EMAIL } from "./desktop-support-mail.js";
 import { createDesktopUpdateFlow, INSTANCE_SETTINGS_GENERAL_PATH } from "./desktop-update-flow.js";
 import {
-  createBoundDesktopUpdateRecoveryRequest,
-  resolveDesktopUpdateRuntimeReceiptForProfile,
-} from "./desktop-update-runtime-receipt.js";
-import {
   ensureExternalDesktopUpdateHelper,
   isDesktopUpdateRequestFresh,
   quarantineDesktopUpdateRequest,
@@ -104,6 +100,10 @@ import {
   spawnDesktopUpdateHelper,
 } from "./desktop-update-helper.js";
 import { createDesktopUpdatePolicyLoader } from "./desktop-update-policy-loader.js";
+import {
+  createBoundDesktopUpdateRecoveryRequest,
+  resolveDesktopUpdateRuntimeReceiptForProfile,
+} from "./desktop-update-runtime-receipt.js";
 import { resolveDesktopUpdateTrustKeys } from "./desktop-update-trust.js";
 import {
   resolveDesktopWindowChromeOptions,

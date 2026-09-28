@@ -28,8 +28,8 @@ import {
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import {
-  lockProjectGoalMutationAuthorityForDelete,
   lockNodeProjectGoalMutationAuthority,
+  lockProjectGoalMutationAuthorityForDelete,
 } from "./project-goal-mutation-fence.js";
 import {
   listProjectResourceAttachmentsByProjectIds,

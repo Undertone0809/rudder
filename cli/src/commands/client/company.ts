@@ -21,9 +21,9 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
-import { binaryContentTypeByExtension, readZipArchive } from "./zip.js";
 import { registerOrganizationBrandColorCommand } from "./company-brand-color.js";
 import { registerOrganizationGetCommand } from "./company-get.js";
+import { binaryContentTypeByExtension, readZipArchive } from "./zip.js";
 
 interface CompanyCommandOptions extends BaseClientOptions {}
 interface OrganizationMembersOptions extends BaseClientOptions {

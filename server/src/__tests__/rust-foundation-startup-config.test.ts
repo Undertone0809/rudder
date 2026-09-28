@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { Config } from "../config.js";
 import { createRudderAppStartupOptions } from "../app.js";
+import type { Config } from "../config.js";
 
 const startupSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 
