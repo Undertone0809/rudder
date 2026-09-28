@@ -1024,3 +1024,40 @@ for documentation-only changes instead of restarting acceptance. The top-level
 `current_candidate` in the status file is authoritative; older checkpoints are
 historical evidence. Evaluate progress by accepted increments merged into Main and
 authority units actually transferred, not branches, agents, commits, or test counts.
+
+### Convergence priority after the user's status review
+
+The quoted `29f4002ce` / remote `9f1afa0e` snapshot is historical. Do not reset
+the candidate or reuse its receipt status. The coordinator must read current Git,
+CI, and independent verdicts before reporting progress.
+
+Finish D1's existing PR before expanding implementation scope. Preserve the
+workspace-backup-list work in its isolated checkout, but park further development.
+The next integration priority is the supported generic member-directory default
+server/CLI/MCP path, followed by D1 default writer ownership and old-writer negative
+proof. Existing private implementations are inputs to these slices, not completed
+authority transfers. Do not add a private-only capability merely to increase counts.
+
+In goal mode the parent coordinates scoped `gpt-6-luna` / `max` workers, reconciles
+their evidence, owns the delivery records and Git integration, and assigns
+independent review and verification. Every worker has explicit file ownership and
+a concrete terminal output. Required native CI runs collect all failing crates
+with `--no-fail-fast`, avoiding one new failure per full matrix cycle.
+
+The canonical checkpoint records the latest implementation SHA, published head,
+runtime evidence SHA and content-equivalence explanation separately. A metadata-only
+commit does not recursively invalidate its own evidence. Historical status blocks
+remain labeled historical and never override the canonical checkpoint.
+
+The bounded next-slice preparation at `44366d918` found three concrete prerequisites
+for the generic member-directory default path: lifecycle-managed signer creation
+when no explicit key is configured; installed foundation binary staging/resolution
+(including Windows executable names); and a default-only API/CLI/MCP workflow that
+does not accidentally rely on another required-mode feature to launch the child.
+Partition these into runtime, packaging, and workflow ownership after D1 merges.
+Inspect the actual generic server/CLI supported-platform and package matrix before
+activation; do not assume the Desktop target list covers every supported install.
+Verify startup failure explicitly, and verify HTTP 503 without Node invocation for
+an unavailable foundation after the public listener is running. Packaging acceptance
+must run without repository `native/target` binaries. This read slice has no writer
+handoff; the subsequent D1 default-write slice does.

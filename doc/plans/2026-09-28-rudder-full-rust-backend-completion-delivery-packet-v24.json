@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "rudder-full-rust-backend-completion-v24-d1-branding-project-goal",
-  "status": "review_ready",
+  "status": "integration_pending",
   "owner": {
     "root_id": "rudder-full-rust-backend-completion-2026-09-21",
     "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
@@ -28,13 +28,17 @@
     "authorization": "The user authorized isolated implementation, disposable local real-entry testing, normal CI, PR updates, and incremental protected-main integration. Production migration, stable release, production traffic switching, and destructive user-data operations remain unauthorized."
   },
   "candidate": {
+    "runtime_verified_source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+    "runtime_content_equivalence": "Through 9df1d85b9, public API/CLI/MCP and foundation runtime are unchanged. Later deltas are docs, CI, private request planner (Newton stage accept, 18 tests and Clippy), and three test expectations. Hubble observed runtime equivalence at 5fa6f66b8; final reviewer must validate the delivery candidate.",
     "branch": "codex/rudder-d1-candidate-20260928",
     "source_ref": "refs/heads/codex/rudder-d1-candidate-20260928",
-    "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
-    "source_tree": "f86976228d0d0661b8bbbfff37efccbddbdda960",
-    "dirty_fingerprint": "9961b0dc417a0bab15e3d70d7d04dc33b2b05c365b3b2a0bb23377d3f4ee1586",
+    "source_sha": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
+    "source_tree": "fecce12c406ece254d86b459c29cbef4914e3286",
+    "dirty_fingerprint": "8446909887b2b54956a9993f18e6212e43beeca9ac5d083505fb84dcacaa34a8",
     "dirty_fingerprint_method": "SHA-256 of git diff --binary origin/main...HEAD excluding doc/plans records; source changes are committed and this packet is maintained separately.",
     "changed_paths": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/rust-d1-real-entry.yml",
       "cli/src/__tests__/agent-v1-mcp-d1-capabilities.test.ts",
       "cli/src/__tests__/agent-v1-mcp-server.test.ts",
       "cli/src/__tests__/agent-v1-registry.test.ts",
@@ -58,6 +62,7 @@
       "native/bins/rudder-server-foundation/tests/black_box.rs",
       "native/crates/agent-contract-core/src/contract.generated.json",
       "native/crates/agent-contract-core/src/lib.rs",
+      "native/crates/agent-request-planner/Cargo.toml",
       "native/crates/agent-request-planner/src/bin/agent-request-planner-differential.rs",
       "native/crates/agent-request-planner/src/lib.rs",
       "native/crates/agent-request-planner/tests/planner.rs",
@@ -71,6 +76,7 @@
       "native/crates/d1-persistence/src/transaction.rs",
       "native/crates/d1-persistence/tests/postgres.rs",
       "native/crates/d1-persistence/tests/support/mod.rs",
+      "native/crates/migration-core/tests/validation.rs",
       "native/crates/project-goal-link-core/Cargo.toml",
       "native/crates/project-goal-link-core/src/lib.rs",
       "native/crates/server-foundation/Cargo.toml",
@@ -116,6 +122,7 @@
       "server/src/__tests__/app-lifecycle.test.ts",
       "server/src/__tests__/budgets-service.test.ts",
       "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/company-portability.test.ts",
       "server/src/__tests__/config-env-loading.test.ts",
       "server/src/__tests__/goals-contract.test.ts",
       "server/src/__tests__/issues-helpers.test.ts",
@@ -170,19 +177,20 @@
       "server/src/services/rust-foundation-bridge.ts",
       "server/src/services/side-chats.ts",
       "server/src/types/express.d.ts",
+      "tests/e2e/workspace-backups.spec.ts",
       "ui/src/api/client.ts",
       "ui/src/api/projects.test.ts",
       "ui/src/api/projects.ts"
     ],
     "build": {
       "id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
-      "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "source_sha": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
       "artifact_hash": "ab2037ad26350518277177e43d8b911750f297329ad6f49e7df3fd49926a9b03;96d26f7b274854800d6666dae420ab857d154c9f7ec722a03d58af35637a6d70",
-      "verification": "Locked Cargo build completed at c8c8e5b2a. Rust backend content is unchanged at 945a0d5d4: subsequent changes repaired CI compatibility literals and restored Desktop updater files to Main. Independent runtime verification remains pending."
+      "verification": "Locked Cargo build completed at c8c8e5b2a. Hubble independently verified binary hashes and both real-entry workflows on the equivalent frozen runtime; the 9df1d85b9 delivery delta does not change executed foundation/API/CLI/MCP code."
     },
     "runtime": {
       "id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
-      "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "source_sha": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
       "topology": "Node public API listener -> private Actix/SQLx authority for D1 -> CLI/MCP through public HTTP; other domains remain Node-owned"
     },
     "organization_data": {
@@ -223,35 +231,58 @@
       ]
     }
   },
+  "post_verifier_checks": {
+    "native_workspace": {
+      "passed": 362,
+      "failed": 0,
+      "ignored": 2,
+      "ignored_reason": "Optional migration-history database tests require RUDDER_MIGRATION_HISTORY_POSTGRES_TEST_DATABASE_URL; real D1 bootstrap/restart preflight is independently verified.",
+      "log": "/var/folders/5l/j5_nt6_x45bbmygxn444r24r0000gn/T/rudder-native-tests.Pvm3P8hV1j",
+      "sha256": "e3d81dd27d5254d8bb27b11381d37daaf8a83d9f1a91e696cbe7fbe1a53eec8a"
+    },
+    "portability_focused_tests": "Newton independently reran company-portability.test.ts on 44366d918: 29 passed. This direct reviewer result supersedes the earlier broader 33-test author summary whose command/log was not retained in this packet. No runtime edit.",
+    "workspace_backup_e2e": {
+      "passed": 2,
+      "mode": "Rust required",
+      "log": "/private/tmp/rudder-backup-e2e.1nXiS4/playwright.log",
+      "sha256": "05038e2b880fcce72e7ec5eb906bce710cbe5c1af7d90eaec2e27f14a2b09953",
+      "scope": "Browse, download, restore, delete and failed backup handling. Actual trace shows pre/code, superseding the initial incorrect generic-Markdown heading assumption. Original CI text-lookup failure root cause is not established."
+    }
+  },
   "receipts": {
     "reviewer": {
       "verdict": "accept",
       "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
       "level": "stage_verdict",
       "scope": "Whole D1 branding and Project-Goal: prior review plus sole updater compatibility blocker resolved at 945a0d5d4. Final handoff remains pending.",
-      "candidate_fingerprint": "9961b0dc417a0bab15e3d70d7d04dc33b2b05c365b3b2a0bb23377d3f4ee1586",
-      "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "candidate_fingerprint": "8446909887b2b54956a9993f18e6212e43beeca9ac5d083505fb84dcacaa34a8",
+      "source_sha": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
       "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
       "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
       "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
       "packet_version": "v24.2"
     },
     "verifier": {
+      "original_receipt_source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "rebind_basis": "Unchanged executed runtime; original independent evidence artifact and hashes preserved. Final reviewer validates delivery-head delta.",
       "verdict": "PASS",
       "agent_id": "01a0e90e-d2df-7092-a9a6-4ac0e3d80c1f",
       "evidence": "doc/plans/artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json",
-      "lease_recheck": "current: runtime content unchanged at 5fa6f66b8; private planner delta tested separately, delta review pending",
-      "candidate_fingerprint": "9961b0dc417a0bab15e3d70d7d04dc33b2b05c365b3b2a0bb23377d3f4ee1586",
-      "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "lease_recheck": "current: runtime content unchanged at 5fa6f66b8; private planner delta tested separately and stage accepted by Newton; later 9df1d85b9 delta is test/CI-only",
+      "candidate_fingerprint": "8446909887b2b54956a9993f18e6212e43beeca9ac5d083505fb84dcacaa34a8",
+      "source_sha": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
       "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
       "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
       "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
       "packet_version": "v24.2"
     },
     "final_review": {
-      "verdict": "pending",
-      "candidate_fingerprint": "9961b0dc417a0bab15e3d70d7d04dc33b2b05c365b3b2a0bb23377d3f4ee1586",
-      "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "verdict": "accept",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "level": "final_handoff_verdict",
+      "evidence": "Newton inspected exact443 tree and source fingerprint, reconciled Hubble PASS and runtime equivalence, checked actual backup E2E/native log hashes and counts, and independently reran portability29. No blocking findings. CI and merge remain separate gates.",
+      "candidate_fingerprint": "8446909887b2b54956a9993f18e6212e43beeca9ac5d083505fb84dcacaa34a8",
+      "source_sha": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
       "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
       "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
       "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
@@ -355,15 +386,15 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
     "branch_refs": [
-      "refs/heads/codex/rudder-d1-candidate-20260928@945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
-      "refs/remotes/origin/codex/rudder-rust-mainline-probe-20260923@945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
+      "refs/heads/codex/rudder-d1-candidate-20260928@44366d918c710ef33dbea6a5c7e2cfbb7709233b",
+      "refs/remotes/origin/codex/rudder-rust-mainline-probe-20260923@44366d918c710ef33dbea6a5c7e2cfbb7709233b",
       "refs/remotes/origin/main@66b500aef009a0554ebf658de4fca6ddfa8466f1"
     ],
-    "pr_remote_head_observed": "9f1afa0e1ce65b89969382191e0c5f268591ea43",
-    "pr_remote_base_observed": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "pr_remote_head_observed": "44366d918c710ef33dbea6a5c7e2cfbb7709233b",
+    "pr_remote_base_observed": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss",
-    "patch_tree_sha": "f86976228d0d0661b8bbbfff37efccbddbdda960",
+    "patch_tree_sha": "fecce12c406ece254d86b459c29cbef4914e3286",
     "expected_old_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
     "cas": {
       "attempted": false,
