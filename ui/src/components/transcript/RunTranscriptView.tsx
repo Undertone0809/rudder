@@ -126,6 +126,7 @@ function RunTranscriptViewContent({
     }),
     [effectiveShowDeveloperDiagnostics, entries, presentation],
   );
+  const rawEntries = presentation === "detail" ? entries : renderableEntries;
   const blocks = useMemo(
     () => normalizeTranscript(presentation === "chat"
       ? filterChatAssistantTranscriptEntries(renderableEntries, {
@@ -157,7 +158,7 @@ function RunTranscriptViewContent({
       : undefined
   ), [activeRunAnnotationBlockId, runAnnotationContext]);
 
-  if (renderableEntries.length === 0) {
+  if ((mode === "raw" ? rawEntries : renderableEntries).length === 0) {
     if (!emptyMessage) return null;
     return (
       <div className={cn("rounded-2xl border border-dashed border-border/70 bg-background/40 p-4 text-sm text-muted-foreground", className)}>
@@ -247,7 +248,7 @@ function RunTranscriptViewContent({
       <div hidden={mode !== "raw"}>
         {mode === "raw" ? (
           <div className={className}>
-            <RawTranscriptView entries={renderableEntries} density={density} limit={limit} />
+            <RawTranscriptView entries={rawEntries} density={density} limit={limit} />
           </div>
         ) : null}
       </div>

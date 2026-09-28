@@ -12,6 +12,15 @@ const input: TranscriptEntry = {
 };
 
 describe("native transcript presentation", () => {
+  it("preserves the exact native input in Run Detail Raw mode", () => {
+    const html = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
+      presentation="detail" mode="raw" entries={[input]}
+    /></ThemeProvider>);
+    expect(html).toContain("Conversation input:");
+    expect(html).toContain("currentMessage");
+    expect(html).toContain("what skills do you have?");
+  });
+
   it("leaves an empty Chat process empty when the runtime only echoes user input", () => {
     const html = renderToStaticMarkup(<ThemeProvider><RunTranscriptView
       presentation="chat" entries={[
