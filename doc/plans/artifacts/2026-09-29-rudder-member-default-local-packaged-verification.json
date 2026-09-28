@@ -1,0 +1,52 @@
+{
+  "schema": "rudder.local-packaged-verification/v1",
+  "candidate_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+  "candidate_tree": "7b02b6a6412130a5461042216ad15093806465ac",
+  "packaging_source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+  "packaging_source_tree": "458853294b6301534ea5192741cfc83dbfc140a0",
+  "source_equivalence": "Runtime paths are unchanged from archive9d to candidate8c; the only changed path under server/native/cli/packages/desktop/ui is server/scripts/stage-native.test.mjs (import ordering). CI and metadata/test-only changes do not rebuild this artifact.",
+  "author_agent": "Parfit/01a0e9cd-bd5c-7ae0-ae6a-bdc9dcaf84b3",
+  "recorder": "Parent assembled from Parfit command results, preserved logs and independently recomputed artifact/log hashes; not an independent verifier receipt.",
+  "environment": "Disposable local macOS ARM64; app0.7.24; Node22.23.1",
+  "archive_root": "/private/tmp/rudder-member-default-9dce4eee8.kgB2nY",
+  "evidence_root": "/private/tmp/rudder-member-default-app-builder.RXirTu",
+  "checks": {
+    "desktop_dist": "PASS_exit0",
+    "computer_use_package": "PASS_darwin_arm64_exit0",
+    "packaged_smoke": "PASS_account_gate_auto_update_public_fallback_full_only_and_data_preservation",
+    "packaged_app_builder": "PASS_same_artifact_standalone_temp_fixture_exit0",
+    "aggregate_desktop_verify": "FAIL_dev_clean_Agent_Terminal_constrained_layout_timeout_smoke_mjs6540"
+  },
+  "artifacts": {
+    "portable_zip_sha256": "621b44b93b5c5109015938983f8625ef023aacfaf5ee0bc030127d9f78a47e15",
+    "shell_zip_sha256": "7116fe8b866050309cf9f9e874829a95d849de501cfc2d73caf97c7352f0a7ee",
+    "packaged_server_foundation_sha256": "a167762363df9606c9467d96eefe1b354b5ab01f7d1d2b30d8f52bcb91af10b4",
+    "hash_note": "These author Desktop artifacts are distinct from Hubble's independently installed npm package and binary. Do not substitute identities between receipts."
+  },
+  "logs": [
+    {"file": "packaged-smoke.log", "sha256": "57204666d387ed3c5654290375b2feda7774f91bcb20512c25acf2ebe87cfa68"},
+    {"file": "app-builder-smoke-packaged-isolated.log", "sha256": "8d820a05950c6cf41c8c1112f6f9d7c8bda35c2a6715e73053aa24e8505e2498"},
+    {"file": "app-builder-smoke-packaged-workspace-leak.log", "sha256": "592cd40f8db5ad47c09090633259916cf71c65ad76bd904ba0ec92e51982cfba"},
+    {"file": "desktop-dist.log", "sha256": "7bc8f8ba2f74a5764dc55c4504dfb819a5abc40a5d858cc864d633aa77ed7d41"},
+    {"file": "verify-computer-use-package.log", "sha256": "bb5b578129f9a450a7c7522348461c28c81e4281570d51cc375204a0dfe597b5"},
+    {"file": "desktop-verify-cache-bridge.log", "sha256": "41d81c2fab1eef19a6260a0a630462851282418a3697402268ff62a7b532a93e"}
+  ],
+  "app_builder_first_attempt": {
+    "result": "FAIL_pnpm_frozen_install_autoInstallPeers_config_mismatch_before_readiness",
+    "cause": "TMPDIR placed the generated standalone project below the archived Rudder checkout; pnpm discovered all20 parent workspace packages and its autoInstallPeers=true lockfile instead of scaffold false.",
+    "repair": "Move only TMPDIR to a sibling scratch directory outside every checkout; rerun same packaged artifact without source, assertion or lockfile changes.",
+    "failed_evidence_preserved": true
+  },
+  "build_accommodation": "Existing Desktop stager compiled into CARGO_TARGET_DIR but looked in archive/native/target. A temporary symlink to the shared target enabled staging; no source fix. The symlink remained at parent hash check; packaged files and zip hashes above are independent copied assets.",
+  "cleanup": {
+    "author_report": "Packaged smoke and successful App Builder exited and removed their disposable profiles; scoped lsof checks for run-root cwd and packaged executable found no matching owned processes.",
+    "limit": "Not every transient App Builder port/PID was retained. Do not claim exhaustive PID/port receipts for these author checks. Independent installed verifier has its own complete resource receipt.",
+    "unrelated_processes": "No additional process termination or host-wide cleanup performed for this receipt."
+  },
+  "dev_clean_disposition": "Newton inspected current logs and unchanged UI/smoke paths against Main, plus prior accepted D1 same-signature evidence. No new bounded merge blocker or fresh Main reproduction required; aggregate desktop:verify stays FAIL, not baseline-proven PASS.",
+  "limits": [
+    "Author packaged regression evidence only; Hubble's independent receipt remains separate.",
+    "Only macOS ARM64 executed here; no six-platform execution, release, production or whole-migration claim.",
+    "Final reviewer receipt and exact-head CI qualification remain separate gates."
+  ]
+}

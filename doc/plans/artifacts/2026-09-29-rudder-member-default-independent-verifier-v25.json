@@ -1,0 +1,346 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-generic-member-default-v25",
+  "acceptance_packet": "25.2",
+  "verdict": "PASS",
+  "verifier_role": "independent installed real-workflow verifier",
+  "recorded_at": "2026-09-28T21:49:04.085Z",
+  "scope": "Bounded installed member-directory default Rust acceptance; final reviewer and exact-head CI remain separate parent integration gates.",
+  "candidate_rebind": {
+    "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+    "tree": "7b02b6a6412130a5461042216ad15093806465ac",
+    "fingerprint": "4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f",
+    "fingerprint_method": "SHA256 of git diff --binary f6eab53c3...8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0 -- . ':!doc/plans'",
+    "equivalence": "Only scripts/runtime-postinstall-compat.test.mjs differs from artifact HEAD939; server/native/cli/packages/installed harness content unchanged. No rebuild or replay required."
+  },
+  "actual_artifact": {
+    "head": "939ea94e1bc7c59d1aabee3eb0bb4229be1f3da5",
+    "tree": "4fec84298bbc1085edbd37e49d9362a29252eb08",
+    "ci_run": 36483530738,
+    "runtime_source": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
+    "runtime_source_tree": "f451fca2351a7121a85799905255d21c4909f213",
+    "runtime_source_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
+    "runtime_fingerprint_method": "SHA256 of git diff --binary f6eab53c3...1c387d7c1 excluding doc/plans",
+    "server_tarball": "/tmp/rudder-member-verifier.SR0PUD/tarballs/rudderhq-server-0.7.24.tgz",
+    "server_tarball_sha256": "754e4b30e6d13bb02ab6dbac455ce7bdf0a6fd49ce8b57d7cc5008067d6a1cbd",
+    "install_root": "/private/tmp/rudder-member-verifier.SR0PUD/install",
+    "server_entry_sha256": "91d220481c55cdb1adb4669dc1391d3d7fbab4111eb6d5b529b738a730faeccb",
+    "cli_entry_sha256": "4353acec4352b7df663658f13e1a9e6c5274fb54dbb118712251760de33f6b40",
+    "package_lock_sha256": "f2c528f7fd07fc2cc506f9e1acbb5903e48b37e796dd0643515fb90b052368b6",
+    "node": "v22.23.1",
+    "npm": "10.9.8",
+    "native": [
+      {
+        "target": "aarch64-apple-darwin",
+        "artifact_id": 10998470516,
+        "sha256": "ed5155ccc5f4697d90f6ef00ff5b6a3a16caac9c7451fb56364d791e4481a6e9",
+        "build_mode": "native-build",
+        "execution": "PASS"
+      },
+      {
+        "target": "aarch64-pc-windows-msvc",
+        "artifact_id": 10997746997,
+        "sha256": "bb2ba7bb57c27a85bdef2aef522ec362854d0be9f087bb10d539560e4d0642bc",
+        "build_mode": "cross-compile",
+        "execution": "not_attempted"
+      },
+      {
+        "target": "aarch64-unknown-linux-gnu",
+        "artifact_id": 10997377287,
+        "sha256": "cd4e4343349eae027cf2ffdd329445d45dcf0575e5100632489a9bcf5a342b01",
+        "build_mode": "cross-compile",
+        "execution": "not_attempted"
+      },
+      {
+        "target": "x86_64-apple-darwin",
+        "artifact_id": 10997697554,
+        "sha256": "2200ebf168c304e1282b2cf28f56ccc60e4727352dcb67f470daa2a095d827f8",
+        "build_mode": "native-build",
+        "execution": "not_attempted"
+      },
+      {
+        "target": "x86_64-pc-windows-msvc",
+        "artifact_id": 10997197525,
+        "sha256": "94789d786f02ede3989160ff2f1c79073764c413af33789839755250163c4323",
+        "build_mode": "native-build",
+        "execution": "not_attempted"
+      },
+      {
+        "target": "x86_64-unknown-linux-gnu",
+        "artifact_id": 10997806612,
+        "sha256": "84a12f5ce6ccc710cff2bc556d9b20a4d4022b3b8ea4c0fe8b891edcabb26da5",
+        "build_mode": "native-build",
+        "execution": "not_attempted"
+      }
+    ]
+  },
+  "leases": {
+    "runtime": "member-v25.2-ci36483530738-macos-arm64",
+    "data": "member-v25.2-fresh-fixture-under-rudder-member-verifier.SR0PUD"
+  },
+  "default_workflow": {
+    "exit_code": 0,
+    "no_mode_signer_binary_overrides": true,
+    "full_package": true,
+    "fixture_root": "/private/tmp/rudder-member-verifier.SR0PUD/rudder-installed-member-directory.dLZ8it",
+    "organization_ids": [
+      "77ea2c70-accd-4f5a-8bf6-b4fa7c4474a2",
+      "2773a351-f0e3-4be7-bf26-13b57ed88627"
+    ],
+    "node_pids": [
+      83265,
+      83538,
+      85804,
+      10995,
+      11740
+    ],
+    "foundation_pids": [
+      85567,
+      85901,
+      11716
+    ],
+    "api_port": 52693,
+    "database_port": 52694,
+    "command": "TMPDIR=/private/tmp/rudder-member-verifier.SR0PUD node --import /private/tmp/rudder-member-verifier.SR0PUD/observe-runtime.mjs scripts/smoke/installed-member-directory.mjs --install-root /private/tmp/rudder-member-verifier.SR0PUD/install --keep-temp",
+    "observation_note": "External /tmp preload captures child output and HTTP responses; no candidate edits. Separate explicit-off supplemental restarts are recorded in the same observation stream."
+  },
+  "criteria": [
+    {
+      "criterion": "Complete package and fresh lifecycle install",
+      "result": "PASS",
+      "proof": "Normal six-target prepack; fresh npm install with scripts; host644->755 without manual chmod/Cargo;1919 server files and2355 dependency dist files matched."
+    },
+    {
+      "criterion": "Relocated default startup",
+      "result": "PASS",
+      "proof": "Own packaged host asset resolves outside checkout without mode, signer or binary overrides."
+    },
+    {
+      "criterion": "Missing-asset startup rejection",
+      "result": "PASS",
+      "proof": "Boot rejects unavailable required asset; no API listener; owned DB closes; asset restored."
+    },
+    {
+      "criterion": "Authentication, scope and persistence",
+      "result": "PASS",
+      "proof": "Local-trusted seed, same-data authenticated restart, invalid key401 and foreign-org403; CLI/MCP corresponding denials."
+    },
+    {
+      "criterion": "Pagination and references",
+      "result": "PASS",
+      "proof": "API/CLI short refs/full UUID option; MCP supported short refs; repeated full11-member traversal identical and duplicate-free."
+    },
+    {
+      "criterion": "Signed envelope integrity and bounds",
+      "result": "PASS",
+      "proof": "Separate actual installed HTTP protocol supplement below."
+    },
+    {
+      "criterion": "Post-boot outage",
+      "result": "PASS",
+      "proof": "Owned Rust child killed and asset hidden; Node health200, member API503, CLI/MCP errors; restored asset and cleanup verified."
+    },
+    {
+      "criterion": "Explicit off and writer defaults",
+      "result": "PASS",
+      "proof": "Explicit member off boots and serves directory with Rust binary absent and both writer modes unset; no Rust child. No writer-retirement claim."
+    },
+    {
+      "criterion": "Stage/freeze and independent terminal gate",
+      "result": "PASS",
+      "proof": "Parent-relayed Newton stage rebind accepted; immutable artifact hashes current; independent default and named protocol workflows observed."
+    }
+  ],
+  "protocol_supplement": {
+    "name": "explicit-static-signer-protocol-supplement",
+    "default_configuration_proof": false,
+    "profile": "/private/tmp/rudder-member-verifier.SR0PUD/protocol-profile.zdINgV",
+    "organization_id": "45763549-7ca1-438d-ac60-eb3d3d2e5b3c",
+    "node_pid": 67824,
+    "foundation_pid": 68328,
+    "api_port": 58277,
+    "database_port": 58278,
+    "foundation_port": 58397,
+    "listener_discovery": "lsof -nP -a -p 68328 -iTCP -sTCP:LISTEN -Fn; scoped to owned child PID",
+    "signer": "Explicit fixture-owned static32-byte UTF8 signer, held only for this process",
+    "key_sha256": "8bcb817931abacfb70e5dba1d82a3ea7c9e9e945f9791e1217742b63e0464824",
+    "cases": [
+      {
+        "name": "correctly signed long URI",
+        "identity_utf8_bytes": 13,
+        "request_target_bytes": 681,
+        "http_status": 200,
+        "result": "PASS"
+      },
+      {
+        "name": "signed request target 8192 bytes",
+        "identity_utf8_bytes": 13,
+        "request_target_bytes": 8192,
+        "http_status": 200,
+        "result": "PASS"
+      },
+      {
+        "name": "signed request target 8193 bytes",
+        "identity_utf8_bytes": 13,
+        "request_target_bytes": 8193,
+        "http_status": 401,
+        "result": "PASS",
+        "reason": "actor_envelope_invalid"
+      },
+      {
+        "name": "bound path changed after signing",
+        "identity_utf8_bytes": 13,
+        "request_target_bytes": 90,
+        "http_status": 401,
+        "result": "PASS",
+        "reason": "actor_envelope_invalid"
+      },
+      {
+        "name": "bound body changed after signing",
+        "identity_utf8_bytes": 13,
+        "request_target_bytes": 83,
+        "http_status": 401,
+        "result": "PASS",
+        "reason": "actor_envelope_invalid"
+      },
+      {
+        "name": "actor changed after signing",
+        "identity_utf8_bytes": 13,
+        "request_target_bytes": 83,
+        "http_status": 401,
+        "result": "PASS",
+        "reason": "actor_envelope_invalid"
+      },
+      {
+        "name": "ASCII identity 256 bytes",
+        "identity_utf8_bytes": 256,
+        "request_target_bytes": 83,
+        "http_status": 200,
+        "result": "PASS"
+      },
+      {
+        "name": "ASCII identity 257 bytes",
+        "identity_utf8_bytes": 257,
+        "request_target_bytes": 83,
+        "http_status": 401,
+        "result": "PASS",
+        "reason": "actor_envelope_invalid"
+      },
+      {
+        "name": "multibyte identity 256 bytes",
+        "identity_utf8_bytes": 256,
+        "request_target_bytes": 83,
+        "http_status": 200,
+        "result": "PASS"
+      },
+      {
+        "name": "multibyte identity 257 bytes",
+        "identity_utf8_bytes": 257,
+        "request_target_bytes": 83,
+        "http_status": 401,
+        "result": "PASS",
+        "reason": "actor_envelope_invalid"
+      }
+    ],
+    "binary_sha256_before": "ed5155ccc5f4697d90f6ef00ff5b6a3a16caac9c7451fb56364d791e4481a6e9",
+    "binary_sha256_after": "ed5155ccc5f4697d90f6ef00ff5b6a3a16caac9c7451fb56364d791e4481a6e9"
+  },
+  "cleanup": {
+    "result": "PASS",
+    "hidden_asset_restored": true,
+    "host_mode": "755",
+    "all_six_binary_hashes_unchanged": true,
+    "original_and_supplemental_owned_pids_exited": true,
+    "closed_ports": [
+      52602,
+      52603,
+      52693,
+      52694,
+      58277,
+      58278,
+      58397
+    ],
+    "protocol_pids_exited": [
+      {
+        "pid": 67824,
+        "exited": true
+      },
+      {
+        "pid": 68328,
+        "exited": true
+      }
+    ],
+    "db_slot_released": true,
+    "disposable_data_retained_for_evidence": true,
+    "unrelated_processes_preserved": true
+  },
+  "limits": [
+    "Only macOS ARM64 executed; six-target package presence, hashes and architecture verified, not foreign-platform runtime behavior.",
+    "No production or existing-user DB access, stable publication, release readiness, full migration, Node backend retirement, or D1 writer retirement claim.",
+    "Named explicit-signer protocol supplement is separate from default no-overrides proof.",
+    "Final reviewer and CI integration decisions are parent-owned; this receipt does not claim those gates completed.",
+    "Raw /tmp evidence is local and may expire; receipt stores paths and SHA256, not member payloads or secrets."
+  ],
+  "evidence": [
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/terminal-receipt.json",
+      "sha256": "3ec8b5f52256f4626060f15b9130fe4fd27df9cf6eaa3bde774ee4b9c1b4c638"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/install-identity.json",
+      "sha256": "6c9e68c05edf14bcfa4b8c9fac2c788f917a1c98960ecd4e4542d431c7b9c3cf"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/artifact-manifest.json",
+      "sha256": "062e69199e9e08ebf6ac0ee145f3c8d8c0c75cfcfac0332f490bbe1f692604b0"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/dependency-provenance.json",
+      "sha256": "80b0cf888b7c3ace3261ba8f30d01641ce0e04aff1619fb0452cbfc931f3092e"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/server-pack.log",
+      "sha256": "58bfc3d1cd007e8384071a2b5f0759fe8b994f83cfa6d0d8c84280b468dd186c"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/npm-install.log",
+      "sha256": "2eb4f06bd77c28fd88b6e81a0cb3b08472e22693cf8fc4a8cd75da1bffac9b14"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/full-package-smoke.log",
+      "sha256": "fe7d1504620713540519b2a6594e04f2c2a3dd8120c0ff4b559f1c60cb9301a1"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/runtime-observations.jsonl",
+      "sha256": "263beec42805ea19f7bc5bc023765794fd88fbbf92a01e4040e30f9a4e252f0b"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/supplemental.log",
+      "sha256": "46c80674dac2ea29965daad5709127dbca805ef484d2cd2c1991db46b507f456"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/supplemental-observations.json",
+      "sha256": "583789ac87d3a069649f5d16b3db912d32f951502a2aca644af966beee462a25"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/protocol-receipt.json",
+      "sha256": "c662886b6dfdcccd75b5aa6ea7e528d898735d66dd6dc42a383d30d6f85a5e01"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/protocol-probe.log",
+      "sha256": "c586a6d83a2d20f2e56d88ab58d86c924c759f50b075e49a517751d51ed8eaf0"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/protocol-server.log",
+      "sha256": "75bc25559dcab626297f6a1bb329b0fe2a058b81a0a7b167280ad238842bfbda"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/head-rebind.json",
+      "sha256": "8552f7d862a2aab7419b57f402e7c2258e8f78ca61234b55e9587db441713357"
+    },
+    {
+      "path": "/private/tmp/rudder-member-verifier.SR0PUD/criterion-proof.md",
+      "sha256": "914841aaa1b02ec81b536e132a65b08064460810997d4f6727146413c1fcfc70"
+    }
+  ]
+}

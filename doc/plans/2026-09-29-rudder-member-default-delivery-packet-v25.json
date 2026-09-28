@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "rudder-generic-member-default-v25",
-  "status": "review_ready",
+  "status": "delivered",
   "owner": {
     "root_id": "rudder-full-rust-backend-completion",
     "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
@@ -39,11 +39,11 @@
   },
   "candidate": {
     "branch": "codex/member-directory-default-20260929",
-    "source_ref": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
-    "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
-    "source_tree": "f451fca2351a7121a85799905255d21c4909f213",
-    "dirty_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
-    "fingerprint_method": "SHA256 git diff --binary f6eab53c3...1c387d7c1 excluding doc/plans",
+    "source_ref": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+    "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+    "source_tree": "7b02b6a6412130a5461042216ad15093806465ac",
+    "dirty_fingerprint": "4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f",
+    "fingerprint_method": "SHA256 git diff --binary f6eab53c3...8cbfc87a0 excluding doc/plans",
     "changed_paths": [
       ".github/workflows/ci.yml",
       ".github/workflows/release.yml",
@@ -67,19 +67,35 @@
       "server/src/__tests__/rust-foundation-startup-config.test.ts",
       "server/src/config.ts",
       "server/src/services/rust-foundation-bridge.test.ts",
-      "server/src/services/rust-foundation-bridge.ts"
+      "server/src/services/rust-foundation-bridge.ts",
+      "scripts/runtime-postinstall-compat.test.mjs"
     ],
     "build": {
-      "id": "pending-six-target-candidate",
-      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95"
+      "id": "server-tarball-sha256:754e4b30e6d13bb02ab6dbac455ce7bdf0a6fd49ce8b57d7cc5008067d6a1cbd",
+      "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "manifest": "/tmp/rudder-member-verifier.SR0PUD/install-identity.json",
+      "ci_run": "36483530738",
+      "published_source_sha": "939ea94e1bc7c59d1aabee3eb0bb4229be1f3da5",
+      "origin_source_sha": "939ea94e1bc7c59d1aabee3eb0bb4229be1f3da5",
+      "origin_runtime_source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
+      "source_binding": "Logical candidate rebind, not rebuild. Only compatibility test name/expected string changed from origin939 to8c; all native/server/CLI/packages/UI/Desktop/harness/workflow sources and frozen package bytes unchanged. Newton independently accepted equivalence."
     },
     "runtime": {
-      "id": "pending-independent-installed-runtime",
-      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95"
+      "id": "member-v25.2-ci36483530738-macos-arm64",
+      "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "install_root": "/private/tmp/rudder-member-verifier.SR0PUD/install",
+      "host_binary_sha256": "ed5155ccc5f4697d90f6ef00ff5b6a3a16caac9c7451fb56364d791e4481a6e9",
+      "process_identity": "Completed and cleaned; exact Node/foundation PIDs and API/database ports recorded in doc/plans/artifacts/2026-09-29-rudder-member-default-independent-verifier-v25.json default_workflow, protocol_supplement and cleanup.",
+      "origin_source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
+      "supplemental_protocol_fixture": "Same installed artifact, separate disposable profile with fixture-selected explicit static signer for actual HTTP tamper and identity byte-boundary proof. Original default/no-overrides fixture remains separate; record only key fingerprint."
     },
     "organization_data": {
-      "organization_id": "pending-independent-org-id",
-      "data_id": "pending-independent-disposable-data"
+      "organization_id": "77ea2c70-accd-4f5a-8bf6-b4fa7c4474a2",
+      "organization_ids": ["77ea2c70-accd-4f5a-8bf6-b4fa7c4474a2", "2773a351-f0e3-4be7-bf26-13b57ed88627"],
+      "supplemental_protocol_organization_id": "45763549-7ca1-438d-ac60-eb3d3d2e5b3c",
+      "data_id": "member-v25.2-fresh-fixture-under-rudder-member-verifier.SR0PUD",
+      "fixture_root": "/private/tmp/rudder-member-verifier.SR0PUD",
+      "lease": "Completed fresh disposable profiles; child roots, organization identities, process and port cleanup recorded in the durable independent verifier receipt. No remaining live acceptance process is claimed."
     },
     "workload_fixture": "scripts/smoke/installed-member-directory.mjs",
     "budget_lease": {
@@ -89,7 +105,7 @@
     },
     "acceptance_packet": {
       "version": "25.2",
-      "fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
+      "fingerprint": "4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f",
       "criteria": [
         "Actual relocated installed server package resolves its own native asset without mode, signer or binary overrides; no repository/ancestor native target resolution.",
         "Missing required packaged binary rejects initial boot and closes owned API/database resources; no fallback.",
@@ -115,32 +131,43 @@
   "receipts": {
     "reviewer": {
       "verdict": "accept",
-      "candidate_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
-      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
-      "build_id": "pending-six-target-candidate",
-      "runtime_id": "pending-independent-installed-runtime",
-      "data_id": "pending-independent-disposable-data",
+      "candidate_fingerprint": "4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f",
+      "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "build_id": "server-tarball-sha256:754e4b30e6d13bb02ab6dbac455ce7bdf0a6fd49ce8b57d7cc5008067d6a1cbd",
+      "runtime_id": "member-v25.2-ci36483530738-macos-arm64",
+      "data_id": "member-v25.2-fresh-fixture-under-rudder-member-verifier.SR0PUD",
       "packet_version": "25.2",
       "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
-      "level": "integrated_stage_plus_import_and_workflow_deltas",
-      "evidence": "Independent integrated stage accept at5f7a6b1ef/source9d; subsequent exact three-file import-only delta accept remains applicable atcb9e06163. No product change; full package install verifier and exact-head CI still pending. Newton also accepted exact WindowsARM64 linker-binding delta at1c387d7c1; fresh CI must prove cross-link/artifact upload."
+      "level": "integrated_stage_rebind_complete_package",
+      "evidence": "Independent integrated stage accept at5f7a6b1ef/source9d, followed by import-only delta accept atcb9 and WindowsARM64 linker delta accept at1c. Pre-verifier freeze independently matched source/tarball/all six installed binary hashes and host755. Newton accepted v25.2 complete-package lease and test-only artifact-equivalence rebind to8c; actual artifact origin939/runtime1c retained, no rebuild claimed. Subsequent verifier, final review and exact-head CI completed successfully as recorded below.",
+      "verified_at": "2026-09-28T21:25:03Z"
     },
     "verifier": {
-      "verdict": "pending",
-      "candidate_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
-      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
-      "build_id": "pending-six-target-candidate",
-      "runtime_id": "pending-independent-installed-runtime",
-      "data_id": "pending-independent-disposable-data",
-      "packet_version": "25.2"
+      "verdict": "PASS",
+      "candidate_fingerprint": "4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f",
+      "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "build_id": "server-tarball-sha256:754e4b30e6d13bb02ab6dbac455ce7bdf0a6fd49ce8b57d7cc5008067d6a1cbd",
+      "runtime_id": "member-v25.2-ci36483530738-macos-arm64",
+      "data_id": "member-v25.2-fresh-fixture-under-rudder-member-verifier.SR0PUD",
+      "packet_version": "25.2",
+      "evidence": "Hubble independently passed installed default API/CLI/MCP, restart, outage, pagination, explicit-off and URI bounds. Separate actual-HTTP static-signer supplement passed path/body/actor tamper rejection and ASCII/multibyte identity256 accepted versus257 rejected. Explicit8c artifact-equivalence rebind; artifact origin939/runtime1c retained. Owned processes exited and ports closed.",
+      "verified_at": "2026-09-28T21:43:17.649Z",
+      "terminal_receipt": "/tmp/rudder-member-verifier.SR0PUD/terminal-receipt.json",
+      "durable_receipt": "doc/plans/artifacts/2026-09-29-rudder-member-default-independent-verifier-v25.json",
+      "protocol_receipt": "/tmp/rudder-member-verifier.SR0PUD/protocol-receipt.json",
+      "criterion_proof": "/tmp/rudder-member-verifier.SR0PUD/criterion-proof.md"
     },
     "final_review": {
-      "verdict": "pending",
-      "candidate_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
-      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
-      "build_id": "pending-six-target-candidate",
-      "runtime_id": "pending-independent-installed-runtime",
-      "data_id": "pending-independent-disposable-data",
+      "verdict": "accept",
+      "reviewer_agent": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "recorded_at": "2026-09-28T22:19:51Z",
+      "evidence": "Newton final bounded-slice accept: Hubble independent PASS and8c rebind adequate; six author packaged log hashes and both ZIP plus foundation hashes independently matched. No blocking findings. Author and independent artifact identities remain separate. Aggregate desktop:verify FAIL at unchanged Terminal layout accepted as a scoped limitation, not a fresh Main reproduction. Exact8c CI and parent preflight still gate merge.",
+      "packaged_receipt": "doc/plans/artifacts/2026-09-29-rudder-member-default-local-packaged-verification.json",
+      "candidate_fingerprint": "4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f",
+      "source_sha": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "build_id": "server-tarball-sha256:754e4b30e6d13bb02ab6dbac455ce7bdf0a6fd49ce8b57d7cc5008067d6a1cbd",
+      "runtime_id": "member-v25.2-ci36483530738-macos-arm64",
+      "data_id": "member-v25.2-fresh-fixture-under-rudder-member-verifier.SR0PUD",
       "packet_version": "25.2"
     }
   },
@@ -195,18 +222,27 @@
         "kind": "workflow_only_fix",
         "previous_source": "cb9e0616398d9fda6c2fa47dd5cea1485bc96a86",
         "current_source": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
-        "reason": "CI WindowsARM64 selected Git Bash link.exe; explicit MSVC Hostx64/arm64 linker bound for Cargo. Reviewer stage accept; actionlint andCI4/release24 contracts PASS; runtime source unchanged; fresh target build pending."
+        "reason": "CI WindowsARM64 selected Git Bash link.exe; explicit MSVC Hostx64/arm64 linker bound for Cargo. Reviewer stage accept; actionlint andCI4/release24 contracts PASS; runtime source unchanged. Subsequent six-target builds and exact8c qualification passed."
+      },
+      {
+        "kind": "test_only_rebind",
+        "previous_source": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
+        "current_source": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+        "reason": "Postinstall contract now asserts both unchanged candidate hooks in order. Reviewer independently verified exact diff, tree/fingerprint and runtime/artifact equivalence; new exact-head CI required."
       }
     ],
     "invalidated_receipts": []
   },
   "integration": {
     "pr_url": "https://github.com/Undertone0809/rudder/pull/233",
-    "published_head": "5f7a6b1ef07f79e8eef6f41378082591bdf83371",
-    "publication_state": "draft_for_CI_not_accepted",
-    "ci_run": "36482464814",
-    "d1_regression_run": "36482464800",
-    "publication_equivalence": "5f7a6b1ef changes only doc/plans metadata relative to frozen source9dce4eee8; runtime and acceptance harness unchanged.",
+    "published_head": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+    "publication_state": "MERGED_PR233",
+    "ci_run": "36487072166",
+    "ci_attempt": 2,
+    "ci_result": "PASS_all_applicable_jobs_and_D1_regression",
+    "ci_first_attempt": "All other jobs PASS; Intel macOS job109146539956 timed out at5000ms in unchanged log-store-offsets.test.ts250 (112PASS,1FAIL,1skip). Same test/source passed prior939 job109135403690. One failed-job-only retry, no source edits or timeout/assertion changes; repeated failure requires diagnosis.",
+    "d1_regression_run": "36487072045",
+    "publication_equivalence": "8c changes only one compatibility test from artifact-origin939; no rebuild/runtime change.",
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
@@ -214,17 +250,17 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
     "branch_refs": [
-      "refs/heads/codex/member-directory-default-20260929@1c387d7c1fdcce841a98d8928e80795d5e7feb95"
+      "refs/heads/codex/member-directory-default-20260929@8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
-    "patch_tree_sha": "f451fca2351a7121a85799905255d21c4909f213",
+    "patch_tree_sha": "7b02b6a6412130a5461042216ad15093806465ac",
     "expected_old_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
+      "delivered_sha": "e14771c4a0ed642bafd478c18dd1278855be89c5"
     },
     "index_update_mode": "none",
     "failed_ci_job": {
@@ -232,6 +268,13 @@
       "job": "109131285224",
       "cause": "Git_Bash_link_exe_selected_instead_of_MSVC_arm64",
       "fix": "1c387d7c1fdcce841a98d8928e80795d5e7feb95"
+    },
+    "previous_ci": {
+      "run": "36483530738",
+      "result": "all_families_PASS_except_single_scripts_postinstall_expectation",
+      "failed_job": "109135403623",
+      "test_fix": "8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0",
+      "focused_tests": "PASS_7"
     }
   },
   "preservation": {
@@ -253,15 +296,31 @@
     ]
   },
   "terminal": {
-    "delivered_ref": null,
-    "delivered_sha": null,
-    "delivered_tree_sha": null,
-    "timestamp": null,
-    "proof": []
+    "delivered_ref": "refs/heads/main",
+    "delivered_sha": "e14771c4a0ed642bafd478c18dd1278855be89c5",
+    "delivered_tree_sha": "7b02b6a6412130a5461042216ad15093806465ac",
+    "timestamp": "2026-09-28T22:22:31Z",
+    "proof": [
+      "GitHub PR233 MERGED with match-head8cbfc87a0 after stage accept, independent PASS, final accept, all current checks successful and Main f6e unchanged.",
+      "Fetched e147 parent is f6e; entire merged tree7b02b6a equals accepted8c tree. No runtime content drift or additional replay required.",
+      "Unrelated untracked v18 file hash5bf0c51a unchanged; index empty before integration; original7b2a worktree untouched."
+    ]
   },
   "goal_claims": {
     "implementation_complete": false,
     "release_ready": false,
     "production_verified": false
+  },
+  "independent_preparation": {
+    "agent_id": "01a0e90e-d2df-7092-a9a6-4ac0e3d80c1f",
+    "status": "independent_installed_acceptance_PASS",
+    "manifest": "/tmp/rudder-member-verifier.SR0PUD/install-identity.json",
+    "server_pack": "normal_prepack_all_six_CI_artifacts",
+    "install": "fresh_npm_lifecycle_enabled_host_mode644_to755",
+    "server_files_matched": 1919,
+    "dependency_dist_files_matched": 2355,
+    "host_runtime": "PASS_disposable_profiles_cleaned",
+    "foreign_platform_execution": "not_attempted",
+    "readiness_question": "none_for_bounded_verifier_scope_final_review_and_CI_remain_parent_gates"
   }
 }
