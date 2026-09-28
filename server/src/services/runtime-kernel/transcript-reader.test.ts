@@ -1055,6 +1055,7 @@ describe("transcript reader", () => {
       revision: "partial-native",
       availability: "available",
       completeness: "partial",
+      truncated: true,
     });
     const reader = createTranscriptReader(db as never, { nativeReader: { readRange: nativeReader } });
     const input = {
@@ -1065,7 +1066,12 @@ describe("transcript reader", () => {
     };
 
     const nativePage = await reader.readRun(input);
-    expect(nativePage).toMatchObject({ source: "native", completeness: "partial", nextCursor: expect.any(String) });
+    expect(nativePage).toMatchObject({
+      source: "native",
+      completeness: "partial",
+      truncated: true,
+      nextCursor: expect.any(String),
+    });
     expect(nativePage.items.map((entry) => entry.sourceEntryId)).toEqual(["native-prefix"]);
     const legacyPage = await reader.readRun({ ...input, cursor: nativePage.nextCursor });
     expect(legacyPage).toMatchObject({ source: "legacy", completeness: "complete", nextCursor: null });

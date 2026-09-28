@@ -572,6 +572,7 @@ export function pageFromRunSource(
     availability: source.availability,
     completeness: source.completeness,
     ...(source.limitReached ? { limitReached: source.limitReached } : {}),
+    ...(source.truncated ? { truncated: true } : {}),
   };
 }
 

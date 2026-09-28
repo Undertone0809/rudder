@@ -866,6 +866,7 @@ async function readNativeSpan(
     providerRevision: revision,
     availability,
     completeness,
+    ...(result.truncated ? { truncated: true } : {}),
     providerCursor: input.cursor,
     providerNextCursor: nextCursor,
     spanId: input.span.id,

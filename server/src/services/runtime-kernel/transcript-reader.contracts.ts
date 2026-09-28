@@ -178,6 +178,7 @@ export interface NativeTranscriptReadResult {
   source?: TranscriptSource;
   availability?: TranscriptAvailability;
   completeness?: TranscriptCompleteness;
+  truncated?: boolean;
 }
 
 export interface NativeTranscriptReaderHook {
