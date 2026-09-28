@@ -517,6 +517,28 @@ describe("Cursor ACP native capabilities", () => {
     expect(serializedDiagnostic).not.toContain("https://cursor.example");
   });
 
+  it.each(["sensitive", "oversized"])("bounds and redacts %s string RPC codes in diagnostics", async (kind) => {
+    const secret = "cursor-auth-code-private-secret";
+    const code = kind === "sensitive"
+      ? "apiKey=" + secret + " Visit https://cursor.example/login?state=private-state"
+      : "x".repeat(4_000);
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([{ id: "cursor_login", name: "Cursor Login" }]) }) + "\n");
+      } else if (request.method === "authenticate") {
+        output.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code, message: "Invalid params" } }) + "\n");
+      }
+    });
+    const diagnostic = await probeCursorAcpAuthentication({
+      ...profile(fixture.spawn), env: { CURSOR_API_KEY: secret },
+    });
+    expect(diagnostic.requestTrace[1]?.errorCode).toBe(kind === "sensitive"
+      ? "apiKey=[REDACTED] Visit [URL REDACTED]"
+      : "x".repeat(2_000));
+    expect(JSON.stringify(diagnostic)).not.toContain(secret);
+    expect(JSON.stringify(diagnostic)).not.toContain("private-state");
+  });
+
   it("copies only sanitized provider error.data.message into authentication diagnostics", async () => {
     const secret = "cursor-auth-data-test-secret";
     const authState = "cursor-auth-data-private-state";

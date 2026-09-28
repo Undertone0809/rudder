@@ -831,12 +831,14 @@ class CursorAcpClient {
       } : {}),
     };
     const captureError = (error: unknown) => {
-      diagnostic.errorCode = error instanceof CursorAcpRpcError ? error.code : null;
-      diagnostic.errorMessage = diagnosticText(error, profileSecrets(this.profile));
+      const secrets = profileSecrets(this.profile);
+      const code = error instanceof CursorAcpRpcError ? error.code : null;
+      diagnostic.errorCode = typeof code === "string" ? diagnosticText(code, secrets) : code;
+      diagnostic.errorMessage = diagnosticText(error, secrets);
       const dataMessage = error instanceof CursorAcpRpcError
         ? stringValue(recordValue(error.data)?.message)
         : null;
-      if (dataMessage) diagnostic.errorDataMessage = diagnosticText(dataMessage, profileSecrets(this.profile));
+      if (dataMessage) diagnostic.errorDataMessage = diagnosticText(dataMessage, secrets);
     };
     this.requestDiagnostics.push(diagnostic);
     if (this.requestDiagnostics.length > 16) this.requestDiagnostics.shift();
