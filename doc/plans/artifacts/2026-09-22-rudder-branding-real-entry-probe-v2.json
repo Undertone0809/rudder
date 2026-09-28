@@ -1,0 +1,58 @@
+{
+  "schema": "rudder.rust-backend-completion.branding-real-entry-probe/v1",
+  "supersedes": "2026-09-22-rudder-branding-real-entry-probe.json",
+  "scope": "D1 organization brandColor write through the real Node entry, private Actix bridge, SQLx transaction, outbox, and restart replay",
+  "candidate": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260921",
+    "source_sha": "5873b34bc3522807248aa179da22aa7a9ab7ca9a",
+    "tree_sha": "f972acbfc4807b20c9a2eece1f5a3f4f0a4d3e39",
+    "dirty_fingerprint": "5b2b7ac88341a07cdeeac647279cdb0c9041cd4ded9d18073bc7666c64d35b91",
+    "origin_main": "b4c2f46966d080a18b8ce8d9545e427aa5b50ced"
+  },
+  "build_artifacts": {
+    "rudder_server_foundation_sha256": "2022af954ef8d3bd016ec825925983b6ed875e4244357fb34c4fcd28c4a9460a",
+    "migration_preflight_sha256": "d6f6bb0c0a37aef7fd0e0f65bee53c97600e7be785080a22f4015fb367faab1b"
+  },
+  "runtime": {
+    "node": "v22.23.1",
+    "package_manager": "pnpm_9.15.4",
+    "rust": "rustc_1.93.0",
+    "cargo": "cargo_1.93.0",
+    "embedded_postgres": "18.1.0-beta.16"
+  },
+  "target": {
+    "kind": "disposable_embedded_postgres_and_local_trusted_node",
+    "instance_id": "rust-branding-real-entry-38958",
+    "organization_id": "84f7d2b8-f721-4951-b03e-b7ce213f6380",
+    "api_port": 62821,
+    "embedded_postgres_port": 62822,
+    "data_disposed": true
+  },
+  "observations": {
+    "health": "HTTP 200; status=ok",
+    "migration_preflight": "bootstrap_then_current; 169 journal entries; 171 SQL files; fingerprint 6df10b65da8034a116003108d9951d1e119b31be0e979f09874406f87af417da",
+    "node_to_actix": "POST organization HTTP 201, then PATCH branding HTTP 200; response_authority=rust; rust_invoked=true; old_authority_invoked=false; fallback_reason=null",
+    "database_readback": "brand_color=#abcdef; owner=rust; mutation_version=1; fence_epoch=1; immutable receipt=applied; activity=organization.branding_updated; outbox=pending/0",
+    "restart_replay": "same data identity and same idempotency key returned HTTP 200 without duplicate activity or receipt",
+    "cleanup": "disposable home, Node server, Actix child, and embedded PostgreSQL were disposed; no production data or traffic involved"
+  },
+  "checks": {
+    "rust_build": "cargo build --bin migration-preflight --bin rudder-server-foundation PASS",
+    "branding_real_entry": "RUST_BRANDING_REAL_ENTRY_PASS",
+    "server_bridge_and_contract_focused": "34/34 Vitest PASS for branding route, bridge lifecycle, and outbox retry",
+    "migration_manifest": "169 journal entries / 171 SQL files"
+  },
+  "claims": {
+    "branding_real_entry_connected": true,
+    "default_path_verified": false,
+    "old_authority_retired": false,
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "limits": [
+    "Node remains the public HTTP and migration authority; Actix is a private route-scoped bridge.",
+    "This is local disposable evidence only and is not a production canary or traffic switch.",
+    "Session/revocation authority, complete competing-writer fence, Project-Goal supported entry, Rust CLI/MCP runtime, and final installed workflow remain incomplete."
+  ]
+}

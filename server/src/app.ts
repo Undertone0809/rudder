@@ -2,14 +2,55 @@ import type { Db } from "@rudderhq/db";
 import type express from "express";
 import { createHttpApp } from "./bootstrap/create-http-app.js";
 import type { RudderAppOptions } from "./bootstrap/types.js";
+import type { Config } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { RuntimeSupervisor, supervisedStart } from "./runtime/runtime-supervisor.js";
 import { configureBrowserCapabilityDeployment } from "./services/browser-capability.js";
+import { startOrganizationMutationOutboxPublisher } from "./services/organization-mutation-outbox.js";
 export { resolveViteHmrPort } from "./bootstrap/create-http-app.js";
 
 export interface RudderAppHandle {
   app: express.Express;
   close(): Promise<void>;
+}
+
+type RudderAppStartupOptions = Pick<
+  RudderAppOptions,
+  | "authReady"
+  | "companyDeletionEnabled"
+  | "databaseUrl"
+  | "rustFoundationMode"
+  | "rustOrganizationBrandingMode"
+  | "rustProjectGoalSetMode"
+  | "rustFoundationBinaryPath"
+  | "rustFoundationActorEnvelopeKey"
+>;
+
+export function createRudderAppStartupOptions(
+  config: Config,
+  databaseUrl: string,
+  authReady: boolean,
+): RudderAppStartupOptions {
+  return {
+    authReady,
+    companyDeletionEnabled: config.companyDeletionEnabled,
+    databaseUrl,
+    rustFoundationMode: config.rustFoundationMode,
+    rustOrganizationBrandingMode: config.rustOrganizationBrandingMode,
+    rustProjectGoalSetMode: config.rustProjectGoalSetMode,
+    rustFoundationBinaryPath: config.rustFoundationBinaryPath,
+    rustFoundationActorEnvelopeKey: config.rustFoundationActorEnvelopeKey,
+  };
+}
+
+export function ownRudderAppAndOutbox(
+  supervisor: RuntimeSupervisor,
+  db: Db,
+  appHandle: RudderAppHandle,
+): void {
+  supervisor.own("app", () => appHandle.close());
+  const publisher = startOrganizationMutationOutboxPublisher(db);
+  supervisor.own("organization-mutation-outbox", () => publisher.close());
 }
 
 export async function createRudderApp(

@@ -72,7 +72,7 @@ describe("project command", () => {
     expect(JSON.parse(output)).toEqual(expect.objectContaining({ id: "project-1", name: "New Launch" }));
   });
 
-  it("updates projects by shortname with org context for resolution", async () => {
+  it("updates projects by shortname with org context and an idempotency key", async () => {
     const fetchMock = vi.fn(async () => new Response(
       JSON.stringify({
         id: "project-1",
@@ -112,10 +112,101 @@ describe("project command", () => {
     expect(requestedUrl.pathname).toBe("/api/projects/launch-plan");
     expect(requestedUrl.searchParams.get("orgId")).toBe("org-1");
     expect(init.method).toBe("PATCH");
+    const headers = new Headers(init.headers);
+    expect(headers.get("x-rudder-idempotency-key")).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(headers.get("x-rudder-required-authority")).toBeNull();
     expect(JSON.parse(String(init.body))).toEqual({
       name: "Renamed Launch",
       status: "in_progress",
       archivedAt: null,
     });
+  });
+
+  it("sends an optional idempotency key for scalar updates without requiring Rust", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ id: "project-1", status: "in_progress" }),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "project",
+      "update",
+      "project-1",
+      "--status",
+      "in_progress",
+      "--idempotency-key",
+      "project-scalar-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("x-rudder-idempotency-key")).toBe("project-scalar-1");
+    expect(headers.get("x-rudder-required-authority")).toBeNull();
+    expect(JSON.parse(String(init.body))).toEqual({ status: "in_progress" });
+  });
+
+  it("requires an idempotency key and Rust authority for Project-Goal updates", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ id: "project-1", goalId: "goal-1" }),
+      { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "project",
+      "update",
+      "project-1",
+      "--goal-id",
+      "11111111-1111-4111-8111-111111111111",
+      "--idempotency-key",
+      "project-goal-1",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(0);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(headers.get("x-rudder-idempotency-key")).toBe("project-goal-1");
+    expect(headers.get("x-rudder-required-authority")).toBe("rust");
+    expect(JSON.parse(String(init.body))).toEqual({ goalId: "11111111-1111-4111-8111-111111111111" });
+  });
+
+  it("rejects Project-Goal updates without an idempotency key", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(runCli([
+      process.execPath,
+      "rudder",
+      "project",
+      "update",
+      "project-1",
+      "--goal-ids",
+      "11111111-1111-4111-8111-111111111111",
+      "--api-base",
+      "http://localhost:3100",
+      "--api-key",
+      "token-1",
+      "--json",
+    ])).resolves.toBe(1);
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

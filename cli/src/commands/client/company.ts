@@ -21,6 +21,8 @@ import {
   resolveCommandContext,
   type BaseClientOptions,
 } from "./common.js";
+import { registerOrganizationBrandColorCommand } from "./company-brand-color.js";
+import { registerOrganizationGetCommand } from "./company-get.js";
 import { binaryContentTypeByExtension, readZipArchive } from "./zip.js";
 
 interface CompanyCommandOptions extends BaseClientOptions {}
@@ -1141,21 +1143,9 @@ export function registerCompanyCommands(program: Command): void {
     { includeCompany: false },
   );
 
-  addCommonClientOptions(
-    company
-      .command("get")
-      .description("Get one organization")
-      .argument("<orgId>", "Organization ID")
-      .action(async (orgId: string, opts: CompanyCommandOptions) => {
-        try {
-          const ctx = resolveCommandContext(opts);
-          const row = await ctx.api.get<Organization>(`/api/orgs/${orgId}`);
-          printOutput(row, { json: ctx.json });
-        } catch (err) {
-          handleCommandError(err);
-        }
-      }),
-  );
+  registerOrganizationBrandColorCommand(company);
+
+  registerOrganizationGetCommand(company);
 
   addCommonClientOptions(
     company

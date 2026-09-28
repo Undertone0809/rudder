@@ -16,7 +16,7 @@ import {
   chatQueuedMessages,
   organizations
 } from "@rudderhq/db";
-import { parseShortRef, sanitizeChatStructuredPayload, shortRefFor, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
+import { parseShortRef, sanitizeChatStructuredPayload, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { withChatTranscriptGenerationProvenance } from "@rudderhq/shared/chat-transcript-provenance";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -66,6 +66,7 @@ import { conversationMutability, nextForkTitle } from "./chats.fork-helpers.js";
 import {
   buildSearchSnippet,
   CHAT_TRANSCRIPT_KEY,
+  chatShortRef,
   chatTranscriptFromPayload,
   contentPath,
   escapeLikePattern,
@@ -74,6 +75,7 @@ import {
   isVisibleIncomingChatMessage,
   listContextLinksForConversationIds,
   listPrimaryIssues,
+  messageShortRef,
   operationProposalDecisionStatusFromPayload,
   operationProposalFromPayload,
   resolveContextEntities,
@@ -99,28 +101,13 @@ import { issueApprovalService } from "./issue-approvals.js";
 import { issueService } from "./issues.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { organizationService } from "./orgs.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import {
   completeProductAnalyticsWorkCycle,
   recordProductAnalyticsChatCreated,
 } from "./product-analytics.js";
-
-function chatShortRef(id: string): string | null {
-  try {
-    return shortRefFor("chat", id);
-  } catch {
-    return null;
-  }
-}
-
-function messageShortRef(id: string): string | null {
-  try {
-    return shortRefFor("message", id);
-  } catch {
-    return null;
-  }
-}
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -1915,6 +1902,7 @@ export function chatService(db: Db, storage?: StorageService) {
       throw unprocessable("Queued annotation files require an explicit annotation replacement");
     }
     return db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, input.orgId);
       const current = await tx
         .select()
         .from(chatQueuedMessages)
@@ -2125,6 +2113,7 @@ export function chatService(db: Db, storage?: StorageService) {
   }) {
     if (input.assetIds.length === 0) return [];
     return db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, input.orgId);
       const linkedRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
@@ -4050,6 +4039,13 @@ export function chatService(db: Db, storage?: StorageService) {
 
   async function remove(id: string) {
     return db.transaction(async (tx) => {
+      const conversation = await tx
+        .select({ orgId: chatConversations.orgId })
+        .from(chatConversations)
+        .where(eq(chatConversations.id, id))
+        .then((rows) => rows[0] ?? null);
+      if (!conversation) return null;
+      await lockNodeMutationAuthority(tx, conversation.orgId);
       const attachmentRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
@@ -4641,6 +4637,7 @@ export function chatService(db: Db, storage?: StorageService) {
       }
 
       return db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, input.orgId);
         const [asset] = await tx
           .insert(assets)
           .values({
@@ -4698,6 +4695,7 @@ export function chatService(db: Db, storage?: StorageService) {
         .then((rows) => rows[0] ?? null);
       if (!existing) return null;
 
+      await lockNodeMutationAuthority(tx, existing.orgId);
       await tx.delete(chatAttachments).where(eq(chatAttachments.id, attachmentId));
       const hasRemainingAttachment = await tx
         .select({ id: chatAttachments.id })

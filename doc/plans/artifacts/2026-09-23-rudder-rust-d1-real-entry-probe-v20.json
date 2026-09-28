@@ -1,0 +1,125 @@
+{
+  "artifact_kind": "rudder.rust.d1.real-entry-probe",
+  "artifact_version": "v20",
+  "created_at": "2026-09-23",
+  "candidate": {
+    "worktree": "/private/tmp/rudder-rust-mainline-probe-20260923",
+    "branch": "codex/rudder-rust-mainline-probe-20260923",
+    "source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "source_tree": "15c813eb7aff94e87f406e552b8d406e4512a5cd",
+    "dirty_fingerprint": "7a57b77dd8bd48b41b0c8acbb00e56684713da197c137925faf37c12dbe22511",
+    "dirty_fingerprint_scope": "105 staged source paths; all doc/plans durable records, delivery packets, and artifacts excluded",
+    "origin_main": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+    "migration_manifest": {
+      "journal_entries": 175,
+      "sql_files": 177,
+      "fingerprint": "bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7"
+    }
+  },
+  "environment": {
+    "node": "v22.23.1",
+    "pnpm": "9.15.4",
+    "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
+    "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)",
+    "embedded_postgresql": "18.1.0-beta.16",
+    "foundation_binary_sha256": "7b88ac79c5d4bb6caf3cad92bc0c1f93c8d3dd25226a7a267098eca69b590025",
+    "migration_preflight_binary_sha256": "040287e9863337d0a536bb8b7179d10aa8395ac9e05f7e4d4767c691b2e2508a"
+  },
+  "attempts": [
+    {
+      "kind": "initial",
+      "commands": [
+        "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-branding-real-entry.ts",
+        "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts"
+      ],
+      "result": "FAIL_CLOSED_ENVIRONMENT",
+      "observation": "Both disposable startups refused migration inspection because native/target/debug/migration-preflight was absent; no product mutation was committed and both temporary homes were cleaned up."
+    },
+    {
+      "kind": "rerun_after_build",
+      "commands": [
+        "cargo build -p rudder-migration-service --bin migration-preflight",
+        "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-branding-real-entry.ts",
+        "node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-goal-real-entry.ts"
+      ],
+      "result": "PASS",
+      "branding": {
+        "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+        "data_id": "rust-branding-real-entry-38664",
+        "organization_id": "55a6d4fc-e05a-44a7-b404-288890df5a6f",
+        "migration": "bootstrap_then_current; 175 journal entries; 177 SQL files; manifest bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7",
+        "api": "health 200; organization create 201; branding PATCH 200",
+        "authority_receipt": "rust_invoked=true; response_authority=rust; old_authority_invoked=false; fallback_reason=null",
+        "database_readback": "brand_color=#abcdef; owner=rust; mutation_version=1; fence_epoch=1; receipt=applied; activity=organization.branding_updated; outbox=pending/0",
+        "restart_replay": "same idempotency key returned 200 without duplicate receipt or activity"
+      },
+      "project_goal": {
+        "marker": "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
+        "data_id": "rust-project-goal-real-entry-38663",
+        "organization_id": "2d58689d-3acd-4dce-a32f-0a0182d2c943",
+        "other_organization_id": "6b713c8e-5b46-4e53-b155-f8d3133a6925",
+        "project_id": "3317ed26-9f77-4bae-8279-6db65c35b8d5",
+        "api": "health 200; create-with-goals 201; Rust-owned complete goal-set update 200",
+        "authority_receipt": "Project PATCH response_authority=rust; old authority did not execute the selected Rust write",
+        "handoff_and_recovery": "invalid allowlist rejected before partial handoff; valid two-project allowlist accepted; same-config restart 200; unlisted required write 409",
+        "negative_cases": "mixed update 409; signed idempotency substitution 401; idempotency conflict 409; cross-organization target 422; clear-all 200; Rust-owned organization delete 409",
+        "tooling": "direct CLI exit 0; direct MCP stdio exit 0; missing legacy binary did not select Node fallback",
+        "database_readback": "final receipts=4; activities=2; links=0; mutation_version=2; replay after restart 200"
+      }
+    }
+  ],
+  "latest_real_entry_supplement": {
+    "recorded_at": "2026-09-23T23:01:02+08:00",
+    "candidate": {
+      "source_sha": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4",
+      "source_tree": "15c813eb7aff94e87f406e552b8d406e4512a5cd",
+      "dirty_fingerprint": "23552a728d941d02fe1ad75828ddb862bee359027a81b5189c99ea5f7e7d2069",
+      "dirty_fingerprint_scope": "105 source paths excluding doc/plans durable records, delivery packets, and artifacts",
+      "origin_main": "cf131c6de87ac7d29ad4acbda3da6729dc2c52a4"
+    },
+    "runtime": {
+      "node": "v22.23.1",
+      "pnpm": "9.15.4",
+      "rustc": "rustc 1.93.0 (254b59607 2026-01-19)",
+      "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)",
+      "embedded_postgresql": "18.1.0-beta.16",
+      "foundation_binary_sha256": "7b88ac79c5d4bb6caf3cad92bc0c1f93c8d3dd25226a7a267098eca69b590025",
+      "migration_preflight_binary_sha256": "040287e9863337d0a536bb8b7179d10aa8395ac9e05f7e4d4767c691b2e2508a"
+    },
+    "branding": {
+      "marker": "RUST_BRANDING_REAL_ENTRY_PASS",
+      "data_id": "rust-branding-real-entry-58291",
+      "organization_id": "508df794-f207-4c9a-9fcd-220ef5d83ea9",
+      "migration": "bootstrap_then_current; 175 journal entries; 177 SQL files; manifest bda5ccbcea0293163db4bfd309da88cced8f69197905e132b94d2698c6e7acb7",
+      "http": "health 200; organization create 201; branding PATCH 200; restart replay 200",
+      "authority": "rust_invoked=true; response_authority=rust; old_authority_invoked=false; fallback_reason=null",
+      "cli": "exit 0; org brand-color update returned #bada55",
+      "mcp": "exit 0; rudder_organization_brand_color_update returned #c0ffee with RUDDER_MCP_RUDDER_BIN pointing to a missing binary",
+      "database_readback": "owner=rust; mutation_version=1; fence_epoch=1; receipt=applied; activityCount=1; outbox=pending/0"
+    },
+    "logs": {
+      "branding": "/tmp/rudder-rust-branding-v21.log",
+      "branding_sha256": "8e7bd499565df890d158696e9e2d64f80f8ea913d8ea4070a199bff7ee941d12"
+    },
+    "scope": "This supplement updates real-entry evidence only; it does not claim default Rust listener authority, old-writer retirement, implementation_complete, release_ready, or production_verified."
+  },
+  "claims": {
+    "branding_real_entry_connected": true,
+    "project_goal_real_entry_connected": true,
+    "default_path_verified": false,
+    "old_authority_retired": false,
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  },
+  "supporting_checks": {
+    "server_focused": "7 files / 84 tests PASS: config, startup wiring, bridge lifecycle, branding route, project routes, organization fence, Project-Goal fence",
+    "previous_candidate_checks": "cargo workspace check, Rust foundation/D1/auth suites, CLI/MCP, typechecks, Desktop update 62 tests, and release matrix 19 tests all exited 0 before the v20 evidence-only record update",
+    "diff_and_records": "git diff --check, JSON/YAML parsing, and delivery packet validator PASS"
+  },
+  "cleanup": {
+    "disposable_homes": "removed by each smoke script",
+    "server_and_actix_children": "stopped by each smoke script",
+    "production_data_or_traffic": "not touched"
+  }
+}

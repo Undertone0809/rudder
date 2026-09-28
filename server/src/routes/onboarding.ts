@@ -800,7 +800,7 @@ export function onboardingRoutes(db: Db) {
     if (!createdProject && project.description !== ONBOARDING_PROJECT_DESCRIPTION) {
       project = await projects.update(project.id, {
         description: ONBOARDING_PROJECT_DESCRIPTION,
-      }) ?? project;
+      }, { allowScalarUpdateWhenProjectGoalOwned: true }) ?? project;
     }
 
     const issueByTitle = new Map<string, ExistingIssue | CreatedIssue>(

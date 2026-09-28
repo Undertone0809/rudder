@@ -4,7 +4,8 @@ import type { Server } from "node:http";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
-import { organizationRoutes } from "../routes/orgs.js";
+import { organizationRoutes, type RustFoundationProbeReceipt } from "../routes/orgs.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const mockCompanyService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -66,8 +67,13 @@ const mockWorkspaceBrowser = vi.hoisted(() => ({
   createFile: vi.fn(),
   writeFile: vi.fn(),
 }));
+const mockOrganizationMemberService = vi.hoisted(() => ({
+  list: vi.fn(),
+  countActiveVisible: vi.fn(),
+}));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
+const mockHandoffOrganizationBrandingAuthority = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockSecretService = vi.hoisted(() => ({
   normalizeAdapterConfigForPersistence: vi.fn(async (_companyId: string, config: Record<string, unknown> | null | undefined) => ({
     config: config ?? {},
@@ -98,7 +104,8 @@ vi.mock("../services/index.js", () => ({
     ensureDefaultsFromRuntime: vi.fn(),
   }),
   organizationIntelligenceRuntimeChainService: () => ({ assertUsable: vi.fn() }),
-  organizationMemberService: () => ({ list: vi.fn(), countActiveVisible: vi.fn() }),
+  organizationMemberService: () => mockOrganizationMemberService,
+  handoffOrganizationBrandingAuthority: mockHandoffOrganizationBrandingAuthority,
   logActivity: mockLogActivity,
 }));
 vi.mock("../services/organization-workspace-browser.js", () => ({
@@ -127,14 +134,21 @@ function createOrganization() {
 
 const activeServers = new Set<Server>();
 
-async function createApp(actor: Record<string, unknown>) {
+async function createApp(
+  actor: Record<string, unknown>,
+  rustFoundationBridge?: RustFoundationBridge,
+  onRustFoundationProbe?: (receipt: RustFoundationProbeReceipt) => void,
+) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
   });
-  app.use("/api/orgs", organizationRoutes({} as any));
+  app.use(
+    "/api/orgs",
+    organizationRoutes({} as any, undefined, undefined, rustFoundationBridge, { onRustFoundationProbe }),
+  );
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -154,6 +168,9 @@ describe("PATCH /api/orgs/:orgId/branding", () => {
     mockCompanyService.update.mockReset();
     mockAgentService.getById.mockReset();
     mockLogActivity.mockReset();
+    mockOrganizationMemberService.list.mockReset();
+    mockHandoffOrganizationBrandingAuthority.mockReset();
+    mockHandoffOrganizationBrandingAuthority.mockResolvedValue(undefined);
   });
 
   it("rejects non-CEO agent callers", async () => {
@@ -265,6 +282,304 @@ describe("PATCH /api/orgs/:orgId/branding", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation error");
     expect(mockCompanyService.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/orgs/:orgId/members/directory Rust bridge", () => {
+  beforeEach(() => {
+    mockOrganizationMemberService.list.mockReset();
+  });
+
+  function bridge(
+    mode: "shadow" | "required",
+    response: unknown,
+    organizationBrandingMode: "off" | "shadow" | "required" = "off",
+  ): RustFoundationBridge {
+    return {
+      mode,
+      organizationBrandingMode,
+      requiresStartup: false,
+      start: vi.fn(),
+      memberDirectory: vi.fn().mockResolvedValue(response),
+      organizationBranding: vi.fn().mockResolvedValue(response),
+      close: vi.fn(),
+    } as unknown as RustFoundationBridge;
+  }
+
+  const page = {
+    total: 1,
+    items: [{ name: "Operator", type: "human", role: "owner", ref: "usr_operator" }],
+    nextCursor: null,
+    hasMore: false,
+  };
+
+  it("forwards required reads to Actix and never invokes the Node read service", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+      sessionId: "session-1",
+      authEpoch: 1,
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory?type=all&limit=1");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(page);
+    expect(rustBridge.memberDirectory).toHaveBeenCalledWith(
+      expect.objectContaining({ originalUrl: "/api/orgs/organization-1/members/directory?type=all&limit=1" }),
+      "organization-1",
+    );
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      orgId: "organization-1",
+      probeMode: "required",
+      rustInvoked: true,
+      responseAuthority: "rust",
+      fallbackReason: null,
+      oldAuthorityInvoked: false,
+      status: 200,
+    })]);
+  });
+
+  it("fails closed with an explicit unavailable response when required Actix is down", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    const rustBridge = bridge("required", null);
+    vi.mocked(rustBridge.memberDirectory).mockRejectedValueOnce(new Error("bridge unavailable"));
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory");
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      error: "Rust member directory is unavailable",
+      code: "rust_foundation_member_directory_unavailable",
+    });
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "required",
+      rustInvoked: true,
+      responseAuthority: "none",
+      fallbackReason: "required_bridge_request_failed",
+      oldAuthorityInvoked: false,
+      status: null,
+    })]);
+  });
+
+  it("maps a required Rust error into the Node error response shape", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    const rustBridge = bridge("required", {
+      status: 422,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({
+        schema: "rudder.native.server.error.v1",
+        status: "error",
+        reason: "member_directory_invalid_limit",
+      })),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory?limit=bad");
+
+    expect(res.status).toBe(422);
+    expect(res.body).toEqual({ error: "member_directory_invalid_limit" });
+    expect(mockOrganizationMemberService.list).not.toHaveBeenCalled();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "required",
+      responseAuthority: "rust",
+      fallbackReason: null,
+      oldAuthorityInvoked: false,
+      status: 422,
+    })]);
+  });
+
+  it("keeps the Node result as an explicit shadow fallback while comparing Rust output", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    mockOrganizationMemberService.list.mockResolvedValueOnce(page);
+    const rustBridge = bridge("shadow", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify(page)),
+    });
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .get("/api/orgs/organization-1/members/directory");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(page);
+    expect(rustBridge.memberDirectory).toHaveBeenCalledOnce();
+    expect(mockOrganizationMemberService.list).toHaveBeenCalledOnce();
+    expect(receipts).toEqual([expect.objectContaining({
+      probeMode: "shadow",
+      rustInvoked: true,
+      responseAuthority: "node",
+      fallbackReason: "shadow_probe_only",
+      oldAuthority: "node",
+      oldAuthorityInvoked: true,
+      status: 200,
+    })]);
+  });
+
+  it("routes dedicated branding writes to Rust and does not invoke the Node writer", async () => {
+    const organization = createOrganization();
+    const receipts: RustFoundationProbeReceipt[] = [];
+    mockCompanyService.getById.mockResolvedValue({
+      ...organization,
+      name: "Rust Rudder",
+      brandColor: "#abcdef",
+    });
+    const rustBridge = bridge("required", {
+      status: 200,
+      contentType: "application/json",
+      body: Buffer.from(JSON.stringify({ status: "applied" })),
+    }, "required");
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+      sessionId: "session-1",
+      authEpoch: 3,
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1/branding")
+      .set("x-rudder-idempotency-key", "branding-route-test")
+      .send({ brandColor: "#abcdef" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.brandColor).toBe("#abcdef");
+    expect(rustBridge.organizationBranding).toHaveBeenCalledWith(
+      expect.objectContaining({ originalUrl: "/api/orgs/organization-1/branding" }),
+      "organization-1",
+      Buffer.from(JSON.stringify({ brandColor: "#abcdef" }), "utf8"),
+      "/api/orgs/organization-1/branding",
+    );
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(receipts).toEqual([{
+      orgId: "organization-1",
+      requestId: null,
+      probeMode: "required",
+      rustInvoked: true,
+      responseAuthority: "rust",
+      fallbackReason: null,
+      oldAuthority: null,
+      oldAuthorityInvoked: false,
+      status: 200,
+    }]);
+  });
+
+  it("fails closed when required Rust branding is unavailable", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    const rustBridge = bridge("required", null, "required");
+    vi.mocked(rustBridge.organizationBranding).mockRejectedValueOnce(new Error("bridge unavailable"));
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1/branding")
+      .set("x-rudder-idempotency-key", "branding-unavailable-test")
+      .send({ brandColor: "#abcdef" });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      error: "Rust organization branding is unavailable",
+      code: "rust_foundation_organization_branding_request_failed",
+    });
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(receipts).toEqual([{
+      orgId: "organization-1",
+      requestId: null,
+      probeMode: "required",
+      rustInvoked: true,
+      responseAuthority: "none",
+      fallbackReason: "required_bridge_request_failed",
+      oldAuthority: null,
+      oldAuthorityInvoked: false,
+      status: null,
+    }]);
+  });
+
+  it("rejects required Rust branding without an idempotency key", async () => {
+    const receipts: RustFoundationProbeReceipt[] = [];
+    const rustBridge = bridge("required", null, "required");
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge, (receipt) => receipts.push(receipt));
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1/branding")
+      .send({ brandColor: "#abcdef" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("x-rudder-idempotency-key is required");
+    expect(rustBridge.organizationBranding).not.toHaveBeenCalled();
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+    expect(receipts).toEqual([]);
+  });
+
+  it("rejects a mixed generic organization patch instead of partially writing it", async () => {
+    const rustBridge = bridge("required", null, "required");
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1")
+      .send({ name: "Rust Rudder", brandColor: "#abcdef", budgetMonthlyCents: 1000 });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("separate requests");
+    expect(rustBridge.organizationBranding).not.toHaveBeenCalled();
+    expect(mockCompanyService.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-branding generic organization settings on the Node path", async () => {
+    const organization = createOrganization();
+    mockCompanyService.update.mockResolvedValue({ ...organization, budgetMonthlyCents: 1000 });
+    const rustBridge = bridge("required", null, "required");
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, rustBridge);
+
+    const res = await request(app)
+      .patch("/api/orgs/organization-1")
+      .send({ budgetMonthlyCents: 1000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.budgetMonthlyCents).toBe(1000);
+    expect(rustBridge.organizationBranding).not.toHaveBeenCalled();
+    expect(mockCompanyService.update).toHaveBeenCalledWith("organization-1", { budgetMonthlyCents: 1000 });
   });
 });
 
