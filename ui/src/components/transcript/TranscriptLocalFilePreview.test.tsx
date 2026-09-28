@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
+import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { TranscriptLocalFilePreview } from "./TranscriptLocalFilePreview";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

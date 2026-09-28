@@ -34,6 +34,7 @@ import {
   logActivity,
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
+import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.js";
 import {
   assertRunIntelligenceAccess,
   filterRunsByRunIntelligenceAccess,
@@ -43,7 +44,6 @@ import {
 import type { StorageService } from "../storage/types.js";
 import { listAgentRunsForRequest } from "./agents.management-run-list.js";
 import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
-import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.js";
 
 type AgentManagementRouteContext = {
   router: Router;

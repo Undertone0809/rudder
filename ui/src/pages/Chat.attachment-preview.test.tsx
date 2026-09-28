@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { ApiError } from "@/api/client";
 import type { ChatRuntimeSensitiveInputRequest } from "@/api/chats";
+import { ApiError } from "@/api/client";
 import { DesktopBrowserLinkBridge } from "@/components/DesktopBrowserLinkBridge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { AgentRuntimeInvocationMeta } from "../../agent-runtimes/index.js";
+import { buildHeartbeatAdapterInvokePayload } from "./heartbeat.core.js";
 import {
   compactHeartbeatAdapterInvokePayload,
   projectHeartbeatAdapterResult,
 } from "./heartbeat.execute-native-retention.js";
-import type { AgentRuntimeInvocationMeta } from "../../agent-runtimes/index.js";
-import { buildHeartbeatAdapterInvokePayload } from "./heartbeat.core.js";
 
 describe("heartbeat native retention projections", () => {
   it("compacts invocation payloads and keeps native raw prompt content out", () => {

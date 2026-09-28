@@ -27,9 +27,9 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.ts";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.ts";
 import { getRunSummary } from "../services/run-intelligence.ts";
 import { createCursorTranscriptSupplementCapture } from "../services/runtime-kernel/cursor-transcript-supplement.ts";
 import {

@@ -104,8 +104,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
 import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName, visibleInterruptedChatMessageBody } from "./Chat.parts";
-import { ChatInlineVisualContent } from "./ChatInlineVisual";
 import { chatFinalAnswerFromTranscript } from "./Chat.timeline";
+import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
 export { StreamTranscriptItem } from "./Chat.StreamTranscriptItem";

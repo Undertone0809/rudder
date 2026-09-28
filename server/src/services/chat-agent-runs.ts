@@ -5,18 +5,18 @@ import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudde
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
-import { logger } from "../middleware/logger.js";
 import { redactCurrentUserText } from "../log-redaction.js";
+import { logger } from "../middleware/logger.js";
 import { redactSensitiveText } from "../redaction.js";
+import { getStorageService, type ContentAddressedStorageService } from "../storage/index.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
-import { getRunLogStore } from "./run-log-store.js";
-import { getStorageService, type ContentAddressedStorageService } from "../storage/index.js";
 import {
   MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES,
   storeRunInstructionSnapshot,
 } from "./run-instruction-snapshots.js";
+import { getRunLogStore } from "./run-log-store.js";
 import {
   buildHeartbeatAdapterInvokePayload,
   networkWaitBackoffMs,

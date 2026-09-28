@@ -1,8 +1,8 @@
+import type { TranscriptEntry } from "@/agent-runtimes";
 import {
   activeChatStreamTimelineInsertionIndex,
   type ActiveChatStreamTimelineState,
 } from "@/lib/chat-stream-state";
-import type { TranscriptEntry } from "@/agent-runtimes";
 import type { ChatMessage } from "@rudderhq/shared";
 
 export type ChatTimelineRow =

@@ -1,7 +1,4 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import {
-  filterRenderableTranscriptEntries,
-} from "@/components/transcript/RunTranscriptView.common";
 import type {
   TranscriptAgentDirectoryEntry,
   TranscriptAgentInspection,
@@ -9,6 +6,9 @@ import type {
   TranscriptSkillTarget,
 } from "@/components/transcript/RunTranscriptView";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
+import {
+  filterRenderableTranscriptEntries,
+} from "@/components/transcript/RunTranscriptView.common";
 import { normalizeTranscript } from "@/components/transcript/RunTranscriptView.normalize";
 import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { formatChatProcessDuration, lastTranscriptAtMs } from "@/lib/chat-process-duration";

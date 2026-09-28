@@ -12,9 +12,9 @@ import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AssistantDraftItem,
   ChatMessageItem,
   ChatMessagesLoadingState,
-  AssistantDraftItem,
   LazyStreamTranscriptItem,
   OptimisticUserDraftItem,
   StreamTranscriptItem,
