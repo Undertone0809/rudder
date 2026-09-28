@@ -2,7 +2,6 @@ import {
   buildModelAttemptSpecs,
   isAgentRuntimeNetworkSuspension,
   type AgentRuntimeExecutionResult,
-  type TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import { runRuntimeSpans, runtimeBindings } from "@rudderhq/db";
@@ -32,7 +31,7 @@ import {
   createChatAssistantStopFinalizer,
   type ChatAssistantStaleOutcome,
 } from "./chat-assistant.execution-owner.js";
-import { asRecord, asString, CHAT_RESULT_SENTINEL_PREFIX, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, maybeEmitAssistantDelta, maybeEmitAssistantState, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { asRecord, asString, CHAT_RESULT_SENTINEL_PREFIX, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, maybeEmitAssistantDelta, maybeEmitAssistantState, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, resultText, safeTrim, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
 import { createChatNativeAttemptCallbacks } from "./chat-assistant.native-attempt.js";
 import { persistChatNativeTransport, resolveChatTranscriptCapability } from "./chat-assistant.native-transcript.js";
 import { userImageContentPathsFromMessages } from "./chat-assistant.proposal-validation.js";
@@ -56,6 +55,7 @@ import {
   sideChatForkBindingMatchesTarget,
 } from "./chat-assistant.side-chat-source.js";
 import { createChatAssistantStdoutBuffer } from "./chat-assistant.stdout-buffer.js";
+import { createChatAssistantTranscriptProcessor } from "./chat-assistant.transcript-processor.js";
 import { createChatTranscriptDelivery } from "./chat-assistant.transcript-delivery.js";
 import { admitClaudeDeferredFork, recordClaudeDeferredForkOutcome, reserveClaudeDeferredFork } from "./claude-deferred-fork-admission.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
@@ -527,17 +527,16 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const transcriptDelivery = transcript.delivery;
     const assistantTextAccumulator = createAssistantTextAccumulator();
     const finalAssistantTextAccumulator = createAssistantTextAccumulator();
-    let hasNativeFinalMessage = false;
-    let hasRuntimeOutputEvidence = false;
+    const transcriptProcessingState = {
+      hasNativeFinalMessage: false,
+      hasRuntimeOutputEvidence: false,
+    };
     const sentinelStream = createSentinelStream(resultSentinel);
     const inlineVisualStream = createRudderInlineVisualStreamSuppressor();
     const commentaryInlineVisualStream = createRudderInlineVisualStreamSuppressor();
-    const transcriptInlineVisualStream = createRudderInlineVisualStreamSuppressor();
-    let transcriptDeltaOpen = false;
-    let transcriptDeltaCarry = "";
     const { freezeStopCutoff, finalizeStoppedReply } = createChatAssistantStopFinalizer({
       finalAssistantText: () => finalAssistantTextAccumulator.fullText,
-      hasNativeFinalMessage: () => hasNativeFinalMessage,
+      hasNativeFinalMessage: () => transcriptProcessingState.hasNativeFinalMessage,
       resultSentinel,
       visibleText: () => sentinelStream.visibleText,
       isFinalized: isRunFinalized,
@@ -730,270 +729,21 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         attachmentReferences: preparedAttachments.references,
       }));
 
-      const processTranscriptEntries = async (entries: TranscriptEntry[]) => {
-        for (const entry of entries) {
-          if (isExecutionInactive()) return;
-          if (entry.kind !== "init") hasRuntimeOutputEvidence = true;
-          if (entry.kind === "tool_call") {
-            await maybeEmitAssistantState(input.onAssistantState, "tool_busy");
-            if (isExecutionInactive()) return;
-          }
-          if (entry.kind === "assistant") {
-            if (entry.phase === "commentary") {
-              // Streaming deltas may begin or end with meaningful whitespace.
-              // Keep one suppressor for the whole commentary stream so private
-              // inline visuals stay filtered without trimming token boundaries.
-              const commentaryText = entry.delta === true
-                ? commentaryInlineVisualStream.push(entry.text)
-                : redactRudderInlineVisualSources(entry.text);
-              if (!commentaryText) continue;
-              const commentaryEntry: TranscriptEntry = {
-                kind: "assistant",
-                ts: entry.ts,
-                text: commentaryText,
-                ...(entry.delta === true ? { delta: true } : {}),
-                phase: "commentary",
-                ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
-              };
-              await input.onObservedTranscriptEntry?.(commentaryEntry, transcriptDelivery);
-              if (isExecutionInactive()) return;
-              await input.onTranscriptEntry?.(commentaryEntry, transcriptDelivery);
-              if (isExecutionInactive()) return;
-              await chatRunsSvc.appendTranscriptEntry(chatRun, commentaryEntry, transcriptDelivery);
-              continue;
-            }
-            if (entry.phase === "final_answer") {
-              hasNativeFinalMessage = true;
-            }
-            const delta = assistantTextAccumulator.push(entry.text, entry.delta === true);
-            if (entry.phase === "final_answer") {
-              finalAssistantTextAccumulator.push(entry.text, entry.delta === true);
-            }
-            if (!delta) continue;
-            const visibleDelta = inlineVisualStream.push(sentinelStream.push(delta));
-            const textBlock = parseAssistantTextBlock(assistantTextAccumulator.fullText);
-            if (visibleDelta && !textBlock) {
-              const assistantTranscriptEntry: TranscriptEntry = {
-                kind: "assistant",
-                ts: entry.ts,
-                text: visibleDelta,
-                delta: true,
-              };
-              await input.onObservedTranscriptEntry?.(assistantTranscriptEntry, transcriptDelivery);
-              if (isExecutionInactive()) return;
-              await input.onTranscriptEntry?.(assistantTranscriptEntry, transcriptDelivery);
-              if (isExecutionInactive()) return;
-              await chatRunsSvc.appendTranscriptEntry(chatRun, assistantTranscriptEntry, transcriptDelivery);
-            }
-            continue;
-          }
-          const suppressTranscriptSource = (text: string, delta = false) => {
-            const hideResidualWidgetSource = (output: string) => (
-              /<div\b[^>]*\bid\s*=\s*["']widget["']/i.test(output)
-                ? `[private inline visual source omitted]${output.endsWith("\n") ? "\n" : ""}`
-                : output
-            );
-            if (delta) {
-              // Thinking deltas are arbitrary stream fragments. Preserve continuity
-              // and admit only complete logical lines so raw widget markup cannot be
-              // projected before an opening marker or tag finishes across chunks.
-              transcriptDeltaOpen = true;
-              transcriptDeltaCarry += text;
-              if (Buffer.byteLength(transcriptDeltaCarry, "utf8") > 256 * 1024) {
-                transcriptDeltaCarry = "";
-                transcriptDeltaOpen = false;
-                return "[oversized transcript delta omitted]";
-              }
-              let output = "";
-              let newline = transcriptDeltaCarry.indexOf("\n");
-              while (newline >= 0) {
-                output += hideResidualWidgetSource(
-                  transcriptInlineVisualStream.push(transcriptDeltaCarry.slice(0, newline + 1)),
-                );
-                transcriptDeltaCarry = transcriptDeltaCarry.slice(newline + 1);
-                newline = transcriptDeltaCarry.indexOf("\n");
-              }
-              return output;
-            }
-            // Complete transcript entries are logical records. The synthetic newline
-            // lets own-line markers advance the shared state machine when a runtime
-            // reports START/body/END as separate non-delta entries.
-            let output = "";
-            if (transcriptDeltaOpen) {
-              if (transcriptDeltaCarry) {
-                output += hideResidualWidgetSource(
-                  transcriptInlineVisualStream.push(`${transcriptDeltaCarry}\n`),
-                );
-                transcriptDeltaCarry = "";
-              }
-              transcriptDeltaOpen = false;
-            }
-            const admittedRecord = transcriptInlineVisualStream.push(`${text}\n`);
-            const recordOutput = admittedRecord.endsWith("\n")
-              ? admittedRecord.slice(0, -1)
-              : admittedRecord;
-            return output + hideResidualWidgetSource(recordOutput);
-          };
-          let structuredTranscriptNodes = 0;
-          let structuredTranscriptBytes = 0;
-          const suppressStructuredTranscriptValue = (value: unknown, depth = 0): unknown => {
-            structuredTranscriptNodes += 1;
-            if (structuredTranscriptNodes > 1_000) return "[bounded transcript value omitted]";
-            if (typeof value === "string") {
-              structuredTranscriptBytes += Buffer.byteLength(value, "utf8");
-              if (structuredTranscriptBytes > 256 * 1024) return "[bounded transcript value omitted]";
-              return suppressTranscriptSource(value);
-            }
-            if (depth >= 8) return "[bounded transcript value omitted]";
-            if (Array.isArray(value)) {
-              return value.slice(0, 100).map((item) => suppressStructuredTranscriptValue(item, depth + 1));
-            }
-            if (value && typeof value === "object") {
-              const output: Record<string, unknown> = {};
-              for (const [index, [key, item]] of Object.entries(value as Record<string, unknown>)
-                .slice(0, 100)
-                .entries()) {
-                structuredTranscriptBytes += Buffer.byteLength(key, "utf8");
-                const sanitizedKey = structuredTranscriptBytes > 256 * 1024
-                  ? `[bounded-key-${index}]`
-                  : suppressTranscriptSource(key) || `[redacted-key-${index}]`;
-                let uniqueKey = sanitizedKey;
-                let suffix = 1;
-                while (Object.hasOwn(output, uniqueKey)) {
-                  uniqueKey = `${sanitizedKey}-${suffix}`;
-                  suffix += 1;
-                }
-                output[uniqueKey] = suppressStructuredTranscriptValue(item, depth + 1);
-              }
-              return output;
-            }
-            return value;
-          };
-          const safeEntry: TranscriptEntry = (() => {
-            switch (entry.kind) {
-              case "thinking":
-                return {
-                  kind: entry.kind,
-                  ts: entry.ts,
-                  text: suppressTranscriptSource(entry.text, entry.delta === true),
-                  ...(entry.delta === true ? { delta: true } : {}),
-                  ...(entry.segmentId ? { segmentId: suppressTranscriptSource(entry.segmentId) } : {}),
-                };
-              case "user":
-              case "stderr":
-              case "system":
-              case "stdout":
-                return {
-                  kind: entry.kind,
-                  ts: entry.ts,
-                  text: suppressTranscriptSource(entry.text),
-                };
-              case "result":
-                return {
-                  kind: entry.kind,
-                  ts: entry.ts,
-                  text: suppressTranscriptSource(entry.text),
-                  inputTokens: entry.inputTokens,
-                  outputTokens: entry.outputTokens,
-                  cachedTokens: entry.cachedTokens,
-                  costUsd: entry.costUsd,
-                  subtype: suppressTranscriptSource(entry.subtype),
-                  isError: entry.isError,
-                  errors: entry.errors.slice(0, 100).map((message) => suppressTranscriptSource(message)),
-                };
-              case "tool_result":
-                return {
-                  kind: entry.kind,
-                  ts: entry.ts,
-                  content: suppressTranscriptSource(entry.content),
-                  ...(entry.toolName ? { toolName: suppressTranscriptSource(entry.toolName) } : {}),
-                  toolUseId: suppressTranscriptSource(entry.toolUseId),
-                  isError: entry.isError,
-                };
-              case "tool_call":
-                {
-                  const rawInput = entry.input && typeof entry.input === "object" && !Array.isArray(entry.input)
-                    ? entry.input as Record<string, unknown>
-                    : null;
-                  const normalizedToolName = entry.name.trim().toLowerCase().replace(/[\s_-]+/g, "");
-                  const durableImage = normalizedToolName === "imageview" && typeof rawInput?.path === "string"
-                    ? durableTranscriptImages.get(rawInput.path)
-                    : null;
-                  const durableInput = durableImage && rawInput
-                    ? {
-                      ...rawInput,
-                      path: durableImage.contentPath,
-                      displayName: durableImage.displayName,
-                    }
-                    : entry.input;
-                  return {
-                    kind: entry.kind,
-                    ts: entry.ts,
-                    name: suppressTranscriptSource(entry.name),
-                    input: suppressStructuredTranscriptValue(durableInput),
-                    ...(entry.toolUseId ? { toolUseId: suppressTranscriptSource(entry.toolUseId) } : {}),
-                  };
-                }
-              case "todo_list":
-                return {
-                  kind: entry.kind,
-                  ts: entry.ts,
-                  ...(entry.todoListId ? { todoListId: suppressTranscriptSource(entry.todoListId) } : {}),
-                  items: entry.items.slice(0, 100).map((item) => ({
-                    text: suppressTranscriptSource(item.text),
-                    status: item.status,
-                  })),
-                };
-              case "init":
-                return {
-                  kind: entry.kind,
-                  ts: entry.ts,
-                  model: suppressTranscriptSource(entry.model),
-                  sessionId: suppressTranscriptSource(entry.sessionId),
-                };
-              default:
-                return {
-                  kind: "system",
-                  ts: new Date().toISOString(),
-                  text: "Unsupported runtime transcript entry omitted",
-                };
-            }
-          })();
-          if (entry.kind === "result") {
-            const safeResultEntry = safeEntry.kind === "result" ? safeEntry : null;
-            const observedText = partialBodyFromRawAssistantText(safeResultEntry?.text ?? "", resultSentinel);
-            if (observedText) {
-              await input.onObservedTranscriptEntry?.({
-                ...safeResultEntry!,
-                text: observedText,
-              }, transcriptDelivery);
-            }
-          } else if (
-            !(entry.kind === "stdout" && entry.text.includes(resultSentinel))
-            && !(
-              ("text" in safeEntry && typeof safeEntry.text === "string" && safeEntry.text.length === 0)
-              || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
-            )
-          ) {
-            await input.onObservedTranscriptEntry?.(safeEntry, transcriptDelivery);
-          }
-          if (isExecutionInactive()) return;
-          const suppressVisibleEntry = shouldSuppressChatTranscriptEntry(entry, resultSentinel)
-            || (
-            ("text" in safeEntry && typeof safeEntry.text === "string" && safeEntry.text.length === 0)
-            || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
-            );
-          if (!suppressVisibleEntry) {
-            await input.onTranscriptEntry?.(safeEntry, transcriptDelivery);
-            if (isExecutionInactive()) return;
-            await chatRunsSvc.appendTranscriptEntry(chatRun, safeEntry, transcriptDelivery);
-          }
-          if (entry.kind === "tool_result") {
-            await maybeEmitAssistantState(input.onAssistantState, "streaming");
-            if (isExecutionInactive()) return;
-          }
-        }
-      };
+      const transcriptProcessor = createChatAssistantTranscriptProcessor({
+        callbacks: input,
+        isInactive: isExecutionInactive,
+        appendTranscriptEntry: (entry, delivery) => chatRunsSvc.appendTranscriptEntry(chatRun, entry, delivery),
+        resultSentinel,
+        transcriptDelivery,
+        assistantTextAccumulator,
+        finalAssistantTextAccumulator,
+        sentinelStream,
+        inlineVisualStream,
+        commentaryInlineVisualStream,
+        durableTranscriptImages,
+        state: transcriptProcessingState,
+      });
+      const { processTranscriptEntries } = transcriptProcessor;
 
       const processStdoutLine = async (line: string) => {
         if (isExecutionInactive() || !parser || !line.trim()) return;
@@ -1317,7 +1067,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (networkSuspension) {
         const partialBody = redactRudderInlineVisualSources(
           partialBodyFromRawAssistantText(
-            hasNativeFinalMessage ? finalAssistantTextAccumulator.fullText : "",
+            transcriptProcessingState.hasNativeFinalMessage ? finalAssistantTextAccumulator.fullText : "",
             resultSentinel,
           )
           || (safeTrim(sentinelStream.visibleText) ?? ""),
@@ -1340,7 +1090,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       if (isStopped()) return finalizeStoppedReply();
 
       const rawResultText = resultText(result);
-      const finalAssistantText = hasNativeFinalMessage ? finalAssistantTextAccumulator.fullText : "";
+      const finalAssistantText = transcriptProcessingState.hasNativeFinalMessage
+        ? finalAssistantTextAccumulator.fullText
+        : "";
       const partialBody =
         redactRudderInlineVisualSources(partialBodyFromRawAssistantText(
           finalAssistantText,
@@ -1386,7 +1138,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           || partialBody
           || rawResultText
           || finalAssistantText
-          || hasRuntimeOutputEvidence,
+          || transcriptProcessingState.hasRuntimeOutputEvidence,
         );
         const rawProviderFailure = asRecord(result.resultJson?.providerFailure);
         const authProviderFailure = result.errorCode === "codex_provider_auth_required"

@@ -34,7 +34,6 @@ import {
   logActivity,
   syncInstructionsBundleConfigFromFilePath
 } from "../services/index.js";
-import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.js";
 import {
   assertRunIntelligenceAccess,
   filterRunsByRunIntelligenceAccess,
@@ -42,8 +41,10 @@ import {
   sideChatVisibilityCondition,
 } from "../services/run-intelligence-access.js";
 import type { StorageService } from "../storage/types.js";
+import { registerAgentInvocationInstructionsRoute } from "./agents.management-invocation-instructions.js";
 import { listAgentRunsForRequest } from "./agents.management-run-list.js";
-import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
+import { runIntelligenceScope } from "./agents.management-run-scope.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 type AgentManagementRouteContext = {
   router: Router;
@@ -56,14 +57,6 @@ type IntelligenceRuntimeChainTestInput = {
   agentRuntimeType: string;
   agentRuntimeConfig: Record<string, unknown>;
 };
-
-function runIntelligenceScope(req: Request, notFoundMessage?: string) {
-  return {
-    orgIds: getAuthorizedOrgScope(req),
-    sideChatOwnerId: req.actor.type === "board" ? (req.actor.userId ?? "local-board") : null,
-    ...(notFoundMessage ? { notFoundMessage } : {}),
-  };
-}
 
 export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) {
   const {
@@ -1489,47 +1482,13 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     res.json(events);
   });
 
-  router.get("/agent-runs/:runId/events/:eventId/invocation-instructions", async (req, res) => {
-    const scope = runIntelligenceScope(req, "Agent run not found");
-    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
-    const run = await heartbeat.getRun(runId);
-    if (!run) {
-      res.status(404).json({ error: "Agent run not found" });
-      return;
-    }
-    assertCompanyAccess(req, run.orgId);
-    await assertRunIntelligenceAccess(db, run, scope);
-
-    const eventIdText = String(req.params.eventId ?? "");
-    const eventId = Number(eventIdText);
-    if (!/^[1-9][0-9]*$/u.test(eventIdText) || !Number.isSafeInteger(eventId)) {
-      res.status(404).json({ error: "Invocation instruction snapshot not found" });
-      return;
-    }
-    if (!storage) {
-      res.status(503).json({ error: "Invocation instruction storage is unavailable" });
-      return;
-    }
-
-    const snapshot = await readRunInstructionSnapshotForEvent({
-      db,
-      storage,
-      orgId: run.orgId,
-      runId: run.id,
-      eventId,
-    });
-    if (!snapshot) {
-      res.status(404).json({ error: "Invocation instruction snapshot not found" });
-      return;
-    }
-
-    const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.json({
-      agentInstructionStack: redactCurrentUserText(snapshot.agentInstructionStack, currentUserRedactionOptions),
-      sha256: snapshot.sha256,
-      byteSize: snapshot.byteSize,
-    });
+  registerAgentInvocationInstructionsRoute({
+    router,
+    db,
+    storage,
+    heartbeat,
+    getCurrentUserRedactionOptions,
+    resolveScope: runIntelligenceScope,
   });
 
   async function listRunEventsForRequest(req: Request, res: any, notFoundMessage: string) {
