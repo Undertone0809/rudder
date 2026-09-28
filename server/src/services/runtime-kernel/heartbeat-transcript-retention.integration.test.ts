@@ -325,6 +325,10 @@ async function readAllFiles(directory: string): Promise<string> {
   return (await Promise.all(files.map((file) => fsp.readFile(file, "utf8")))).join("\n");
 }
 
+function countOccurrences(value: string, marker: string): number {
+  return marker ? value.split(marker).length - 1 : 0;
+}
+
 describe("heartbeat native transcript retention integration", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -585,15 +589,17 @@ describe("heartbeat native transcript retention integration", () => {
     const sessionId = `w12-native-session-${randomUUID()}`;
     const native = await queueRun(agentId);
     const nativeToken = `W12_NATIVE_RAW_${randomUUID()}`;
-    const nativeRaw = `${nativeToken}::${"native transcript payload ".repeat(1_750)}`;
+    const nativeRaw = `${nativeToken}::${"native transcript payload 你好 🐕 ".repeat(1_400)}`;
+    const nativePayloadBytes = Buffer.byteLength(nativeRaw, "utf8");
     const nativeTurnId = `turn-${native.run.id}`;
     const subagentTurnId = `${nativeTurnId}-subagent`;
     const subagentRaw = `W12_NATIVE_SUBAGENT_RAW_${randomUUID()}`;
+    const nativeDecoy = `OUT_OF_SCOPE_${randomUUID()}`;
     fakeNativeProvider.register(native.run.id, {
       sessionId,
       turnId: nativeTurnId,
       rawTranscript: nativeRaw,
-      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
+      decoy: nativeDecoy,
     });
 
     const nativeTerminalGate = fakeTerminalEffect.arm();
@@ -692,9 +698,30 @@ describe("heartbeat native transcript retention integration", () => {
 
       const sqlEvidence = JSON.stringify({ run: nativeRun, attempts, events, span, subagentSpan });
       expect(sqlEvidence).not.toContain(nativeRaw);
+      expect(countOccurrences(sqlEvidence, nativeToken)).toBe(0);
       expect(sqlEvidence).not.toContain(subagentRaw);
       expect(events.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
-      expect(await readAllFiles(runLogRoot)).not.toContain(nativeRaw);
+      const runLogText = await readAllFiles(runLogRoot);
+      expect(runLogText).not.toContain(nativeRaw);
+      expect(countOccurrences(runLogText, nativeToken)).toBe(0);
+      const nativeRunLogPath = path.join(runLogRoot, orgId, agentId, `${native.run.id}.ndjson`);
+      const nativeRunLogStat = await fsp.stat(nativeRunLogPath).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      });
+      const nativeRunLogBytes = nativeRunLogStat?.size ?? 0;
+      expect(nativeRun.logBytes ?? 0).toBe(nativeRunLogBytes);
+      expect(nativeRunLogBytes).toBe(0);
+
+      const nativeSourceEntries = (fakeNativeProvider.sessions.get(sessionId) ?? [])
+        .filter((entry) => entry.runId === native.run.id && entry.turnId === nativeTurnId);
+      expect(nativeSourceEntries).toHaveLength(1);
+      const nativeSourceText = String(nativeSourceEntries[0]?.entry.text ?? "");
+      expect(nativeSourceText).toBe(nativeRaw);
+      expect(Buffer.byteLength(nativeSourceText, "utf8")).toBe(nativePayloadBytes);
+      expect(nativePayloadBytes).toBeGreaterThan(50_000);
+      expect(nativePayloadBytes).toBeGreaterThan(nativeRaw.length);
+      expect(countOccurrences(nativeSourceText, nativeToken)).toBe(1);
 
       const readerInputs: any[] = [];
       const transcriptReader = createTranscriptReader(db, {
@@ -713,7 +740,11 @@ describe("heartbeat native transcript retention integration", () => {
       });
       expect(page).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
       expect(page.items.map((item) => item.text)).toEqual([nativeRaw]);
-      expect(page.items.map((item) => item.text)).not.toContain(`OUT_OF_SCOPE_${randomUUID()}`);
+      const readerText = page.items.map((item) => item.text ?? "").join("");
+      expect(readerText).toBe(nativeRaw);
+      expect(Buffer.byteLength(readerText, "utf8")).toBe(nativePayloadBytes);
+      expect(countOccurrences(readerText, nativeToken)).toBe(1);
+      expect(readerText).not.toContain(nativeDecoy);
       expect(readerInputs).toHaveLength(1);
       expect(readerInputs[0]).toMatchObject({
         readonly: true,
@@ -737,6 +768,7 @@ describe("heartbeat native transcript retention integration", () => {
     const cleanedNativeSpan = cleanedNativeSpans.find((candidate) => candidate.id === primarySpanId);
     const cleanedSubagentSpan = cleanedNativeSpans.find((candidate) => candidate.relation === "native_subagent");
     const cleanedNativeEvents = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
+    const cleanedSqlEvidence = JSON.stringify({ run: cleanedNativeRun, spans: cleanedNativeSpans, events: cleanedNativeEvents });
     expect(cleanedNativeRun).toMatchObject({
       status: "succeeded",
       logRef: null,
@@ -751,7 +783,8 @@ describe("heartbeat native transcript retention integration", () => {
     expect(cleanedNativeSpan?.supplementalObjectRef).toBeNull();
     expect(cleanedSubagentSpan?.supplementalObjectRef).toBeNull();
     expect(cleanedNativeEvents.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
-    expect(JSON.stringify(cleanedNativeEvents)).not.toContain(nativeRaw);
+    expect(cleanedSqlEvidence).not.toContain(nativeRaw);
+    expect(countOccurrences(cleanedSqlEvidence, nativeToken)).toBe(0);
     expect(JSON.stringify(cleanedNativeEvents)).not.toContain(subagentRaw);
     expect(await filesBelow(runLogRoot)).toEqual([]);
     expect(await filesBelow(path.join(transcriptObjectRoot, "transcript-objects"))).toEqual([]);
@@ -767,6 +800,9 @@ describe("heartbeat native transcript retention integration", () => {
     });
     expect(rereadPage).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
     expect(rereadPage.items.map((item) => item.text)).toEqual([nativeRaw]);
+    const rereadText = rereadPage.items.map((item) => item.text ?? "").join("");
+    expect(Buffer.byteLength(rereadText, "utf8")).toBe(nativePayloadBytes);
+    expect(countOccurrences(rereadText, nativeToken)).toBe(1);
     expect(rereadPage.revision).toBe(nativeRevision);
 
     const rereadSubagentPage = await rereadAfterCleanup.readRun({
