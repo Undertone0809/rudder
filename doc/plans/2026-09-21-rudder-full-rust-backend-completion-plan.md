@@ -1002,3 +1002,25 @@ active work are established. PR count, branch-ref count, implementation
 completion, release readiness, and production verification are separate
 signals; a merged D1 slice does not complete Phase 0-7 or authorize production
 traffic changes.
+
+## 2026-09-29 Concurrency and CI correction
+
+The user explicitly requests earlier candidate publication for PR CI and faster
+incremental merges. Publish clearly unaccepted working candidates to the existing
+slice PR for CI feedback; this is not an acceptance, merge, release, or production
+claim. Independent stage review, real-workflow verification, final review, and
+required protected-branch checks still gate merge.
+
+Limit active delivery work to one integration slice and one following implementation
+slice. Assign disjoint file ownership to workers and keep one coordinator responsible
+for integration. Run review, CI preparation, and following-slice implementation in
+parallel. Do not create another D1 PR or another checkout merely for an agent.
+Serialize embedded PostgreSQL smoke suites until their shared startup contention
+has been removed. Use CI for the broad and platform matrices; repeat a successful
+local journey only when a relevant source, runtime, fixture, or criterion changes.
+
+Freeze product source independently from evidence records. Record content equivalence
+for documentation-only changes instead of restarting acceptance. The top-level
+`current_candidate` in the status file is authoritative; older checkpoints are
+historical evidence. Evaluate progress by accepted increments merged into Main and
+authority units actually transferred, not branches, agents, commits, or test counts.
