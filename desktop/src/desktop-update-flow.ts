@@ -39,11 +39,9 @@ import {
   spawnDesktopUpdateHelper,
   writeDesktopUpdateHelperRequest,
   type DesktopUpdateHelperRequest,
-  type DesktopUpdateRuntimeReceipt,
   type HelperAttestation,
 } from "./desktop-update-helper.js";
 import { resolveDesktopUpdateChildLaunch } from "./desktop-update-launch.js";
-import { createAutomaticDesktopUpdateRuntimeContext } from "./desktop-update-runtime-receipt.js";
 import {
   clearPostUpdateReloadMarker,
   writePostUpdateReloadMarker,
@@ -101,7 +99,6 @@ export function createDesktopUpdateFlow(context: {
   showMainWindow: () => void;
   getUserDataPath?: () => string;
   getUpdateInstallPath?: () => string | undefined;
-  getRuntimeReceipt?: () => DesktopUpdateRuntimeReceipt;
   isAutomaticUpdateAllowed?: () => boolean;
   /** True only when the stable, externally installed updater is attested. */
   hasExternalUpdateHelperCapability?: () => boolean;
@@ -154,13 +151,33 @@ export function createDesktopUpdateFlow(context: {
   let automaticCheckInFlight: Promise<void> | null = null;
   let pendingAutomaticHelperHandoff: { requestPath: string; helperPath: string; transactionId: string } | null = null;
 
-  const {
-    automaticRuntimeIdentity,
-    automaticRuntimeReceipt,
-    automaticUpdateScopeAllowed,
-    automaticUpdatePrerequisitesAvailable,
-    automaticUpdateCapabilityAvailable,
-  } = createAutomaticDesktopUpdateRuntimeContext({ context, isPackaged: () => app.isPackaged, platform, env: process.env });
+  function automaticRuntimeIdentity(): { profile: string | null; instanceId: string | null } {
+    const runtime = context.getBootState()?.runtime ?? {};
+    return {
+      profile: typeof runtime.localEnv === "string"
+        ? runtime.localEnv
+        : (process.env.RUDDER_LOCAL_ENV?.trim() || null),
+      instanceId: typeof runtime.instanceId === "string"
+        ? runtime.instanceId
+        : (process.env.RUDDER_INSTANCE_ID?.trim() || null),
+    };
+  }
+
+  function automaticUpdateScopeAllowed(): boolean {
+    if (!app.isPackaged || platform !== "darwin" || context.isAutomaticUpdateAllowed?.() === false) return false;
+    const identity = automaticRuntimeIdentity();
+    return identity.profile === "prod_local" && identity.instanceId === "default";
+  }
+
+  function automaticUpdatePrerequisitesAvailable(): boolean {
+    return automaticUpdateScopeAllowed()
+      && context.hasExternalUpdateHelperCapability?.() === true;
+  }
+
+  function automaticUpdateCapabilityAvailable(): boolean {
+    return automaticUpdatePrerequisitesAvailable()
+      && context.hasSignedUpdatePolicyCapability?.() === true;
+  }
 
   function automaticPreparationIsActive(
     preparation: { ownerPid: number; childPid?: number; startedAt: string },
@@ -253,11 +270,6 @@ export function createDesktopUpdateFlow(context: {
       execPath: process.execPath,
       installPath: context.getUpdateInstallPath?.(),
     });
-    const runtimeReceipt = automaticRuntimeReceipt();
-    if (!runtimeReceipt) {
-      trace({ blocked: "runtime_receipt" });
-      return "continue";
-    }
     const existingRequestPath = `${transactionPaths.journalPath}.request.json`;
     if (candidate.status === "claimed" && !journal) {
       // A claimed transaction may already be owned by a detached helper. Never
@@ -277,7 +289,6 @@ export function createDesktopUpdateFlow(context: {
             statePath: autoUpdateStatePath(),
             paths: transactionPaths,
             helper: currentHelper ?? undefined,
-            runtimeReceipt,
           })) return "continue";
           quarantineDesktopUpdateRequest(existingRequestPath);
           mutateAutomaticState((current) => ({
@@ -408,7 +419,6 @@ export function createDesktopUpdateFlow(context: {
         databaseRevision,
         migrationCompatible: runtime.migrationCompatible !== false && bootState.migrationCompatible !== false,
       },
-      runtimeReceipt,
       helper: effectiveHelper,
       probation: {
         executable: path.join(transactionPaths.installPath, "Contents", "MacOS", "Rudder"),
