@@ -2,14 +2,16 @@ import { describe, expect, it } from "vitest";
 import { isCodexProviderAuthFailure, isCodexTransportDisconnectError, parseCodexJsonl } from "./parse.js";
 
 describe("parseCodexJsonl", () => {
-  it("does not promote incomplete assistant progress to a final summary", () => {
+  it("does not promote interrupted assistant deltas to a final summary", () => {
     const parsed = parseCodexJsonl([
       JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
-      JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Partial progress before stop." } }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "Partial ", delta: true } }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "progress before stop.", delta: true } }),
     ].join("\n"));
 
     expect(parsed.sessionId).toBe("thread-123");
     expect(parsed.summary).toBe("");
+    expect(parsed.modelOutputObserved).toBe(true);
   });
 
   it("does not promote incomplete reasoning to a final summary", () => {
@@ -21,7 +23,7 @@ describe("parseCodexJsonl", () => {
     expect(parsed.summary).toBe("");
   });
 
-  it("uses completed assistant messages as the final summary", () => {
+  it("uses legacy snapshot-only assistant messages as the final summary", () => {
     const parsed = parseCodexJsonl([
       JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
       JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Final visible answer." } }),
@@ -33,6 +35,31 @@ describe("parseCodexJsonl", () => {
     ].join("\n"));
 
     expect(parsed.summary).toBe("Final visible answer.");
+  });
+
+  it("replaces accumulated item deltas with the same item's complete snapshot", () => {
+    const parsed = parseCodexJsonl([
+      JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "The final ", delta: true } }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "answer is", delta: true } }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "The final answer is complete." } }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n"));
+
+    expect(parsed.summary).toBe("The final answer is complete.");
+  });
+
+  it("keeps interleaved deltas from distinct assistant items separate", () => {
+    const parsed = parseCodexJsonl([
+      JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "First ", delta: true } }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-2", type: "agent_message", text: "Second ", delta: true } }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "item", delta: true } }),
+      JSON.stringify({ type: "item.completed", item: { id: "message-2", type: "agent_message", text: "item", delta: true } }),
+      JSON.stringify({ type: "turn.completed" }),
+    ].join("\n"));
+
+    expect(parsed.summary).toBe("First item\n\nSecond item");
   });
 
   it("recognizes only the Codex responses transport disconnect", () => {
