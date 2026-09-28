@@ -71,6 +71,35 @@ describe("organization row writer mutation fences", () => {
     expect(lockCall).toBeLessThan(organizationWrite);
   });
 
+  it("routes organization asset deletion through the helper that locks its exact Node fence", () => {
+    const orgSource = readServiceSource("orgs.ts");
+    const removeStart = orgSource.indexOf("remove: (id: string) =>");
+    const transactionStart = orgSource.indexOf("db.transaction(async (tx) => {", removeStart);
+    const helperCall = orgSource.indexOf(
+      "await lockProjectGoalMutationAuthoritiesForOrganizationDeletion(tx, id);",
+      transactionStart,
+    );
+    const assetDelete = orgSource.indexOf("await tx.delete(assets)", transactionStart);
+
+    expect(removeStart).toBeGreaterThanOrEqual(0);
+    expect(transactionStart).toBeGreaterThan(removeStart);
+    expect(helperCall).toBeGreaterThan(transactionStart);
+    expect(assetDelete).toBeGreaterThan(helperCall);
+
+    const helperSource = readServiceSource("project-goal-mutation-fence.ts");
+    const helperStart = helperSource.indexOf(
+      "export async function lockProjectGoalMutationAuthoritiesForOrganizationDeletion(",
+    );
+    const nextHelper = helperSource.indexOf("\nexport async function ", helperStart + 1);
+    const helperBody = helperSource.slice(helperStart, nextHelper < 0 ? undefined : nextHelper);
+    const organizationFenceLock = helperBody.indexOf("await lockNodeMutationAuthority(tx, organizationId);");
+    const projectFenceRead = helperBody.indexOf("const result = await tx.execute(sql`");
+
+    expect(helperStart).toBeGreaterThanOrEqual(0);
+    expect(organizationFenceLock).toBeGreaterThanOrEqual(0);
+    expect(projectFenceRead).toBeGreaterThan(organizationFenceLock);
+  });
+
   it.each([
     "assets.ts",
     "chats.annotation-persistence.ts",
@@ -88,7 +117,13 @@ describe("organization row writer mutation fences", () => {
     for (const write of writes) {
       const writeOffset = write.index ?? -1;
       const transactionOffset = source.lastIndexOf("db.transaction(", writeOffset);
-      const lockOffset = source.lastIndexOf("await lockNodeMutationAuthority", writeOffset);
+      const directLockOffset = source.lastIndexOf("await lockNodeMutationAuthority", writeOffset);
+      const lockOffset = fileName === "orgs.ts" && directLockOffset < transactionOffset
+        ? source.lastIndexOf(
+          "await lockProjectGoalMutationAuthoritiesForOrganizationDeletion(tx, id);",
+          writeOffset,
+        )
+        : directLockOffset;
       expect(lockOffset, `${fileName} asset write at ${writeOffset} must be fenced`).toBeGreaterThanOrEqual(0);
       if (transactionOffset >= 0) {
         expect(lockOffset).toBeGreaterThan(transactionOffset);
