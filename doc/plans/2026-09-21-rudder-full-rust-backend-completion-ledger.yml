@@ -24,7 +24,10 @@ source:
   pending_worktree_patch: none_code_fence_fix_committed
   authority_row_provenance: Pasteur_read_only_source_and_existing_evidence_audit_of_948_tree_identical_to_merged_e2
 pending_candidate:
-  source_sha: 9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709
+  source_sha: 1c387d7c1fdcce841a98d8928e80795d5e7feb95
+  source_fingerprint: 91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed
+  pr: https://github.com/Undertone0809/rudder/pull/233
+  review: integrated_stage_accept_independent_verifier_and_final_review_pending
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   evidence: author_host_installed_API_CLI_MCP_PASS_not_independent_acceptance
   authority_effect: none_until_candidate_gates_pass_current_rows_remain_bound_to_accepted_Main_source

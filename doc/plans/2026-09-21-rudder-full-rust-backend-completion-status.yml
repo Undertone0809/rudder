@@ -5,9 +5,10 @@ status: in_progress
 current_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   branch: codex/member-directory-default-20260929
-  source_sha: 9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709
-  source_tree: 458853294b6301534ea5192741cfc83dbfc140a0
-  source_fingerprint: f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0
+  source_sha: 1c387d7c1fdcce841a98d8928e80795d5e7feb95
+  source_tree: f451fca2351a7121a85799905255d21c4909f213
+  source_fingerprint: 91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed
+  equivalence: cb9_import_order_and1c387_CI_linker_only_runtime_binary_and_harness_logic_unchanged_since9d
   origin_main: f6eab53c3cee4385e36da60098a83cbd8734e32f
   state: source_frozen_author_host_workflow_PASS_independent_integrated_gates_pending
   packet: doc/plans/2026-09-29-rudder-member-default-delivery-packet-v25.json
@@ -17,11 +18,16 @@ current_candidate:
   checks: runtime38_server41_CLI_MCP85_harness3_packaging9_auth17_actionlint_CI_contract4_release_contract24_PASS
   regressions_fixed: npm_exec_mode_normalization_and_342_byte_cursor_URL_rejected_by_actor_envelope
   preserved_contracts: local_trusted_implicit_board_authenticated_agent_keys_MCP_short_refs_API_CLI_full_UUIDs
-  reviewer: pending_integrated_stage_runtime_only_Newton_accept_at_pre_path_fix892
+  reviewer: Newton_integrated_stage_accept_at5f_plus_cb9_import_and1c387_linker_delta_accept
+  full_workspace_typecheck: PASS_19_packages
+  lint: candidate_three_paths_fixed_scoped_PASS_six_remaining_findings_identical_to_Main
   verifier: pending_no_author_result_promoted
   final_reviewer: pending
-  ci: pending_PR_publication
-  next_executable: publish_unaccepted_candidate_for_CI_then_independent_stage_review_and_installed_verifier_after_six_target_artifacts
+  pr: https://github.com/Undertone0809/rudder/pull/233
+  published_head: 5f7a6b1ef07f79e8eef6f41378082591bdf83371
+  publication: draft_for_early_CI_not_accepted
+  ci: {matrix: 36482464814, D1_regression: 36482464800, status: WindowsARM64_linker_failed_fixed1c387_fresh_CI_pending_D1_PASS}
+  next_executable: reconcile_integrated_Newton_stage_review_and_CI_then_freeze_six_target_package_for_independent_installed_verifier
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 historical_d1_fence_reconciliation:
   worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss

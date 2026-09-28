@@ -14,7 +14,7 @@
       "Reconcile Rust work with new Main changes as Main advances.",
       "Use gpt-6-luna with max reasoning for spawned agents, and use parallel agents for critical review where useful.",
       "Converge one coherent vertical slice per PR, commit accepted checkpoints, and continue the overall migration after each merge.",
-      "This packet covers only the D1 organization branding and Project-Goal authority slice; Chat and unrelated update-recovery experiments remain separate and incomplete.",
+      "Historical predecessor v24 covered D1 organization branding and Project-Goal authority. This v25 successor covers generic installed member-directory default reads; D1 default writers, Chat and update-recovery ownership remain separate and incomplete.",
       "2026-09-29, verbatim: 对了，记得先把这个 plan 写进 doc/plans",
       "2026-09-29, verbatim: 我觉得你的开发节奏可以再快一点。比如你现在生产环境好多地方都还没真实接入，其实完全可以现在就逐步接进去，不需要一口气全部接完。很多部分完全可以一边接一边测试，并不影响的。建议你调整一下策略，让开发更快一点：很多真实环境可以先迁移进来，因为单纯离线测试和真正切进来测试完全是不一样的。你可以持续地、一点一点把这些功能先接入到生产环境里，逐步替换掉。按原始授权边界，目前先使用 disposable real-entry 环境与正常 CI；未经额外授权不切生产流量、不迁移生产数据库。",
       "2026-09-29, verbatim: 需要说明的是，重构的过程中 Main 分支时不时会有新功能或者修改进来，你的 rust 也要对应去做好适配。这个你自己调度分析就好。",
@@ -39,11 +39,11 @@
   },
   "candidate": {
     "branch": "codex/member-directory-default-20260929",
-    "source_ref": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
-    "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
-    "source_tree": "458853294b6301534ea5192741cfc83dbfc140a0",
-    "dirty_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
-    "fingerprint_method": "SHA256 git diff --binary f6eab53c3...9dce4eee8 excluding doc/plans",
+    "source_ref": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
+    "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
+    "source_tree": "f451fca2351a7121a85799905255d21c4909f213",
+    "dirty_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
+    "fingerprint_method": "SHA256 git diff --binary f6eab53c3...1c387d7c1 excluding doc/plans",
     "changed_paths": [
       ".github/workflows/ci.yml",
       ".github/workflows/release.yml",
@@ -71,11 +71,11 @@
     ],
     "build": {
       "id": "pending-six-target-candidate",
-      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709"
+      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95"
     },
     "runtime": {
       "id": "pending-independent-installed-runtime",
-      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709"
+      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95"
     },
     "organization_data": {
       "organization_id": "pending-independent-org-id",
@@ -88,8 +88,8 @@
       "expires_at": "not_applicable"
     },
     "acceptance_packet": {
-      "version": "25.0",
-      "fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
+      "version": "25.2",
+      "fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
       "criteria": [
         "Actual relocated installed server package resolves its own native asset without mode, signer or binary overrides; no repository/ancestor native target resolution.",
         "Missing required packaged binary rejects initial boot and closes owned API/database resources; no fallback.",
@@ -114,31 +114,34 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
-      "candidate_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
-      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+      "verdict": "accept",
+      "candidate_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
+      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
       "build_id": "pending-six-target-candidate",
       "runtime_id": "pending-independent-installed-runtime",
       "data_id": "pending-independent-disposable-data",
-      "packet_version": "25.0"
+      "packet_version": "25.2",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "level": "integrated_stage_plus_import_and_workflow_deltas",
+      "evidence": "Independent integrated stage accept at5f7a6b1ef/source9d; subsequent exact three-file import-only delta accept remains applicable atcb9e06163. No product change; full package install verifier and exact-head CI still pending. Newton also accepted exact WindowsARM64 linker-binding delta at1c387d7c1; fresh CI must prove cross-link/artifact upload."
     },
     "verifier": {
       "verdict": "pending",
-      "candidate_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
-      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+      "candidate_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
+      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
       "build_id": "pending-six-target-candidate",
       "runtime_id": "pending-independent-installed-runtime",
       "data_id": "pending-independent-disposable-data",
-      "packet_version": "25.0"
+      "packet_version": "25.2"
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
-      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+      "candidate_fingerprint": "91cd3c7bf9bbd7237e5a206fa9d973dfc3912f73c1f8536c485fce996c24c8ed",
+      "source_sha": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
       "build_id": "pending-six-target-candidate",
       "runtime_id": "pending-independent-installed-runtime",
       "data_id": "pending-independent-disposable-data",
-      "packet_version": "25.0"
+      "packet_version": "25.2"
     }
   },
   "author_evidence": {
@@ -170,15 +173,40 @@
       "server_typecheck": "PASS",
       "dependency_build": "PASS_15_packages",
       "ui_build": "PASS",
-      "actionlint": "PASS"
+      "actionlint": "PASS",
+      "full_workspace_typecheck": "PASS_19_packages",
+      "full_lint": "FAIL_6_unchanged_Main_paths_after_3_candidate_import_fixes",
+      "changed_import_lint": "PASS_3_paths",
+      "lint_baseline_attribution": "git diff origin/main HEAD confirms six remaining files identical; no whole-repository formatting.",
+      "workflow_fix": "actionlint_PASS_CI_contract4_PASS_release_contract24_PASS",
+      "command_correction": "release contract requires Vitest; initial node --test invocation failed runner initialization, rerun under Vitest passed24."
     }
   },
   "drift": {
     "active": false,
-    "events": [],
+    "events": [
+      {
+        "kind": "content_equivalent_runtime",
+        "previous_source": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+        "current_source": "cb9e0616398d9fda6c2fa47dd5cea1485bc96a86",
+        "reason": "Metadata followed by scoped import organization only; reviewer inspected delta and retained integrated stage accept. Product/runtime/binary sources unchanged. Acceptance harness executable logic unchanged."
+      },
+      {
+        "kind": "workflow_only_fix",
+        "previous_source": "cb9e0616398d9fda6c2fa47dd5cea1485bc96a86",
+        "current_source": "1c387d7c1fdcce841a98d8928e80795d5e7feb95",
+        "reason": "CI WindowsARM64 selected Git Bash link.exe; explicit MSVC Hostx64/arm64 linker bound for Cargo. Reviewer stage accept; actionlint andCI4/release24 contracts PASS; runtime source unchanged; fresh target build pending."
+      }
+    ],
     "invalidated_receipts": []
   },
   "integration": {
+    "pr_url": "https://github.com/Undertone0809/rudder/pull/233",
+    "published_head": "5f7a6b1ef07f79e8eef6f41378082591bdf83371",
+    "publication_state": "draft_for_CI_not_accepted",
+    "ci_run": "36482464814",
+    "d1_regression_run": "36482464800",
+    "publication_equivalence": "5f7a6b1ef changes only doc/plans metadata relative to frozen source9dce4eee8; runtime and acceptance harness unchanged.",
     "authorized": true,
     "mode": "main_first",
     "target_ref": "refs/heads/main",
@@ -186,11 +214,11 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
     "branch_refs": [
-      "refs/heads/codex/member-directory-default-20260929@9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709"
+      "refs/heads/codex/member-directory-default-20260929@1c387d7c1fdcce841a98d8928e80795d5e7feb95"
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
-    "patch_tree_sha": "458853294b6301534ea5192741cfc83dbfc140a0",
+    "patch_tree_sha": "f451fca2351a7121a85799905255d21c4909f213",
     "expected_old_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
     "cas": {
       "attempted": false,
@@ -198,7 +226,13 @@
       "observed_old_sha": null,
       "delivered_sha": null
     },
-    "index_update_mode": "none"
+    "index_update_mode": "none",
+    "failed_ci_job": {
+      "run": "36482464814",
+      "job": "109131285224",
+      "cause": "Git_Bash_link_exe_selected_instead_of_MSVC_arm64",
+      "fix": "1c387d7c1fdcce841a98d8928e80795d5e7feb95"
+    }
   },
   "preservation": {
     "checked": true,
@@ -206,10 +240,11 @@
       "doc/plans/2026-09-23-rudder-installed-member-directory-delivery-packet-v18.json",
       "Original7b2a checkout remains untouched"
     ],
-    "index_fingerprint_before": "pending-final-freeze",
-    "index_fingerprint_after": "pending-final-freeze",
-    "worktree_fingerprint_before": "pending-final-freeze",
-    "worktree_fingerprint_after": "pending-final-freeze",
+    "index_fingerprint_before": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "index_fingerprint_after": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "worktree_fingerprint_before": "5bf0c51a3c21ad69fcd7f465ed9af10bc62f5ae0148ead0e38295dc274827e13",
+    "worktree_fingerprint_after": "5bf0c51a3c21ad69fcd7f465ed9af10bc62f5ae0148ead0e38295dc274827e13",
+    "fingerprint_scope": "Unrelated v18 packet only: SHA256 of its git ls-files --stage output (empty because untracked), and file bytes. Entire candidate index separately observed as1bf49a88bd88cb5e0e11c79c4cd9e782b850b1f1c7c0fb922ea5531f22d897f8 at5f7a6b1ef; expected to change with authored metadata commits.",
     "unrelated_paths_preserved": true,
     "index_preserved": true,
     "evidence": [
