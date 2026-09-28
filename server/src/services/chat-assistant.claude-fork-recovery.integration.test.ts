@@ -152,6 +152,13 @@ describe("Claude deferred fork recovery against durable Run rows", () => {
     const orgIds = [...createdOrgIds];
     createdOrgIds.clear();
     if (orgIds.length === 0) return;
+    // These crash-cut fixtures never launch a provider. Retire their synthetic
+    // writer leases before deleting evidence, without weakening the DB fence.
+    await db.update(runRuntimeSpans).set({
+      state: "sealed",
+      closedAt: new Date(),
+      writerLeaseReleasedAt: new Date(),
+    }).where(inArray(runRuntimeSpans.orgId, orgIds));
     await db.delete(heartbeatRunEvents).where(inArray(heartbeatRunEvents.orgId, orgIds));
     await db.delete(heartbeatRunAttempts).where(inArray(heartbeatRunAttempts.orgId, orgIds));
     await db.delete(runRuntimeSpans).where(inArray(runRuntimeSpans.orgId, orgIds));
@@ -342,6 +349,7 @@ describe("Claude deferred fork recovery against durable Run rows", () => {
       completeness: "complete",
       openedAt: createdAt,
       closedAt: sealedAt,
+      writerLeaseReleasedAt: sealedAt,
       updatedAt: sealedAt,
     });
 
@@ -683,7 +691,9 @@ describe("Claude deferred fork recovery against durable Run rows", () => {
       errorCode: "claude_fork_completion_unresolved",
     });
     expect(span).toMatchObject({
-      state: "sealed",
+      // A persisted child proves acceptance, not that the old writer stopped.
+      state: "open",
+      writerLeaseReleasedAt: null,
       completeness: "partial",
       nativeExecutionRef: "child-assistant-1",
       selectorJson: {

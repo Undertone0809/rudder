@@ -1,7 +1,7 @@
 import type { AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import { heartbeatRuns, nativeSegments, runRuntimeSpans, type Db } from "@rudderhq/db";
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { chatAgentRunService } from "./chat-agent-runs.js";
+import { chatAgentRunService } from "./chat-agent-runs.js";
 import { ChatAssistantStreamError } from "./chat-assistant.contracts.js";
 import {
   admitClaudeDeferredFork,
@@ -79,6 +79,18 @@ export async function recoverClaudeDeferredForkRun(input: {
     throw new Error("Claude fork recovery lost the owned Run fence");
   }
   if (recovery.status === "accepted_child_open_span") {
+    // Recovery deliberately marks interrupted submission as unknown. The
+    // owner-fenced durable child is the evidence needed to reconcile it;
+    // finalization alone must not bypass that state transition.
+    const reconciled = await chatAgentRunService(input.db).reconcileAcceptance(
+      input.run,
+      {
+        state: "accepted",
+        providerThreadId: recovery.child.session.sessionId,
+        providerTurnId: recovery.child.boundary,
+      },
+    );
+    if (!reconciled) throw new Error("Claude fork acceptance reconciliation lost ownership");
     await settleAcceptedClaudeForkRecovery({
       run: input.run, child: recovery.child,
       sourceBoundaryRef: recovery.descriptor.sourceSelector.throughInclusiveUuid,
@@ -217,6 +229,10 @@ export async function settleAcceptedClaudeForkRecovery(input: {
     status: "failed",
     error: reason,
     errorCode: "claude_fork_completion_unresolved",
+    terminalFields: {
+      sessionIdAfter: child.session.sessionId,
+      sessionParamsAfterJson: child.session.sessionParams,
+    },
     nativeExecution: { spanId, result, error: true },
     attempt: {
       submissionPhase: "accepted",
