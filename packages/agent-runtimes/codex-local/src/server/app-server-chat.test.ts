@@ -88,10 +88,19 @@ const finish = (status = "completed") => {
     completedAtMs: Date.now(),
     item: { type: "agentMessage", id: "agent-1", text: "Steered reply", phase: null, memoryCitation: null },
   } });
-  send({ method: "turn/completed", params: {
-    threadId,
-    turn: { id: turnId, items: [], itemsView: { type: "full" }, status, error: null, startedAt: 1, completedAt: 2, durationMs: 1 },
-  } });
+  const completedTurn = {
+    id: turnId,
+    items: [],
+    itemsView: { type: "full" },
+    error: null,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1,
+  };
+  if (process.env.RUDDER_TEST_TURN_STATUS_MISSING !== "1") {
+    completedTurn.status = process.env.RUDDER_TEST_TURN_STATUS || status;
+  }
+  send({ method: "turn/completed", params: { threadId, turn: completedTurn } });
 };
 
 if (process.env.RUDDER_TEST_APP_SERVER_STDERR) {
@@ -497,6 +506,39 @@ describe("executeCodexAppServerChat", () => {
       errorMessage: expect.stringContaining("401 Unauthorized"),
     });
     expect(result.stdout).toContain('"type":"error"');
+    expect(result.stdout).not.toContain('"type":"turn.completed"');
+  });
+
+  it.each([
+    ["missing", { RUDDER_TEST_TURN_STATUS_MISSING: "1" }, "unknown"],
+    ["unrecognized", { RUDDER_TEST_TURN_STATUS: "cancelled" }, "cancelled"],
+  ] as const)("fails closed when Codex reports a %s terminal Turn status", async (_kind, statusEnv, status) => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_COMMAND_TRANSCRIPT: "1",
+        ...statusEnv,
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: false,
+      errorMessage: `Codex turn ${status}`,
+    });
+    expect(result.stdout).toContain('"type":"turn.failed"');
     expect(result.stdout).not.toContain('"type":"turn.completed"');
   });
 

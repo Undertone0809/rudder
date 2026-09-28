@@ -695,13 +695,13 @@ export async function executeCodexAppServerChat(
       }
       if (notification.method === "turn/completed") {
         const turn = asRecord(params.turn) ?? {};
-        const status = asString(turn.status) || "completed";
+        const status = asString(turn.status) || "unknown";
         const error = asRecord(turn.error);
         turnError = error
           ? new Error(asString(error.message) || `Codex turn ${status}`)
-          : status === "failed" || (status === "interrupted" && !options.abortSignal?.aborted)
-            ? new Error(`Codex turn ${status}`)
-            : null;
+          : status === "completed" || (status === "interrupted" && options.abortSignal?.aborted)
+            ? null
+            : new Error(`Codex turn ${status}`);
         await emit({
           type: turnError ? "turn.failed" : "turn.completed",
           result: finalAgentText,
