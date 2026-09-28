@@ -16,19 +16,22 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockBudgetService = vi.hoisted(() => ({
   getInvocationBlock: vi.fn(),
 }));
 
 const mockRuntimeAdapter = vi.hoisted(() => {
+  const pendingExecutions = new Map<string, () => void>();
+  const completeRunIds = new Set<string>();
   const calls: Array<{
     runId: string;
     taskKey: string | null;
@@ -36,16 +39,25 @@ const mockRuntimeAdapter = vi.hoisted(() => {
     sessionDisplayId: string | null;
     sessionParams: Record<string, unknown> | null;
   }> = [];
-  let completeNextExecution = false;
-
   return {
     calls,
-    completeNextExecution() {
-      completeNextExecution = true;
+    completeRun(runId: string) {
+      const complete = pendingExecutions.get(runId);
+      if (complete) complete();
+      else completeRunIds.add(runId);
     },
     reset() {
+      if (pendingExecutions.size > 0) {
+        throw new Error("Cannot reset the runtime adapter while executions are still pending");
+      }
       calls.length = 0;
-      completeNextExecution = false;
+      completeRunIds.clear();
+    },
+    drainPendingExecutions() {
+      for (const complete of [...pendingExecutions.values()]) complete();
+    },
+    pendingExecutionCount() {
+      return pendingExecutions.size;
     },
     adapter: {
       type: "codex_local",
@@ -81,8 +93,7 @@ const mockRuntimeAdapter = vi.hoisted(() => {
           sessionDisplayId: ctx.runtime.sessionDisplayId,
           sessionParams: ctx.runtime.sessionParams,
         });
-        if (completeNextExecution) {
-          completeNextExecution = false;
+        if (completeRunIds.delete(ctx.runId)) {
           return {
             exitCode: 0,
             signal: null,
@@ -90,10 +101,26 @@ const mockRuntimeAdapter = vi.hoisted(() => {
             sessionId: null,
             sessionDisplayId: null,
             sessionParams: null,
+            nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
             resultJson: { summary: "legacy queued execution completed" },
           };
         }
-        return await new Promise(() => {});
+        return await new Promise((resolve) => {
+          const complete = () => {
+            pendingExecutions.delete(ctx.runId);
+            resolve({
+              exitCode: 0,
+              signal: null,
+              timedOut: false,
+              sessionId: null,
+              sessionDisplayId: null,
+              sessionParams: null,
+              nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+              resultJson: { summary: "test execution drained" },
+            });
+          };
+          pendingExecutions.set(ctx.runId, complete);
+        });
       },
     },
   };
@@ -233,10 +260,36 @@ async function waitForCondition(check: () => Promise<boolean>, timeoutMs = 3_000
   throw new Error("Timed out waiting for test condition");
 }
 
+async function spawnExitedProcessEvidence(): Promise<{ processPid: number; processExitedAt: Date }> {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  const processPid = child.pid;
+  if (typeof processPid !== "number") throw new Error("Failed to spawn exit-evidence child process");
+
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("Exit-evidence child process did not exit within 3 seconds"));
+    }, 3_000);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal });
+    });
+  });
+  if (exit.code !== 0 || exit.signal !== null) {
+    throw new Error(`Exit-evidence child ended unexpectedly (code=${exit.code}, signal=${exit.signal})`);
+  }
+  return { processPid, processExitedAt: new Date() };
+}
+
 describe("heartbeat run concurrency", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
   let dataDir = "";
+  const testAgentIds = new Set<string>();
 
   beforeAll(async () => {
     const started = await startTempDatabase();
@@ -246,6 +299,7 @@ describe("heartbeat run concurrency", () => {
   }, 20_000);
 
   beforeEach(async () => {
+    testAgentIds.clear();
     const cleanupAt = new Date();
     await db
       .update(heartbeatRuns)
@@ -254,15 +308,62 @@ describe("heartbeat run concurrency", () => {
         finishedAt: cleanupAt,
         processExitedAt: cleanupAt,
         terminalEffectsPending: false,
-        executionOwnerToken: null,
-        executionLeaseExpiresAt: null,
         updatedAt: cleanupAt,
       })
-      .where(inArray(heartbeatRuns.status, ["queued", "running"]));
+      .where(eq(heartbeatRuns.status, "queued"));
     vi.clearAllMocks();
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     mockRuntimeAdapter.reset();
   }, 15_000);
+
+  afterEach(async () => {
+    const deadline = Date.now() + 10_000;
+    let observedState: unknown = null;
+    while (Date.now() < deadline) {
+      const runIds = [...new Set(mockRuntimeAdapter.calls.map((call) => call.runId))];
+      const agentIds = [...testAgentIds];
+      mockRuntimeAdapter.drainPendingExecutions();
+      const agentRuns = agentIds.length > 0
+        ? await db
+          .select({ id: heartbeatRuns.id })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.agentId, agentIds))
+        : [];
+      const allRunIds = [...new Set([...runIds, ...agentRuns.map((run) => run.id)])];
+      const calledRuns = runIds.length > 0
+        ? await db
+          .select({
+            id: heartbeatRuns.id,
+            status: heartbeatRuns.status,
+            executionOwnerToken: heartbeatRuns.executionOwnerToken,
+            terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+            processExitedAt: heartbeatRuns.processExitedAt,
+          })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.id, runIds))
+        : [];
+      const activeSpans = allRunIds.length > 0
+        ? await db
+          .select({ id: runRuntimeSpans.id })
+          .from(runRuntimeSpans)
+          .where(and(inArray(runRuntimeSpans.runId, allRunIds), isNull(runRuntimeSpans.writerLeaseReleasedAt)))
+        : [];
+      observedState = { calledRuns, activeSpanIds: activeSpans.map((span) => span.id) };
+      const drained = (runIds.length === 0 || (calledRuns.length === runIds.length
+        && calledRuns.every((run) => run.status !== "running"
+            && run.executionOwnerToken === null
+            && run.terminalEffectsPending === false
+            && run.processExitedAt !== null)))
+        && activeSpans.length === 0;
+
+      const callsBeforeQuietPeriod = mockRuntimeAdapter.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (drained
+        && mockRuntimeAdapter.pendingExecutionCount() === 0
+        && mockRuntimeAdapter.calls.length === callsBeforeQuietPeriod) return;
+    }
+    throw new Error(`Runtime adapter teardown did not drain: ${JSON.stringify(observedState)}`);
+  });
 
   async function countPostgresLockWaiters() {
     const rows = await db.execute(sql<{ count: number }>`
@@ -354,6 +455,7 @@ describe("heartbeat run concurrency", () => {
       updatedAt: fixtureOptions.createdAt,
     });
 
+    testAgentIds.add(agentId);
     return { orgId, agentId };
   }
 
@@ -524,6 +626,7 @@ describe("heartbeat run concurrency", () => {
       },
     });
     const sourceRunId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
       orgId: input.orgId,
@@ -532,6 +635,8 @@ describe("heartbeat run concurrency", () => {
       triggerDetail: "manual",
       status: "failed",
       finishedAt: new Date(),
+      processPid: exitedWriter.processPid,
+      processExitedAt: exitedWriter.processExitedAt,
       error: "retry with explicit session",
       sessionIdBefore: "old-source-session",
       sessionIdAfter: "explicit-session",
@@ -1095,6 +1200,7 @@ describe("heartbeat run concurrency", () => {
       stateJson: {},
     });
     const sourceRunId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
       orgId,
@@ -1103,6 +1209,8 @@ describe("heartbeat run concurrency", () => {
       triggerDetail: "manual",
       status: "failed",
       finishedAt: new Date(),
+      processPid: exitedWriter.processPid,
+      processExitedAt: exitedWriter.processExitedAt,
       error: "retry me",
       sessionIdBefore: "selected-session-before",
       sessionIdAfter: "selected-session-after",
@@ -1628,7 +1736,7 @@ describe("heartbeat run concurrency", () => {
     });
     expect(legacyBefore?.contextSnapshot).not.toHaveProperty("unifiedAgentRun");
 
-    mockRuntimeAdapter.completeNextExecution();
+    mockRuntimeAdapter.completeRun(runId);
     await heartbeatService(db).resumeQueuedRuns();
     await waitForCondition(async () => {
       const [run] = await db
@@ -1777,6 +1885,31 @@ describe("heartbeat run concurrency", () => {
     let statuses = await listRunStatuses(low.agentId);
     expect(statuses.filter((run) => run.status === "running")).toHaveLength(1);
     expect(statuses.filter((run) => run.status === "queued")).toHaveLength(1);
+
+    const lowRunId = mockRuntimeAdapter.calls[0]?.runId;
+    expect(lowRunId).toBeDefined();
+    mockRuntimeAdapter.completeRun(lowRunId!);
+    await waitForCondition(async () => {
+      const [run] = await db
+        .select({
+          status: heartbeatRuns.status,
+          executionOwnerToken: heartbeatRuns.executionOwnerToken,
+          terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+          processExitedAt: heartbeatRuns.processExitedAt,
+        })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, lowRunId!));
+      const [activeSpan] = await db
+        .select({ id: runRuntimeSpans.id })
+        .from(runRuntimeSpans)
+        .where(and(eq(runRuntimeSpans.runId, lowRunId!), isNull(runRuntimeSpans.writerLeaseReleasedAt)))
+        .limit(1);
+      return run?.status === "succeeded"
+        && run.executionOwnerToken === null
+        && run.terminalEffectsPending === false
+        && run.processExitedAt !== null
+        && !activeSpan;
+    });
 
     mockRuntimeAdapter.reset();
     const high = await seedAgentFixture(999);
@@ -2230,6 +2363,7 @@ describe("heartbeat run concurrency", () => {
   it("deduplicates concurrent retries for a terminal run without an issue", async () => {
     const { orgId, agentId } = await seedAgentFixture(3);
     const sourceRunId = randomUUID();
+    const exitedWriter = await spawnExitedProcessEvidence();
     await db.insert(heartbeatRuns).values({
       id: sourceRunId,
       orgId,
@@ -2238,6 +2372,8 @@ describe("heartbeat run concurrency", () => {
       triggerDetail: "manual",
       status: "failed",
       terminalEffectsPending: false,
+      processPid: exitedWriter.processPid,
+      processExitedAt: exitedWriter.processExitedAt,
       contextSnapshot: { taskKey: "retry-without-issue" },
       finishedAt: new Date(),
       error: "source failed",
