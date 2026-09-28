@@ -1,4 +1,3 @@
-import { diagnoseOpenCodeNativeFailure } from "@rudderhq/agent-runtime-utils";
 import type {
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlHandle,
@@ -12,6 +11,7 @@ import type {
   OpenCodeNativeFailureDiagnostic,
   TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
+import { diagnoseOpenCodeNativeFailure } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";

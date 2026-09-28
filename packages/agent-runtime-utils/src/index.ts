@@ -31,12 +31,12 @@ export {
   type ModelAttemptSpec
 } from "./model-fallbacks.js";
 export { resolveNativeCommand, type NativeCommand } from "./native-command.js";
-export { hasConfirmedNativeWriterQuiescence } from "./native-writer-quiescence.js";
 export {
   diagnoseOpenCodeNativeFailure,
   parseOpenCodeNativeFailureDiagnostic,
   type OpenCodeNativeFailureDiagnostic
 } from "./native-failure-diagnostic.js";
+export { hasConfirmedNativeWriterQuiescence } from "./native-writer-quiescence.js";
 export {
   classifyAgentRuntimeNetworkFailure,
   isAgentRuntimeNetworkSuspension,
