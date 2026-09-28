@@ -1031,8 +1031,12 @@ The quoted `29f4002ce` / remote `9f1afa0e` snapshot is historical. Do not reset
 the candidate or reuse its receipt status. The coordinator must read current Git,
 CI, and independent verdicts before reporting progress.
 
-Finish D1's existing PR before expanding implementation scope. Preserve the
-workspace-backup-list work in its isolated checkout, but park further development.
+Keep D1's existing PR as the first integration priority. While its immutable
+candidate runs CI, allow one following default-read slice in a separate existing
+checkout, with disjoint runtime, packaging, and workflow-test ownership. Do not
+mix that implementation or generic CI tooling into the frozen D1 candidate.
+Reconcile the following slice onto merged Main before freezing its acceptance.
+Preserve the workspace-backup-list work in its isolated checkout, but park further development.
 The next integration priority is the supported generic member-directory default
 server/CLI/MCP path, followed by D1 default writer ownership and old-writer negative
 proof. Existing private implementations are inputs to these slices, not completed

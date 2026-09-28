@@ -1,0 +1,26 @@
+{
+  "candidate_sha": "948929b25251183bd552fc8e893a121fa878d860",
+  "packaging_source_sha": "2e8bfcadfd8adc58e1e2392b9fc21108a7a31d2e",
+  "runtime_equivalence": "Only organization-row-writer-fence.test.ts, rust-foundation-bridge.test.ts and plan records differ between packaging source and candidate. Newton confirmed runtime equivalence in the final948 review.",
+  "agent": "01a0e942-d767-7770-89ae-0a119442e3d1",
+  "environment": "Disposable local darwin/arm64; Node22.23.1; pnpm9.15.4; Rust1.93.0; app0.7.24",
+  "initial_desktop_verify": "FAIL: development clean Agent Terminal constrained-layout assertion at smoke.mjs:6540",
+  "initial_log": "/tmp/rudder-d1-desktop-verify.ZjaBt0/desktop-verify.log",
+  "initial_log_sha256": "2f82d8b0634338678ef679b733ad039910c25a95eaaffe1a167bdf387b0a8c44",
+  "packaged_followup": {
+    "desktop_dist": "PASS",
+    "computer_use_package": "PASS",
+    "packaged_smoke": "PASS: account-gate and loopback auto-update-public",
+    "packaged_app_builder": "PASS",
+    "log": "/tmp/rudder-d1-desktop-verify.ZjaBt0/desktop-packaged-followup.log",
+    "log_sha256": "964a402c5684eefb13d4be8b2b3e5f9d1927e1953bc872ace7563195f34cb630",
+    "portable_zip_sha256": "382806e6307363f00def8637950f0dfebdb76729819884f363317ecfc5d53ac8",
+    "shell_zip_sha256": "9df5e3754542c276fd7c475983dc5d516a059e6e97000b76f1e855802f68a2da",
+    "foundation_sha256": "a210cab974f389ca422950e94e945cabdb1a367f53e9f82885a7f05c4b4cc2d7"
+  },
+  "dev_clean_rerun": "FAIL: same constrained-layout assertion at6540; no rebuild or source changes; do not use shell exit0 because Bash PIPESTATUS under zsh masked the failing pipeline",
+  "dev_clean_rerun_log": "/tmp/rudder-d1-desktop-verify.ZjaBt0/dev-clean-rerun.log",
+  "dev_clean_rerun_log_sha256": "0d3d2fdf35eed0c3e715f5e8547d262057bf7d3e66f1a67edb25d1f384fe0af9",
+  "reviewer_assessment": "Newton: no additional bounded D1 merge blocker. Desktop sources, UI layout/components and smoke script match Main66b500a; changed API headers/Project mutations have no identified connection to unchanged xterm sizing/Desktop IPC. Apparently unrelated failure in unchanged code, not a proven Main-reproduced baseline. Required CI still gates merge.",
+  "limitation": "Packaged stages pass; do not describe the initial full desktop:verify chain as PASS. No production data or installed stable app was changed."
+}
