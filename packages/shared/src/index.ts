@@ -497,6 +497,7 @@ export type {
   RudderPluginDetail, RudderPluginDirectory, RudderPluginDiscoverEntry, RudderPluginImportReport, RudderPluginMarketplaceInput, RudderPluginPackageFileInput,
   RudderPluginSkillConflictStrategy, RudderPluginSourceResolution, RudderPluginSourceType
 } from "./types/plugin-v1.js";
+export type { AgentRunInvocationInstructions, RecoveredRunDeveloperInstructions } from "./types/run-instructions.js";
 export {
   configureRudderPluginMarketplaceSchema, configureRudderPluginMcpSchema, configureRudderPluginSkillsSchema, customizeRudderPluginSkillSchema,
   inspectRudderPluginArchiveSchema, inspectRudderPluginSchema, installRudderPluginSchema,

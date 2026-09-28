@@ -426,15 +426,19 @@ export function LogViewer({
   const invocationInstructionSnapshotQuery = useQuery({
     queryKey: queryKeys.runInvocationInstructions(
       run.id,
-      instructionSnapshotStatus === "available" ? adapterInvokeEvent?.id ?? null : null,
+      adapterInvokeEvent?.id ?? null,
     ),
     queryFn: () => agentRunsApi.invocationInstructions(run.id, adapterInvokeEvent!.id),
-    enabled: instructionSnapshotStatus === "available"
-      && adapterInvokeEvent !== null
+    enabled: adapterInvokeEvent !== null
       && activeDetailTab === "invocation",
+    retry: false,
+    gcTime: 0,
   });
+  const recoveredInstructions = invocationInstructionSnapshotQuery.data?.source === "codex_native_rollout"
+    ? invocationInstructionSnapshotQuery.data : null;
   const invocationAgentInstructionStack = readInvocationAgentInstructionStack(adapterInvokePayload)
-    ?? invocationInstructionSnapshotQuery.data?.agentInstructionStack;
+    ?? (invocationInstructionSnapshotQuery.data && "agentInstructionStack" in invocationInstructionSnapshotQuery.data
+      ? invocationInstructionSnapshotQuery.data.agentInstructionStack : undefined);
   const invocationContentSummary = readInvocationContentSummary(adapterInvokePayload);
   const invocationPromptText =
     invocationAgentInstructionStack !== undefined
@@ -674,7 +678,9 @@ export function LogViewer({
                       ? invocationInstructionSnapshotQuery.isError
                         ? "The stored snapshot could not be verified or read. Current Agent files are not a historical substitute."
                         : "The snapshot is tied to this Run, Attempt, and Span."
-                      : "This Run has no retained instruction text. Current Agent files are not a historical substitute."}
+                      : recoveredInstructions
+                        ? "The original full instruction stack is unavailable. A verified developer-instruction fragment is shown below."
+                        : "The original full instruction stack is unavailable. Current Agent files are not a historical substitute."}
                   </p>
                   <pre className="rounded-md bg-neutral-100 p-2 whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
                     {formatInvocationValueForDisplay(invocationContentSummary, censorUsernameInLogs)}
@@ -700,6 +706,9 @@ export function LogViewer({
                     >{invocationPromptText}</pre>
                   </div>
                 </div>
+              )}
+              {invocationPromptText === null && recoveredInstructions && (
+                <RecoveredDeveloperInstructions recovery={recoveredInstructions} censorUsernameInLogs={censorUsernameInLogs} />
               )}
               {adapterInvokePayload?.context !== undefined && (
                 <div>
@@ -788,3 +797,4 @@ export function LogViewer({
 }
 
 /* ---- Keys Tab ---- */
+import { RecoveredDeveloperInstructions } from "./AgentDetail.run-instructions";

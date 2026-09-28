@@ -1,5 +1,6 @@
 import type {
   AgentRun,
+  AgentRunInvocationInstructions,
   AgentRunOverview,
   HeartbeatRun,
   HeartbeatRunEvent,
@@ -82,11 +83,7 @@ export interface AgentRunTranscriptResult {
   page: AgentRunTranscriptPage["page"];
 }
 
-export interface AgentRunInvocationInstructions {
-  agentInstructionStack: string;
-  sha256: string;
-  byteSize: number;
-}
+export type { AgentRunInvocationInstructions } from "@rudderhq/shared";
 
 function mergeTranscriptSources(
   left: AgentRunTranscriptSource | null,

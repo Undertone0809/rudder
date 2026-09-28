@@ -1,12 +1,19 @@
 import {
   heartbeatRunAttempts,
   heartbeatRunEvents,
+  heartbeatRuns,
+  nativeSegments,
   runRuntimeSpans,
+  runtimeBindings,
   type Db,
 } from "@rudderhq/db";
+import type { RecoveredRunDeveloperInstructions } from "@rudderhq/shared";
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import path from "node:path";
+import { resolveOrganizationRoot, resolveRudderInstanceRoot } from "../home-paths.js";
 import type { ContentAddressedStorageService, StorageService } from "../storage/types.js";
+import { recoverCodexDeveloperInstructions } from "./run-instruction-recovery.js";
 
 export const RUN_INSTRUCTION_SNAPSHOT_NAMESPACE = "run-instruction-snapshots";
 export const MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES = 16 * 1024 * 1024;
@@ -21,6 +28,76 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+/** Recovery never replaces an available (even unreadable) snapshot. Historical
+ * binding, profile, attempt and native turn must agree before touching disk. */
+export async function readRecoveredRunDeveloperInstructions(input: {
+  db: Db;
+  orgId: string;
+  runId: string;
+  eventId: number;
+}): Promise<RecoveredRunDeveloperInstructions | null> {
+  const [event] = await input.db.select({ payload: heartbeatRunEvents.payload })
+    .from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.id, input.eventId), eq(heartbeatRunEvents.orgId, input.orgId),
+      eq(heartbeatRunEvents.runId, input.runId), eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+    )).limit(1);
+  const payload = asRecord(event?.payload);
+  if (!payload || asRecord(payload.invocationInstructionSnapshot)?.status === "available"
+    || payload.agentRuntimeType !== "codex_local"
+    || typeof payload.invocationAttemptId !== "string" || typeof payload.invocationSpanId !== "string") return null;
+  const [row] = await input.db.select({
+    agentId: heartbeatRuns.agentId, context: heartbeatRuns.contextSnapshot,
+    sessionIntent: heartbeatRuns.sessionIntentJson,
+    binding: runtimeBindings, segment: nativeSegments, span: runRuntimeSpans,
+  }).from(heartbeatRuns)
+    .innerJoin(runRuntimeSpans, and(eq(runRuntimeSpans.runId, heartbeatRuns.id), eq(runRuntimeSpans.orgId, heartbeatRuns.orgId)))
+    .innerJoin(heartbeatRunAttempts, and(eq(heartbeatRunAttempts.id, runRuntimeSpans.attemptId),
+      eq(heartbeatRunAttempts.runId, heartbeatRuns.id), eq(heartbeatRunAttempts.orgId, heartbeatRuns.orgId)))
+    .innerJoin(runtimeBindings, and(eq(runtimeBindings.id, runRuntimeSpans.bindingId), eq(runtimeBindings.orgId, heartbeatRuns.orgId)))
+    .innerJoin(nativeSegments, and(eq(nativeSegments.id, runRuntimeSpans.segmentId),
+      eq(nativeSegments.bindingId, runtimeBindings.id), eq(nativeSegments.orgId, heartbeatRuns.orgId)))
+    .where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.orgId, input.orgId),
+      eq(runRuntimeSpans.id, payload.invocationSpanId), eq(heartbeatRunAttempts.id, payload.invocationAttemptId)))
+    .limit(1);
+  if (!row) return null;
+  const context = asRecord(row.context);
+  const admission = asRecord(context?.unifiedAgentRun);
+  const intent = asRecord(row.sessionIntent);
+  const params = asRecord(intent?.sessionParams);
+  const profile = asRecord(context?.runtimeProviderProfile);
+  const selector = asRecord(row.span.selectorJson);
+  const revision = params?.rudderChatDeveloperInstructionsRevision;
+  if (row.binding.agentId !== row.agentId || row.binding.runtimeType !== "codex_local"
+    || row.binding.continuity !== "native" || row.binding.hostId !== "local"
+    || row.segment.runtimeType !== "codex_local" || row.span.relation === "native_subagent"
+    || admission?.runtimeBindingId !== row.binding.id || admission.runtimeSegmentId !== row.segment.id
+    || context?.runtimeBindingId !== row.binding.id || context.runtimeSegmentId !== row.segment.id
+    || admission.runtimeType !== "codex_local" || admission.agentId !== row.agentId
+    || JSON.stringify(asRecord(admission.sessionIntent)) !== JSON.stringify(intent)
+    || params?.transport !== "codex_app_server" || params.profileOrgId !== input.orgId
+    || params.profileBindingId !== row.binding.id || params.profileHostId !== row.binding.hostId
+    || params.profileId !== row.binding.profileId || params.workspaceBindingId !== row.binding.workspaceBindingId
+    || params.capabilityRevision !== row.binding.capabilityRevision
+    || selector?.kind !== "codex_turn" || selector.runId !== input.runId
+    || selector.threadId !== row.segment.nativeSessionId || intent?.sessionId !== selector.threadId
+    || params.threadId !== selector.threadId || params.sessionId !== selector.threadId
+    || typeof selector.threadId !== "string" || typeof selector.turnId !== "string"
+    || profile?.runtimeType !== "codex_local" || typeof profile.codexHome !== "string"
+    || typeof revision !== "string") return null;
+  const recovered = await recoverCodexDeveloperInstructions({
+    managedRoot: resolveRudderInstanceRoot(),
+    managedHome: path.join(resolveOrganizationRoot(input.orgId), "codex-home", "agents", row.agentId),
+    persistedHome: profile.codexHome,
+    sessionId: selector.threadId, turnId: selector.turnId, sha256: revision,
+  });
+  if (!recovered) return null;
+  return {
+    source: "codex_native_rollout", completeness: "partial", snapshotStatus: "missing",
+    developerInstructions: recovered.text, sha256: recovered.sha256, byteSize: recovered.byteSize,
+    spanId: row.span.id, sessionId: selector.threadId, turnId: selector.turnId,
+  };
 }
 
 export async function storeRunInstructionSnapshot(input: {

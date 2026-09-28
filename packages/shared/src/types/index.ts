@@ -211,6 +211,7 @@ export type {
   CreateOrganizationResourceRequest, CreateProjectInlineResourceInput, OrganizationResource, ProjectResourceAttachment,
   ProjectResourceAttachmentInput, UpdateOrganizationResourceRequest, UpdateProjectResourceAttachmentRequest
 } from "./resource.js";
+export type { AgentRunInvocationInstructions, RecoveredRunDeveloperInstructions } from "./run-instructions.js";
 export type {
   RunEventCursorPage,
   RunInspectionHeader,
