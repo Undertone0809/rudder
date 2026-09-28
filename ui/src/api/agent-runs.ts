@@ -82,6 +82,12 @@ export interface AgentRunTranscriptResult {
   page: AgentRunTranscriptPage["page"];
 }
 
+export interface AgentRunInvocationInstructions {
+  agentInstructionStack: string;
+  sha256: string;
+  byteSize: number;
+}
+
 function mergeTranscriptSources(
   left: AgentRunTranscriptSource | null,
   right: AgentRunTranscriptSource | undefined,
@@ -199,6 +205,11 @@ export const agentRunsApi = {
   events: (runId: string, afterSeq = 0, limit = 200) =>
     api.get<HeartbeatRunEvent[]>(
       `/agent-runs/${runId}/events?afterSeq=${encodeURIComponent(String(afterSeq))}&limit=${encodeURIComponent(String(limit))}`,
+    ),
+  invocationInstructions: (runId: string, eventId: number) =>
+    api.get<AgentRunInvocationInstructions>(
+      `/agent-runs/${encodeURIComponent(runId)}/events/${encodeURIComponent(String(eventId))}/invocation-instructions`,
+      { cache: "no-store" },
     ),
   allEvents: async (runId: string) => {
     const events: HeartbeatRunEvent[] = [];

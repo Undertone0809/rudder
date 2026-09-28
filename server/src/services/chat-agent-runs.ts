@@ -5,11 +5,23 @@ import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudde
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
+import { logger } from "../middleware/logger.js";
+import { redactCurrentUserText } from "../log-redaction.js";
+import { redactSensitiveText } from "../redaction.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
 import { getRunLogStore } from "./run-log-store.js";
-import { buildHeartbeatAdapterInvokePayload, networkWaitBackoffMs } from "./runtime-kernel/heartbeat.core.js";
+import { getStorageService, type ContentAddressedStorageService } from "../storage/index.js";
+import {
+  MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES,
+  storeRunInstructionSnapshot,
+} from "./run-instruction-snapshots.js";
+import {
+  buildHeartbeatAdapterInvokePayload,
+  networkWaitBackoffMs,
+  sanitizeAgentInstructionStackForPersistence,
+} from "./runtime-kernel/heartbeat.core.js";
 import { registerLiveChatRunExecution } from "./runtime-kernel/heartbeat.js";
 import {
   reconcileHeartbeatRunEvidence,
@@ -244,6 +256,7 @@ function serializeRun(row: typeof heartbeatRuns.$inferSelect): HeartbeatRun {
 export function chatAgentRunService(db: Db, options: {
   transcriptObjectStore?: TranscriptObjectStore;
   transcriptReaderFactory?: (database: Pick<Db, "select">) => TranscriptReader;
+  instructionSnapshotStorage?: ContentAddressedStorageService;
   leaseRenewIntervalMs?: number;
 } = {}) {
   const unifiedRunAdapter: UnifiedAgentRunAdapter = createHeartbeatUnifiedAgentRunAdapter(db);
@@ -841,24 +854,53 @@ export function chatAgentRunService(db: Db, options: {
   ) {
     // Persist the full audit row before execution can suspend or lose its process.
     // Successful native finalization rewrites this same event after source proof.
+    const payload = buildHeartbeatAdapterInvokePayload({
+      meta,
+      runtimeSkills: runtimeSkills.map((entry) => ({
+        key: entry.key,
+        runtimeName: entry.runtimeName ?? entry.key,
+        name: entry.name ?? null,
+        description: entry.description ?? null,
+      })),
+    });
+    const invocationSpanId = run.runtimeSpanId?.trim() || null;
+    const invocationAttemptId = run.runtimeAttemptRef?.id?.trim() || null;
+    payload.invocationSpanId = invocationSpanId;
+    payload.invocationAttemptId = invocationAttemptId;
+
+    const instructionStack = sanitizeAgentInstructionStackForPersistence(meta);
+    const instructionBytes = typeof instructionStack === "string"
+      ? Buffer.byteLength(instructionStack, "utf8")
+      : 0;
+    if (!instructionStack || instructionBytes === 0) {
+      payload.invocationInstructionSnapshot = { status: "unavailable", reason: "instructions_not_reported" };
+    } else if (!invocationAttemptId || !invocationSpanId) {
+      payload.invocationInstructionSnapshot = { status: "unavailable", reason: "run_linkage_unavailable" };
+    } else if (instructionBytes > MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES) {
+      payload.invocationInstructionSnapshot = { status: "unavailable", reason: "size_limit" };
+    } else {
+      try {
+        const stored = await storeRunInstructionSnapshot({
+          storage: options.instructionSnapshotStorage ?? getStorageService(),
+          orgId: run.orgId,
+          text: redactCurrentUserText(redactSensitiveText(instructionStack)),
+        });
+        payload.invocationInstructionSnapshot = { status: "available", ...stored };
+      } catch {
+        payload.invocationInstructionSnapshot = { status: "unavailable", reason: "storage_unavailable" };
+        logger.warn(
+          { orgId: run.orgId, agentId: run.agentId, runId: run.id },
+          "could not persist Chat invocation instruction snapshot",
+        );
+      }
+    }
+
     await appendEvent(run, {
       eventType: "adapter.invoke",
       stream: "system",
       level: "info",
       message: "adapter invocation",
-      payload: {
-        ...buildHeartbeatAdapterInvokePayload({
-          meta,
-          runtimeSkills: runtimeSkills.map((entry) => ({
-            key: entry.key,
-            runtimeName: entry.runtimeName ?? entry.key,
-            name: entry.name ?? null,
-            description: entry.description ?? null,
-          })),
-        }),
-        invocationSpanId: run.runtimeSpanId ?? null,
-        invocationAttemptId: run.runtimeAttemptRef?.id ?? null,
-      },
+      payload,
     });
   }
 

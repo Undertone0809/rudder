@@ -20,12 +20,14 @@ import {
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.ts";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { getRunSummary } from "../services/run-intelligence.ts";
@@ -41,6 +43,7 @@ import { persistNativeTransportProfile } from "../services/runtime-kernel/native
 import { createTranscriptObjectReader, createTranscriptObjectStore, type TranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
 import { createTranscriptReader, type NativeTranscriptReadInput } from "../services/runtime-kernel/transcript-reader.ts";
 import { createHeartbeatUnifiedAgentRunAdapter } from "../services/runtime-kernel/unified-agent-run.integration.ts";
+import type { ContentAddressedStorageService, PutFileInput, PutFileResult } from "../storage/types.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -58,6 +61,41 @@ type EmbeddedPostgresCtor = new (opts: {
   onLog?: (message: unknown) => void;
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
+
+function createInstructionSnapshotStorage() {
+  const objects = new Map<string, Buffer>();
+  const putContentAddressedFile = vi.fn(async (input: PutFileInput): Promise<PutFileResult> => {
+    const sha256 = createHash("sha256").update(input.body).digest("hex");
+    const objectKey = `${input.orgId}/${input.namespace}/${sha256}`;
+    if (!objects.has(objectKey)) objects.set(objectKey, Buffer.from(input.body));
+    return {
+      provider: "local_disk",
+      objectKey,
+      contentType: input.contentType,
+      byteSize: input.body.byteLength,
+      sha256,
+      originalFilename: input.originalFilename,
+    };
+  });
+  const storage: ContentAddressedStorageService = {
+    provider: "local_disk",
+    putFile: putContentAddressedFile,
+    putContentAddressedFile,
+    async getObject(orgId, objectKey) {
+      if (!objectKey.startsWith(`${orgId}/`)) throw new Error("organization mismatch");
+      const body = objects.get(objectKey);
+      if (!body) throw new Error("snapshot missing");
+      return { stream: Readable.from([body]), contentLength: body.byteLength };
+    },
+    async headObject(orgId, objectKey) {
+      return { exists: objectKey.startsWith(`${orgId}/`) && objects.has(objectKey) };
+    },
+    async deleteObject(orgId, objectKey) {
+      if (objectKey.startsWith(`${orgId}/`)) objects.delete(objectKey);
+    },
+  };
+  return { storage, objects, putContentAddressedFile };
+}
 
 async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
   const mod = await import("embedded-postgres");
@@ -669,8 +707,10 @@ describe("chatAgentRunService", () => {
 
   it("cleans Chat duplicates only after complete stable Reader proof and verifies again after cleanup", async () => {
     let nativeRevision = "native-chat-proof-r1";
+    const instructionSnapshots = createInstructionSnapshotStorage();
     const proofSvc = chatAgentRunService(db, {
       transcriptObjectStore: objectStore,
+      instructionSnapshotStorage: instructionSnapshots.storage,
       transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
         nativeReader: { readRange: async () => ({
           items: nativeEntries,
@@ -684,6 +724,7 @@ describe("chatAgentRunService", () => {
       transcriptSource: "native",
     });
     const prompt = `retained prompt ${"x".repeat(5_000)}`;
+    const instructionStack = "Actual injected Chat instructions: preserve the selected task context.";
     const reply = `native reply ${"y".repeat(2_500)}`;
     const nativeEntries = Array.from({ length: 225 }, (_, index) => ({
       kind: "assistant" as const,
@@ -694,7 +735,7 @@ describe("chatAgentRunService", () => {
       agentRuntimeType: "codex_local",
       command: "codex",
       prompt,
-      agentInstructionStack: prompt,
+      agentInstructionStack: instructionStack,
       context: { chatMode: true },
     }, []);
     for (const entry of nativeEntries) {
@@ -741,8 +782,27 @@ describe("chatAgentRunService", () => {
     });
     expect(span?.supplementalObjectRef).toBeNull();
     expect(invokes).toHaveLength(1);
+    expect(invokes[0]?.payload).toMatchObject({
+      invocationAttemptId: run.runtimeAttemptRef!.id,
+      invocationSpanId: run.runtimeSpanId,
+      invocationInstructionSnapshot: { status: "available" },
+    });
     expect(invokes[0]?.payload).not.toHaveProperty("prompt");
+    expect(invokes[0]?.payload).not.toHaveProperty("agentInstructionStack");
     expect(JSON.stringify(invokes[0]?.payload)).not.toContain(prompt);
+    expect(JSON.stringify(invokes[0]?.payload)).not.toContain(instructionStack);
+    expect(instructionSnapshots.putContentAddressedFile).toHaveBeenCalledTimes(1);
+    await expect(readRunInstructionSnapshotForEvent({
+      db,
+      storage: instructionSnapshots.storage,
+      orgId: run.orgId,
+      runId: run.id,
+      eventId: invokes[0]!.id,
+    })).resolves.toMatchObject({
+      agentInstructionStack: instructionStack,
+      sha256: createHash("sha256").update(instructionStack).digest("hex"),
+      byteSize: Buffer.byteLength(instructionStack),
+    });
     expect(fs.existsSync(path.join(objectDir, "transcript-objects", `${objectRef}.ndjson`))).toBe(false);
 
     const reread = createTranscriptReader(db as any, {

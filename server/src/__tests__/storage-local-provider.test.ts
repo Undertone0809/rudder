@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLocalDiskStorageProvider } from "../storage/local-disk-provider.js";
 import { createStorageService } from "../storage/service.js";
 
@@ -40,6 +40,34 @@ describe("local disk storage provider", () => {
 
     expect(fetchedBody.toString("utf8")).toBe("hello image bytes");
     expect(stored.sha256).toHaveLength(64);
+  });
+
+  it("deduplicates content-addressed objects within an organization", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-storage-"));
+    tempRoots.push(root);
+
+    const provider = createLocalDiskStorageProvider(root);
+    const putObject = vi.spyOn(provider, "putObject");
+    const service = createStorageService(provider);
+    const body = Buffer.from("injected instructions", "utf8");
+    const input = {
+      orgId: "organization-a",
+      namespace: "run-instruction-snapshots",
+      originalFilename: null,
+      contentType: "text/plain; charset=utf-8",
+      body,
+    };
+
+    const first = await service.putContentAddressedFile(input);
+    const duplicate = await service.putContentAddressedFile(input);
+    const otherOrganization = await service.putContentAddressedFile({ ...input, orgId: "organization-b" });
+
+    expect(duplicate.objectKey).toBe(first.objectKey);
+    expect(duplicate.sha256).toBe(first.sha256);
+    expect(otherOrganization.objectKey).not.toBe(first.objectKey);
+    expect(putObject).toHaveBeenCalledTimes(2);
+    expect((await readStreamToBuffer((await service.getObject("organization-a", first.objectKey)).stream)).toString())
+      .toBe("injected instructions");
   });
 
   it("blocks cross-organization object access", async () => {

@@ -30,7 +30,9 @@ import {
 } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { redactCurrentUserText } from "../../log-redaction.js";
+import { redactSensitiveText } from "../../redaction.js";
 import { logger } from "../../middleware/logger.js";
+import { getStorageService } from "../../storage/index.js";
 import { publishLiveEvent } from "../live-events.js";
 import {
   isManagedWorkspaceConfigurationError,
@@ -57,6 +59,10 @@ import {
   resolveHeartbeatTranscriptRetention,
   transcriptForHeartbeatRetention,
 } from "./heartbeat-transcript-retention.js";
+import {
+  MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES,
+  storeRunInstructionSnapshot,
+} from "../run-instruction-snapshots.js";
 import { createHeartbeatRuntimeDriver } from "./heartbeat.admission.js";
 import { handleAssignmentGuardrailCheckpoint } from "./heartbeat.execute-assignment-recovery.js";
 import { prepareHeartbeatRunExecution } from "./heartbeat.execute-context.js";
@@ -85,6 +91,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
+import { sanitizeAgentInstructionStackForPersistence } from "./heartbeat.core.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, networkWaitBackoffMs, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
@@ -772,13 +779,46 @@ export function createHeartbeatExecuteHandlers(context: any) {
             if (key in meta.env) meta.env[key] = "***REDACTED***";
           }
         }
+        const eventMeta: AgentRuntimeInvocationMeta & Record<string, unknown> = {
+          ...meta,
+          invocationAttemptId: activeAttemptRef?.id ?? null,
+          invocationSpanId: commonSpanId,
+        };
+        if (transcriptRetention.mode === "native" && !transcriptRetention.persistRawTranscript) {
+          const instructionStack = sanitizeAgentInstructionStackForPersistence(meta);
+          const instructionBytes = typeof instructionStack === "string"
+            ? Buffer.byteLength(instructionStack, "utf8")
+            : 0;
+          if (!instructionStack || instructionBytes === 0) {
+            eventMeta.invocationInstructionSnapshot = { status: "unavailable", reason: "instructions_not_reported" };
+          } else if (!activeAttemptRef?.id || !commonSpanId) {
+            eventMeta.invocationInstructionSnapshot = { status: "unavailable", reason: "run_linkage_unavailable" };
+          } else if (instructionBytes > MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES) {
+            eventMeta.invocationInstructionSnapshot = { status: "unavailable", reason: "size_limit" };
+          } else {
+            try {
+              const stored = await storeRunInstructionSnapshot({
+                storage: getStorageService(),
+                orgId: currentRun.orgId,
+                text: redactCurrentUserText(redactSensitiveText(instructionStack), currentUserRedactionOptions),
+              });
+              eventMeta.invocationInstructionSnapshot = { status: "available", ...stored };
+            } catch {
+              eventMeta.invocationInstructionSnapshot = { status: "unavailable", reason: "storage_unavailable" };
+              logger.warn(
+                { orgId: currentRun.orgId, agentId: currentRun.agentId, runId: currentRun.id },
+                "could not persist native invocation instruction snapshot",
+              );
+            }
+          }
+        }
         await appendRunEvent(currentRun, {
           eventType: "adapter.invoke",
           stream: "system",
           level: "info",
           message: "adapter invocation",
           payload: buildHeartbeatAdapterInvokePayload({
-            meta,
+            meta: eventMeta,
             runtimeSkills: runtimeSkillEntries,
             transcriptRetention,
           }),

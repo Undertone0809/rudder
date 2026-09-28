@@ -39,7 +39,7 @@ import { useSidePanel } from "../context/SidePanelContext";
 import { queryKeys } from "../lib/queryKeys";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
-import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForCopy, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readInvocationContentSummary, readScrollMetrics, redactPathValue, RunEventsList, ScrollContainer, scrollToContainerBottom, WorkspaceOperationsSection } from "./AgentDetail.helpers";
+import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForCopy, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readInvocationContentSummary, readInvocationInstructionSnapshotStatus, readScrollMetrics, redactPathValue, RunEventsList, ScrollContainer, scrollToContainerBottom, WorkspaceOperationsSection } from "./AgentDetail.helpers";
 
 export function mergeRunEvents(
   currentEvents: HeartbeatRunEvent[],
@@ -393,10 +393,16 @@ export function LogViewer({
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
   }).data?.censorUsernameInLogs === true;
-  const adapterInvokePayloads = useMemo(() => events
+  const adapterInvokeEntries = useMemo(() => events
     .filter((event) => event.eventType === "adapter.invoke")
-    .map((event) => redactPathValue(asRecord(event.payload ?? null), censorUsernameInLogs))
-    .filter((payload): payload is Record<string, unknown> => payload !== null), [censorUsernameInLogs, events]);
+    .map((event) => ({
+      event,
+      payload: redactPathValue(asRecord(event.payload ?? null), censorUsernameInLogs),
+    }))
+    .filter((entry): entry is { event: HeartbeatRunEvent; payload: Record<string, unknown> } => entry.payload !== null),
+  [censorUsernameInLogs, events]);
+  const adapterInvokePayloads = adapterInvokeEntries.map((entry) => entry.payload);
+  const adapterInvokeEvent = adapterInvokeEntries[0]?.event ?? null;
   const adapterInvokePayload = adapterInvokePayloads[0] ?? null;
   const adapterSkillUsagePayload = useMemo(() => {
     const evt = events.find((e) => e.eventType === "adapter.skill_usage");
@@ -416,7 +422,19 @@ export function LogViewer({
         ? "Waiting for transcript..."
         : "No transcript for this run.";
   const hasInvocationTab = Boolean(adapterInvokePayload);
-  const invocationAgentInstructionStack = readInvocationAgentInstructionStack(adapterInvokePayload);
+  const instructionSnapshotStatus = readInvocationInstructionSnapshotStatus(adapterInvokePayload);
+  const invocationInstructionSnapshotQuery = useQuery({
+    queryKey: queryKeys.runInvocationInstructions(
+      run.id,
+      instructionSnapshotStatus === "available" ? adapterInvokeEvent?.id ?? null : null,
+    ),
+    queryFn: () => agentRunsApi.invocationInstructions(run.id, adapterInvokeEvent!.id),
+    enabled: instructionSnapshotStatus === "available"
+      && adapterInvokeEvent !== null
+      && activeDetailTab === "invocation",
+  });
+  const invocationAgentInstructionStack = readInvocationAgentInstructionStack(adapterInvokePayload)
+    ?? invocationInstructionSnapshotQuery.data?.agentInstructionStack;
   const invocationContentSummary = readInvocationContentSummary(adapterInvokePayload);
   const invocationPromptText =
     invocationAgentInstructionStack !== undefined
@@ -644,8 +662,20 @@ export function LogViewer({
                   data-testid="invocation-content-summary"
                   className="space-y-2 text-xs text-muted-foreground"
                 >
-                  <div className="font-medium text-foreground">Invocation text not persisted in metadata</div>
-                  <p>Check Transcript for reader-backed content. If text is unavailable, its status is shown there.</p>
+                  <div className="font-medium text-foreground">
+                    {instructionSnapshotStatus === "available"
+                      ? invocationInstructionSnapshotQuery.isError
+                        ? "Stored instruction snapshot could not be read"
+                        : "Loading the injected instruction snapshot"
+                      : "No historical instruction snapshot is available"}
+                  </div>
+                  <p>
+                    {instructionSnapshotStatus === "available"
+                      ? invocationInstructionSnapshotQuery.isError
+                        ? "The stored snapshot could not be verified or read. Current Agent files are not a historical substitute."
+                        : "The snapshot is tied to this Run, Attempt, and Span."
+                      : "This Run has no retained instruction text. Current Agent files are not a historical substitute."}
+                  </p>
                   <pre className="rounded-md bg-neutral-100 p-2 whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
                     {formatInvocationValueForDisplay(invocationContentSummary, censorUsernameInLogs)}
                   </pre>
@@ -653,7 +683,7 @@ export function LogViewer({
               )}
               {invocationPromptText !== null && (
                 <div>
-                  <div className="mb-1 text-xs text-muted-foreground">Agent Instruction Stack</div>
+                  <div className="mb-1 text-xs text-muted-foreground">Injected Agent Instruction Stack</div>
                   <div className="relative">
                     <CopyText
                       text={formatInvocationValueForCopy(invocationAgentInstructionStack, censorUsernameInLogs)}

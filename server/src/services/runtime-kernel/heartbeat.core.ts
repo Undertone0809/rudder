@@ -375,10 +375,7 @@ export function buildHeartbeatAdapterInvokePayload(input: {
     input.meta.prompt,
     producerStartupContextSection,
   );
-  const persistentAgentInstructionStack = sanitizeStartupContextPromptForPersistence(
-    typeof input.meta.agentInstructionStack === "string" ? input.meta.agentInstructionStack : null,
-    producerStartupContextSection,
-  );
+  const persistentAgentInstructionStack = sanitizeAgentInstructionStackForPersistence(input.meta);
   const sanitizedContext = sanitizeStartupContextContextForPersistence(input.meta.context);
   const explicitUsedSkills = Array.isArray(input.meta.usedSkills)
     ? input.meta.usedSkills
@@ -618,6 +615,16 @@ export function sanitizeStartupContextPromptForPersistence(
   const replacement = replacementLines.join("\n").trimEnd();
   if (nextSection < 0) return `${redactedPrompt.slice(0, start)}${replacement}`;
   return `${redactedPrompt.slice(0, start)}${replacement}${redactedPrompt.slice(nextSection)}`;
+}
+
+export function sanitizeAgentInstructionStackForPersistence(input: {
+  agentInstructionStack?: string | null;
+  context?: Record<string, unknown> | null;
+}) {
+  return sanitizeStartupContextPromptForPersistence(
+    typeof input.agentInstructionStack === "string" ? input.agentInstructionStack : null,
+    readProducerStartupContextSection(input.context),
+  );
 }
 
 function redactResponseAnnotationPromptSection(prompt: string) {

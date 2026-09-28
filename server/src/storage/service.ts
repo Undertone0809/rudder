@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { badRequest, forbidden, unprocessable } from "../errors.js";
-import type { PutFileInput, PutFileResult, StorageProvider, StorageService } from "./types.js";
+import type {
+  ContentAddressedStorageService,
+  PutFileInput,
+  PutFileResult,
+  StorageProvider,
+} from "./types.js";
 
 const MAX_SEGMENT_LENGTH = 120;
 
@@ -87,7 +92,7 @@ function assertPutFileInput(input: PutFileInput): void {
   }
 }
 
-export function createStorageService(provider: StorageProvider): StorageService {
+export function createStorageService(provider: StorageProvider): ContentAddressedStorageService {
   return {
     provider: provider.id,
 
@@ -109,6 +114,35 @@ export function createStorageService(provider: StorageProvider): StorageService 
         contentType,
         byteSize,
         sha256: hashBuffer(input.body),
+        originalFilename: input.originalFilename,
+      };
+    },
+
+    async putContentAddressedFile(input: PutFileInput): Promise<PutFileResult> {
+      assertPutFileInput(input);
+      const sha256 = hashBuffer(input.body);
+      const objectKey = `${input.orgId}/${normalizeNamespace(input.namespace)}/${sha256}`;
+      ensureCompanyPrefix(input.orgId, objectKey);
+      const byteSize = input.body.length;
+      const contentType = input.contentType.trim().toLowerCase();
+      const existing = await provider.headObject({ objectKey });
+      if (!existing.exists) {
+        await provider.putObject({
+          objectKey,
+          body: input.body,
+          contentType,
+          contentLength: byteSize,
+        });
+      } else if (existing.contentLength !== undefined && existing.contentLength !== byteSize) {
+        throw new Error("Content-addressed object has an unexpected size");
+      }
+
+      return {
+        provider: provider.id,
+        objectKey,
+        contentType,
+        byteSize,
+        sha256,
         originalFilename: input.originalFilename,
       };
     },

@@ -238,6 +238,18 @@ export function readInvocationAgentInstructionStack(payload: Record<string, unkn
   return payload.prompt;
 }
 
+export function readInvocationInstructionSnapshotStatus(payload: Record<string, unknown> | null | undefined) {
+  const snapshot = asRecord(payload?.invocationInstructionSnapshot);
+  if (snapshot?.status === "unavailable") return "unavailable" as const;
+  if (snapshot?.status !== "available"
+    || typeof snapshot.objectKey !== "string"
+    || typeof snapshot.sha256 !== "string"
+    || !/^[a-f0-9]{64}$/u.test(snapshot.sha256)
+    || !Number.isSafeInteger(snapshot.byteSize)
+    || (snapshot.byteSize as number) <= 0) return null;
+  return "available" as const;
+}
+
 export function readInvocationContentSummary(payload: Record<string, unknown> | null | undefined) {
   const summary = asRecord(payload?.invocationContent);
   return summary?.textStored === false ? summary : null;

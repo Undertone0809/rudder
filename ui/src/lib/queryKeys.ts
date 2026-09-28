@@ -274,6 +274,8 @@ export const queryKeys = {
     queryKeys.agentRuns(orgId, agentId, limit),
   runDetail: (runId: string) => ["agent-run", runId] as const,
   runEvents: (runId: string) => ["run-events", runId] as const,
+  runInvocationInstructions: (runId: string, eventId: number | null) =>
+    ["agent-run-invocation-instructions", runId, eventId] as const,
   runWorkspaceOperations: (runId: string) => ["agent-run", runId, "workspace-operations"] as const,
   liveRuns: (orgId: string) => ["live-runs", orgId] as const,
   runIssues: (runId: string) => ["run-issues", runId] as const,

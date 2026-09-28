@@ -24,7 +24,7 @@ import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { notFound } from "../errors.js";
-import { redactCurrentUserValue } from "../log-redaction.js";
+import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
 import { validate } from "../middleware/validate.js";
 import { omitSecretPayloadFields, redactEventPayload } from "../redaction.js";
 import { normalizeCreatedAgentAvatarIcon } from "../services/agents.js";
@@ -43,6 +43,7 @@ import {
 import type { StorageService } from "../storage/types.js";
 import { listAgentRunsForRequest } from "./agents.management-run-list.js";
 import { assertBoard, assertCompanyAccess, getActorInfo, getAuthorizedOrgScope } from "./authz.js";
+import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.js";
 
 type AgentManagementRouteContext = {
   router: Router;
@@ -1486,6 +1487,49 @@ export function registerAgentManagementRoutes(ctx: AgentManagementRouteContext) 
     const events = await listRunEventsForRequest(req, res, "Agent run not found");
     if (!events) return;
     res.json(events);
+  });
+
+  router.get("/agent-runs/:runId/events/:eventId/invocation-instructions", async (req, res) => {
+    const scope = runIntelligenceScope(req, "Agent run not found");
+    const runId = await resolveRunIdReferenceForScope(db, req.params.runId as string, scope);
+    const run = await heartbeat.getRun(runId);
+    if (!run) {
+      res.status(404).json({ error: "Agent run not found" });
+      return;
+    }
+    assertCompanyAccess(req, run.orgId);
+    await assertRunIntelligenceAccess(db, run, scope);
+
+    const eventIdText = String(req.params.eventId ?? "");
+    const eventId = Number(eventIdText);
+    if (!/^[1-9][0-9]*$/u.test(eventIdText) || !Number.isSafeInteger(eventId)) {
+      res.status(404).json({ error: "Invocation instruction snapshot not found" });
+      return;
+    }
+    if (!storage) {
+      res.status(503).json({ error: "Invocation instruction storage is unavailable" });
+      return;
+    }
+
+    const snapshot = await readRunInstructionSnapshotForEvent({
+      db,
+      storage,
+      orgId: run.orgId,
+      runId: run.id,
+      eventId,
+    });
+    if (!snapshot) {
+      res.status(404).json({ error: "Invocation instruction snapshot not found" });
+      return;
+    }
+
+    const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.json({
+      agentInstructionStack: redactCurrentUserText(snapshot.agentInstructionStack, currentUserRedactionOptions),
+      sha256: snapshot.sha256,
+      byteSize: snapshot.byteSize,
+    });
   });
 
   async function listRunEventsForRequest(req: Request, res: any, notFoundMessage: string) {

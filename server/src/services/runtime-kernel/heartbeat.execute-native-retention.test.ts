@@ -3,6 +3,8 @@ import {
   compactHeartbeatAdapterInvokePayload,
   projectHeartbeatAdapterResult,
 } from "./heartbeat.execute-native-retention.js";
+import type { AgentRuntimeInvocationMeta } from "../../agent-runtimes/index.js";
+import { buildHeartbeatAdapterInvokePayload } from "./heartbeat.core.js";
 
 describe("heartbeat native retention projections", () => {
   it("compacts invocation payloads and keeps native raw prompt content out", () => {
@@ -28,6 +30,44 @@ describe("heartbeat native retention projections", () => {
         transcriptRetentionMode: "native",
       },
     });
+  });
+
+  it("preserves a deduplicated instruction locator and Run Attempt Span link through compaction", () => {
+    const instructionStack = "private injected instruction stack";
+    const locator = {
+      status: "available",
+      objectKey: `org/run-instruction-snapshots/${"a".repeat(64)}`,
+      sha256: "a".repeat(64),
+      byteSize: instructionStack.length,
+    };
+    const meta: AgentRuntimeInvocationMeta & Record<string, unknown> = {
+      agentRuntimeType: "claude_local",
+      command: "claude",
+      prompt: "private task prompt",
+      agentInstructionStack: instructionStack,
+      invocationInstructionSnapshot: locator,
+      invocationAttemptId: "attempt-1",
+      invocationSpanId: "span-1",
+    };
+    const recorded = buildHeartbeatAdapterInvokePayload({
+      meta,
+      runtimeSkills: [],
+      transcriptRetention: {
+        mode: "native",
+        persistRawTranscript: false,
+        reason: "native_transcript_capability",
+      },
+    });
+    const compacted = compactHeartbeatAdapterInvokePayload(recorded);
+
+    expect(compacted).toMatchObject({
+      invocationInstructionSnapshot: locator,
+      invocationAttemptId: "attempt-1",
+      invocationSpanId: "span-1",
+    });
+    expect(compacted).not.toHaveProperty("prompt");
+    expect(compacted).not.toHaveProperty("agentInstructionStack");
+    expect(JSON.stringify(compacted)).not.toContain(instructionStack);
   });
 
   it("projects native adapter results without raw transcript fields while preserving summary fallback", () => {

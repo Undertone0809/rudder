@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatInvocationValueForCopy, formatInvocationValueForDisplay, readInvocationAgentInstructionStack, readInvocationContentSummary, readInvocationMcpServerList } from "./AgentDetail.helpers";
+import { formatInvocationValueForCopy, formatInvocationValueForDisplay, readInvocationAgentInstructionStack, readInvocationContentSummary, readInvocationInstructionSnapshotStatus, readInvocationMcpServerList } from "./AgentDetail.helpers";
 
 describe("readInvocationAgentInstructionStack", () => {
   it("prefers the explicit full instruction stack over the legacy prompt", () => {
@@ -27,6 +27,25 @@ describe("readInvocationAgentInstructionStack", () => {
     expect(readInvocationAgentInstructionStack(payload)).toBeUndefined();
     expect(readInvocationContentSummary(payload)).toEqual(payload.invocationContent);
     expect(readInvocationContentSummary({ prompt: "legacy" })).toBeNull();
+  });
+});
+
+describe("readInvocationInstructionSnapshotStatus", () => {
+  it("accepts only a recorded available content-addressed snapshot", () => {
+    expect(readInvocationInstructionSnapshotStatus({
+      invocationInstructionSnapshot: {
+        status: "available",
+        objectKey: `org/run-instruction-snapshots/${"a".repeat(64)}`,
+        sha256: "a".repeat(64),
+        byteSize: 128,
+      },
+    })).toBe("available");
+    expect(readInvocationInstructionSnapshotStatus({
+      invocationInstructionSnapshot: { status: "unavailable", reason: "storage_unavailable" },
+    })).toBe("unavailable");
+    expect(readInvocationInstructionSnapshotStatus({
+      invocationContent: { textStored: false },
+    })).toBeNull();
   });
 });
 
