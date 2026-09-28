@@ -119,6 +119,13 @@ describe("runtime retention service", () => {
     const where = inArray(organizations.id, orgIds);
     await db.delete(runtimeSourceAliases).where(inArray(runtimeSourceAliases.orgId, orgIds));
     await db.delete(runtimeRetentionClaims).where(inArray(runtimeRetentionClaims.orgId, orgIds));
+    // These fixtures insert spans directly and never launch a provider writer.
+    // Release only this test's synthetic leases after its retention assertions.
+    await db.update(runRuntimeSpans).set({
+      state: "unresolved", completeness: "unknown", closedAt: new Date(),
+      writerLeaseReleasedAt: new Date(),
+    })
+      .where(inArray(runRuntimeSpans.orgId, orgIds));
     await db.delete(runRuntimeSpans).where(inArray(runRuntimeSpans.orgId, orgIds));
     await db.delete(nativeSegments).where(inArray(nativeSegments.orgId, orgIds));
     await db.delete(runtimeBindings).where(inArray(runtimeBindings.orgId, orgIds));
