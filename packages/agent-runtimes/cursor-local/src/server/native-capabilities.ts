@@ -758,6 +758,7 @@ type CursorAcpRequestDiagnostic = {
   durationMs: number;
   errorCode?: number | string | null;
   errorMessage?: string;
+  errorDataMessage?: string;
   advertisedAuthMethodIds?: string[];
   chosenAuthMethodId?: string | null;
 };
@@ -832,6 +833,10 @@ class CursorAcpClient {
     const captureError = (error: unknown) => {
       diagnostic.errorCode = error instanceof CursorAcpRpcError ? error.code : null;
       diagnostic.errorMessage = diagnosticText(error, profileSecrets(this.profile));
+      const dataMessage = error instanceof CursorAcpRpcError
+        ? stringValue(recordValue(error.data)?.message)
+        : null;
+      if (dataMessage) diagnostic.errorDataMessage = diagnosticText(dataMessage, profileSecrets(this.profile));
     };
     this.requestDiagnostics.push(diagnostic);
     if (this.requestDiagnostics.length > 16) this.requestDiagnostics.shift();

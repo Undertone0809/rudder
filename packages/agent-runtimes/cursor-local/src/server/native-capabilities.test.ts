@@ -517,6 +517,40 @@ describe("Cursor ACP native capabilities", () => {
     expect(serializedDiagnostic).not.toContain("https://cursor.example");
   });
 
+  it("copies only sanitized provider error.data.message into authentication diagnostics", async () => {
+    const secret = "cursor-auth-data-test-secret";
+    const authState = "cursor-auth-data-private-state";
+    const dataMessage = "Login detail refresh_token=" + secret
+      + " Visit https://cursor.example/login?state=" + authState + "&token=" + secret;
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([{ id: "cursor_login", name: "Cursor Login" }]) }) + "\n");
+      } else if (request.method === "authenticate") {
+        output.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: {
+          code: -32602,
+          message: "Invalid params",
+          data: { message: dataMessage, privateDiagnostic: "must-not-be-copied" },
+        } }) + "\n");
+      }
+    });
+    const diagnostic = await probeCursorAcpAuthentication({
+      ...profile(fixture.spawn),
+      env: { CURSOR_API_KEY: secret },
+    });
+    const serializedDiagnostic = JSON.stringify(diagnostic);
+
+    expect(diagnostic.requestTrace[1]).toMatchObject({
+      method: "authenticate",
+      errorCode: -32602,
+      errorMessage: "Invalid params",
+      errorDataMessage: "Login detail refresh_token=[REDACTED] Visit [URL REDACTED]",
+    });
+    expect(serializedDiagnostic).not.toContain(secret);
+    expect(serializedDiagnostic).not.toContain(authState);
+    expect(serializedDiagnostic).not.toContain("https://cursor.example");
+    expect(serializedDiagnostic).not.toContain("must-not-be-copied");
+  });
+
   it("uses a configured alternative authentication method when advertised", async () => {
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {
