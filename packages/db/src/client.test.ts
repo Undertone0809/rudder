@@ -966,6 +966,7 @@ describe("applyPendingMigrations", () => {
           "0172_organization_mutation_fence_token.sql",
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
+          "0175_project_delete_receipt_kind.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1161,6 +1162,7 @@ describe("applyPendingMigrations", () => {
           "0172_organization_mutation_fence_token.sql",
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
+          "0175_project_delete_receipt_kind.sql",
         ],
         reason: "pending-migrations",
       });
