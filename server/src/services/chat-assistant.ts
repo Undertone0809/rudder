@@ -534,13 +534,34 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const sentinelStream = createSentinelStream(resultSentinel);
     const inlineVisualStream = createRudderInlineVisualStreamSuppressor();
     const commentaryInlineVisualStream = createRudderInlineVisualStreamSuppressor();
+    // This is execution-local evidence only. A reattached Run may already have
+    // submitted input in another process, even before this invocation starts.
+    let providerDispatched = Boolean(input.resumeRunId);
     const { freezeStopCutoff, finalizeStoppedReply } = createChatAssistantStopFinalizer({
       finalAssistantText: () => finalAssistantTextAccumulator.fullText,
       hasNativeFinalMessage: () => transcriptProcessingState.hasNativeFinalMessage,
       resultSentinel,
       visibleText: () => sentinelStream.visibleText,
       isFinalized: isRunFinalized,
-      finalize: finalizeChatRun,
+      finalize: async (state) => {
+        if (!providerDispatched) {
+          const recorded = await guardActiveRun(() => chatRunsSvc.recordNativeExecutionResult(runId, {
+            exitCode: null,
+            signal: "SIGTERM",
+            timedOut: false,
+            submissionPhase: "pre_submission",
+            nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+          }, {
+            orgId: chatRun.orgId,
+            spanId: chatRun.runtimeSpanId ?? null,
+            attemptId: chatRun.runtimeAttemptRef?.id,
+            ownerToken: chatRun.runtimeSpanOwnerToken,
+            attemptEpoch: chatRun.runtimeSpanAttemptEpoch,
+          }));
+          if (!recorded) throw new Error("Chat pre-dispatch Stop could not be recorded against its native span");
+        }
+        return finalizeChatRun(state);
+      },
       finalState: (partialBody): Parameters<typeof chatRunsSvc.finalizeRun>[1] => ({
         status: "cancelled",
         error: "Chat run stopped before completion",
@@ -963,6 +984,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           resolveDriver: attemptPorts.resolveDriver,
           submitInputThroughDriver: true,
           nativeDriverRequired,
+          onProviderDispatch: () => { providerDispatched = true; },
           createAuthToken: (agentRuntimeType) =>
             createLocalAgentJwt(
               runtimeAgentId,

@@ -4796,6 +4796,44 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
+  it("records never-started writer proof when Stop arrives before provider dispatch", async () => {
+    const svc = chatAssistantService({} as any);
+    const controller = new AbortController();
+    const result = await svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+      abortSignal: controller.signal,
+      onRunCreated: () => { controller.abort(); },
+    });
+    expect(result).toMatchObject({ outcome: "stopped", partialBody: "" });
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.recordNativeExecutionResult).toHaveBeenCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        submissionPhase: "pre_submission",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      }),
+      expect.objectContaining({ orgId: "organization-1" }),
+    );
+    expect(mockChatAgentRuns.recordNativeExecutionResult.mock.invocationCallOrder[0])
+      .toBeLessThan(mockChatAgentRuns.finalizeRun.mock.invocationCallOrder[0]!);
+  });
+
+  it("does not invent never-started proof when a dispatched provider throws during Stop", async () => {
+    const svc = chatAssistantService({} as any);
+    const controller = new AbortController();
+    mockAdapter.execute.mockImplementationOnce(async () => {
+      controller.abort();
+      throw new Error("provider writer exit is unknown");
+    });
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(), messages: makeMessages(), contextLinks: [],
+      abortSignal: controller.signal,
+    })).resolves.toMatchObject({ outcome: "stopped" });
+    expect(mockChatAgentRuns.recordNativeExecutionResult).not.toHaveBeenCalled();
+  });
+
   it("returns a stopped partial reply when the runtime abort signal fires", async () => {
     const svc = chatAssistantService({} as any);
     const controller = new AbortController();
