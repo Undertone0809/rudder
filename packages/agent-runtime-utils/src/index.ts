@@ -36,6 +36,7 @@ export {
   isAgentRuntimeNetworkSuspension,
   type AgentRuntimeNetworkFailureEvidence
 } from "./network-suspension.js";
+export { hasConfirmedNativeWriterQuiescence } from "./native-writer-quiescence.js";
 export {
   assertUniqueOrganizationStorageKeys,
   normalizeOrganizationStoragePathSegment,
@@ -118,7 +119,9 @@ export type {
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
   AgentRuntimeEnvironmentTestStatus, AgentRuntimeExecutionContext,
+  AgentRuntimeTransientInputKind, AgentRuntimeTransientInputRequest, AgentRuntimeTransientInputResult,
   AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta,
+  AgentRuntimeNativeWriterQuiescence,
   AgentRuntimeLoadedMcpServerMeta,
   AgentRuntimeLoadedSkillMeta,
   AgentRuntimeMediaAttachment,

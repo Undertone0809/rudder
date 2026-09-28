@@ -185,7 +185,7 @@ describe("Claude stream-json control", () => {
       await stream.waitForReplay(INITIAL_UUID);
       expect(runningProcesses.has(runId)).toBe(true);
 
-      await expect(stream.interrupt()).resolves.toBe("acknowledged");
+      await expect(stream.interrupt()).resolves.toBe("waiting_safe_boundary");
       const result = await stream.close();
       expect(result.signal).toBe("SIGTERM");
       expect(runningProcesses.has(runId)).toBe(false);
@@ -397,7 +397,7 @@ describe("Claude stream-json control", () => {
       );
       await stream.sendUserMessage("cancel while waiting", INITIAL_UUID);
       await approvalRequested;
-      await expect(stream.interrupt()).resolves.toBe("acknowledged");
+      await expect(stream.interrupt()).resolves.toBe("waiting_safe_boundary");
       const result = await stream.close();
       resolveApprovalWait();
 

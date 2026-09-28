@@ -14,6 +14,7 @@ import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
   readHermesProductHistory,
+  readHermesProductHistoryExecutionSpan,
   type HermesProductHistoryProfile,
   type HermesProductHistoryResult,
 } from "./product-history.js";
@@ -216,9 +217,10 @@ export function deriveHermesAcpTranscriptBoundary(input: {
     return unknownHermesBoundary(input.sessionId, "Hermes persisted history tail could not be read before the native prompt.");
   }
   if (input.before?.relation !== "none" || input.after.relation !== "none") {
+    const lineage = input.after.relation !== "none" ? input.after : input.before;
     return unknownHermesBoundary(
       input.sessionId,
-      `Hermes compression/session successor prevents proving one Run range (${input.after.successorSessionId ?? "unknown successor"}).`,
+      `Hermes ACP compression successor ${lineage?.successorSessionId ?? "unknown"} is seeded from a compacted handoff and may clone concurrent parent-tail rows with new IDs. Hermes 0.21.0 persists no source-row locators for handoff rows and exposes no per-prompt Run watermark, so exact row ownership across session generations cannot be proven.`,
     );
   }
   const startExclusive = input.before?.tailRowId ?? null;
@@ -226,14 +228,10 @@ export function deriveHermesAcpTranscriptBoundary(input: {
   if (endInclusive === null || (startExclusive !== null && endInclusive <= startExclusive)) {
     return unknownHermesBoundary(input.sessionId, "Hermes native prompt produced no provable persisted message interval.");
   }
-  const sourceRangeRef = JSON.stringify({
-    version: 1,
-    status: "exact",
-    sessionId: input.sessionId,
-    startExclusive,
-    endInclusive,
-  });
-  return { status: "exact", sessionId: input.sessionId, startExclusive, endInclusive, sourceRangeRef };
+  return unknownHermesBoundary(
+    input.sessionId,
+    "Hermes 0.21.0 history rows have no prompt-scoped locator, and Rudder does not acquire a session-exclusive writer lease spanning both history snapshots. A same-session row-ID window can contain interleaved foreign rows, so Run ownership is unknown.",
+  );
 }
 
 function exactSourceRange(selector: Record<string, unknown> | null | undefined, sessionId: string): { startExclusive: number | null; endInclusive: number } | null {
@@ -1013,8 +1011,11 @@ export async function executeHermesNativeChat(input: {
   let sessionParams: Record<string, unknown> | null = input.sessionParams;
   let aborted = false;
   let promptActive = false;
+  let promptTerminalHadUnresolvedInteraction = false;
   let liveLogs = Promise.resolve();
   let cancelSent = false;
+  let pendingInteractions = 0;
+  let interactionRequestFailed = false;
   let controlLease: { release(): Promise<void> } | null = null;
   const onNotification = (method: string, params: JsonRecord) => {
     if (method !== "session/update" || !promptActive || params.sessionId !== sessionId) return;
@@ -1040,18 +1041,27 @@ export async function executeHermesNativeChat(input: {
   };
   const onServerRequest = async (request: AcpServerRequest): Promise<unknown> => {
     if (request.method === "session/request_permission") {
-      return permissionOutcome(asRecord(request.params) ?? {}, {
-        requestId: String(request.id),
-        secrets,
-        requestApproval: input.requestApproval,
-        waitForApproval: input.waitForApproval,
-        timeoutMs: input.timeoutMs,
-        provider: "hermes",
-        onEvent: async (event) => {
-          await input.onLog("stdout", `${JSON.stringify({ type: "hermes_acp_interaction", ...event })}\n`);
-        },
-      });
+      pendingInteractions += 1;
+      try {
+        return await permissionOutcome(asRecord(request.params) ?? {}, {
+          requestId: String(request.id),
+          secrets,
+          requestApproval: input.requestApproval,
+          waitForApproval: input.waitForApproval,
+          timeoutMs: input.timeoutMs,
+          provider: "hermes",
+          onEvent: async (event) => {
+            await input.onLog("stdout", `${JSON.stringify({ type: "hermes_acp_interaction", ...event })}\n`);
+          },
+        });
+      } catch (error) {
+        interactionRequestFailed = true;
+        throw error;
+      } finally {
+        pendingInteractions -= 1;
+      }
     }
+    interactionRequestFailed = true;
     throw new Error(`Hermes ACP client does not implement ${request.method}.`);
   };
   const abortHandler = () => {
@@ -1130,6 +1140,7 @@ export async function executeHermesNativeChat(input: {
       promptError = error;
     }
     promptActive = false;
+    promptTerminalHadUnresolvedInteraction = interactionRequestFailed || pendingInteractions > 0;
     await liveLogs;
     const historyAfter = await readHermesHistoryTail({
       profile: input.profile,
@@ -1183,14 +1194,16 @@ export async function executeHermesNativeChat(input: {
       },
     };
     const usage = usageFrom(response.usage);
-    const cancelled = stopReason === "cancelled" || aborted;
-    const completed = stopReason === "end_turn" && !cancelled && !providerError && !emptyResponse;
+    const cancelled = stopReason === "cancelled" || aborted || cancelSent;
+    const unresolvedInteraction = promptTerminalHadUnresolvedInteraction || interactionRequestFailed || pendingInteractions > 0;
+    const completed = stopReason === "end_turn" && !cancelled && !providerError && !emptyResponse && !unresolvedInteraction;
     await controlLease?.release();
     controlLease = null;
     return {
       exitCode: completed ? 0 : 1,
       signal: cancelled ? "SIGTERM" : null,
       timedOut: false,
+      ...(completed ? { nativeWriterQuiescence: { status: "confirmed" as const, source: "provider_terminal" as const } } : {}),
       provider: "hermes",
       model: configuredModel,
       ...(usage ? { usage } : {}),
@@ -1297,16 +1310,26 @@ export async function readHermesAcpNativeTranscript(input: HermesAcpTranscriptRe
     };
   }
   try {
-    const result = await readHermesProductHistory({
-      runtimeType: "hermes_gateway",
-      sessionId,
-      profile,
-      range: exactRange ?? null,
-      cursor: input.cursor,
-      limit: 100,
-      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
-      signal: input.signal,
-    });
+    const result = exactRange
+      ? await readHermesProductHistoryExecutionSpan({
+        runtimeType: "hermes_gateway",
+        sessionId,
+        profile,
+        range: exactRange,
+        cursor: input.cursor,
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        signal: input.signal,
+      })
+      : await readHermesProductHistory({
+        runtimeType: "hermes_gateway",
+        sessionId,
+        profile,
+        range: null,
+        cursor: input.cursor,
+        limit: 100,
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        signal: input.signal,
+      });
     return {
       items: result.items,
       nextCursor: result.nextCursor,

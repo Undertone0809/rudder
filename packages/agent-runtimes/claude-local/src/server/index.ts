@@ -16,6 +16,8 @@ export type {
   ClaudeDeferredForkIntent,
   ClaudeLocalProfileTransport,
   ClaudeLocalProfileTransportResolver,
+  ClaudeNativeForkRequest,
+  ClaudeNativeForkResult,
   ClaudeNativeTranscriptReadRequest,
   ClaudeNativeTranscriptReadResult,
   ClaudeProviderBindingRef,

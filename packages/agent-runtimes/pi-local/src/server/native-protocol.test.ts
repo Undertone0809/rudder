@@ -1,3 +1,4 @@
+import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -31,6 +32,8 @@ async function makePiFixture(directory: string, options: {
   retryDelayMs?: number;
   appendParentDuringFork?: boolean;
   invalidFrameAfterUsage?: boolean;
+  stallPrompt?: boolean;
+  exitOnAbort?: boolean;
 } = {}): Promise<string> {
   const command = path.join(directory, "pi-fixture.mjs");
   await fs.writeFile(command, `#!/usr/bin/env node
@@ -55,6 +58,8 @@ const fixtureOptions = ${JSON.stringify({
   retryDelayMs: options.retryDelayMs ?? 100,
   appendParentDuringFork: options.appendParentDuringFork === true,
   invalidFrameAfterUsage: options.invalidFrameAfterUsage === true,
+  stallPrompt: options.stallPrompt === true,
+  exitOnAbort: options.exitOnAbort === true,
 })};
 let forked = false;
 let stateReadCount = 0;
@@ -156,6 +161,7 @@ input.on("line", async (line) => {
       if (reply) await reply;
     }
     response("prompt", {});
+    if (fixtureOptions.stallPrompt) return;
     const retryStates = fixtureOptions.agentEndWillRetry;
     for (let index = 0; index < retryStates.length; index += 1) {
       if (index > 0) process.stdout.write(JSON.stringify({ type: "auto_retry_start" }) + "\\n");
@@ -192,6 +198,9 @@ input.on("line", async (line) => {
   }
   if (request.type === "steer" || request.type === "abort") {
     response(request.type, {});
+    if (request.type === "abort" && fixtureOptions.exitOnAbort) {
+      setTimeout(() => process.exit(0), 25);
+    }
     return;
   }
   response(request.type, {});
@@ -321,6 +330,7 @@ describe("Pi native protocol contract", () => {
     expect(args).not.toContain("--no-extensions");
     expect(args).not.toContain("--no-builtin-tools");
     expect(result.exitCode).toBe(0);
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
     expect(result.resultJson).toMatchObject({
       transport: "pi_rpc",
       providerSessionId: "pi-parent",
@@ -358,6 +368,83 @@ describe("Pi native protocol contract", () => {
     expect(registered[0]?.providerTurnId).toBeNull();
     expect(logs.join("")).toContain("Pi native chat completed");
     expect(logs.join("")).not.toContain("native pi answer");
+  });
+
+  it("confirms quiescence only after Pi acknowledges an abort", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-stop-ack-");
+    const command = await makePiFixture(directory, { stallPrompt: true, exitOnAbort: true });
+    const sessionFile = path.join(directory, "session.jsonl");
+    await fs.writeFile(sessionFile, "", "utf8");
+    let resolveControlHandle!: (handle: AgentRuntimeControlHandle) => void;
+    const controlHandleReady = new Promise<AgentRuntimeControlHandle>((resolve) => {
+      resolveControlHandle = resolve;
+    });
+    const execution = executePiNativeChat({
+      command,
+      cwd: directory,
+      env: { HOME: directory },
+      sessionFile,
+      sessionDir: directory,
+      prompt: "stop this native turn",
+      model: "provider/model",
+      timeoutSec: 10,
+      binding: { hostId: "local", profileId: "pi-profile" },
+      controlAttempt: {
+        attemptEpoch: 1,
+        ownerToken: "owner",
+        register: async (handle) => {
+          resolveControlHandle(handle);
+          return { isCurrent: () => true, release: async () => {} };
+        },
+        complete: async () => {},
+      },
+      onLog: async () => {},
+    });
+
+    const handle = await controlHandleReady;
+    await expect(handle.interrupt("operator_stop")).resolves.toBe("acknowledged");
+    const result = await execution;
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_stop_ack" },
+    });
+    const requests = (await fs.readFile(path.join(directory, "requests.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(requests.map((request) => request.type)).toContain("abort");
+  });
+
+  it("leaves a prompt timeout unconfirmed when no terminal event or stop ack arrives", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-prompt-timeout-");
+    const command = await makePiFixture(directory, { stallPrompt: true });
+    const sessionFile = path.join(directory, "session.jsonl");
+    await fs.writeFile(sessionFile, "", "utf8");
+
+    const result = await executePiNativeChat({
+      command,
+      cwd: directory,
+      env: { HOME: directory },
+      sessionFile,
+      sessionDir: directory,
+      prompt: "wait for the stalled native turn",
+      model: "provider/model",
+      timeoutSec: 0.05,
+      binding: { hostId: "local", profileId: "pi-profile" },
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      timedOut: true,
+      nativeWriterQuiescence: { status: "unconfirmed", reason: expect.any(String) },
+    });
+    const requests = (await fs.readFile(path.join(directory, "requests.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(requests.map((request) => request.type)).toContain("prompt");
+    expect(requests.map((request) => request.type)).not.toContain("abort");
   });
 
   it("bridges Pi extension select, confirm, and text input through runtime approvals", async () => {
@@ -546,6 +633,7 @@ describe("Pi native protocol contract", () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>);
 
     expect(result.exitCode).toBe(0);
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
     expect(result.summary).toBe("native pi answer");
     expect(result.usage).toEqual({ inputTokens: 27, outputTokens: 3, cachedInputTokens: 4 });
     expect(result.costUsd).toBeCloseTo(0.005, 6);
@@ -653,6 +741,111 @@ describe("Pi native protocol contract", () => {
     ]);
     expect(JSON.stringify([...oldRun.items, ...laterRun.items])).not.toContain("abandoned-");
     expect(await fs.readFile(sessionFile, "utf8")).toBe(original);
+  });
+
+  it("fails closed when Pi Run anchors were pruned or belong to another branch", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-pruned-anchor-");
+    const command = await makePiFixture(directory);
+    const sessionFile = path.join(directory, "session.jsonl");
+    await fs.writeFile(sessionFile, [
+      { type: "session", version: 3, id: "pi-parent", cwd: directory },
+      { type: "message", id: "root-user", parentId: null, message: { role: "user", content: "start" } },
+      { type: "message", id: "abandoned-user", parentId: "root-user", message: { role: "user", content: "abandoned" } },
+      { type: "message", id: "abandoned-assistant", parentId: "abandoned-user", message: { role: "assistant", content: "other branch" } },
+      { type: "message", id: "kept-user", parentId: "pruned-assistant", message: { role: "user", content: "continue" } },
+      { type: "compaction", id: "compact-1", parentId: "kept-user", summary: "compacted history", firstKeptEntryId: "kept-user" },
+      { type: "message", id: "latest-assistant", parentId: "compact-1", message: { role: "assistant", content: "latest" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+    const session = sessionFor(directory, command, "latest-assistant");
+    const binding = { hostId: "local", profileId: "pi-profile" };
+    const selector = {
+      kind: "pi_branch_range",
+      sessionResourceRef: sessionFile,
+      fromExclusive: "pruned-assistant",
+      throughInclusive: "latest-assistant",
+      leafId: "latest-assistant",
+    };
+
+    const prunedStart = await readPiNativeTranscript({
+      runtimeType: "pi_local", session, selector, binding,
+    });
+    const otherBranchStart = await readPiNativeTranscript({
+      runtimeType: "pi_local",
+      session,
+      selector: { ...selector, fromExclusive: "abandoned-assistant" },
+      binding,
+    });
+    const otherBranchEnd = await readPiNativeTranscript({
+      runtimeType: "pi_local",
+      session,
+      selector: { ...selector, fromExclusive: null },
+      range: { throughInclusive: "abandoned-assistant" },
+      binding,
+    });
+    const prunedPersistedLeafSession = {
+      ...session,
+      sessionParams: {
+        ...session.sessionParams,
+        leafId: "pruned-assistant",
+        previousLeafId: null,
+      },
+    };
+    const prunedPersistedLeaf = await readPiNativeTranscript({
+      runtimeType: "pi_local",
+      session: prunedPersistedLeafSession,
+      range: {},
+      binding,
+    });
+
+    for (const result of [prunedStart, otherBranchStart, otherBranchEnd, prunedPersistedLeaf]) {
+      expect(result).toMatchObject({
+        items: [],
+        availability: "incompatible",
+        completeness: "unknown",
+      });
+    }
+  });
+
+  it("reports a truly empty session-scope history as complete", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-empty-session-");
+    const command = await makePiFixture(directory);
+    const sessionFile = path.join(directory, "session.jsonl");
+    const validHeader = JSON.stringify({
+      type: "session", version: 3, id: "pi-parent", cwd: directory,
+    });
+    const readSessionScope = () => {
+      const initialSession = sessionFor(directory, command);
+      const session = {
+        ...initialSession,
+        sessionParams: { ...initialSession.sessionParams, leafId: null, previousLeafId: null },
+      };
+      return readPiNativeTranscript({
+        runtimeType: "pi_local",
+        session,
+        binding: { hostId: "local", profileId: "pi-profile" },
+      });
+    };
+
+    await fs.writeFile(sessionFile, `${validHeader}\n`, "utf8");
+    await expect(readSessionScope()).resolves.toMatchObject({
+      items: [],
+      availability: "available",
+      completeness: "complete",
+    });
+
+    for (const invalidHistory of [
+      "",
+      `${validHeader}\n${validHeader}\n`,
+      `${JSON.stringify({ type: "session", version: 3, id: "different-session", cwd: directory })}\n`,
+      `${validHeader}\n{\"type\":\"message\"`,
+    ]) {
+      await fs.writeFile(sessionFile, invalidHistory, "utf8");
+      await expect(readSessionScope()).resolves.toMatchObject({
+        items: [],
+        availability: "incompatible",
+        completeness: "unknown",
+      });
+    }
   });
 
   it("projects native thinking, tool calls, and failed results into renderable entries", async () => {

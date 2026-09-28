@@ -1172,6 +1172,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: appResult.exitCode,
         signal: appResult.signal,
         timedOut: appResult.timedOut,
+        nativeWriterQuiescence: appResult.nativeWriterQuiescence,
         errorMessage: appResult.errorMessage,
         ...(providerAuthFailure ? { errorCode: "codex_provider_auth_required" } : {}),
         usage: appResult.usage,
@@ -1361,7 +1362,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
 
   const toResult = async (
-    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; providerAuthFailure: string | null; startedAt: Date; endedAt: Date },
+    attempt: { proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string; pid?: number | null; startedAt?: string | null }; rawStderr: string; parsed: ReturnType<typeof parseCodexJsonl>; providerAuthFailure: string | null; startedAt: Date; endedAt: Date },
     clearSessionOnMissingSession = false,
     transportRecovery?: {
       kind: "codex_transport_disconnect";
@@ -1383,6 +1384,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: attempt.proc.exitCode,
         signal: attempt.proc.signal,
         timedOut: true,
+        nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Codex timed out before child-process exit was observed." },
         errorMessage: `Timed out after ${timeoutSec}s`,
         ...(transportRecovery ? { errorCode: "codex_transport_continuation_failed" } : {}),
         ...(transportRecovery ? { resultJson: { transportRecovery } } : {}),
@@ -1469,6 +1473,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
       timedOut: false,
+      nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+        ? { status: "confirmed", source: "process_exit" }
+        : { status: "unconfirmed", reason: "Codex child-process exit was not observed." },
       errorMessage:
         attempt.proc.exitCode === 0 && attempt.proc.signal === null && !attempt.providerAuthFailure
           ? null

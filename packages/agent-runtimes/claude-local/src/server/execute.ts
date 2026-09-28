@@ -1471,6 +1471,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: proc.timedOut,
+      nativeWriterQuiescence: parsedStream.resultJson
+        ? { status: "confirmed", source: "provider_terminal" }
+        : proc.pid != null && proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Claude fork submission ended without an observed provider terminal event or child-process exit." },
       submissionPhase: "indeterminate",
       errorMessage: `Claude deferred fork acceptance is unknown: ${reason}`,
       errorCode: "claude_fork_acceptance_unknown",
@@ -1507,6 +1512,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: proc.exitCode,
         signal: proc.signal,
         timedOut: true,
+        nativeWriterQuiescence: proc.pid != null && proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Claude timed out before child-process exit was observed." },
         errorMessage: `Timed out after ${timeoutSec}s`,
         errorCode: "timeout",
         errorMeta,
@@ -1533,6 +1541,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: proc.exitCode,
         signal: proc.signal,
         timedOut: false,
+        nativeWriterQuiescence: proc.pid != null && proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Claude returned without an observed provider terminal event or child-process exit." },
         errorMessage: fallbackErrorMessage,
         errorCode: loginMeta.requiresLogin ? "claude_auth_required" : null,
         errorMeta,
@@ -1608,6 +1619,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: false,
+      nativeWriterQuiescence: parsedStream.resultJson
+        ? { status: "confirmed", source: "provider_terminal" }
+        : proc.pid != null && proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Claude returned without an observed provider terminal event or child-process exit." },
       errorMessage:
         (proc.exitCode ?? 0) === 0
           ? null

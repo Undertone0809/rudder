@@ -208,6 +208,7 @@ rl.on("line", (line) => {
   if (message.method === "turn/start") {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
+    if (process.env.RUDDER_TEST_STALL_TURN === "1") return;
     if (process.env.RUDDER_TEST_USER_INPUT_REQUEST === "1") {
       send({
         id: "user-input-request-1",
@@ -464,8 +465,9 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/interrupt") {
+    if (process.env.RUDDER_TEST_UNCONFIRMED_INTERRUPT === "1") return;
     send({ id: message.id, result: {} });
-    finish("interrupted");
+    if (process.env.RUDDER_TEST_STALL_TURN !== "1") finish("interrupted");
   }
 });
 process.on("SIGTERM", () => {
@@ -914,6 +916,7 @@ describe("executeCodexAppServerChat", () => {
     });
 
     expect(result).toMatchObject({ exitCode: 0, sessionId: "thread-app-1", providerTurnId: "turn-app-1" });
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
     expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
       inputRequest: expect.objectContaining({ questions: [expect.objectContaining({ id: "codex_q1" })] }),
       payload: expect.objectContaining({ sessionId: "thread-app-1", turnId: "turn-app-1" }),
@@ -1822,9 +1825,80 @@ describe("executeCodexAppServerChat", () => {
     expect(result.signal).toBe("SIGTERM");
     expect(result.timedOut).toBe(false);
     expect(result.stdout).toContain('"subtype":"interrupted"');
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
     expect(result.stdout).not.toContain('"text":"Steered reply"');
     expect(result.summary).toBe("");
   });
+
+  it("requires process-tree exit to confirm Stop even when App Server acknowledges the interrupt", async () => {
+    const run = async (unconfirmedInterrupt: boolean) => {
+      const controller = new AbortController();
+      let handle: AgentRuntimeControlHandle | null = null;
+      let childPid: number | null = null;
+      const execution = executeCodexAppServerChat({
+        command: fakeCodex,
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: process.env.PATH ?? "",
+          RUDDER_TEST_STALL_TURN: "1",
+          RUDDER_TEST_IGNORE_SIGTERM: "1",
+          ...(unconfirmedInterrupt ? { RUDDER_TEST_UNCONFIRMED_INTERRUPT: "1" } : {}),
+        } as Record<string, string>,
+        prompt: "Long request",
+        model: "gpt-test",
+        modelReasoningEffort: "high",
+        search: false,
+        bypassApprovalsAndSandbox: true,
+        imagePaths: [],
+        sessionId: null,
+        timeoutSec: 1,
+        abortSignal: controller.signal,
+        onLog: vi.fn(async () => undefined),
+        onSpawn: async ({ pid }) => {
+          childPid = pid;
+        },
+        controlAttempt: {
+          attemptEpoch: 1,
+          ownerToken: "owner-1",
+          register: vi.fn(async (published) => {
+            handle = published;
+            return { isCurrent: () => true, release: vi.fn(async () => undefined) };
+          }),
+          complete: vi.fn(async () => undefined),
+        },
+      });
+      const activeHandle = await waitFor(() => handle?.providerTurnId ? handle : null);
+      if (!unconfirmedInterrupt) {
+        await expect(activeHandle.interrupt("operator_stop")).resolves.toBe("acknowledged");
+        expect(childPid).not.toBeNull();
+        expect(() => process.kill(childPid!, 0)).not.toThrow();
+      }
+      controller.abort();
+      return { result: await execution, childPid };
+    };
+
+    const acknowledged = await run(false);
+    expect(acknowledged.result).toMatchObject({
+      timedOut: true,
+      nativeWriterQuiescence: process.platform === "win32"
+        ? { status: "unconfirmed" }
+        : { status: "confirmed", source: "process_exit" },
+    });
+    expect(acknowledged.childPid).not.toBeNull();
+    expect(() => process.kill(acknowledged.childPid!, 0)).toThrow();
+    if (process.platform !== "win32") {
+      expect(() => process.kill(-acknowledged.childPid!, 0)).toThrow();
+    }
+
+    const unacknowledged = await run(true);
+    expect(unacknowledged.result).toMatchObject({
+      timedOut: true,
+      nativeWriterQuiescence: process.platform === "win32"
+        ? { status: "unconfirmed" }
+        : { status: "confirmed", source: "process_exit" },
+    });
+  }, 10_000);
 
   it("force-kills an App Server process that ignores graceful shutdown", async () => {
     let handle: AgentRuntimeControlHandle | null = null;
@@ -1872,5 +1946,8 @@ describe("executeCodexAppServerChat", () => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_800);
     expect(childPid).not.toBeNull();
     expect(() => process.kill(childPid!, 0)).toThrow();
+    if (process.platform !== "win32") {
+      expect(() => process.kill(-childPid!, 0)).toThrow();
+    }
   }, 10_000);
 });

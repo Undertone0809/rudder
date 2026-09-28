@@ -782,7 +782,7 @@ export function startClaudeStreamJsonProcess(
       aborted = true;
       cancelPendingControlRequests();
       terminate();
-      return "acknowledged";
+      return "waiting_safe_boundary";
     },
     getSessionId: () => sessionId,
     getLastUuid: () => lastUuid,

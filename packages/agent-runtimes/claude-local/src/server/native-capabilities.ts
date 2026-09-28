@@ -6,8 +6,12 @@ import type {
   AgentRuntimeControlSteerResult,
   TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 
 export type ClaudeCapabilityStatus = "supported" | "unsupported" | "unknown";
@@ -100,6 +104,23 @@ export type ClaudeNativeTranscriptReadResult = {
   completeness: "complete" | "partial" | "terminal_only" | "unknown";
 };
 
+export type ClaudeNativeForkRequest = {
+  runtimeType: string;
+  session: ClaudeProviderSessionRef;
+  boundary: string;
+  selector?: Record<string, unknown> | null;
+  binding?: ClaudeProviderBindingRef | null;
+  signal?: AbortSignal;
+};
+
+export type ClaudeNativeForkResult = {
+  session: ClaudeProviderSessionRef;
+  boundary: string;
+  sourceBoundary: string;
+  identityMap: Record<string, string>;
+  continuity: "native";
+};
+
 /** The only provider-owned state needed to read an official Claude session. */
 export type ClaudeLocalProfileTransport = {
   binding: ClaudeProviderBindingRef;
@@ -124,7 +145,34 @@ type ClaudeParsedRecord = {
 
 const CLAUDE_NATIVE_TRANSPORT = "claude-cli-jsonl";
 const CLAUDE_NATIVE_VERSION = "2.1.216";
+const CLAUDE_FORK_SDK_VERSION = "0.3.216";
+const CLAUDE_FORK_SDK_CLI_VERSION = "2.1.216";
+const CLAUDE_FORK_TRANSPORT = `claude-agent-sdk-${CLAUDE_FORK_SDK_VERSION}`;
 const TRANSCRIPT_PAGE_SIZE = 100;
+const CLAUDE_SESSION_EVENT_TYPES = new Set(["user", "assistant", "attachment", "system", "progress"]);
+const CLAUDE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CLAUDE_AGENT_SDK_PACKAGE = "@anthropic-ai/claude-agent-sdk";
+const claudeRequire = createRequire(import.meta.url);
+
+const CLAUDE_FORK_WORKER_SOURCE = `
+import { pathToFileURL } from "node:url";
+
+try {
+  const { forkSession } = await import(pathToFileURL(process.env.RUDDER_CLAUDE_AGENT_SDK_ENTRY).href);
+  if (typeof forkSession !== "function") throw new Error("The pinned Claude SDK has no forkSession operation.");
+  let inputJson = "";
+  for await (const chunk of process.stdin) inputJson += chunk;
+  const input = JSON.parse(inputJson);
+  const result = await forkSession(input.sessionId, {
+    dir: input.cwd,
+    upToMessageId: input.boundary,
+  });
+  process.stdout.write("RUDDER_CLAUDE_FORK_RESULT:" + JSON.stringify(result));
+} catch (error) {
+  process.stderr.write(String(error instanceof Error ? error.message : error));
+  process.exitCode = 1;
+}
+`;
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -171,7 +219,13 @@ function profileIdentityMatches(params: Record<string, unknown>, binding: Claude
 }
 
 function encodeClaudeProjectPath(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const encoded = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  if (encoded.length <= 200) return encoded;
+  let hash = 0;
+  for (let index = 0; index < cwd.length; index += 1) {
+    hash = (hash << 5) - hash + cwd.charCodeAt(index) | 0;
+  }
+  return `${encoded.slice(0, 200)}-${Math.abs(hash).toString(36)}`;
 }
 
 export function resolveClaudeSessionFilePath(configDir: string, cwd: string, sessionId: string): string {
@@ -570,6 +624,511 @@ function isCompletedAssistantRecord(record: ClaudeRecord): boolean {
   return stopReason === "end_turn";
 }
 
+type ClaudeForkSdkResolution =
+  | { status: "available"; entry: string }
+  | { status: "unavailable"; reason: string };
+
+function resolveClaudeForkSdk(): ClaudeForkSdkResolution {
+  let entry: string;
+  try {
+    entry = claudeRequire.resolve(CLAUDE_AGENT_SDK_PACKAGE);
+  } catch {
+    return { status: "unavailable", reason: `The pinned ${CLAUDE_AGENT_SDK_PACKAGE}@${CLAUDE_FORK_SDK_VERSION} package is not installed.` };
+  }
+
+  let directory = path.dirname(entry);
+  while (true) {
+    try {
+      const manifest = recordValue(JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8")));
+      if (manifest?.name === CLAUDE_AGENT_SDK_PACKAGE) {
+        const sdkVersion = stringValue(manifest.version);
+        const pairedCliVersion = stringValue(manifest.claudeCodeVersion);
+        if (sdkVersion !== CLAUDE_FORK_SDK_VERSION || pairedCliVersion !== CLAUDE_FORK_SDK_CLI_VERSION) {
+          return {
+            status: "unavailable",
+            reason: `Claude Agent SDK ${sdkVersion ?? "unknown"} declares Claude Code ${pairedCliVersion ?? "unknown"}; Rudder requires SDK ${CLAUDE_FORK_SDK_VERSION} paired with Claude Code ${CLAUDE_FORK_SDK_CLI_VERSION}.`,
+          };
+        }
+        return { status: "available", entry };
+      }
+    } catch {
+      // Continue walking toward the package root.
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return { status: "unavailable", reason: `Could not verify the installed ${CLAUDE_AGENT_SDK_PACKAGE} package metadata.` };
+}
+
+function claudeForkEvidence(profile: ClaudeLocalProfileTransport): ClaudeCapabilityEvidence {
+  const base = profileEvidence(profile);
+  if (base.status !== "supported") return base;
+  if (!path.isAbsolute(profile.cwd) || !path.isAbsolute(profile.configDir)) {
+    return {
+      ...base,
+      status: "unsupported",
+      transport: CLAUDE_FORK_TRANSPORT,
+      reason: "Claude exact boundary fork requires absolute host-authorized cwd and CLAUDE_CONFIG_DIR paths.",
+    };
+  }
+  if (profile.readFile) {
+    return {
+      ...base,
+      status: "unsupported",
+      transport: CLAUDE_FORK_TRANSPORT,
+      reason: "Claude exact boundary fork requires a local host profile transport because the SDK writes the child session to the profile-owned session store.",
+    };
+  }
+  if (profile.providerVersion !== CLAUDE_FORK_SDK_CLI_VERSION) {
+    return {
+      ...base,
+      status: "unsupported",
+      transport: CLAUDE_FORK_TRANSPORT,
+      reason: `Exact Claude boundary fork is verified only for Claude Code ${CLAUDE_FORK_SDK_CLI_VERSION} with Claude Agent SDK ${CLAUDE_FORK_SDK_VERSION}; this profile reports ${profile.providerVersion || "no version"}.`,
+    };
+  }
+  const sdk = resolveClaudeForkSdk();
+  if (sdk.status !== "available") {
+    return {
+      ...base,
+      status: "unsupported",
+      transport: CLAUDE_FORK_TRANSPORT,
+      reason: sdk.reason,
+    };
+  }
+  return {
+    ...base,
+    transport: CLAUDE_FORK_TRANSPORT,
+    reason: `Claude Code ${CLAUDE_FORK_SDK_CLI_VERSION} is paired with pinned Claude Agent SDK ${CLAUDE_FORK_SDK_VERSION}; its profile-bound forkSession operation copies through an exact completed assistant UUID without invoking inference.`,
+  };
+}
+
+function nativeForkError(message: string): Error {
+  const error = new Error(message);
+  error.name = "ClaudeNativeForkError";
+  return error;
+}
+
+function isClaudeUuid(value: string): boolean {
+  return CLAUDE_UUID_PATTERN.test(value);
+}
+
+function sdkTranscriptEvents(records: ClaudeParsedRecord[]): ClaudeParsedRecord[] {
+  return records.filter((entry) => (
+    Boolean(entry.uuid)
+    && CLAUDE_SESSION_EVENT_TYPES.has(stringValue(entry.record.type) ?? "")
+    && entry.record.isSidechain !== true
+  ));
+}
+
+function verifyForkSelector(input: ClaudeNativeForkRequest, boundary: string): void {
+  if (!input.selector) return;
+  if (stringValue(input.selector.kind) !== "claude_chain") {
+    throw nativeForkError("Claude native fork requires a claude_chain source selector.");
+  }
+  const selectorSessionId = stringValue(input.selector.sessionId);
+  if (selectorSessionId && selectorSessionId !== input.session.sessionId) {
+    throw nativeForkError("Claude native fork selector does not match the source session.");
+  }
+  const selectorBoundary = selectorValue(input.selector, ["throughInclusiveUuid", "through", "executionRef"]);
+  if (selectorBoundary && selectorBoundary !== boundary) {
+    throw nativeForkError("Claude native fork boundary does not match the persisted Run selector.");
+  }
+  const selectorStatus = stringValue(input.selector.boundaryStatus);
+  if (selectorStatus && ["missing", "unknown", "partial", "terminal_only"].includes(selectorStatus)) {
+    throw nativeForkError(`Claude native fork cannot use a ${selectorStatus} Run boundary.`);
+  }
+}
+
+function verifyForkSource(
+  input: ClaudeNativeForkRequest,
+  profile: ClaudeLocalProfileTransport,
+  records: ClaudeParsedRecord[],
+): { parentPath: string; transcriptEvents: ClaudeParsedRecord[]; boundaryIndex: number } {
+  const binding = input.binding;
+  if (!binding || !binding.hostId.trim() || !binding.profileId.trim() || !bindingMatches(binding, profile)) {
+    throw nativeForkError("Claude native fork requires the exact host-authorized profile binding.");
+  }
+  if (input.runtimeType !== "claude_local") throw nativeForkError("Claude native fork received a different runtime type.");
+  if (!path.isAbsolute(profile.cwd) || !path.isAbsolute(profile.configDir)) {
+    throw nativeForkError("Claude native fork requires absolute host-authorized cwd and CLAUDE_CONFIG_DIR paths.");
+  }
+  if (profile.readFile) {
+    throw nativeForkError("Claude native fork requires a local host profile transport; a redirected transcript reader cannot authorize SDK writes.");
+  }
+
+  const sessionId = input.session.sessionId.trim();
+  const boundary = input.boundary.trim();
+  if (!isClaudeUuid(sessionId)) throw nativeForkError("Claude Agent SDK fork requires a UUID source session ID.");
+  if (!isClaudeUuid(boundary)) throw nativeForkError("Claude native fork requires a UUID assistant boundary.");
+  const params = input.session.sessionParams;
+  const persistedSessionId = stringValue(params.sessionId ?? params.session_id);
+  if (persistedSessionId && persistedSessionId !== sessionId) {
+    throw nativeForkError("Claude native fork session metadata contains a different provider session ID.");
+  }
+  const storedCwd = stringValue(params.cwd);
+  if (storedCwd && path.resolve(storedCwd) !== path.resolve(profile.cwd)) {
+    throw nativeForkError("Claude native fork source session cwd does not match the authorized profile.");
+  }
+  const storedConfigDir = stringValue(params.claudeConfigDir ?? params.configDir);
+  if (storedConfigDir && path.resolve(storedConfigDir) !== path.resolve(profile.configDir)) {
+    throw nativeForkError("Claude native fork source session config directory does not match the authorized profile.");
+  }
+  const storedFilePath = stringValue(params.sessionFilePath ?? params.claudeSessionFilePath);
+  const parentPath = resolveClaudeSessionFilePath(profile.configDir, profile.cwd, sessionId);
+  if (storedFilePath && path.resolve(storedFilePath) !== path.resolve(parentPath)) {
+    throw nativeForkError("Claude native fork source session file does not match the authorized profile.");
+  }
+  verifyForkSelector(input, boundary);
+
+  const transcriptEvents = sdkTranscriptEvents(records);
+  const byUuid = new Map<string, ClaudeParsedRecord>();
+  for (const entry of transcriptEvents) {
+    const uuid = entry.uuid!;
+    if (byUuid.has(uuid)) throw nativeForkError("Claude source session contains duplicate transcript UUIDs.");
+    byUuid.set(uuid, entry);
+    const rowSessionId = sessionIdFromRecord(entry.record);
+    if (rowSessionId && rowSessionId !== sessionId) {
+      throw nativeForkError("Claude source session contains a transcript record from another session.");
+    }
+  }
+  const boundaryIndex = transcriptEvents.findIndex((entry) => entry.uuid === boundary);
+  const boundaryRecord = boundaryIndex >= 0 ? transcriptEvents[boundaryIndex] : undefined;
+  if (!boundaryRecord) throw nativeForkError(`Claude source session has no transcript record with boundary UUID ${boundary}.`);
+  if (!isCompletedAssistantRecord(boundaryRecord.record)) {
+    throw nativeForkError("Claude native fork boundary is not a completed assistant end_turn record.");
+  }
+
+  const sourceBoundaryRecordIndex = records.findIndex((entry) => entry.uuid === boundary);
+  const postBoundaryReplacement = records.slice(sourceBoundaryRecordIndex + 1).find((entry) => (
+    stringValue(entry.record.type) === "content-replacement"
+    && stringValue(entry.record.sessionId) === sessionId
+  ));
+  if (postBoundaryReplacement) {
+    throw nativeForkError("Claude native fork cannot include a content-replacement record after the selected assistant boundary.");
+  }
+
+  let current: ClaudeParsedRecord | undefined = boundaryRecord;
+  const visited = new Set<string>();
+  while (current) {
+    const uuid = current.uuid;
+    if (!uuid || visited.has(uuid)) throw nativeForkError("Claude native fork boundary ancestry is cyclic or ambiguous.");
+    visited.add(uuid);
+    if (!current.parentUuid) break;
+    current = byUuid.get(current.parentUuid);
+    if (!current) throw nativeForkError("Claude native fork boundary ancestry is incomplete.");
+  }
+  return { parentPath, transcriptEvents, boundaryIndex };
+}
+
+async function runClaudeSdkFork(
+  profile: ClaudeLocalProfileTransport,
+  sdkEntry: string,
+  input: Pick<ClaudeNativeForkRequest, "session" | "boundary">,
+  parentBytes: Buffer,
+): Promise<{ sessionId: string; transcript: Buffer }> {
+  const temporaryHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-fork-home-"));
+  const temporaryConfigDir = path.join(temporaryHome, "claude-profile");
+  const temporarySessionPath = resolveClaudeSessionFilePath(temporaryConfigDir, profile.cwd, input.session.sessionId);
+  const temporarySessionDirectory = path.dirname(temporarySessionPath);
+
+  let result: { sessionId: string; transcript: Buffer } | null = null;
+  let operationError: unknown;
+  try {
+    await fs.mkdir(temporarySessionDirectory, { recursive: true });
+    await fs.writeFile(temporarySessionPath, parentBytes, { flag: "wx" });
+
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", CLAUDE_FORK_WORKER_SOURCE], {
+      cwd: path.resolve(profile.cwd),
+      env: {
+        HOME: temporaryHome,
+        USERPROFILE: temporaryHome,
+        TMPDIR: temporaryHome,
+        CLAUDE_CONFIG_DIR: temporaryConfigDir,
+        RUDDER_CLAUDE_AGENT_SDK_ENTRY: sdkEntry,
+        PATH: "",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const output = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+      child.stderr.on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-4096); });
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ code, stdout, stderr }));
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(JSON.stringify({
+        sessionId: input.session.sessionId,
+        cwd: path.resolve(profile.cwd),
+        boundary: input.boundary,
+      }));
+    });
+
+    if (output.code !== 0) {
+      throw nativeForkError(`Claude Agent SDK forkSession failed${output.stderr ? `: ${output.stderr.trim()}` : ` (exit ${output.code ?? "signal"})`}.`);
+    }
+    const marker = "RUDDER_CLAUDE_FORK_RESULT:";
+    const markerIndex = output.stdout.lastIndexOf(marker);
+    if (markerIndex < 0) throw nativeForkError("Claude Agent SDK forkSession returned no child session identity.");
+    let sdkResult: unknown;
+    try {
+      sdkResult = JSON.parse(output.stdout.slice(markerIndex + marker.length).trim());
+    } catch {
+      throw nativeForkError("Claude Agent SDK forkSession returned malformed child session data.");
+    }
+    const childSessionId = stringValue(recordValue(sdkResult)?.sessionId);
+    if (!childSessionId || !isClaudeUuid(childSessionId)) {
+      throw nativeForkError("Claude Agent SDK forkSession returned an invalid child session ID.");
+    }
+    if (childSessionId === input.session.sessionId) {
+      throw nativeForkError("Claude Agent SDK returned the parent session as its fork.");
+    }
+    const temporaryChildPath = resolveClaudeSessionFilePath(temporaryConfigDir, profile.cwd, childSessionId);
+    result = { sessionId: childSessionId, transcript: await fs.readFile(temporaryChildPath) };
+  } catch (error) {
+    operationError = error;
+  }
+
+  try {
+    await fs.rm(temporaryHome, { recursive: true, force: true });
+  } catch (cleanupError) {
+    const operationMessage = operationError instanceof Error ? operationError.message : String(operationError ?? "none");
+    const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+    let stagedChildPaths: string[] = [];
+    try {
+      const entries = await fs.readdir(temporarySessionDirectory, { withFileTypes: true });
+      stagedChildPaths = entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl") && entry.name !== path.basename(temporarySessionPath))
+        .map((entry) => path.join(temporarySessionDirectory, entry.name));
+    } catch {
+      // The staging directory path remains actionable if it cannot be inspected.
+    }
+    const childDetail = stagedChildPaths.length > 0
+      ? ` Candidate child file(s): ${stagedChildPaths.join(", ")}.`
+      : result?.sessionId
+        ? ` The staged child session ID is ${result.sessionId}.`
+        : " The SDK may have written a child before returning its identity.";
+    throw nativeForkError(`Claude Agent SDK fork staging cleanup failed at ${temporaryHome}.${childDetail} Inspect or reconcile files under ${temporarySessionDirectory}. Fork error: ${operationMessage}. Cleanup error: ${cleanupMessage}.`);
+  }
+
+  if (operationError) throw operationError;
+  if (!result) throw nativeForkError("Claude Agent SDK fork produced no staged child transcript.");
+  return result;
+}
+
+function expectedForkRecords(
+  transcriptEvents: ClaudeParsedRecord[],
+  boundaryIndex: number,
+): ClaudeParsedRecord[] {
+  return transcriptEvents
+    .slice(0, boundaryIndex + 1)
+    .filter((entry) => stringValue(entry.record.type) !== "progress");
+}
+
+async function verifyClaudeForkChild(input: {
+  profile: ClaudeLocalProfileTransport;
+  parentSessionId: string;
+  childSessionId: string;
+  boundary: string;
+  parentRecords: ClaudeParsedRecord[];
+  expectedRecords: ClaudeParsedRecord[];
+}): Promise<{ childBoundary: string; identityMap: Record<string, string> }> {
+  const childPath = resolveClaudeSessionFilePath(input.profile.configDir, input.profile.cwd, input.childSessionId);
+  const childRaw = await fs.readFile(childPath, "utf8");
+  const parsedChild = parseClaudeSessionJsonl(childRaw);
+  if (parsedChild.malformed) throw nativeForkError("Claude Agent SDK created a malformed child session transcript.");
+
+  const childEvents = sdkTranscriptEvents(parsedChild.records);
+  const childBySource = new Map<string, ClaudeParsedRecord>();
+  for (const childEvent of childEvents) {
+    const forkedFrom = recordValue(childEvent.record.forkedFrom);
+    if (stringValue(forkedFrom?.sessionId) !== input.parentSessionId) {
+      throw nativeForkError("Claude Agent SDK child transcript contains an event without the expected parent session identity.");
+    }
+    const sourceUuid = stringValue(forkedFrom?.messageUuid);
+    if (!sourceUuid || childBySource.has(sourceUuid)) {
+      throw nativeForkError("Claude Agent SDK child transcript has missing or duplicate source message identities.");
+    }
+    childBySource.set(sourceUuid, childEvent);
+  }
+
+  if (childEvents.length !== input.expectedRecords.length || childBySource.size !== input.expectedRecords.length) {
+    throw nativeForkError("Claude Agent SDK child transcript does not contain exactly the source prefix through the requested boundary.");
+  }
+  const expectedIds = new Set(input.expectedRecords.map((entry) => entry.uuid!));
+  const actualSourceOrder = childEvents.map((entry) => stringValue(recordValue(entry.record.forkedFrom)?.messageUuid));
+  if (actualSourceOrder.some((sourceUuid, index) => sourceUuid !== input.expectedRecords[index]?.uuid)) {
+    throw nativeForkError("Claude Agent SDK child transcript does not preserve the source message order through the boundary.");
+  }
+  const identityMap: Record<string, string> = {};
+  const childIds = new Set<string>();
+  const parentByUuid = new Map(input.parentRecords.flatMap((entry) => entry.uuid ? [[entry.uuid, entry] as const] : []));
+  for (const source of input.expectedRecords) {
+    const sourceUuid = source.uuid!;
+    const childEvent = childBySource.get(sourceUuid);
+    if (!childEvent || stringValue(childEvent.record.type) !== stringValue(source.record.type)) {
+      throw nativeForkError(`Claude Agent SDK child transcript is missing source event ${sourceUuid}.`);
+    }
+    const childUuid = childEvent.uuid;
+    if (!childUuid || !isClaudeUuid(childUuid) || childUuid === sourceUuid || childIds.has(childUuid)) {
+      throw nativeForkError("Claude Agent SDK did not remap every copied message UUID to a distinct child identity.");
+    }
+    const childSessionId = sessionIdFromRecord(childEvent.record);
+    if (childSessionId && childSessionId !== input.childSessionId) {
+      throw nativeForkError("Claude Agent SDK child event contains a mismatched session ID.");
+    }
+    const sourceParentUuid = source.parentUuid;
+    let expectedChildParent: string | null = null;
+    let parent = sourceParentUuid ? parentByUuid.get(sourceParentUuid) : undefined;
+    while (parent) {
+      if (stringValue(parent.record.type) !== "progress") {
+        expectedChildParent = identityMap[parent.uuid!] ?? null;
+        break;
+      }
+      parent = parent.parentUuid ? parentByUuid.get(parent.parentUuid) : undefined;
+    }
+    if ((childEvent.parentUuid ?? null) !== expectedChildParent) {
+      throw nativeForkError(`Claude Agent SDK child event ${childUuid} does not preserve the remapped parent chain.`);
+    }
+    identityMap[sourceUuid] = childUuid;
+    childIds.add(childUuid);
+  }
+  if (Object.keys(identityMap).length !== expectedIds.size) {
+    throw nativeForkError("Claude Agent SDK child identity map is incomplete.");
+  }
+  const childBoundary = identityMap[input.boundary];
+  if (!childBoundary) throw nativeForkError("Claude Agent SDK did not include the selected assistant boundary in its child session.");
+  return { childBoundary, identityMap };
+}
+
+async function forkClaudeNativeSession(
+  input: ClaudeNativeForkRequest,
+  profile: ClaudeLocalProfileTransport,
+): Promise<ClaudeNativeForkResult> {
+  const evidence = claudeForkEvidence(profile);
+  if (evidence.status !== "supported") throw nativeForkError(evidence.reason);
+  if (input.signal?.aborted) throw nativeForkError("Claude native fork was aborted before source validation.");
+  if (!input.binding || !bindingMatches(input.binding, profile)) {
+    throw nativeForkError("Claude native fork requires the exact host-authorized profile binding.");
+  }
+  const sdk = resolveClaudeForkSdk();
+  if (sdk.status !== "available") throw nativeForkError(sdk.reason);
+
+  let canonicalCwd: string;
+  try {
+    canonicalCwd = await fs.realpath(profile.cwd);
+  } catch {
+    throw nativeForkError("Claude native fork profile cwd is not available on the authorized host.");
+  }
+  const storedCwd = stringValue(input.session.sessionParams.cwd);
+  if (storedCwd) {
+    let canonicalStoredCwd: string;
+    try {
+      canonicalStoredCwd = await fs.realpath(storedCwd);
+    } catch {
+      throw nativeForkError("Claude native fork source session cwd is not available on the authorized host.");
+    }
+    if (canonicalStoredCwd !== canonicalCwd) {
+      throw nativeForkError("Claude native fork source session cwd does not match the authorized profile.");
+    }
+  }
+  const sdkProfile = { ...profile, cwd: canonicalCwd };
+  const sdkInput: ClaudeNativeForkRequest = {
+    ...input,
+    session: {
+      ...input.session,
+      sessionParams: { ...input.session.sessionParams, cwd: canonicalCwd },
+    },
+  };
+
+  const loaded = await loadProfileSessionRecords(sdkProfile, {
+    runtimeType: sdkInput.runtimeType,
+    binding: sdkInput.binding,
+    session: sdkInput.session,
+    selector: null,
+  });
+  if (loaded.status !== "available") throw nativeForkError(`Claude source session is not available in its authorized profile (${loaded.revision}).`);
+  if (loaded.malformed) throw nativeForkError("Claude source session JSONL is malformed or incomplete.");
+  const source = verifyForkSource(sdkInput, sdkProfile, loaded.records);
+  const parentBytes = await fs.readFile(source.parentPath);
+  if (stableHash(parentBytes.toString("utf8")) !== loaded.revision) {
+    throw nativeForkError("Claude source session changed during boundary validation; retry from a fresh Run snapshot.");
+  }
+  const expectedRecords = expectedForkRecords(source.transcriptEvents, source.boundaryIndex);
+  const sdkFork = await runClaudeSdkFork(sdkProfile, sdk.entry, sdkInput, parentBytes);
+  const childSessionId = sdkFork.sessionId;
+  let childPath: string | null = null;
+  let childCreated = false;
+  try {
+    childPath = resolveClaudeSessionFilePath(sdkProfile.configDir, sdkProfile.cwd, childSessionId);
+    if (input.signal?.aborted) throw nativeForkError("Claude native fork was canceled while the provider operation completed.");
+    const parentAfterFork = await fs.readFile(source.parentPath);
+    if (!parentBytes.equals(parentAfterFork)) {
+      throw nativeForkError("Claude source session changed while the native fork was being created.");
+    }
+    const childFile = await fs.open(childPath, "wx");
+    childCreated = true;
+    try {
+      await childFile.writeFile(sdkFork.transcript);
+    } finally {
+      await childFile.close();
+    }
+    const child = await verifyClaudeForkChild({
+      profile: sdkProfile,
+      parentSessionId: sdkInput.session.sessionId,
+      childSessionId,
+      boundary: sdkInput.boundary,
+      parentRecords: source.transcriptEvents,
+      expectedRecords,
+    });
+    return {
+      session: {
+        sessionId: childSessionId,
+        sessionDisplayId: childSessionId,
+        sessionParams: {
+          sessionId: childSessionId,
+          cwd: canonicalCwd,
+          claudeConfigDir: path.resolve(profile.configDir),
+          sessionFilePath: childPath,
+          transport: CLAUDE_FORK_TRANSPORT,
+          profileHostId: profile.binding.hostId,
+          profileId: profile.binding.profileId,
+          ...(profile.binding.id ? { profileBindingId: profile.binding.id } : {}),
+          ...(profile.binding.orgId ? { profileOrgId: profile.binding.orgId } : {}),
+          ...(profile.binding.workspaceBindingId ? { workspaceBindingId: profile.binding.workspaceBindingId } : {}),
+          ...(profile.binding.capabilityRevision ? { capabilityRevision: profile.binding.capabilityRevision } : {}),
+          ...(stringValue(input.session.sessionParams.workspaceId) ? { workspaceId: stringValue(input.session.sessionParams.workspaceId)! } : {}),
+          ...(stringValue(input.session.sessionParams.repoUrl) ? { repoUrl: stringValue(input.session.sessionParams.repoUrl)! } : {}),
+          ...(stringValue(input.session.sessionParams.repoRef) ? { repoRef: stringValue(input.session.sessionParams.repoRef)! } : {}),
+          forkedFromSessionId: input.session.sessionId,
+          lastUuid: child.childBoundary,
+          lastAssistantUuid: child.childBoundary,
+        },
+      },
+      boundary: child.childBoundary,
+      sourceBoundary: input.boundary,
+      identityMap: child.identityMap,
+      continuity: "native",
+    };
+  } catch (error) {
+    if (childCreated && childPath) {
+      try {
+        await fs.rm(childPath, { force: true });
+      } catch (cleanupError) {
+        const operationMessage = error instanceof Error ? error.message : String(error);
+        const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        throw nativeForkError(`Claude native fork failed and child session cleanup also failed at ${childPath}; reconcile that exact session file. Fork error: ${operationMessage}. Cleanup error: ${cleanupMessage}.`);
+      }
+    }
+    throw error;
+  }
+}
+
 export async function verifyClaudeSessionAssistantHead(input: {
   profile: ClaudeLocalProfileTransport;
   binding: ClaudeProviderBindingRef;
@@ -687,7 +1246,7 @@ function profileEvidence(profile: ClaudeLocalProfileTransport): ClaudeCapability
 
 function unsupportedNativeEvidence(
   profile: ClaudeLocalProfileTransport,
-  capability: "fork" | "steer" | "interrupt",
+  capability: "steer" | "interrupt",
 ): ClaudeCapabilityEvidence {
   const evidence = profileEvidence(profile);
   if (evidence.status !== "supported") {
@@ -696,16 +1255,14 @@ function unsupportedNativeEvidence(
       reason: `${evidence.reason} Claude ${capability} remains unclassified until the verified profile transport is available.`,
     };
   }
-  const reason = capability === "fork"
-    ? "Claude Code CLI supports --fork-session with --resume/--continue, but it does not accept a completed assistant UUID as the fork boundary. This adapter has no bound Agent SDK operation to create that branch without submitting a query, so exact native Side Chat fork is unsupported."
-    : capability === "steer"
-      ? "Claude Code supports text steer through its official --input-format stream-json user-message protocol; a live execute handle is required before sending it."
-      : "Claude Code has no provider message-level interrupt command; process interruption remains lifecycle-authoritative and is only available through a live execute handle.";
+  const reason = capability === "steer"
+    ? "Claude Code supports text steer through its official --input-format stream-json user-message protocol; a live execute handle is required before sending it."
+    : "Claude Code has no provider message-level interrupt command; process interruption remains lifecycle-authoritative and is only available through a live execute handle.";
   return {
-    status: capability === "fork" ? "unsupported" : "supported",
+    status: "supported",
     reason: `Claude Code ${profile.providerVersion || CLAUDE_NATIVE_VERSION}: ${reason}`,
     providerVersion: profile.providerVersion ?? null,
-    transport: capability === "fork" ? CLAUDE_NATIVE_TRANSPORT : "claude-cli-stream-json",
+    transport: "claude-cli-stream-json",
     profileBound: true,
     profileRequired: true,
   };
@@ -745,8 +1302,8 @@ const staticTranscriptEvidence: ClaudeCapabilityEvidence = {
 
 const staticForkEvidence: ClaudeCapabilityEvidence = {
   status: "unknown",
-  reason: "Claude boundary fork cannot be classified until the requested provider profile is bound; the unbound adapter does not claim a fork hook.",
-  transport: "claude-cli",
+  reason: `Claude exact assistant-boundary fork requires host authorization and the pinned Claude Agent SDK ${CLAUDE_FORK_SDK_VERSION} paired with Claude Code ${CLAUDE_FORK_SDK_CLI_VERSION}.`,
+  transport: CLAUDE_FORK_TRANSPORT,
   profileBound: false,
   profileRequired: true,
 };
@@ -818,7 +1375,10 @@ export interface ClaudeRuntimeProviderCapabilityAdapter {
     evidence: ClaudeCapabilityEvidence;
     readRange: (input: ClaudeNativeTranscriptReadRequest) => Promise<ClaudeNativeTranscriptReadResult>;
   };
-  fork: { evidence: ClaudeCapabilityEvidence };
+  fork: {
+    evidence: ClaudeCapabilityEvidence;
+    fork: (input: ClaudeNativeForkRequest) => Promise<ClaudeNativeForkResult>;
+  };
   control: {
     steer: {
       evidence: ClaudeCapabilityEvidence;
@@ -862,7 +1422,10 @@ function boundCapabilities(profile: ClaudeLocalProfileTransport): ClaudeRuntimeP
       evidence,
       readRange: (input) => readProfileSession(profile, input),
     },
-    fork: { evidence: unsupportedNativeEvidence(profile, "fork") },
+    fork: {
+      evidence: claudeForkEvidence(profile),
+      fork: (input) => forkClaudeNativeSession(input, profile),
+    },
     control: {
       steer: {
         evidence: unsupportedNativeEvidence(profile, "steer"),
@@ -900,7 +1463,10 @@ function unknownCapabilities(reason: string): ClaudeRuntimeProviderCapabilityAda
       evidence,
       readRange: async () => ({ items: [], nextCursor: null, source: "native", revision: "unavailable", availability: "offline", completeness: "unknown" }),
     },
-    fork: { evidence: { ...staticForkEvidence, reason } },
+    fork: {
+      evidence: { ...staticForkEvidence, reason },
+      fork: async () => { throw nativeForkError(reason); },
+    },
     control: {
       steer: { evidence: { ...staticControlEvidence, reason }, mode: "native", requiresHandle: true, execute: delegateSteer },
       interrupt: { evidence: { ...staticControlEvidence, reason }, mode: "process", requiresHandle: true, execute: delegateInterrupt },

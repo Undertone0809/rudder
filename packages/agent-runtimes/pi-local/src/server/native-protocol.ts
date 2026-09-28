@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeApprovalRequest,
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlHandle,
   AgentRuntimeControlInterruptReason,
@@ -6,7 +7,6 @@ import type {
   AgentRuntimeControlSteerInput,
   AgentRuntimeControlSteerResult,
   AgentRuntimeExecutionContext,
-  AgentRuntimeApprovalRequest,
   AgentRuntimeExecutionResult,
   TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
@@ -641,10 +641,10 @@ class PiRpcClient {
     for (const waiter of waiters) waiter(response);
   }
 
-  private waitFor(command: string): Promise<PiRpcResponse> {
+  private waitFor(command: string, timeoutMs = RPC_TIMEOUT_MS): Promise<PiRpcResponse> {
     if (this.closed) return Promise.reject(new PiNativeCapabilityError("unknown", "Pi RPC process exited before its response."));
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new PiNativeCapabilityError("unknown", `Pi RPC ${command} timed out.`)), RPC_TIMEOUT_MS);
+      const timeout = setTimeout(() => reject(new PiNativeCapabilityError("unknown", `Pi RPC ${command} timed out.`)), timeoutMs);
       const abort = () => {
         clearTimeout(timeout);
         reject(this.signal?.reason ?? new Error("Pi RPC request cancelled"));
@@ -661,9 +661,9 @@ class PiRpcClient {
     });
   }
 
-  async command(command: string, extra: JsonRecord = {}): Promise<unknown> {
+  async command(command: string, extra: JsonRecord = {}, timeoutMs = RPC_TIMEOUT_MS): Promise<unknown> {
     if (!this.child.stdin.writable) throw new PiNativeCapabilityError("unknown", "Pi RPC stdin is not writable.");
-    const response = this.waitFor(command);
+    const response = this.waitFor(command, timeoutMs);
     this.child.stdin.write(`${JSON.stringify({ type: command, ...extra })}\n`);
     const result = await response;
     if (!result.success) throw rpcError(result);
@@ -691,7 +691,7 @@ class PiRpcClient {
     }
   }
 
-  async prompt(message: string): Promise<void> {
+  async prompt(message: string, timeoutMs = RPC_TIMEOUT_MS): Promise<void> {
     const startAgentEndCount = this.agentEndCount;
     const agentEnd = new Promise<void>((resolve, reject) => {
       const started = Date.now();
@@ -699,12 +699,12 @@ class PiRpcClient {
         if (this.agentEndCount > startAgentEndCount) return resolve();
         if (this.closed) return reject(new PiNativeCapabilityError("unknown", "Pi RPC ended before agent_end."));
         if (this.eventFailure) return reject(this.eventFailure);
-        if (Date.now() - started > RPC_TIMEOUT_MS) return reject(new PiNativeCapabilityError("unknown", "Pi RPC prompt timed out."));
+        if (Date.now() - started > timeoutMs) return reject(new PiNativeCapabilityError("unknown", "Pi RPC prompt timed out."));
         setTimeout(poll, 10);
       };
       poll();
     });
-    await this.command("prompt", { message });
+    await this.command("prompt", { message }, timeoutMs);
     await agentEnd;
     await this.drainEvents();
   }
@@ -720,22 +720,41 @@ class PiRpcClient {
   }
 }
 
-async function readSessionEntries(sessionFile: string): Promise<{ entries: PiSessionEntry[]; leafId: string | null }> {
-  const content = await fs.readFile(sessionFile, "utf8").catch(() => "");
+async function readSessionEntries(sessionFile: string): Promise<{
+  entries: PiSessionEntry[];
+  leafId: string | null;
+  hasInvalidEntries: boolean;
+  sessionHeaderIds: string[];
+}> {
+  let content: string;
+  try {
+    content = await fs.readFile(sessionFile, "utf8");
+  } catch {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session history could not be read.");
+  }
   const entries: PiSessionEntry[] = [];
+  let hasInvalidEntries = false;
   for (const line of content.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     let value: unknown;
-    try { value = JSON.parse(line); } catch { continue; }
+    try { value = JSON.parse(line); } catch {
+      hasInvalidEntries = true;
+      continue;
+    }
     const record = asRecord(value);
     const id = nonEmpty(record?.id);
-    if (!record || !id) continue;
+    if (!record || !id) {
+      hasInvalidEntries = true;
+      continue;
+    }
     entries.push({ id, parentId: nonEmpty(record.parentId), type: nonEmpty(record.type) ?? "unknown", value: record });
   }
-  const ids = new Set(entries.map((entry) => entry.id));
-  const childIds = new Set(entries.map((entry) => entry.parentId).filter((id): id is string => Boolean(id && ids.has(id))));
-  const leafId = [...entries].reverse().find((entry) => !childIds.has(entry.id))?.id ?? entries.at(-1)?.id ?? null;
-  return { entries, leafId };
+  const sessionHeaderIds = entries.filter((entry) => entry.type === "session").map((entry) => entry.id);
+  const historyEntries = entries.filter((entry) => entry.type !== "session");
+  const ids = new Set(historyEntries.map((entry) => entry.id));
+  const childIds = new Set(historyEntries.map((entry) => entry.parentId).filter((id): id is string => Boolean(id && ids.has(id))));
+  const leafId = [...historyEntries].reverse().find((entry) => !childIds.has(entry.id))?.id ?? historyEntries.at(-1)?.id ?? null;
+  return { entries, leafId, hasInvalidEntries, sessionHeaderIds };
 }
 
 function isAppendOnlySessionFile(before: string, after: string): boolean {
@@ -923,6 +942,12 @@ function applyRange(items: JsonRecord[], range: JsonRecord | null): JsonRecord[]
     return -1;
   };
   let result = [...items];
+  const start = range.start;
+  if (start !== undefined && start !== null) {
+    const id = idFor(start);
+    const index = id ? lastIndexFor(result, id) : -1;
+    result = index >= 0 ? result.slice(index) : typeof start === "number" ? result.slice(Math.floor(start)) : [];
+  }
   const from = range.fromExclusive ?? range.after;
   if (from !== undefined && from !== null) {
     const id = idFor(from);
@@ -940,6 +965,22 @@ function applyRange(items: JsonRecord[], range: JsonRecord | null): JsonRecord[]
     result = id ? result.filter((item) => item.id === id || item.sourceEntryId === id) : [];
   }
   return result;
+}
+
+function assertTranscriptBoundary(
+  items: readonly JsonRecord[],
+  boundary: unknown,
+  label: string,
+  allowPosition = false,
+): void {
+  if (boundary === undefined || boundary === null || (allowPosition && typeof boundary === "number")) return;
+  const id = boundaryId(boundary);
+  if (!id) {
+    throw new PiNativeCapabilityError("unknown", `Pi transcript ${label} is not a supported exact boundary.`);
+  }
+  if (!items.some((item) => item.id === id || item.sourceEntryId === id)) {
+    throw new PiNativeCapabilityError("unknown", `Pi transcript ${label} is not present on the selected provider branch.`);
+  }
 }
 
 function unavailable(error: PiNativeCapabilityError): PiTranscriptResult {
@@ -961,12 +1002,6 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
     const selector = selectorRecord(input.selector);
     if (selector && selector.kind !== "pi_branch_range") throw new PiNativeCapabilityError("unsupported", "The Pi native reader received a non-Pi span selector.");
     const range = requestedRange(input);
-    const leafId = boundaryId(range?.throughInclusive)
-      ?? boundaryId(range?.end)
-      ?? boundaryId(selector?.throughInclusive)
-      ?? boundaryId(selector?.leafId)
-      ?? boundaryId(bound.params.leafId);
-    if (!leafId) throw new PiNativeCapabilityError("unknown", "Pi transcript selector has no provider leaf boundary.");
     const state = parseState(await withRpc({
       command: bound.command,
       cwd: bound.cwd,
@@ -982,7 +1017,51 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
       throw new PiNativeCapabilityError("unsupported", "Pi RPC resumed a different provider session file.");
     }
     const tree = await readSessionEntries(bound.sessionFile);
+    const rangeLeafId = boundaryId(range?.throughInclusive)
+      ?? boundaryId(range?.end);
+    const leafId = boundaryId(selector?.leafId)
+      ?? boundaryId(selector?.throughInclusive)
+      ?? boundaryId(bound.params.leafId)
+      ?? rangeLeafId;
+    const rangeHasBoundary = ["start", "fromExclusive", "after", "throughInclusive", "end", "itemId"]
+      .some((key) => range?.[key] !== undefined && range[key] !== null);
+    const hasSessionAnchor = Boolean(
+      boundaryId(bound.params.leafId)
+      || boundaryId(bound.params.previousLeafId)
+      || boundaryId(range?.fromExclusive)
+      || boundaryId(range?.after)
+      || rangeLeafId
+      || boundaryId(selector?.fromExclusive)
+      || boundaryId(selector?.throughInclusive)
+      || boundaryId(selector?.leafId),
+    );
+    const expectedSessionIds = [nonEmpty(state.sessionId), nonEmpty(bound.params.providerSessionId)]
+      .filter((value): value is string => Boolean(value));
+    if (
+      !leafId
+      && input.selector == null
+      && !rangeHasBoundary
+      && !hasSessionAnchor
+      && !tree.hasInvalidEntries
+      && tree.sessionHeaderIds.length === 1
+      && expectedSessionIds.length > 0
+      && expectedSessionIds.every((id) => id === tree.sessionHeaderIds[0])
+      && tree.entries.every((entry) => entry.type === "session")
+    ) {
+      return {
+        items: [],
+        nextCursor: null,
+        revision: revisionFor(bound.sessionFile, null, tree.entries),
+        source: "native",
+        availability: "available",
+        completeness: "complete",
+      };
+    }
+    if (!leafId) throw new PiNativeCapabilityError("unknown", "Pi transcript selector has no provider leaf boundary.");
     const branch = branchForLeaf(tree.entries, leafId);
+    if (!branch.some((entry) => entry.id === leafId) || branch.at(-1)?.id !== leafId) {
+      throw new PiNativeCapabilityError("unknown", "Pi transcript selected leaf is not present on the resolved provider branch.");
+    }
     const previousLeaf = boundaryId(range?.fromExclusive)
       ?? boundaryId(range?.after)
       ?? (selector && Object.prototype.hasOwnProperty.call(selector, "fromExclusive")
@@ -1018,6 +1097,21 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
         ...(text ? { text } : {}),
       }));
     });
+    for (const [label, boundary] of [
+      ["selector exclusive start", selector?.fromExclusive],
+      ["selector inclusive end", selector?.throughInclusive],
+      ["selector leaf", selector?.leafId],
+      ["range inclusive start", range?.start],
+      ["range exclusive start", range?.fromExclusive],
+      ["range exclusive start", range?.after],
+      ["range inclusive end", range?.throughInclusive],
+      ["range inclusive end", range?.end],
+      ["range item", range?.itemId],
+      ["selected branch leaf", leafId],
+      ["session exclusive start", previousLeaf],
+    ] as const) {
+      assertTranscriptBoundary(records, boundary, label, label.startsWith("range") && label !== "range item");
+    }
     return {
       items: applyRange(records, effectiveRange),
       nextCursor: null,
@@ -1151,11 +1245,11 @@ function parseState(value: unknown): JsonRecord {
   return state;
 }
 
-async function waitForPiSettled(rpc: PiRpcClient, signal?: AbortSignal): Promise<JsonRecord> {
-  const deadline = Date.now() + RPC_TIMEOUT_MS;
+async function waitForPiSettled(rpc: PiRpcClient, signal?: AbortSignal, timeoutMs = RPC_TIMEOUT_MS): Promise<JsonRecord> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw signal.reason ?? new Error("Pi RPC session was cancelled.");
-    const state = parseState(await rpc.command("get_state"));
+    const state = parseState(await rpc.command("get_state", {}, Math.max(1, deadline - Date.now())));
     const isStreaming = state.isStreaming;
     const isCompacting = state.isCompacting;
     const pendingMessageCount = state.pendingMessageCount;
@@ -1170,7 +1264,7 @@ async function waitForPiSettled(rpc: PiRpcClient, signal?: AbortSignal): Promise
     if (!isStreaming && !isCompacting && pendingMessageCount === 0 && !rpc.isRetrying && !rpc.willRetryAfterAgentEnd) return state;
     await new Promise((resolve) => setTimeout(resolve, RPC_SETTLED_POLL_MS));
   }
-  throw new PiNativeCapabilityError("unknown", "Pi RPC did not reach a native settled state before timing out.");
+    throw new PiNativeCapabilityError("unknown", "Pi RPC did not reach a native settled state before timing out.");
 }
 
 async function handlePiExtensionUiRequest(input: {
@@ -1269,6 +1363,7 @@ export function createPiRpcControlHandle(input: {
   rpc: { command(command: string, extra?: JsonRecord): Promise<unknown> };
   sessionId: string;
   providerTurnId: string | null;
+  onStopAcknowledged?: () => void;
 }): AgentRuntimeControlHandle {
   return {
     runtimeType: "pi_local",
@@ -1292,6 +1387,7 @@ export function createPiRpcControlHandle(input: {
     },
     async interrupt(_reason: AgentRuntimeControlInterruptReason): Promise<AgentRuntimeControlInterruptResult> {
       await input.rpc.command("abort");
+      input.onStopAcknowledged?.();
       return "acknowledged";
     },
     async dispose() {
@@ -1375,6 +1471,8 @@ export async function executePiNativeChat(input: {
   let lease: Awaited<ReturnType<NonNullable<AgentRuntimeControlAttemptLease["register"]>>> | null = null;
   let rpc!: PiRpcClient;
   let providerSessionId: string | null = null;
+  let promptSent = false;
+  let stopAcknowledged = false;
   const currentAttemptIsCurrent = () => {
     if (!input.controlAttempt || !lease) return !input.controlAttempt || !input.signal?.aborted;
     try {
@@ -1410,6 +1508,7 @@ export async function executePiNativeChat(input: {
         rpc,
         sessionId: nonEmpty(state.sessionId) ?? input.sessionFile,
         providerTurnId: null,
+        onStopAcknowledged: () => { stopAcknowledged = true; },
       }));
       if (!lease) throw new PiNativeCapabilityError("unknown", "Pi RPC control handle lost its attempt lease.");
     }
@@ -1423,8 +1522,12 @@ export async function executePiNativeChat(input: {
       rpcEnv: safeEnv(input.env),
     });
     if (!currentAttemptIsCurrent()) throw new PiNativeCapabilityError("unknown", "Pi RPC attempt lost ownership before prompt submission.");
-    await rpc.prompt(input.prompt);
-    const finalState = await waitForPiSettled(rpc, input.signal);
+    const runTimeoutMs = Number.isFinite(input.timeoutSec) && input.timeoutSec > 0
+      ? Math.max(1, input.timeoutSec * 1_000)
+      : RPC_TIMEOUT_MS;
+    promptSent = true;
+    await rpc.prompt(input.prompt, runTimeoutMs);
+    const finalState = await waitForPiSettled(rpc, input.signal, runTimeoutMs);
     providerSessionId = nonEmpty(finalState.sessionId) ?? nonEmpty(state.sessionId);
     const leafId = await extractLeafId(nonEmpty(finalState.sessionFile) ?? sessionFile);
     const content = eventSummary.finalAssistantText;
@@ -1464,6 +1567,7 @@ export async function executePiNativeChat(input: {
       exitCode: 0,
       signal: null,
       timedOut: false,
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
       errorMessage: null,
       sessionId: sessionFile,
       sessionParams: params,
@@ -1498,7 +1602,12 @@ export async function executePiNativeChat(input: {
     return {
       exitCode: 1,
       signal: null,
-      timedOut: false,
+      timedOut: /timed out/iu.test(message),
+      ...(stopAcknowledged
+        ? { nativeWriterQuiescence: { status: "confirmed" as const, source: "provider_stop_ack" as const } }
+        : promptSent
+          ? { nativeWriterQuiescence: { status: "unconfirmed" as const, reason: "Pi RPC prompt ended without an observed agent_end or abort acknowledgement." } }
+          : {}),
       errorMessage: message,
       errorCode: error instanceof PiNativeCapabilityError ? `pi_native_${error.status}` : "pi_native_rpc_error",
       sessionId: input.sessionFile,

@@ -251,4 +251,38 @@ providerDescribe("with the versioned read-only Python helper", () => {
       limit: 1,
     })).rejects.toMatchObject({ code: "cursor_scope_mismatch" });
   });
+
+  it("invalidates pagination when an existing source row payload changes", async () => {
+    const fixtureData = await fixture();
+    const first = await readHermesProductHistory({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      limit: 1,
+    });
+    expect(first.items[0]?.rowId).toBe(1);
+    expect(first.nextCursor).toBeTruthy();
+
+    const statePath = path.join(fixtureData.root, "home", "state.db");
+    const state = JSON.parse(await fs.readFile(statePath, "utf8")) as {
+      messages: Record<string, Array<Record<string, unknown>>>;
+    };
+    state.messages[fixtureData.sessionId]![0]!.content = "mutated after page one";
+    await fs.writeFile(statePath, JSON.stringify(state), "utf8");
+
+    const changed = await readHermesProductHistory({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      limit: 1,
+    });
+    expect(changed.revision).not.toBe(first.revision);
+    await expect(readHermesProductHistory({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      limit: 1,
+      cursor: first.nextCursor,
+    })).rejects.toMatchObject({ code: "cursor_snapshot_mismatch" });
+  });
 });

@@ -1,6 +1,7 @@
 import type {
   AgentRuntimeControlHandleLease,
   AgentRuntimeExecutionContext,
+  AgentRuntimeNativeWriterQuiescence,
   UsageSummary,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -84,6 +85,7 @@ export interface CodexAppServerChatResult {
   providerTurnId: string | null;
   resumed: boolean;
   clearSession: boolean;
+  nativeWriterQuiescence?: AgentRuntimeNativeWriterQuiescence;
 }
 
 function asRecord(value: unknown): JsonRecord | null {
@@ -494,6 +496,7 @@ export async function executeCodexAppServerChat(
   let turnId: string | null = null;
   let turnCompleted = false;
   let turnError: Error | null = null;
+  let interruptAcknowledged = false;
   let resolveTurn!: () => void;
   let rejectTurn!: (error: Error) => void;
   const turnDone = new Promise<void>((resolve, reject) => {
@@ -508,6 +511,8 @@ export async function executeCodexAppServerChat(
   let abortCleanup: (() => void) | null = null;
   let controlLease: AgentRuntimeControlHandleLease | null = null;
   let disposed = false;
+  let processTreeTerminated = false;
+  let result!: Omit<CodexAppServerChatResult, "nativeWriterQuiescence">;
 
   const emit = async (event: JsonRecord) => {
     const line = `${JSON.stringify(event)}\n`;
@@ -742,6 +747,7 @@ export async function executeCodexAppServerChat(
       if (!threadId || !turnId || client.state !== "ready") return "unverified" as const;
       try {
         await client.request("turn/interrupt", { threadId, turnId }, APP_SERVER_INTERRUPT_TIMEOUT_MS);
+        interruptAcknowledged = true;
         return "acknowledged" as const;
       } catch {
         return "unverified" as const;
@@ -757,12 +763,17 @@ export async function executeCodexAppServerChat(
     }
   };
 
-  const terminateAndWait = async () => {
-    if (!isProcessTreeAlive(child)) return;
+  const terminateAndWait = async (): Promise<boolean> => {
+    if (!child.pid) return false;
+    if (!isProcessTreeAlive(child)) return process.platform !== "win32";
     signalProcessGroup(child, false);
-    if (await waitForProcessTreeExit(child, APP_SERVER_PROCESS_HARD_DEADLINE_MS)) return;
+    if (await waitForProcessTreeExit(child, APP_SERVER_PROCESS_HARD_DEADLINE_MS)) {
+      return process.platform !== "win32";
+    }
     signalProcessGroup(child, true);
-    await waitForProcessTreeExit(child, 1_000);
+    const exited = await waitForProcessTreeExit(child, 1_000);
+    // On Windows this probe only observes the direct child, not its descendants.
+    return process.platform !== "win32" && exited;
   };
   const scheduleHardKill = () => {
     if (!forceKillTimer) {
@@ -961,7 +972,7 @@ export async function executeCodexAppServerChat(
 
     await turnDone;
     const finalTurnError = turnError as Error | null;
-    return {
+    result = {
       exitCode: finalTurnError ? 1 : 0,
       signal: options.abortSignal?.aborted ? "SIGTERM" : null,
       timedOut: false,
@@ -978,7 +989,7 @@ export async function executeCodexAppServerChat(
       clearSession,
     };
   } catch (error) {
-    return {
+    result = {
       exitCode: 1,
       signal: options.abortSignal?.aborted ? "SIGTERM" : null,
       timedOut: error instanceof Error && /^Timed out after /.test(error.message),
@@ -1000,7 +1011,21 @@ export async function executeCodexAppServerChat(
     await controlLease?.release().catch(() => undefined);
     disposed = true;
     client.dispose("Codex App Server chat execution complete");
-    await terminateAndWait();
+    processTreeTerminated = await terminateAndWait();
     if (forceKillTimer) clearTimeout(forceKillTimer);
   }
+
+  return {
+    ...result,
+    nativeWriterQuiescence: turnCompleted
+      ? { status: "confirmed", source: "provider_terminal" }
+      : processTreeTerminated
+        ? { status: "confirmed", source: "process_exit" }
+        : {
+            status: "unconfirmed",
+            reason: interruptAcknowledged
+              ? "Codex App Server acknowledged turn/interrupt, but its process tree exit was not verified."
+              : "Codex App Server returned without an observed terminal event or verified process-tree exit.",
+          },
+  };
 }

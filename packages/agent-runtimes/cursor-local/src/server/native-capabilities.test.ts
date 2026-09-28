@@ -16,6 +16,7 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 type SpawnFn = NonNullable<CursorLocalProfileTransport["spawn"]>;
+const CURRENT_CURSOR_VERSION = "2026.06.19-20-24-33-653a7fb";
 
 const binding: CursorProviderBindingRef = {
   hostId: "host-cursor-1",
@@ -57,11 +58,11 @@ function createSpawnFixture(
   return { spawn, requests };
 }
 
-function initializeResult(authMethods: JsonRecord[] = []): JsonRecord {
+function initializeResult(authMethods: JsonRecord[] = [], loadSession: boolean | null = true): JsonRecord {
   return {
     protocolVersion: 1,
     agentCapabilities: {
-      loadSession: true,
+      ...(loadSession !== null ? { loadSession } : {}),
       sessionCapabilities: { list: {} },
     },
     authMethods,
@@ -72,17 +73,21 @@ function loadedSessionResult(): JsonRecord {
   return { modes: {}, models: [], configOptions: [] };
 }
 
-function profile(spawn: SpawnFn): CursorLocalProfileTransport {
+function profile(spawn: SpawnFn, providerVersion = CURRENT_CURSOR_VERSION): CursorLocalProfileTransport {
   return {
     binding,
     cwd: "/tmp/cursor-project",
-    providerVersion: "2026.06.19-20-24-33-653a7fb",
+    providerVersion,
     command: "agent",
     spawn,
   };
 }
 
-function requestForSession(_spawn: SpawnFn, sessionId = "cursor-session-1"): CursorNativeTranscriptReadRequest {
+function requestForSession(
+  _spawn: SpawnFn,
+  sessionId = "cursor-session-1",
+  providerVersion: string | null = CURRENT_CURSOR_VERSION,
+): CursorNativeTranscriptReadRequest {
   return {
     runtimeType: "cursor",
       session: {
@@ -95,7 +100,7 @@ function requestForSession(_spawn: SpawnFn, sessionId = "cursor-session-1"): Cur
         cursorAcpCommand: "agent",
         cursorAcpProtocolVersion: 1,
         cursorAcpAuthMethodId: "cursor_login",
-        cursorProviderVersion: "2026.06.19-20-24-33-653a7fb",
+        ...(providerVersion ? { cursorProviderVersion: providerVersion } : {}),
         workspaceId: "workspace-1",
         profileHostId: binding.hostId,
         profileId: binding.profileId,
@@ -113,7 +118,7 @@ function requestForSession(_spawn: SpawnFn, sessionId = "cursor-session-1"): Cur
 }
 
 describe("Cursor ACP native capabilities", () => {
-  it("loads real ACP session replay and preserves the protocol request contract", async () => {
+  it("loads an ACP session replay fixture and preserves the protocol request contract", async () => {
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {
         output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
@@ -588,6 +593,9 @@ describe("Cursor ACP native capabilities", () => {
       "initialize", "initialized", "authenticate", "session/load", "session/prompt",
     ]);
     expect(resumedFixture.requests.find((request) => request.method === "authenticate")?.params).toEqual({ methodId: "organization_login" });
+    const capabilities = createCursorLocalProviderCapabilities(profile(resumedFixture.spawn));
+    expect(capabilities.sessionResume.evidence.status).toBe("supported");
+    expect(capabilities.transcript.evidence.status).toBe("supported");
   });
 
   it("reuses the persisted authentication method before transcript replay", async () => {
@@ -758,6 +766,8 @@ describe("Cursor ACP native capabilities", () => {
 
     expect(missing.availability).toBe("missing");
     expect(missing.revision).toContain("missing-session");
+    expect(adapter.sessionResume.evidence.status).toBe("unknown");
+    expect(adapter.transcript.evidence.status).toBe("unknown");
     expect(wrongProfile).toMatchObject({ availability: "incompatible", revision: "profile-mismatch" });
     expect(wrongCwd).toMatchObject({ availability: "incompatible", revision: "session-cwd-mismatch" });
     expect(fixture.requests.filter((request) => typeof request.id === "number")).toHaveLength(2);
@@ -777,6 +787,13 @@ describe("Cursor ACP native capabilities", () => {
     expect(adapter.control.steer.evidence.reason).toContain("no verified native steer");
     expect(adapter.control.steer.mode).toBeUndefined();
     expect(adapter.control.interrupt.mode).toBeUndefined();
+    expect(adapter.contextHandoff.evidence).toMatchObject({
+      status: "supported",
+      transport: "cursor-agent-cli",
+      profileBound: true,
+    });
+    expect(adapter.contextHandoff.evidence.reason).toContain("bounded prompt projection");
+    expect(adapter.contextHandoff.evidence.reason).toContain("not a native branch");
   });
 
   it("persists only non-secret ACP profile metadata with the session", () => {
@@ -827,31 +844,132 @@ describe("Cursor ACP native capabilities", () => {
     const adapter = createCursorLocalProviderCapabilities(profile(fixture.spawn));
 
     expect(adapter.sessionResume.evidence).toMatchObject({
-      status: "supported",
+      status: "unknown",
       transport: "cursor-agent-acp-stdio",
       profileBound: true,
       profileRequired: true,
     });
+    expect(adapter.sessionResume.evidence.reason).toContain("provider version alone does not establish");
+    expect(adapter.transcript.evidence.status).toBe("unknown");
     expect(adapter.input.evidence.transport).toBe("cursor-agent-cli");
+    expect(adapter.input.evidence.status).toBe("supported");
     expect(adapter.contextHandoff.evidence.transport).toBe("cursor-agent-cli");
     expect(adapter.transcript.evidence.transport).toBe("cursor-agent-acp-stdio");
   });
 
-  it("does not claim CLI support when the profile version is not available", () => {
+  it.each([
+    ["older", "2025.01.15"],
+    ["unknown", ""],
+  ])("does not infer native support from an %s provider version", (_label, providerVersion) => {
     const fixture = createSpawnFixture(() => undefined);
-    const adapter = createCursorLocalProviderCapabilities({ ...profile(fixture.spawn), providerVersion: "" });
+    const adapter = createCursorLocalProviderCapabilities(profile(fixture.spawn, providerVersion));
 
-    expect(adapter.input.evidence).toMatchObject({ status: "unknown", profileBound: true, transport: "cursor-agent-cli" });
+    expect(adapter.input.evidence).toMatchObject({ status: "supported", profileBound: true, transport: "cursor-agent-cli" });
     expect(adapter.sessionResume.evidence.status).toBe("unknown");
     expect(adapter.transcript.evidence.status).toBe("unknown");
+  });
+
+  it.each([
+    ["older", "2025.01.15"],
+    ["unknown", ""],
+  ])("attests resume and transcript only after session/load responds for an %s provider version", async (_label, providerVersion) => {
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/load") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "cursor-session-1", modes: {} } })}\n`);
+      }
+    });
+    const resolver = createCursorLocalProviderCapabilityResolver(() => profile(fixture.spawn, providerVersion));
+    const adapter = resolver("cursor", binding);
+
+    expect(adapter?.sessionResume.evidence.status).toBe("unknown");
+    expect(adapter?.transcript.evidence.status).toBe("unknown");
+    await adapter?.transcript.readRange(requestForSession(fixture.spawn, "cursor-session-1", providerVersion || null));
+
+    const refreshed = resolver("cursor", binding);
+    expect(refreshed?.sessionResume.evidence).toMatchObject({
+      status: "supported",
+      providerVersion: providerVersion || null,
+      transport: "cursor-agent-acp-stdio",
+      profileBound: true,
+    });
+    expect(refreshed?.transcript.evidence.status).toBe("supported");
+    expect(refreshed?.transcript.evidence.reason).toContain("session/load returned persisted session state");
+    const otherOrg = createCursorLocalProviderCapabilities({
+      ...profile(fixture.spawn, providerVersion),
+      binding: { ...binding, orgId: "org-cursor-2" },
+    });
+    expect(otherOrg.sessionResume.evidence.status).toBe("unknown");
+    expect(otherOrg.transcript.evidence.status).toBe("unknown");
+  });
+
+  it.each([
+    ["explicitly disabled", false, "unsupported"],
+    ["not reported", null, "unknown"],
+  ] as const)("keeps loadSession %s as %s without a method response", async (_label, loadSession, status) => {
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([], loadSession) })}\n`);
+      }
+    });
+    const adapter = createCursorLocalProviderCapabilities(profile(fixture.spawn));
+
+    await adapter.transcript.readRange(requestForSession(fixture.spawn));
+
+    expect(adapter.sessionResume.evidence.status).toBe(status);
+    expect(adapter.transcript.evidence.status).toBe(status);
+    expect(fixture.requests.filter((request) => request.method === "session/load")).toHaveLength(0);
+  });
+
+  it("marks session/load unsupported only when ACP returns Method not found", async () => {
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/load") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } })}\n`);
+      }
+    });
+    const adapter = createCursorLocalProviderCapabilities(profile(fixture.spawn, "2025.01.15"));
+
+    await adapter.transcript.readRange(requestForSession(fixture.spawn, "cursor-session-1", "2025.01.15"));
+
+    expect(adapter.sessionResume.evidence.status).toBe("unsupported");
+    expect(adapter.transcript.evidence).toMatchObject({
+      status: "unsupported",
+      providerVersion: "2025.01.15",
+      transport: "cursor-agent-acp-stdio",
+    });
+    expect(adapter.transcript.evidence.reason).toContain("Method not found");
+  });
+
+  it("keeps resume and transcript unknown when another ACP method is not found", async () => {
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } })}\n`);
+      }
+    });
+    const adapter = createCursorLocalProviderCapabilities(profile(fixture.spawn));
+
+    await adapter.transcript.readRange(requestForSession(fixture.spawn));
+
+    expect(adapter.sessionResume.evidence.status).toBe("unknown");
+    expect(adapter.transcript.evidence.status).toBe("unknown");
+    expect(fixture.requests.map((request) => request.method)).toEqual(["initialize"]);
   });
 
   it("exposes a profile resolver while preserving unknown before binding", () => {
     const fixture = createSpawnFixture(() => undefined);
     const resolver = createCursorLocalProviderCapabilityResolver(() => profile(fixture.spawn));
+    const unbound = resolver("cursor", null);
+    const bound = resolver("cursor", binding);
 
-    expect(resolver("cursor", binding)?.transcript.readRange).toBeTypeOf("function");
-    expect(resolver("cursor", null)?.transcript.evidence.status).toBe("unknown");
+    expect(bound?.transcript.readRange).toBeTypeOf("function");
+    expect(unbound?.transcript.evidence.status).toBe("unknown");
+    expect(unbound?.fork.evidence).toMatchObject({ status: "unknown", profileBound: false });
+    expect(unbound?.contextHandoff.evidence).toMatchObject({ status: "unknown", profileBound: false });
+    expect(bound?.fork.evidence).toMatchObject({ status: "unsupported", profileBound: true });
+    expect(bound?.contextHandoff.evidence).toMatchObject({ status: "supported", profileBound: true });
     expect(resolver("hermes_gateway", binding)).toBeNull();
   });
 
@@ -878,7 +996,12 @@ describe("Cursor ACP native capabilities", () => {
       controlAttempt: { ownerToken: "owner-1", attemptEpoch: 1, complete: async () => {},
         register: async (value) => { handle = value; return { isCurrent: () => true, release: async () => { released = true; } }; } },
     });
-    expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_incomplete_turn", sessionId: "cancel-session" });
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorCode: "cursor_native_incomplete_turn",
+      sessionId: "cancel-session",
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    });
     expect(fixture.requests.filter((request) => request.method === "session/cancel")).toEqual([
       { jsonrpc: "2.0", method: "session/cancel", params: { sessionId: "cancel-session" } },
     ]);
@@ -905,7 +1028,7 @@ describe("Cursor ACP native capabilities", () => {
           sessionId: "permission-session", toolCall: { title: "Read file", token: "secret-value" },
           options: [{ optionId: "once", kind: "allow_once", name: "Allow once" }],
         } };
-        output.write(`${JSON.stringify(permission)}\n${JSON.stringify(permission)}\n`);
+        output.write(`${JSON.stringify(permission)}\n`);
         return;
       }
       const result = request.method === "initialize" ? initializeResult()
@@ -931,35 +1054,32 @@ describe("Cursor ACP native capabilities", () => {
       ? { outcome: "selected", optionId: "once" } : { outcome: "cancelled" } });
   });
 
-  it("replays a completed permission response for a late duplicate request ID", async () => {
+  it.each(["replay", "changed content", "changed method"] as const)("rejects a completed permission correlation on %s", async (collision) => {
     const permissionId = "permission-retry";
-    let promptId: unknown;
-    let permissionResponseCount = 0;
     const permission = { jsonrpc: "2.0", id: permissionId, method: "session/request_permission", params: {
       sessionId: "permission-retry-session",
       toolCall: { title: "Read file" },
       options: [{ optionId: "once", kind: "allow_once", name: "Allow once" }],
     } };
+    const duplicate = collision === "replay" ? permission
+      : collision === "changed content" ? {
+        ...permission,
+        params: { ...permission.params, toolCall: { title: "Write file" } },
+      }
+        : {
+          ...permission,
+          method: "cursor/ask_question",
+          params: { toolCallId: "different-tool", title: "Different question" },
+        };
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {
         output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
       } else if (request.method === "session/new") {
         output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "permission-retry-session" } })}\n`);
       } else if (request.method === "session/prompt") {
-        promptId = request.id;
         output.write(`${JSON.stringify(permission)}\n`);
       } else if (!request.method && request.id === permissionId) {
-        permissionResponseCount += 1;
-        if (permissionResponseCount === 1) {
-          queueMicrotask(() => output.write(`${JSON.stringify(permission)}\n`));
-        } else if (permissionResponseCount === 2) {
-          output.write(`${JSON.stringify({
-            jsonrpc: "2.0",
-            method: "session/update",
-            params: { sessionId: "permission-retry-session", update: { sessionUpdate: "agent_message_chunk", executionRef: "permission-retry-execution", content: { type: "text", text: "done" } } },
-          })}\n`);
-          output.write(`${JSON.stringify({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } })}\n`);
-        }
+        queueMicrotask(() => output.write(`${JSON.stringify(duplicate)}\n`));
       }
     });
     const approvals: unknown[] = [];
@@ -982,11 +1102,204 @@ describe("Cursor ACP native capabilities", () => {
       waitForApproval: async () => ({ id: "approval-retry", status: "approved" }),
     });
 
-    expect(result.exitCode).toBe(0);
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_protocol-mismatch" });
+    expect(result.errorMessage).toContain(collision === "replay" ? "replayed" : "different request identity");
     expect(approvals).toHaveLength(1);
     const responses = fixture.requests.filter((request) => !request.method && request.id === permissionId);
-    expect(responses).toHaveLength(2);
-    expect(responses[0]?.result).toEqual(responses[1]?.result);
+    expect(responses).toHaveLength(1);
+    expect(responses[0]?.result).toEqual({ outcome: { outcome: "selected", optionId: "once" } });
+  });
+
+  it("rejects a reused request ID before dispatching either pending approval", async () => {
+    const first = { jsonrpc: "2.0", id: 42, method: "session/request_permission", params: {
+      sessionId: "permission-pending-session",
+      toolCall: { title: "Read file" },
+      options: [{ optionId: "once", kind: "allow_once", name: "Allow once" }],
+    } };
+    const conflicting = { ...first, params: { ...first.params, toolCall: { title: "Write file" } } };
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "permission-pending-session" } })}\n`);
+      } else if (request.method === "session/prompt") {
+        output.write(`${JSON.stringify(first)}\n${JSON.stringify(conflicting)}\n`);
+      }
+    });
+    const approvals: unknown[] = [];
+    const result = await executeCursorNativeChat({
+      profile: profile(fixture.spawn), binding, prompt: "read", model: "", onLog: async () => {},
+      controlAttempt: {
+        ownerToken: "owner-1",
+        attemptEpoch: 1,
+        complete: async () => {},
+        register: async () => ({ isCurrent: () => true, release: async () => {} }),
+      },
+      requestApproval: async (approval) => { approvals.push(approval); return { id: "pending-approval", status: "pending" }; },
+      waitForApproval: async () => ({ id: "pending-approval", status: "approved" }),
+    });
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_protocol-mismatch" });
+    expect(result.errorMessage).toContain("different request identity");
+    expect(approvals).toHaveLength(0);
+    expect(fixture.requests.filter((request) => !request.method && request.id === 42)).toHaveLength(0);
+  });
+
+  it("suppresses an approval response when its request ID conflicts while approval is pending", async () => {
+    const first = { jsonrpc: "2.0", id: 42, method: "session/request_permission", params: {
+      sessionId: "permission-inflight-session",
+      toolCall: { title: "Read file" },
+      options: [{ optionId: "once", kind: "allow_once", name: "Allow once" }],
+    } };
+    const conflicting = { ...first, params: { ...first.params, toolCall: { title: "Write file" } } };
+    let providerOutput: PassThrough | null = null;
+    let approvalWaitStarted = false;
+    let releaseApproval: (() => void) | undefined;
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "permission-inflight-session" } })}\n`);
+      } else if (request.method === "session/prompt") {
+        providerOutput = output;
+        output.write(`${JSON.stringify(first)}\n`);
+      }
+    });
+    const approvals: unknown[] = [];
+    const result = await executeCursorNativeChat({
+      profile: profile(fixture.spawn), binding, prompt: "read", model: "", onLog: async () => {},
+      controlAttempt: {
+        ownerToken: "owner-1",
+        attemptEpoch: 1,
+        complete: async () => {},
+        register: async () => ({ isCurrent: () => true, release: async () => {} }),
+      },
+      requestApproval: async (approval) => {
+        approvals.push(approval);
+        return { id: "inflight-approval", status: "pending" };
+      },
+      waitForApproval: async (id) => {
+        approvalWaitStarted = true;
+        queueMicrotask(() => providerOutput?.write(`${JSON.stringify(conflicting)}\n`));
+        return new Promise<{ id: string; status: "approved" }>((resolve) => {
+          releaseApproval = () => resolve({ id, status: "approved" });
+        });
+      },
+    });
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_protocol-mismatch" });
+    expect(result.errorMessage).toContain("different request identity");
+    expect(approvalWaitStarted).toBe(true);
+    expect(approvals).toHaveLength(1);
+    releaseApproval?.();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(fixture.requests.filter((request) => !request.method && request.id === 42)).toHaveLength(0);
+  });
+
+  it("keeps numeric and string ACP request IDs separately correlated", async () => {
+    const numericRequest = { jsonrpc: "2.0", id: 42, method: "session/request_permission", params: {
+      sessionId: "permission-typed-session",
+      toolCall: { title: "Read number ID" },
+      options: [{ optionId: "once", kind: "allow_once", name: "Allow once" }],
+    } };
+    const stringRequest = { ...numericRequest, id: "42", params: {
+      ...numericRequest.params,
+      toolCall: { title: "Read string ID" },
+    } };
+    let promptId: unknown;
+    const providerResponses: JsonRecord[] = [];
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "permission-typed-session" } })}\n`);
+      } else if (request.method === "session/prompt") {
+        promptId = request.id;
+        output.write(`${JSON.stringify(numericRequest)}\n`);
+      } else if (!request.method && (request.id === 42 || request.id === "42")) {
+        providerResponses.push(request);
+        if (providerResponses.length === 1) {
+          output.write(`${JSON.stringify(stringRequest)}\n`);
+        } else {
+          output.write(`${JSON.stringify({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } })}\n`);
+        }
+      }
+    });
+    const approvals: JsonRecord[] = [];
+    const result = await executeCursorNativeChat({
+      profile: profile(fixture.spawn), binding, prompt: "read", model: "", onLog: async () => {},
+      controlAttempt: {
+        ownerToken: "owner-1",
+        attemptEpoch: 1,
+        complete: async () => {},
+        register: async () => ({ isCurrent: () => true, release: async () => {} }),
+      },
+      requestApproval: async (approval) => {
+        approvals.push(approval as unknown as JsonRecord);
+        return { id: `typed-approval-${approvals.length}`, status: "pending" };
+      },
+      waitForApproval: async (id) => ({ id, status: "approved" }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(approvals.map((approval) => (approval.payload as JsonRecord).nativeRequestId)).toEqual([42, "42"]);
+    expect(providerResponses.map((response) => response.id)).toEqual([42, "42"]);
+    expect(providerResponses.map((response) => response.result)).toEqual([
+      { outcome: { outcome: "selected", optionId: "once" } },
+      { outcome: { outcome: "selected", optionId: "once" } },
+    ]);
+  });
+
+  it("rejects numeric request IDs that JavaScript cannot preserve exactly", async () => {
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "unsafe-id-session" } })}\n`);
+      } else if (request.method === "session/prompt") {
+        output.write('{"jsonrpc":"2.0","id":9007199254740993,"method":"session/request_permission","params":{"sessionId":"unsafe-id-session","toolCall":{"title":"Read file"},"options":[{"optionId":"once","kind":"allow_once","name":"Allow once"}]}}\n');
+      }
+    });
+    const approvals: unknown[] = [];
+    const result = await executeCursorNativeChat({
+      profile: profile(fixture.spawn), binding, prompt: "read", model: "", onLog: async () => {},
+      requestApproval: async (approval) => {
+        approvals.push(approval);
+        return { id: "unsafe-id-approval", status: "approved" };
+      },
+      waitForApproval: async () => ({ id: "unsafe-id-approval", status: "approved" }),
+    });
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_protocol-mismatch" });
+    expect(result.errorMessage).toContain("non-safe-integer numeric server request ID");
+    expect(approvals).toHaveLength(0);
+    expect(fixture.requests.filter((request) => !request.method)).toHaveLength(0);
+  });
+
+  it("fails closed for a null request ID instead of treating approval as a notification", async () => {
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId: "null-id-session" } })}\n`);
+      } else if (request.method === "session/prompt") {
+        output.write('{"jsonrpc":"2.0","id":null,"method":"session/request_permission","params":{"sessionId":"null-id-session","toolCall":{"title":"Read file"},"options":[{"optionId":"once","kind":"allow_once","name":"Allow once"}]}}\n');
+      }
+    });
+    const approvals: unknown[] = [];
+    const result = await executeCursorNativeChat({
+      profile: profile(fixture.spawn), binding, prompt: "read", model: "", onLog: async () => {},
+      requestApproval: async (approval) => {
+        approvals.push(approval);
+        return { id: "null-id-approval", status: "approved" };
+      },
+      waitForApproval: async () => ({ id: "null-id-approval", status: "approved" }),
+    });
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_protocol-mismatch" });
+    expect(result.errorMessage).toContain("unsupported server request ID type");
+    expect(approvals).toHaveLength(0);
+    expect(fixture.requests.filter((request) => !request.method)).toHaveLength(0);
   });
 
   it("returns an internal JSON-RPC error when the approval bridge fails", async () => {
@@ -1047,6 +1360,33 @@ describe("Cursor ACP native capabilities", () => {
     const result = await executeCursorNativeChat({ profile: profile(fixture.spawn), binding,
       prompt: "hello", model: "", onLog: async () => {} });
     expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_incomplete_turn", sessionId: "incomplete-session" });
+    expect(result.nativeWriterQuiescence).toEqual(stopReason
+      ? { status: "confirmed", source: "provider_terminal" }
+      : { status: "unconfirmed", reason: expect.any(String) });
+  });
+
+  it("keeps a prompt timeout unconfirmed when ACP never returns a terminal response", async () => {
+    const fixture = createSpawnFixture((request, output) => {
+      const result = request.method === "initialize" ? initializeResult()
+        : request.method === "session/new" ? { sessionId: "stalled-session" } : {};
+      if (request.method !== "session/prompt") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result })}\n`);
+      }
+    });
+    const result = await executeCursorNativeChat({
+      profile: { ...profile(fixture.spawn), requestTimeoutMs: 250 },
+      binding,
+      prompt: "wait for provider",
+      model: "",
+      onLog: async () => {},
+    });
+
+    expect(result).toMatchObject({
+      timedOut: true,
+      errorCode: "cursor_native_timeout",
+      nativeWriterQuiescence: { status: "unconfirmed" },
+    });
+    expect(fixture.requests.some((request) => request.method === "session/prompt")).toBe(true);
   });
 
   it("preserves a newly created session when its first prompt fails", async () => {
@@ -1127,6 +1467,7 @@ describe("Cursor ACP native capabilities", () => {
       sessionId: "cursor-native-new",
       summary: " ACP answer ",
       resultJson: { transport: "cursor-agent-acp-stdio", nativeSession: true },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
     });
     expect(result.sessionParams).toMatchObject({
       sessionId: "cursor-native-new",
@@ -1448,7 +1789,7 @@ describe("Cursor ACP native capabilities", () => {
     expect(fixture.requests.some((request) => request.method === "session/prompt")).toBe(false);
   });
 
-  it.each([null, {}])("fails closed for an empty persisted session/load result %#", async (loadResult) => {
+  it.each([null, {}, { sessionId: "different-session", modes: {} }])("fails closed for an invalid persisted session/load result %#", async (loadResult) => {
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {
         output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
@@ -1470,6 +1811,9 @@ describe("Cursor ACP native capabilities", () => {
     expect(result).toMatchObject({ exitCode: 1, errorCode: "cursor_native_protocol-mismatch" });
     expect(fixture.requests.map((request) => request.method)).toEqual(["initialize", "initialized", "session/load"]);
     expect(fixture.requests.some((request) => request.method === "session/prompt")).toBe(false);
+    const capabilities = createCursorLocalProviderCapabilities(profile(fixture.spawn));
+    expect(capabilities.sessionResume.evidence.status).toBe("unknown");
+    expect(capabilities.transcript.evidence.status).toBe("unknown");
   });
 
   it("rejects host/profile/cwd/workspace/transport drift before starting ACP", async () => {

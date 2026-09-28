@@ -259,13 +259,25 @@ describe("Claude profile-bound native capabilities", () => {
     expect(wrongCwd).toMatchObject({ availability: "incompatible", revision: "cwd-mismatch" });
   });
 
-  it("does not claim an exact assistant-boundary fork for the session-level CLI fork", () => {
-    const adapter = createClaudeLocalProviderCapabilities(profile());
+  it("advertises the version-pinned SDK fork only for its paired Claude Code profile", () => {
+    const adapter = createClaudeLocalProviderCapabilities({ ...profile(), readFile: undefined });
 
-    expect(adapter.fork.evidence.status).toBe("unsupported");
-    expect(adapter.fork.evidence.reason).toContain("--fork-session");
+    expect(adapter.fork.evidence).toMatchObject({
+      status: "supported",
+      providerVersion: "2.1.216",
+      transport: "claude-agent-sdk-0.3.216",
+      profileBound: true,
+      profileRequired: true,
+    });
+    expect(adapter.fork.evidence.reason).toContain("Claude Agent SDK 0.3.216");
     expect(adapter.fork.evidence.reason).toContain("completed assistant UUID");
-    expect(adapter.fork.evidence.reason).toContain("without submitting a query");
+    expect(adapter.fork.fork).toBeTypeOf("function");
+
+    const mismatchedProfile = createClaudeLocalProviderCapabilities({ ...profile(), readFile: undefined, providerVersion: "2.1.217" });
+    expect(mismatchedProfile.fork.evidence).toMatchObject({ status: "unsupported", providerVersion: "2.1.217" });
+    const redirectedProfile = createClaudeLocalProviderCapabilities(profile());
+    expect(redirectedProfile.fork.evidence).toMatchObject({ status: "unsupported" });
+    expect(redirectedProfile.fork.evidence.reason).toContain("local host profile transport");
     expect(adapter.control.steer.evidence).toMatchObject({
       status: "supported",
       transport: "claude-cli-stream-json",

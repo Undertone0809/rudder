@@ -27,10 +27,12 @@ import {
   HERMES_PRODUCT_HISTORY_TRANSPORT,
   HermesProductHistoryError,
   readHermesProductHistory,
+  readHermesProductHistoryExecutionSpan,
   type HermesProductHistoryProfile,
   type HermesProductHistoryRange,
 } from "./product-history.js";
 import {
+  forkHermesProductRpcNativeSession,
   HERMES_PRODUCT_RPC_TRANSPORT,
   hermesProductRpcProfileEvidence,
   isHermesProductRpcProfile,
@@ -358,15 +360,24 @@ async function readProfileProductHistory(
   const range = executionRange ? intersectHistoryRanges(executionRange, requested) : requested;
   if (range === undefined) return historyBoundaryUnknownResult("history-range-unknown");
   try {
-    const result = await readHermesProductHistory({
-      runtimeType: request.runtimeType,
-      sessionId: request.session.sessionId,
-      profile: historyProfile,
-      range,
-      cursor: request.cursor,
-      limit: TRANSCRIPT_PAGE_SIZE,
-      signal: request.signal,
-    });
+    const result = executionRange
+      ? await readHermesProductHistoryExecutionSpan({
+        runtimeType: request.runtimeType,
+        sessionId: request.session.sessionId,
+        profile: historyProfile,
+        range,
+        cursor: request.cursor,
+        signal: request.signal,
+      })
+      : await readHermesProductHistory({
+        runtimeType: request.runtimeType,
+        sessionId: request.session.sessionId,
+        profile: historyProfile,
+        range,
+        cursor: request.cursor,
+        limit: TRANSCRIPT_PAGE_SIZE,
+        signal: request.signal,
+      });
     return {
       items: result.items,
       nextCursor: result.nextCursor,
@@ -1241,31 +1252,6 @@ async function forwardAcpInterrupt(input: ProviderControlRequest): Promise<Agent
   return input.handle.interrupt(input.operation.reason);
 }
 
-function acpRunHasAssistantOrToolHistory(result: HermesAcpTranscriptResult): boolean {
-  return result.items.some((item) => {
-    const row = recordValue(recordValue(item.payload)?.row);
-    const role = (stringValue(row?.role) ?? item.kind.replace(/^hermes:db:/, "")).toLowerCase();
-    return role === "assistant"
-      || role === "tool"
-      || (Array.isArray(row?.tool_calls) && row.tool_calls.length > 0)
-      || Boolean(stringValue(row?.tool_call_id) || stringValue(row?.tool_name));
-  });
-}
-
-function markAcpRunHistoryIncomplete(result: HermesAcpTranscriptResult): HermesAcpTranscriptResult {
-  if (
-    result.availability !== "available"
-    || result.completeness !== "complete"
-    || acpRunHasAssistantOrToolHistory(result)
-  ) return result;
-  return {
-    ...result,
-    availability: result.items.length === 0 ? "missing" : "available",
-    completeness: "partial",
-    revision: `run-output-missing:${result.revision}`,
-  };
-}
-
 function boundAcpCapabilities(
   profile: HermesAcpProfileTransport,
   productRpcProfile?: boolean,
@@ -1338,10 +1324,7 @@ function boundAcpCapabilities(
       cursor: input.cursor,
       signal: input.signal,
     });
-    // Session-wide empty history is valid; a Run span promises execution output.
-    return stringValue(input.selector?.kind) === "hermes_execution"
-      ? markAcpRunHistoryIncomplete(result)
-      : result;
+    return result;
   };
   return {
     runtimeType: "hermes_gateway",
@@ -1359,7 +1342,7 @@ function boundAcpCapabilities(
           ...evidence,
           status: "supported",
           transport: HERMES_PRODUCT_HISTORY_TRANSPORT,
-          reason: `${evidence.reason} The host-authorized Hermes state.db reader supplies exact Run row ranges when the pre/post prompt tails remain in one session generation.`,
+          reason: `${evidence.reason} Session history is readable, but Hermes 0.21.0 provides no prompt-scoped row locator. Product Gateway advertises and enforces per_session_exclusive_submit by claiming a durable per-session lease before prompt mutation and retaining it until session finalization. Rudder's before-history snapshot precedes prompt.submit, where that lease is acquired; another owner can append rows and release its lease in the gap, so same-session row windows can contain foreign assistant/tool rows and Run spans remain unknown. Exact-span reads reject cursors, cap selection at 200 rows, and bind revision to the selected row locators and raw payloads before returning no Run-owned rows. Compression successors also remain unknown because compacted handoffs have no source-row locators.`,
         }
         : {
           ...evidence,
@@ -1371,13 +1354,28 @@ function boundAcpCapabilities(
     fork: {
       evidence: {
         ...evidence,
-        status: "unsupported",
+        status: productProfile || evidence.status !== "supported" ? evidence.status : "unsupported",
+        transport: productProfile ? HERMES_PRODUCT_RPC_TRANSPORT : evidence.transport,
         reason: productProfile
-          ? "Hermes Product Gateway session.branch only supports the live head; exact selected historical boundaries are not available through the current adapter."
-          : "Hermes ACP session/fork copies the current head; selected historical message boundaries are unsupported.",
+          ? evidence.status === "supported"
+            ? `${evidence.reason} The versioned SessionDB helper copies and verifies the visible prefix through an exact assistant row boundary.`
+            : `${evidence.reason} Exact native Fork remains unclassified for this Product Gateway profile.`
+          : evidence.status === "supported"
+            ? "Hermes ACP session/fork copies the current head and cannot honor a selected historical message boundary."
+            : `${evidence.reason} Historical Fork remains unclassified for this ACP profile.`,
       },
       execute: (input) => {
-        if (productProfile) throw new Error("Hermes Product Gateway cannot fork an exact selected historical boundary through the current adapter.");
+        if (productProfile) {
+          return forkHermesProductRpcNativeSession({
+            runtimeType: input.runtimeType,
+            profile: profile as HermesProductRpcProfile,
+            session: input.session,
+            boundary: input.boundary,
+            binding: input.binding,
+            workspace: acpWorkspaceFromSession(input.session),
+            signal: input.signal,
+          });
+        }
         return forkHermesAcpNativeSession({
           runtimeType: input.runtimeType,
           session: input.session,

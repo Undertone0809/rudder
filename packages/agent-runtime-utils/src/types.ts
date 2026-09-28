@@ -71,6 +71,17 @@ export interface AgentRuntimeNetworkSuspension {
   };
 }
 
+/** Evidence that this invocation can no longer append to its native session. */
+export type AgentRuntimeNativeWriterQuiescence =
+  | {
+    status: "confirmed";
+    source: "not_started" | "provider_terminal" | "provider_stop_ack" | "process_exit";
+  }
+  | {
+    status: "unconfirmed";
+    reason: string;
+  };
+
 export type AgentRuntimeBillingType =
   | "api"
   | "subscription"
@@ -106,6 +117,8 @@ export interface AgentRuntimeExecutionResult {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  /** Runtime-owned proof; absence means the native writer must remain fenced. */
+  nativeWriterQuiescence?: AgentRuntimeNativeWriterQuiescence;
   /** Durable provider submission state for the common Run boundary. */
   submissionPhase?: AgentRuntimeNetworkSubmissionPhase | null;
   /** Provider-native identity for the submitted execution, when known. */
@@ -364,7 +377,19 @@ export interface AgentRuntimeExecutionContext {
   controlAttempt?: AgentRuntimeControlAttemptLease;
   requestApproval?: (request: AgentRuntimeApprovalRequest) => Promise<AgentRuntimeApprovalHandle>;
   waitForApproval?: (approvalId: string, timeoutMs: number) => Promise<AgentRuntimeApprovalDecision>;
+  /** One-shot sensitive input returned over a transient, non-persistent host channel. */
+  requestTransientInput?: (request: AgentRuntimeTransientInputRequest) => Promise<AgentRuntimeTransientInputResult>;
 }
+
+export type AgentRuntimeTransientInputKind = "secret" | "sudo";
+
+export type AgentRuntimeTransientInputRequest = Readonly<{
+  kind: AgentRuntimeTransientInputKind;
+}>;
+
+export type AgentRuntimeTransientInputResult =
+  | Readonly<{ status: "provided"; value: string }>
+  | Readonly<{ status: "cancelled" | "timed_out" | "aborted" }>;
 
 export interface AgentRuntimeApprovalRequest {
   type: "agent_runtime";

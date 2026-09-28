@@ -696,6 +696,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         timedOut: boolean;
         stdout: string;
         stderr: string;
+        pid?: number | null;
+        startedAt?: string | null;
       };
       parsed: ReturnType<typeof parseCursorJsonl>;
     },
@@ -707,6 +709,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: attempt.proc.exitCode,
         signal: attempt.proc.signal,
         timedOut: true,
+        nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "Cursor timed out before child-process exit was observed." },
         errorMessage: `Timed out after ${timeoutSec}s`,
         clearSession: clearSessionWhenMissing,
         ...(legacyChatProvenance
@@ -802,6 +807,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
       timedOut: false,
+      nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+        ? { status: "confirmed", source: "process_exit" }
+        : { status: "unconfirmed", reason: "Cursor child-process exit was not observed." },
       errorMessage:
         !failed
           ? null

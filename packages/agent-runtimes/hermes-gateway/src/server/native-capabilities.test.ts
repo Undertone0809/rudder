@@ -11,7 +11,11 @@ import {
   type HermesGatewayProfileTransport,
   type HermesNativeTranscriptReadRequest,
 } from "./native-capabilities.js";
-import { buildHermesProductRpcSessionParams, HERMES_PRODUCT_RPC_TRANSPORT } from "./product-rpc.js";
+import {
+  buildHermesProductRpcSessionParams,
+  HERMES_PRODUCT_RPC_TRANSPORT,
+  type HermesProductRpcProfile,
+} from "./product-rpc.js";
 
 const binding = {
   hostId: "host-hermes-1",
@@ -83,6 +87,9 @@ class SessionDB:
     def resolve_resume_session_id(self, session_id):
         return self.state.get("resume", {}).get(session_id, session_id)
 
+    def get_compression_lineage(self, session_id):
+        return self.state.get("compression_lineage", {}).get(session_id, [session_id])
+
     def close(self):
         return None
 `;
@@ -120,7 +127,7 @@ async function historyFixture(options: {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-hermes-native-reader-"));
   historyRoots.push(root);
   const sessionId = options.sessionId ?? "same-session";
-  const rows = options.rows ?? [
+  const rows: Array<Record<string, unknown>> = options.rows ?? [
     { role: "user", content: "before", timestamp: 1 },
     { role: "assistant", content: "run one", timestamp: 2 },
     { role: "assistant", content: "run two", timestamp: 3 },
@@ -129,13 +136,20 @@ async function historyFixture(options: {
   const hermesHome = path.join(root, "home");
   await fs.mkdir(sourcePath);
   await fs.mkdir(hermesHome);
+  await fs.mkdir(path.join(sourcePath, "tui_gateway"));
   await fs.writeFile(path.join(sourcePath, "hermes_state.py"), HISTORY_FAKE_SESSION_DB, "utf8");
+  await fs.writeFile(path.join(sourcePath, "tui_gateway", "entry.py"), "# test fixture\n", "utf8");
   await fs.writeFile(path.join(hermesHome, "state.db"), JSON.stringify({
     sessions: {
       [sessionId]: { id: sessionId, source: "acp", message_count: rows.length },
     },
     messages: {
-      [sessionId]: rows.map((row) => ({ ...row, session_id: sessionId, active: 1, compacted: 0 })),
+      [sessionId]: rows.map((row) => ({
+        ...row,
+        session_id: sessionId,
+        active: row.active ?? 1,
+        compacted: row.compacted ?? 0,
+      })),
     },
   }), "utf8");
   return {
@@ -154,7 +168,11 @@ async function historyFixture(options: {
   };
 }
 
-function acpHistoryProfile(fixture: Awaited<ReturnType<typeof historyFixture>>) {
+function acpHistoryProfile(fixture: Awaited<ReturnType<typeof historyFixture>>): HermesProductRpcProfile {
+  const { pythonCommand, sourcePath, hermesHome } = fixture.profile;
+  if (!pythonCommand || !sourcePath || !hermesHome) {
+    throw new Error("Hermes history fixture requires explicit provider paths");
+  }
   return {
     binding,
     command: process.execPath,
@@ -162,9 +180,9 @@ function acpHistoryProfile(fixture: Awaited<ReturnType<typeof historyFixture>>) 
     cwd: fixture.root,
     providerVersion: fixture.profile.providerVersion,
     protocolVersion: 1,
-    hermesPythonCommand: fixture.profile.pythonCommand,
-    hermesSourcePath: fixture.profile.sourcePath,
-    hermesHome: fixture.profile.hermesHome,
+    hermesPythonCommand: pythonCommand,
+    hermesSourcePath: sourcePath,
+    hermesHome,
   };
 }
 
@@ -249,9 +267,54 @@ describe("Hermes profile-bound native capabilities", () => {
       transport: "hermes-session-db-read-only",
       profileBound: true,
     });
-    expect(result).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
-    expect(result.items.map((item) => item.sourceEntryId)).toEqual(["2"]);
-    expect(result.items[0]?.text).toBe("run one");
+    expect(result).toMatchObject({
+      source: "native",
+      availability: "available",
+      completeness: "unknown",
+      revision: expect.stringContaining("execution-ownership-unproven:"),
+      items: [],
+    });
+  });
+
+  it("invalidates a Unified Reader continuation when an existing Hermes row changes", async () => {
+    const fixture = await historyFixture({
+      rows: Array.from({ length: 101 }, (_, index) => ({
+        id: index + 1,
+        role: index % 2 ? "assistant" : "user",
+        content: `history row ${index + 1}`,
+        timestamp: index + 1,
+      })),
+    });
+    const adapter = createHermesGatewayProviderCapabilities(fixture.profile);
+    const readRequest = request({
+      session: {
+        ...request().session,
+        sessionId: fixture.sessionId,
+        sessionDisplayId: fixture.sessionId,
+        sessionParams: {
+          ...request().session.sessionParams,
+          hermesSessionId: fixture.sessionId,
+        },
+      },
+    });
+
+    const first = await adapter.transcript.readRange(readRequest);
+    expect(first.items).toHaveLength(100);
+    expect(first.nextCursor).toBeTruthy();
+
+    const databasePath = path.join(fixture.profile.hermesHome!, "state.db");
+    const database = JSON.parse(await fs.readFile(databasePath, "utf8"));
+    database.messages[fixture.sessionId][0].content = "mutated after the first page";
+    await fs.writeFile(databasePath, JSON.stringify(database), "utf8");
+
+    const continuation = await adapter.transcript.readRange({ ...readRequest, cursor: first.nextCursor });
+    expect(continuation).toMatchObject({
+      items: [],
+      nextCursor: null,
+      availability: "offline",
+      completeness: "unknown",
+      revision: "history-error:cursor_snapshot_mismatch",
+    });
   });
 
   it("keeps a same-session Run without an exact boundary unknown instead of reading the whole session", async () => {
@@ -503,6 +566,32 @@ describe("Hermes profile-bound native capabilities", () => {
 });
 
 describe("Hermes ACP profile-bound native capabilities", () => {
+  it("keeps persisted Run transcript ownership unknown even within one session generation", () => {
+    const acpProfile = {
+      binding: { hostId: binding.hostId, profileId: binding.profileId, capabilityRevision: "acp-v1" },
+      command: process.execPath,
+      args: ["-e", ""],
+      cwd: process.cwd(),
+      providerVersion: "0.21.0",
+      protocolVersion: 1,
+      hermesPythonCommand: process.execPath,
+      hermesSourcePath: path.resolve("."),
+      hermesHome: os.tmpdir(),
+    };
+    const adapter = createHermesAcpProviderCapabilities(acpProfile);
+
+    expect(adapter.transcript.evidence).toMatchObject({ status: "supported", profileBound: true });
+    expect(adapter.transcript.evidence.reason).toContain("no prompt-scoped row locator");
+    expect(adapter.transcript.evidence.reason).toContain("advertises and enforces per_session_exclusive_submit");
+    expect(adapter.transcript.evidence.reason).toContain("before-history snapshot precedes prompt.submit");
+    expect(adapter.transcript.evidence.reason).toContain("release its lease in the gap");
+    expect(adapter.transcript.evidence.reason).toContain("foreign assistant/tool rows");
+    expect(adapter.transcript.evidence.reason).toContain("compacted handoff");
+    expect(adapter.transcript.evidence.reason).toContain("source-row locators");
+    expect(adapter.transcript.evidence.reason).toContain("cap selection at 200 rows");
+    expect(adapter.transcript.evidence.reason).toContain("raw payloads");
+  });
+
   it("advertises only the verified ACP session and control methods for an explicit profile", () => {
     const acpProfile = {
       binding: { hostId: binding.hostId, profileId: binding.profileId, capabilityRevision: "acp-v1" },
@@ -526,6 +615,29 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     expect(resolved?.transcript.readRange).toBeTypeOf("function");
   });
 
+  it("rejects historical boundaries on ACP without invoking session/fork", async () => {
+    const acpProfile = {
+      binding,
+      command: process.execPath,
+      args: ["-e", ""],
+      cwd: process.cwd(),
+      providerVersion: "0.21.0",
+      protocolVersion: 1,
+    };
+    const adapter = createHermesAcpProviderCapabilities(acpProfile);
+
+    await expect(adapter.fork.execute({
+      runtimeType: "hermes_gateway",
+      binding,
+      session: {
+        sessionId: "hermes-session-1",
+        sessionDisplayId: "hermes-session-1",
+        sessionParams: { transport: "hermes-acp-stdio" },
+      },
+      boundary: "hermes:db:hermes-session-1:7",
+    })).rejects.toThrow("historical message boundary");
+  });
+
   it("does not expose ACP support without a bound profile version", () => {
     const adapter = createHermesAcpProviderCapabilities({
       binding,
@@ -538,14 +650,18 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     expect(adapter.transcript.evidence.reason).toContain("provider version");
   });
 
-  it("reads only the exact Product Gateway row interval and rejects a mismatched persisted profile", async () => {
+  it("does not treat interleaved Product RPC assistant/tool rows as Run-owned and binds the range revision to raw rows", async () => {
     const fixture = await historyFixture({
       providerVersion: "0.21.0",
       sessionId: "hermes-product-session",
       rows: [
-        { id: 1, role: "assistant", content: "old session history", timestamp: 1 },
-        { id: 2, role: "user", content: "current Run prompt", timestamp: 2 },
-        { id: 3, role: "assistant", content: "current Run output", timestamp: 3 },
+        { id: 1, role: "user", content: "previous prompt", timestamp: 1 },
+        { id: 2, role: "assistant", content: "previous Run output", timestamp: 2 },
+        { id: 3, role: "tool", tool_name: "foreign-tool", content: "foreign tool result", timestamp: 3 },
+        { id: 4, role: "user", content: "current Run prompt", timestamp: 4 },
+        { id: 5, role: "assistant", content: "interleaved foreign assistant", timestamp: 5 },
+        { id: 6, role: "tool", tool_name: "foreign-tool-2", content: "interleaved foreign tool", timestamp: 6 },
+        { id: 7, role: "assistant", content: "possible current Run output", timestamp: 7 },
       ],
     });
     try {
@@ -561,8 +677,8 @@ describe("Hermes ACP profile-bound native capabilities", () => {
         version: 1,
         status: "exact",
         sessionId: fixture.sessionId,
-        startExclusive: 1,
-        endInclusive: 3,
+        startExclusive: 2,
+        endInclusive: 7,
       });
       const adapter = createHermesAcpProviderCapabilities(profile);
       const result = await adapter.transcript.readRange({
@@ -587,9 +703,44 @@ describe("Hermes ACP profile-bound native capabilities", () => {
         transport: "hermes-session-db-read-only",
         profileBound: true,
       });
-      expect(result).toMatchObject({ availability: "available", completeness: "complete" });
-      expect(result.items.map((item) => item.sourceEntryId)).toEqual(["2", "3"]);
-      expect(result.items.some((item) => JSON.stringify(item.payload).includes("old session history"))).toBe(false);
+      expect(result).toMatchObject({
+        availability: "available",
+        completeness: "unknown",
+        revision: expect.stringContaining("execution-ownership-unproven:"),
+        items: [],
+      });
+
+      const databasePath = path.join(fixture.profile.hermesHome!, "state.db");
+      const database = JSON.parse(await fs.readFile(databasePath, "utf8"));
+      const foreignRow = database.messages[fixture.sessionId].find((row: Record<string, unknown>) => row.id === 5);
+      if (!foreignRow) throw new Error("interleaved foreign assistant row is missing");
+      foreignRow.content = "changed foreign assistant payload";
+      await fs.writeFile(databasePath, JSON.stringify(database), "utf8");
+      const changed = await adapter.transcript.readRange({
+        runtimeType: "hermes_gateway",
+        binding,
+        session: { sessionId: fixture.sessionId, sessionDisplayId: fixture.sessionId, sessionParams },
+        selector: { kind: "hermes_execution", sourceRangeRef },
+      });
+      expect(changed.revision).not.toBe(result.revision);
+
+      database.messages[fixture.sessionId].push({
+        id: 8,
+        session_id: fixture.sessionId,
+        role: "assistant",
+        content: "outside the requested range",
+        timestamp: 8,
+        active: 1,
+        compacted: 0,
+      });
+      await fs.writeFile(databasePath, JSON.stringify(database), "utf8");
+      const withForeignTail = await adapter.transcript.readRange({
+        runtimeType: "hermes_gateway",
+        binding,
+        session: { sessionId: fixture.sessionId, sessionDisplayId: fixture.sessionId, sessionParams },
+        selector: { kind: "hermes_execution", sourceRangeRef },
+      });
+      expect(withForeignTail.revision).toBe(changed.revision);
 
       const mismatched = await adapter.transcript.readRange({
         runtimeType: "hermes_gateway",
@@ -602,6 +753,65 @@ describe("Hermes ACP profile-bound native capabilities", () => {
         selector: { kind: "hermes_execution", sourceRangeRef },
       });
       expect(mismatched).toMatchObject({ availability: "incompatible", revision: "session-profile-mismatch" });
+    } finally {
+      await fs.rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies exact-range cursor and 200-row restrictions to the Product RPC Reader", async () => {
+    const fixture = await historyFixture({
+      providerVersion: "0.21.0",
+      sessionId: "hermes-product-bounded-session",
+      rows: Array.from({ length: 201 }, (_, index) => ({
+        id: index + 1,
+        role: index % 2 ? "assistant" : "tool",
+        content: `interleaved row ${index + 1}`,
+        timestamp: index + 1,
+      })),
+    });
+    try {
+      const profile = acpHistoryProfile(fixture);
+      const sessionParams = buildHermesProductRpcSessionParams({ sessionId: fixture.sessionId, profile });
+      const adapter = createHermesAcpProviderCapabilities(profile);
+      const requestInput = {
+        runtimeType: "hermes_gateway",
+        binding,
+        session: { sessionId: fixture.sessionId, sessionDisplayId: fixture.sessionId, sessionParams },
+        selector: {
+          kind: "hermes_execution",
+          sourceRangeRef: JSON.stringify({
+            version: 1,
+            status: "exact",
+            sessionId: fixture.sessionId,
+            startExclusive: 0,
+            endInclusive: 201,
+          }),
+        },
+      };
+      const withCursor = await adapter.transcript.readRange({ ...requestInput, cursor: "unexpected-cursor" });
+      const oversized = await adapter.transcript.readRange(requestInput);
+
+      expect(withCursor).toMatchObject({ items: [], nextCursor: null, revision: "execution-cursor-unsupported", completeness: "unknown" });
+      expect(oversized).toMatchObject({ items: [], nextCursor: null, revision: "execution-range-too-large", completeness: "unknown" });
+    } finally {
+      await fs.rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("advertises versioned exact-prefix Product Gateway Fork only for verified Hermes 0.21.0", async () => {
+    if (!historyPythonCommand) return;
+    const fixture = await historyFixture({ providerVersion: "0.21.0", sessionId: "hermes-product-fork-parent" });
+    try {
+      const profile = acpHistoryProfile(fixture);
+      const adapter = createHermesAcpProviderCapabilities(profile);
+      expect(adapter.fork.evidence).toMatchObject({
+        status: "supported",
+        transport: HERMES_PRODUCT_RPC_TRANSPORT,
+      });
+      expect(adapter.fork.evidence.reason).toContain("exact assistant row boundary");
+
+      const unverified = createHermesAcpProviderCapabilities({ ...profile, providerVersion: "0.22.0" });
+      expect(unverified.fork.evidence).toMatchObject({ status: "unknown", profileBound: true });
     } finally {
       await fs.rm(fixture.root, { recursive: true, force: true });
     }
@@ -647,7 +857,7 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     expect(adapter.transcript.evidence.reason).toContain("host-authorized Python/source/HERMES_HOME history profile");
   });
 
-  it("marks a v0.21.0 subscription-403 Run with only its user row as partial and preserves that evidence", async () => {
+  it("does not promote a v0.21.0 user row to Run-owned output after a provider error", async () => {
     if (!historyPythonCommand) return;
     const fixture = await historyFixture(HERMES_ACP_021_SUBSCRIPTION_403_FIXTURE);
     const acpProfile = acpHistoryProfile(fixture);
@@ -665,14 +875,13 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     });
     expect(result).toMatchObject({
       availability: "available",
-      completeness: "partial",
-      revision: expect.stringContaining("run-output-missing:"),
+      completeness: "unknown",
+      revision: expect.stringContaining("execution-ownership-unproven:"),
+      items: [],
     });
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toMatchObject({ kind: "hermes:db:user", text: "provider HTTP 403" });
   });
 
-  it("marks an exact Run boundary with zero persisted rows missing instead of complete", async () => {
+  it("keeps empty exact Run spans unknown because empty history cannot prove ownership", async () => {
     if (!historyPythonCommand) return;
     const fixture = await historyFixture({
       sessionId: "empty-run-session",
@@ -687,9 +896,9 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     ));
 
     expect(result).toMatchObject({
-      availability: "missing",
-      completeness: "partial",
-      revision: expect.stringContaining("run-output-missing:"),
+      availability: "available",
+      completeness: "unknown",
+      revision: expect.stringContaining("execution-ownership-unproven:"),
       items: [],
     });
   });
@@ -712,7 +921,7 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     });
   });
 
-  it("keeps exact-boundary assistant/tool history complete and missing boundaries unknown", async () => {
+  it("does not accept assistant/tool rows as exact Run proof and keeps missing boundaries unknown", async () => {
     if (!historyPythonCommand) return;
     const fixture = await historyFixture({ providerVersion: "0.21.0" });
     const adapter = createHermesAcpProviderCapabilities(acpHistoryProfile(fixture));
@@ -727,8 +936,12 @@ describe("Hermes ACP profile-bound native capabilities", () => {
       boundaryStatus: "unknown",
     }));
 
-    expect(complete).toMatchObject({ availability: "available", completeness: "complete" });
-    expect(complete.items.some((item) => item.kind === "hermes:db:assistant")).toBe(true);
+    expect(complete).toMatchObject({
+      availability: "available",
+      completeness: "unknown",
+      revision: expect.stringContaining("execution-ownership-unproven:"),
+      items: [],
+    });
     expect(unknownBoundary).toMatchObject({
       availability: "missing",
       completeness: "unknown",
@@ -737,7 +950,7 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     });
   });
 
-  it("accepts tool-only history as complete Run evidence", async () => {
+  it("does not accept a tool-only row as Run evidence", async () => {
     if (!historyPythonCommand) return;
     const fixture = await historyFixture({
       sessionId: "tool-only-run-session",
@@ -751,8 +964,11 @@ describe("Hermes ACP profile-bound native capabilities", () => {
       exactAcpRunSelector(fixture.sessionId, 1),
     ));
 
-    expect(result).toMatchObject({ availability: "available", completeness: "complete" });
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.kind).toBe("hermes:db:tool");
+    expect(result).toMatchObject({
+      availability: "available",
+      completeness: "unknown",
+      revision: expect.stringContaining("execution-ownership-unproven:"),
+      items: [],
+    });
   });
 });

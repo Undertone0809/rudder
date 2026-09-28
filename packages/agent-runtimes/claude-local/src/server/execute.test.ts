@@ -343,6 +343,8 @@ describe("Claude native Run continuation boundary", () => {
 
     expect(capture.calls).toHaveLength(2);
     expect(capture.calls.map((call) => call.prompt)).toEqual(["First prompt.", "Second prompt."]);
+    expect(first.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
+    expect(second.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
     const resumeIndex = capture.calls[1]!.argv.indexOf("--resume");
     expect(capture.calls[1]!.argv[resumeIndex + 1]).toBe("resume-session-1");
     expect(first.sessionParams).toMatchObject({

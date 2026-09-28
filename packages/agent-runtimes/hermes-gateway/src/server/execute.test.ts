@@ -92,10 +92,24 @@ function sessionRoute(req: IncomingMessage, res: ServerResponse): boolean {
   return false;
 }
 
-async function listen(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): Promise<{ url: string; requests: Array<{ method: string; path: string; headers: IncomingMessage["headers"] }>; close: () => Promise<void> }> {
+async function listen(handler: (req: IncomingMessage, res: ServerResponse) => unknown | Promise<unknown>): Promise<{ url: string; requests: Array<{ method: string; path: string; headers: IncomingMessage["headers"] }>; close: () => Promise<void> }> {
   const requests: Array<{ method: string; path: string; headers: IncomingMessage["headers"] }> = [];
   const server = createServer(async (req, res) => {
     requests.push({ method: req.method ?? "", path: req.url ?? "", headers: req.headers });
+    if (req.url === "/v1/capabilities" && req.method === "GET") {
+      try {
+        await handler(req, res);
+      } catch (error) {
+        if (!res.writableEnded) {
+          return json(res, 200, { features: { runs_idempotency: { supported: true, durable: true, retention_seconds: 86_400 } } });
+        }
+        throw error;
+      }
+      if (!res.writableEnded) {
+        return json(res, 200, { features: { runs_idempotency: { supported: true, durable: true, retention_seconds: 86_400 } } });
+      }
+      return;
+    }
     await handler(req, res);
   });
   servers.push(server);
@@ -121,6 +135,146 @@ afterEach(async () => {
 });
 
 describe("Hermes gateway execution", () => {
+  it("refuses run submission when the API does not promise durable idempotency", async () => {
+    const server = await listen((req, res) => {
+      if (req.url === "/v1/capabilities") {
+        return json(res, 200, { features: { runs_idempotency: { supported: true, durable: false, retention_seconds: 86_400 } } });
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const result = await execute(context({ url: server.url }));
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_idempotency_unavailable" });
+    expect(result.resultJson).toMatchObject({ runSubmission: { supported: true, durable: false, submitted: false } });
+    expect(server.requests.map((request) => request.path)).toEqual(["/v1/capabilities"]);
+  });
+
+  it("uses the formal Idempotency-Key header and replays the original run for the same payload", async () => {
+    const accepted = new Map<string, { body: string; runId: string }>();
+    const submissions: Array<{ key: string | undefined; body: Record<string, unknown>; replayed: boolean }> = [];
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        const key = req.headers["idempotency-key"];
+        const body = await readJsonBody(req);
+        if (typeof key !== "string") return json(res, 400, { code: "invalid_idempotency_key" });
+        const fingerprint = JSON.stringify(body);
+        const previous = accepted.get(key);
+        if (previous && previous.body !== fingerprint) return json(res, 409, { code: "idempotency_key_conflict" });
+        const record = previous ?? { body: fingerprint, runId: "hermes-run-idempotent" };
+        accepted.set(key, record);
+        submissions.push({ key, body, replayed: Boolean(previous) });
+        return json(res, 202, { run_id: record.runId, status: "started", replayed: Boolean(previous) });
+      }
+      if (req.url === "/v1/runs/hermes-run-idempotent/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        return res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const first = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
+      context: { chatMode: true, chatPrompt: "same prompt" },
+    }));
+    const replay = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
+      context: { chatMode: true, chatPrompt: "same prompt" },
+    }));
+
+    expect(first.exitCode).toBe(0);
+    expect(replay.exitCode).toBe(0);
+    expect((replay.resultJson as Record<string, unknown>).runSubmission).toMatchObject({
+      acceptance: "accepted",
+      idempotencyKey: "run-rudder-1",
+      replayed: true,
+    });
+    expect(submissions).toHaveLength(2);
+    expect(submissions.map(({ key }) => key)).toEqual(["run-rudder-1", "run-rudder-1"]);
+    expect(submissions.every(({ body }) => !Object.hasOwn(body, "idempotency_key"))).toBe(true);
+  });
+
+  it("fails a changed payload with the provider's idempotency conflict", async () => {
+    let acceptedBody: string | null = null;
+    let runCount = 0;
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        if (req.headers["idempotency-key"] !== "run-rudder-1") return json(res, 400, { code: "invalid_idempotency_key" });
+        const body = JSON.stringify(await readJsonBody(req));
+        if (acceptedBody !== null && acceptedBody !== body) return json(res, 409, { code: "idempotency_key_conflict" });
+        acceptedBody = body;
+        runCount += 1;
+        return json(res, 202, { run_id: "hermes-run-conflict", status: "started" });
+      }
+      if (req.url === "/v1/runs/hermes-run-conflict/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        return res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+
+    const first = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
+      context: { chatMode: true, chatPrompt: "original prompt" },
+    }));
+    const conflict = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
+      context: { chatMode: true, chatPrompt: "changed prompt" },
+    }));
+
+    expect(first.exitCode).toBe(0);
+    expect(conflict).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_idempotency_conflict" });
+    expect(runCount).toBe(1);
+  });
+
+  it("reconciles ambiguous acceptance with the same durable key after a gateway restart", async () => {
+    const durableRecords = new Map<string, { body: string; runId: string }>();
+    const firstGateway = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        const key = req.headers["idempotency-key"];
+        const body = JSON.stringify(await readJsonBody(req));
+        if (typeof key !== "string") throw new Error("missing formal idempotency header");
+        durableRecords.set(key, { body, runId: "hermes-run-before-restart" });
+        res.destroy();
+        return;
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+    const first = await execute(context({ url: firstGateway.url, timeoutMs: 500 }));
+    await firstGateway.close();
+
+    const replayedKeys: string[] = [];
+    const restartedGateway = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        const key = req.headers["idempotency-key"];
+        const body = JSON.stringify(await readJsonBody(req));
+        if (typeof key !== "string") return json(res, 400, { code: "invalid_idempotency_key" });
+        const previous = durableRecords.get(key);
+        if (!previous) return json(res, 500, { code: "durable_reservation_lost" });
+        if (previous.body !== body) return json(res, 409, { code: "idempotency_key_conflict" });
+        replayedKeys.push(key);
+        return json(res, 202, { run_id: previous.runId, status: "started", replayed: true });
+      }
+      if (req.url === "/v1/runs/hermes-run-before-restart/events") {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        return res.end(`data: ${JSON.stringify({ event: "run.completed", output: "reconciled" })}\n\n`);
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+    const reconciled = await execute(context({ url: restartedGateway.url, timeoutMs: 1_000 }));
+
+    expect(first).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_submission_indeterminate" });
+    expect(first.resultJson).toMatchObject({ runSubmission: {
+      acceptance: "unknown",
+      idempotencyKey: "run-rudder-1",
+      durableReplay: true,
+      independentResubmissionAllowed: false,
+    } });
+    expect(reconciled.exitCode).toBe(0);
+    expect(replayedKeys).toEqual(["run-rudder-1"]);
+    expect((reconciled.resultJson as Record<string, unknown>).runSubmission).toMatchObject({ replayed: true });
+  });
+
   it("uses ACP for chat without requiring the legacy HTTP gateway and returns a native session", async () => {
     const mockAcp = String.raw`
 process.stdin.setEncoding("utf8");
@@ -545,12 +699,53 @@ process.stdin.on("data", (chunk) => {
     expect(result.resultJson).toMatchObject({ upstreamRunId: "hermes-run-1", status: "completed", output: "hello from Hermes" });
     expect((result.resultJson as { synthetic_tool_continuity: Record<string, unknown> }).synthetic_tool_continuity).toMatchObject({ native: false, lossless: false, eventCount: 3 });
     expect(server.requests.map((request) => request.path)).toEqual([
+      "/v1/capabilities",
       "/api/sessions",
       "/api/sessions/hermes-session-1/messages",
       "/v1/runs",
       "/v1/runs/hermes-run-1/events",
     ]);
     expect(server.requests[0]?.headers.authorization).toBe("Bearer hermes-test-key");
+  });
+
+  it("releases a Hermes session writer at provider completion so the next run can reuse the session", async () => {
+    let runCount = 0;
+    let providerTurnLeaseHeld = false;
+    const submittedSessionIds: string[] = [];
+    const server = await listen(async (req, res) => {
+      if (sessionRoute(req, res)) return;
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        if (providerTurnLeaseHeld) return json(res, 409, { code: "session_turn_already_active" });
+        providerTurnLeaseHeld = true;
+        submittedSessionIds.push(String(body.session_id ?? ""));
+        runCount += 1;
+        return json(res, 202, { run_id: `hermes-run-session-lease-${runCount}`, status: "started" });
+      }
+      if (/^\/v1\/runs\/hermes-run-session-lease-\d+\/events$/.test(req.url ?? "")) {
+        // Hermes publishes run.completed only after run_conversation has released its turn lease.
+        providerTurnLeaseHeld = false;
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        return res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+    const runtime = {
+      sessionId: "hermes-session-1",
+      sessionParams: { sessionId: "hermes-session-1" },
+      sessionDisplayId: "hermes-session-1",
+      taskKey: null,
+    };
+
+    const first = await execute(context({ url: server.url, timeoutMs: 1_000 }, { runId: "run-hermes-first", runtime }));
+    expect(first.exitCode).toBe(0);
+    expect(first.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
+
+    const second = await execute(context({ url: server.url, timeoutMs: 1_000 }, { runId: "run-hermes-second", runtime }));
+    expect(second.exitCode).toBe(0);
+    expect(second.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
+    expect(submittedSessionIds).toEqual(["hermes-session-1", "hermes-session-1"]);
+    expect(runCount).toBe(2);
   });
 
   it("returns an upstream failed terminal event as a run failure, not a timeout", async () => {
@@ -639,6 +834,7 @@ process.stdin.on("data", (chunk) => {
       hermesAuthEnvVar: "HERMES_API_KEY",
     });
     expect(server.requests.map((request) => request.path)).toEqual([
+      "/v1/capabilities",
       "/api/sessions/hermes-session-existing",
       "/api/sessions/hermes-session-existing/messages",
       "/v1/runs",

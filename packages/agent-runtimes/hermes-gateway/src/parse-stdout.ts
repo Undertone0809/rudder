@@ -10,12 +10,77 @@ function text(value: unknown): string {
   return typeof item.text === "string" ? item.text : item.content ? text(item.content) : "";
 }
 
+function valueText(value: unknown): string {
+  const direct = text(value);
+  if (direct) return direct;
+  const item = record(value);
+  return Object.keys(item).length > 0 ? JSON.stringify(item) : "";
+}
+
+function parseProductRpcEvent(envelope: Record<string, unknown>, ts: string): TranscriptEntry[] {
+  const event = typeof envelope.event === "string" ? envelope.event : "";
+  const payload = record(envelope.payload);
+  if (!event) return [];
+
+  if (event === "message.delta") {
+    const content = text(payload.text ?? payload.delta);
+    return content ? [{ kind: "assistant", ts, text: content, delta: true }] : [];
+  }
+  if (event === "message.interim") {
+    if (payload.already_streamed === true) return [];
+    const content = text(payload.text);
+    return content ? [{ kind: "assistant", ts, text: content }] : [];
+  }
+  if (event === "tool.start") {
+    const toolUseId = typeof payload.tool_id === "string" ? payload.tool_id : "";
+    if (!toolUseId) return [];
+    return [{
+      kind: "tool_call",
+      ts,
+      toolUseId,
+      name: typeof payload.name === "string" ? payload.name : "Hermes tool",
+      input: payload.args ?? payload.context ?? {},
+    }];
+  }
+  if (event === "tool.complete") {
+    const toolUseId = typeof payload.tool_id === "string" ? payload.tool_id : "";
+    if (!toolUseId) return [];
+    const content = valueText(payload.result_text ?? payload.summary ?? payload.result ?? payload.error);
+    return content ? [{
+      kind: "tool_result",
+      ts,
+      toolUseId,
+      ...(typeof payload.name === "string" ? { toolName: payload.name } : {}),
+      content,
+      isError: payload.is_error === true || payload.status === "failed" || payload.status === "error",
+    }] : [];
+  }
+  if (event === "approval.request" || event === "clarify.request") {
+    const status = typeof payload.status === "string" ? payload.status : "requested";
+    const details = event === "approval.request"
+      ? [text(payload.description), text(payload.command)].filter(Boolean).join("\n")
+      : Array.isArray(payload.questions)
+        ? payload.questions.map((question) => text(record(question).question)).filter(Boolean).join("\n")
+        : text(payload.question);
+    const label = event === "approval.request" ? "approval" : "clarification";
+    return [{ kind: "system", ts, text: `Hermes ${label} ${status}${details ? `: ${details}` : "."}` }];
+  }
+  if (event === "secret.request" || event === "sudo.request") {
+    return [{ kind: "system", ts, text: "Hermes requested protected input; Rudder cancelled the request." }];
+  }
+  if (event === "message.complete" || event === "message.start" || event === "session.info") return [];
+
+  const summary = text(payload.message ?? payload.text ?? payload.summary);
+  return summary ? [{ kind: "system", ts, text: `Hermes ${event}: ${summary}` }] : [];
+}
+
 /** Shared live and historical Hermes projection; excludes permission payloads. */
 export function parseHermesGatewayStdoutLine(line: string, ts: string): TranscriptEntry[] {
   const trimmed = line.trim();
   if (!trimmed) return [];
   try {
     const envelope = record(JSON.parse(trimmed));
+    if (envelope.type === "hermes_product_rpc_event") return parseProductRpcEvent(envelope, ts);
     if (envelope.type === "hermes_acp_update") {
       const update = record(envelope.update);
       const kind = update.sessionUpdate;

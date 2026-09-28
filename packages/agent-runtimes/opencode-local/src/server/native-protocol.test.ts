@@ -1,15 +1,16 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { hasConfirmedNativeWriterQuiescence } from "@rudderhq/agent-runtime-utils";
 import { execute as executeOpenCodeAdapter } from "./execute.js";
 import {
   createOpenCodeLocalProviderCapabilityResolver,
   disposeOpenCodeNativeServersForTests,
-  executeOpenCodeNativeChat,
   ensureManagedOpenCodeServer,
+  executeOpenCodeNativeChat,
   forkOpenCodeNativeSession,
   readOpenCodeNativeTranscript,
   runtimeProviderCapabilities,
@@ -82,7 +83,7 @@ async function makeOpenCodeFixture(directory: string, options: {
   rejectSessionCreate?: boolean;
   rejectSessionCreateMessage?: string;
   rejectPrompt?: boolean;
-  abortMode?: "stall" | "reject";
+  abortMode?: "stall" | "reject" | "false" | "no-content";
   exportPrefix?: string;
   exportOverride?: unknown;
   exportPadBytes?: number;
@@ -308,10 +309,19 @@ const server = createServer(async (request, response) => {
       response.end(JSON.stringify({ message: "fixture abort rejected" }));
       return;
     }
+    if (fixtureOptions.abortMode === "false") {
+      response.end(JSON.stringify(false));
+      return;
+    }
     aborted = true;
     for (const resolve of abortWaiters.splice(0)) resolve();
     eventResponse?.end();
     eventResponse = null;
+    if (fixtureOptions.abortMode === "no-content") {
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
     response.end(JSON.stringify(true));
     return;
   }
@@ -588,6 +598,7 @@ describe("OpenCode native protocol contract", () => {
       responsePartTypes: ["text"],
     });
     expect(result.summary).toBe("native answer");
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
     expect(result.resultJson).not.toHaveProperty("response");
     expect(result.resultJson).not.toHaveProperty("stdout");
     expect(result.resultJson).not.toHaveProperty("stderr");
@@ -1347,7 +1358,7 @@ describe("OpenCode native protocol contract", () => {
     expect(released).toBe(true);
   });
 
-  it.each(["stall", "reject"] as const)("reports a %s provider abort as unverified through the native control handle", async (abortMode) => {
+  it.each(["stall", "reject", "false", "no-content"] as const)("reports a %s provider abort as unverified through the native control handle", async (abortMode) => {
     const directory = await makeFixtureDirectory(`rudder-opencode-control-${abortMode}-abort-`);
     const command = await makeOpenCodeFixture(directory, {
       waitForAbort: true,
@@ -1372,7 +1383,7 @@ describe("OpenCode native protocol contract", () => {
       (error: unknown) => error,
     );
 
-    await waitForValue(() => handle);
+    await waitForValue(() => handle, 10_000);
     await waitForMessageRequest(directory);
     let interruptsSettled = false;
     const interruptions = Promise.all([
@@ -1397,10 +1408,10 @@ describe("OpenCode native protocol contract", () => {
     }
     await expect(interruptions).resolves.toEqual(["unverified", "unverified"]);
     const executionError = await executionOutcome as {
-      sessionContext?: { submissionPhase: string; providerAbortConfirmed?: boolean };
+      sessionContext?: { submissionPhase: string; providerAbortAcknowledged?: boolean };
     };
     expect(executionError).toBeInstanceOf(Error);
-    expect(executionError.sessionContext).toMatchObject({ submissionPhase: "accepted", providerAbortConfirmed: false });
+    expect(executionError.sessionContext).toMatchObject({ submissionPhase: "accepted", providerAbortAcknowledged: false });
     const requests = await fixtureRequests(directory);
     expect(requests.filter((request) => request.method === "POST" && request.url?.includes("/session/oc-session-1/abort"))).toHaveLength(1);
     expect(released).toBe(true);
@@ -1542,12 +1553,12 @@ describe("OpenCode native protocol contract", () => {
     await expect(runFixtureChat(directory, command, { timeoutSec: 1 }))
       .rejects.toMatchObject({
         timedOut: true,
-        sessionContext: { submissionPhase: "indeterminate", providerAbortConfirmed: true, userMessageId: expect.stringMatching(/^msg/u) },
+        sessionContext: { submissionPhase: "indeterminate", providerAbortAcknowledged: true, userMessageId: expect.stringMatching(/^msg/u) },
       });
     expect((await fixtureRequests(directory)).filter((request) => request.url?.includes("/prompt_async"))).toHaveLength(1);
   }, 10_000);
 
-  it.each(["stall", "reject"] as const)("reports an unconfirmed %s abort without waiting for the normal request deadline", async (abortMode) => {
+  it.each(["stall", "reject", "false", "no-content"] as const)("reports an unconfirmed %s abort without waiting for the normal request deadline", async (abortMode) => {
     const directory = await makeFixtureDirectory(`rudder-opencode-${abortMode}-abort-`);
     const command = await makeOpenCodeFixture(directory, { waitForAbort: true, streamEvents: [], abortMode });
     const started = Date.now();
@@ -1561,14 +1572,15 @@ describe("OpenCode native protocol contract", () => {
     });
     expect(result).toMatchObject({
       exitCode: 1, timedOut: true, errorCode: "opencode_native_timed_out",
-      errorMessage: expect.stringContaining("Provider abort was not confirmed"),
-      submissionPhase: "accepted", resultJson: { providerAbortConfirmed: false },
+      errorMessage: expect.stringContaining("Provider abort request was not acknowledged"),
+      submissionPhase: "accepted", resultJson: { providerAbortAcknowledged: false },
+      nativeWriterQuiescence: { status: "unconfirmed" },
     });
     expect(Date.now() - started).toBeLessThan(7_000);
     expect((await fixtureRequests(directory)).filter((request) => request.method === "POST" && request.url?.includes("/abort"))).toHaveLength(1);
   }, 10_000);
 
-  it("bounds partial-boundary recovery when the export CLI stalls after timeout", async () => {
+  it("does not treat a bare abort acknowledgement as writer quiescence when partial export stalls", async () => {
     const directory = await makeFixtureDirectory("rudder-opencode-stalled-partial-export-");
     const command = await makeOpenCodeFixture(directory, {
       waitForAbort: true, persistPartialOnAbort: true, exportDelayMs: 10_000,
@@ -1581,7 +1593,17 @@ describe("OpenCode native protocol contract", () => {
       config: { command, cwd: directory, model: "provider/model", promptTemplate: "{{context.chatPrompt}}", timeoutSec: 1, env: { HOME: directory } },
       context: { chatMode: true, chatPrompt: "partial turn" }, authToken: "fixture-token", onLog: async () => {},
     });
-    expect(result).toMatchObject({ exitCode: 1, timedOut: true, errorCode: "opencode_native_timed_out", resultJson: { providerAbortConfirmed: true } });
+    expect(result).toMatchObject({
+      exitCode: 1,
+      timedOut: true,
+      errorCode: "opencode_native_timed_out",
+      resultJson: { providerAbortAcknowledged: true },
+      nativeWriterQuiescence: {
+        status: "unconfirmed",
+        reason: "OpenCode acknowledged the session abort request without a turn-scoped terminal event.",
+      },
+    });
+    expect(hasConfirmedNativeWriterQuiescence(result)).toBe(false);
     expect(result.resultJson).not.toHaveProperty("transcriptBoundary");
     expect(Date.now() - started).toBeLessThan(7_000);
   }, 10_000);
@@ -1623,7 +1645,12 @@ describe("OpenCode native protocol contract", () => {
       authToken: "fixture-token", onLog: async () => {},
     });
     expect(result).toMatchObject({ exitCode: 1, errorMessage: expect.stringContaining("inactive for 1s"), submissionPhase: "accepted" });
-    expect(result).toMatchObject({ timedOut: true, errorCode: "opencode_native_timed_out", resultJson: { providerAbortConfirmed: true } });
+    expect(result).toMatchObject({
+      timedOut: true,
+      errorCode: "opencode_native_timed_out",
+      resultJson: { providerAbortAcknowledged: true },
+      nativeWriterQuiescence: { status: "unconfirmed" },
+    });
     const requests = await fixtureRequests(directory);
     expect(requests.some((request) => request.method === "POST" && request.url?.includes("/abort"))).toBe(true);
   }, 10_000);
@@ -1637,7 +1664,7 @@ describe("OpenCode native protocol contract", () => {
       })),
     });
     await expect(runFixtureChat(directory, command, { timeoutSec: 1, maxTurnSec: 1, idleTimeoutSec: 2 }))
-      .rejects.toMatchObject({ message: expect.stringContaining("timed out after 1s"), timedOut: true, sessionContext: { submissionPhase: "accepted", providerAbortConfirmed: true } });
+      .rejects.toMatchObject({ message: expect.stringContaining("timed out after 1s"), timedOut: true, sessionContext: { submissionPhase: "accepted", providerAbortAcknowledged: true } });
     const requests = await fixtureRequests(directory);
     expect(requests.some((request) => request.method === "POST" && request.url?.includes("/abort"))).toBe(true);
   }, 10_000);

@@ -1,10 +1,3 @@
-import { spawn, type ChildProcessByStdio } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
-import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer as createNetServer } from "node:net";
-import path from "node:path";
-import type { Readable } from "node:stream";
-import { pathToFileURL } from "node:url";
 import type {
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlHandle,
@@ -17,6 +10,13 @@ import type {
   AgentRuntimeExecutionResult,
   TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer as createNetServer } from "node:net";
+import path from "node:path";
+import type { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import {
   openCodeForkCleanupSafetyError,
   openCodeSideChatCleanupContractError,
@@ -97,7 +97,8 @@ export class OpenCodeNativeCapabilityError extends Error {
       submissionPhase: "pre_submission" | "accepted" | "indeterminate";
       userMessageId?: string;
       observedAssistantMessageIds?: string[];
-      providerAbortConfirmed?: boolean;
+      providerAbortAcknowledged?: boolean;
+      terminalObserved?: boolean;
     },
     readonly timedOut = false,
     readonly source: "adapter" | "provider" = "adapter",
@@ -780,6 +781,7 @@ async function openOpenCodeEventStream(
 }
 
 async function abortOpenCodeSession(url: string, sessionId: string, cwd: string, authorization: string): Promise<boolean> {
+  // OpenCode returns a session-wide boolean, not a turn-scoped terminal receipt.
   return fetchJson(
     requestUrl(url, `/session/${encodeURIComponent(sessionId)}/abort`, { directory: cwd }),
     { method: "POST" },
@@ -788,7 +790,7 @@ async function abortOpenCodeSession(url: string, sessionId: string, cwd: string,
     undefined,
     undefined,
     TURN_ABORT_TIMEOUT_MS,
-  ).then((result) => result !== false, () => false);
+  ).then((result) => result === true, () => false);
 }
 
 function basicAuthorization(username: string, password: string): string {
@@ -2296,10 +2298,11 @@ export async function executeOpenCodeNativeChat(input: {
   let turnActivityObserved = false;
   let idleObserved = false;
   let terminalResponseObserved = false;
+  let providerTerminalObserved = false;
   let eventStreamConnected = false;
   let providerAbortSent = false;
   let providerAbortTask: Promise<void> | null = null;
-  let providerAbortConfirmed: boolean | null = null;
+  let providerAbortAcknowledged: boolean | null = null;
   let turnTimedOut = false;
   let streamFailure: Error | null = null;
   let resolveIdle!: () => void;
@@ -2326,7 +2329,7 @@ export async function executeOpenCodeNativeChat(input: {
       if (!providerAbortSent) {
         providerAbortSent = true;
         providerAbortTask = abortOpenCodeSession(managed.url, sessionId!, cwd, managed.authorization)
-          .then((confirmed) => { providerAbortConfirmed = confirmed; });
+          .then((acknowledged) => { providerAbortAcknowledged = acknowledged; });
       }
       if (providerAbortTask) await providerAbortTask;
     }
@@ -2546,6 +2549,7 @@ export async function executeOpenCodeNativeChat(input: {
         if (!turnActivityObserved) return;
         if (!idleObserved) {
           idleObserved = true;
+          providerTerminalObserved = true;
           if (idleTimeout) clearTimeout(idleTimeout);
           resolveIdle();
         }
@@ -2655,7 +2659,7 @@ export async function executeOpenCodeNativeChat(input: {
       }),
       interrupt: async (_reason: AgentRuntimeControlInterruptReason): Promise<AgentRuntimeControlInterruptResult> => {
         await abortTurn(new Error("OpenCode native turn interrupted"), true);
-        return providerAbortConfirmed === true ? "acknowledged" : "unverified";
+        return providerAbortAcknowledged === true ? "acknowledged" : "unverified";
       },
       dispose: async () => {
         if (!idleObserved) await abortTurn(new Error("OpenCode native control handle disposed"), true);
@@ -2752,12 +2756,13 @@ export async function executeOpenCodeNativeChat(input: {
         providerMessageId: messageId,
         messageId,
         userMessageId,
-        terminalMessageIds: [messageId],
+      terminalMessageIds: [messageId],
         serverUrl: managed.url,
         providerVersion: managed.providerVersion,
         ...responseMetadata(parts, summary),
       },
       summary,
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
     };
   } catch (error) {
     if (promptSent && !providerAbortSent && !idleObserved) await abortTurn(error, true);
@@ -2785,9 +2790,10 @@ export async function executeOpenCodeNativeChat(input: {
       ...(promptSent && observedAssistantMessageIds.size > 0
         ? { observedAssistantMessageIds: [...observedAssistantMessageIds] }
         : {}),
-      ...(providerAbortConfirmed !== null ? { providerAbortConfirmed } : {}),
+      ...(providerAbortAcknowledged !== null ? { providerAbortAcknowledged } : {}),
+      terminalObserved: providerTerminalObserved || terminalResponseObserved,
     };
-    const abortDiagnostic = providerAbortConfirmed === false ? " Provider abort was not confirmed." : "";
+    const abortDiagnostic = providerAbortAcknowledged === false ? " Provider abort request was not acknowledged." : "";
     if (error instanceof OpenCodeNativeCapabilityError) {
       throw new OpenCodeNativeCapabilityError(
         error.status,

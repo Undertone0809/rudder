@@ -150,6 +150,7 @@ class CursorAcpRpcError extends Error {
   constructor(
     readonly code: number | string | null,
     message: string,
+    readonly method: string,
     readonly data?: unknown,
   ) {
     super(message);
@@ -167,7 +168,7 @@ type CursorAcpProviderResponse =
 
 const CURSOR_RPC_METHOD_NOT_FOUND = -32601;
 const CURSOR_RPC_INTERNAL_ERROR = -32603;
-const CURSOR_PROVIDER_RESPONSE_CACHE_SIZE = 256;
+const CURSOR_PROFILE_CAPABILITY_CACHE_SIZE = 128;
 
 const CURSOR_ACP_PROTOCOL_VERSION = 1;
 const CURSOR_NATIVE_PAGE_SIZE = 100;
@@ -715,6 +716,18 @@ type CursorAcpMessage = {
   error?: unknown;
 };
 
+type CursorAcpRequestId = string | number;
+type CursorAcpProviderRequestState = {
+  requestIdentity: string;
+  status: "pending" | "completed";
+};
+
+function cursorAcpRequestIdentity(message: CursorAcpMessage): string {
+  const request = { ...(recordValue(message) ?? {}) };
+  delete request.id;
+  return stableHash(canonicalUpdate(request));
+}
+
 type CursorAcpRequestMethod = "initialize" | "authenticate" | "session/new" | "session/load"
   | "session/set_model" | "session/set_mode" | "session/prompt";
 type CursorAcpRequestDiagnostic = {
@@ -724,14 +737,13 @@ type CursorAcpRequestDiagnostic = {
 };
 
 class CursorAcpClient {
-  private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: unknown) => void; timer: NodeJS.Timeout }>();
+  private readonly pending = new Map<number, { method: CursorAcpRequestMethod; resolve: (value: unknown) => void; reject: (error: unknown) => void; timer: NodeJS.Timeout }>();
   private readonly child: CursorAcpProcess;
   private readonly timeoutMs: number;
   private nextRequestId = 1;
   private buffer = "";
   private closed = false;
-  private readonly pendingProviderRequests = new Map<string, Promise<CursorAcpProviderResponse>>();
-  private readonly providerResponseCache = new Map<string, CursorAcpProviderResponse>();
+  private readonly providerRequests = new Map<CursorAcpRequestId, CursorAcpProviderRequestState>();
   private readonly requestDiagnostics: CursorAcpRequestDiagnostic[] = [];
 
   constructor(
@@ -791,6 +803,7 @@ class CursorAcpClient {
         reject(new CursorAcpTimeoutError(method, timeoutMs));
       }, timeoutMs);
       this.pending.set(id, {
+        method,
         resolve: (value) => { finish("completed"); resolve(value); },
         reject: (error) => { finish("failed"); reject(error); },
         timer,
@@ -819,9 +832,9 @@ class CursorAcpClient {
     this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   }
 
-  close(): void {
+  close(error: unknown = new Error("Cursor ACP connection was closed")): void {
     this.closed = true;
-    this.failPending(new Error("Cursor ACP connection was closed"));
+    this.failPending(error);
     if (this.child.exitCode === null && !this.child.killed) {
       this.child.stdin.end();
       this.child.kill("SIGTERM");
@@ -842,35 +855,57 @@ class CursorAcpClient {
         this.failPending(new CursorNativeCapabilityError("unknown", "protocol-mismatch", "Cursor ACP emitted a non-JSON response."));
         continue;
       }
+      if (typeof parsed.method === "string"
+        && Object.prototype.hasOwnProperty.call(parsed, "id")
+        && typeof parsed.id !== "string"
+        && typeof parsed.id !== "number") {
+        this.close(new CursorNativeCapabilityError(
+          "unsupported",
+          "protocol-mismatch",
+          "Cursor ACP used an unsupported server request ID type; refusing ambiguous correlation.",
+        ));
+        continue;
+      }
+      if (typeof parsed.method === "string" && typeof parsed.id === "number" && !Number.isSafeInteger(parsed.id)) {
+        this.close(new CursorNativeCapabilityError(
+          "unsupported",
+          "protocol-mismatch",
+          "Cursor ACP used a non-safe-integer numeric server request ID; refusing ambiguous correlation.",
+        ));
+        continue;
+      }
       // JSON-RPC request IDs are scoped to the sender. A provider request may
       // reuse one of our pending IDs; it must never resolve that request.
       if (typeof parsed.method === "string" && (typeof parsed.id === "string" || typeof parsed.id === "number")) {
-        const requestId = parsed.id;
-        const key = `${typeof requestId}:${requestId}`;
-        if (this.pendingProviderRequests.has(key)) continue;
-        const cached = this.providerResponseCache.get(key);
-        if (cached) {
-          this.writeProviderResponse(requestId, cached);
+        const requestId: CursorAcpRequestId = parsed.id;
+        const requestIdentity = cursorAcpRequestIdentity(parsed);
+        const previous = this.providerRequests.get(requestId);
+        if (previous) {
+          const reuse = previous.requestIdentity === requestIdentity
+            ? "replayed"
+            : "reused with a different request identity";
+          this.close(new CursorNativeCapabilityError(
+            "unsupported",
+            "protocol-mismatch",
+            `Cursor ACP ${reuse} server request ID ${JSON.stringify(requestId)}; terminating the connection to prevent approval response miscorrelation.`,
+          ));
           continue;
         }
+        const requestState: CursorAcpProviderRequestState = { requestIdentity, status: "pending" };
+        this.providerRequests.set(requestId, requestState);
         const method = parsed.method;
         const response = Promise.resolve().then(async () => {
+          if (this.closed || this.providerRequests.get(requestId) !== requestState) {
+            throw new Error("Cursor ACP request correlation was invalidated.");
+          }
           if (!this.onRequest) throw new CursorAcpMethodNotFoundError("Cursor ACP client method is not supported.");
           return this.onRequest(method, recordValue(parsed.params) ?? {}, requestId);
         }).then(
           (result): CursorAcpProviderResponse => ({ result: result === undefined ? null : result }),
           (error): CursorAcpProviderResponse => ({ error: providerRequestError(error, profileSecrets(this.profile)) }),
         );
-        this.pendingProviderRequests.set(key, response);
         void response.then((resolved) => {
-          this.pendingProviderRequests.delete(key);
-          this.providerResponseCache.set(key, resolved);
-          while (this.providerResponseCache.size > CURSOR_PROVIDER_RESPONSE_CACHE_SIZE) {
-            const oldestKey = this.providerResponseCache.keys().next().value as string | undefined;
-            if (oldestKey === undefined) break;
-            this.providerResponseCache.delete(oldestKey);
-          }
-          this.writeProviderResponse(requestId, resolved);
+          this.writeProviderResponse(requestId, requestIdentity, requestState, resolved);
         });
         continue;
       }
@@ -884,6 +919,7 @@ class CursorAcpClient {
           pending.reject(new CursorAcpRpcError(
             typeof error?.code === "number" || typeof error?.code === "string" ? error.code : null,
             errorText(error) || "Cursor ACP returned an error.",
+            pending.method,
             error?.data,
           ));
         } else {
@@ -903,8 +939,17 @@ class CursorAcpClient {
     }
   }
 
-  private writeProviderResponse(requestId: string | number, response: CursorAcpProviderResponse): void {
-    if (this.closed) return;
+  private writeProviderResponse(
+    requestId: CursorAcpRequestId,
+    requestIdentity: string,
+    requestState: CursorAcpProviderRequestState,
+    response: CursorAcpProviderResponse,
+  ): void {
+    if (this.closed
+      || this.providerRequests.get(requestId) !== requestState
+      || requestState.requestIdentity !== requestIdentity
+      || requestState.status !== "pending") return;
+    requestState.status = "completed";
     try {
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: requestId, ...response })}\n`);
     } catch {
@@ -993,37 +1038,116 @@ function profileEvidence(profile: CursorLocalProfileTransport): CursorCapability
       profileRequired: true,
     };
   }
-  if (!profile.providerVersion.trim()) {
-    return {
-      status: "unknown",
-      reason: "Cursor ACP capability evidence requires the installed Cursor Agent provider version.",
-      transport: CURSOR_NATIVE_TRANSPORT,
-      profileBound: true,
-      profileRequired: true,
-    };
-  }
   return {
-    status: "supported",
-    reason: `Cursor Agent ${profile.providerVersion} exposes ACP initialize/loadSession, authenticate(${profile.authMethodId ?? "cursor_login"}), and session/load on the bound ${command} profile transport; session/load replay does not prove complete retained history.`,
-    providerVersion: profile.providerVersion,
+    status: "unknown",
+    reason: `Cursor ACP ${command} session/load has not been observed on this bound profile; provider version alone does not establish resume or transcript support.`,
+    providerVersion: profile.providerVersion.trim() || null,
     transport: CURSOR_NATIVE_TRANSPORT,
     profileBound: true,
     profileRequired: true,
   };
 }
 
+type CursorProfileCapabilityObservation = {
+  status: CursorCapabilityStatus;
+  reason: string;
+  providerVersion: string | null;
+  transport: string;
+  profileBound: boolean;
+  profileRequired: true;
+};
+type CursorProfileCapabilityObserver = (
+  observation: Pick<CursorProfileCapabilityObservation, "status" | "reason">,
+) => void;
+
+const cursorProfileCapabilityObservations = new Map<string, CursorProfileCapabilityObservation>();
+const cursorSpawnIds = new WeakMap<NonNullable<CursorLocalProfileTransport["spawn"]>, number>();
+let nextCursorSpawnId = 1;
+
+function profileCapabilityObservationKey(profile: CursorLocalProfileTransport): string {
+  const spawn = profile.spawn ?? nodeSpawn;
+  let spawnId = 0;
+  if (profile.spawn) {
+    spawnId = cursorSpawnIds.get(spawn) ?? nextCursorSpawnId++;
+    cursorSpawnIds.set(spawn, spawnId);
+  }
+  return stableHash({
+    bindingId: profile.binding.id?.trim() ?? null,
+    orgId: profile.binding.orgId?.trim() ?? null,
+    hostId: profile.binding.hostId.trim(),
+    profileId: profile.binding.profileId.trim(),
+    workspaceBindingId: profile.binding.workspaceBindingId?.trim() ?? null,
+    capabilityRevision: profile.binding.capabilityRevision?.trim() ?? null,
+    command: profile.command?.trim() || CURSOR_DEFAULT_COMMAND,
+    cwd: path.resolve(profile.cwd),
+    providerVersion: profile.providerVersion.trim() || null,
+    protocolVersion: profile.protocolVersion ?? CURSOR_ACP_PROTOCOL_VERSION,
+    path: profile.env?.PATH ?? process.env.PATH ?? null,
+    spawnId,
+  });
+}
+
+function observeProfileCapability(
+  profile: CursorLocalProfileTransport,
+  observation: Pick<CursorProfileCapabilityObservation, "status" | "reason">,
+): void {
+  if (!profile.binding.hostId.trim() || !profile.binding.profileId.trim() || !path.isAbsolute(profile.cwd)) return;
+  const key = profileCapabilityObservationKey(profile);
+  cursorProfileCapabilityObservations.delete(key);
+  cursorProfileCapabilityObservations.set(key, {
+    ...observation,
+    providerVersion: profile.providerVersion.trim() || null,
+    transport: CURSOR_NATIVE_TRANSPORT,
+    profileBound: true,
+    profileRequired: true,
+  });
+  while (cursorProfileCapabilityObservations.size > CURSOR_PROFILE_CAPABILITY_CACHE_SIZE) {
+    const oldestKey = cursorProfileCapabilityObservations.keys().next().value;
+    if (oldestKey === undefined) break;
+    cursorProfileCapabilityObservations.delete(oldestKey);
+  }
+}
+
+function observedProfileEvidence(profile: CursorLocalProfileTransport): CursorCapabilityEvidence {
+  const unobserved = profileEvidence(profile);
+  if (!unobserved.profileBound) return unobserved;
+  const key = profileCapabilityObservationKey(profile);
+  const observation = cursorProfileCapabilityObservations.get(key);
+  if (!observation) return unobserved;
+  cursorProfileCapabilityObservations.delete(key);
+  cursorProfileCapabilityObservations.set(key, observation);
+  return { ...observation };
+}
+
+function profileCapabilityObservationFromFailure(error: unknown): Pick<CursorProfileCapabilityObservation, "status" | "reason"> {
+  if (error instanceof CursorAcpRpcError && error.code === CURSOR_RPC_METHOD_NOT_FOUND && error.method === "session/load") {
+    return {
+      status: "unsupported",
+      reason: "Cursor ACP returned JSON-RPC Method not found for session/load on the bound profile.",
+    };
+  }
+  if (error instanceof CursorNativeCapabilityError && error.status === "unsupported"
+    && /initialize did not advertise the requested protocol version|agentCapabilities\.loadSession=false/.test(error.message)) {
+    return { status: "unsupported", reason: error.message };
+  }
+  return {
+    status: "unknown",
+    reason: "Cursor ACP session/load did not return a verified persisted session state; capability remains unconfirmed.",
+  };
+}
+
 function unsupportedNativeEvidence(profile: CursorLocalProfileTransport, method: string): CursorCapabilityEvidence {
   const evidence = profileEvidence(profile);
-  if (evidence.status !== "supported") {
+  if (!evidence.profileBound) {
     return {
       ...evidence,
-      reason: `${evidence.reason} Cursor ${method} remains unclassified until the verified ACP profile transport is available.`,
+      reason: `${evidence.reason} Cursor ${method} remains unclassified until the ACP profile transport is bound.`,
     };
   }
   return {
     status: "unsupported",
-    reason: `Cursor Agent ${profile.providerVersion} ACP initialize advertises loadSession and session list, but no verified native ${method} boundary/control hook is exposed by this adapter; it will not synthesize one from CLI --resume.`,
-    providerVersion: profile.providerVersion,
+    reason: `Cursor adapter exposes no verified native ${method} operation and will not synthesize one from CLI --resume.`,
+    providerVersion: profile.providerVersion.trim() || null,
     transport: CURSOR_NATIVE_TRANSPORT,
     profileBound: true,
     profileRequired: true,
@@ -1054,6 +1178,7 @@ async function initializeCursorClient(
   profile: CursorLocalProfileTransport,
   requireLoadSession: boolean,
   persistedAuthMethodId?: string | null,
+  observeCapability?: CursorProfileCapabilityObserver,
 ): Promise<string | null> {
   const initialize = recordValue(await client.request("initialize", {
     protocolVersion: profile.protocolVersion ?? CURSOR_ACP_PROTOCOL_VERSION,
@@ -1062,17 +1187,36 @@ async function initializeCursorClient(
   }));
   const advertisedProtocol = initialize?.protocolVersion;
   const capabilities = recordValue(initialize?.agentCapabilities);
-  if (
-    advertisedProtocol !== (profile.protocolVersion ?? CURSOR_ACP_PROTOCOL_VERSION) ||
-    (requireLoadSession && capabilities?.loadSession !== true)
-  ) {
+  if (advertisedProtocol !== (profile.protocolVersion ?? CURSOR_ACP_PROTOCOL_VERSION)) {
+    if (requireLoadSession) {
+      observeCapability?.({
+        status: "unsupported",
+        reason: "Cursor ACP initialize negotiated a protocol version different from the requested version.",
+      });
+    }
     throw new CursorNativeCapabilityError(
       "unsupported",
       "protocol-mismatch",
-      requireLoadSession
-        ? "Cursor ACP initialize did not advertise the requested protocol version and agentCapabilities.loadSession=true."
-        : "Cursor ACP initialize did not advertise the requested protocol version.",
+      "Cursor ACP initialize did not advertise the requested protocol version.",
     );
+  }
+  if (requireLoadSession && capabilities?.loadSession !== true) {
+    const explicitlyUnsupported = capabilities?.loadSession === false;
+    const reason = explicitlyUnsupported
+      ? "Cursor ACP initialize advertised agentCapabilities.loadSession=false."
+      : "Cursor ACP initialize did not report agentCapabilities.loadSession; session/load support remains unconfirmed.";
+    observeCapability?.({ status: explicitlyUnsupported ? "unsupported" : "unknown", reason });
+    throw new CursorNativeCapabilityError(
+      explicitlyUnsupported ? "unsupported" : "unknown",
+      "protocol-mismatch",
+      reason,
+    );
+  }
+  if (requireLoadSession) {
+    observeCapability?.({
+      status: "unknown",
+      reason: "Cursor ACP initialize advertised loadSession; awaiting a session/load method response.",
+    });
   }
   client.notify("initialized", {});
   const authMethods = Array.isArray(initialize?.authMethods)
@@ -1202,6 +1346,7 @@ async function loadCursorSession(
   sessionId: string,
   signal: AbortSignal | undefined,
   persistedAuthMethodId?: string | null,
+  observeCapability?: CursorProfileCapabilityObserver,
 ): Promise<JsonRecord[]> {
   const updates: JsonRecord[] = [];
   let sessionMismatch = false;
@@ -1217,7 +1362,7 @@ async function loadCursorSession(
     updates.push(update);
   }, signal);
   try {
-    await initializeCursorClient(client, profile, true, persistedAuthMethodId);
+    await initializeCursorClient(client, profile, true, persistedAuthMethodId, observeCapability);
     const loaded = await client.request("session/load", {
       sessionId,
       cwd: profile.cwd,
@@ -1231,8 +1376,13 @@ async function loadCursorSession(
         `Cursor ACP replay returned a session/update for a session other than ${sessionId}.`,
       );
     }
+    observeCapability?.({
+      status: "supported",
+      reason: "Cursor ACP initialize advertised loadSession and session/load returned persisted session state; transcript completeness remains partial.",
+    });
     return updates;
   } catch (error) {
+    observeCapability?.(profileCapabilityObservationFromFailure(error));
     throw normalizeRpcFailure(error, "session/load", profileSecrets(profile));
   } finally {
     client.close();
@@ -1294,6 +1444,7 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
   let active = true;
   let cancellationRequested = false;
   let promptActive = false;
+  let promptSubmitted = false;
   let logWrites = Promise.resolve();
   let logFailure: unknown;
   const failureParams = requestedSessionId
@@ -1430,14 +1581,26 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
       input.profile,
       Boolean(requestedSessionId),
       stringValue(requestedParams.cursorAcpAuthMethodId),
+      requestedSessionId
+        ? (observation) => observeProfileCapability(input.profile, observation)
+        : undefined,
     );
     if (requestedSessionId) {
-      const loaded = await client.request("session/load", {
-        sessionId: requestedSessionId,
-        cwd: input.profile.cwd,
-        mcpServers: input.profile.mcpServers ?? [],
-      });
-      sessionModes = recordValue(requireLoadedCursorSession(loaded, requestedSessionId).modes);
+      try {
+        const loaded = await client.request("session/load", {
+          sessionId: requestedSessionId,
+          cwd: input.profile.cwd,
+          mcpServers: input.profile.mcpServers ?? [],
+        });
+        sessionModes = recordValue(requireLoadedCursorSession(loaded, requestedSessionId).modes);
+        observeProfileCapability(input.profile, {
+          status: "supported",
+          reason: "Cursor ACP initialize advertised loadSession and session/load returned persisted session state; transcript completeness remains partial.",
+        });
+      } catch (error) {
+        observeProfileCapability(input.profile, profileCapabilityObservationFromFailure(error));
+        throw error;
+      }
     } else {
       const created = recordValue(await client.request("session/new", {
         cwd: input.profile.cwd,
@@ -1493,6 +1656,7 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
     // session/load replays history for readers. It is not output of this Run.
     updates.length = 0;
     promptActive = true;
+    promptSubmitted = true;
     const promptResult = recordValue(await client.request("session/prompt", {
       sessionId: activeSessionId,
       prompt: [{ type: "text", text: input.prompt }],
@@ -1513,6 +1677,7 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
       .join("");
     const sessionParams = cursorNativeSessionParams(input, activeSessionId, authMethodId);
     const stopReason = stringValue(promptResult?.stopReason);
+    const providerTerminalObserved = Boolean(stopReason && ["end_turn", "max_tokens", "cancelled", "refusal", "error"].includes(stopReason));
     const promptBoundary = resolvePromptBoundary(updates);
     const completed = stopReason === "end_turn" && !cancellationRequested
       && (!input.controlAttempt || controlLease?.isCurrent() === true);
@@ -1533,6 +1698,9 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
       exitCode: completed ? 0 : 1,
       signal: null,
       timedOut: false,
+      nativeWriterQuiescence: providerTerminalObserved
+        ? { status: "confirmed", source: "provider_terminal" }
+        : { status: "unconfirmed", reason: "Cursor ACP returned without a recognized provider terminal stop reason." },
       errorMessage: completed ? null : incompleteReason,
       ...(!completed ? { errorCode: "cursor_native_incomplete_turn" } : {}),
       sessionId: activeSessionId,
@@ -1569,6 +1737,11 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
       exitCode: 1,
       signal: null,
       timedOut,
+      ...(promptSubmitted
+        ? { nativeWriterQuiescence: { status: "unconfirmed" as const, reason: timedOut
+          ? "Cursor ACP prompt timed out without a provider terminal response or stop acknowledgement."
+          : "Cursor ACP prompt ended without a provider terminal response or stop acknowledgement." } }
+        : {}),
       errorMessage: normalized.message,
       errorCode: timedOut ? "cursor_native_timeout" : `cursor_native_${normalized.kind}`,
       ...(activeSessionId ? {
@@ -1607,6 +1780,10 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
 async function readProfileSession(
   profile: CursorLocalProfileTransport,
   request: CursorNativeTranscriptReadRequest,
+  capabilityEvidence: {
+    sessionResume: CursorCapabilityEvidence;
+    transcript: CursorCapabilityEvidence;
+  },
 ): Promise<CursorNativeTranscriptReadResult> {
   const binding = request.binding;
   if (!binding || !binding.hostId.trim() || !binding.profileId.trim()) {
@@ -1615,7 +1792,8 @@ async function readProfileSession(
   if (!bindingMatches(binding, profile)) {
     return { items: [], nextCursor: null, source: "native", revision: "profile-mismatch", availability: "incompatible", completeness: "unknown" };
   }
-  if (profileEvidence(profile).status !== "supported") {
+  const currentEvidence = observedProfileEvidence(profile);
+  if (!currentEvidence.profileBound || currentEvidence.status === "unsupported") {
     return { items: [], nextCursor: null, source: "native", revision: "profile-unverified", availability: "incompatible", completeness: "unknown" };
   }
   if (request.runtimeType !== "cursor") {
@@ -1636,8 +1814,20 @@ async function readProfileSession(
   if (mismatch) {
     return { items: [], nextCursor: null, source: "native", revision: mismatch, availability: "incompatible", completeness: "unknown" };
   }
+  const observeCapability: CursorProfileCapabilityObserver = (observation) => {
+    observeProfileCapability(profile, observation);
+    const evidence = observedProfileEvidence(profile);
+    Object.assign(capabilityEvidence.sessionResume, evidence);
+    Object.assign(capabilityEvidence.transcript, evidence);
+  };
   try {
-    const updates = await loadCursorSession(profile, sessionId, request.signal, stringValue(params.cursorAcpAuthMethodId));
+    const updates = await loadCursorSession(
+      profile,
+      sessionId,
+      request.signal,
+      stringValue(params.cursorAcpAuthMethodId),
+      observeCapability,
+    );
     const revision = stableHash(updates);
     const scoped = selectRunUpdates(sessionId, updates, request.selector);
     if (scoped.status !== "ok" || !scoped.updates) {
@@ -1789,14 +1979,15 @@ export const runtimeProviderCapabilities: CursorRuntimeProviderCapabilityRegistr
 };
 
 function boundCapabilities(profile: CursorLocalProfileTransport): CursorRuntimeProviderCapabilityAdapter {
-  const evidence = profileEvidence(profile);
+  const evidence = observedProfileEvidence(profile);
+  const profileBindingEvidence = profileEvidence(profile);
   const command = profile.command?.trim() || CURSOR_DEFAULT_COMMAND;
   const cliEvidence: CursorCapabilityEvidence = {
-    status: evidence.status,
-    reason: `${evidence.reason} Cursor Agent uses the profile-bound ${command} CLI for prompt input and --resume; this is separate from ACP transcript replay.`,
-    providerVersion: profile.providerVersion || null,
+    status: profileBindingEvidence.profileBound ? "supported" : "unknown",
+    reason: `Cursor Agent uses the profile-bound ${command} CLI for prompt input and --resume; this is separate from ACP transcript replay.`,
+    providerVersion: profile.providerVersion.trim() || null,
     transport: "cursor-agent-cli",
-    profileBound: evidence.profileBound,
+    profileBound: profileBindingEvidence.profileBound,
     profileRequired: false,
   };
   const resumeEvidence: CursorCapabilityEvidence = {
@@ -1804,6 +1995,7 @@ function boundCapabilities(profile: CursorLocalProfileTransport): CursorRuntimeP
     profileRequired: true,
     reason: `${evidence.reason} ACP session/load is the profile-bound native resume transport; legacy CLI context-handoff sessions remain separately allowlisted.`,
   };
+  const transcriptEvidence = { ...evidence };
   return {
     runtimeType: "cursor",
     sessionResume: { evidence: resumeEvidence },
@@ -1814,7 +2006,13 @@ function boundCapabilities(profile: CursorLocalProfileTransport): CursorRuntimeP
         reason: `${cliEvidence.reason} Context handoff remains a bounded prompt projection, not a native branch.`,
       },
     },
-    transcript: { evidence, readRange: (input) => readProfileSession(profile, input) },
+    transcript: {
+      evidence: transcriptEvidence,
+      readRange: (input) => readProfileSession(profile, input, {
+        sessionResume: resumeEvidence,
+        transcript: transcriptEvidence,
+      }),
+    },
     fork: { evidence: unsupportedNativeEvidence(profile, "boundary fork") },
     control: {
       // Unsupported controls intentionally omit mode: no ACP control request is sent.
@@ -1828,9 +2026,9 @@ function unknownCapabilities(reason: string): CursorRuntimeProviderCapabilityAda
   const evidence: CursorCapabilityEvidence = { ...staticTranscriptEvidence, reason: `${reason} A profile-bound ACP source was not resolved.` };
   return {
     runtimeType: "cursor",
-    sessionResume: { evidence: { ...staticSessionResumeEvidence, reason } },
-    input: { evidence: staticInputEvidence },
-    contextHandoff: { evidence: staticContextEvidence },
+    sessionResume: { evidence: { ...staticSessionResumeEvidence, status: "unknown", profileBound: false, reason } },
+    input: { evidence: { ...staticInputEvidence, status: "unknown", profileBound: false, reason } },
+    contextHandoff: { evidence: { ...staticContextEvidence, status: "unknown", profileBound: false, reason } },
     transcript: {
       evidence,
       readRange: async () => ({ items: [], nextCursor: null, source: "native", revision: "unavailable", availability: "offline", completeness: "unknown" }),

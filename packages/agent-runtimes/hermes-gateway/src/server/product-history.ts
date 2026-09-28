@@ -3,11 +3,12 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-export const HERMES_PRODUCT_HISTORY_HELPER_VERSION = "rudder-hermes-product-history-v1";
+export const HERMES_PRODUCT_HISTORY_HELPER_VERSION = "rudder-hermes-product-history-v2";
 export const HERMES_PRODUCT_HISTORY_TRANSPORT = "hermes-session-db-read-only";
 const HERMES_RUNTIME_TYPE = "hermes_gateway";
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 200;
+const HERMES_MAX_EXECUTION_RANGE_ROWS = 200;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
@@ -135,6 +136,7 @@ export type HermesProductHistoryErrorCode =
   | "invalid_range"
   | "invalid_cursor"
   | "cursor_scope_mismatch"
+  | "cursor_snapshot_mismatch"
   | "scope_violation"
   | "helper_failed"
   | "aborted";
@@ -149,12 +151,13 @@ export class HermesProductHistoryError extends Error {
 
 type NormalizedRange = { startExclusive: number | null; endInclusive: number | null };
 type CursorPayload = {
-  version: 1;
+  version: 2;
   runtimeType: typeof HERMES_RUNTIME_TYPE;
   sessionId: string;
   profileScope: string;
   range: NormalizedRange;
   afterRowId: number;
+  rowSnapshotDigest: string;
 };
 
 type HelperResponse = {
@@ -163,6 +166,7 @@ type HelperResponse = {
   helperVersion?: string;
   sessionId?: string;
   rows?: JsonRecord[];
+  rowSnapshotDigest?: string;
   tailRowId?: number | null;
   session?: JsonRecord | null;
   compressionTipSessionId?: string | null;
@@ -172,6 +176,7 @@ type HelperResponse = {
 
 const PYTHON_HELPER_SOURCE = String.raw`
 import json
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -198,6 +203,12 @@ def main():
     if after_id is not None:
         after_id = int(after_id)
     limit = int(request.get("limit") or 1)
+    range_start = request.get("rangeStartExclusive")
+    if range_start is not None:
+        range_start = int(range_start)
+    range_end = request.get("rangeEndInclusive")
+    if range_end is not None:
+        range_end = int(range_end)
     source_path = os.environ.get("RUDDER_HERMES_SOURCE", "")
     if source_path:
         sys.path.insert(0, source_path)
@@ -214,13 +225,18 @@ def main():
         # The official API forbids after_id with include_compacted.  The raw
         # audit read intentionally uses include_inactive and leaves compaction
         # generations un-deduped so pre-compression rows remain addressable.
-        rows = db.get_messages(
+        snapshot_rows = db.get_messages(
             session_id,
             include_inactive=True,
             include_compacted=False,
-            limit=limit,
-            after_id=after_id,
+            after_id=range_start,
         )
+        if range_end is not None:
+            snapshot_rows = [row for row in snapshot_rows if int(row["id"]) <= range_end]
+        row_snapshot_digest = hashlib.sha256(json.dumps(
+            snapshot_rows, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"), default=str,
+        ).encode("utf-8")).hexdigest()
+        rows = [row for row in snapshot_rows if after_id is None or int(row["id"]) > after_id][:limit]
         tail_rows = db.get_messages(
             session_id,
             include_inactive=True,
@@ -237,6 +253,7 @@ def main():
             "helperVersion": HELPER_VERSION,
             "sessionId": session_id,
             "rows": rows,
+            "rowSnapshotDigest": row_snapshot_digest,
             "tailRowId": tail_row_id,
             "session": session,
             "compressionTipSessionId": tip_id,
@@ -324,11 +341,13 @@ function decodeCursor(value: string): CursorPayload {
   try {
     const parsed = asRecord(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
     if (
-      parsed?.version !== 1
+      parsed?.version !== 2
       || parsed.runtimeType !== HERMES_RUNTIME_TYPE
       || typeof parsed.sessionId !== "string"
       || typeof parsed.profileScope !== "string"
       || typeof parsed.afterRowId !== "number"
+      || typeof parsed.rowSnapshotDigest !== "string"
+      || !/^[a-f0-9]{64}$/.test(parsed.rowSnapshotDigest)
     ) throw new Error("invalid cursor shape");
     const range = asRecord(parsed.range);
     if (!range || (range.startExclusive !== null && typeof range.startExclusive !== "number")
@@ -336,7 +355,7 @@ function decodeCursor(value: string): CursorPayload {
       throw new Error("invalid cursor range");
     }
     return {
-      version: 1,
+      version: 2,
       runtimeType: HERMES_RUNTIME_TYPE,
       sessionId: parsed.sessionId,
       profileScope: parsed.profileScope,
@@ -345,14 +364,15 @@ function decodeCursor(value: string): CursorPayload {
         endInclusive: range.endInclusive as number | null,
       },
       afterRowId: parsed.afterRowId,
+      rowSnapshotDigest: parsed.rowSnapshotDigest,
     };
   } catch (error) {
     throw new HermesProductHistoryError("invalid_cursor", `Invalid Hermes history cursor: ${boundedDiagnostic(error)}.`);
   }
 }
 
-function cursorFor(input: HermesProductHistoryRequest, profile: HermesProductHistoryProfile, range: NormalizedRange): number | null {
-  if (!input.cursor) return range.startExclusive;
+function cursorFor(input: HermesProductHistoryRequest, profile: HermesProductHistoryProfile, range: NormalizedRange): CursorPayload | null {
+  if (!input.cursor) return null;
   const cursor = decodeCursor(input.cursor);
   if (cursor.sessionId !== input.sessionId || cursor.profileScope !== profileScope(profile)) {
     throw new HermesProductHistoryError("cursor_scope_mismatch", "Hermes history cursor belongs to another session or host profile.");
@@ -363,7 +383,7 @@ function cursorFor(input: HermesProductHistoryRequest, profile: HermesProductHis
   if (!Number.isSafeInteger(cursor.afterRowId) || cursor.afterRowId < 0) {
     throw new HermesProductHistoryError("invalid_cursor", "Hermes history cursor has an invalid row boundary.");
   }
-  return cursor.afterRowId;
+  return cursor;
 }
 
 function normalizedTimeout(value: number | undefined): number {
@@ -514,7 +534,13 @@ function validateHelperResponse(value: unknown): HelperResponse {
 
 async function runHelper(
   profile: HermesProductHistoryProfile,
-  request: { sessionId: string; afterId: number | null; limit: number },
+  request: {
+    sessionId: string;
+    afterId: number | null;
+    limit: number;
+    rangeStartExclusive: number | null;
+    rangeEndInclusive: number | null;
+  },
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<HelperResponse> {
@@ -612,6 +638,8 @@ async function runHelper(
       sessionId: request.sessionId,
       afterId: request.afterId,
       limit: request.limit,
+      rangeStartExclusive: request.rangeStartExclusive,
+      rangeEndInclusive: request.rangeEndInclusive,
     }) + "\n");
   });
 }
@@ -638,8 +666,15 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
   const profile = validateProfile(input.profile);
   const limit = normalizedLimit(input.limit);
   const timeoutMs = normalizedTimeout(input.timeoutMs);
-  const afterId = cursorFor({ ...input, sessionId }, profile, range);
-  const response = await runHelper(profile, { sessionId, afterId, limit: limit + 1 }, timeoutMs, input.signal);
+  const cursor = cursorFor({ ...input, sessionId }, profile, range);
+  const afterId = cursor?.afterRowId ?? range.startExclusive;
+  const response = await runHelper(profile, {
+    sessionId,
+    afterId,
+    limit: limit + 1,
+    rangeStartExclusive: range.startExclusive,
+    rangeEndInclusive: range.endInclusive,
+  }, timeoutMs, input.signal);
   if (response.helperVersion !== HERMES_PRODUCT_HISTORY_HELPER_VERSION) {
     throw new HermesProductHistoryError("helper_failed", "Hermes history helper version is not supported.");
   }
@@ -652,6 +687,13 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
   }
   if (response.sessionId !== sessionId) {
     throw new HermesProductHistoryError("scope_violation", "Hermes history helper returned another session identity.");
+  }
+  const rowSnapshotDigest = response.rowSnapshotDigest;
+  if (typeof rowSnapshotDigest !== "string" || !/^[a-f0-9]{64}$/.test(rowSnapshotDigest)) {
+    throw new HermesProductHistoryError("scope_violation", "Hermes history helper returned no valid row snapshot digest.");
+  }
+  if (cursor && cursor.rowSnapshotDigest !== rowSnapshotDigest) {
+    throw new HermesProductHistoryError("cursor_snapshot_mismatch", "Hermes history changed after this cursor was issued; restart pagination from the first page.");
   }
   if (response.rows !== undefined && !Array.isArray(response.rows)) {
     throw new HermesProductHistoryError("scope_violation", "Hermes history helper returned a non-array row set.");
@@ -691,12 +733,13 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
   };
   const nextCursor = hasMore && pageRows.length > 0
     ? encodeCursor({
-        version: 1,
+        version: 2,
         runtimeType: HERMES_RUNTIME_TYPE,
         sessionId,
         profileScope: profileScope(profile),
         range,
         afterRowId: pageRows.at(-1)!.id as number,
+        rowSnapshotDigest,
       })
     : null;
   const session = projectSession(response.session);
@@ -708,6 +751,7 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
     revision: stableRevision({
       helperVersion: HERMES_PRODUCT_HISTORY_HELPER_VERSION,
       sessionId,
+      rowSnapshotDigest,
       tailRowId,
       session,
       tipId,
@@ -723,5 +767,59 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
       successor: successorSession,
       lineage,
     },
+  };
+}
+
+export async function readHermesProductHistoryExecutionSpan(
+  input: Omit<HermesProductHistoryRequest, "limit">,
+): Promise<HermesProductHistoryResult> {
+  const range = normalizeRange(input.range);
+  const sessionId = stringValue(input.sessionId);
+  if (stringValue(input.cursor)) {
+    return {
+      ...errorResult("missing", range, unavailableLineage(sessionId ?? ""), "execution-cursor-unsupported"),
+      revision: "execution-cursor-unsupported",
+    };
+  }
+  if (!sessionId || range.endInclusive === null) {
+    return {
+      ...errorResult("missing", range, unavailableLineage(sessionId ?? ""), "execution-boundary-unknown"),
+      revision: "execution-boundary-unknown",
+    };
+  }
+
+  const result = await readHermesProductHistory({
+    ...input,
+    sessionId,
+    range,
+    limit: HERMES_MAX_EXECUTION_RANGE_ROWS,
+  });
+  if (result.availability !== "available") return { ...result, items: [], nextCursor: null, completeness: "unknown" };
+  if (result.nextCursor) {
+    return {
+      ...result,
+      items: [],
+      nextCursor: null,
+      revision: "execution-range-too-large",
+      completeness: "unknown",
+    };
+  }
+
+  const selectedRowsRevision = stableRevision({
+    runtimeType: input.runtimeType,
+    profileScope: profileScope(input.profile),
+    sessionId,
+    range: result.range,
+    rows: result.items.map((item) => ({
+      locator: { sessionId: item.sessionId, rowId: item.rowId, sourceEntryId: item.sourceEntryId },
+      payload: item.raw,
+    })),
+  });
+  return {
+    ...result,
+    items: [],
+    nextCursor: null,
+    revision: `execution-ownership-unproven:${selectedRowsRevision}`,
+    completeness: "unknown",
   };
 }

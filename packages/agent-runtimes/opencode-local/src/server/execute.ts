@@ -1034,6 +1034,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: 1,
         signal: null,
         timedOut,
+        ...(sessionContext?.terminalObserved
+          ? { nativeWriterQuiescence: { status: "confirmed" as const, source: "provider_terminal" as const } }
+          : sessionContext && sessionContext.submissionPhase !== "pre_submission"
+            ? {
+              nativeWriterQuiescence: {
+                status: "unconfirmed" as const,
+                reason: sessionContext.providerAbortAcknowledged === true
+                  ? "OpenCode acknowledged the session abort request without a turn-scoped terminal event."
+                  : "OpenCode native turn ended without a provider terminal event or process exit.",
+              },
+            }
+            : {}),
         ...(sessionContext ? { submissionPhase: sessionContext.submissionPhase, providerThreadId: sessionContext.sessionId } : {}),
         errorMessage: message,
         errorCode: timedOut
@@ -1053,8 +1065,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           hostId: profileIdentity.hostId,
           ...(sessionContext ? { providerSessionId: sessionContext.sessionId } : {}),
           ...(sessionContext?.userMessageId ? { userMessageId: sessionContext.userMessageId } : {}),
-          ...(sessionContext?.providerAbortConfirmed !== undefined
-            ? { providerAbortConfirmed: sessionContext.providerAbortConfirmed }
+          ...(sessionContext?.providerAbortAcknowledged !== undefined
+            ? { providerAbortAcknowledged: sessionContext.providerAbortAcknowledged }
             : {}),
           ...(sessionContext?.observedAssistantMessageIds?.length
             ? {
@@ -1213,7 +1225,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const toResult = (
     attempt: {
-      proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string };
+      proc: { exitCode: number | null; signal: string | null; timedOut: boolean; stdout: string; stderr: string; pid?: number | null; startedAt?: string | null };
       rawStderr: string;
       parsed: ReturnType<typeof parseOpenCodeJsonl>;
       stoppedAfterToolLoopIdle?: boolean;
@@ -1226,6 +1238,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         exitCode: attempt.proc.exitCode,
         signal: attempt.proc.signal,
         timedOut: true,
+        nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+          ? { status: "confirmed", source: "process_exit" }
+          : { status: "unconfirmed", reason: "OpenCode timed out before child-process exit was observed." },
         errorMessage: `Timed out after ${timeoutSec}s`,
         clearSession: clearSessionOnMissingSession,
       };
@@ -1290,6 +1305,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       exitCode: synthesizedExitCode,
       signal: attempt.proc.signal,
       timedOut: false,
+      nativeWriterQuiescence: attempt.proc.pid != null && attempt.proc.startedAt != null
+        ? { status: "confirmed", source: "process_exit" }
+        : { status: "unconfirmed", reason: "OpenCode child-process exit was not observed." },
       errorMessage: (synthesizedExitCode ?? 0) === 0 ? null : fallbackErrorMessage,
       errorCode: startupIdle ? "opencode_startup_idle" : toolLoopIdle ? "opencode_tool_loop_idle" : null,
       usage: {

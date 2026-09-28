@@ -650,6 +650,7 @@ async function executeHermesProductRpc(
     controlAttempt: ctx.controlAttempt,
     requestApproval: ctx.requestApproval,
     waitForApproval: ctx.waitForApproval,
+    requestTransientInput: ctx.requestTransientInput,
     onSpawn: ctx.onSpawn,
     onLog: ctx.onLog,
     secrets,
@@ -939,6 +940,55 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const timeoutMs = positiveMs(config.timeoutMs ?? (asNumber(config.timeoutSec, 120) * 1000), 120_000);
   const requestTimeout = Math.min(timeoutMs, 15_000);
+  const idempotencyKey = asString(ctx.runId, "").trim();
+  if (!/^[!-~]{1,255}$/.test(idempotencyKey)) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: "Hermes Runs requires a stable Rudder Run ID that fits the provider Idempotency-Key contract.",
+      errorCode: "hermes_gateway_idempotency_key_invalid",
+    };
+  }
+  let idempotencyRetentionSeconds = 0;
+  try {
+    const capabilities = await requestJson(endpoint(base, "/v1/capabilities"), config, {}, requestTimeout);
+    const features = asRecord(capabilities.body.features);
+    const idempotency = asRecord(features?.runs_idempotency);
+    const retentionSeconds = idempotency?.retention_seconds;
+    if (!capabilities.response.ok
+      || idempotency?.supported !== true
+      || idempotency.durable !== true
+      || typeof retentionSeconds !== "number"
+      || !Number.isSafeInteger(retentionSeconds)
+      || retentionSeconds < 1) {
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        errorMessage: "Hermes API Server must advertise durable /v1/runs Idempotency-Key replay before Rudder submits a run.",
+        errorCode: "hermes_gateway_idempotency_unavailable",
+        resultJson: {
+          runSubmission: {
+            supported: idempotency?.supported === true,
+            durable: idempotency?.durable === true,
+            retentionSeconds: typeof retentionSeconds === "number" ? retentionSeconds : null,
+            submitted: false,
+          },
+        },
+      };
+    }
+    idempotencyRetentionSeconds = retentionSeconds;
+  } catch (error) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: `Hermes API Server idempotency capability could not be verified: ${redactDiagnostic(error, configuredSecrets)}`,
+      errorCode: "hermes_gateway_idempotency_unavailable",
+      resultJson: { runSubmission: { submitted: false, acceptance: "not_attempted" } },
+    };
+  }
   const template = parseObject(config.payloadTemplate);
   const workstreamKey = sessionKey(ctx);
   const preliminaryToolContext = buildToolContextProjection(ctx, workstreamKey);
@@ -1029,10 +1079,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ...template,
     input,
     session_id: session.providerSessionId,
-    idempotency_key: ctx.runId,
     ...(asString(config.model, "").trim() ? { model: asString(config.model, "").trim() } : {}),
   };
   delete body.message;
+  delete body.idempotency_key;
 
   if (ctx.onMeta) {
     await ctx.onMeta({
@@ -1076,12 +1126,70 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const abortHandler = () => { void stopUpstream(); };
   ctx.abortSignal?.addEventListener("abort", abortHandler, { once: true });
 
-  const started = await requestJson(endpoint(base, "/v1/runs"), config, { method: "POST", headers: { "content-type": "application/json", "x-hermes-session-key": workstreamKey }, body: JSON.stringify(body) }, requestTimeout);
+  let started: Awaited<ReturnType<typeof requestJson>>;
+  try {
+    started = await requestJson(endpoint(base, "/v1/runs"), config, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-hermes-session-key": workstreamKey,
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body),
+    }, requestTimeout);
+  } catch (error) {
+    ctx.abortSignal?.removeEventListener("abort", abortHandler);
+    const diagnostic = redactDiagnostic(error, configuredSecrets);
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: `Hermes run submission acceptance is unknown; reconcile with the same Run ID and unchanged payload before any new submission. ${diagnostic}`,
+      errorCode: "hermes_gateway_submission_indeterminate",
+      resultJson: {
+        runSubmission: {
+          acceptance: "unknown",
+          idempotencyKey,
+          durableReplay: true,
+          retentionSeconds: idempotencyRetentionSeconds,
+          reconcileWithSameKeyAndPayload: true,
+          independentResubmissionAllowed: false,
+        },
+      },
+    };
+  }
   if (!started.response.ok) {
     ctx.abortSignal?.removeEventListener("abort", abortHandler);
     const safeBody = asRecord(redactInvocationValue(started.body, configuredSecrets)) ?? {};
     const message = textFrom(safeBody) ?? `Hermes run submission returned HTTP ${started.response.status}`;
-    return { exitCode: 1, signal: null, timedOut: false, errorMessage: message, errorCode: "hermes_gateway_submission_failed", resultJson: safeBody };
+    const isIdempotencyConflict = started.response.status === 409
+      && asString(safeBody.code ?? asRecord(safeBody.error)?.code, "") === "idempotency_key_conflict";
+    const isAmbiguousServerError = started.response.status >= 500;
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: isAmbiguousServerError
+        ? `Hermes run submission acceptance is unknown after HTTP ${started.response.status}; reconcile with the same Run ID and unchanged payload.`
+        : message,
+      errorCode: isIdempotencyConflict
+        ? "hermes_gateway_idempotency_conflict"
+        : isAmbiguousServerError
+          ? "hermes_gateway_submission_indeterminate"
+          : "hermes_gateway_submission_failed",
+      resultJson: isAmbiguousServerError ? {
+        runSubmission: {
+          acceptance: "unknown",
+          idempotencyKey,
+          durableReplay: true,
+          retentionSeconds: idempotencyRetentionSeconds,
+          reconcileWithSameKeyAndPayload: true,
+          independentResubmissionAllowed: false,
+          providerStatus: started.response.status,
+        },
+        response: safeBody,
+      } : safeBody,
+    };
   }
   upstreamRunId = asString(started.body.run_id ?? started.body.id, "").trim() || null;
   if (!upstreamRunId) {
@@ -1092,7 +1200,17 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       timedOut: false,
       errorMessage: "Hermes API Server did not return a run_id.",
       errorCode: "hermes_gateway_submission_indeterminate",
-      resultJson: redactInvocationValue(started.body, configuredSecrets) as Record<string, unknown>,
+      resultJson: {
+        runSubmission: {
+          acceptance: "unknown",
+          idempotencyKey,
+          durableReplay: true,
+          retentionSeconds: idempotencyRetentionSeconds,
+          reconcileWithSameKeyAndPayload: true,
+          independentResubmissionAllowed: false,
+        },
+        response: redactInvocationValue(started.body, configuredSecrets),
+      },
     };
   }
   await ctx.onLog("stdout", `[hermes-gateway] run accepted upstreamRunId=${upstreamRunId}\n`);
@@ -1300,6 +1418,13 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   }
   const resultJson = redactInvocationValue({
     upstreamRunId,
+    runSubmission: {
+      acceptance: "accepted",
+      idempotencyKey,
+      replayed: started.response.headers.get("Idempotency-Replayed") === "true"
+        || asRecord(started.body)?.replayed === true,
+      retentionSeconds: idempotencyRetentionSeconds,
+    },
     status,
     output: safeOutput,
     events: events.map((event) => safeEvent(event, configuredSecrets)),
@@ -1343,5 +1468,5 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     const errorMessage = textFrom(latestStatus.error) ?? `Hermes run ended with status ${status}.`;
     return { exitCode: 1, signal: null, timedOut: false, errorMessage: String(redactInvocationValue(errorMessage, configuredSecrets)), errorCode: "hermes_gateway_run_failed", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
   }
-  return { exitCode: 0, signal: null, timedOut: false, provider: "hermes", model: asString(latestStatus.model, "") || null, ...(usage ? { usage } : {}), sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
+  return { exitCode: 0, signal: null, timedOut: false, nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" }, provider: "hermes", model: asString(latestStatus.model, "") || null, ...(usage ? { usage } : {}), sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
 }
