@@ -33,6 +33,11 @@ export {
 export { resolveNativeCommand, type NativeCommand } from "./native-command.js";
 export { hasConfirmedNativeWriterQuiescence } from "./native-writer-quiescence.js";
 export {
+  diagnoseOpenCodeNativeFailure,
+  parseOpenCodeNativeFailureDiagnostic,
+  type OpenCodeNativeFailureDiagnostic
+} from "./native-failure-diagnostic.js";
+export {
   classifyAgentRuntimeNetworkFailure,
   isAgentRuntimeNetworkSuspension,
   type AgentRuntimeNetworkFailureEvidence

@@ -269,6 +269,16 @@ describe("run intelligence real route workflow", () => {
 
     const startedAt = new Date("2026-07-14T10:00:00.000Z");
     const finishedAt = new Date("2026-07-14T10:00:07.000Z");
+    const nativeFailure = {
+      runtime: "opencode_local",
+      event: "session.error",
+      source: "provider",
+      errorName: "UnknownError",
+      statusCode: 503,
+      responseErrorType: "ProviderUnavailableError",
+      messageClassification: "rejected",
+      message: null,
+    };
     await db.insert(heartbeatRuns).values([
       {
         id: runId,
@@ -282,7 +292,7 @@ describe("run intelligence real route workflow", () => {
         error: "command failed",
         errorCode: "command_error",
         usageJson: { inputTokens: 200, cachedInputTokens: 50, outputTokens: 30, costUsd: 0.02 },
-        resultJson: { summary: "Fix failed", stdout: `raw-result-marker:${"R".repeat(5 * 1024 * 1024)}` },
+        resultJson: { summary: "Fix failed", nativeFailure, stdout: `raw-result-marker:${"R".repeat(5 * 1024 * 1024)}` },
         resultSummaryJson: { summary: "Fix failed", costUsd: 0.02 },
         contextSnapshot: { targetType: "issue", targetId: "RIE-1" },
         createdAt: startedAt,
@@ -573,6 +583,7 @@ describe("run intelligence real route workflow", () => {
     expect(fullDetail.status).toBe(200);
     expect(fullDetail.body.run).toMatchObject({ id: runId, orgId, status: "failed" });
     expect(fullDetail.body.run.resultJson.stdout).toContain("raw-result-marker");
+    expect(fullDetail.body.run.resultJson.nativeFailure).toEqual(nativeFailure);
 
     const otherOrgList = await request(app)
       .get(`/api/run-intelligence/orgs/${otherOrgId}/runs`)

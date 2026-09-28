@@ -4176,7 +4176,21 @@ describe("chatAssistantService operator profile prompt injection", () => {
       );
       return {
         summary: "",
-        resultJson: null,
+        resultJson: {
+          nativeFailure: {
+            runtime: "opencode_local",
+            event: "session.error",
+            source: "adapter",
+            errorName: "APIError",
+            statusCode: 502,
+            responseErrorType: "ServiceUnavailable",
+            messageClassification: "present",
+            message: "Provider temporarily unavailable",
+            rawBody: "raw-response-body-secret",
+            responseHeaders: { authorization: "header-secret" },
+          },
+          extraAdapterMetadata: "adapter-metadata-secret",
+        },
         timedOut: false,
         exitCode: 1,
         errorMessage: "runtime process exited",
@@ -4200,9 +4214,21 @@ describe("chatAssistantService operator profile prompt injection", () => {
         resultJson: expect.objectContaining({
           outcome: "failed",
           partialBody: "",
+          nativeFailure: {
+            runtime: "opencode_local",
+            event: "session.error",
+            source: "provider",
+            errorName: "APIError",
+            statusCode: 502,
+            responseErrorType: "ServiceUnavailable",
+            messageClassification: "present",
+            message: "Provider temporarily unavailable",
+          },
         }),
       }),
     );
+    const finalizedRun = mockChatAgentRuns.finalizeRun.mock.lastCall?.[1];
+    expect(JSON.stringify(finalizedRun)).not.toMatch(/raw-response-body-secret|header-secret|adapter-metadata-secret/u);
   });
 
   it("redacts inline visual source from a native final without a repair invocation", async () => {

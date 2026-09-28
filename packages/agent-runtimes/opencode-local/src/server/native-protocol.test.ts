@@ -785,9 +785,9 @@ describe("OpenCode native protocol contract", () => {
             sessionID: "oc-session-1",
             error: {
               name: testCase.name,
-              message: testCase.message,
               data: {
                 statusCode: 404,
+                message: testCase.message,
                 responseBody: testCase.responseBody,
                 responseHeaders: testCase.responseHeaders,
               },
@@ -813,11 +813,23 @@ describe("OpenCode native protocol contract", () => {
       });
 
       expect(result).toMatchObject({ exitCode: 1, errorCode: testCase.expectedCode });
+      expect(result.resultJson?.nativeFailure).toMatchObject({
+        runtime: "opencode_local",
+        event: "session.error",
+        source: testCase.name === "UnknownError" ? "adapter" : "provider",
+        errorName: testCase.name,
+        statusCode: 404,
+        messageClassification: "present",
+        message: testCase.message,
+      });
+      expect(result.resultJson?.nativeFailure).not.toHaveProperty("responseBody");
+      expect(result.resultJson?.nativeFailure).not.toHaveProperty("responseHeaders");
       if (testCase.name === "ProviderModelNotFoundError") {
         expect(result.errorMessage).toContain("ProviderModelNotFoundError");
         expect(result.errorMessage).toContain("Model not found: opencode/mimo-v2.6-flash-free");
         expect(logs.join("")).toContain("OpenCode native chat failed (provider)");
       }
+      expect(JSON.stringify(result.resultJson)).not.toMatch(/header-secret|response-body-secret|fixture-token/u);
       expect(result.errorMessage).not.toMatch(/header-secret|response-body-secret|fixture-token/u);
       expect(logs.join("")).not.toMatch(/header-secret|response-body-secret|fixture-token/u);
     }

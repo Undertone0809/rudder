@@ -1,3 +1,4 @@
+import { diagnoseOpenCodeNativeFailure } from "@rudderhq/agent-runtime-utils";
 import type {
   AgentRuntimeControlAttemptLease,
   AgentRuntimeControlHandle,
@@ -8,6 +9,7 @@ import type {
   AgentRuntimeControlSteerResult,
   AgentRuntimeExecutionContext,
   AgentRuntimeExecutionResult,
+  OpenCodeNativeFailureDiagnostic,
   TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
@@ -102,6 +104,7 @@ export class OpenCodeNativeCapabilityError extends Error {
     },
     readonly timedOut = false,
     readonly source: "adapter" | "provider" = "adapter",
+    readonly nativeFailure?: OpenCodeNativeFailureDiagnostic,
   ) {
     super(message);
   }
@@ -217,6 +220,15 @@ function asRecord(value: unknown): JsonRecord | null {
 
 function nonEmpty(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function safeErrorMessage(value: unknown): string | null {
+  return diagnoseOpenCodeNativeFailure(value).message;
+}
+
+function nativeFailureLabel(failure: OpenCodeNativeFailureDiagnostic): string {
+  const label = `${failure.errorName ?? "Error"}${failure.statusCode ? ` HTTP ${failure.statusCode}` : ""}${failure.responseErrorType ? ` (${failure.responseErrorType})` : ""}`;
+  return failure.message ? `${label}: ${failure.message}` : label;
 }
 
 function boundedDiagnostic(value: unknown, maxChars = 2_000): string {
@@ -1276,58 +1288,6 @@ function transcriptEntriesForMessage(message: OpenCodeMessage): OpenCodeProjecte
   }];
 }
 
-function safeErrorIdentifier(value: unknown): string | null {
-  const identifier = nonEmpty(value);
-  return identifier && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/u.test(identifier) ? identifier : null;
-}
-
-function safeErrorMessage(value: unknown): string | null {
-  const message = nonEmpty(value);
-  if (!message || message.length > 300 || !/^[A-Za-z0-9 .,:;!?()/_+-]+$/u.test(message)) return null;
-  if (/(?:https?:\/\/|\b(?:api[ _-]*key|token|password|secret|authorization|cookie|bearer|basic|credential)\b|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{4,}\b|@)/iu.test(message)) return null;
-  if (/[A-Za-z0-9+/_=-]{28,}/u.test(message)) return null;
-  return message;
-}
-
-function responseErrorType(value: unknown): string | null {
-  if (typeof value === "string") {
-    if (value.length > 8_000) return null;
-    try {
-      value = JSON.parse(value);
-    } catch {
-      return null;
-    }
-  }
-  return safeErrorIdentifier(asRecord(asRecord(value)?.error)?.type);
-}
-
-function assistantErrorDiagnostic(value: unknown): { cancelled: boolean; provider: boolean; message: string } {
-  const record = asRecord(value);
-  const data = asRecord(record?.data);
-  const name = safeErrorIdentifier(record?.name);
-  const statusCode = typeof data?.statusCode === "number"
-    && Number.isInteger(data.statusCode)
-    && data.statusCode >= 100
-    && data.statusCode <= 599
-    ? data.statusCode
-    : null;
-  const type = responseErrorType(data?.responseBody);
-  const message = safeErrorMessage(value)
-    ?? safeErrorMessage(record?.message)
-    ?? safeErrorMessage(record?.error)
-    ?? safeErrorMessage(record?.detail)
-    ?? safeErrorMessage(data?.message);
-  const provider = (name === "APIError" && statusCode !== null)
-    || /^Provider[A-Za-z0-9]*Error$/u.test(name ?? "");
-  const label = `${name ?? "Error"}${statusCode ? ` HTTP ${statusCode}` : ""}${type ? ` (${type})` : ""}`;
-  const diagnostic = boundedDiagnostic(message ? `${label}: ${message}` : label);
-  return {
-    cancelled: !provider && /abort|cancel/iu.test([name, message].filter(Boolean).join(" ")),
-    provider,
-    message: diagnostic,
-  };
-}
-
 function validateNativeChatResponse(response: unknown, sessionId: string, expectedUserMessageId?: string): {
   info: JsonRecord;
   parts: JsonRecord[];
@@ -1344,13 +1304,16 @@ function validateNativeChatResponse(response: unknown, sessionId: string, expect
     throw new OpenCodeNativeCapabilityError("unknown", "OpenCode native message response has no message info.");
   }
   if (info.error !== undefined && info.error !== null) {
-    const error = assistantErrorDiagnostic(info.error);
+    const nativeFailure = diagnoseOpenCodeNativeFailure(info.error, "message.error");
+    const provider = nativeFailure.source === "provider";
+    const cancelled = !provider && /abort|cancel/iu.test([nativeFailure.errorName, nativeFailure.message].filter(Boolean).join(" "));
     throw new OpenCodeNativeCapabilityError(
       "unknown",
-      `OpenCode native message ${error.cancelled ? "was cancelled" : "failed"}: ${error.message}`,
+      `OpenCode native message ${cancelled ? "was cancelled" : "failed"}: ${nativeFailureLabel(nativeFailure)}`,
       undefined,
       false,
-      error.provider ? "provider" : "adapter",
+      provider ? "provider" : "adapter",
+      nativeFailure,
     );
   }
   if (info.role !== "assistant") {
@@ -2534,13 +2497,15 @@ export async function executeOpenCodeNativeChat(input: {
         candidateAssistantMessageIds.add(observedAssistantMessageId);
       }
       if (event.type === "session.error") {
-        const error = assistantErrorDiagnostic(event.properties.error);
+        const nativeFailure = diagnoseOpenCodeNativeFailure(event.properties.error);
+        const provider = nativeFailure.source === "provider";
         failStream(new OpenCodeNativeCapabilityError(
           "unknown",
-          `OpenCode ${error.provider ? "provider" : "session"} error: ${error.message}`,
+          `OpenCode ${provider ? "provider" : "session"} error: ${nativeFailureLabel(nativeFailure)}`,
           undefined,
           false,
-          error.provider ? "provider" : "adapter",
+          provider ? "provider" : "adapter",
+          nativeFailure,
         ));
         return;
       }
@@ -2799,6 +2764,7 @@ export async function executeOpenCodeNativeChat(input: {
         context,
         turnTimedOut || error.timedOut,
         error.source,
+        error.nativeFailure,
       );
     }
     throw new OpenCodeNativeCapabilityError(

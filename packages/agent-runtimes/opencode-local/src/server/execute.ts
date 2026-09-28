@@ -1028,6 +1028,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       const providerFailure = error instanceof OpenCodeNativeCapabilityError && error.source === "provider";
       const sessionContext = error instanceof OpenCodeNativeCapabilityError ? error.sessionContext : undefined;
       const timedOut = error instanceof OpenCodeNativeCapabilityError && error.timedOut;
+      const nativeFailure = error instanceof OpenCodeNativeCapabilityError ? error.nativeFailure : undefined;
       const failedSessionId = sessionContext?.sessionId ?? nativeSessionId;
       await onLog("stderr", `[rudder] OpenCode native chat failed (${providerFailure ? "provider" : status}): ${message}\n`);
       return {
@@ -1063,6 +1064,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           nativeSession: true,
           profileId: profileIdentity.profileId,
           hostId: profileIdentity.hostId,
+          ...(nativeFailure ? { nativeFailure } : {}),
           ...(sessionContext ? { providerSessionId: sessionContext.sessionId } : {}),
           ...(sessionContext?.userMessageId ? { userMessageId: sessionContext.userMessageId } : {}),
           ...(sessionContext?.providerAbortAcknowledged !== undefined

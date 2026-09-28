@@ -1,6 +1,7 @@
 import {
   buildModelAttemptSpecs,
   isAgentRuntimeNetworkSuspension,
+  parseOpenCodeNativeFailureDiagnostic,
   type AgentRuntimeExecutionResult,
 } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
@@ -1164,6 +1165,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           || transcriptProcessingState.hasRuntimeOutputEvidence,
         );
         const rawProviderFailure = asRecord(result.resultJson?.providerFailure);
+        const nativeFailure = parseOpenCodeNativeFailureDiagnostic(result.resultJson?.nativeFailure);
         const authProviderFailure = result.errorCode === "codex_provider_auth_required"
           && rawProviderFailure?.classification === "authentication"
           && rawProviderFailure.retryable === false
@@ -1210,6 +1212,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             partialBody: finalPartialBody,
             ...(forkAcceptanceUnknown ? { submissionPhase: "indeterminate", nativeCompletion: "unknown" } : {}),
             ...(authProviderFailure ? { providerFailure: authProviderFailure } : {}),
+            ...(nativeFailure ? { nativeFailure } : {}),
           },
         });
         throw new ChatAssistantStreamError(
