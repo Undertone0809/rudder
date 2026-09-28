@@ -1,0 +1,181 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rust-project-delete-v26",
+  "status": "review_ready",
+  "owner": {
+    "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
+    "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。",
+    "corrections": [
+      "Publish bounded draft candidates early for CI; merge only qualified increments."
+    ],
+    "non_goals": [
+      "No default writer flip, production migration, release, public listener retirement or new CLI/MCP delete capability."
+    ],
+    "authorization": "implementation | local_integration | publication"
+  },
+  "candidate": {
+    "branch": "codex/d1-default-writer-20260929",
+    "source_ref": "9e459a5a3204285885c50b08e49915d8a2f38215",
+    "source_sha": "9e459a5a3204285885c50b08e49915d8a2f38215",
+    "dirty_fingerprint": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+    "changed_paths": [
+      ".github/workflows/rust-d1-real-entry.yml",
+      "doc/plans/2026-09-29-rust-project-delete-ownership.md",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/project_deletions.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/db/src/migrations/0175_project_delete_receipt_kind.sql",
+      "packages/db/src/migrations/meta/0175_snapshot.json",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/schema/organization_mutations.ts",
+      "scripts/smoke/rust-project-delete-real-entry.test.ts",
+      "scripts/smoke/rust-project-delete-real-entry.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/routes/projects.ts",
+      "server/src/services/project-goal-mutation-fence.test.ts",
+      "server/src/services/project-goal-mutation-fence.ts",
+      "server/src/services/projects.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts"
+    ],
+    "build": {
+      "id": "foundation-ae9d6054-migration-d996435c",
+      "source_sha": "9e459a5a3204285885c50b08e49915d8a2f38215",
+      "equivalence": "Binaries built before checkpoint/rebase; post-rebase delta only historical delivery docs and runtime-postinstall-compat.test.mjs; product/runtime files identical.",
+      "foundation_sha256": "ae9d6054b6fc1da1bbcaab3c6fe6beef7d678550a41b01f1fd675f69886b1d44",
+      "migration_sha256": "d996435c7609713a07b7b1dda42b138b9b85e50248034271d242776916057a59"
+    },
+    "runtime": {
+      "id": "author-project-delete-recovery-GM92Ny-stopped",
+      "source_sha": "9e459a5a3204285885c50b08e49915d8a2f38215"
+    },
+    "organization_data": {
+      "organization_id": "bfd8b548-593d-44ad-9dbe-c4ee102b9a2e",
+      "data_id": "bfd8b548-593d-44ad-9dbe-c4ee102b9a2e-cleaned"
+    },
+    "workload_fixture": "Disposable linked/resource-bearing Project, scoped agents, Issue FK blocker, large response, audit failure, delayed outbox, recreated UUID, Rust outage.",
+    "budget_lease": {
+      "id": "local-project-delete-v26",
+      "fingerprint": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+      "expires_at": "2026-10-01T00:00:00Z"
+    },
+    "acceptance_packet": {
+      "version": "26.0",
+      "fingerprint": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+      "criteria": [
+        "Unchanged public DELETE and legacy response incl >256KiB and >1MiB; keyed replay exact and unkeyed repeat404.",
+        "Current actor/org authorization including replay; foreign/terminated denied.",
+        "Atomic delete/link cascades/audit/receipt/outbox; FK, audit and receipt storage failure roll back.",
+        "Stale Node remover cannot issue DELETE on Rust-owned Project; Rust outage never falls back.",
+        "Restart with valid deleted-ID receipt succeeds; unknown allowlist ID fails closed.",
+        "Pending outbox survives restart, then actual public WebSocket delivery and published state; recreated UUID untouched.",
+        "No current CLI/MCP delete command exists; do not invent product surface.",
+        "Installed upgrade and applicable packaged verification, independent verifier PASS, final reviewer accept and exact-head CI before merge."
+      ],
+      "state_inventory": []
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "candidate_fingerprint": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+      "source_sha": "9e459a5a3204285885c50b08e49915d8a2f38215",
+      "build_id": "foundation-ae9d6054-migration-d996435c",
+      "runtime_id": "author-project-delete-recovery-GM92Ny-stopped",
+      "data_id": "bfd8b548-593d-44ad-9dbe-c4ee102b9a2e-cleaned",
+      "packet_version": "26.0",
+      "verdict": "accept",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "scope": "renewed stage reviewed precheckpoint identical product content; frozen identity rebind pending"
+    },
+    "verifier": {
+      "candidate_fingerprint": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+      "source_sha": "9e459a5a3204285885c50b08e49915d8a2f38215",
+      "build_id": "foundation-ae9d6054-migration-d996435c",
+      "runtime_id": "author-project-delete-recovery-GM92Ny-stopped",
+      "data_id": "bfd8b548-593d-44ad-9dbe-c4ee102b9a2e-cleaned",
+      "packet_version": "26.0",
+      "verdict": "pending"
+    },
+    "final_review": {
+      "candidate_fingerprint": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+      "source_sha": "9e459a5a3204285885c50b08e49915d8a2f38215",
+      "build_id": "foundation-ae9d6054-migration-d996435c",
+      "runtime_id": "author-project-delete-recovery-GM92Ny-stopped",
+      "data_id": "bfd8b548-593d-44ad-9dbe-c4ee102b9a2e-cleaned",
+      "packet_version": "26.0",
+      "verdict": "pending"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      "Rebased only successor commit onto 442203954; prior squash-merged member work excluded. No successor code conflict."
+    ],
+    "invalidated_receipts": [
+      "Earlier small-fixture author result superseded for large response and outbox delivery."
+    ]
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+    "branch_refs": [
+      "codex/d1-default-writer-20260929"
+    ],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss",
+    "patch_tree_sha": "542af926c99d087988b6e2c1749a7f5d804dd9ef",
+    "expected_old_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [],
+    "index_fingerprint_before": "task_owned_22_paths",
+    "index_fingerprint_after": "clean_after_checkpoint",
+    "worktree_fingerprint_before": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+    "worktree_fingerprint_after": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "Original 7b2a checkout untouched; sibling untracked v18 packet preserved; all successor edits checkpointed before explicit --onto rebase."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  },
+  "author_evidence": {
+    "log": "/tmp/rudder-project-delete-recovery.GM92Ny",
+    "log_sha256": "86a661125cd8d484e4d14a64e31a2ae9c4876130aa35a84a3b73d15303f565f5",
+    "verdict": "PASS_author_only",
+    "large_response_bytes": 1180164,
+    "outbox_id": "047c1c1c-5a66-4e66-9f24-643f06234300",
+    "outbox_state": "published",
+    "outbox_attempts": 1
+  },
+  "claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  }
+}

@@ -2,6 +2,16 @@ schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-29
 source:
+  candidate_sha: 9e459a5a3204285885c50b08e49915d8a2f38215
+  candidate_tree: 542af926c99d087988b6e2c1749a7f5d804dd9ef
+  source_fingerprint: 0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8
+  main_base_sha: 4422039540f8926f5021466061f1bbd1b890dd01
+  acceptance: Project_DELETE_stage_accept_author_real_entry_PASS_independent_acceptance_pending
+  receipt_packet: doc/plans/2026-09-29-rudder-project-delete-delivery-packet-v26.json
+  row_refresh_scope: candidate_only_no_whole_authority_row_advancement_before_acceptance
+  project_delete: {implemented: true, private_verified: true, author_real_entry_verified: true, independent_verified: false, default_path_verified: false, whole_component_retired: false}
+  remaining_project_writers: Node_create_with_goals_and_organization_delete
+delivered_member_source:
   candidate_sha: 8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0
   candidate_tree: 7b02b6a6412130a5461042216ad15093806465ac
   source_fingerprint: 4ab88b772ce8764cde6ef7cc448c41e6a08647fd399bdc918c91680de0a38d3f
