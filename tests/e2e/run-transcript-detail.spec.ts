@@ -1,5 +1,7 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { and, eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import { chatConversations, createDb, heartbeatRunEvents, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
@@ -29,6 +31,35 @@ async function openVisibleRunList(page: Page): Promise<Locator> {
   const historyList = page.getByTestId("agent-runs-history-list");
   await expect(historyList).toBeVisible();
   return historyList;
+}
+
+function isolatedE2EScreenshotPath(name: string) {
+  const runId = process.env.RUDDER_E2E_RUN_ID?.replace(/[^a-z0-9._-]/gi, "-") ?? "local";
+  return join(tmpdir(), `${name}-${runId}-${process.pid}.png`);
+}
+
+function captureUnexpectedRequestFailures(page: Page) {
+  const failures: string[] = [];
+  const navigationSequenceByRequest = new WeakMap<Request, number>();
+  let mainFrameNavigationSequence = 0;
+
+  page.on("request", (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+      mainFrameNavigationSequence += 1;
+    }
+    navigationSequenceByRequest.set(request, mainFrameNavigationSequence);
+  });
+  page.on("requestfailed", (request) => {
+    const error = request.failure()?.errorText ?? "unknown";
+    const requestNavigationSequence = navigationSequenceByRequest.get(request);
+    const abortedByLaterNavigation = error === "net::ERR_ABORTED"
+      && requestNavigationSequence !== undefined
+      && requestNavigationSequence < mainFrameNavigationSequence;
+    if (abortedByLaterNavigation) return;
+    failures.push(`${request.method()} ${request.url()} :: ${error}`);
+  });
+
+  return failures;
 }
 
 async function installRunTranscriptFilePreviewStub(page: Page, expectedPaths: string[]) {
@@ -99,14 +130,11 @@ test.describe("Run transcript detail", () => {
   test("renders detail transcripts as readable progress chunks with collapsed grouped tool activity", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
+    const requestFailures = captureUnexpectedRequestFailures(page);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("requestfailed", (request) => {
-      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
-    });
     await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
     const organization = await createOrganization(page, `Run-Detail-${Date.now()}`);
 
@@ -157,7 +185,7 @@ test.describe("Run transcript detail", () => {
 
     await shellView.click();
     await commandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-desktop.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-desktop"),
     });
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
@@ -179,7 +207,7 @@ test.describe("Run transcript detail", () => {
       );
     }
     await mobileCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-mobile.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-mobile"),
     });
 
     const externalToolGroup = page.getByRole("button", { name: /Expand tool activity group 2/ }).filter({ hasText: "Searched 2 times, used 3 tools" });
@@ -249,12 +277,12 @@ test.describe("Run transcript detail", () => {
     await expect(rudderDisclosure).toHaveCSS("opacity", "0");
 
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-mcp-idle.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-mcp-idle"),
       fullPage: true,
     });
     await rudderMcpRow.hover();
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-mcp-hover.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-mcp-hover"),
       fullPage: true,
     });
 
@@ -293,7 +321,7 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByText("memory update failed:", { exact: false })).toHaveCount(0);
 
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-detail-expanded.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-detail-expanded"),
       fullPage: true,
     });
 
@@ -312,7 +340,7 @@ test.describe("Run transcript detail", () => {
     const lightCommandTerminal = page.getByTestId("command-terminal-detail").first();
     await expect(lightCommandTerminal).toBeVisible();
     await lightCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-light-desktop.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-light-desktop"),
     });
     await page.setViewportSize({ width: 390, height: 844 });
     const lightMobileCommandDisclosure = page.getByRole("button", { name: /Expand command details: Marked PAP-473 done/ }).first();
@@ -323,7 +351,7 @@ test.describe("Run transcript detail", () => {
     const lightTerminalOverflow = await lightMobileCommandTerminal.evaluate((element) => element.scrollWidth - element.clientWidth);
     expect(lightTerminalOverflow).toBeLessThanOrEqual(1);
     await lightMobileCommandTerminal.screenshot({
-      path: "/tmp/rudder-r6z-143-terminal-ui-light-mobile.png",
+      path: isolatedE2EScreenshotPath("rudder-r6z-143-terminal-ui-light-mobile"),
     });
 
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
@@ -359,8 +387,35 @@ test.describe("Run transcript detail", () => {
     const transcriptEntries = [
       { kind: "system", text: "reasoning started" },
       { kind: "assistant", text: "Progress update." },
+      {
+        kind: "user",
+        text: [
+          "<rudder_agent_instruction>",
+          "<rudder_agent_operating_contract>",
+          "",
+          "Your home directory is $AGENT_HOME. Everything personal to you lives there.",
+          "",
+          "Use these paths consistently:",
+          "- Personal instructions live under $AGENT_HOME/instructions.",
+          "</rudder_agent_operating_contract>",
+          "</rudder_agent_instruction>",
+        ].join("\n"),
+      },
       { kind: "system", text: "reasoning completed" },
       { kind: "system", text: "reasoning started" },
+      {
+        kind: "tool_call",
+        name: "shell",
+        input: { command: "printf transcript-fixture-tool" },
+        toolUseId: "transcript-fixture-tool",
+      },
+      {
+        kind: "tool_result",
+        toolUseId: "transcript-fixture-tool",
+        toolName: "shell",
+        content: "Transcript fixture tool completed.",
+        isError: false,
+      },
       { kind: "assistant", text: "I", delta: true },
       { kind: "assistant", text: " read", delta: true },
       { kind: "assistant", text: " AG", delta: true },
@@ -381,22 +436,6 @@ test.describe("Run transcript detail", () => {
         text: "memory update failed: update /Users/zeeland/.rudder/instances/e2e/organizations/org/workspaces/agents/transcript-tester--e2e/life/preferences.yml permission denied",
       },
     ];
-    await e2eDb.insert(heartbeatRunEvents).values(transcriptEntries.map((entry, index) => ({
-      orgId: organization.id,
-      runId: run.id,
-      agentId: agent.id,
-      seq: 10_000 + index,
-      eventType: "transcript.entry",
-      stream: "system",
-      level: "info",
-      message: "chat transcript entry",
-      payload: {
-        ...entry,
-        ts: new Date(transcriptStartedAt + index).toISOString(),
-      },
-      createdAt: new Date(transcriptStartedAt + index),
-    })));
-
     await expect.poll(async () => {
       const runDetailRes = await page.request.get(`/api/agent-runs/${run.id}`);
       if (!runDetailRes.ok()) return null;
@@ -428,35 +467,75 @@ test.describe("Run transcript detail", () => {
     await expect(nativeDetailPane.getByTestId("invocation-mcp-evidence").getByText("rudder-tools", { exact: true })).toBeVisible();
     await expect(nativeDetailPane.getByText("adapter invocation", { exact: true })).toHaveCount(1);
 
-    await e2eDb
-      .update(heartbeatRunEvents)
-      .set({
-        payload: {
-          ...(firstInvocation?.payload as Record<string, unknown>),
-          loadedMcpServers: [
-            { serverName: "rudder-tools", source: "built_in" },
-            { serverName: "rudder-browser", source: "built_in" },
-            { serverName: "rudder-computer", source: "built_in" },
-            { serverName: "external.supabase-production-with-a-long-name", source: "managed_external" },
-          ],
-        },
-      })
-      .where(eq(heartbeatRunEvents.id, firstInvocation!.id));
-    await e2eDb.insert(heartbeatRunEvents).values({
+    const transcriptRunId = randomUUID();
+    const transcriptRunStartedAt = new Date(transcriptStartedAt - 1_000);
+    const transcriptRunFinishedAt = new Date(transcriptRunStartedAt.getTime() + 60_000);
+    const firstInvocationPayload = {
+      ...(firstInvocation!.payload as Record<string, unknown>),
+      loadedMcpServers: [
+        { serverName: "rudder-tools", source: "built_in" },
+        { serverName: "rudder-browser", source: "built_in" },
+        { serverName: "rudder-computer", source: "built_in" },
+        { serverName: "external.supabase-production-with-a-long-name", source: "managed_external" },
+      ],
+    };
+    await e2eDb.insert(heartbeatRuns).values({
+      id: transcriptRunId,
       orgId: organization.id,
-      runId: run.id,
       agentId: agent.id,
-      seq: 9_000,
-      eventType: "adapter.invoke",
-      stream: "system",
-      level: "info",
-      message: "adapter invocation",
-      payload: {
-        ...(firstInvocation?.payload as Record<string, unknown>),
-        loadedMcpServers: [],
-      },
-      createdAt: new Date(transcriptStartedAt - 1),
+      invocationSource: "scheduled",
+      triggerDetail: "Run transcript fixture",
+      status: "succeeded",
+      startedAt: transcriptRunStartedAt,
+      finishedAt: transcriptRunFinishedAt,
+      resultJson: { retention: { transcriptSource: "legacy" } },
+      createdAt: transcriptRunStartedAt,
+      updatedAt: transcriptRunFinishedAt,
     });
+    await e2eDb.insert(heartbeatRunEvents).values([
+      {
+        orgId: organization.id,
+        runId: transcriptRunId,
+        agentId: agent.id,
+        seq: 9_000,
+        eventType: "adapter.invoke",
+        stream: "system",
+        level: "info",
+        message: "adapter invocation",
+        payload: firstInvocationPayload,
+        createdAt: new Date(transcriptRunStartedAt.getTime() + 1),
+      },
+      {
+        orgId: organization.id,
+        runId: transcriptRunId,
+        agentId: agent.id,
+        seq: 9_001,
+        eventType: "adapter.invoke",
+        stream: "system",
+        level: "info",
+        message: "adapter invocation",
+        payload: {
+          ...firstInvocationPayload,
+          loadedMcpServers: [],
+        },
+        createdAt: new Date(transcriptRunStartedAt.getTime() + 2),
+      },
+      ...transcriptEntries.map((entry, index) => ({
+        orgId: organization.id,
+        runId: transcriptRunId,
+        agentId: agent.id,
+        seq: 10_000 + index,
+        eventType: "transcript.entry",
+        stream: "system" as const,
+        level: "info" as const,
+        message: "chat transcript entry",
+        payload: {
+          ...entry,
+          ts: new Date(transcriptStartedAt + index).toISOString(),
+        },
+        createdAt: new Date(transcriptStartedAt + index),
+      })),
+    ]);
 
     await page.goto("/");
     await page.evaluate((orgId) => {
@@ -464,7 +543,7 @@ test.describe("Run transcript detail", () => {
       window.localStorage.setItem("rudder.theme", "dark");
     }, organization.id);
 
-    await page.goto(`/agents/${agent.id}/runs/${run.id}`);
+    await page.goto(`/agents/${agent.id}/runs/${transcriptRunId}`);
 
     const mainContent = page.locator("#main-content");
     const agentRunsTab = mainContent.getByRole("tab", { name: "Runs" });
@@ -472,7 +551,14 @@ test.describe("Run transcript detail", () => {
     await expect(mainContent.getByRole("tab", { name: "Configuration" })).toBeVisible();
     await expect(mainContent.getByRole("tab", { name: "Instructions" })).toBeVisible();
     await expect(mainContent.getByRole("tab", { name: "Skills" })).toBeVisible();
-    await expect(mainContent.getByRole("tab", { name: "Integrations" })).toBeVisible();
+    await expect(mainContent.getByRole("tablist").first().getByRole("tab")).toHaveText([
+      "Dashboard",
+      "Configuration",
+      "Instructions",
+      "Skills",
+      "Runs",
+      "Issues",
+    ]);
     await expect(agentRunsTab).toBeVisible();
     await expect(mainContent.getByRole("tab", { name: "Issues" })).toBeVisible();
     await expect(agentRunsTab).toHaveAttribute("data-state", "active");
@@ -496,9 +582,19 @@ test.describe("Run transcript detail", () => {
     }
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
-    await expect(detailPane.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
+    await expect(detailPane).toContainText("Progress update.");
+    await expect(detailPane).toContainText("I read AGENTS.md and added E2E coverage.");
+    await expect(detailPane.getByText(/I read AGENTS\.md and added E2E coverage\./)).toHaveCount(1);
+    await expect(detailPane).not.toContainText("<rudder_agent_instruction>");
+    await expect(detailPane).not.toContainText("Your home directory is $AGENT_HOME");
     await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
     await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
+    const transcriptToolDisclosure = detailPane.getByRole("button", {
+      name: /Expand command details: Ran printf transcript-fixture-tool/,
+    });
+    await expect(transcriptToolDisclosure).toBeVisible();
+    await transcriptToolDisclosure.click();
+    await expect(detailPane.getByTestId("command-terminal-detail")).toContainText("printf transcript-fixture-tool");
     await expect(detailPane.getByText("Agent memory updated", { exact: false })).toBeVisible();
     await detailPane.getByRole("button", { name: "Expand memory update details" }).click();
     await expect(
@@ -516,18 +612,20 @@ test.describe("Run transcript detail", () => {
     await expect(detailPane.getByText("Raw event", { exact: true })).toHaveCount(0);
     await expect(detailPane.getByText("memory update failed:", { exact: false })).toHaveCount(0);
     await page.screenshot({
-      path: "/tmp/rudder-run-transcript-detail-real-dark.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-detail-real-dark"),
       fullPage: true,
     });
 
     await page.getByRole("button", { name: "raw" }).click();
-    await expect(detailPane.getByText(/reasoning started/i)).toHaveCount(0);
-    await expect(detailPane.getByText(/reasoning completed/i)).toHaveCount(0);
+    await expect(detailPane).toContainText("<rudder_agent_instruction>");
+    await expect(detailPane).toContainText("Your home directory is $AGENT_HOME");
+    await expect(detailPane).toContainText("reasoning started");
+    await expect(detailPane).toContainText("reasoning completed");
     const coalescedRawMessage = detailPane.locator("pre").filter({ hasText: "I read AGENTS.md and added E2E coverage." });
     await expect(coalescedRawMessage).toHaveCount(1);
     await expect(detailPane.getByText("I read AG", { exact: true })).toHaveCount(0);
     await coalescedRawMessage.locator("..").screenshot({
-      path: "/tmp/rudder-run-transcript-raw-coalesced.png",
+      path: isolatedE2EScreenshotPath("rudder-run-transcript-raw-coalesced"),
     });
     await page.getByRole("button", { name: "nice" }).click();
 
@@ -551,7 +649,8 @@ test.describe("Run transcript detail", () => {
     expect(transcriptDialogBox!.y).toBeGreaterThanOrEqual(0);
     expect(transcriptDialogBox!.x + transcriptDialogBox!.width).toBeLessThanOrEqual(viewport!.width);
     expect(transcriptDialogBox!.y + transcriptDialogBox!.height).toBeLessThanOrEqual(viewport!.height);
-    await expect(transcriptDialog.getByText(/Progress update\.\s+I read AGENTS\.md and added E2E coverage\./)).toBeVisible();
+    await expect(transcriptDialog).toContainText("Progress update.");
+    await expect(transcriptDialog).toContainText("I read AGENTS.md and added E2E coverage.");
     await expect(transcriptDialog.getByRole("button", { name: "raw" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(transcriptDialog).toBeHidden();
@@ -589,7 +688,7 @@ test.describe("Run transcript detail", () => {
     expect(await narrowMcpEvidence.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-run-invocation-mcp-narrow-dark.png", fullPage: true });
+    await page.screenshot({ path: isolatedE2EScreenshotPath("rudder-run-invocation-mcp-narrow-dark"), fullPage: true });
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.getByRole("tab", { name: "Metadata" }).click();
 
@@ -597,6 +696,10 @@ test.describe("Run transcript detail", () => {
     await expect(promptBlock).toBeVisible();
     const promptText = await promptBlock.textContent();
     expect(promptText?.trim()).toBeTruthy();
+    const actualInstructionStack = String(firstInvocationPayload.agentInstructionStack ?? "");
+    const actualInstructionHeading = actualInstructionStack.split(/\r?\n/, 1)[0]?.trim();
+    expect(actualInstructionHeading).toBeTruthy();
+    expect(promptText).toContain(actualInstructionHeading);
 
     if (baseURL) {
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
@@ -614,7 +717,7 @@ test.describe("Run transcript detail", () => {
     await expect(page.getByRole("button", { name: "nice" })).toBeVisible();
 
     await page.screenshot({
-      path: "tests/e2e/test-results/agent-run-detail-tabs.png",
+      path: isolatedE2EScreenshotPath("agent-run-detail-tabs"),
       fullPage: true,
     });
   });
@@ -1066,14 +1169,11 @@ test.describe("Run transcript detail", () => {
   test("annotates a failed tool result block with its own source identity", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
+    const requestFailures = captureUnexpectedRequestFailures(page);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("requestfailed", (request) => {
-      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
-    });
 
     await page.setViewportSize({ width: 1440, height: 1050 });
     const organization = await createOrganization(page, `Run-Annotation-Items-${Date.now()}`);
@@ -1371,7 +1471,7 @@ test.describe("Run transcript detail", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-r6z-100-failed-tool-annotation-mobile.png", fullPage: true });
+    await page.screenshot({ path: isolatedE2EScreenshotPath("rudder-r6z-100-failed-tool-annotation-mobile"), fullPage: true });
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
     expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
     expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
@@ -1380,14 +1480,11 @@ test.describe("Run transcript detail", () => {
   test("exposes item-scoped annotation affordances across transcript types and action rows", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
-    const requestFailures: string[] = [];
+    const requestFailures = captureUnexpectedRequestFailures(page);
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => pageErrors.push(error.message));
-    page.on("requestfailed", (request) => {
-      requestFailures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`);
-    });
 
     await page.setViewportSize({ width: 1440, height: 1050 });
     const organization = await createOrganization(page, `Run-Annotation-Items-${Date.now()}`);
@@ -1677,7 +1774,7 @@ test.describe("Run transcript detail", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await detailPane.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await page.screenshot({ path: "/tmp/rudder-r6z-106-transcript-annotation-items-mobile.png", fullPage: true });
+    await page.screenshot({ path: isolatedE2EScreenshotPath("rudder-r6z-106-transcript-annotation-items-mobile"), fullPage: true });
     expect(consoleErrors, `console errors: ${consoleErrors.join(" | ")}`).toEqual([]);
     expect(pageErrors, `page errors: ${pageErrors.join(" | ")}`).toEqual([]);
     expect(requestFailures, `request failures: ${requestFailures.join(" | ")}`).toEqual([]);
@@ -1759,12 +1856,32 @@ test.describe("Run transcript detail", () => {
     await page.goto(`/agents/${agent.id}/runs/${runId}`, { waitUntil: "domcontentloaded" });
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
-    await expect(detailPane.getByText("2 entries", { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(detailPane.getByText("50 entries", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(detailPane).toContainText("Conversation transcript marker 1");
-    await expect(detailPane).toContainText("Conversation transcript marker 1205");
+    await expect(detailPane).not.toContainText("Conversation transcript marker 1205");
+
+    const continuation = detailPane.getByTestId("transcript-continuation");
+    const nextPage = continuation.getByRole("button", { name: "Next transcript page" });
+    await expect(continuation).toContainText("Page 1");
+    await expect(nextPage).toBeEnabled();
+    for (let pageNumber = 2; pageNumber <= 25; pageNumber += 1) {
+      await expect(nextPage).toBeEnabled();
+      const transcriptPageResponse = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === `/api/run-intelligence/runs/${runId}/transcript`
+          && url.searchParams.has("cursor");
+      });
+      await nextPage.click();
+      const response = await transcriptPageResponse;
+      expect(response.ok(), `Transcript page ${pageNumber} returned ${response.status()}: ${await response.text()}`).toBe(true);
+      await expect(continuation).toContainText(`Page ${pageNumber}`);
+      if (await detailPane.getByText("Conversation transcript marker 1205", { exact: true }).count()) break;
+    }
+    await expect(detailPane.getByText("Conversation transcript marker 1205", { exact: true })).toBeVisible();
+    await expect(nextPage).toBeDisabled();
 
     await page.screenshot({
-      path: "/tmp/rudder-agent-run-complete-conversation-transcript.png",
+      path: isolatedE2EScreenshotPath("rudder-agent-run-complete-conversation-transcript"),
       fullPage: true,
     });
   });
@@ -2037,7 +2154,8 @@ test.describe("Run transcript detail", () => {
 
     const detailPane = page.getByTestId("agent-runs-detail-pane");
     await expect(detailPane.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(detailPane.getByText("No persisted transcript for this run.", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("0 entries", { exact: true })).toBeVisible();
+    await expect(detailPane.getByText("No transcript for this run.", { exact: true })).toBeVisible();
     await expect(detailPane.getByRole("button", { name: "Expand transcript" })).toBeVisible();
   });
 
@@ -2144,7 +2262,8 @@ test.describe("Run transcript detail", () => {
     const urlBeforeCopy = new URL(page.url());
 
     const runList = await openVisibleRunList(page);
-    const copyButton = runList.getByRole("button", { name: `Copy run ID ${run.id.slice(0, 8)}` });
+    const runLabel = `run_${run.id.slice(0, 8)}`;
+    const copyButton = runList.getByRole("button", { name: `Copy run ID ${runLabel}` });
     await expect(copyButton).toBeVisible({ timeout: 15_000 });
 
     await copyButton.click();
@@ -2159,7 +2278,7 @@ test.describe("Run transcript detail", () => {
       .toBe(run.id);
 
     await page.screenshot({
-      path: "tests/e2e/test-results/agent-run-id-copied.png",
+      path: isolatedE2EScreenshotPath("agent-run-id-copied"),
       fullPage: true,
     });
   });
@@ -2231,11 +2350,13 @@ test.describe("Run transcript detail", () => {
 
     const expectedTodayLabel = formatRunOccurrenceForTest(todayStartedAt, now);
     const expectedOlderLabel = formatRunOccurrenceForTest(olderStartedAt, now);
+    const todayRunLabel = `run_${todayRunId.slice(0, 8)}`;
+    const olderRunLabel = `run_${olderRunId.slice(0, 8)}`;
     const todayRow = listPane.getByRole("link", {
-      name: new RegExp(`Open run ${todayRunId.slice(0, 8)} from ${escapeRegExp(expectedTodayLabel)}`),
+      name: new RegExp(`Open run ${todayRunLabel} from ${escapeRegExp(expectedTodayLabel)}`),
     });
     const olderRow = listPane.getByRole("link", {
-      name: new RegExp(`Open run ${olderRunId.slice(0, 8)} from ${escapeRegExp(expectedOlderLabel)}`),
+      name: new RegExp(`Open run ${olderRunLabel} from ${escapeRegExp(expectedOlderLabel)}`),
     });
 
     await expect(todayRow).toBeVisible();
@@ -2256,7 +2377,7 @@ test.describe("Run transcript detail", () => {
     expect(olderTimingBox!.x + olderTimingBox!.width).toBeLessThanOrEqual(listBox!.x + listBox!.width + 1);
 
     await page.screenshot({
-      path: "/tmp/rudder-agent-run-list-occurrence-times.png",
+      path: isolatedE2EScreenshotPath("rudder-agent-run-list-occurrence-times"),
       fullPage: true,
     });
 
@@ -2274,10 +2395,10 @@ test.describe("Run transcript detail", () => {
     const mobileHistoryList = page.getByTestId("agent-runs-history-list");
     await expect(mobileHistoryList).toBeVisible();
     const mobileTodayRow = mobileHistoryList.getByRole("link", {
-      name: new RegExp(`Open run ${todayRunId.slice(0, 8)} from ${escapeRegExp(expectedTodayLabel)}`),
+      name: new RegExp(`Open run ${todayRunLabel} from ${escapeRegExp(expectedTodayLabel)}`),
     });
     const mobileOlderRow = mobileHistoryList.getByRole("link", {
-      name: new RegExp(`Open run ${olderRunId.slice(0, 8)} from ${escapeRegExp(expectedOlderLabel)}`),
+      name: new RegExp(`Open run ${olderRunLabel} from ${escapeRegExp(expectedOlderLabel)}`),
     });
     await expect(mobileTodayRow).toBeVisible();
     await expect(mobileOlderRow).toBeVisible();
@@ -2287,7 +2408,7 @@ test.describe("Run transcript detail", () => {
     expect(mobileOlderTimingBox).not.toBeNull();
     expect(mobileOlderTimingBox!.x + mobileOlderTimingBox!.width).toBeLessThanOrEqual(mobileListBox!.x + mobileListBox!.width + 1);
     await page.screenshot({
-      path: "/tmp/rudder-agent-run-list-occurrence-times-mobile.png",
+      path: isolatedE2EScreenshotPath("rudder-agent-run-list-occurrence-times-mobile"),
       fullPage: true,
     });
   });
