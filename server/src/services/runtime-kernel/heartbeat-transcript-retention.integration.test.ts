@@ -15,8 +15,8 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { desc, eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { desc, eq, sql } from "drizzle-orm";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
@@ -329,6 +329,89 @@ function countOccurrences(value: string, marker: string): number {
   return marker ? value.split(marker).length - 1 : 0;
 }
 
+type W12BenchmarkPage = {
+  source: string;
+  availability: string;
+  completeness: string;
+  items: Array<{ text?: string | null }>;
+};
+
+function percentile(values: number[], fraction: number): number {
+  const ordered = [...values].sort((left, right) => left - right);
+  return ordered[Math.max(0, Math.ceil(ordered.length * fraction) - 1)] ?? 0;
+}
+
+async function benchmarkEquivalentReaders(input: {
+  native: () => Promise<W12BenchmarkPage>;
+  legacy: () => Promise<W12BenchmarkPage>;
+  expectedText: string;
+}) {
+  const warmupsPerArm = 3;
+  const measuredReadsPerArm = 20;
+  const arms = ["native", "legacy"] as const;
+  const samplesMs: Record<(typeof arms)[number], number[]> = { native: [], legacy: [] };
+  let peakSampledRssBytes = 0;
+
+  const read = async (arm: (typeof arms)[number], record: boolean) => {
+    peakSampledRssBytes = Math.max(peakSampledRssBytes, process.memoryUsage().rss);
+    const started = process.hrtime.bigint();
+    const page = await input[arm]();
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+    const text = page.items.map((item) => item.text ?? "").join("");
+    if (page.source !== arm || page.availability !== "available" || page.completeness !== "complete" || text !== input.expectedText) {
+      throw new Error(`${arm} Reader benchmark lost or misclassified the equivalent payload`);
+    }
+    peakSampledRssBytes = Math.max(peakSampledRssBytes, process.memoryUsage().rss);
+    if (record) samplesMs[arm].push(Number(elapsedMs.toFixed(3)));
+  };
+
+  for (let index = 0; index < warmupsPerArm; index += 1) {
+    const order = index % 2 === 0 ? arms : [...arms].reverse();
+    for (const arm of order) await read(arm, false);
+  }
+  const rssBeforeBytes = process.memoryUsage().rss;
+  peakSampledRssBytes = rssBeforeBytes;
+  for (let index = 0; index < measuredReadsPerArm; index += 1) {
+    const order = index % 2 === 0 ? arms : [...arms].reverse();
+    for (const arm of order) await read(arm, true);
+  }
+  const rssAfterBytes = process.memoryUsage().rss;
+
+  const summarize = (values: number[]) => ({
+    count: values.length,
+    p50Ms: percentile(values, 0.5),
+    p95Ms: percentile(values, 0.95),
+    minMs: Math.min(...values),
+    maxMs: Math.max(...values),
+    samplesMs: values,
+  });
+
+  return {
+    warmupsPerArm,
+    measuredReadsPerArm,
+    order: "alternating native-first and legacy-first",
+    latency: { native: summarize(samplesMs.native), legacy: summarize(samplesMs.legacy) },
+    processRss: {
+      processRole: "Vitest integration worker running Rudder server-side services",
+      metric: "process.memoryUsage().rss",
+      sampling: "before and after each Reader call; peak is the maximum boundary sample",
+      rssBeforeBytes,
+      peakSampledRssBytes,
+      rssAfterBytes,
+      peakDeltaBytes: peakSampledRssBytes - rssBeforeBytes,
+      afterDeltaBytes: rssAfterBytes - rssBeforeBytes,
+    },
+  };
+}
+
+async function writeW12BenchmarkReceipt(outputPath: string, receipt: unknown) {
+  const resolvedPath = path.resolve(outputPath);
+  if (!resolvedPath.startsWith(`${path.resolve("/tmp")}${path.sep}`)) {
+    throw new Error("W12 benchmark receipts must be written under /tmp");
+  }
+  await fsp.writeFile(resolvedPath, `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });
+}
+
 describe("heartbeat native transcript retention integration", () => {
   let db!: ReturnType<typeof createDb>;
   let instance: EmbeddedPostgresInstance | null = null;
@@ -589,8 +672,10 @@ describe("heartbeat native transcript retention integration", () => {
     const sessionId = `w12-native-session-${randomUUID()}`;
     const native = await queueRun(agentId);
     const nativeToken = `W12_NATIVE_RAW_${randomUUID()}`;
-    const nativeRaw = `${nativeToken}::${"native transcript payload 你好 🐕 ".repeat(1_400)}`;
+    // The legacy stdout parser trims terminal whitespace; keep the same byte size with a final period.
+    const nativeRaw = `${nativeToken}::${"native transcript payload 你好 🐕 ".repeat(1_399)}native transcript payload 你好 🐕.`;
     const nativePayloadBytes = Buffer.byteLength(nativeRaw, "utf8");
+    expect(nativePayloadBytes).toBe(53_253);
     const nativeTurnId = `turn-${native.run.id}`;
     const subagentTurnId = `${nativeTurnId}-subagent`;
     const subagentRaw = `W12_NATIVE_SUBAGENT_RAW_${randomUUID()}`;
@@ -605,6 +690,7 @@ describe("heartbeat native transcript retention integration", () => {
     const nativeTerminalGate = fakeTerminalEffect.arm();
     let nativeRevision = "";
     let primarySpanId: string | null = null;
+    let nativeRunLogBytesWhilePending = 0;
     try {
       await heartbeatService(db).startNextQueuedRunForAgent(agentId);
       await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
@@ -709,9 +795,9 @@ describe("heartbeat native transcript retention integration", () => {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw error;
       });
-      const nativeRunLogBytes = nativeRunLogStat?.size ?? 0;
-      expect(nativeRun.logBytes ?? 0).toBe(nativeRunLogBytes);
-      expect(nativeRunLogBytes).toBe(0);
+      nativeRunLogBytesWhilePending = nativeRunLogStat?.size ?? 0;
+      expect(nativeRun.logBytes ?? 0).toBe(nativeRunLogBytesWhilePending);
+      expect(nativeRunLogBytesWhilePending).toBe(0);
 
       const nativeSourceEntries = (fakeNativeProvider.sessions.get(sessionId) ?? [])
         .filter((entry) => entry.runId === native.run.id && entry.turnId === nativeTurnId);
@@ -822,6 +908,166 @@ describe("heartbeat native transcript retention integration", () => {
     });
     expect(verifiedProof.ok).toBe(true);
     if (!verifiedProof.ok) throw new Error(`Expected complete native proof, got ${verifiedProof.reason}`);
+
+    const legacy = await queueRun(agentId);
+    fakeNativeProvider.setProfileMode("unsupported");
+    const legacyToken = nativeToken;
+    const legacyRaw = nativeRaw;
+    expect(Buffer.byteLength(legacyRaw, "utf8")).toBe(nativePayloadBytes);
+    const legacyTurnId = `turn-${legacy.run.id}`;
+    fakeNativeProvider.register(legacy.run.id, {
+      sessionId,
+      turnId: legacyTurnId,
+      rawTranscript: legacyRaw,
+      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
+    });
+    const [legacySegmentBefore] = await db.select().from(nativeSegments)
+      .where(eq(nativeSegments.id, legacy.segmentId));
+    expect(legacySegmentBefore?.nativeSessionId).toBeNull();
+
+    let legacyLogBytesWhilePending = 0;
+    let legacyLogTextWhilePending = "";
+    let readerBenchmark: Awaited<ReturnType<typeof benchmarkEquivalentReaders>> | undefined;
+    const legacyOnlyReader = createTranscriptReader(db, { logStore: getRunLogStore() });
+    const nativeReadInput = {
+      orgId,
+      runId: native.run.id,
+      spanId: cleanedNativeSpan!.id,
+      principal: { orgId, principalScopeRef: `org:${orgId}`, authorized: true },
+    };
+    const legacyTerminalGate = fakeTerminalEffect.arm();
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(legacy.run.id));
+      await legacyTerminalGate.entered;
+      const legacyRunPending = await waitForTerminalEffectsPending(legacy.run.id);
+      expect(legacyRunPending.resultJson).toMatchObject({
+        stdout: legacyRaw,
+        stderr: legacyRaw,
+        output: legacyRaw,
+        transcript: [{ text: legacyRaw }],
+        events: [{ payload: { text: legacyRaw } }],
+        retention: { transcriptSource: "legacy" },
+      });
+      expect(legacyRunPending.logRef).toEqual(expect.any(String));
+      expect((legacyRunPending.terminalEffectsJson as any).automation).toMatchObject({
+        output: "bounded fake provider summary",
+      });
+      expect(JSON.stringify(legacyRunPending.terminalEffectsJson)).not.toContain(legacyRaw);
+      expect(await readAllFiles(runLogRoot)).toContain(legacyRaw);
+
+      const legacyLogRefWhilePending = legacyRunPending.logRef;
+      if (!legacyLogRefWhilePending) throw new Error("Expected the pending legacy Run log reference");
+      const legacyLogPathWhilePending = path.resolve(runLogRoot, legacyLogRefWhilePending);
+      const legacyLogStatWhilePending = await fsp.stat(legacyLogPathWhilePending);
+      legacyLogTextWhilePending = await fsp.readFile(legacyLogPathWhilePending, "utf8");
+      legacyLogBytesWhilePending = legacyLogStatWhilePending.size;
+      expect(legacyLogStatWhilePending.size).toBe(Buffer.byteLength(legacyLogTextWhilePending, "utf8"));
+      expect(legacyLogTextWhilePending).toContain(legacyRaw);
+      expect(countOccurrences(legacyLogTextWhilePending, legacyToken)).toBe(1);
+
+      const [legacySpanWhilePending] = await db.select().from(runRuntimeSpans)
+        .where(eq(runRuntimeSpans.runId, legacy.run.id));
+      if (!legacySpanWhilePending) throw new Error("Expected a pending legacy runtime span");
+      const legacyReadInput = {
+        orgId,
+        runId: legacy.run.id,
+        spanId: legacySpanWhilePending.id,
+        principal: { orgId, principalScopeRef: `org:${orgId}`, authorized: true },
+      };
+      const legacyReadPage = await legacyOnlyReader.readRun(legacyReadInput);
+      expect(legacyReadPage).toMatchObject({ source: "legacy", availability: "available", completeness: "complete" });
+      const legacyReadText = legacyReadPage.items.map((item) => item.text ?? "").join("");
+      expect(Buffer.byteLength(legacyReadText, "utf8")).toBe(nativePayloadBytes);
+      expect(createHash("sha256").update(legacyReadText, "utf8").digest("hex"))
+        .toBe(createHash("sha256").update(legacyRaw, "utf8").digest("hex"));
+
+      const receiptPath = process.env.RUDDER_W12_BENCHMARK_RECEIPT;
+      if (receiptPath) {
+        readerBenchmark = await benchmarkEquivalentReaders({
+          native: async () => await rereadAfterCleanup.readRun(nativeReadInput),
+          legacy: async () => await legacyOnlyReader.readRun(legacyReadInput),
+          expectedText: nativeRaw,
+        });
+      }
+    } finally {
+      legacyTerminalGate.release();
+      await waitForTerminalEffectsComplete(legacy.run.id);
+    }
+
+    const [legacyPersistedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, legacy.run.id));
+    const legacyAttempts = await db.select().from(heartbeatRunAttempts)
+      .where(eq(heartbeatRunAttempts.runId, legacy.run.id));
+    const legacyEvents = await db.select().from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, legacy.run.id));
+    const legacySpans = await db.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.runId, legacy.run.id));
+    const legacySqlEvidence = JSON.stringify({ run: legacyPersistedRun, attempts: legacyAttempts, events: legacyEvents, spans: legacySpans });
+    const legacySqlMarkerOccurrences = countOccurrences(legacySqlEvidence, legacyToken);
+    expect(legacySqlMarkerOccurrences).toBeGreaterThan(0);
+    const [nativeStorage] = await db.select({
+      resultJsonBytes: sql<number>`pg_column_size(${heartbeatRuns.resultJson})`,
+    }).from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    const [legacyStorage] = await db.select({
+      resultJsonBytes: sql<number>`pg_column_size(${heartbeatRuns.resultJson})`,
+    }).from(heartbeatRuns).where(eq(heartbeatRuns.id, legacy.run.id));
+    const nativeResultJsonBytes = Number(nativeStorage?.resultJsonBytes ?? 0);
+    const legacyResultJsonBytes = Number(legacyStorage?.resultJsonBytes ?? 0);
+    expect(nativeResultJsonBytes).toBeGreaterThan(0);
+    expect(legacyResultJsonBytes).toBeGreaterThan(nativeResultJsonBytes);
+
+    expect(legacyLogBytesWhilePending).toBeGreaterThan(0);
+    const legacyLogRef = legacyPersistedRun?.logRef;
+    expect(legacyLogRef).toEqual(expect.any(String));
+
+    const receiptPath = process.env.RUDDER_W12_BENCHMARK_RECEIPT;
+    if (receiptPath) {
+      if (!readerBenchmark) throw new Error("W12 Reader measurements were not captured while legacy logs existed");
+      const receipt = {
+        kind: "rudder-w12-transcript-retention-comparison-v1",
+        recordedAt: new Date().toISOString(),
+        runtime: { node: process.version, platform: process.platform, arch: process.arch },
+        fixture: {
+          payloadUtf8Bytes: nativePayloadBytes,
+          payloadSha256: createHash("sha256").update(nativeRaw, "utf8").digest("hex"),
+          identicalPayloadAcrossArms: true,
+          nativeEvidence: "synthetic fake native readRange hook; no real provider invoked",
+        },
+        storage: {
+          sqlMetric: "pg_column_size(heartbeat_runs.result_json)",
+          runLogMetric: "filesystem stat size of the isolated per-Run NDJSON file",
+          native: {
+            resultJsonBytes: nativeResultJsonBytes,
+            runLogBytesWhileTerminalEffectsPending: nativeRunLogBytesWhilePending,
+            runLogBytesAfterRetentionCleanup: 0,
+            runLogState: "terminal-effects-pending, then after native retention cleanup",
+            markerOccurrencesInSqlEvidence: countOccurrences(cleanedSqlEvidence, nativeToken),
+            markerOccurrencesInRunLog: 0,
+          },
+          legacy: {
+            resultJsonBytes: legacyResultJsonBytes,
+            resultJsonState: "after terminal effects completed",
+            runLogBytesWhileTerminalEffectsPending: legacyLogBytesWhilePending,
+            runLogState: "terminal-effects-pending; post-terminal file lifetime excluded",
+            markerOccurrencesInSqlEvidence: legacySqlMarkerOccurrences,
+            markerOccurrencesInRunLogWhilePending: countOccurrences(legacyLogTextWhilePending, legacyToken),
+          },
+          legacyMinusNative: {
+            resultJsonBytes: legacyResultJsonBytes - nativeResultJsonBytes,
+            runLogBytesWhileTerminalEffectsPending: legacyLogBytesWhilePending - nativeRunLogBytesWhilePending,
+          },
+        },
+        reader: readerBenchmark,
+        evidenceLimits: [
+          "legacy post-terminal log-file lifetime is excluded because the isolated fixture did not show stable file presence after completion",
+          "native Reader is an in-memory fake, not a real provider or persistent native store",
+          "RSS is the Vitest integration worker process, not an HTTP server or packaged Host",
+          "browser memory and Host-native RSS are not measured",
+        ],
+      };
+      await writeW12BenchmarkReceipt(receiptPath, receipt);
+    }
+
     await db.delete(runRuntimeSpans).where(eq(runRuntimeSpans.id, cleanedSubagentSpan!.id));
     const cleanupWithMissingSpan = await cleanSealedNativeTranscriptMirrors({
       db,
@@ -856,45 +1102,6 @@ describe("heartbeat native transcript retention integration", () => {
       runId: native.run.id,
     })).resolves.toMatchObject({ ok: false, reason: "span_attempt_set_mismatch" });
 
-    const legacy = await queueRun(agentId);
-    fakeNativeProvider.setProfileMode("unsupported");
-    const legacyToken = `W12_LEGACY_RAW_${randomUUID()}`;
-    const legacyRaw = `${legacyToken}::${"legacy transcript payload ".repeat(1_750)}`;
-    const legacyTurnId = `turn-${legacy.run.id}`;
-    fakeNativeProvider.register(legacy.run.id, {
-      sessionId,
-      turnId: legacyTurnId,
-      rawTranscript: legacyRaw,
-      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
-    });
-    const [legacySegmentBefore] = await db.select().from(nativeSegments)
-      .where(eq(nativeSegments.id, legacy.segmentId));
-    expect(legacySegmentBefore?.nativeSessionId).toBeNull();
-
-    const legacyTerminalGate = fakeTerminalEffect.arm();
-    try {
-      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
-      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(legacy.run.id));
-      await legacyTerminalGate.entered;
-      const legacyRun = await waitForTerminalEffectsPending(legacy.run.id);
-      expect(legacyRun.resultJson).toMatchObject({
-        stdout: legacyRaw,
-        stderr: legacyRaw,
-        output: legacyRaw,
-        transcript: [{ text: legacyRaw }],
-        events: [{ payload: { text: legacyRaw } }],
-        retention: { transcriptSource: "legacy" },
-      });
-      expect(legacyRun.logRef).toEqual(expect.any(String));
-      expect((legacyRun.terminalEffectsJson as any).automation).toMatchObject({
-        output: "bounded fake provider summary",
-      });
-      expect(JSON.stringify(legacyRun.terminalEffectsJson)).not.toContain(legacyRaw);
-      expect(await readAllFiles(runLogRoot)).toContain(legacyRaw);
-    } finally {
-      legacyTerminalGate.release();
-      await waitForTerminalEffectsComplete(legacy.run.id);
-    }
   }, 60_000);
 
   it("keeps raw fallback for an unresolved profile until the terminal native range is proven", async () => {
