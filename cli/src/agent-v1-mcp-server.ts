@@ -35,6 +35,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import * as d1Capabilities from "./agent-v1-mcp-d1-capabilities.js";
 import {
   throwInvalidMcpArgument,
   validateMcpToolArguments,
@@ -639,7 +640,10 @@ async function callToolDirectlyIfSupported(
       ? RUDDER_BROWSER_MCP_MAX_TOOL_RESULT_BYTES
       : RUDDER_MCP_MAX_TOOL_RESULT_BYTES,
   );
-
+  const d1Result = await d1Capabilities.dispatchD1CapabilityDirectly(
+    capabilityId, input, env, api, { requiredRuntimeString, requiredString, optionalString },
+  );
+  if (d1Result) return success(d1Result.data);
   switch (capabilityId) {
     case "agent.me":
       return success(await api.get("/api/agents/me"));
@@ -1147,6 +1151,8 @@ function cliArgsForCapability(
       pushOptional(args, "--cursor", input.cursor);
       return args;
     }
+    case "organization.brand_color.update":
+      return d1Capabilities.organizationBrandColorCliArgs(input, env, requiredString, pushOptional);
     case "agent.update": {
       const args = ["agent", "update"];
       pushRuntimeAgentArg(args, input, env, false);
@@ -1383,19 +1389,13 @@ function cliArgsForCapability(
       pushOptional(args, "--color", input.color);
       return args;
     }
-    case "project.update": {
-      const args = ["project", "update", requiredAnyString(input, ["project", "projectId"])];
-      pushOptional(args, "--name", input.name);
-      pushOptional(args, "--description", input.description);
-      pushOptional(args, "--status", input.status);
-      pushOptional(args, "--goal-id", input.goalId);
-      pushOptional(args, "--goal-ids", input.goalIds);
-      pushOptional(args, "--lead-agent-id", input.leadAgentId);
-      pushOptional(args, "--target-date", input.targetDate);
-      pushOptional(args, "--color", input.color);
-      pushOptional(args, "--archived-at", input.archivedAt);
-      return args;
-    }
+    case "project.update":
+      return d1Capabilities.projectUpdateCliArgs(input, {
+        requiredAnyString,
+        requiredString,
+        optionalString,
+        pushOptional,
+      });
     case "user.activity": {
       const args = ["user", "activity"];
       pushOptional(args, "--user", input.user);

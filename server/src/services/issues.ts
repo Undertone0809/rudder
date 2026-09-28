@@ -49,6 +49,7 @@ import { instanceSettingsService } from "./instance-settings.js";
 import { issueMaterialUpdateActivitySql } from "./issue-activity-filters.js";
 import { resolveIssueReferenceInputs } from "./issue-references.js";
 import { removeMessengerCustomGroupEntriesForItem } from "./messenger-saved-views.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { ensureProductAnalyticsWorkCycle, recordProductAnalyticsEvent } from "./product-analytics.js";
 
 import { createIssueCommentAttachmentMethods } from "./issues.comments-attachments.js";
@@ -66,6 +67,9 @@ import {
   fieldSearchMatch,
   followedByUserCondition,
   isUniqueConstraintConflict,
+  normalizeIssueListLimit,
+  normalizeIssueListOffset,
+  normalizeIssueSearchFields,
   participatedByAgentCondition, prepareIssueCancellationPatch,
   resolveIdempotentIssueOrigin,
   sameRunLock,
@@ -84,8 +88,6 @@ import {
 export { deriveIssueUserContext } from "./issues.helpers.js";
 export type { IssueFilters, IssueSortDir, IssueSortField } from "./issues.helpers.js";
 
-const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
-const MAX_ISSUE_LIST_LIMIT = 500;
 const DEFAULT_ISSUE_SORT_FIELD: IssueSortField = "priority";
 const DEFAULT_ISSUE_SORT_DIR: IssueSortDir = "asc";
 const ISSUE_DESCRIPTION_ASSET_PATH_RE = /\/api\/assets\/([^/?#\s)]+)\/content/g;
@@ -132,6 +134,7 @@ async function stageIssueDescriptionAssets(input: {
   createdByAgentId?: string | null;
   createdByUserId?: string | null;
 }) {
+  await lockNodeMutationAuthority(input.tx, input.orgId);
   const sourceAssetIds = extractIssueDescriptionAssetIds(input.description);
   if (sourceAssetIds.length === 0) {
     return {
@@ -202,26 +205,6 @@ async function stageIssueDescriptionAssets(input: {
       : input.description,
     attachments,
   };
-}
-
-function normalizeIssueSearchFields(fields: IssueSearchField[] | undefined): Set<IssueSearchField> {
-  const allowed = new Set<IssueSearchField>(["title", "description", "comment"]);
-  const normalized = (fields ?? DEFAULT_ISSUE_SEARCH_FIELDS).filter((field): field is IssueSearchField => allowed.has(field));
-  return new Set(normalized.length > 0 ? normalized : DEFAULT_ISSUE_SEARCH_FIELDS);
-}
-
-function normalizeIssueListLimit(limit: number | undefined): number | undefined {
-  if (typeof limit !== "number" || !Number.isFinite(limit)) return undefined;
-  const normalized = Math.floor(limit);
-  if (normalized < 1) return undefined;
-  return Math.min(MAX_ISSUE_LIST_LIMIT, normalized);
-}
-
-function normalizeIssueListOffset(offset: number | undefined): number | undefined {
-  if (typeof offset !== "number" || !Number.isFinite(offset)) return undefined;
-  const normalized = Math.floor(offset);
-  if (normalized < 1) return undefined;
-  return normalized;
 }
 
 type SortableIssueExpression = Parameters<typeof asc>[0];
@@ -1171,6 +1154,7 @@ export function issueService(db: Db, storage?: StorageService) {
       const copiedObjectKeys: Array<{ orgId: string; objectKey: string }> = [];
       try {
         const createdIssue = await db.transaction(async (tx) => {
+          await lockNodeMutationAuthority(tx, orgId);
         let executionWorkspaceSettings =
           (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
         if (executionWorkspaceSettings == null && issueData.projectId) {
@@ -1817,6 +1801,13 @@ export function issueService(db: Db, storage?: StorageService) {
 
     remove: (id: string) =>
       db.transaction(async (tx) => {
+        const issueOrganization = await tx
+          .select({ orgId: issues.orgId })
+          .from(issues)
+          .where(eq(issues.id, id))
+          .then((rows) => rows[0] ?? null);
+        if (!issueOrganization) return null;
+        await lockNodeMutationAuthority(tx, issueOrganization.orgId);
         const attachmentAssetIds = await tx
           .select({ assetId: issueAttachments.assetId })
           .from(issueAttachments)

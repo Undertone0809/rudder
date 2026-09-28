@@ -17,6 +17,7 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 import { listDetachedChatTranscripts, replaceDetachedChatTranscript, selectChatTranscript } from "./chat-transcript-persistence.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 
 type MessageRow = typeof chatMessages.$inferSelect;
 
@@ -162,6 +163,7 @@ export function createChatAnnotationMessagePersistence(
     options: AddUserChatMessageOptions = {},
   ) {
     const persist = () => db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, orgId);
       const now = new Date();
       let target: MessageRow | null = null;
       let turnId: string = randomUUID();

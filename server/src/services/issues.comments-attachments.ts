@@ -21,6 +21,7 @@ import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { normalizeLocalLibraryPathMarkdown } from "./library-path-markdown.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 
 import { MAX_ISSUE_COMMENT_PAGE_LIMIT } from "./issues.helpers.js";
 
@@ -632,6 +633,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
       }
 
       return db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, issue.orgId);
         const [asset] = await tx
           .insert(assets)
           .values({
@@ -756,6 +758,7 @@ export function createIssueCommentAttachmentMethods(ctx: IssueCommentAttachmentM
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
+        await lockNodeMutationAuthority(tx, existing.orgId);
         await tx.delete(issueAttachments).where(eq(issueAttachments.id, id));
         await tx.delete(assets).where(eq(assets.id, existing.assetId));
         return existing;

@@ -10,7 +10,7 @@ import {
   issues,
   projects
 } from "@rudderhq/db";
-import { formatMessengerPreview, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
+import { formatMessengerPreview, shortRefFor, type ChatStreamTranscriptEntry, type ChatTranscriptSummary } from "@rudderhq/shared";
 import { inArray, sql } from "drizzle-orm";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
 
@@ -54,6 +54,22 @@ export function isIssueProposalStatus(value: unknown): value is ChatIssueProposa
 
 export function contentPath(assetId: string) {
   return `/api/assets/${assetId}/content`;
+}
+
+export function chatShortRef(id: string): string | null {
+  try {
+    return shortRefFor("chat", id);
+  } catch {
+    return null;
+  }
+}
+
+export function messageShortRef(id: string): string | null {
+  try {
+    return shortRefFor("message", id);
+  } catch {
+    return null;
+  }
 }
 
 export function safeTrim(value: string | null | undefined) {

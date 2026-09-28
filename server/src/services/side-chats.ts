@@ -15,6 +15,7 @@ import { conflict, notFound, unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { selectedChatMessageBranchCondition } from "./chat-message-branch.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { recordProductAnalyticsChatCreated } from "./product-analytics.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
@@ -98,18 +99,27 @@ export function sideChatService(db: Db) {
   }
 
   async function markExpired(conversationId: string, now: Date) {
-    await db
-      .update(chatConversations)
-      .set({
-        sideChatState: "expired",
-        sideChatExpiresAt: null,
-        updatedAt: now,
-      })
-      .where(and(
-        eq(chatConversations.id, conversationId),
-        eq(chatConversations.conversationKind, "side_chat"),
-        eq(chatConversations.sideChatState, "active"),
-      ));
+    await db.transaction(async (tx) => {
+      const conversation = await tx
+        .select({ orgId: chatConversations.orgId })
+        .from(chatConversations)
+        .where(eq(chatConversations.id, conversationId))
+        .then((rows) => rows[0] ?? null);
+      if (!conversation) return;
+      await lockNodeMutationAuthority(tx, conversation.orgId);
+      await tx
+        .update(chatConversations)
+        .set({
+          sideChatState: "expired",
+          sideChatExpiresAt: null,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(chatConversations.id, conversationId),
+          eq(chatConversations.conversationKind, "side_chat"),
+          eq(chatConversations.sideChatState, "active"),
+        ));
+    });
   }
 
   async function assertMutable(conversation: ChatConversation, userId: string | null, now = new Date()) {
@@ -132,16 +142,19 @@ export function sideChatService(db: Db) {
       return conversation;
     }
     assertOwner(conversation as ConversationRow, userId);
-    await db
-      .update(chatConversations)
-      .set({
-        sideChatExpiresAt: expiresAtFrom(at),
-        updatedAt: at,
-      })
-      .where(and(
-        eq(chatConversations.id, conversation.id),
-        eq(chatConversations.sideChatState, "active"),
-      ));
+    await db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, conversation.orgId);
+      await tx
+        .update(chatConversations)
+        .set({
+          sideChatExpiresAt: expiresAtFrom(at),
+          updatedAt: at,
+        })
+        .where(and(
+          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.sideChatState, "active"),
+        ));
+    });
     return hydrated(conversation.id, userId!);
   }
 
@@ -154,6 +167,7 @@ export function sideChatService(db: Db) {
     preferredAgentId?: string;
   }) {
     const createdId = await db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, input.orgId);
       const existing = await tx
         .select()
         .from(chatConversations)
@@ -436,16 +450,19 @@ export function sideChatService(db: Db) {
     if (conversation.sideChatState === "kept" || conversation.messengerVisible) {
       throw conflict("A kept Side Chat is a normal Messenger chat");
     }
-    const deleted = await db
-      .delete(chatConversations)
-      .where(and(
-        eq(chatConversations.id, conversation.id),
-        eq(chatConversations.createdByUserId, input.userId),
-        eq(chatConversations.conversationKind, "side_chat"),
-        eq(chatConversations.messengerVisible, false),
-        ne(chatConversations.sideChatState, "kept"),
-      ))
-      .returning({ id: chatConversations.id });
+    const deleted = await db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, conversation.orgId);
+      return tx
+        .delete(chatConversations)
+        .where(and(
+          eq(chatConversations.id, conversation.id),
+          eq(chatConversations.createdByUserId, input.userId),
+          eq(chatConversations.conversationKind, "side_chat"),
+          eq(chatConversations.messengerVisible, false),
+          ne(chatConversations.sideChatState, "kept"),
+        ))
+        .returning({ id: chatConversations.id });
+    });
     if (!deleted[0]) throw conflict("Side Chat could not be destroyed");
     return deleted[0];
   }
@@ -458,6 +475,7 @@ export function sideChatService(db: Db) {
     if (conversation.sideChatState !== "active") throw conflict("Only an active Side Chat can be kept in Messenger");
 
     const outcome = await db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, conversation.orgId);
       const now = new Date();
       const expired = await tx
         .update(chatConversations)

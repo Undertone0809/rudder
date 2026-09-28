@@ -80,9 +80,14 @@ export {
 } from "./mcp/tool-discovery.js";
 export { messengerService } from "./messenger.js";
 export { operatorProfileService } from "./operator-profile.js";
+export {
+  handoffOrganizationBrandingAuthority,
+  lockNodeOrganizationBrandingAuthority
+} from "./organization-branding-fence.js";
 export { organizationIntelligenceProfileService } from "./organization-intelligence-profiles.js";
 export { organizationIntelligenceRuntimeChainService } from "./organization-intelligence-runtime-chain.js";
 export { organizationMemberService } from "./organization-members.js";
+export { startOrganizationMutationOutboxPublisher } from "./organization-mutation-outbox.js";
 export { organizationPortabilityFacade, organizationPortabilityService } from "./organization-portability.js";
 export { organizationSkillFacade, organizationSkillService } from "./organization-skills.js";
 export { organizationService } from "./orgs.js";
@@ -102,6 +107,9 @@ export {
   type RecordProductAnalyticsEventInput
 } from "./product-analytics.js";
 export { productIntelligenceService } from "./product-intelligence.js";
+export {
+  handoffProjectGoalMutationAuthority, lockNodeProjectGoalMutationAuthority, lockProjectGoalMutationAuthoritiesForOrganizationDeletion
+} from "./project-goal-mutation-fence.js";
 export { projectService } from "./projects.js";
 export { blockerFingerprint, requestService } from "./requests.js";
 export { resourceCatalogService } from "./resource-catalog.js";

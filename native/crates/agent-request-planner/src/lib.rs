@@ -1,4 +1,4 @@
-//! Pure request planning for the direct Agent v1 MCP capabilities.
+//! Request planning for the direct Agent v1 MCP capabilities.
 //!
 //! Authentication and HTTP execution deliberately live outside this crate. The
 //! caller supplies trusted runtime identity; model arguments can never replace it.
@@ -43,6 +43,7 @@ pub struct DirectRequest {
     pub method: HttpMethod,
     pub path: String,
     pub query: Vec<(String, String)>,
+    pub headers: Vec<(String, String)>,
     pub body: Option<Value>,
     pub context: RequiredContext,
     pub response_limit: usize,
@@ -150,6 +151,37 @@ fn map_request(
                 HttpMethod::Get,
                 format!("/api/orgs/{}/members/directory", encode_path_segment(org())),
                 None,
+            )
+        }
+        "organization.brand_color.update" => (
+            HttpMethod::Patch,
+            format!("/api/orgs/{}/branding", encode_path_segment(org())),
+            Some(json!({
+                "brandColor": s("brandColor")?
+            })),
+        ),
+        "project.update" => {
+            if let Some(org_id) = runtime_string(runtime.organization_id.as_deref()) {
+                query.push(("orgId".into(), org_id.into()));
+            }
+            (
+                HttpMethod::Patch,
+                format!("/api/projects/{}", encode_path_segment(&s("project")?)),
+                Some(project(
+                    &input,
+                    &[
+                        "name",
+                        "description",
+                        "status",
+                        "goalId",
+                        "goalIds",
+                        "leadAgentId",
+                        "targetDate",
+                        "color",
+                        "archivedAt",
+                    ],
+                    &[],
+                )),
             )
         }
         "goal.list" => {
@@ -516,11 +548,32 @@ fn map_request(
         browser if browser.starts_with("browser.") => map_browser(browser, &input)?,
         _ => unreachable!("every direct capability is mapped"),
     };
+    let headers = if id == "organization.brand_color.update" {
+        vec![
+            ("x-rudder-idempotency-key".into(), s("idempotencyKey")?),
+            ("x-rudder-required-authority".into(), "rust".into()),
+        ]
+    } else if id == "project.update" {
+        let has_goal_mutation = input.contains_key("goalId") || input.contains_key("goalIds");
+        let key = if has_goal_mutation || input.contains_key("idempotencyKey") {
+            s("idempotencyKey")?
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
+        let mut headers = vec![("x-rudder-idempotency-key".into(), key)];
+        if has_goal_mutation {
+            headers.push(("x-rudder-required-authority".into(), "rust".into()));
+        }
+        headers
+    } else {
+        Vec::new()
+    };
     Ok(DirectRequest {
         capability_id: id.into(),
         method,
         path,
         query,
+        headers,
         body,
         context,
         response_limit: if id.starts_with("browser.") {

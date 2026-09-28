@@ -36,9 +36,11 @@ import {
   issueWorkProducts,
   joinRequests,
   labels,
+  organizationBrandingMutationState,
   organizationIssuePrefixAliases,
   organizationLogos,
   organizationMemberships,
+  organizationMutationState,
   organizations,
   organizationSecrets,
   organizationSkills,
@@ -59,8 +61,14 @@ import { and, count, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { ensureOrganizationWorkspaceLayout, removeOrganizationStorage } from "../home-paths.js";
 import { logger } from "../middleware/logger.js";
+import {
+  lockNodeOrganizationBrandingAuthority,
+  lockOrganizationBrandingAuthorityForDeletion,
+} from "./organization-branding-fence.js";
+import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { recordProductAnalyticsEvent } from "./product-analytics.js";
+import { lockProjectGoalMutationAuthoritiesForOrganizationDeletion } from "./project-goal-mutation-fence.js";
 
 type OrganizationCreationPath = "onboarding" | "manual" | "import" | "fixture";
 type OrganizationCreateInput = typeof organizations.$inferInsert & {
@@ -298,6 +306,15 @@ export function organizationService(db: Db) {
           ...organizationData,
         });
 
+        await tx
+          .insert(organizationMutationState)
+          .values({ orgId: created.id })
+          .onConflictDoNothing({ target: organizationMutationState.orgId });
+        await tx
+          .insert(organizationBrandingMutationState)
+          .values({ orgId: created.id })
+          .onConflictDoNothing({ target: organizationBrandingMutationState.orgId });
+
         await tx.insert(labels).values(
           DEFAULT_ISSUE_LABELS.map((label) => ({
             orgId: created.id,
@@ -343,6 +360,9 @@ export function organizationService(db: Db) {
       data: Partial<typeof organizations.$inferInsert> & { logoAssetId?: string | null },
     ) =>
       db.transaction(async (tx) => {
+        const writesBrandColor = Object.prototype.hasOwnProperty.call(data, "brandColor");
+        if (writesBrandColor) await lockNodeOrganizationBrandingAuthority(tx, id);
+        await lockNodeMutationAuthority(tx, id);
         const existing = await getCompanyQuery(tx)
           .where(eq(organizations.id, id))
           .then((rows) => rows[0] ?? null);
@@ -455,6 +475,7 @@ export function organizationService(db: Db) {
 
     archive: (id: string) =>
       db.transaction(async (tx) => {
+        await lockNodeMutationAuthority(tx, id);
         const updated = await tx
           .update(organizations)
           .set({ status: "archived", updatedAt: new Date() })
@@ -472,6 +493,8 @@ export function organizationService(db: Db) {
 
     remove: (id: string) =>
       db.transaction(async (tx) => {
+        await lockOrganizationBrandingAuthorityForDeletion(tx, id);
+        await lockProjectGoalMutationAuthoritiesForOrganizationDeletion(tx, id);
         // Delete from child tables in dependency order
         await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.orgId, id));
         await tx.delete(requests).where(eq(requests.orgId, id));
@@ -517,8 +540,8 @@ export function organizationService(db: Db) {
         await tx.delete(organizationIssuePrefixAliases).where(eq(organizationIssuePrefixAliases.orgId, id));
         await tx.delete(assets).where(eq(assets.orgId, id));
         await tx.delete(projectGoals).where(eq(projectGoals.orgId, id));
-        await tx.delete(goals).where(eq(goals.orgId, id));
         await tx.delete(projects).where(eq(projects.orgId, id));
+        await tx.delete(goals).where(eq(goals.orgId, id));
         await tx.delete(agents).where(eq(agents.orgId, id));
         const rows = await tx
           .delete(organizations)

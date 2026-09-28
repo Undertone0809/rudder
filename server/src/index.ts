@@ -42,7 +42,7 @@ import { resolve } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
-import { createRudderApp } from "./app.js";
+import { createRudderApp, createRudderAppStartupOptions, ownRudderAppAndOutbox } from "./app.js";
 import { shouldStartAutomaticBackupSchedulers } from "./backup-scheduler-policy.js";
 import { getBoardClaimWarningUrl } from "./board-claim.js";
 import {
@@ -1091,8 +1091,7 @@ async function startServerRuntime(
     allowedHostnames: config.allowedHostnames,
     bindHost: config.host,
     workspacePreviewOrigin: config.workspacePreviewOrigin,
-    authReady,
-    companyDeletionEnabled: config.companyDeletionEnabled,
+    ...createRudderAppStartupOptions(config, activeDatabaseConnectionString, authReady),
     mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
     instanceId,
     localEnv,
@@ -1105,7 +1104,7 @@ async function startServerRuntime(
       networkWaitingRunHandlers.push(handler);
     },
   });
-  supervisor.own("app", () => appHandle.close());
+  ownRudderAppAndOutbox(supervisor, db as any, appHandle);
   const server = createServer(appHandle.app as unknown as Parameters<typeof createServer>[0]);
   const beginHttpClose = createHttpServerShutdown(server, {
     onCloseError: (err) => {

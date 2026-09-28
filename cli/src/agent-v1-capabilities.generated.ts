@@ -38,6 +38,18 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
     "requiresRunId": false
   },
   {
+    "attachesRunIdWhenAvailable": true,
+    "category": "organization",
+    "command": "rudder org brand-color update --org-id <id> --brand-color <hex> --idempotency-key <key>",
+    "contract": "agent-v1",
+    "description": "Update the authenticated organization's brand color.",
+    "id": "organization.brand_color.update",
+    "mutating": true,
+    "requiresAgentId": false,
+    "requiresOrgId": true,
+    "requiresRunId": false
+  },
+  {
     "attachesRunIdWhenAvailable": false,
     "category": "agent",
     "command": "rudder agent capabilities",
@@ -460,7 +472,7 @@ export const AGENT_CLI_CAPABILITIES: AgentCliCapability[] = [
   {
     "attachesRunIdWhenAvailable": true,
     "category": "project",
-    "command": "rudder project update <project-id-or-shortname> [--org-id <id>]",
+    "command": "rudder project update <project-id-or-shortname> [--org-id <id>] [--idempotency-key <key>]",
     "contract": "agent-v1",
     "description": "Update mutable project fields such as name, description, status, goals, lead agent, target date, color, or archivedAt.",
     "id": "project.update",

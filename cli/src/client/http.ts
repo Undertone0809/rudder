@@ -10,6 +10,7 @@ export { ApiRequestError } from "./api-request-error.js";
 
 interface RequestOptions {
   ignoreNotFound?: boolean;
+  headers?: HeadersInit;
 }
 
 interface RecoverAuthInput {
@@ -108,6 +109,7 @@ export class RudderApiClient {
     const headers: Record<string, string> = {
       accept: "application/json",
       ...toStringRecord(init.headers),
+      ...toStringRecord(opts?.headers),
     };
 
     if (typeof init.body === "string") {
