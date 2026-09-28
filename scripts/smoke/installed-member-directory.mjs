@@ -260,7 +260,8 @@ function startServerProcess(serverEntry, cwd, env) {
 }
 
 async function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) {
+  if ((child.exitCode !== null || child.signalCode !== null)
+    && child.stdout?.readableEnded && child.stderr?.readableEnded) {
     return { code: child.exitCode, signal: child.signalCode };
   }
   return await new Promise((resolve, reject) => {
@@ -268,7 +269,7 @@ async function waitForExit(child, timeoutMs) {
       child.kill("SIGTERM");
       reject(new Error(`server process ${child.pid ?? "unknown"} did not exit within ${timeoutMs}ms`));
     }, timeoutMs);
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       clearTimeout(timer);
       resolve({ code, signal });
     });
@@ -477,7 +478,7 @@ async function verifyRequiredStartupFailure(installed, runRoot, timeoutMs) {
     const server = startServerProcess(installed.serverEntry, runRoot, env);
     const result = await waitForExit(server.child, timeoutMs);
     assert.notEqual(result.code, 0, `required startup unexpectedly succeeded\n${server.logs.stdout}`);
-    assert.match(server.logs.stderr, /foundation.*binary|binary.*unavailable/iu);
+    assert.match(`${server.logs.stdout}\n${server.logs.stderr}`, /foundation.*binary|binary.*unavailable/iu);
     assert.equal(await portIsListening(apiPort), false, "startup failure exposed an API listener");
     await waitForPortClosed(databasePort);
   } finally {
@@ -554,6 +555,18 @@ async function runSmoke(options) {
       if (index === 1) agentId = createdAgentId;
     }
     const agentKey = await createAgentKey(apiUrl, agentId);
+    // Local-trusted deployments intentionally grant implicit board access.
+    // Seed through that supported entry, then exercise rejection semantics in
+    // authenticated mode without changing any Rust bridge selection or signer.
+    const trustedRead = await fetch(`${apiUrl}/api/orgs/${orgId}/members/directory?limit=1`);
+    assert.equal(trustedRead.status, 200, "local-trusted default member read failed");
+    await stopServer(server);
+    await waitForPortClosed(databasePort);
+    env.RUDDER_DEPLOYMENT_MODE = "authenticated";
+    server = startServerProcess(installed.serverEntry, runRoot, env);
+    await waitForHealth(server, apiUrl, options.timeoutMs);
+    assert.equal((server.logs.stderr.match(/\[rudder-rust-bridge\] started pid=/gu) ?? []).length, 1);
+    console.log("[installed-member-directory] authenticated deployment restarted on the same data; Rust overrides remain absent");
     const query = "Member Directory Agent";
     const firstPageResult = await getMemberPage(apiUrl, orgId, agentKey, {
       query,
