@@ -2485,7 +2485,7 @@
               "type": "array"
             },
             "idempotencyKey": {
-              "description": "Stable key for safe Project-Goal replacement retry.",
+              "description": "Stable key for retrying project updates; required when changing Project-Goal links.",
               "maxLength": 256,
               "minLength": 1,
               "type": "string"

@@ -67,6 +67,9 @@ import {
   fieldSearchMatch,
   followedByUserCondition,
   isUniqueConstraintConflict,
+  normalizeIssueListLimit,
+  normalizeIssueListOffset,
+  normalizeIssueSearchFields,
   participatedByAgentCondition, prepareIssueCancellationPatch,
   resolveIdempotentIssueOrigin,
   sameRunLock,
@@ -85,8 +88,6 @@ import {
 export { deriveIssueUserContext } from "./issues.helpers.js";
 export type { IssueFilters, IssueSortDir, IssueSortField } from "./issues.helpers.js";
 
-const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
-const MAX_ISSUE_LIST_LIMIT = 500;
 const DEFAULT_ISSUE_SORT_FIELD: IssueSortField = "priority";
 const DEFAULT_ISSUE_SORT_DIR: IssueSortDir = "asc";
 const ISSUE_DESCRIPTION_ASSET_PATH_RE = /\/api\/assets\/([^/?#\s)]+)\/content/g;
@@ -204,26 +205,6 @@ async function stageIssueDescriptionAssets(input: {
       : input.description,
     attachments,
   };
-}
-
-function normalizeIssueSearchFields(fields: IssueSearchField[] | undefined): Set<IssueSearchField> {
-  const allowed = new Set<IssueSearchField>(["title", "description", "comment"]);
-  const normalized = (fields ?? DEFAULT_ISSUE_SEARCH_FIELDS).filter((field): field is IssueSearchField => allowed.has(field));
-  return new Set(normalized.length > 0 ? normalized : DEFAULT_ISSUE_SEARCH_FIELDS);
-}
-
-function normalizeIssueListLimit(limit: number | undefined): number | undefined {
-  if (typeof limit !== "number" || !Number.isFinite(limit)) return undefined;
-  const normalized = Math.floor(limit);
-  if (normalized < 1) return undefined;
-  return Math.min(MAX_ISSUE_LIST_LIMIT, normalized);
-}
-
-function normalizeIssueListOffset(offset: number | undefined): number | undefined {
-  if (typeof offset !== "number" || !Number.isFinite(offset)) return undefined;
-  const normalized = Math.floor(offset);
-  if (normalized < 1) return undefined;
-  return normalized;
 }
 
 type SortableIssueExpression = Parameters<typeof asc>[0];

@@ -7,6 +7,7 @@ import {
   organizationMutationState,
   organizationResources,
   organizations,
+  projectGoalMutationState,
   projectResourceAttachments,
   projectWorkspaces,
   projects,
@@ -473,6 +474,38 @@ describe("project service workspace resolution", () => {
     expect(reloaded?.codebase.localFolder).toBe(resolveOrganizationWorkspaceRoot(orgId));
     expect(reloaded?.primaryWorkspace?.id).toBe(workspaceId);
     expect(reloaded?.workspaces.map((workspace) => workspace.id)).toEqual([workspaceId]);
+  });
+
+  it("rejects ordinary project field updates after Project authority moves to Rust", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Project Field Fence Org",
+      urlKey: deriveOrganizationUrlKey("Project Field Fence Org"),
+      issuePrefix: "PFF",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await provisionNodeMutationState(orgId);
+
+    const project = await projectSvc.create(orgId, {
+      name: "Node-owned project",
+      status: "planned",
+    });
+    await expect(projectSvc.update(project.id, { name: "Node-owned update" })).resolves.toEqual(
+      expect.objectContaining({ name: "Node-owned update" }),
+    );
+
+    await db.update(projectGoalMutationState)
+      .set({ owner: "rust", fenceEpoch: 1n, fenceToken: randomUUID() })
+      .where(eq(projectGoalMutationState.projectId, project.id));
+
+    await expect(projectSvc.update(project.id, { name: "Stale Node write" })).rejects.toMatchObject({
+      status: 409,
+      message: "Project goal mutation authority is owned by Rust",
+    });
+    await expect(projectSvc.getById(project.id)).resolves.toEqual(expect.objectContaining({
+      name: "Node-owned update",
+    }));
   });
 
   it("fails closed before the first workspace write when organization mutation authority is rust", async () => {

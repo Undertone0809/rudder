@@ -1963,6 +1963,49 @@ describe("agent-v1 MCP server", () => {
     });
   });
 
+  it("passes scalar Project update idempotency without forcing Rust authority", async () => {
+    const env = buildMcpServerEnv({
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "runtime-key",
+      RUDDER_ORG_ID: "runtime-org",
+      RUDDER_MCP_RUDDER_BIN: "/missing/rudder-cli",
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (inputUrl, init) => {
+      const url = new URL(String(inputUrl));
+      const headers = new Headers(init?.headers);
+      expect(url.pathname).toBe("/api/projects/project-1");
+      expect(url.searchParams.get("orgId")).toBe("runtime-org");
+      expect(init?.method).toBe("PATCH");
+      expect(headers.get("x-rudder-idempotency-key")).toBe("project-scalar-1");
+      expect(headers.get("x-rudder-required-authority")).toBeNull();
+      expect(JSON.parse(String(init?.body))).toEqual({ status: "active" });
+      return new Response(JSON.stringify({ id: "project-1", status: "active" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const response = await runAgentV1McpJsonRpcMessage({
+      jsonrpc: "2.0",
+      id: "project-scalar",
+      method: "tools/call",
+      params: {
+        name: "rudder_project_update",
+        arguments: {
+          project: "project-1",
+          status: "active",
+          idempotencyKey: "project-scalar-1",
+        },
+      },
+    }, env);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(response?.result).toMatchObject({
+      isError: false,
+      structuredContent: { id: "project-1", status: "active" },
+    });
+  });
+
   it("keeps bounded oversized errors in the modern result envelope", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(
       JSON.stringify({ payload: "X".repeat(1_100_000) }),

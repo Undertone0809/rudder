@@ -144,7 +144,7 @@ export function registerProjectCommands(program: Command): void {
       .option("--target-date <date>", "Target date")
       .option("--color <value>", "Project color or supported gradient token")
       .option("--archived-at <iso8601|null>", "Set archivedAt timestamp or literal 'null'")
-      .option("--idempotency-key <key>", "Stable key for safe Project-Goal retry")
+      .option("--idempotency-key <key>", "Stable key for retrying project updates; required for Project-Goal changes")
       .addHelpText("after", formatExamplesAndCautions({
         examples: [
           {
@@ -176,10 +176,14 @@ export function registerProjectCommands(program: Command): void {
             archivedAt: parseNullableOption(opts.archivedAt),
           });
           const hasGoalMutation = opts.goalIds !== undefined || opts.goalId !== undefined;
-          const headers = hasGoalMutation
+          const idempotencyKey = projectUpdateIdempotencyKey(opts.idempotencyKey);
+          if (hasGoalMutation && !idempotencyKey) {
+            throw new Error("--idempotency-key is required when updating Project-Goal links");
+          }
+          const headers = idempotencyKey
             ? {
-              "x-rudder-idempotency-key": requiredProjectGoalIdempotencyKey(opts.idempotencyKey),
-              "x-rudder-required-authority": "rust",
+              "x-rudder-idempotency-key": idempotencyKey,
+              ...(hasGoalMutation ? { "x-rudder-required-authority": "rust" } : {}),
             }
             : undefined;
           const updated = await ctx.api.patch<Project>(projectPath(projectRef, ctx.orgId), payload, headers ? { headers } : undefined);
@@ -201,9 +205,10 @@ function parseCsv(value: string | undefined): string[] | undefined {
   return items;
 }
 
-function requiredProjectGoalIdempotencyKey(value: string | undefined): string {
-  const key = value?.trim();
-  if (!key) throw new Error("--idempotency-key is required when updating Project-Goal links");
+function projectUpdateIdempotencyKey(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const key = value.trim();
+  if (!key) throw new Error("--idempotency-key cannot be empty");
   return key;
 }
 

@@ -281,6 +281,15 @@ async function main() {
     const unlistedProjectId = String((unlistedProjectResponse.body as { id?: string }).id);
     assert.match(unlistedProjectId, /^[0-9a-f-]{36}$/u);
 
+    const mixedProjectResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Rust Project-Goal mixed PATCH entry" }),
+    }));
+    assert.equal(mixedProjectResponse.status, 201);
+    const mixedProjectId = String((mixedProjectResponse.body as { id?: string }).id);
+    assert.match(mixedProjectId, /^[0-9a-f-]{36}$/u);
+
     // Exercise the startup fence itself. A missing allowlisted UUID must be
     // rejected before any selected project changes owner; the follow-up
     // restart with the valid allowlist proves the failed run did not commit a
@@ -292,6 +301,7 @@ async function main() {
     process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [
       projectId,
       toolingProjectId,
+      mixedProjectId,
       missingAllowlistProjectId,
     ].join(",");
     let invalidAllowlistStartupError = "";
@@ -303,7 +313,7 @@ async function main() {
     }
     assert.ok(invalidAllowlistStartupError, "missing allowlist target must fail startup");
 
-    process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [projectId, toolingProjectId].join(",");
+    process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [projectId, toolingProjectId, mixedProjectId].join(",");
     current = await start();
     const allowlistHealth = await readResponse(await fetch(`${current.apiUrl}/api/health`));
     assert.equal(allowlistHealth.status, 200);
@@ -311,8 +321,8 @@ async function main() {
     sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     const allowlistStates = await sql.unsafe(
       "SELECT project_id::text AS project_id, owner "
-        + "FROM project_goal_mutation_state WHERE project_id IN ($1, $2, $3, $4) ORDER BY project_id",
-      [projectId, toolingProjectId, unlistedProjectId, createWithGoalsProjectId],
+        + "FROM project_goal_mutation_state WHERE project_id IN ($1, $2, $3, $4, $5) ORDER BY project_id",
+      [projectId, toolingProjectId, unlistedProjectId, createWithGoalsProjectId, mixedProjectId],
     );
     assert.deepEqual(
       Array.from(allowlistStates),
@@ -321,6 +331,7 @@ async function main() {
         { project_id: toolingProjectId, owner: "rust" },
         { project_id: unlistedProjectId, owner: "node" },
         { project_id: createWithGoalsProjectId, owner: "node" },
+        { project_id: mixedProjectId, owner: "rust" },
       ].sort((left, right) => left.project_id.localeCompare(right.project_id)),
     );
     await sql.end({ timeout: 2 });
@@ -343,7 +354,7 @@ async function main() {
     await current.stop();
     await current.dispose();
     current = null;
-    process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [projectId, toolingProjectId].join(",");
+    process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [projectId, toolingProjectId, mixedProjectId].join(",");
     current = await start();
     const sameConfigRestartHealth = await readResponse(await fetch(`${current.apiUrl}/api/health`));
     assert.equal(sameConfigRestartHealth.status, 200);
@@ -371,6 +382,28 @@ async function main() {
     const agentApiKey = String((keyResponse.body as { token?: string }).token);
     assert.match(agentApiKey, /^pcp_[a-f0-9]{48}$/u);
 
+    const nonCeoResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Rust Project mixed PATCH engineer",
+        role: "engineer",
+        agentRuntimeType: "process",
+        agentRuntimeConfig: {},
+      }),
+    }));
+    assert.equal(nonCeoResponse.status, 201);
+    const nonCeoAgentId = String((nonCeoResponse.body as { id?: string }).id);
+    assert.match(nonCeoAgentId, /^[0-9a-f-]{36}$/u);
+    const nonCeoKeyResponse = await readResponse(await fetch(`${current.apiUrl}/api/agents/${nonCeoAgentId}/keys`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "project-mixed-real-entry" }),
+    }));
+    assert.equal(nonCeoKeyResponse.status, 201);
+    const nonCeoApiKey = String((nonCeoKeyResponse.body as { token?: string }).token);
+    assert.match(nonCeoApiKey, /^pcp_[a-f0-9]{48}$/u);
+
     const cliRuntimeEnv = {
       RUDDER_API_URL: current.apiUrl,
       RUDDER_API_KEY: agentApiKey,
@@ -380,16 +413,114 @@ async function main() {
     };
     const tsxPath = path.join(repoRoot, "cli/node_modules/tsx/dist/cli.mjs");
     const cliEntryPath = path.join(repoRoot, "cli/src/index.ts");
+    const cliMixedKey = `cli-${toolingProjectId}`;
+    const mcpMixedKey = `mcp-${toolingProjectId}`;
+    assert.notEqual(cliMixedKey, mcpMixedKey);
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    const assertToolingMixedPatch = async (input: {
+      idempotencyKey: string;
+      actorId: string;
+      name: string;
+      description: string;
+      goalIds: string[];
+      version: string;
+    }) => {
+      const receiptRows = await sql!.unsafe(
+        "SELECT command_kind, outcome, resulting_version::text AS resulting_version, "
+          + "activity_id::text AS activity_id, result->'result'->>'kind' AS result_kind, idempotency_key "
+          + "FROM organization_mutation_receipts WHERE org_id = $1 AND idempotency_key = $2",
+        [organizationId, input.idempotencyKey],
+      );
+      assert.equal(receiptRows.length, 1);
+      const activityId = String(receiptRows[0]?.activity_id);
+      assert.match(activityId, /^[0-9a-f-]{36}$/u);
+      const [projectRows, goalLinks, activityRows, outboxRows] = await Promise.all([
+        sql!.unsafe(
+          "SELECT name, description, status, goal_id::text AS goal_id FROM projects WHERE id = $1 AND org_id = $2",
+          [toolingProjectId, organizationId],
+        ),
+        sql!.unsafe(
+          "SELECT goal_id::text AS goal_id FROM project_goals WHERE project_id = $1 ORDER BY goal_id",
+          [toolingProjectId],
+        ),
+        sql!.unsafe(
+          "SELECT action, actor_type, actor_id::text AS actor_id, agent_id::text AS agent_id, "
+            + "details->>'name' AS name, details->>'description' AS description, details->'goalIds' AS goal_ids "
+            + "FROM activity_log WHERE org_id = $1 AND id = $2::uuid",
+          [organizationId, activityId],
+        ),
+        sql!.unsafe(
+          "SELECT event_type, payload->>'action' AS action FROM organization_mutation_outbox "
+            + "WHERE org_id = $1 AND activity_id = $2::uuid",
+          [organizationId, activityId],
+        ),
+      ]);
+      assert.deepEqual(receiptRows[0], {
+        command_kind: "project_goal_set_replacement",
+        outcome: "applied",
+        resulting_version: input.version,
+        activity_id: activityId,
+        result_kind: "project_patch",
+        idempotency_key: input.idempotencyKey,
+      });
+      assert.deepEqual(projectRows[0], {
+        name: input.name,
+        description: input.description,
+        status: "in_progress",
+        goal_id: input.goalIds[0] ?? null,
+      });
+      assert.deepEqual(Array.from(goalLinks), input.goalIds.map((goal_id) => ({ goal_id })).sort((a, b) => a.goal_id.localeCompare(b.goal_id)));
+      assert.deepEqual(activityRows[0], {
+        action: "project.updated",
+        actor_type: "agent",
+        actor_id: input.actorId,
+        agent_id: input.actorId,
+        name: input.name,
+        description: input.description,
+        goal_ids: input.goalIds,
+      });
+      assert.deepEqual(Array.from(outboxRows), [{ event_type: "activity.logged", action: "project.updated" }]);
+      return activityId;
+    };
     const cliResult = await runChildProcess(
       process.execPath,
-      [tsxPath, cliEntryPath, "project", "update", toolingProjectId, "--goal-ids", `${goalA},${goalB}`, "--idempotency-key", `cli-${toolingProjectId}`, "--json", "--full-ids"],
+      [
+        tsxPath,
+        cliEntryPath,
+        "project",
+        "update",
+        toolingProjectId,
+        "--name",
+        "CLI mixed Project update",
+        "--description",
+        "CLI scalar and goal mutation",
+        "--status",
+        "in_progress",
+        "--goal-ids",
+        `${goalA},${goalB}`,
+        "--idempotency-key",
+        cliMixedKey,
+        "--json",
+        "--full-ids",
+      ],
       repoRoot,
       cliRuntimeEnv,
     );
     assert.equal(cliResult.exitCode, 0, cliResult.stderr || cliResult.stdout);
-    const cliBody = JSON.parse(cliResult.stdout) as { id?: string; goalIds?: string[] };
+    const cliBody = JSON.parse(cliResult.stdout) as { id?: string; name?: string; description?: string; status?: string; goalIds?: string[] };
     assert.equal(cliBody.id, toolingProjectId);
+    assert.equal(cliBody.name, "CLI mixed Project update");
+    assert.equal(cliBody.description, "CLI scalar and goal mutation");
+    assert.equal(cliBody.status, "in_progress");
     assert.deepEqual(cliBody.goalIds, [goalA, goalB]);
+    const cliMixedActivityId = await assertToolingMixedPatch({
+      idempotencyKey: cliMixedKey,
+      actorId: agentId,
+      name: "CLI mixed Project update",
+      description: "CLI scalar and goal mutation",
+      goalIds: [goalA, goalB],
+      version: "1",
+    });
 
     const mcpResult = await runChildProcess(
       process.execPath,
@@ -397,6 +528,8 @@ async function main() {
       repoRoot,
       {
         ...cliRuntimeEnv,
+        RUDDER_API_KEY: nonCeoApiKey,
+        RUDDER_AGENT_ID: nonCeoAgentId,
         RUDDER_TOOL_TRANSPORT_SURFACE: "mcp",
         // A direct Project-Goal MCP dispatch must not try this legacy process.
         RUDDER_MCP_RUDDER_BIN: path.join(home, "missing-rudder-cli"),
@@ -409,21 +542,35 @@ async function main() {
           name: "rudder_project_update",
           arguments: {
             project: toolingProjectId,
+            name: "MCP mixed Project update",
+            description: "MCP scalar and goal mutation",
+            status: "in_progress",
             goalIds: [],
-            idempotencyKey: `mcp-${toolingProjectId}`,
+            idempotencyKey: mcpMixedKey,
           },
         },
       }) + "\n",
     );
     assert.equal(mcpResult.exitCode, 0, mcpResult.stderr || mcpResult.stdout);
     const mcpBody = JSON.parse(mcpResult.stdout.trim()) as {
-      result?: { isError?: boolean; structuredContent?: { id?: string; goalIds?: string[] } };
+      result?: { isError?: boolean; structuredContent?: { id?: string; name?: string; description?: string; status?: string; goalIds?: string[] } };
     };
     assert.equal(mcpBody.result?.isError, false);
     assert.equal(typeof mcpBody.result?.structuredContent?.id, "string");
+    assert.equal(mcpBody.result?.structuredContent?.name, "MCP mixed Project update");
+    assert.equal(mcpBody.result?.structuredContent?.description, "MCP scalar and goal mutation");
+    assert.equal(mcpBody.result?.structuredContent?.status, "in_progress");
     assert.deepEqual(mcpBody.result?.structuredContent?.goalIds, []);
+    const mcpMixedActivityId = await assertToolingMixedPatch({
+      idempotencyKey: mcpMixedKey,
+      actorId: nonCeoAgentId,
+      name: "MCP mixed Project update",
+      description: "MCP scalar and goal mutation",
+      goalIds: [],
+      version: "2",
+    });
+    assert.notEqual(cliMixedActivityId, mcpMixedActivityId);
 
-    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     const setGoals = async (idempotencyKey: string, goalIds: string[]) => {
       return await readResponse(await fetch(`${current!.apiUrl}/api/projects/${projectId}`, {
         method: "PATCH",
@@ -490,17 +637,276 @@ async function main() {
     await sql.unsafe("DROP TRIGGER fail_real_entry_project_activity_trigger ON activity_log");
     await sql.unsafe("DROP FUNCTION fail_real_entry_project_activity()");
 
-    const mixedUpdate = await readResponse(await fetch(`${current.apiUrl}/api/projects/${projectId}`, {
+    const mixedKey = `real-project-goal-mixed-${mixedProjectId}`;
+    const mixedPatch = {
+      goalIds: [goalA, goalB],
+      name: "Rust required-mode mixed patch",
+      description: "One public Project and Goal transaction",
+      status: "in_progress",
+      leadAgentId: nonCeoAgentId,
+      targetDate: "2026-10-01",
+      color: "#123abc",
+      icon: "folder",
+      executionWorkspacePolicy: { enabled: true, defaultMode: "shared_workspace" },
+      resourceAttachments: [],
+      newResources: [
+        {
+          name: "Mixed PATCH research brief",
+          kind: "url",
+          sourceType: "external",
+          locator: `https://example.test/${mixedProjectId}/brief`,
+          description: "First inline source",
+          role: "reference",
+          note: "Background source",
+          sortOrder: 1,
+          isPrimary: false,
+        },
+        {
+          name: "Mixed PATCH test plan",
+          kind: "url",
+          sourceType: "external",
+          locator: `https://example.test/${mixedProjectId}/test-plan`,
+          description: "Primary deliverable",
+          role: "deliverable",
+          note: "Acceptance plan",
+          sortOrder: 2,
+          isPrimary: true,
+        },
+      ],
+    };
+    const sendMixedPatch = async () => await readResponse(await fetch(`${current!.apiUrl}/api/projects/${mixedProjectId}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${nonCeoApiKey}`,
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": mixedKey,
+      },
+      body: JSON.stringify(mixedPatch),
+    }));
+    const mixedUpdate = await sendMixedPatch();
+    assert.equal(mixedUpdate.status, 200, bodyError(mixedUpdate));
+    assert.equal((mixedUpdate.body as { name?: string }).name, mixedPatch.name);
+    assert.deepEqual((mixedUpdate.body as { goalIds?: string[] }).goalIds, [goalA, goalB]);
+
+    const mixedPublicReadback = await readResponse(await fetch(`${current.apiUrl}/api/projects/${mixedProjectId}`));
+    assert.equal(mixedPublicReadback.status, 200, bodyError(mixedPublicReadback));
+    const mixedPublicProject = mixedPublicReadback.body as {
+      id?: string;
+      name?: string;
+      description?: string | null;
+      status?: string;
+      leadAgentId?: string | null;
+      targetDate?: string | null;
+      color?: string | null;
+      icon?: string | null;
+      executionWorkspacePolicy?: Record<string, unknown> | null;
+      goalIds?: string[];
+      resources?: Array<{
+        role?: string;
+        note?: string | null;
+        sortOrder?: number;
+        isPrimary?: boolean;
+        resource?: { name?: string; kind?: string; locator?: string };
+      }>;
+    };
+    assert.deepEqual({
+      id: mixedPublicProject.id,
+      name: mixedPublicProject.name,
+      description: mixedPublicProject.description,
+      status: mixedPublicProject.status,
+      leadAgentId: mixedPublicProject.leadAgentId,
+      targetDate: mixedPublicProject.targetDate,
+      color: mixedPublicProject.color,
+      icon: mixedPublicProject.icon,
+      executionWorkspacePolicy: mixedPublicProject.executionWorkspacePolicy,
+      goalIds: [...(mixedPublicProject.goalIds ?? [])].sort(),
+    }, {
+      id: mixedProjectId,
+      name: mixedPatch.name,
+      description: mixedPatch.description,
+      status: mixedPatch.status,
+      leadAgentId: nonCeoAgentId,
+      targetDate: mixedPatch.targetDate,
+      color: mixedPatch.color,
+      icon: mixedPatch.icon,
+      executionWorkspacePolicy: mixedPatch.executionWorkspacePolicy,
+      goalIds: [goalA, goalB].sort(),
+    });
+    assert.deepEqual((mixedPublicProject.resources ?? []).map((attachment) => ({
+      name: attachment.resource?.name,
+      kind: attachment.resource?.kind,
+      locator: attachment.resource?.locator,
+      role: attachment.role,
+      note: attachment.note,
+      sortOrder: attachment.sortOrder,
+      isPrimary: attachment.isPrimary,
+    })), [
+      {
+        name: "Mixed PATCH research brief",
+        kind: "url",
+        locator: `https://example.test/${mixedProjectId}/brief`,
+        role: "reference",
+        note: "Background source",
+        sortOrder: 1,
+        isPrimary: false,
+      },
+      {
+        name: "Mixed PATCH test plan",
+        kind: "url",
+        locator: `https://example.test/${mixedProjectId}/test-plan`,
+        role: "deliverable",
+        note: "Acceptance plan",
+        sortOrder: 2,
+        isPrimary: true,
+      },
+    ]);
+
+    const mixedProjectReadback = await sql.unsafe(
+      "SELECT name, description, status, lead_agent_id::text AS lead_agent_id, target_date::text AS target_date, "
+        + "color, icon, execution_workspace_policy::text AS execution_workspace_policy, goal_id::text AS goal_id "
+        + "FROM projects WHERE id = $1 AND org_id = $2",
+      [mixedProjectId, organizationId],
+    );
+    const mixedGoalLinks = await sql.unsafe(
+      "SELECT goal_id::text AS goal_id FROM project_goals WHERE project_id = $1 ORDER BY goal_id",
+      [mixedProjectId],
+    );
+    const mixedResources = await sql.unsafe(
+      "SELECT resource.name, resource.kind, resource.locator, attachment.role, attachment.note, "
+        + "attachment.sort_order, attachment.is_primary "
+        + "FROM project_resource_attachments attachment "
+        + "JOIN organization_resources resource ON resource.id = attachment.resource_id AND resource.org_id = attachment.org_id "
+        + "WHERE attachment.org_id = $1 AND attachment.project_id = $2 ORDER BY attachment.sort_order",
+      [organizationId, mixedProjectId],
+    );
+    const mixedReceipt = await sql.unsafe(
+      "SELECT command_kind, outcome, resulting_version::text AS resulting_version, activity_id::text AS activity_id, "
+        + "result->'result'->>'kind' AS result_kind "
+        + "FROM organization_mutation_receipts WHERE org_id = $1 AND idempotency_key = $2",
+      [organizationId, mixedKey],
+    );
+    const mixedActivity = await sql.unsafe(
+      "SELECT action, actor_type, actor_id, agent_id::text AS agent_id, details->>'name' AS name, "
+        + "details->'goalIds' AS goal_ids "
+        + "FROM activity_log WHERE org_id = $1 AND id = $2::uuid",
+      [organizationId, mixedReceipt[0]?.activity_id],
+    );
+    const mixedOutbox = await sql.unsafe(
+      "SELECT event_type, payload->>'action' AS action FROM organization_mutation_outbox "
+        + "WHERE org_id = $1 AND activity_id = $2::uuid",
+      [organizationId, mixedReceipt[0]?.activity_id],
+    );
+    assert.deepEqual({
+      ...mixedProjectReadback[0],
+      execution_workspace_policy: JSON.parse(String(mixedProjectReadback[0]?.execution_workspace_policy)),
+    }, {
+      name: mixedPatch.name,
+      description: mixedPatch.description,
+      status: mixedPatch.status,
+      lead_agent_id: nonCeoAgentId,
+      target_date: mixedPatch.targetDate,
+      color: mixedPatch.color,
+      icon: mixedPatch.icon,
+      execution_workspace_policy: mixedPatch.executionWorkspacePolicy,
+      goal_id: goalA,
+    });
+    assert.deepEqual(Array.from(mixedGoalLinks), [{ goal_id: goalA }, { goal_id: goalB }].sort((a, b) => a.goal_id.localeCompare(b.goal_id)));
+    assert.deepEqual(Array.from(mixedResources), [
+      {
+        name: "Mixed PATCH research brief",
+        kind: "url",
+        locator: `https://example.test/${mixedProjectId}/brief`,
+        role: "reference",
+        note: "Background source",
+        sort_order: 1,
+        is_primary: false,
+      },
+      {
+        name: "Mixed PATCH test plan",
+        kind: "url",
+        locator: `https://example.test/${mixedProjectId}/test-plan`,
+        role: "deliverable",
+        note: "Acceptance plan",
+        sort_order: 2,
+        is_primary: true,
+      },
+    ]);
+    assert.deepEqual(mixedReceipt[0], {
+      command_kind: "project_goal_set_replacement",
+      outcome: "applied",
+      resulting_version: "1",
+      activity_id: mixedReceipt[0]?.activity_id,
+      result_kind: "project_patch",
+    });
+    assert.match(String(mixedReceipt[0]?.activity_id), /^[0-9a-f-]{36}$/u);
+    assert.deepEqual(mixedActivity[0], {
+      action: "project.updated",
+      actor_type: "agent",
+      actor_id: nonCeoAgentId,
+      agent_id: nonCeoAgentId,
+      name: mixedPatch.name,
+      goal_ids: [goalA, goalB],
+    });
+    assert.deepEqual(Array.from(mixedOutbox), [{ event_type: "activity.logged", action: "project.updated" }]);
+
+    const mixedReplay = await sendMixedPatch();
+    assert.equal(mixedReplay.status, 200, bodyError(mixedReplay));
+    const mixedReplayCounts = await sql.unsafe(
+      "SELECT "
+        + "(SELECT count(*)::text FROM organization_mutation_receipts WHERE org_id = $1 AND idempotency_key = $2) AS receipts, "
+        + "(SELECT count(*)::text FROM activity_log WHERE org_id = $1 AND id = $3::uuid) AS activities, "
+        + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id = $1 AND activity_id = $3::uuid) AS outbox, "
+        + "(SELECT count(*)::text FROM project_goals WHERE project_id = $4::uuid) AS links, "
+        + "(SELECT count(*)::text FROM project_resource_attachments WHERE project_id = $4::uuid) AS attachments, "
+        + "(SELECT count(*)::text FROM organization_resources WHERE org_id = $1 AND locator = ANY($5::text[])) AS resources, "
+        + "(SELECT mutation_version::text FROM project_goal_mutation_state WHERE project_id = $4::uuid) AS version",
+      [organizationId, mixedKey, mixedReceipt[0]?.activity_id, mixedProjectId, mixedPatch.newResources.map((resource) => resource.locator)],
+    );
+    assert.deepEqual(mixedReplayCounts[0], {
+      receipts: "1",
+      activities: "1",
+      outbox: "1",
+      links: "2",
+      attachments: "2",
+      resources: "2",
+      version: "1",
+    });
+
+    const omittedGoalKey = `real-project-goal-omitted-${mixedProjectId}`;
+    const omittedGoalUpdate = await readResponse(await fetch(`${current.apiUrl}/api/projects/${mixedProjectId}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${nonCeoApiKey}`,
+        "content-type": "application/json",
+        "x-rudder-idempotency-key": omittedGoalKey,
+      },
+      body: JSON.stringify({ name: "Mixed PATCH omission preserves goals" }),
+    }));
+    assert.equal(omittedGoalUpdate.status, 200, bodyError(omittedGoalUpdate));
+    const omittedGoalLinks = await sql.unsafe(
+      "SELECT p.goal_id::text AS goal_id, count(link.goal_id)::text AS link_count "
+        + "FROM projects p LEFT JOIN project_goals link ON link.project_id = p.id "
+        + "WHERE p.id = $1 GROUP BY p.goal_id",
+      [mixedProjectId],
+    );
+    assert.deepEqual(omittedGoalLinks[0], { goal_id: goalA, link_count: "2" });
+
+    const goalIdNullClear = await readResponse(await fetch(`${current.apiUrl}/api/projects/${mixedProjectId}`, {
       method: "PATCH",
       headers: {
         "content-type": "application/json",
-        "x-rudder-idempotency-key": `real-project-goal-mixed-${projectId}`,
-        "x-rudder-required-authority": "rust",
+        "x-rudder-idempotency-key": `real-project-goal-null-clear-${mixedProjectId}`,
       },
-      body: JSON.stringify({ name: "must-not-write-with-goals", goalIds: [] }),
+      body: JSON.stringify({ goalId: null }),
     }));
-    assert.equal(mixedUpdate.status, 409);
-    assert.match(bodyError(mixedUpdate), /Project-Goal replacement/u);
+    assert.equal(goalIdNullClear.status, 200, bodyError(goalIdNullClear));
+    const goalIdNullReadback = await sql.unsafe(
+      "SELECT p.goal_id::text AS goal_id, count(link.goal_id)::text AS link_count "
+        + "FROM projects p LEFT JOIN project_goals link ON link.project_id = p.id "
+        + "WHERE p.id = $1 GROUP BY p.goal_id",
+      [mixedProjectId],
+    );
+      assert.deepEqual(goalIdNullReadback[0], { goal_id: null, link_count: "0" });
 
     const firstKey = `real-project-goal-first-${projectId}`;
     const first = await setGoals(firstKey, [goalA, goalB]);
@@ -679,13 +1085,14 @@ async function main() {
     sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     const finalCounts = await sql.unsafe(
       "SELECT "
-        + "(SELECT count(*)::text FROM organization_mutation_receipts WHERE org_id = $1 AND command_kind = 'project_goal_set_replacement') AS receipts, "
+        + "(SELECT count(*)::text FROM organization_mutation_receipts WHERE org_id = $1 "
+        + "AND command_kind = 'project_goal_set_replacement' AND result->'result'->>'project_id' = $2::text) AS receipts, "
         + "(SELECT count(*)::text FROM activity_log WHERE org_id = $1 AND action = 'project.updated' AND entity_id = $2::text) AS activities, "
         + "(SELECT count(*)::text FROM project_goals WHERE project_id = $2::uuid) AS links, "
         + "(SELECT mutation_version::text FROM project_goal_mutation_state WHERE project_id = $2::uuid) AS version",
       [organizationId, projectId],
     );
-    assert.deepEqual(finalCounts[0], { receipts: "4", activities: "2", links: "0", version: "2" });
+    assert.deepEqual(finalCounts[0], { receipts: "2", activities: "2", links: "0", version: "2" });
 
     console.log(JSON.stringify({
       marker: "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",
@@ -697,17 +1104,39 @@ async function main() {
       projectId,
       createWithGoalsProjectId,
       goalIds: [goalA, goalB],
+      mixedProjectId,
       toolingProjectId,
       agentId,
       cliStatus: cliResult.exitCode,
       mcpStatus: mcpResult.exitCode,
+      cliMixedKey,
+      cliMixedActivityId,
+      mcpMixedKey,
+      mcpMixedActivityId,
       createWithGoalsStatus: createWithGoalsResponse.status,
       mixedUpdateStatus: mixedUpdate.status,
+      mixedPublicReadbackStatus: mixedPublicReadback.status,
+      mixedProjectFields: {
+        name: mixedProjectReadback[0]?.name,
+        status: mixedProjectReadback[0]?.status,
+        leadAgentId: mixedProjectReadback[0]?.lead_agent_id,
+        targetDate: mixedProjectReadback[0]?.target_date,
+        goalIds: Array.from(mixedGoalLinks).map((row) => row.goal_id),
+      },
+      mixedResourceCount: mixedResources.length,
+      mixedActivityCount: mixedActivity.length,
+      mixedOutboxCount: mixedOutbox.length,
+      mixedReplayStatus: mixedReplay.status,
+      mixedReplayCounts: mixedReplayCounts[0],
+      omittedGoalUpdateStatus: omittedGoalUpdate.status,
+      omittedGoalLinkCount: omittedGoalLinks[0]?.link_count,
+      goalIdNullClearStatus: goalIdNullClear.status,
+      goalIdNullClearReadback: goalIdNullReadback[0],
       auditFailureStatus: auditFailure.status,
       signedIdempotencySubstitutionStatus,
       rustOwnedOrganizationDeleteStatus: rustOwnedOrganizationDelete.status,
       allowlistStartupRejected: Boolean(invalidAllowlistStartupError),
-      allowlistProjectIds: [projectId, toolingProjectId],
+      allowlistProjectIds: [projectId, toolingProjectId, mixedProjectId],
       sameConfigRestartHealthStatus: sameConfigRestartHealth.status,
       unlistedProjectId,
       unlistedProjectStatus: unlistedGoalSet.status,

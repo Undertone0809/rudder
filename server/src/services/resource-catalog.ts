@@ -16,6 +16,7 @@ import type {
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { badRequest, conflict, unprocessable } from "../errors.js";
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
+import { lockNodeProjectGoalMutationAuthority } from "./project-goal-mutation-fence.js";
 
 function toOrganizationResource(row: typeof organizationResources.$inferSelect): OrganizationResource {
   return {
@@ -147,6 +148,30 @@ async function listOrganizationResourceMap(db: Db, orgId: string, resourceIds: s
   return new Map(rows.map((row) => [row.id, toOrganizationResource(row)]));
 }
 
+async function lockAttachedResourceProjectMutationAuthorities(
+  tx: Db | any,
+  orgId: string,
+  resourceId: string,
+) {
+  const attachments = await tx
+    .select({ projectId: projectResourceAttachments.projectId })
+    .from(projectResourceAttachments)
+    .where(
+      and(
+        eq(projectResourceAttachments.orgId, orgId),
+        eq(projectResourceAttachments.resourceId, resourceId),
+      ),
+    )
+    .orderBy(asc(projectResourceAttachments.projectId));
+
+  const projectIds: string[] = [...new Set(
+    (attachments as Array<{ projectId: string }>).map((attachment) => attachment.projectId),
+  )];
+  for (const projectId of projectIds) {
+    await lockNodeProjectGoalMutationAuthority(tx, orgId, projectId);
+  }
+}
+
 export async function listProjectResourceAttachments(
   db: Db,
   orgId: string,
@@ -229,6 +254,7 @@ export async function replaceProjectResourceAttachments(
   if (project.orgId !== input.orgId) {
     throw unprocessable("Project must belong to same organization");
   }
+  await lockNodeProjectGoalMutationAuthority(dbOrTx, input.orgId, input.projectId);
 
   const createdResourceIds: string[] = [];
 
@@ -361,6 +387,8 @@ export function resourceCatalogService(db: Db) {
           }
         }
 
+        await lockAttachedResourceProjectMutationAuthorities(tx, orgId, resourceId);
+
         const patch: Partial<typeof organizationResources.$inferInsert> = {
           updatedAt: new Date(),
         };
@@ -384,6 +412,7 @@ export function resourceCatalogService(db: Db) {
     removeOrganizationResource: async (orgId: string, resourceId: string): Promise<OrganizationResource | null> => {
       const row = await db.transaction(async (tx) => {
         await lockNodeMutationAuthority(tx, orgId);
+        await lockAttachedResourceProjectMutationAuthorities(tx, orgId, resourceId);
         return tx
           .delete(organizationResources)
           .where(and(eq(organizationResources.orgId, orgId), eq(organizationResources.id, resourceId)))
@@ -404,10 +433,7 @@ export function resourceCatalogService(db: Db) {
       projectId: string;
       attachments: ProjectResourceAttachmentInput[];
       newResources?: CreateProjectInlineResourceInput[];
-    }) => db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, input.orgId);
-      return replaceProjectResourceAttachments(tx, input);
-    }),
+    }) => db.transaction((tx) => replaceProjectResourceAttachments(tx, input)),
 
     createProjectResourceAttachment: async (
       projectId: string,
@@ -421,7 +447,7 @@ export function resourceCatalogService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!project) return null;
 
-        await lockNodeMutationAuthority(tx, project.orgId);
+        await lockNodeProjectGoalMutationAuthority(tx, project.orgId, projectId);
         const resource = await tx
           .select()
           .from(organizationResources)
@@ -516,7 +542,7 @@ export function resourceCatalogService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
-        await lockNodeMutationAuthority(tx, existing.orgId);
+        await lockNodeProjectGoalMutationAuthority(tx, existing.orgId, projectId);
         const resource = await tx
           .select()
           .from(organizationResources)
@@ -564,7 +590,7 @@ export function resourceCatalogService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
-        await lockNodeMutationAuthority(tx, existing.orgId);
+        await lockNodeProjectGoalMutationAuthority(tx, existing.orgId, projectId);
         const resource = await tx
           .select()
           .from(organizationResources)

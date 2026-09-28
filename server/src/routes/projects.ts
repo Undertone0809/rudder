@@ -124,10 +124,20 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
       || Object.prototype.hasOwnProperty.call(body, "goalId");
     const nonGoalKeys = Object.keys(body).filter((key) => key !== "goalIds" && key !== "goalId");
     const goalSetOnly = hasGoalMutation && nonGoalKeys.length === 0;
-    const rustRequiredForRequest = rustFoundationBridge?.projectGoalSetMode === "required"
-      || req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+    const rustRequiredForRequest = rustFoundationBridge?.projectGoalSetMode === "required" || rustRequiredHeader;
+    const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
+    const rustOwnsProject = mutationOwner === "rust";
 
-    if (hasGoalMutation && rustRequiredForRequest) {
+    if (rustOwnsProject && rustFoundationBridge?.projectGoalSetMode !== "required") {
+      res.status(503).json({
+        error: "Rust Project-Goal authority is not enabled",
+        code: "rust_foundation_project_goal_set_disabled",
+      });
+      return;
+    }
+
+    if ((hasGoalMutation && rustRequiredForRequest) || rustOwnsProject || rustRequiredHeader) {
       if (rustFoundationBridge?.projectGoalSetMode !== "required") {
         res.status(503).json({
           error: "Rust Project-Goal authority is not enabled",
@@ -136,7 +146,7 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
         return;
       }
       if (!req.header("x-rudder-idempotency-key")?.trim()) {
-        throw badRequest("x-rudder-idempotency-key is required for Rust Project-Goal replacement");
+        throw badRequest("x-rudder-idempotency-key is required for Rust Project updates");
       }
       const goalIds = body.goalIds !== undefined ? body.goalIds : body.goalId ? [body.goalId] : [];
       const rustBody = goalSetOnly

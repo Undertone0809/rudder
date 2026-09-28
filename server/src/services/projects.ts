@@ -1,5 +1,5 @@
 import type { Db } from "@rudderhq/db";
-import { agents, goals, projectGoals, projectWorkspaces, projects, workspaceRuntimeServices } from "@rudderhq/db";
+import { agents, goals, projectGoalMutationState, projectGoals, projectWorkspaces, projects, workspaceRuntimeServices } from "@rudderhq/db";
 import {
   DEFAULT_PROJECT_ICON,
   PROJECT_COLORS,
@@ -513,6 +513,18 @@ export function projectService(db: Db) {
       return enriched ?? null;
     },
 
+    getMutationOwner: async (orgId: string, projectId: string): Promise<"node" | "rust" | null> => {
+      const row = await db
+        .select({ owner: projectGoalMutationState.owner })
+        .from(projectGoalMutationState)
+        .where(and(
+          eq(projectGoalMutationState.orgId, orgId),
+          eq(projectGoalMutationState.projectId, projectId),
+        ))
+        .then((rows) => rows[0] ?? null);
+      return row?.owner ?? null;
+    },
+
     create: async (
       orgId: string,
       data: Omit<typeof projects.$inferInsert, "orgId"> & {
@@ -649,11 +661,7 @@ export function projectService(db: Db) {
         : [];
 
       const row = await db.transaction(async (tx) => {
-        if (ids !== undefined) {
-          await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
-        } else {
-          await lockNodeMutationAuthority(tx, existingProject.orgId);
-        }
+        await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
         const updatedRow = await tx
           .update(projects)
           .set(updates)

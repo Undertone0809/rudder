@@ -236,6 +236,29 @@ export function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
 }
 
+const DEFAULT_ISSUE_SEARCH_FIELDS: IssueSearchField[] = ["title"];
+const MAX_ISSUE_LIST_LIMIT = 500;
+
+export function normalizeIssueSearchFields(fields: IssueSearchField[] | undefined): Set<IssueSearchField> {
+  const allowed = new Set<IssueSearchField>(["title", "description", "comment"]);
+  const normalized = (fields ?? DEFAULT_ISSUE_SEARCH_FIELDS).filter((field): field is IssueSearchField => allowed.has(field));
+  return new Set(normalized.length > 0 ? normalized : DEFAULT_ISSUE_SEARCH_FIELDS);
+}
+
+export function normalizeIssueListLimit(limit: number | undefined): number | undefined {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) return undefined;
+  const normalized = Math.floor(limit);
+  if (normalized < 1) return undefined;
+  return Math.min(MAX_ISSUE_LIST_LIMIT, normalized);
+}
+
+export function normalizeIssueListOffset(offset: number | undefined): number | undefined {
+  if (typeof offset !== "number" || !Number.isFinite(offset)) return undefined;
+  const normalized = Math.floor(offset);
+  if (normalized < 1) return undefined;
+  return normalized;
+}
+
 export function textContains(value: string | null | undefined, query: string): value is string {
   return Boolean(value && value.toLowerCase().includes(query.toLowerCase()));
 }

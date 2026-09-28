@@ -1,5 +1,5 @@
 {
-  "artifactHash": "c90ac61bb8a56a5ef8026762f899b2f9c5e4618de5b6f6c40480a1cc5de60500",
+  "artifactHash": "40640159976a63bd4971f8a5c4b29842eb95ffa769fac290d26abf2c24418bb4",
   "baselineProvenance": {
     "g0IntegrationSha": "68a5b27ce7a8c22277b6daac4838f0fe35049b3d",
     "issue": "R6Z-130",
@@ -2486,7 +2486,7 @@
               "type": "array"
             },
             "idempotencyKey": {
-              "description": "Stable key for safe Project-Goal replacement retry.",
+              "description": "Stable key for retrying project updates; required when changing Project-Goal links.",
               "maxLength": 256,
               "minLength": 1,
               "type": "string"

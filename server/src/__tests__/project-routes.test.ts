@@ -11,6 +11,7 @@ import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js
 const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),
   getById: vi.fn(),
+  getMutationOwner: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
   listWorkspaces: vi.fn(),
@@ -104,6 +105,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
   beforeEach(() => {
     mockProjectService.create.mockReset();
     mockProjectService.getById.mockReset();
+    mockProjectService.getMutationOwner.mockReset().mockResolvedValue("node");
     mockProjectService.update.mockReset();
     mockLogActivity.mockReset();
     mockProjectService.resolveByReference.mockResolvedValue({ project: null, ambiguous: false });
@@ -486,6 +488,48 @@ describe("POST /api/orgs/:orgId/projects", () => {
       ...projectPatch.newResources[0],
       sourceType: "external",
     }] }, runId: null });
+    expect(mockProjectService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("routes scalar Project patches through Rust after the Project owner handoff", async () => {
+    const existing = createProject();
+    const updated = { ...existing, name: "Rust-owned scalar update" };
+    mockProjectService.getById.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectGoalSet: vi.fn().mockResolvedValue({
+        status: 200,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify({ result: { kind: "project_patch" } })),
+      }),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
+
+    const res = await request(app)
+      .patch("/api/projects/project-1")
+      .set("x-rudder-idempotency-key", "project-scalar-patch-1")
+      .send({ name: updated.name });
+
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe(updated.name);
+    expect(bridge.projectGoalSet).toHaveBeenCalledOnce();
+    const rustBody = JSON.parse((bridge.projectGoalSet as ReturnType<typeof vi.fn>).mock.calls[0][3].toString("utf8"));
+    expect(rustBody).toEqual({ projectPatch: { name: updated.name }, runId: null });
+    expect(mockProjectService.update).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("fails closed instead of sending a Rust-owned scalar patch to Node", async () => {
+    mockProjectService.getById.mockResolvedValue(createProject());
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+
+    const res = await request(app).patch("/api/projects/project-1").send({ name: "Stale Node write" });
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_foundation_project_goal_set_disabled");
     expect(mockProjectService.update).not.toHaveBeenCalled();
     expect(mockLogActivity).not.toHaveBeenCalled();
   });

@@ -970,11 +970,17 @@ async fn mixed_project_patch_updates_project_goals_resources_and_activity_atomic
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn mixed_project_patch_preserves_omitted_goals_and_honors_clear_and_goal_ids_precedence() {
+async fn mixed_project_patch_preserves_goal_omission_and_nullable_scalar_semantics() {
     let database = Database::start().await;
     let store = MutationStore::new(database.pool.clone());
     seed_patch_agent(&database).await;
     seed_project_goal_projection(&database, GOAL).await;
+    sqlx::query("UPDATE projects SET color='#123abc' WHERE id=$1::uuid AND org_id=$2::uuid")
+        .bind(PROJECT)
+        .bind(ORG)
+        .execute(&database.pool)
+        .await
+        .unwrap();
 
     store
         .project_patch(project_patch_command(
@@ -1008,7 +1014,64 @@ async fn mixed_project_patch_preserves_omitted_goals_and_honors_clear_and_goal_i
         .unwrap();
     assert_eq!(project_primary(&database).await, None);
     assert!(project_goals(&database).await.is_empty());
-    assert_eq!(database.counts().await, (3, 3, 3));
+
+    let description_before_clear: Option<String> = sqlx::query_scalar(
+        "SELECT description FROM projects WHERE id=$1::uuid AND org_id=$2::uuid",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        description_before_clear.as_deref(),
+        Some("Non-goal Project field changed")
+    );
+    store
+        .project_patch(project_patch_command(
+            json!({"goalIds": [GOAL], "description": null}),
+            3,
+            "project-patch-clear-nullable-description",
+        ))
+        .await
+        .unwrap();
+    let cleared_description: Option<String> = sqlx::query_scalar(
+        "SELECT description FROM projects WHERE id=$1::uuid AND org_id=$2::uuid",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(cleared_description, None);
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
+
+    let color_before_omission: Option<String> =
+        sqlx::query_scalar("SELECT color FROM projects WHERE id=$1::uuid AND org_id=$2::uuid")
+            .bind(PROJECT)
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(color_before_omission.as_deref(), Some("#123abc"));
+    store
+        .project_patch(project_patch_command(
+            json!({"goalIds": [GOAL_TWO], "status": "in_progress"}),
+            4,
+            "project-patch-omit-nullable-color",
+        ))
+        .await
+        .unwrap();
+    let preserved_color: Option<String> =
+        sqlx::query_scalar("SELECT color FROM projects WHERE id=$1::uuid AND org_id=$2::uuid")
+            .bind(PROJECT)
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(preserved_color.as_deref(), Some("#123abc"));
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
+    assert_eq!(database.counts().await, (5, 5, 5));
 }
 
 #[tokio::test(flavor = "multi_thread")]

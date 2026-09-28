@@ -1,20 +1,31 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import type { Config } from "../config.js";
+import { createRudderAppStartupOptions } from "../app.js";
 
 const startupSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-const appCallStart = startupSource.indexOf("const appHandle = await createRudderApp");
-const appCallEnd = startupSource.indexOf("\n  });", appCallStart);
-const appCallSource = startupSource.slice(appCallStart, appCallEnd);
 
 describe("Rust member directory supported startup wiring", () => {
-  it("passes the active database and explicit bridge config into createRudderApp", () => {
-    expect(appCallStart).toBeGreaterThanOrEqual(0);
-    expect(appCallEnd).toBeGreaterThan(appCallStart);
-    expect(appCallSource).toContain("databaseUrl: activeDatabaseConnectionString");
-    expect(appCallSource).toContain("rustFoundationMode: config.rustFoundationMode");
-    expect(appCallSource).toContain("rustOrganizationBrandingMode: config.rustOrganizationBrandingMode");
-    expect(appCallSource).toContain("rustProjectGoalSetMode: config.rustProjectGoalSetMode");
-    expect(appCallSource).toContain("rustFoundationBinaryPath: config.rustFoundationBinaryPath");
-    expect(appCallSource).toContain("rustFoundationActorEnvelopeKey: config.rustFoundationActorEnvelopeKey");
+  it("passes active database and explicit bridge config through startup exactly once", () => {
+    const config = {
+      companyDeletionEnabled: true,
+      rustFoundationMode: "required",
+      rustOrganizationBrandingMode: "required",
+      rustProjectGoalSetMode: "shadow",
+      rustFoundationBinaryPath: "/runtime/rudder-server-foundation",
+      rustFoundationActorEnvelopeKey: "actor-envelope-key",
+    } as Config;
+
+    expect(createRudderAppStartupOptions(config, "postgres://active-db", true)).toEqual({
+      authReady: true,
+      companyDeletionEnabled: true,
+      databaseUrl: "postgres://active-db",
+      rustFoundationMode: "required",
+      rustOrganizationBrandingMode: "required",
+      rustProjectGoalSetMode: "shadow",
+      rustFoundationBinaryPath: "/runtime/rudder-server-foundation",
+      rustFoundationActorEnvelopeKey: "actor-envelope-key",
+    });
+    expect(startupSource.match(/createRudderAppStartupOptions\(/g)).toHaveLength(1);
   });
 });
