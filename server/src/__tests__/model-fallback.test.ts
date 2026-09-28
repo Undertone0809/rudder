@@ -679,11 +679,13 @@ describe("executeAdapterWithModelFallbacks", () => {
     });
     ctx.context.chatPrompt = "continue the conversation";
     const resolveDriver = vi.fn(() => null);
+    const onProviderDispatch = vi.fn();
 
     const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
       resolveDriver,
       submitInputThroughDriver: true,
       nativeDriverRequired: true,
+      onProviderDispatch,
     });
 
     expect(executed).toMatchObject({
@@ -695,6 +697,29 @@ describe("executeAdapterWithModelFallbacks", () => {
     });
     expect(resolveDriver).toHaveBeenCalledTimes(1);
     expect(adapter.execute).not.toHaveBeenCalled();
+    expect(onProviderDispatch).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes admission cancellation from an actual provider dispatch", async () => {
+    const onProviderDispatch = vi.fn();
+    const adapter: ServerAgentRuntimeModule = {
+      type: "process",
+      testEnvironment: vi.fn(),
+      execute: vi.fn(async () => {
+        expect(onProviderDispatch).toHaveBeenCalledOnce();
+        return result({ model: "process" });
+      }),
+    };
+    const ctx = baseContext({ model: "test" });
+    await expect(executeAdapterWithModelFallbacks(adapter, ctx, {
+      onAttemptStart: () => { throw new Error("cancelled before admission completed"); },
+      onProviderDispatch,
+    })).rejects.toThrow("cancelled before admission completed");
+    expect(onProviderDispatch).not.toHaveBeenCalled();
+    expect(adapter.execute).not.toHaveBeenCalled();
+
+    await executeAdapterWithModelFallbacks(adapter, ctx, { onProviderDispatch });
+    expect(adapter.execute).toHaveBeenCalledOnce();
   });
 
   it.each(["gemini_local", "openclaw_gateway"])(

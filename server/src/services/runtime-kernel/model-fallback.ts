@@ -47,6 +47,8 @@ export interface ModelFallbackExecutionOptions {
   ) => Promise<void> | void;
   /** Persist acceptance uncertainty before the native provider call is dispatched. */
   onAttemptSubmissionStart?: (attempt: ModelAttemptSpec) => Promise<void> | void;
+  /** Synchronous notification immediately before calling a provider adapter/driver. */
+  onProviderDispatch?: (attempt: ModelAttemptSpec) => void;
 }
 
 function isSubmissionPhase(value: unknown): value is AgentRuntimeNetworkSubmissionPhase {
@@ -459,6 +461,7 @@ export async function executeAdapterWithModelFallbacks(
             `No profile-bound Runtime Driver is available for ${attemptRuntimeType}.`,
           );
         } else if (!driver) {
+          options.onProviderDispatch?.(attempt);
           result = await attemptAdapter.execute({
             ...attemptContext,
             controlAttempt: controlAttempt ?? undefined,
@@ -525,6 +528,7 @@ export async function executeAdapterWithModelFallbacks(
             } else {
               nativeSubmissionCheckpointStarted = Boolean(options.onAttemptSubmissionStart);
               await options.onAttemptSubmissionStart?.(attempt);
+              options.onProviderDispatch?.(attempt);
               result = await driver.execute(driverContext);
             }
           } else {
@@ -539,6 +543,7 @@ export async function executeAdapterWithModelFallbacks(
               const prompt = typeof attemptContext.context.chatPrompt === "string"
                 ? attemptContext.context.chatPrompt
                 : "";
+              options.onProviderDispatch?.(attempt);
               result = await driver.submitInput({
                 context: driverContext,
                 session: sessionInput?.status === "supported" ? sessionInput.value : null,
@@ -551,6 +556,7 @@ export async function executeAdapterWithModelFallbacks(
           }
         }
       } else {
+        options.onProviderDispatch?.(attempt);
         result = await attemptAdapter.execute({
           ...attemptContext,
           controlAttempt: controlAttempt ?? undefined,

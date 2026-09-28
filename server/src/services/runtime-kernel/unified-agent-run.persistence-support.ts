@@ -665,6 +665,22 @@ export async function loadPersistedUnifiedEntry(db: Db, runId: string): Promise<
     .limit(1)
     .then((rows) => rows[0] ?? null);
   if (!attempt) {
+    const span = await db
+      .select({ id: runRuntimeSpans.id })
+      .from(runRuntimeSpans)
+      .where(and(
+        eq(runRuntimeSpans.orgId, run.orgId),
+        eq(runRuntimeSpans.runId, run.id),
+      ))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    const hasExecutionFence = Boolean(
+      admission.ownerFenceId
+      || admission.lastOwnerToken
+      || admission.attemptEpoch !== undefined
+      || admission.lastLeaseExpiresAt,
+    );
+    if (!span && !hasExecutionFence) return null;
     throw persistenceError("contract", `heartbeat run ${run.id} has no durable attempt row`);
   }
   if (attempt.agentId !== run.agentId) {

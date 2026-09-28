@@ -63,6 +63,7 @@ import {
 } from "./unified-agent-run.heartbeat-persistence.js";
 import { createHeartbeatUnifiedAgentRunAdapter } from "./unified-agent-run.integration.js";
 import type { UnifiedAttemptFinishInput, UnifiedNativeExecutionInput } from "./unified-agent-run.js";
+import { loadPersistedUnifiedEntry } from "./unified-agent-run.persistence-support.js";
 
 export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRun } from "../agent-run-context.js";
 export { buildHeartbeatRunAdmissionFields } from "./heartbeat.admission.js";
@@ -753,10 +754,10 @@ export function heartbeatService(
     const commonAdmission = runBeforeTerminal && runBeforeTerminal.status === "running"
       ? readCommonRunAdmission(runBeforeTerminal)
       : null;
-    const commonEntry = commonAdmission
+    let commonEntry = commonAdmission
       ? await unifiedRunAdapter.get(runId)
       : null;
-    const commonOwnerFence = commonEntry?.ownerFence ?? null;
+    let commonOwnerFence = commonEntry?.ownerFence ?? null;
     const commonExpectedOwnerToken = opts?.expectedExecutionOwnerToken ?? runBeforeTerminal?.executionOwnerToken ?? null;
     const agentIssueCreationSettlement = runBeforeTerminal
       ? await (async () => {
@@ -795,6 +796,33 @@ export function heartbeatService(
         ? { agentIssueCreationNotification }
         : {}),
     };
+    const legacyTerminalInput = {
+      runId,
+      status,
+      patch,
+      expectedStatuses: opts?.expectedStatuses,
+      activityWatermark: opts?.activityWatermark,
+      terminalEffectsPending: opts?.terminalEffectsPending,
+      terminalEffectsIntent,
+      processExitedAt: opts?.processExitedAt,
+      expectedExecutionOwnerToken: commonAdmission
+        ? commonExpectedOwnerToken
+        : opts?.expectedExecutionOwnerToken,
+    };
+    let admissionOnlyTerminal: typeof heartbeatRuns.$inferSelect | null | undefined;
+    if (commonAdmission && !commonEntry) {
+      const resolution = await db.transaction(async (rawTx) => {
+        const tx = rawTx as unknown as Db;
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${runId}))`);
+        const materializedEntry = await loadPersistedUnifiedEntry(tx, runId);
+        if (materializedEntry) return { entry: materializedEntry, updated: null };
+        const updated = await transitionHeartbeatRunToTerminal(tx, legacyTerminalInput);
+        return { entry: null, updated };
+      });
+      commonEntry = resolution.entry;
+      commonOwnerFence = commonEntry?.ownerFence ?? null;
+      if (!commonEntry) admissionOnlyTerminal = resolution.updated;
+    }
     let usedUnifiedTerminal = false;
     if (commonAdmission && commonEntry && commonOwnerFence && runBeforeTerminal && commonExpectedOwnerToken === commonOwnerFence.ownerToken) {
       const nativeExecution = opts?.nativeExecution;
@@ -829,17 +857,9 @@ export function heartbeatService(
     }
     const updated = usedUnifiedTerminal
       ? await getRun(runId)
-      : await transitionHeartbeatRunToTerminal(db, {
-          runId,
-          status,
-          patch,
-          expectedStatuses: opts?.expectedStatuses,
-          activityWatermark: opts?.activityWatermark,
-          terminalEffectsPending: opts?.terminalEffectsPending,
-          terminalEffectsIntent,
-          processExitedAt: opts?.processExitedAt,
-          expectedExecutionOwnerToken: opts?.expectedExecutionOwnerToken,
-        });
+      : admissionOnlyTerminal !== undefined
+        ? admissionOnlyTerminal
+        : await transitionHeartbeatRunToTerminal(db, legacyTerminalInput);
     if (updated) {
       publishRunStatus(updated);
       if (!usedUnifiedTerminal) await finishLatestHeartbeatRunAttempt(db, updated.id, {

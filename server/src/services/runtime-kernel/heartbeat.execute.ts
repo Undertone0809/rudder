@@ -175,6 +175,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     } | null = null;
     let terminalTranscriptOwner: NativeTranscriptRetentionOwner | null = null;
     let adapterResultForQuiescence: AgentRuntimeExecutionResult | null = null;
+    let providerDispatchStarted = false;
     let activeRuntimeDriver: RuntimeDriver | null = null;
     const inspectUnifiedEntry = async (attemptId?: string | null) => {
       if (!unifiedRunAdapter) return null;
@@ -1080,6 +1081,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           });
           if (!unknown.ok) throw new Error(`Unified Run ${run.id} dispatch checkpoint rejected: ${unknown.reason}`);
         },
+        onProviderDispatch: () => { providerDispatchStarted = true; },
         onAttemptResult: async (_attempt, result, submissionPhase) => {
           await recordUnifiedAttemptResult(result as unknown as Record<string, unknown>, submissionPhase);
         },
@@ -1839,6 +1841,19 @@ export function createHeartbeatExecuteHandlers(context: any) {
           }
         } finally {
           if (executionLeaseTimer) clearInterval(executionLeaseTimer);
+          // Only this fresh executor can prove that it never called a provider.
+          // A recovered running Run may still have a writer from its old owner.
+          if (!runWasRunningAtEntry && !providerDispatchStarted && commonSpanId) {
+            await acknowledgeRunProcessExit(run.id, {
+              exitCode: null,
+              signal: null,
+              timedOut: false,
+              submissionPhase: "pre_submission",
+              nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+            }, commonSpanId).catch((error) => {
+              logger.error({ err: error, runId, spanId: commonSpanId }, "failed to persist pre-dispatch writer quiescence");
+            });
+          }
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
           runAbortControllers.delete(run.id);
           activeRunExecutions.delete(run.id);

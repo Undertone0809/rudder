@@ -16,10 +16,11 @@ import {
   organizationSkills,
   organizations,
   requests,
+  runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -138,6 +139,71 @@ describe("heartbeat passive issue closeout", () => {
   });
 
   afterEach(async () => {
+    const cleanupHeartbeat = heartbeatService(db);
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const activeRuns = await db
+        .select({ id: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .where(inArray(heartbeatRuns.status, ["queued", "running"]));
+      if (activeRuns.length === 0) break;
+      for (const run of activeRuns) {
+        await cleanupHeartbeat.cancelRun(run.id);
+      }
+    }
+    try {
+      await waitFor(async () => {
+        const [activeRuns, activeWriters] = await Promise.all([
+          db.select({ id: heartbeatRuns.id })
+            .from(heartbeatRuns)
+            .where(inArray(heartbeatRuns.status, ["queued", "running"])),
+          db.select({ id: runRuntimeSpans.id })
+            .from(runRuntimeSpans)
+            .where(and(
+              isNull(runRuntimeSpans.writerLeaseReleasedAt),
+              or(
+                isNotNull(runRuntimeSpans.writerBindingRef),
+                isNotNull(runRuntimeSpans.writerResourceRef),
+              ),
+            )),
+        ]);
+        return activeRuns.length === 0 && activeWriters.length === 0 ? true : null;
+      }, 20_000);
+    } catch (error) {
+      const [activeRuns, activeWriters] = await Promise.all([
+        db.select({
+          id: heartbeatRuns.id,
+          status: heartbeatRuns.status,
+          executionOwnerToken: heartbeatRuns.executionOwnerToken,
+          processPid: heartbeatRuns.processPid,
+          processExitedAt: heartbeatRuns.processExitedAt,
+          terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+        })
+          .from(heartbeatRuns)
+          .where(inArray(heartbeatRuns.status, ["queued", "running"])),
+        db.select({
+          id: runRuntimeSpans.id,
+          runId: runRuntimeSpans.runId,
+          attemptId: runRuntimeSpans.attemptId,
+          ownerToken: runRuntimeSpans.ownerToken,
+          writerBindingRef: runRuntimeSpans.writerBindingRef,
+          writerResourceRef: runRuntimeSpans.writerResourceRef,
+          writerLeaseReleasedAt: runRuntimeSpans.writerLeaseReleasedAt,
+        })
+          .from(runRuntimeSpans)
+          .where(and(
+            isNull(runRuntimeSpans.writerLeaseReleasedAt),
+            or(
+              isNotNull(runRuntimeSpans.writerBindingRef),
+              isNotNull(runRuntimeSpans.writerResourceRef),
+            ),
+          )),
+      ]);
+      throw new Error(
+        `heartbeat test cleanup did not reach writer quiescence: ${JSON.stringify({ activeRuns, activeWriters })}`,
+        { cause: error },
+      );
+    }
+
     for (let attempt = 0; attempt < 6; attempt += 1) {
       try {
         await db.delete(activityLog);
@@ -160,7 +226,7 @@ describe("heartbeat passive issue closeout", () => {
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
     }
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await instance?.stop();
