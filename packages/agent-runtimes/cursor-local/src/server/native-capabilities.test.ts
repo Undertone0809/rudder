@@ -718,7 +718,10 @@ describe("Cursor ACP native capabilities", () => {
     const secret = "cursor-login-test-secret";
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {
-        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([{ id: "cursor_login" }]) })}\n`);
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([
+          { id: "cursor_login", name: "Cursor Login" },
+          { id: "workspace_sso", name: "Workspace SSO" },
+        ]) })}\n`);
       }
     });
     const result = await executeCursorNativeChat({
@@ -734,11 +737,18 @@ describe("Cursor ACP native capabilities", () => {
       acpTimeout: { method: "authenticate", timeoutMs: 250, durationMs: expect.any(Number) },
       acpRequestTrace: [
         { method: "initialize", status: "completed", durationMs: expect.any(Number) },
-        { method: "authenticate", status: "timed_out", durationMs: expect.any(Number) },
+        {
+          method: "authenticate",
+          status: "timed_out",
+          durationMs: expect.any(Number),
+          advertisedAuthMethodIds: ["cursor_login", "workspace_sso"],
+          chosenAuthMethodId: "cursor_login",
+        },
       ],
     });
     expect(JSON.stringify(result.resultJson)).not.toContain(secret);
     expect(fixture.requests.map((request) => request.method)).toEqual(["initialize", "initialized", "authenticate"]);
+    expect(fixture.requests.find((request) => request.method === "authenticate")?.params).toEqual({ methodId: "cursor_login" });
   });
 
   it("classifies a missing provider session and refuses profile/cwd mismatches", async () => {

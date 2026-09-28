@@ -280,6 +280,22 @@ function diagnosticText(value: unknown, secrets: readonly string[] = []): string
   return String(redactProviderValue(text, secrets)).slice(0, 2_000);
 }
 
+function safeAuthMethodDiagnostic(
+  advertisedAuthMethodIds: readonly string[],
+  chosenAuthMethodId: string | null,
+  secrets: readonly string[],
+): CursorAcpAuthMethodDiagnostic {
+  const safeId = (id: string) => {
+    if (id.length > 128) return "[REDACTED]";
+    const safe = diagnosticText(id, secrets);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(safe) ? safe : "[REDACTED]";
+  };
+  return {
+    advertisedAuthMethodIds: advertisedAuthMethodIds.slice(0, 32).map(safeId),
+    chosenAuthMethodId: chosenAuthMethodId ? safeId(chosenAuthMethodId) : null,
+  };
+}
+
 function bindingMatches(requested: CursorProviderBindingRef, profile: CursorLocalProfileTransport): boolean {
   return profile.binding.hostId.trim() === requested.hostId.trim()
     && profile.binding.profileId.trim() === requested.profileId.trim()
@@ -730,10 +746,16 @@ function cursorAcpRequestIdentity(message: CursorAcpMessage): string {
 
 type CursorAcpRequestMethod = "initialize" | "authenticate" | "session/new" | "session/load"
   | "session/set_model" | "session/set_mode" | "session/prompt";
+type CursorAcpAuthMethodDiagnostic = {
+  advertisedAuthMethodIds: string[];
+  chosenAuthMethodId: string | null;
+};
 type CursorAcpRequestDiagnostic = {
   method: CursorAcpRequestMethod;
   status: "started" | "completed" | "failed" | "timed_out";
   durationMs: number;
+  advertisedAuthMethodIds?: string[];
+  chosenAuthMethodId?: string | null;
 };
 
 class CursorAcpClient {
@@ -784,12 +806,25 @@ class CursorAcpClient {
     }
   }
 
-  request(method: CursorAcpRequestMethod, params: JsonRecord, timeoutMs = this.timeoutMs): Promise<unknown> {
+  request(
+    method: CursorAcpRequestMethod,
+    params: JsonRecord,
+    timeoutMs = this.timeoutMs,
+    authMethodDiagnostic?: CursorAcpAuthMethodDiagnostic,
+  ): Promise<unknown> {
     if (this.closed) return Promise.reject(new CursorNativeCapabilityError("unknown", "transport-error", "Cursor ACP process is closed."));
     const id = this.nextRequestId++;
     const message = JSON.stringify({ jsonrpc: "2.0", id, method, params });
     const startedAt = performance.now();
-    const diagnostic: CursorAcpRequestDiagnostic = { method, status: "started", durationMs: 0 };
+    const diagnostic: CursorAcpRequestDiagnostic = {
+      method,
+      status: "started",
+      durationMs: 0,
+      ...(method === "authenticate" && authMethodDiagnostic ? {
+        advertisedAuthMethodIds: [...authMethodDiagnostic.advertisedAuthMethodIds],
+        chosenAuthMethodId: authMethodDiagnostic.chosenAuthMethodId,
+      } : {}),
+    };
     this.requestDiagnostics.push(diagnostic);
     if (this.requestDiagnostics.length > 16) this.requestDiagnostics.shift();
     return new Promise((resolve, reject) => {
@@ -820,7 +855,12 @@ class CursorAcpClient {
   }
 
   get requestTrace(): CursorAcpRequestDiagnostic[] {
-    return this.requestDiagnostics.map((diagnostic) => ({ ...diagnostic }));
+    return this.requestDiagnostics.map((diagnostic) => ({
+      ...diagnostic,
+      ...(diagnostic.advertisedAuthMethodIds
+        ? { advertisedAuthMethodIds: [...diagnostic.advertisedAuthMethodIds] }
+        : {}),
+    }));
   }
 
   get pid(): number | null {
@@ -1179,6 +1219,7 @@ async function initializeCursorClient(
   requireLoadSession: boolean,
   persistedAuthMethodId?: string | null,
   observeCapability?: CursorProfileCapabilityObserver,
+  observeAuthMethodDiagnostic?: (diagnostic: CursorAcpAuthMethodDiagnostic) => void,
 ): Promise<string | null> {
   const initialize = recordValue(await client.request("initialize", {
     protocolVersion: profile.protocolVersion ?? CURSOR_ACP_PROTOCOL_VERSION,
@@ -1222,6 +1263,9 @@ async function initializeCursorClient(
   const authMethods = Array.isArray(initialize?.authMethods)
     ? [...new Set(initialize.authMethods.map((method) => stringValue(recordValue(method)?.id)).filter((id): id is string => Boolean(id)))]
     : [];
+  const authSecrets = profileSecrets(profile);
+  let authMethodDiagnostic = safeAuthMethodDiagnostic(authMethods, null, authSecrets);
+  observeAuthMethodDiagnostic?.(authMethodDiagnostic);
   const configuredAuthMethodId = stringValue(profile.authMethodId) ?? stringValue(persistedAuthMethodId);
   let authMethodId: string | null = null;
   if (authMethods.length > 0 && configuredAuthMethodId) {
@@ -1244,7 +1288,9 @@ async function initializeCursorClient(
       "Cursor ACP advertised multiple authentication methods; configure one explicitly.",
     );
   }
-  if (authMethodId) await authenticateCursorClient(client, profile, authMethodId);
+  authMethodDiagnostic = safeAuthMethodDiagnostic(authMethods, authMethodId, authSecrets);
+  observeAuthMethodDiagnostic?.(authMethodDiagnostic);
+  if (authMethodId) await authenticateCursorClient(client, profile, authMethodId, authMethodDiagnostic);
   return authMethodId;
 }
 
@@ -1326,9 +1372,10 @@ async function authenticateCursorClient(
   client: CursorAcpClient,
   profile: CursorLocalProfileTransport,
   authMethodId: string,
+  authMethodDiagnostic: CursorAcpAuthMethodDiagnostic,
 ): Promise<void> {
   try {
-    const authentication = await client.request("authenticate", { methodId: authMethodId });
+    const authentication = await client.request("authenticate", { methodId: authMethodId }, undefined, authMethodDiagnostic);
     if (authentication === null || authentication === undefined) {
       throw new CursorNativeCapabilityError(
         "unknown",
@@ -1339,6 +1386,42 @@ async function authenticateCursorClient(
   } catch (error) {
     throw normalizeRpcFailure(error, "authenticate", profileSecrets(profile));
   }
+}
+
+export type CursorAcpAuthenticationProbeResult = CursorAcpAuthMethodDiagnostic & {
+  status: "authenticated" | "no_auth_method" | "timed_out" | "failed";
+  requestTrace: CursorAcpRequestDiagnostic[];
+};
+
+export async function probeCursorAcpAuthentication(
+  profile: CursorLocalProfileTransport,
+): Promise<CursorAcpAuthenticationProbeResult> {
+  const client = new CursorAcpClient(profile, () => {});
+  let status: CursorAcpAuthenticationProbeResult["status"] = "failed";
+  let authMethodDiagnostic: CursorAcpAuthMethodDiagnostic = {
+    advertisedAuthMethodIds: [],
+    chosenAuthMethodId: null,
+  };
+  try {
+    const authMethodId = await initializeCursorClient(
+      client,
+      profile,
+      false,
+      undefined,
+      undefined,
+      (diagnostic) => { authMethodDiagnostic = diagnostic; },
+    );
+    status = authMethodId ? "authenticated" : "no_auth_method";
+  } catch (error) {
+    status = error instanceof CursorAcpTimeoutError ? "timed_out" : "failed";
+  } finally {
+    client.close();
+  }
+  return {
+    ...authMethodDiagnostic,
+    status,
+    requestTrace: client.requestTrace,
+  };
 }
 
 async function loadCursorSession(

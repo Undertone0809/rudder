@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCursorLocalProviderCapabilities,
   executeCursorNativeChat,
+  probeCursorAcpAuthentication,
   type CursorLocalProfileTransport,
   type CursorProviderBindingRef,
 } from "./native-capabilities.js";
@@ -23,6 +24,47 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 describe.skipIf(!integrationEnabled)("Cursor ACP installed runtime", () => {
+  it("reports installed ACP authentication methods without opening a session", async () => {
+    const command = process.env.RUDDER_CURSOR_AGENT_COMMAND?.trim() || "cursor-agent";
+    const cwd = await mkdtemp(path.join(tmpdir(), "rudder-cursor-acp-auth-"));
+    const binding: CursorProviderBindingRef = {
+      hostId: "local-cursor-acp-auth-diagnostic",
+      profileId: `auth-diagnostic-${Date.now()}`,
+      capabilityRevision: "cursor-acp-v1",
+    };
+    const profile: CursorLocalProfileTransport = {
+      binding,
+      command,
+      cwd,
+      providerVersion: "diagnostic",
+      protocolVersion: 1,
+      requestTimeoutMs: 30_000,
+    };
+
+    try {
+      const diagnostic = await probeCursorAcpAuthentication(profile);
+      process.stdout.write(`${JSON.stringify({
+        status: diagnostic.status,
+        advertisedAuthMethodIds: diagnostic.advertisedAuthMethodIds,
+        chosenAuthMethodId: diagnostic.chosenAuthMethodId,
+        requestTrace: diagnostic.requestTrace,
+      })}\n`);
+      expect(diagnostic.advertisedAuthMethodIds.length).toBeGreaterThan(0);
+      expect(diagnostic.chosenAuthMethodId).toBeTruthy();
+      expect(diagnostic.requestTrace.map((request) => request.method)).toEqual(["initialize", "authenticate"]);
+      expect(diagnostic.requestTrace[0]).toMatchObject({ method: "initialize", status: "completed" });
+      const authenticate = diagnostic.requestTrace[1];
+      expect(authenticate).toMatchObject({
+        method: "authenticate",
+        advertisedAuthMethodIds: diagnostic.advertisedAuthMethodIds,
+        chosenAuthMethodId: diagnostic.chosenAuthMethodId,
+      });
+      expect(["completed", "failed", "timed_out"]).toContain(authenticate?.status);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }, 35_000);
+
   it("continues across ACP processes and keeps transcript boundaries fail-closed", async () => {
     const command = process.env.RUDDER_CURSOR_AGENT_COMMAND?.trim() || "cursor-agent";
     const providerVersion = execFileSync(command, ["--version"], { encoding: "utf8" }).trim();
