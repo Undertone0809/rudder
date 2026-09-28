@@ -1,0 +1,232 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rudder-generic-member-default-v25",
+  "status": "review_ready",
+  "owner": {
+    "root_id": "rudder-full-rust-backend-completion",
+    "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
+  },
+  "intent": {
+    "raw_request": "/goal 2026-09-21-rudder-full-rust-backend-completion-plan.md，\n完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。\n\n最终目标不是 Node orchestration + Rust sidecar，而是：\nActix Web 接管核心 HTTP/WebSocket 服务；SQLx 接管 PostgreSQL 查询、\n事务和迁移；第一方业务服务、鉴权/session、调度器、workers、\nAgent Run、Chat/Side Chat、Automation、provider adapters、常用后端\n组件、CLI 和 MCP 均由 Rust 实现，对应 Node 后端退出运行时。\n\n同时纳入第一方 identity、analytics collector、managed MCP、\n嵌入式 PostgreSQL 生命周期，以及拥有产品状态的维护和更新恢复工具。\n不能因为它们不在 server 目录，就把它们排除。\n\n保留 React、前端工具、Electron shell，以及用户选择的外部\nprovider CLI、MCP、Local App 和插件组件。允许短生命周期安装入口，\n但不能用这些例外保留第一方 Node 业务、迁移、调度或常驻工具运行时。\n\n先读取当前 AGENTS.md、完整计划、原始迁移方案和实际实现/测试。\n保护已有未提交工作，使用独立迁移 worktree，不把当前代码 reset\n回计划中的旧 SHA。复用已有 Rust 实现，不无审查合并历史大 PR。\n\n刷新完整能力与 authority 清单，区分：\n已实现、私有验证、真实入口接入、默认路径验证、旧实现退出。\n持续维护计划指定的 ledger 和 status 文件，不沿用聊天中的估算百分比。\n\n按 Phase 0–7 连续推进，优先接通已有 Actix/read 能力；\n第一个完整写入切片优先完成现有 D1 组织 branding 与 Project–Goal link。\n每个切片都包括真实入口、鉴权、事务、审计、副作用、恢复、\n相关 CLI/MCP 和旧 writer 的退出，而不是只迁移文件或新增 crate。\n\n保持现有功能和行为，尤其保留 Side Chat 临时/过期/转永久、\n消息历史、stream/cancel/reconnect 和受支持的会话连续性。\n不要强迫 Chat 依赖 Issue，不要借迁移删功能或进行未授权产品重设计。\n\n禁止生产双写、陈旧 writer 继续写入、静默 Node fallback、\n用 Node 子进程包装旧实现，以及把后端业务转移进 Electron/bootstrap。\n迁移事务关联单元前，必须确保所有旧 writer 也遵守 ownership/fence。\n\n每个切片按当前仓库规则完成测试、reviewer、精确候选冻结、\n独立真实工作流 verifier 和最终 reviewer 验收。\n通过后提交合格增量并继续下一切片，不等我再次说“继续”。\n\n最终必须证明：移除旧第一方 Node 后端资产后，安装后的\nUI/API/CLI/MCP、数据库升级、调度、执行、恢复和支持平台仍通过验收。\n私有 Rust 测试通过、Actix 能启动或单个 PR 合并，都不代表总目标完成。\n\n你被授权在隔离本地环境、测试数据库和正常开发/CI 范围实施、\n测试、制作候选产物，并按仓库规则提交和更新 PR。\n未经额外授权，不删除真实用户数据、不迁移生产数据库、不发布 stable、不切换生产流量、不购买服务。\n\n缺少凭证、签名、平台环境或生产授权时，只阻塞受影响步骤，\n继续其他可执行工作，并明确记录缺口。\n分别报告 implementation_complete、release_ready 和 production_verified；\n没有实际生产证据，不得声称已上线完成。\n\n如因上下文、额度或环境中断，持久化精确提交、已通过检查、\n剩余任务、阻塞和下一条可执行步骤，保持未完成状态以便恢复。\n不要因为完成一个小切片或一个 PR 就结束整个目标。\n\n开始推进",
+    "corrections": [
+      "The plan must be persisted under doc/plans and remain the durable source of truth.",
+      "Use staged real-environment integration and CI feedback; do not wait to integrate every Rust surface at once.",
+      "Reconcile Rust work with new Main changes as Main advances.",
+      "Use gpt-6-luna with max reasoning for spawned agents, and use parallel agents for critical review where useful.",
+      "Converge one coherent vertical slice per PR, commit accepted checkpoints, and continue the overall migration after each merge.",
+      "This packet covers only the D1 organization branding and Project-Goal authority slice; Chat and unrelated update-recovery experiments remain separate and incomplete.",
+      "2026-09-29, verbatim: 对了，记得先把这个 plan 写进 doc/plans",
+      "2026-09-29, verbatim: 我觉得你的开发节奏可以再快一点。比如你现在生产环境好多地方都还没真实接入，其实完全可以现在就逐步接进去，不需要一口气全部接完。很多部分完全可以一边接一边测试，并不影响的。建议你调整一下策略，让开发更快一点：很多真实环境可以先迁移进来，因为单纯离线测试和真正切进来测试完全是不一样的。你可以持续地、一点一点把这些功能先接入到生产环境里，逐步替换掉。按原始授权边界，目前先使用 disposable real-entry 环境与正常 CI；未经额外授权不切生产流量、不迁移生产数据库。",
+      "2026-09-29, verbatim: 需要说明的是，重构的过程中 Main 分支时不时会有新功能或者修改进来，你的 rust 也要对应去做好适配。这个你自己调度分析就好。",
+      "2026-09-29, verbatim: spawn agent luna max or luna extra high 呀，no luna medium",
+      "2026-09-29, verbatim: 继续推进呀。给你一些反馈，我感觉你做太久了，适当的做一些部分，你就commit一些功能直接merge进来。对，很多重构，我觉得你有很多分支可以扔上去去测试，不需要全部都在本地上测试，你不是可以跑CI/CD吗？所以我觉得你有很多rust的东西，你是可以放到PR上面，你反正是开一堆分支嘛，所以我觉得你可以放在上面。我觉得你要阶段性收敛，不然有的分支，因为我看你这几天开了特别多分支，但我基本没有看到几个合并的，所以我觉得你需要去做一下阶段性的一些合并，好深刻的反思一下这个问题，你看一下如何做的更好优化开始推。继续推进吧"
+    ],
+    "non_goals": [
+      "This bounded packet does not claim the full Phase 0-7 migration, a public Actix listener, SQLx migration-apply authority, all first-party Node writer retirement, release readiness, or production verification.",
+      "No production data, production database migration, stable publication, unrestricted traffic switch, or destructive user-data action."
+    ],
+    "authorization": "The user authorized isolated implementation, disposable local real-entry testing, normal CI, PR updates, and incremental protected-main integration. Production migration, stable release, production traffic switching, and destructive user-data operations remain unauthorized."
+  },
+  "scope": {
+    "bounded_slice": "Generic installed member-directory reads default to required Rust; existing Node public listener/auth/CLI/MCP retained for this intermediate slice.",
+    "non_goals": [
+      "No default D1 writer activation or Node writer retirement",
+      "No Chat/Side Chat change",
+      "No new MCP fullIds option; existing short-ref contract preserved",
+      "No stable release or production traffic/database mutation"
+    ],
+    "author_host_fixture_limit": "Host-only tarballs intentionally packed without six-target prepack gate; proves relocated host behavior only, not complete package or release readiness."
+  },
+  "candidate": {
+    "branch": "codex/member-directory-default-20260929",
+    "source_ref": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+    "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+    "source_tree": "458853294b6301534ea5192741cfc83dbfc140a0",
+    "dirty_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
+    "fingerprint_method": "SHA256 git diff --binary f6eab53c3...9dce4eee8 excluding doc/plans",
+    "changed_paths": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml",
+      ".gitignore",
+      "cli/src/__tests__/agent-v1-mcp-server.test.ts",
+      "cli/src/__tests__/organization-members.test.ts",
+      "doc/engineering/DEVELOPING.md",
+      "doc/engineering/PUBLISHING.md",
+      "native/crates/auth-core/src/lib.rs",
+      "native/crates/auth-core/tests/protocol.rs",
+      "scripts/smoke/installed-member-directory.mjs",
+      "scripts/smoke/installed-member-directory.test.mjs",
+      "server/package.json",
+      "server/resources/postinstall-native-mode.mjs",
+      "server/scripts/stage-native.mjs",
+      "server/scripts/stage-native.test.mjs",
+      "server/src/__tests__/app-lifecycle.test.ts",
+      "server/src/__tests__/company-branding-route.test.ts",
+      "server/src/__tests__/config-env-loading.test.ts",
+      "server/src/__tests__/http-app-vite-lifecycle.test.ts",
+      "server/src/__tests__/rust-foundation-startup-config.test.ts",
+      "server/src/config.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts"
+    ],
+    "build": {
+      "id": "pending-six-target-candidate",
+      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709"
+    },
+    "runtime": {
+      "id": "pending-independent-installed-runtime",
+      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709"
+    },
+    "organization_data": {
+      "organization_id": "pending-independent-org-id",
+      "data_id": "pending-independent-disposable-data"
+    },
+    "workload_fixture": "scripts/smoke/installed-member-directory.mjs",
+    "budget_lease": {
+      "id": "user-active-migration-goal",
+      "fingerprint": "no-production-mutations",
+      "expires_at": "not_applicable"
+    },
+    "acceptance_packet": {
+      "version": "25.0",
+      "fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
+      "criteria": [
+        "Actual relocated installed server package resolves its own native asset without mode, signer or binary overrides; no repository/ancestor native target resolution.",
+        "Missing required packaged binary rejects initial boot and closes owned API/database resources; no fallback.",
+        "Supported local-trusted startup remains implicitly board-accessible. Authenticated deployment on same disposable data enforces invalid credential and cross-organization rejection.",
+        "API and CLI cursor pages preserve stable ordering, short refs, full UUID option and organization scope. MCP preserves supported short-ref pagination/auth/scope contract.",
+        "Signed cursor URLs above 256 bytes verify, tampering fails, request target remains bounded at8192 bytes, identity fields remain bounded at256.",
+        "Post-boot Rust outage returns API503 and CLI/MCP failure without Node directory fallback; restored asset and owned resources cleaned up.",
+        "Actual npm install restores Unix execution permission without manual fixture chmod or installed-user Cargo compilation.",
+        "Six-target artifact presence/architecture verification with explicit native-build versus cross-build and host execution limits; no unsupported platform claims.",
+        "Explicit off remains compatibility behavior, writer defaults remain off; no old-authority retirement claim.",
+        "Stage reviewer accept, exact candidate freeze, independent installed workflow PASS, final reviewer accept, required exact-head CI before protected-main integration."
+      ],
+      "state_inventory": [
+        "missing-asset boot failure with owned-resource cleanup",
+        "local-trusted fresh boot and seed",
+        "same-data authenticated restart with no Rust overrides",
+        "API CLI MCP pagination and denial",
+        "post-boot child outage and unavailable packaged asset",
+        "asset restoration and process cleanup"
+      ]
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "pending",
+      "candidate_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
+      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+      "build_id": "pending-six-target-candidate",
+      "runtime_id": "pending-independent-installed-runtime",
+      "data_id": "pending-independent-disposable-data",
+      "packet_version": "25.0"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
+      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+      "build_id": "pending-six-target-candidate",
+      "runtime_id": "pending-independent-installed-runtime",
+      "data_id": "pending-independent-disposable-data",
+      "packet_version": "25.0"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "f737da1b0ada458e5f6bcfca4daa64a43d12b0506e08d577c88f7c21bd4420d0",
+      "source_sha": "9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709",
+      "build_id": "pending-six-target-candidate",
+      "runtime_id": "pending-independent-installed-runtime",
+      "data_id": "pending-independent-disposable-data",
+      "packet_version": "25.0"
+    }
+  },
+  "author_evidence": {
+    "verdict": "PASS_HOST_RUNTIME_ONLY",
+    "log": "/tmp/rudder-member-installed.g3wrD0/smoke-authenticated.log",
+    "log_sha256": "e81f4ec6b8d189c93c9b66347f863af00ea594dd50b3fc931899c46fe4afea97",
+    "server_tarball": "/tmp/rudder-member-installed.g3wrD0/pagination-tarballs/rudderhq-server-0.7.24.tgz",
+    "tarball_sha256": "0549c956e40a9171b2dce409a400ad04a7029a7f573df3613bbce614464299f7",
+    "foundation_sha256": "e20ae5e139010eec44f7fee83c10990ffafc8c4c4bd42da4413e1b33319f8751",
+    "install_prefix": "/tmp/rudder-member-installed.g3wrD0/install-fixed",
+    "data_root": "/tmp/rudder-installed-member-directory.zNvy07",
+    "temp_environment": "TMPDIR=/tmp; no Rust selection/signer/binary overrides",
+    "failed_prior_checks": [
+      "npm tarball normalized native mode755 to644; fixed short installation hook",
+      "stderr-only startup assertion missed stdout; now drains close and checks both streams",
+      "auth-core256 byte path rejected342 byte cursor URL; bounded8192 path fix with17 Rust tests",
+      "local-trusted intentionally does not reject invalid keys; fixture now tests auth rejection in supported authenticated mode without product auth changes"
+    ],
+    "rebase_equivalence": "All candidate product, workflow and harness paths unchanged from tested d157e6d1d after rebase onto f6 Main. Only inherited docs and separately accepted CI runner differ.",
+    "checks": {
+      "runtime_focused": 38,
+      "server_route_lifecycle_bridge": 41,
+      "cli_mcp": 85,
+      "harness": 3,
+      "packaging": 9,
+      "auth_core": 17,
+      "ci_contract": 4,
+      "release_contract": 24,
+      "server_typecheck": "PASS",
+      "dependency_build": "PASS_15_packages",
+      "ui_build": "PASS",
+      "actionlint": "PASS"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
+    "branch_refs": [
+      "refs/heads/codex/member-directory-default-20260929@9dce4eee8b9c8a48af2c01b5ecba7f8ea20b2709"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
+    "patch_tree_sha": "458853294b6301534ea5192741cfc83dbfc140a0",
+    "expected_old_sha": "f6eab53c3cee4385e36da60098a83cbd8734e32f",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "doc/plans/2026-09-23-rudder-installed-member-directory-delivery-packet-v18.json",
+      "Original7b2a checkout remains untouched"
+    ],
+    "index_fingerprint_before": "pending-final-freeze",
+    "index_fingerprint_after": "pending-final-freeze",
+    "worktree_fingerprint_before": "pending-final-freeze",
+    "worktree_fingerprint_after": "pending-final-freeze",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "Named v18 untracked packet SHA256 unchanged:5bf0c51a3c21ad69fcd7f465ed9af10bc62f5ae0148ead0e38295dc274827e13",
+      "Only newly authored commits rebased onto Main; no force push/reset or user work deletion."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  },
+  "goal_claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  }
+}
