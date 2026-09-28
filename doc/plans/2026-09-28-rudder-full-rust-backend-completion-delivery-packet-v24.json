@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "rudder-full-rust-backend-completion-v24-d1-branding-project-goal",
-  "status": "integration_pending",
+  "status": "delivered",
   "owner": {
     "root_id": "rudder-full-rust-backend-completion-2026-09-21",
     "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
@@ -32,9 +32,9 @@
     "runtime_content_equivalence": "Through 9df1d85b9, public API/CLI/MCP and foundation runtime are unchanged. Later deltas are docs, CI, private request planner (Newton stage accept, 18 tests and Clippy), and three test expectations. Hubble observed runtime equivalence at 5fa6f66b8; final reviewer must validate the delivery candidate. At8512, Newton confirmed the only non-plan deltas since443 are two fence test files; executed production runtime is unchanged.",
     "branch": "codex/rudder-d1-candidate-20260928",
     "source_ref": "refs/heads/codex/rudder-d1-candidate-20260928",
-    "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
-    "source_tree": "0511326ce5580cfabcbf7478349b46adca25628f",
-    "dirty_fingerprint": "cd2aedaf822bd394cf8d0fd547eb54d9c4de18dd7a44a5d41a21bdbd73947f0f",
+    "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
+    "source_tree": "51c885ef86d2c8cbbb5ebc6d063add4a9169ac41",
+    "dirty_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
     "dirty_fingerprint_method": "SHA-256 of git diff --binary origin/main...HEAD excluding doc/plans records; source changes are committed and this packet is maintained separately.",
     "changed_paths": [
       ".github/workflows/ci.yml",
@@ -184,13 +184,13 @@
     ],
     "build": {
       "id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
-      "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
       "artifact_hash": "ab2037ad26350518277177e43d8b911750f297329ad6f49e7df3fd49926a9b03;96d26f7b274854800d6666dae420ab857d154c9f7ec722a03d58af35637a6d70",
       "verification": "Locked Cargo build completed at c8c8e5b2a. Hubble independently verified binary hashes and both real-entry workflows on the equivalent frozen runtime; the 9df1d85b9 delivery delta does not change executed foundation/API/CLI/MCP code."
     },
     "runtime": {
       "id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
-      "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
       "topology": "Node public API listener -> private Actix/SQLx authority for D1 -> CLI/MCP through public HTTP; other domains remain Node-owned"
     },
     "organization_data": {
@@ -252,7 +252,12 @@
       "author_tests": "PASS_85_across_8_suites",
       "reviewer_tests": "PASS_26_fence_tests",
       "runtime_changes": false
-    }
+    },
+    "hermetic_bridge": {
+      "tests": "PASS_10_author_and_independent_reviewer",
+      "runtime_changes": false
+    },
+    "local_packaged": "PASS separate packaged stages; full desktop:verifyFAIL and dev clean rerunFAIL, independently assessed apparently unrelated. See artifacts/2026-09-29-rudder-d1-local-packaged-verification.json."
   },
   "receipts": {
     "reviewer": {
@@ -260,8 +265,8 @@
       "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
       "level": "stage_verdict",
       "scope": "Whole D1 stage acceptance confirmed by Newton for frozen8512; two fence test repairs accepted, no runtime change.",
-      "candidate_fingerprint": "cd2aedaf822bd394cf8d0fd547eb54d9c4de18dd7a44a5d41a21bdbd73947f0f",
-      "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+      "candidate_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
       "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
       "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
       "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
@@ -273,9 +278,9 @@
       "verdict": "PASS",
       "agent_id": "01a0e90e-d2df-7092-a9a6-4ac0e3d80c1f",
       "evidence": "doc/plans/artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json",
-      "lease_recheck": "current: Newton verified exact8512 production runtime and original Hubble evidence unchanged; only two fence tests changed since accepted443 outside plan records. Original verifier source and artifact remain recorded.",
-      "candidate_fingerprint": "cd2aedaf822bd394cf8d0fd547eb54d9c4de18dd7a44a5d41a21bdbd73947f0f",
-      "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+      "lease_recheck": "current: Newton exact948 final review confirms unchanged production runtime and original Hubble evidence; additional changes are tests/docs only.",
+      "candidate_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
       "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
       "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
       "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
@@ -285,15 +290,27 @@
       "verdict": "accept",
       "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
       "level": "final_handoff_verdict",
-      "evidence": "Newton verified exact8512 SHA/tree/fingerprint, independently ran26 fence tests and confirmed Hubble PASS runtime-content equivalence. Euler reports85 tests across8 suites. No blocking bounded D1 findings; current CI and local packaged verification remain separate integration gates.",
-      "candidate_fingerprint": "cd2aedaf822bd394cf8d0fd547eb54d9c4de18dd7a44a5d41a21bdbd73947f0f",
-      "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+      "evidence": "Newton final accept exact948 SHA/tree/fingerprint; sole non-plan delta from accepted8512 is hermetic bridge-test repair, independently10PASS. Hubble runtime evidence unchanged, packagedPASS applicable. Full desktop:verifyFAIL remains apparently unrelated Terminal layout, not Main-reproduced. Generic runner uncommitted changes excluded. Current948 CI gates merge.",
+      "candidate_fingerprint": "bf78e78b0b1a90abefdf5d1f4407e2e3934299999899db7c268bdd3bc686c410",
+      "source_sha": "948929b25251183bd552fc8e893a121fa878d860",
       "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
       "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
       "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
       "packet_version": "v24.2"
     },
     "history": [
+      {
+        "verdict": "accept",
+        "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+        "level": "final_handoff_verdict",
+        "evidence": "Newton verified exact8512 SHA/tree/fingerprint, independently ran26 fence tests and confirmed Hubble PASS runtime-content equivalence. Euler reports85 tests across8 suites. No blocking bounded D1 findings; current CI and local packaged verification remain separate integration gates.",
+        "candidate_fingerprint": "cd2aedaf822bd394cf8d0fd547eb54d9c4de18dd7a44a5d41a21bdbd73947f0f",
+        "source_sha": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+        "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+        "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+        "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+        "packet_version": "v24.2"
+      },
       {
         "verdict": "accept",
         "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
@@ -381,7 +398,8 @@
         ]
       }
     ],
-    "invalidated_receipts": [
+    "invalidated_receipts": [],
+    "historical_superseded_receipts": [
       "v23.stage_review",
       "v23.verifier",
       "v23.final_review",
@@ -403,21 +421,22 @@
     "remote_ref": "refs/remotes/origin/main",
     "observed_remote_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
     "branch_refs": [
-      "refs/heads/codex/rudder-d1-candidate-20260928@8512ef9ffe78c62dfe2559553d982e5b7daccf06",
-      "refs/remotes/origin/codex/rudder-rust-mainline-probe-20260923@8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+      "refs/heads/codex/rudder-d1-candidate-20260928@948929b25251183bd552fc8e893a121fa878d860",
+      "refs/remotes/origin/codex/rudder-rust-mainline-probe-20260923@948929b25251183bd552fc8e893a121fa878d860",
       "refs/remotes/origin/main@66b500aef009a0554ebf658de4fca6ddfa8466f1"
     ],
-    "pr_remote_head_observed": "8512ef9ffe78c62dfe2559553d982e5b7daccf06",
+    "pr_remote_head_observed": "948929b25251183bd552fc8e893a121fa878d860",
     "pr_remote_base_observed": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss",
-    "patch_tree_sha": "0511326ce5580cfabcbf7478349b46adca25628f",
+    "patch_tree_sha": "51c885ef86d2c8cbbb5ebc6d063add4a9169ac41",
     "expected_old_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
     "cas": {
-      "attempted": false,
-      "succeeded": false,
-      "observed_old_sha": null,
-      "delivered_sha": null
+      "attempted": true,
+      "succeeded": true,
+      "observed_old_sha": "66b500aef009a0554ebf658de4fca6ddfa8466f1",
+      "delivered_sha": "e2e603f07c7d4b7410fea7792b9a4d0667d3777e",
+      "mechanism": "Protected PR squash with --match-head-commit 948929b25251183bd552fc8e893a121fa878d860; base checked before merge, resulting tree exactly equals accepted candidate."
     },
     "index_update_mode": "none"
   },
@@ -440,10 +459,15 @@
     ]
   },
   "terminal": {
-    "delivered_ref": null,
-    "delivered_sha": null,
-    "delivered_tree_sha": null,
-    "timestamp": null,
-    "proof": []
+    "delivered_ref": "refs/heads/main",
+    "delivered_sha": "e2e603f07c7d4b7410fea7792b9a4d0667d3777e",
+    "delivered_tree_sha": "51c885ef86d2c8cbbb5ebc6d063add4a9169ac41",
+    "timestamp": "2026-09-28T19:55:54Z",
+    "proof": [
+      "PR225 MERGED after all applicable checks including Qualification summary PASS; no unresolved review threads.",
+      "Full CI run 36471765185 and real-entry run 36471764896 passed at accepted source 948929b25.",
+      "Fetched Main e2e603f07 has exactly the accepted candidate tree; git diff 948929b25 origin/main is empty.",
+      "Only this bounded D1 bridge increment is delivered. Default public Rust listener, Node writer retirement and complete migration remain incomplete."
+    ]
   }
 }
