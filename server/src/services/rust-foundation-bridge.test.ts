@@ -1,15 +1,19 @@
 import type { Request } from "express";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRustFoundationBridge,
   type RustFoundationBridge,
 } from "./rust-foundation-bridge.js";
+
+vi.mock("node:url", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:url")>();
+  return { ...actual, fileURLToPath: vi.fn(actual.fileURLToPath) };
+});
 
 type FixtureMode = "invalid" | "not-ready" | "ready" | "ignore-term";
 
@@ -249,13 +253,39 @@ describe("rust foundation bridge lifecycle", () => {
   });
 
   it("fails closed for a missing explicit path even when the default debug binary exists", async () => {
-    const defaultDebugBinary = fileURLToPath(new URL("../../../native/target/debug/rudder-server-foundation", import.meta.url));
-    expect(existsSync(defaultDebugBinary)).toBe(true);
-    const root = await mkdtemp(join(tmpdir(), "rudder-rust-foundation-explicit-path-"));
+    const fixture = await createFixture("ready");
+    const root = dirname(fixture.binaryPath);
+    const debugDirectory = join(root, "native", "target", "debug");
+    const defaultDebugBinary = join(debugDirectory, "rudder-server-foundation");
+    await mkdir(debugDirectory, { recursive: true });
+    await copyFile(fixture.binaryPath, defaultDebugBinary);
+    await chmod(defaultDebugBinary, 0o755);
+
+    const originalFileURLToPath = vi.mocked(fileURLToPath).getMockImplementation()!;
+    const bridgeModuleUrl = new URL("./rust-foundation-bridge.ts", import.meta.url).href;
+    vi.mocked(fileURLToPath).mockImplementation((path, options) => (
+      path.toString() === bridgeModuleUrl
+        ? join(root, "server", "src", "services", "rust-foundation-bridge.ts")
+        : originalFileURLToPath(path, options)
+    ));
     const previousPath = process.env.RUDDER_SERVER_FOUNDATION_PATH;
-    process.env.RUDDER_SERVER_FOUNDATION_PATH = join(root, "rudder-server-foundation-missing");
 
     try {
+      delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
+      const fallbackBridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "required",
+        actorEnvelopeKey: "bridge-test-secret",
+      });
+      activeBridges.add(fallbackBridge);
+      await expect(fallbackBridge.start()).resolves.toBeUndefined();
+      expect(fileURLToPath).toHaveBeenCalledWith(bridgeModuleUrl);
+      const fallbackPid = await fixture.readPid();
+      await fallbackBridge.close();
+      await waitForProcessExit(fallbackPid);
+
+      vi.mocked(fileURLToPath).mockClear();
+      process.env.RUDDER_SERVER_FOUNDATION_PATH = join(root, "rudder-server-foundation-missing");
       const bridge = createRustFoundationBridge({
         databaseUrl: "postgres://bridge-test",
         mode: "required",
@@ -264,10 +294,12 @@ describe("rust foundation bridge lifecycle", () => {
       activeBridges.add(bridge);
 
       await expect(bridge.start()).rejects.toMatchObject({ code: "binary_unavailable" });
+      // An explicit path must not even resolve the repository's default binary paths.
+      expect(fileURLToPath).not.toHaveBeenCalledWith(bridgeModuleUrl);
     } finally {
+      vi.mocked(fileURLToPath).mockImplementation(originalFileURLToPath);
       if (previousPath === undefined) delete process.env.RUDDER_SERVER_FOUNDATION_PATH;
       else process.env.RUDDER_SERVER_FOUNDATION_PATH = previousPath;
-      await rm(root, { recursive: true, force: true });
     }
   });
 
