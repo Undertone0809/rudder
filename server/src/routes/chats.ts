@@ -2471,16 +2471,6 @@ export function chatRoutes(
       deleted = await svc.remove(existing.id);
     } catch (error) {
       if (isActiveNativeWriterDeleteConstraint(error)) throw chatWriterQuiescenceConflict();
-      if (cancelActive) {
-        const quiesced = await waitForChatDeletionQuiescence({
-          db,
-          orgId: existing.orgId,
-          conversationId: existing.id,
-          getLatestActiveGeneration: (conversationId) => svc.getLatestActiveGeneration(conversationId),
-          waitForOtherOwners: false,
-        });
-        if (!quiesced) throw chatWriterQuiescenceConflict();
-      }
       throw error;
     }
     if (!deleted) {
