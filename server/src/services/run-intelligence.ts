@@ -50,6 +50,13 @@ import {
   type RunIntelligenceAccessScope
 } from "./run-intelligence-access.js";
 import { getRunLogStore } from "./run-log-store.js";
+import {
+  MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
+  readBoundedRunDiagnosticTranscript,
+  type RunDiagnosticEntryPosition,
+  type RunDiagnosticProjection,
+  type RunDiagnosticReaderPosition,
+} from "./run-intelligence-diagnostic-reader.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import {
   createRuntimeNativeTranscriptReaderHook,
@@ -219,6 +226,8 @@ type RunRow = typeof heartbeatRuns.$inferSelect & {
   runtimeConfig: Record<string, unknown>;
   orgName: string | null;
   issueId: string | null;
+  diagnosticResultJsonOmitted?: boolean;
+  diagnosticErrorOriginalLength?: number | null;
 };
 
 export interface ListObservedRunsInput {
@@ -817,7 +826,29 @@ async function loadSkillEvidenceForRuns(
   return evidenceByRunId;
 }
 
-async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
+async function loadRunRowById(
+  db: Db,
+  runId: string,
+  options: { diagnosticProjection?: boolean } = {},
+): Promise<RunRow | null> {
+  const diagnosticContextSnapshot = sql<Record<string, unknown> | null>`jsonb_strip_nulls(jsonb_build_object(
+    'agentRuntimeType', ${heartbeatRuns.contextSnapshot}->'agentRuntimeType',
+    'agent_runtime_type', ${heartbeatRuns.contextSnapshot}->'agent_runtime_type',
+    'scene', ${heartbeatRuns.contextSnapshot}->'scene',
+    'rudderScene', ${heartbeatRuns.contextSnapshot}->'rudderScene',
+    'unifiedAgentRun', case
+      when jsonb_typeof(${heartbeatRuns.contextSnapshot}->'unifiedAgentRun') = 'object'
+        then jsonb_strip_nulls(jsonb_build_object('scene', ${heartbeatRuns.contextSnapshot}->'unifiedAgentRun'->'scene'))
+      else null
+    end,
+    'issueId', ${heartbeatRuns.contextSnapshot}->'issueId',
+    'targetType', ${heartbeatRuns.contextSnapshot}->'targetType',
+    'targetId', ${heartbeatRuns.contextSnapshot}->'targetId'
+  ))`.as("contextSnapshot");
+  const diagnosticResultJson = sql<Record<string, unknown> | null>`null::jsonb`.as("resultJson");
+  const diagnosticOmitted = sql<boolean>`coalesce(${heartbeatRuns.resultJson} <> '{}'::jsonb, false)`.as("diagnosticResultJsonOmitted");
+  const diagnosticError = sql<string | null>`left(${heartbeatRuns.error}, 8_192)`.as("error");
+  const diagnosticErrorLength = sql<number | null>`char_length(${heartbeatRuns.error})`.as("diagnosticErrorOriginalLength");
   const rows = await db
     .select({
       id: heartbeatRuns.id,
@@ -828,12 +859,12 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       status: heartbeatRuns.status,
       startedAt: heartbeatRuns.startedAt,
       finishedAt: heartbeatRuns.finishedAt,
-      error: heartbeatRuns.error,
+      error: options.diagnosticProjection ? diagnosticError : heartbeatRuns.error,
       wakeupRequestId: heartbeatRuns.wakeupRequestId,
       exitCode: heartbeatRuns.exitCode,
       signal: heartbeatRuns.signal,
-      usageJson: heartbeatRuns.usageJson,
-      resultJson: heartbeatRuns.resultJson,
+      usageJson: options.diagnosticProjection ? sql`null::jsonb`.as("usageJson") : heartbeatRuns.usageJson,
+      resultJson: options.diagnosticProjection ? diagnosticResultJson : heartbeatRuns.resultJson,
       sessionIdBefore: heartbeatRuns.sessionIdBefore,
       sessionIdAfter: heartbeatRuns.sessionIdAfter,
       sessionParamsBeforeJson: heartbeatRuns.sessionParamsBeforeJson,
@@ -844,8 +875,12 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       logBytes: heartbeatRuns.logBytes,
       logSha256: heartbeatRuns.logSha256,
       logCompressed: heartbeatRuns.logCompressed,
-      stdoutExcerpt: heartbeatRuns.stdoutExcerpt,
-      stderrExcerpt: heartbeatRuns.stderrExcerpt,
+      stdoutExcerpt: options.diagnosticProjection
+        ? sql<string | null>`left(${heartbeatRuns.stdoutExcerpt}, 8_192)`.as("stdoutExcerpt")
+        : heartbeatRuns.stdoutExcerpt,
+      stderrExcerpt: options.diagnosticProjection
+        ? sql<string | null>`left(${heartbeatRuns.stderrExcerpt}, 8_192)`.as("stderrExcerpt")
+        : heartbeatRuns.stderrExcerpt,
       errorCode: heartbeatRuns.errorCode,
       externalRunId: heartbeatRuns.externalRunId,
       chatConversationId: heartbeatRuns.chatConversationId,
@@ -855,7 +890,11 @@ async function loadRunRowById(db: Db, runId: string): Promise<RunRow | null> {
       processStartedAt: heartbeatRuns.processStartedAt,
       retryOfRunId: heartbeatRuns.retryOfRunId,
       processLossRetryCount: heartbeatRuns.processLossRetryCount,
-      contextSnapshot: heartbeatRuns.contextSnapshot,
+      contextSnapshot: options.diagnosticProjection ? diagnosticContextSnapshot : heartbeatRuns.contextSnapshot,
+      ...(options.diagnosticProjection ? {
+        diagnosticResultJsonOmitted: diagnosticOmitted,
+        diagnosticErrorOriginalLength: diagnosticErrorLength,
+      } : {}),
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
@@ -926,6 +965,14 @@ function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | 
     ? item.sourceEntryId
     : source?.sourceEntryId;
   if (typeof sourceEntryId === "string") projected.sourceEntryId = sourceEntryId;
+  const originalLengths = asRecord(source?.__rudderOriginalLengths);
+  if (originalLengths) {
+    const validLengths = Object.fromEntries(
+      Object.entries(originalLengths)
+        .filter(([, length]) => typeof length === "number" && Number.isFinite(length) && length > 0),
+    );
+    if (Object.keys(validLengths).length > 0) projected.__rudderOriginalLengths = validLengths;
+  }
 
   // Native items carry useful structured data outside the legacy entry shape.
   // Keep it nested, without promoting unrelated reader metadata into the entry.
@@ -935,10 +982,21 @@ function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | 
   return projected as unknown as TranscriptEntry;
 }
 
-async function createHistoricalRunTranscriptReader(db: Db, run: RunRow) {
+async function createHistoricalRunTranscriptReader(
+  db: Db,
+  run: RunRow,
+  options: { diagnosticProjection?: boolean } = {},
+) {
   const revisionsByAgentId = await loadRevisionsForRuns(db, [run]);
   const logStore = getRunLogStore();
-  const legacyReader = createLegacyTranscriptReader({ logStore });
+  const legacyReader = createLegacyTranscriptReader({
+    logStore,
+    ...(options.diagnosticProjection ? {
+      maxReadBytes: 256 * 1024,
+      maxTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
+      maxItemBytes: 1024 * 1024,
+    } : {}),
+  });
   return createTranscriptReader(db, {
     nativeReader: createRuntimeNativeTranscriptReaderHook(
       createHistoricalRunRuntimeProviderCapabilityResolver(
@@ -953,6 +1011,12 @@ async function createHistoricalRunTranscriptReader(db: Db, run: RunRow) {
         return legacyReader.readRun({ ...input, runtimeType: run.agentRuntimeType });
       },
     },
+    ...(options.diagnosticProjection ? {
+      diagnosticProjection: true,
+      maxLegacyReadBytes: 256 * 1024,
+      maxLegacyTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
+      maxLegacyItemBytes: 1024 * 1024,
+    } : {}),
   });
 }
 
@@ -1148,7 +1212,15 @@ async function loadRunAccess(db: Db, runId: string): Promise<RunAccessRow | null
       orgId: heartbeatRuns.orgId,
       chatConversationId: heartbeatRuns.chatConversationId,
       scene: heartbeatRuns.scene,
-      contextSnapshot: heartbeatRuns.contextSnapshot,
+      contextSnapshot: sql<Record<string, unknown> | null>`jsonb_strip_nulls(jsonb_build_object(
+        'scene', ${heartbeatRuns.contextSnapshot}->'scene',
+        'rudderScene', ${heartbeatRuns.contextSnapshot}->'rudderScene',
+        'unifiedAgentRun', case
+          when jsonb_typeof(${heartbeatRuns.contextSnapshot}->'unifiedAgentRun') = 'object'
+            then jsonb_strip_nulls(jsonb_build_object('scene', ${heartbeatRuns.contextSnapshot}->'unifiedAgentRun'->'scene'))
+          else null
+        end
+      ))`.as("contextSnapshot"),
     })
     .from(heartbeatRuns)
     .where(eq(heartbeatRuns.id, runId))
@@ -1309,6 +1381,62 @@ export async function getObservedRunDetail(db: Db, runId: string, scope: RunIdRe
     transcript: readerTranscript.entries.length > 0 ? readerTranscript.entries : undefined,
   });
   return detail;
+}
+
+export async function getObservedRunDiagnosticDetail(
+  db: Db,
+  runId: string,
+  scope: RunIdResolutionScope = {},
+  options: { position?: RunDiagnosticReaderPosition } = {},
+): Promise<{
+  detail: ObservedRunDetail;
+  projection: RunDiagnosticProjection;
+  entryPositions: RunDiagnosticEntryPosition[];
+  nextPosition: RunDiagnosticReaderPosition | null;
+  revision: string | null;
+} | null> {
+  const resolvedRunId = await resolveRunIdReferenceForScope(db, runId, scope);
+  const runAccess = await loadRunAccess(db, resolvedRunId);
+  if (!runAccess) return null;
+  await assertRunIntelligenceAccess(db, runAccess, scope);
+
+  const row = await loadRunRowById(db, resolvedRunId, { diagnosticProjection: true });
+  if (!row || row.orgId !== runAccess.orgId) return null;
+  const revisionsByAgentId = new Map<string, Array<typeof agentConfigRevisions.$inferSelect>>([[row.agentId, []]]);
+  const observedRun = await serializeRunRow(row, new Map(), revisionsByAgentId);
+  const reader = await createHistoricalRunTranscriptReader(db, row, { diagnosticProjection: true });
+  const omittedSources = row.diagnosticResultJsonOmitted ? ["resultJson"] : [];
+  const transcript = await readBoundedRunDiagnosticTranscript({
+    readPage: (cursor, limit) => reader.readRun({
+      orgId: runAccess.orgId,
+      runId: resolvedRunId,
+      principal: { type: "board", orgId: runAccess.orgId, authorized: true },
+      cursor,
+      limit,
+    }),
+    toEntry: transcriptEntryFromReaderItem,
+    position: options.position,
+    omittedSources,
+  });
+  if (row.diagnosticErrorOriginalLength && row.diagnosticErrorOriginalLength > (row.error?.length ?? 0)) {
+    (observedRun.run as HeartbeatRun & { __rudderOriginalLengths?: Record<string, number> })
+      .__rudderOriginalLengths = { error: row.diagnosticErrorOriginalLength };
+  }
+
+  return {
+    detail: observedRunFromFilesystem({
+      run: observedRun.run,
+      agentName: observedRun.agentName,
+      orgName: observedRun.orgName,
+      issue: observedRun.issue,
+      bundle: observedRun.bundle,
+      transcript: transcript.entries,
+    }),
+    projection: transcript.projection,
+    entryPositions: transcript.entryPositions,
+    nextPosition: transcript.nextPosition,
+    revision: transcript.revision,
+  };
 }
 
 export async function diagnoseObservedRun(

@@ -23,6 +23,10 @@ import {
 } from "./transcript-reader.contracts.js";
 import { decodeLegacyCursor, encodeLegacyCursor } from "./transcript-reader.legacy-cursor.js";
 import {
+  diagnosticLegacyEventProjection,
+  DIAGNOSTIC_TEXT_CHARS,
+} from "./transcript-reader.diagnostic-projection.js";
+import {
   asRecord,
   isoDate,
   nonEmptyString,
@@ -61,12 +65,31 @@ export function entriesFromLegacyEvents(events: readonly Record<string, unknown>
       ? String(event.id)
       : null;
     const payload = asRecord(event.payload);
+    const payloadLengths = asRecord(payload?.__rudderOriginalLengths);
     const candidates = [payload?.entry, payload?.transcriptEntry, payload?.transcript, event.payload];
     let found = false;
     for (const candidate of candidates) {
       const entry = transcriptEntry(candidate);
       if (entry) {
-        entries.push(sourceEntryId && !entry.sourceEntryId ? { ...entry, sourceEntryId } : entry);
+        const entryLengths = asRecord((entry as Record<string, unknown>).__rudderOriginalLengths);
+        const rawTruncatedFields = (entry as Record<string, unknown>).__rudderTruncatedFields;
+        const diagnosticTruncatedFields = Array.isArray(rawTruncatedFields)
+          ? rawTruncatedFields.filter((field): field is string => typeof field === "string")
+          : [];
+        const diagnosticOriginalLengths = Object.fromEntries(
+          Object.entries(entryLengths ?? payloadLengths ?? {})
+            .filter(([, length]) => typeof length === "number" && Number.isFinite(length) && length > 0),
+        );
+        entries.push({
+          ...entry,
+          ...(sourceEntryId && !entry.sourceEntryId ? { sourceEntryId } : {}),
+          ...(Object.keys(diagnosticOriginalLengths).length > 0
+            ? { __rudderOriginalLengths: diagnosticOriginalLengths }
+            : {}),
+          ...(diagnosticTruncatedFields.length > 0
+            ? { __rudderTruncatedFields: diagnosticTruncatedFields }
+            : {}),
+        } as TranscriptEntry);
         found = true;
         break;
       }
@@ -80,7 +103,10 @@ export function entriesFromLegacyEvents(events: readonly Record<string, unknown>
       ts: isoDate(event.createdAt),
       text: message,
       ...(sourceEntryId ? { sourceEntryId } : {}),
-    });
+      ...(payloadLengths && Object.keys(payloadLengths).length > 0
+        ? { __rudderOriginalLengths: payloadLengths }
+        : {}),
+    } as TranscriptEntry);
   }
   return entries;
 }
@@ -172,6 +198,7 @@ export async function readLegacyEventPage(
     limit: number;
     maxBytes: number;
     maxItemBytes: number;
+    diagnosticProjection?: boolean;
     signal?: AbortSignal;
   },
 ): Promise<LegacyTranscriptEventPage> {
@@ -208,25 +235,33 @@ export async function readLegacyEventPage(
       and(eq(heartbeatRunEvents.seq, cursor.afterSeq), gt(heartbeatRunEvents.id, cursor.afterId)),
     )
     : undefined;
-  const eventBytes = sql<number>`octet_length(coalesce(${heartbeatRunEvents.payload}::text, ''))
+  const fullEventBytes = sql<number>`octet_length(coalesce(${heartbeatRunEvents.payload}::text, ''))
     + octet_length(coalesce(${heartbeatRunEvents.stream}, ''))
     + octet_length(coalesce(${heartbeatRunEvents.level}, ''))
     + octet_length(coalesce(${heartbeatRunEvents.color}, ''))
     + octet_length(coalesce(${heartbeatRunEvents.message}, ''))
     + octet_length(coalesce(${heartbeatRunEvents.idempotencyKey}, '')) + 128`;
-  const metadata = await db.select({
-    id: heartbeatRunEvents.id,
-    seq: heartbeatRunEvents.seq,
-    byteLength: eventBytes,
-  })
-    .from(heartbeatRunEvents)
-    .where(and(
-      scope,
-      lte(heartbeatRunEvents.id, highWatermarkId),
-      afterCondition,
-    ))
-    .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id))
-    .limit(Math.min(MAX_PAGE_LIMIT, Math.max(1, input.limit)) + 1);
+  const diagnostic = input.diagnosticProjection ? diagnosticLegacyEventProjection() : null;
+  const metadata = diagnostic
+    ? await db.select({
+      id: heartbeatRunEvents.id,
+      seq: heartbeatRunEvents.seq,
+      byteLength: diagnostic.byteLength,
+      truncated: diagnostic.truncated,
+    })
+      .from(heartbeatRunEvents)
+      .where(and(scope, lte(heartbeatRunEvents.id, highWatermarkId), afterCondition))
+      .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id))
+      .limit(Math.min(MAX_PAGE_LIMIT, Math.max(1, input.limit)) + 1)
+    : await db.select({
+      id: heartbeatRunEvents.id,
+      seq: heartbeatRunEvents.seq,
+      byteLength: fullEventBytes,
+    })
+      .from(heartbeatRunEvents)
+      .where(and(scope, lte(heartbeatRunEvents.id, highWatermarkId), afterCondition))
+      .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id))
+      .limit(Math.min(MAX_PAGE_LIMIT, Math.max(1, input.limit)) + 1);
   throwIfReadAborted(input.signal);
 
   const selected: Array<{ id: number; seq: number; byteLength: number }> = [];
@@ -251,10 +286,27 @@ export async function readLegacyEventPage(
   }
 
   const ids = selected.map((row) => row.id);
-  const rows = await db.select()
-    .from(heartbeatRunEvents)
-    .where(and(scope, lte(heartbeatRunEvents.id, highWatermarkId), inArray(heartbeatRunEvents.id, ids)))
-    .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id));
+  const rows = diagnostic
+    ? await db.select({
+      id: heartbeatRunEvents.id,
+      orgId: heartbeatRunEvents.orgId,
+      runId: heartbeatRunEvents.runId,
+      seq: heartbeatRunEvents.seq,
+      eventType: sql<string>`left(${heartbeatRunEvents.eventType}, 128)`.as("eventType"),
+      payload: diagnostic.payload,
+      stream: sql<string | null>`left(${heartbeatRunEvents.stream}, 64)`.as("stream"),
+      level: sql<string | null>`left(${heartbeatRunEvents.level}, 32)`.as("level"),
+      color: sql<string | null>`left(${heartbeatRunEvents.color}, 64)`.as("color"),
+      message: sql<string | null>`left(${heartbeatRunEvents.message}, ${DIAGNOSTIC_TEXT_CHARS})`.as("message"),
+      createdAt: heartbeatRunEvents.createdAt,
+    })
+      .from(heartbeatRunEvents)
+      .where(and(scope, lte(heartbeatRunEvents.id, highWatermarkId), inArray(heartbeatRunEvents.id, ids)))
+      .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id))
+    : await db.select()
+      .from(heartbeatRunEvents)
+      .where(and(scope, lte(heartbeatRunEvents.id, highWatermarkId), inArray(heartbeatRunEvents.id, ids)))
+      .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id));
   throwIfReadAborted(input.signal);
   if (rows.length !== selected.length) {
     throw transcriptReaderError("cursor_revision_mismatch", "Legacy event transcript changed during pagination");
@@ -280,6 +332,9 @@ export async function readLegacyEventPage(
     }) : null,
     revision,
     readBytes: bytes,
+    ...(diagnostic && (metadata as Array<{ truncated?: boolean }>).some((row) => row.truncated)
+      ? { truncated: true }
+      : {}),
   };
 }
 
@@ -307,6 +362,10 @@ export async function readNativeBoundLegacySpan(
   if (state.phase !== "events") {
     throw transcriptReaderError("cursor_invalid", "Invalid native-bound legacy transcript cursor");
   }
+  if (options.diagnosticProjection) {
+    state.totalBytes = 0;
+    state.totalItems = 0;
+  }
   const maxReadBytes = Math.max(4, Math.min(MAX_LEGACY_READ_BYTES, Math.floor(options.maxLegacyReadBytes ?? DEFAULT_LEGACY_READ_BYTES)));
   const maxTotalBytes = Math.max(4, Math.min(MAX_LEGACY_TOTAL_READ_BYTES, Math.floor(options.maxLegacyTotalBytes ?? DEFAULT_LEGACY_TOTAL_READ_BYTES)));
   const maxTotalItems = Math.max(1, Math.min(MAX_LEGACY_TOTAL_ITEMS, Math.floor(options.maxLegacyTotalItems ?? DEFAULT_LEGACY_TOTAL_ITEMS)));
@@ -328,6 +387,7 @@ export async function readNativeBoundLegacySpan(
       limit,
       maxBytes,
       maxItemBytes,
+      diagnosticProjection: options.diagnosticProjection,
       signal: input.signal,
     });
   const revision = eventPage?.revision ?? defaultRevision(input.run, `native-bound-legacy:${input.span.id}:${input.span.attemptId ?? "none"}`);
@@ -353,8 +413,9 @@ export async function readNativeBoundLegacySpan(
     revision,
     providerRevision: revision,
     availability: retainedCopyAvailable ? "available" : "offline",
-    completeness: hasMore || limitReached ? "partial" : "unknown",
+    completeness: hasMore || limitReached || eventPage?.truncated ? "partial" : "unknown",
     limitReached,
+    ...(eventPage?.truncated ? { truncated: true } : {}),
     providerCursor: input.cursor ?? null,
     providerNextCursor: hasMore ? encodeLegacyCursor({
       ...state,

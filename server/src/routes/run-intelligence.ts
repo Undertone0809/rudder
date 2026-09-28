@@ -13,6 +13,7 @@ import { logActivity } from "../services/activity-log.js";
 import { formatShortRunId } from "../services/heartbeat-run-reference.js";
 import {
   getObservedRun,
+  getObservedRunDiagnosticDetail,
   getObservedRunDetail,
   getObservedRunEvents,
   getObservedRunLog,
@@ -21,6 +22,7 @@ import {
   listObservedRuns,
   listRunSummaries,
 } from "../services/run-intelligence.js";
+import type { RunDiagnosticReaderPosition } from "../services/run-intelligence-diagnostic-reader.js";
 import {
   listNativeForkIntents,
   NativeForkIntentError,
@@ -130,6 +132,47 @@ function decodeTranscriptProjectionCursor(value: string | null): TranscriptProje
       return null;
     }
     return parsed as TranscriptProjectionCursor;
+  } catch {
+    return null;
+  }
+}
+
+type RunErrorsCursor = {
+  version: 1;
+  kind: "run_errors";
+  runId: string;
+  orgId: string;
+  source: string;
+  revision: string;
+  position: RunDiagnosticReaderPosition;
+  includeRunError: boolean;
+};
+
+function encodeRunErrorsCursor(cursor: RunErrorsCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeRunErrorsCursor(value: string | null): RunErrorsCursor | null {
+  if (!value || value.length > 65_536) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RunErrorsCursor>;
+    const position = parsed.position as Partial<RunDiagnosticReaderPosition> | undefined;
+    const traceState = position?.traceState as RunDiagnosticReaderPosition["traceState"] | undefined;
+    const sourceCursor = position?.sourceCursor;
+    if (parsed.version !== 1 || parsed.kind !== "run_errors"
+      || typeof parsed.runId !== "string" || typeof parsed.orgId !== "string"
+      || typeof parsed.source !== "string" || typeof parsed.revision !== "string"
+      || parsed.includeRunError !== false
+      || !position || (sourceCursor !== null && typeof sourceCursor !== "string")
+      || (typeof sourceCursor === "string" && sourceCursor.length > 32_768)
+      || !Number.isSafeInteger(position.itemOffset) || (position.itemOffset ?? -1) < 0
+      || !Number.isSafeInteger(position.stepOffset) || (position.stepOffset ?? -1) < 0
+      || !traceState || !Number.isSafeInteger(traceState.nextTurnIndex) || traceState.nextTurnIndex < 0
+      || (traceState.activeTurnIndex !== null
+        && (!Number.isSafeInteger(traceState.activeTurnIndex) || traceState.activeTurnIndex < 0))) {
+      return null;
+    }
+    return parsed as RunErrorsCursor;
   } catch {
     return null;
   }
@@ -474,37 +517,66 @@ async function readTranscriptPages(
   throw new Error("Transcript reader exceeded the route page limit");
 }
 
-function buildRunErrors(detail: ObservedRunDetail, maxChars: number) {
+function buildRunErrors(
+  detail: ObservedRunDetail,
+  maxChars: number,
+  entryPositions?: Array<{ stepIndex: number; turnIndex: number | null }>,
+) {
   const trace = buildObservedRunTrace(detail);
   const transcriptErrors = trace.steps
     .filter((step) => step.isError)
-    .map((step) => ({
-      id: stepStableId(step),
-      type: step.kind,
-      index: step.index,
-      turnIndex: step.turnIndex,
-      ts: step.ts,
-      summary: step.preview || step.detailPreview || step.kind,
-      output: clipText(step.detailText, maxChars),
-      transcriptContext: {
-        id: stepStableId(step),
-        command: `rudder runs transcript ${formatShortRunId(detail.run.id)} --around-error ${stepStableId(step)}`,
-      },
-    }));
+    .map((step) => {
+      const output = clipText(step.detailText, maxChars);
+      const entryPosition = entryPositions?.[step.index - 1];
+      const index = entryPosition?.stepIndex ?? step.index;
+      const id = `step-${index}`;
+      const sourceLengths = asRecord(
+        (detail.transcript[step.index - 1] as (TranscriptEntry & { __rudderOriginalLengths?: Record<string, number> }) | undefined)
+          ?.__rudderOriginalLengths,
+      );
+      const sourceLength = sourceLengths?.detailText ?? sourceLengths?.content ?? sourceLengths?.text;
+      if (typeof sourceLength === "number") {
+        output.clipped = true;
+        output.originalLength = sourceLength;
+      }
+      return {
+        id,
+        type: step.kind,
+        index,
+        turnIndex: entryPosition?.turnIndex ?? step.turnIndex,
+        ts: step.ts,
+        summary: step.preview || step.detailPreview || step.kind,
+        output,
+        transcriptContext: {
+          id,
+          command: `rudder runs transcript ${formatShortRunId(detail.run.id)} --around-error ${id}`,
+        },
+      };
+    });
 
   if (!detail.run.error && !detail.run.errorCode) return transcriptErrors;
 
   return [
-    {
-      id: "run-error",
-      type: "runtime",
-      index: null,
-      turnIndex: null,
-      ts: detail.run.finishedAt?.toISOString?.() ?? detail.run.updatedAt?.toISOString?.() ?? null,
-      summary: detail.run.errorCode ?? "runtime_error",
-      output: clipText(detail.run.error ?? detail.run.errorCode ?? "Run failed", maxChars),
-      transcriptContext: transcriptErrors[0]?.transcriptContext ?? null,
-    },
+    (() => {
+      const output = clipText(detail.run.error ?? detail.run.errorCode ?? "Run failed", maxChars);
+      const sourceLength = (detail.run as typeof detail.run & {
+        __rudderOriginalLengths?: Record<string, number>;
+      }).__rudderOriginalLengths?.error;
+      if (typeof sourceLength === "number") {
+        output.clipped = true;
+        output.originalLength = sourceLength;
+      }
+      return {
+        id: "run-error",
+        type: "runtime",
+        index: null,
+        turnIndex: null,
+        ts: detail.run.finishedAt?.toISOString?.() ?? detail.run.updatedAt?.toISOString?.() ?? null,
+        summary: detail.run.errorCode ?? "runtime_error",
+        output,
+        transcriptContext: transcriptErrors[0]?.transcriptContext ?? null,
+      };
+    })(),
     ...transcriptErrors,
   ];
 }
@@ -837,16 +909,63 @@ export function runIntelligenceRoutes(db: Db) {
   router.get("/run-intelligence/runs/:runId/errors", async (req, res) => {
     const runId = req.params.runId as string;
     const scope = runIntelligenceScope(req);
-    const detail = await getObservedRunDetail(db, runId, scope);
-    if (!detail) throw notFound("Agent run not found");
+    const cursor = asString(req.query.cursor);
+    const continuation = decodeRunErrorsCursor(cursor);
+    const legacyCursorIndex = continuation ? null : parseStepStableId(cursor);
+    if (cursor && !continuation && legacyCursorIndex === null) throw badRequest("Invalid errors cursor");
+    if (continuation && continuation.runId !== runId) throw badRequest("Errors cursor does not belong to this run");
+    const diagnostic = await getObservedRunDiagnosticDetail(db, runId, scope, {
+      position: continuation?.position,
+    });
+    if (!diagnostic) throw notFound("Agent run not found");
+    const { detail } = diagnostic;
     assertCompanyAccess(req, detail.run.orgId);
+    if (continuation && (continuation.orgId !== detail.run.orgId
+      || continuation.source !== diagnostic.projection.source
+      || continuation.revision !== diagnostic.revision)) {
+      throw badRequest("Errors cursor source or revision is no longer current");
+    }
     const maxChars = asPositiveInteger(req.query.maxChars, 1200, 20000);
-    const cursorIndex = parseStepStableId(asString(req.query.cursor));
-    const allErrors = buildRunErrors(detail, maxChars)
-      .filter((error) => cursorIndex === null || (error.index !== null && error.index > cursorIndex));
+    const includeRunError = continuation?.includeRunError ?? legacyCursorIndex === null;
+    const allErrors = buildRunErrors(detail, maxChars, diagnostic.entryPositions)
+      .filter((error) => error.id !== "run-error"
+        ? legacyCursorIndex === null || (error.index !== null && error.index > legacyCursorIndex)
+        : includeRunError);
     const errors = limitRowsByJsonBytes(allErrors.slice(0, 200), 400_000);
-    const hasMore = errors.length < allErrors.length;
-    const lastIndexedError = [...errors].reverse().find((error) => error.index !== null);
+    const hasMoreInChunk = errors.length < allErrors.length;
+    const hasMore = hasMoreInChunk || diagnostic.nextPosition !== null;
+    let nextPosition = diagnostic.nextPosition;
+    if (hasMoreInChunk) {
+      const lastError = errors.at(-1);
+      if (lastError?.index !== null && lastError?.index !== undefined) {
+        const lastPosition = diagnostic.entryPositions.find((position) => position.stepIndex === lastError.index)?.after;
+        if (!lastPosition) throw new Error("Errors continuation position is unavailable");
+        nextPosition = lastPosition;
+      } else {
+        nextPosition = continuation?.position ?? {
+          sourceCursor: null,
+          itemOffset: 0,
+          stepOffset: 0,
+          traceState: { nextTurnIndex: 0, activeTurnIndex: null },
+        };
+      }
+    }
+    if (hasMore && !diagnostic.revision) throw badRequest("Errors source revision is unavailable for continuation");
+    const nextCursor = hasMore && nextPosition && diagnostic.revision
+      ? encodeRunErrorsCursor({
+        version: 1,
+        kind: "run_errors",
+        runId,
+        orgId: detail.run.orgId,
+        source: diagnostic.projection.source,
+        revision: diagnostic.revision,
+        position: nextPosition,
+        includeRunError: false,
+      })
+      : null;
+    const projection = hasMore
+      ? { ...diagnostic.projection, completeness: "partial" as const }
+      : diagnostic.projection;
     res.json({
       run: compactRunHeader(detail.run),
       agentName: detail.agentName,
@@ -854,10 +973,11 @@ export function runIntelligenceRoutes(db: Db) {
       issue: detail.issue,
       errors,
       page: {
-        cursor: asString(req.query.cursor),
-        hasMore,
-        nextCursor: hasMore && lastIndexedError ? `step-${lastIndexedError.index}` : null,
+        cursor,
+        hasMore: nextCursor !== null,
+        nextCursor,
       },
+      projection,
     });
   });
 

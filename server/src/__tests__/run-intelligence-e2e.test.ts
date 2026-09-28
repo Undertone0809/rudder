@@ -452,6 +452,18 @@ describe("run intelligence real route workflow", () => {
       id: "step-3",
       output: { clipped: true, originalLength: (5 * 1024 * 1024) + 15 },
     });
+    expect(errors.body.errors.map((error: { id: string }) => error.id)).toContain("step-4");
+    expect(errors.body.projection).toMatchObject({
+      completeness: "partial",
+      source: "legacy",
+      truncatedItems: 1,
+      omittedSources: ["resultJson"],
+      limitReached: null,
+      readFailure: false,
+    });
+    expect(Buffer.byteLength(JSON.stringify(errors.body), "utf8")).toBeLessThan(400_000);
+    expect(JSON.stringify(errors.body)).not.toContain("E".repeat(10_000));
+    expect(JSON.stringify(errors.body)).not.toContain("R".repeat(10_000));
 
     const compactTranscript = await request(app)
       .get(`/api/run-intelligence/runs/${runId}/transcript`)
@@ -467,11 +479,11 @@ describe("run intelligence real route workflow", () => {
       .get(`/api/run-intelligence/runs/${runId}/transcript`)
       .query({
         aroundError: transcriptError.id,
-        contextTurns: "1",
-        output: "full",
-        order: "oldest",
-        turnLimit: "1",
-      });
+      contextTurns: "1",
+      output: "full",
+      order: "oldest",
+      turnLimit: "1",
+    });
     expect(transcript.status).toBe(200);
     expect(transcript.body.page).toMatchObject({
       order: "oldest",
@@ -535,6 +547,171 @@ describe("run intelligence real route workflow", () => {
     const otherOrgLog = await request(app).get(`/api/run-intelligence/runs/${otherRunId}/log`);
     expect(otherOrgLog.status).toBe(403);
     expect(otherOrgLog.body.error).toContain("does not have access");
+  });
+
+  it("reports original detail length and partial status for one clipped errors[] member", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const originalError = "single-error-marker:" + "E".repeat(20_000);
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Single Error Projection",
+      urlKey: deriveOrganizationUrlKey(`Single Error Projection ${orgId}`),
+      issuePrefix: "SEP",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Projection Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "failed",
+    });
+    await db.insert(heartbeatRunEvents).values(transcriptEvent({
+      orgId,
+      runId,
+      agentId,
+      seq: 1,
+      payload: {
+        kind: "result",
+        ts: "2026-09-29T10:00:01.000Z",
+        text: "",
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        costUsd: 0,
+        isError: true,
+        subtype: "error",
+        errors: [originalError],
+      },
+    }));
+
+    const app = await createApp(db, orgId);
+    const response = await request(app)
+      .get(`/api/run-intelligence/runs/${runId}/errors`)
+      .query({ maxChars: "80" });
+    expect(response.status).toBe(200);
+    expect(response.body.errors).toHaveLength(1);
+    expect(response.body.errors[0]).toMatchObject({
+      id: "step-1",
+      output: { clipped: true, originalLength: "Errors:\n".length + originalError.length },
+    });
+    expect(response.body.projection).toMatchObject({
+      completeness: "partial",
+      truncatedItems: 1,
+      readFailure: false,
+    });
+    expect(JSON.stringify(response.body)).not.toContain("E".repeat(10_000));
+  });
+
+  it("continues errors past the 2 MiB diagnostic chunk without duplicates", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const itemCount = 280;
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Diagnostic Continuation",
+      urlKey: deriveOrganizationUrlKey(`Diagnostic Continuation ${orgId}`),
+      issuePrefix: "DCO",
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      orgId,
+      name: "Continuation Agent",
+      role: "engineer",
+      agentRuntimeType: "process",
+      agentRuntimeConfig: {},
+      runtimeConfig: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      orgId,
+      agentId,
+      invocationSource: "on_demand",
+      triggerDetail: "manual",
+      status: "succeeded",
+    });
+    const startMs = Date.parse("2026-09-29T10:00:00.000Z");
+    await db.insert(heartbeatRunEvents).values(Array.from({ length: itemCount }, (_, index) => {
+      const marker = `continuation-error-${String(index + 1).padStart(3, "0")}:`;
+      return {
+        ...transcriptEvent({
+          orgId,
+          runId,
+          agentId,
+          seq: index + 1,
+          payload: {
+            kind: "tool_result",
+            ts: new Date(startMs + (index + 1) * 1_000).toISOString(),
+            toolUseId: `tool-${index + 1}`,
+            toolName: "exec_command",
+            isError: true,
+            content: marker + "x".repeat(8_192 - marker.length),
+          },
+        }),
+        createdAt: new Date(startMs + (index + 1) * 1_000),
+      };
+    }));
+
+    const app = await createApp(db, orgId);
+    const seen: string[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | null = null;
+    let pageCount = 0;
+    do {
+      const response = await request(app)
+        .get(`/api/run-intelligence/runs/${runId}/errors`)
+        .query({ ...(cursor ? { cursor } : {}), maxChars: "80" });
+      expect(response.status).toBe(200);
+      if (pageCount === 0) {
+        expect(response.body.page.hasMore).toBe(true);
+        expect(response.body.projection.completeness).toBe("partial");
+      }
+      seen.push(...response.body.errors.map((error: { id: string }) => error.id));
+      cursor = response.body.page.nextCursor;
+      pageCount += 1;
+      if (cursor) {
+        expect(cursors.has(cursor)).toBe(false);
+        cursors.add(cursor);
+        if (pageCount === 1) {
+          expect(cursor).not.toMatch(/^step-\d+$/);
+          const encoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+          expect(encoded).toMatchObject({
+            kind: "run_errors",
+            runId,
+            orgId,
+            source: "legacy",
+            revision: expect.any(String),
+          });
+          const wrongRunCursor = Buffer.from(JSON.stringify({ ...encoded, runId: randomUUID() }), "utf8")
+            .toString("base64url");
+          const wrongRun = await request(app)
+            .get(`/api/run-intelligence/runs/${runId}/errors`)
+            .query({ cursor: wrongRunCursor });
+          expect(wrongRun.status).toBe(400);
+        }
+      }
+      expect(pageCount).toBeLessThanOrEqual(10);
+    } while (cursor);
+
+    expect(pageCount).toBeGreaterThan(1);
+    expect(seen).toHaveLength(itemCount);
+    expect(new Set(seen).size).toBe(itemCount);
+    expect(seen[0]).toBe("step-1");
+    expect(seen.at(-1)).toBe(`step-${itemCount}`);
   });
 
   it("allocates unique event sequences under concurrent writers", async () => {

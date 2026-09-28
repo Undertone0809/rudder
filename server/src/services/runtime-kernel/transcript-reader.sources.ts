@@ -170,6 +170,7 @@ function transcriptResult(
     itemOffset?: number;
     nextCursor?: string | null;
     limitReached?: TranscriptReadLimit | null;
+    truncated?: boolean;
   },
 ): LegacyTranscriptReadResult {
   return {
@@ -178,8 +179,11 @@ function transcriptResult(
     nextCursor: input.nextCursor ?? null,
     revision: input.revision,
     availability: "available",
-    completeness: input.limitReached || input.nextCursor ? "partial" : entries.length > 0 ? "complete" : "terminal_only",
+    completeness: input.limitReached || input.nextCursor || input.truncated
+      ? "partial"
+      : entries.length > 0 ? "complete" : "terminal_only",
     ...(input.limitReached ? { limitReached: input.limitReached } : {}),
+    ...(input.truncated ? { truncated: true } : {}),
   };
 }
 
@@ -220,6 +224,10 @@ export function createLegacyTranscriptReader(options: {
         totalBytes: 0,
         totalItems: 0,
       };
+      if (input.diagnosticProjection) {
+        state.totalBytes = 0;
+        state.totalItems = 0;
+      }
       const limit = normalizeLimit(input.limit);
 
       if (state.totalBytes >= maxTotalBytes) {
@@ -292,7 +300,7 @@ export function createLegacyTranscriptReader(options: {
         state.skipEntries = 0;
       }
 
-      let pageBytesUsed = state.totalBytes;
+  let pageBytesUsed = state.totalBytes;
       let pageItemsUsed = state.totalItems;
       const remainingPageBytes = () => Math.min(maxReadBytes, maxTotalBytes - pageBytesUsed);
       const remainingPageItems = () => Math.min(limit, maxTotalItems - pageItemsUsed);
@@ -382,6 +390,7 @@ export function createLegacyTranscriptReader(options: {
             limit: eventLimit,
             maxBytes: eventBytes,
             maxItemBytes,
+            diagnosticProjection: input.diagnosticProjection,
             signal: input.signal,
           });
         } else {
@@ -449,6 +458,7 @@ export function createLegacyTranscriptReader(options: {
             totalItems: nextTotalItems,
           }) : null,
           limitReached,
+          truncated: eventPage.truncated,
         });
       }
 
@@ -1121,6 +1131,7 @@ async function readNativeSources(
     availability: mergeAvailability(sources.map((entry) => entry.availability)),
     completeness: mergeCompleteness(sources.map((entry) => entry.completeness)),
     limitReached: activeSource?.limitReached ?? null,
+    ...(sources.some((entry) => entry.truncated) ? { truncated: true } : {}),
     providerCursor: activeSource?.providerCursor ?? null,
     providerNextCursor: runItemIdRangeEnded ? null : activeSource?.providerNextCursor ?? null,
     providerOffset: activeSource?.providerOffset ?? 0,
@@ -1161,9 +1172,11 @@ async function readLegacySource(
     spanId: input.spanId ?? null,
     cursor: input.cursor ?? null,
     limit: input.limit,
+    diagnosticProjection: options.diagnosticProjection,
     readEvents: async (eventInput) => await readLegacyEventPage(db, {
       orgId: input.orgId,
       run: input.run,
+      diagnosticProjection: options.diagnosticProjection,
       ...eventInput,
     }),
     signal: input.signal,
@@ -1181,6 +1194,7 @@ async function readLegacySource(
     availability: result.availability ?? "available",
     completeness: result.completeness ?? (result.entries.length > 0 ? "complete" : "terminal_only"),
     limitReached: result.limitReached ?? null,
+    ...(result.truncated ? { truncated: true } : {}),
     providerCursor: input.cursor ?? null,
     providerNextCursor: result.nextCursor ?? null,
     providerOffset: itemOffset,

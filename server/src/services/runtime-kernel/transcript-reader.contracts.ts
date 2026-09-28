@@ -93,6 +93,8 @@ export interface TranscriptItem {
   origin?: "native" | "object" | "legacy";
   text?: string;
   entry?: TranscriptEntry;
+  /** Original text lengths attached by bounded diagnostic projections. */
+  diagnosticOriginalLengths?: Record<string, number>;
 }
 
 export interface TranscriptPage {
@@ -103,6 +105,8 @@ export interface TranscriptPage {
   availability: TranscriptAvailability;
   completeness: TranscriptCompleteness;
   limitReached?: TranscriptReadLimit | null;
+  /** Diagnostic items were clipped in the source projection. */
+  truncated?: boolean;
 }
 
 export type TranscriptReadLimitReason = "page_bytes" | "total_bytes" | "total_items" | "item_bytes";
@@ -190,11 +194,13 @@ export interface LegacyTranscriptReadInput {
   cursor?: string | null;
   limit?: number;
   events?: readonly Record<string, unknown>[];
+  diagnosticProjection?: boolean;
   readEvents?: (input: {
     cursor?: string | null;
     limit: number;
     maxBytes: number;
     maxItemBytes: number;
+    diagnosticProjection?: boolean;
     signal?: AbortSignal;
   }) => Promise<LegacyTranscriptEventPage>;
   signal?: AbortSignal;
@@ -206,6 +212,7 @@ export interface LegacyTranscriptEventPage {
   revision: string;
   readBytes: number;
   limitReached?: TranscriptReadLimit | null;
+  truncated?: boolean;
 }
 
 export interface LegacyTranscriptReadResult {
@@ -216,6 +223,7 @@ export interface LegacyTranscriptReadResult {
   availability?: TranscriptAvailability;
   completeness?: TranscriptCompleteness;
   limitReached?: TranscriptReadLimit | null;
+  truncated?: boolean;
 }
 
 export interface LegacyTranscriptReaderHook {
@@ -232,6 +240,8 @@ export interface TranscriptReaderOptions {
   maxLegacyTotalBytes?: number;
   maxLegacyTotalItems?: number;
   maxLegacyItemBytes?: number;
+  /** Return clipped, field-projected event payloads for bounded diagnostics. */
+  diagnosticProjection?: boolean;
   authorizePrincipal?: (input: {
     orgId: string;
     principal: TranscriptPrincipal;
@@ -434,6 +444,7 @@ export type ResolvedSource = {
   availability: TranscriptAvailability;
   completeness: TranscriptCompleteness;
   limitReached?: TranscriptReadLimit | null;
+  truncated?: boolean;
   providerCursor: string | null;
   providerNextCursor: string | null;
   /** Visible-item position in the selected Run before this provider page, including preceding spans. */
