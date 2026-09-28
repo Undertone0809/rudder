@@ -1625,6 +1625,48 @@ describe("sideChatService", () => {
       .toBe("running");
   });
 
+  it("serializes removal of shared attachment references and cleans the final asset once", async () => {
+    const source = await createSource();
+    const [asset] = await db.insert(assets).values({
+      orgId: source.orgId, provider: "local_disk", objectKey: "shared-removal.txt",
+      contentType: "text/plain", byteSize: 4, sha256: "b".repeat(64),
+    }).returning();
+    const attachments = await db.insert(chatAttachments).values([0, 1].map(() => ({
+      orgId: source.orgId, conversationId: source.sourceConversationId,
+      messageId: source.anchorMessageId, assetId: asset!.id,
+    }))).returning();
+    let release!: () => void;
+    let acquired!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const blocker = db.transaction(async (tx) => {
+      await tx.select().from(assets).where(eq(assets.id, asset!.id)).for("update");
+      acquired();
+      await held;
+    });
+    let removals: Promise<unknown[]> | undefined;
+    try {
+      await ready;
+      removals = Promise.all(attachments.map((attachment) => chats.removeAttachment(attachment.id)));
+      // Both removers must wait before dropping their references, rather than
+      // each seeing the other's uncommitted reference and skipping cleanup.
+      await waitForDatabaseLockWaiters(db, 2);
+      release();
+      await blocker;
+      const results = await removals;
+      expect(results).toEqual(expect.arrayContaining([
+        expect.objectContaining({ assetDeleted: false }),
+        expect.objectContaining({ assetDeleted: true }),
+      ]));
+      expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toEqual([]);
+      expect(await chats.removeAttachment(attachments[0]!.id)).toBeNull();
+    } finally {
+      release();
+      await blocker;
+      await removals;
+    }
+  }, 15_000);
+
   it("shares Chat authority between writers while fencing a Rust ownership handoff", async () => {
     const source = await createSource();
     let release!: () => void;

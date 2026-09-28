@@ -239,6 +239,19 @@ export function chatService(db: Db, storage?: StorageService) {
   const issueApprovalsSvc = issueApprovalService(db);
   const organizationsSvc = organizationService(db);
   const agentsSvc = agentService(db);
+  async function lockAttachmentAssets(
+    tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+    orgId: string,
+    assetIds: readonly string[],
+  ) {
+    if (assetIds.length === 0) return;
+    // Serialize reference removal before checking for the last reference. A
+    // stable order also prevents deadlocks when two chats share several files.
+    await tx.select({ id: assets.id }).from(assets)
+      .where(and(eq(assets.orgId, orgId), inArray(assets.id, [...new Set(assetIds)])))
+      .orderBy(assets.id)
+      .for("update");
+  }
   const {
     hydrateConversations,
     list,
@@ -2007,6 +2020,7 @@ export function chatService(db: Db, storage?: StorageService) {
     if (input.assetIds.length === 0) return [];
     return db.transaction(async (tx) => {
       await lockNodeMutationAuthority(tx, input.orgId, "shared");
+      await lockAttachmentAssets(tx, input.orgId, input.assetIds);
       const linkedRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
@@ -3964,13 +3978,14 @@ export function chatService(db: Db, storage?: StorageService) {
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
         .where(eq(chatAttachments.conversationId, id));
+      const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
+      await lockAttachmentAssets(tx, conversation.orgId, assetIds);
       const [deleted] = await tx
         .delete(chatConversations)
         .where(eq(chatConversations.id, id))
         .returning();
       if (!deleted) return null;
       await removeMessengerCustomGroupEntriesForItem(tx, deleted.orgId, `chat:${deleted.id}`);
-      const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
       if (assetIds.length > 0) {
         await tx.delete(assets).where(and(
           inArray(assets.id, assetIds),
@@ -4623,7 +4638,10 @@ export function chatService(db: Db, storage?: StorageService) {
       if (!existing) return null;
 
       await lockNodeMutationAuthority(tx, existing.orgId, "shared");
-      await tx.delete(chatAttachments).where(eq(chatAttachments.id, attachmentId));
+      await lockAttachmentAssets(tx, existing.orgId, [existing.assetId]);
+      const removed = await tx.delete(chatAttachments).where(eq(chatAttachments.id, attachmentId))
+        .returning({ id: chatAttachments.id });
+      if (removed.length === 0) return null;
       const hasRemainingAttachment = await tx
         .select({ id: chatAttachments.id })
         .from(chatAttachments)

@@ -6534,9 +6534,11 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
 
   const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getSize());
   assert.ok(originalWindowSize, "Agent Terminal resize smoke should find the Desktop window");
+  // At 1280px the navigation breakpoint can give the terminal more space;
+  // use a viewport that actually constrains its host after that transition.
   await electronApp.evaluate(({ BrowserWindow }, size) => {
     BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
-  }, [1_280, 900]);
+  }, [1_000, 900]);
   await waitForSmokeCondition("Agent Terminal constrained layout", async () => {
     const layout = await terminal.evaluate((panel) => {
       const host = panel.querySelector("[data-testid='terminal-xterm-host']");
