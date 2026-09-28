@@ -1,6 +1,7 @@
 import { agentsApi } from "@/api/agents";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { rudderPluginsApi } from "@/api/rudderPlugins";
+import { AgentIdentity } from "@/components/AgentAvatar";
 import { LocalAppIdentityIcon } from "@/components/LocalAppIdentityIcon";
 import { PluginIcon, themedPluginIconUrl } from "@/components/PluginIcon";
 import { Button } from "@/components/ui/button";
@@ -400,9 +401,9 @@ function PluginDetailDialog({
           <div className="flex flex-wrap justify-end gap-2">
             {plugin.previousPackageId ? <Button variant="outline" onClick={onRollback}>Roll back</Button> : null}
             <Button variant="outline" onClick={onToggle}>{plugin.enabled ? "Disable" : "Enable"}</Button>
-            {canTryInChat ? <Button onClick={onTryChat}><Bot className="h-4 w-4" />Try in Chat</Button> : null}
+            {canTryInChat ? <Button onClick={onTryChat}>Try in Chat</Button> : null}
             {plugin.components.some((component) => component.type === "skill") ? (
-              <Button onClick={onAssignSkills}><Bot className="h-4 w-4" />Add to Agent</Button>
+              <Button onClick={onAssignSkills}>Add to Agent</Button>
             ) : null}
           </div>
         </DialogFooter>
@@ -1464,8 +1465,12 @@ export function Plugins() {
             {(agentsQuery.data ?? []).map((agent: Agent) => (
               <label key={agent.id} className="flex min-h-12 cursor-pointer items-center gap-3 px-3 py-2 hover:bg-muted/35">
                 <input type="checkbox" checked={selectedAgentIds.includes(agent.id)} onChange={(event) => setSelectedAgentIds((current) => event.target.checked ? [...current, agent.id] : current.filter((id) => id !== agent.id))} />
-                <Bot className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">{agent.name}</span>
+                <AgentIdentity
+                  name={agent.name}
+                  icon={agent.icon}
+                  role={agent.role}
+                  className="min-w-0 flex-1 [&>span:last-child]:min-w-0"
+                />
               </label>
             ))}
           </div>

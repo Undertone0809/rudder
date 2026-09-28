@@ -28,6 +28,7 @@ import { useToast } from "../context/ToastContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useOrganizationPageMemory } from "../hooks/useOrganizationPageMemory";
 import { useScrollbarActivityRef } from "../hooks/useScrollbarActivityRef";
+import { useWorkspaceContextSidebarLayout } from "../hooks/useWorkspaceSidebarLayout";
 import { readDesktopShell } from "../lib/desktop-shell";
 import {
   normalizeRememberedSettingsPath,
@@ -59,7 +60,6 @@ import {
   resolveProportionalSidePanelWidth,
   resolveSidePanelCollapseWidth,
   resolveSidePanelDragWidth,
-  shouldAutoCollapseContextSidebar,
   shouldAutoExpandSidePanel,
   useAutoCollapseWorkspaceWidth,
   useViewportResizeTransition,
@@ -91,8 +91,7 @@ export {
   resolveProportionalSidePanelWidth,
   resolveSidePanelCollapseWidth,
   resolveSidePanelDragWidth,
-  shouldAutoCollapseContextSidebar,
-  shouldAutoExpandSidePanel
+  shouldAutoCollapseContextSidebar, shouldAutoExpandSidePanel, shouldShowContextSidebar
 } from "../lib/workspace-shell-layout";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
@@ -876,7 +875,12 @@ function CollapsedWorkspaceSidebarReveal({
 export function Layout() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const { sidebarOpen, setSidebarOpen, toggleSidebar, isMobile } = useSidebar();
+  const {
+    sidebarOpen,
+    setSidebarOpen,
+    toggleSidebar,
+    isMobile,
+  } = useSidebar();
   const {
     openNewIssue,
     openOnboarding,
@@ -888,7 +892,6 @@ export function Layout() {
   const {
     contextKey: sidePanelContextKey,
     displayedContextHold,
-    hidePanel,
     open: sidePanelOpen,
   } = useSidePanel();
   const {
@@ -992,26 +995,18 @@ export function Layout() {
   );
   const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
-  const autoCollapseContextSidebar = shouldAutoCollapseContextSidebar({
-    isMobile,
+  const {
+    autoCollapseContextSidebar,
+    autoCollapseContextSidebarOnOpen,
+    autoCollapseContextSidebarKey,
+    contextSidebarVisible,
+    openWorkspaceSidebar,
+  } = useWorkspaceContextSidebarLayout({
     relativePath: relativeBoardPath,
+    contextKey: displayedSidePanelContext.contextKey,
     sidePanelOpen,
     sidePanelContextReady,
   });
-  const autoCollapseContextSidebarOnOpen = shouldAutoCollapseContextSidebar({
-    isMobile,
-    relativePath: relativeBoardPath,
-    sidePanelOpen: true,
-    sidePanelContextReady,
-  });
-  const autoCollapseContextSidebarKey = autoCollapseContextSidebarOnOpen
-    ? `${relativeBoardPath}:${displayedSidePanelContext.contextKey}`
-    : null;
-  const contextSidebarVisible = sidebarOpen && !autoCollapseContextSidebar;
-  const openWorkspaceSidebar = useCallback(() => {
-    if (autoCollapseContextSidebar) hidePanel();
-    setSidebarOpen(true);
-  }, [autoCollapseContextSidebar, hidePanel, setSidebarOpen]);
   const desktopSidePanelContentInactive = sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
@@ -1627,7 +1622,7 @@ export function Layout() {
                       <>
                         <div
                           data-testid="workspace-context-card"
-                          data-auto-collapsed={autoCollapseContextSidebar || undefined}
+                          data-auto-collapsed={autoCollapseContextSidebar && !contextSidebarVisible || undefined}
                           aria-hidden={!contextSidebarVisible}
                           inert={contextSidebarVisible ? undefined : true}
                           className={cn(
@@ -1667,7 +1662,7 @@ export function Layout() {
                       </>
                     ) : null}
                     {showIntegratedShellSidebar
-                      && (!sidebarOpen || autoCollapseContextSidebar)
+                      && !contextSidebarVisible
                       && useFramelessWorkspaceMain
                       && !hasActiveChatConversation ? (
                       <CollapsedWorkspaceSidebarReveal
