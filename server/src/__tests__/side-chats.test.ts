@@ -1648,8 +1648,8 @@ describe("sideChatService", () => {
     try {
       await ready;
       removals = Promise.all(attachments.map((attachment) => chats.removeAttachment(attachment.id)));
-      // Both removers must wait before dropping their references, rather than
-      // each seeing the other's uncommitted reference and skipping cleanup.
+      // Both removers must serialize before checking the remaining references,
+      // rather than each seeing the other's uncommitted reference and skipping cleanup.
       await waitForDatabaseLockWaiters(db, 2);
       release();
       await blocker;
@@ -1664,6 +1664,45 @@ describe("sideChatService", () => {
       release();
       await blocker;
       await removals;
+    }
+  }, 15_000);
+
+  it("does not invert message-edit and asset locks during conversation removal", async () => {
+    const source = await createSource();
+    const [asset] = await db.insert(assets).values({
+      orgId: source.orgId, provider: "local_disk", objectKey: "edit-removal.txt",
+      contentType: "text/plain", byteSize: 4, sha256: "c".repeat(64),
+    }).returning();
+    const attachment = {
+      orgId: source.orgId, conversationId: source.sourceConversationId,
+      messageId: source.anchorMessageId, assetId: asset!.id,
+    };
+    await db.insert(chatAttachments).values(attachment);
+    let proceed!: () => void;
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const canCopy = new Promise<void>((resolve) => { proceed = resolve; });
+    const editing = db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, source.orgId, "shared");
+      await tx.select().from(chatMessages).where(eq(chatMessages.id, source.anchorMessageId)).for("update");
+      acquired();
+      await canCopy;
+      await tx.execute(sql`SET LOCAL lock_timeout = '1s'`);
+      // Matches an admitted message edit copying an existing attachment.
+      await tx.insert(chatAttachments).values(attachment);
+    });
+    let removing: ReturnType<typeof chats.remove> | undefined;
+    try {
+      await ready;
+      removing = chats.remove(source.sourceConversationId);
+      await waitForDatabaseLockWaiters(db, 1);
+      proceed();
+      await editing;
+      expect(await removing).toMatchObject({ id: source.sourceConversationId });
+      expect(await db.select().from(assets).where(eq(assets.id, asset!.id))).toEqual([]);
+    } finally {
+      proceed();
+      await Promise.allSettled([editing, removing]);
     }
   }, 15_000);
 

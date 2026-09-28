@@ -3973,19 +3973,21 @@ export function chatService(db: Db, storage?: StorageService) {
         .where(eq(chatConversations.id, id))
         .then((rows) => rows[0] ?? null);
       if (!conversation) return null;
-      await lockNodeMutationAuthority(tx, conversation.orgId, "shared");
+      // A cascading delete must drain admitted message editors before taking
+      // conversation/FK locks. Ordinary writes and Side Chat close stay shared.
+      await lockNodeMutationAuthority(tx, conversation.orgId);
       const attachmentRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
         .where(eq(chatAttachments.conversationId, id));
       const assetIds = [...new Set(attachmentRows.map((row) => row.assetId))];
-      await lockAttachmentAssets(tx, conversation.orgId, assetIds);
       const [deleted] = await tx
         .delete(chatConversations)
         .where(eq(chatConversations.id, id))
         .returning();
       if (!deleted) return null;
       await removeMessengerCustomGroupEntriesForItem(tx, deleted.orgId, `chat:${deleted.id}`);
+      await lockAttachmentAssets(tx, conversation.orgId, assetIds);
       if (assetIds.length > 0) {
         await tx.delete(assets).where(and(
           inArray(assets.id, assetIds),
@@ -4638,10 +4640,10 @@ export function chatService(db: Db, storage?: StorageService) {
       if (!existing) return null;
 
       await lockNodeMutationAuthority(tx, existing.orgId, "shared");
-      await lockAttachmentAssets(tx, existing.orgId, [existing.assetId]);
       const removed = await tx.delete(chatAttachments).where(eq(chatAttachments.id, attachmentId))
         .returning({ id: chatAttachments.id });
       if (removed.length === 0) return null;
+      await lockAttachmentAssets(tx, existing.orgId, [existing.assetId]);
       const hasRemainingAttachment = await tx
         .select({ id: chatAttachments.id })
         .from(chatAttachments)
