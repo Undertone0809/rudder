@@ -171,6 +171,102 @@ async function runDeferredFork(reportedSessionId: string | null, unknownSession 
   }
 }
 
+function fakeContinuationCliScript(): string {
+  return `#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
+const capture = fs.existsSync(capturePath) ? JSON.parse(fs.readFileSync(capturePath, "utf8")) : { calls: [] };
+const callIndex = capture.calls.length + 1;
+const call = { argv: process.argv.slice(2), prompt: null };
+capture.calls.push(call);
+const writeCapture = () => fs.writeFileSync(capturePath, JSON.stringify(capture));
+const writeEvent = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+writeCapture();
+writeEvent({ type: "system", subtype: "init", session_id: "resume-session-1" });
+const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+input.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message?.type !== "user") return;
+  call.prompt = message.message?.content?.filter((item) => item?.type === "text").map((item) => item.text).join("\\n") ?? "";
+  writeCapture();
+  writeEvent({ type: "user", isReplay: true, uuid: "user-turn-" + callIndex, session_id: "resume-session-1" });
+  writeEvent({
+    type: "assistant",
+    uuid: "assistant-turn-" + callIndex,
+    session_id: "resume-session-1",
+    message: { stop_reason: "end_turn", content: [{ type: "text", text: "Turn " + callIndex }] },
+  });
+  writeEvent({
+    type: "result",
+    uuid: "result-turn-" + callIndex,
+    session_id: "resume-session-1",
+    subtype: "success",
+    result: "Turn " + callIndex,
+  });
+});
+`;
+}
+
+async function runClaudeContinuations() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-continuation-"));
+  const cwd = path.join(root, "workspace");
+  const command = path.join(root, "fake-claude");
+  const capturePath = path.join(root, "capture.json");
+  const rudderHome = path.join(root, ".rudder");
+  const previousHome = process.env.HOME;
+  const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+  await fs.mkdir(cwd, { recursive: true });
+  await fs.writeFile(command, fakeContinuationCliScript(), "utf8");
+  await fs.chmod(command, 0o755);
+  process.env.HOME = root;
+  process.env.RUDDER_OPERATOR_HOME = root;
+
+  try {
+    const config = {
+      command,
+      cwd,
+      providerBindingId: "continuation-binding-1",
+      providerOrgId: orgId,
+      env: {
+        RUDDER_HOME: rudderHome,
+        RUDDER_TEST_CAPTURE_PATH: capturePath,
+      },
+    };
+    const run = (runtime: { sessionId: string | null; sessionParams: Record<string, unknown> | null; sessionDisplayId: string | null; taskKey: string | null }, chatPrompt: string) => execute({
+      runId: `claude-continuation-${chatPrompt}`,
+      agent: {
+        id: "claude-continuation-agent",
+        orgId,
+        name: "Claude Continuation Test",
+        agentRuntimeType: "claude_local",
+        agentRuntimeConfig: {},
+      },
+      runtime,
+      config: { ...config, promptTemplate: chatPrompt },
+      context: { chatMode: true, chatPrompt },
+      onLog: async () => {},
+    });
+    const first = await run({ sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null }, "First prompt.");
+    const second = await run({
+      sessionId: first.sessionId ?? null,
+      sessionParams: first.sessionParams ?? null,
+      sessionDisplayId: first.sessionDisplayId ?? null,
+      taskKey: null,
+    }, "Second prompt.");
+    const capture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+      calls: Array<{ argv: string[]; prompt: string | null }>;
+    };
+    return { first, second, capture };
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+    else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
 describe("Claude deferred native fork", () => {
   it("submits the real first prompt with resume and fork flags, then returns the provider child", async () => {
     const childSessionId = "child-session-1";
@@ -185,7 +281,11 @@ describe("Claude deferred native fork", () => {
       exitCode: 0,
       submissionPhase: "accepted",
       sessionId: childSessionId,
-      sessionParams: { sessionId: childSessionId, lastUuid: "child-result-1" },
+      sessionParams: {
+        sessionId: childSessionId,
+        lastUuid: "child-result-1",
+        lastAssistantUuid: "child-assistant-1",
+      },
       resultJson: {
         fork: {
           status: "accepted",
@@ -233,6 +333,32 @@ describe("Claude deferred native fork", () => {
         },
         submissionPhase: "indeterminate",
       },
+    });
+  });
+});
+
+describe("Claude native Run continuation boundary", () => {
+  it("resumes the explicit session and advances from the prior assistant UUID, not its result marker", async () => {
+    const { first, second, capture } = await runClaudeContinuations();
+
+    expect(capture.calls).toHaveLength(2);
+    expect(capture.calls.map((call) => call.prompt)).toEqual(["First prompt.", "Second prompt."]);
+    const resumeIndex = capture.calls[1]!.argv.indexOf("--resume");
+    expect(capture.calls[1]!.argv[resumeIndex + 1]).toBe("resume-session-1");
+    expect(first.sessionParams).toMatchObject({
+      lastUuid: "result-turn-1",
+      lastAssistantUuid: "assistant-turn-1",
+    });
+    expect(second.resultJson).toMatchObject({
+      startExclusiveUuid: "assistant-turn-1",
+      transcriptBoundary: {
+        status: "bounded",
+        startExclusiveUuid: "assistant-turn-1",
+      },
+    });
+    expect(second.sessionParams).toMatchObject({
+      lastUuid: "result-turn-2",
+      lastAssistantUuid: "assistant-turn-2",
     });
   });
 });

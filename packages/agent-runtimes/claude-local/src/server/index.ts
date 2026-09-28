@@ -58,6 +58,7 @@ const PROVIDER_SESSION_FIELDS = [
   "claudeConfigDir",
   "sessionFilePath",
   "lastUuid",
+  "lastAssistantUuid",
 ] as const;
 
 function readProviderSessionFields(record: Record<string, unknown>): Record<string, string> {

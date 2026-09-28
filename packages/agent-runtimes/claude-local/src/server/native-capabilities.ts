@@ -381,8 +381,14 @@ function selectedRecordChain(
 
   let selected = records.filter((entry) => entry.uuid ? chain.has(entry.uuid) : false);
   if (start) {
-    const startRecord = byUuid.get(start);
-    if (!startRecord || !startRecord.uuid || !chain.has(startRecord.uuid)) {
+    let startRecord = byUuid.get(start);
+    if (startRecord?.uuid && !chain.has(startRecord.uuid) && stringValue(startRecord.record.type) === "result") {
+      const parent = startRecord.parentUuid ? byUuid.get(startRecord.parentUuid) : undefined;
+      if (parent?.uuid && chain.has(parent.uuid) && stringValue(parent.record.type) === "assistant") {
+        startRecord = parent;
+      }
+    }
+    if (!startRecord?.uuid || !chain.has(startRecord.uuid)) {
       return { records: [], error: `Claude session start boundary ${start} is outside the selected parentUuid chain.` };
     }
     selected = selected.filter((entry) => entry.line > startRecord.line);

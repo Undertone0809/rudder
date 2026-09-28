@@ -112,6 +112,76 @@ describe("Claude profile-bound native capabilities", () => {
     expect(result.items.some((item) => item.text === "Do not include me.")).toBe(false);
   });
 
+  it("continues after a prior result marker by its verified assistant parent", async () => {
+    const continuationSession = [
+      {
+        type: "user",
+        uuid: "user-1",
+        sessionId,
+        message: { role: "user", content: "First prompt." },
+      },
+      {
+        type: "assistant",
+        uuid: "assistant-1",
+        parentUuid: "user-1",
+        sessionId,
+        message: { role: "assistant", content: "First answer.", stop_reason: "end_turn" },
+      },
+      {
+        type: "result",
+        uuid: "result-1",
+        parentUuid: "assistant-1",
+        sessionId,
+      },
+      {
+        type: "user",
+        uuid: "user-2",
+        parentUuid: "assistant-1",
+        sessionId,
+        message: { role: "user", content: "Second prompt." },
+      },
+      {
+        type: "assistant",
+        uuid: "assistant-2",
+        parentUuid: "user-2",
+        sessionId,
+        message: { role: "assistant", content: "Second answer.", stop_reason: "end_turn" },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const result = await createClaudeLocalProviderCapabilities(profile(async () => continuationSession)).transcript.readRange(request({
+      selector: {
+        kind: "claude_chain",
+        sessionId,
+        startExclusiveUuid: "result-1",
+        throughInclusiveUuid: "assistant-2",
+      },
+    }));
+
+    expect(result).toMatchObject({ availability: "available", completeness: "complete" });
+    expect(result.items.map((item) => item.sourceEntryId)).toEqual([
+      "user-2",
+      "assistant-2",
+    ]);
+  });
+
+  it("fails closed when an old result boundary has no verified assistant parent", async () => {
+    const continuationSession = [
+      { type: "assistant", uuid: "assistant-1", sessionId, message: { stop_reason: "end_turn" } },
+      { type: "result", uuid: "result-1", sessionId },
+      { type: "assistant", uuid: "assistant-2", parentUuid: "assistant-1", sessionId },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const result = await createClaudeLocalProviderCapabilities(profile(async () => continuationSession)).transcript.readRange(request({
+      selector: {
+        kind: "claude_chain",
+        sessionId,
+        startExclusiveUuid: "result-1",
+        throughInclusiveUuid: "assistant-2",
+      },
+    }));
+
+    expect(result).toMatchObject({ availability: "incompatible", completeness: "unknown", items: [] });
+  });
+
   it("returns runtime-valid TranscriptEntry values for assistant thinking and tool blocks", async () => {
     const nativeSession = [
       {

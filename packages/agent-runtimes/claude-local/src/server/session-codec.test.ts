@@ -15,6 +15,7 @@ describe("Claude native session codec", () => {
       workspaceBindingId: "workspace-1",
       capabilityRevision: "cap-1",
       lastUuid: "completed-assistant-1",
+      lastAssistantUuid: "completed-assistant-1",
       secret: "must-not-persist",
     };
 
@@ -31,6 +32,7 @@ describe("Claude native session codec", () => {
       workspaceBindingId: "workspace-1",
       capabilityRevision: "cap-1",
       lastUuid: "completed-assistant-1",
+      lastAssistantUuid: "completed-assistant-1",
     });
     expect(sessionCodec.serialize(decoded)).toEqual(decoded);
   });

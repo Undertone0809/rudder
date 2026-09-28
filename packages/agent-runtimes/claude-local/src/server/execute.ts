@@ -1049,8 +1049,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     : persistedSessionId || asString(runtime.sessionId, "").trim();
   const sessionId = runtimeSessionId;
   const previousLastUuid = forkIntent
-    ? forkIntent.sourceSelector.throughInclusiveUuid
+    ? asString(forkIntent.sourceSession.sessionParams.lastUuid, "").trim() || null
     : asString(runtimeSessionParams.lastUuid, "").trim() || null;
+  const previousAssistantUuid = forkIntent
+    ? forkIntent.sourceSelector.throughInclusiveUuid
+    : asString(runtimeSessionParams.lastAssistantUuid, "").trim() || previousLastUuid;
   const profileIdentity = providerProfileIdentity(config, agent.orgId);
   if (forkIntent) {
     const sourceSessionParams = forkIntent.sourceSession.sessionParams;
@@ -1402,7 +1405,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
 
   const sessionParamsFor = (
     resolvedSessionId: string | null,
-    resolvedLastUuid: string | null = previousLastUuid,
+    resolvedLastUuid: string | null = resolvedSessionId === runtimeSessionId ? previousLastUuid : null,
+    resolvedAssistantUuid: string | null = resolvedSessionId === runtimeSessionId ? previousAssistantUuid : null,
   ): Record<string, unknown> | null => {
     if (!resolvedSessionId) return null;
     let sessionFilePath: string | null = null;
@@ -1418,6 +1422,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     return {
       sessionId: resolvedSessionId,
       ...(resolvedLastUuid ? { lastUuid: resolvedLastUuid } : {}),
+      ...(resolvedAssistantUuid ? { lastAssistantUuid: resolvedAssistantUuid } : {}),
       cwd,
       claudeConfigDir: env.CLAUDE_CONFIG_DIR,
       ...(sessionFilePath ? { sessionFilePath } : {}),
@@ -1471,7 +1476,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       errorCode: "claude_fork_acceptance_unknown",
       errorMeta,
       sessionId: childSessionId,
-      sessionParams: childSessionId ? sessionParamsFor(childSessionId, attempt.lastUuid ?? null) : null,
+      sessionParams: childSessionId
+        ? sessionParamsFor(childSessionId, attempt.lastUuid ?? null, attempt.providerTurnId ?? null)
+        : null,
       sessionDisplayId: childSessionId,
       provider: "anthropic",
       biller: "anthropic",
@@ -1566,7 +1573,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     }
     const resolvedSessionParams = resolvedSessionId
       ? ({
-        ...(sessionParamsFor(resolvedSessionId, attempt.lastUuid ?? previousLastUuid) ?? {}),
+        ...(sessionParamsFor(
+          resolvedSessionId,
+          attempt.lastUuid ?? (resolvedSessionId === runtimeSessionId ? previousLastUuid : null),
+          attempt.providerTurnId ?? (resolvedSessionId === runtimeSessionId ? previousAssistantUuid : null),
+        ) ?? {}),
         ...(workspaceId ? { workspaceId } : {}),
         ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
         ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
@@ -1574,8 +1585,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       : null;
     const clearSessionForMaxTurns = isClaudeMaxTurnsResult(parsed);
     const resolvedModel = parsedStream.model || asString(parsed.model, model);
-    const transcriptBoundary = previousLastUuid
-      ? { status: "bounded", startExclusiveUuid: previousLastUuid }
+    const transcriptBoundary = previousAssistantUuid
+      ? { status: "bounded", startExclusiveUuid: previousAssistantUuid }
       : runtimeSessionId
         ? { status: "missing", reason: "claude_session_last_uuid_unavailable" }
         : { status: "initial", reason: "no_previous_claude_session" };
@@ -1615,7 +1626,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ...(forkIntent ? { submissionPhase: "accepted" as const } : {}),
       resultJson: {
         ...parsed,
-        startExclusiveUuid: previousLastUuid,
+        startExclusiveUuid: previousAssistantUuid,
         providerTurnId: attempt.providerTurnId,
         transcriptBoundary,
         ...(forkIntent ? {
