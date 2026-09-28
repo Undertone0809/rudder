@@ -61,7 +61,7 @@ test("browses, restores, and deletes workspace backup versions", async ({ page }
 
   await page.getByRole("button", { name: "plans" }).click();
   await page.getByRole("button", { name: "roadmap.md" }).click();
-  await expect(page.getByText("# Roadmap")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Roadmap", level: 1, exact: true })).toBeVisible();
 
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "Download" }).click();
