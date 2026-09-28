@@ -295,6 +295,20 @@ function isProtectedOrganizationSkillsEntryPath(normalizedPath: string) {
   return normalizedPath.split("/").filter(Boolean)[0]?.toLowerCase() === "skills";
 }
 
+function assertLocalPreviewContentPath(normalizedPath: string) {
+  const segments = normalizedPath.toLowerCase().split("/");
+  // Agent workspaces also contain generated artifacts. Only their managed
+  // instructions/state are excluded from absolute-path Chat previews.
+  if (segments[0] === "skills" || (segments[0] === "agents" && (
+    segments.length < 3
+    || segments[2] === "instructions"
+    || segments[2] === "life"
+    || PROTECTED_AGENT_MANAGED_DIRECTORY_NAMES.has(segments[2]!)
+  ))) {
+    throw notFound("File not found inside the organization Library");
+  }
+}
+
 function isProtectedLibraryResourcePath(normalizedPath: string) {
   const root = normalizedPath.split("/").filter(Boolean)[0] ?? "";
   return PROTECTED_LIBRARY_SYSTEM_ROOTS.has(root);
@@ -626,11 +640,18 @@ export function organizationWorkspaceBrowserService(
       }
 
       const normalizedPath = toPortableRelativePath(relativePath);
-      const protectedRoot = normalizedPath.split("/")[0]?.toLowerCase();
-      if (protectedRoot === "agents" || protectedRoot === "skills") {
-        throw notFound("File not found inside the organization Library");
-      }
-      return normalizedPath;
+      assertLocalPreviewContentPath(normalizedPath);
+      const { canonicalRoot, canonicalTarget } = await resolveCanonicalPathWithinRoot(
+        resolvedRoot,
+        resolvedTarget,
+        "File not found inside the organization Library",
+      );
+      assertNoProtectedPathAlias(normalizedPath, canonicalRoot, canonicalTarget);
+      const canonicalPath = toPortableRelativePath(path.relative(canonicalRoot, canonicalTarget));
+      assertLocalPreviewContentPath(canonicalPath);
+      // Pass the checked target onward, not a symlink that can be retargeted
+      // between this lookup and the existing file reader's boundary checks.
+      return canonicalPath;
     },
 
     async listFiles(

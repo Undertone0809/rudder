@@ -219,6 +219,22 @@ describe("organization workspace media content route", () => {
     expect(mockWorkspaceBrowser.readFile).not.toHaveBeenCalled();
   });
 
+  it("rejects absolute agent artifact lookup by a board user outside the organization", async () => {
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "session",
+      orgIds: ["organization-2"],
+    });
+    const response = await request(app)
+      .get("/api/orgs/organization-1/workspace/file")
+      .query({ path: "/workspace/org-1/agents/codex--example/acceptance-note.txt" });
+
+    expect(response.status).toBe(403);
+    expect(mockWorkspaceBrowser.resolveLocalWorkspaceFilePath).not.toHaveBeenCalled();
+    expect(mockWorkspaceBrowser.readFile).not.toHaveBeenCalled();
+  });
+
   it("propagates an HTTP disconnect to mention-file listing", async () => {
     let resolveAbort!: () => void;
     const abortObserved = new Promise<void>((resolve) => {
