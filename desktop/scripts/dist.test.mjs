@@ -4,8 +4,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
-  runElectronBuilderWithMirrorFallback,
   resolve7zaPath,
+  runElectronBuilderWithMirrorFallback,
   windowsCodeSignArtifactUrls,
 } from "./dist.mjs";
 
