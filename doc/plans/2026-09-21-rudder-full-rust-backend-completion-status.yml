@@ -5,31 +5,36 @@ status: in_progress
 current_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
   branch: codex/d1-default-writer-20260929
-  source_sha: 82a28fa7f8a998cb5c444137a8f094affa6f2258
-  source_tree: 5821ed3037d6471459b5fc8c175d447bc53ae9b1
-  source_fingerprint: 2fc16cc9d1f78a6b53b186665a0bc27a88c2f50745eb80d2ce1f9a36c25783ae
-  runtime_equivalence: product_source_9e_unchanged_f416_release_metadata_82a_exact_manifest_test_only
+  source_sha: 4353c6a4c7391d6f298a06b146026e12a08493df
+  source_tree: 74e50c7b88f59dfeb3e1a1783e68864f070867f8
+  source_fingerprint: 7c82df050488fbb3db636a8b36156eb306e4fa01ab1fc4cdce1f243c51a0987c
+  runtime_equivalence: product_source_9e_unchanged_f416_metadata_82a_manifest_4353_DB_upgrade_tests_only
   origin_main: 4422039540f8926f5021466061f1bbd1b890dd01
-  state: Project_DELETE_stage_accepted_frozen_independent_installed_verifier_in_progress
+  state: Project_DELETE_independent_PASS_final_review_accept_fresh_CI_pending
   packet: doc/plans/2026-09-29-rudder-project-delete-delivery-packet-v26.json
   reviewer: Newton_renewed_stage_accept_release_metadata_and_native_manifest_test_delta_accept
-  verifier: Hubble_QUESTION_host_installed_workflow_and_upgrade_PASS_normal_six_target_package_pending
-  verifier_receipt: /tmp/rudder-delete-verifier.Cu4yeE/independent-receipt-v26.json
-  verifier_limit: host_package_only_no_complete_package_or_final_handoff_claim
-  final_reviewer: pending
+  verifier: Hubble_PASS_normal_six_target_prepack_fresh_install_actual_CI_host_workflow_and_upgrade
+  verifier_receipt: doc/plans/artifacts/2026-09-29-rudder-project-delete-independent-verifier-v26.json
+  verifier_limit: macOS_arm64_runtime_executed_foreign_binaries_packaging_only_no_Desktop_or_production_claim
+  final_reviewer: Newton_final_accept4353_content_equivalence_packaged_upgrade_PASS_devTerminal_FAIL_bounded_nonblocker
   author_log: /tmp/rudder-project-delete-recovery.GM92Ny
   author_log_sha256: 86a661125cd8d484e4d14a64e31a2ae9c4876130aa35a84a3b73d15303f565f5
   checks: large_HTTP_replay_PG_receipt_rollback_public_API_WS_restart_recovery_PASS_author_only
-  publication: PR235_draft_f416_remote_82a_test_fix_checkpoint_batched_metadata_push_pending_not_accepted_for_merge
+  publication: PR235_draft_prior_head0cd_source4353_correction_prepared_for_fresh_CI
+  published_head: 0cd278728871b78c27ffa3b9d6f5dab78a6b0b4c
   pr: https://github.com/Undertone0809/rudder/pull/235
   prior_ci: 36495181241_FAIL_stale_migration_fingerprint_declaration_fixed_f416_preflight_and19_tests_PASS
-  current_ci_failure: 36495413484_native_manifest_exact_counts_stale_fixed82a_validation14_PASS_runtime_unchanged
+  current_ci_failure: 36496470013_Ubuntu_stale0175_arrays_fixed4353_two_actual_PG_tests_PASS_Windows_watchdog_cleanup_unresolved
   current_ci_artifacts: all_six_foundation_targets_PASS_f416
   authority_scope: Rust_owned_Project_DELETE_Node_stale_remover_rejected_no_default_writer_flip
   remaining_writers: Node_create_with_goals_and_organization_delete_not_retired
-  local_DB_slot: Parfit_author_packaged_verification_Hubble_resources_released
-  ci: {matrix: 36495413484, status: in_progress, D1_regression: 36495413397, D1_status: PASS}
-  next_executable: publish_frozen_draft_CI_then_independent_installed_acceptance_final_review_and_protected_merge
+  local_DB_slot: released_author_corrected_fixture_upgrade_completed
+  local_packaged: distribution_ComputerUse_default_account_update_AppBuilder_and_corrected_marker_fixture_upgrade_PASS
+  local_packaged_receipt: doc/plans/artifacts/2026-09-29-rudder-project-delete-local-packaged-verification.json
+  local_packaged_limit: aggregate_desktop_verify_FAIL_devTerminal_layout_unchanged_Desktop_UI_source_no_currentMain_runtime_reproduction_claim
+  ci: {matrix: 36496470013, status: in_progress, D1_regression: 36496470032, D1_status: PASS}
+  prior_runtime_equivalent_D1: {run: 36495413397, status: PASS}
+  next_executable: push4353_test_correction_with_records_resolve_exact_head_CI_and_final_review_then_protected_merge
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 delivered_member_default_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
@@ -733,9 +738,9 @@ historical_v16_receipts:
   verifier: {agent_id: 01a0c903-973c-77a0-8116-8867ff5f43e5, verdict: PASS, data_id: rust-project-goal-real-entry-16304, packet: v16}
   final_review: {agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3, verdict: accept, level: final_handoff_verdict}
 interrupt_resume:
-  last_durable_source_commit: 82a28fa7f8a998cb5c444137a8f094affa6f2258
+  last_durable_source_commit: 4353c6a4c7391d6f298a06b146026e12a08493df
   prior_accepted_candidate: PR233_member_default_and_PR234_delivery_records_merged
-  remaining_work: Project_DELETE_independent_installed_verifier_packaged_checks_CI_final_review_merge_then_next_writer
+  remaining_work: Project_DELETE_fresh_CI_and_protected_merge_then_Project_Create_pilot
   next_command: finish_v26_independent_acceptance_and_CI_resolve_findings_then_protected_PR_merge
 
 historical_candidate_2026_09_28:
