@@ -65,7 +65,17 @@ Complete only this bounded task and report the result through the normal Run evi
     ...(runtimePrompt !== null ? { stdin: runtimePrompt } : {}),
     abortSignal,
   });
-  const nativeWriterQuiescence = proc.exitCode !== null || proc.signal
+  if (abortSignal?.aborted && proc.pid === null && proc.startedAt === null) {
+    return {
+      exitCode: proc.exitCode, signal: proc.signal, timedOut: false,
+      submissionPhase: "pre_submission",
+      errorCode: "cancelled",
+      errorMessage: "Process cancelled before startup",
+      nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+    };
+  }
+  const nativeWriterQuiescence = typeof proc.pid === "number" && proc.pid > 0
+    && (proc.exitCode !== null || proc.signal)
     ? { status: "confirmed" as const, source: "process_exit" as const }
     : { status: "unconfirmed" as const, reason: "process exit was not observed" };
 

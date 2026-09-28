@@ -21,7 +21,7 @@ describe("process adapter Delegation delivery", () => {
     { exitCode: null, signal: "SIGTERM", timedOut: true, confirmed: true },
     { exitCode: null, signal: null, timedOut: true, confirmed: false },
   ])("reports writer quiescence only with observed process exit: %j", async (outcome) => {
-    mockRunChildProcess.mockResolvedValue({ ...outcome, stdout: "", stderr: "" });
+    mockRunChildProcess.mockResolvedValue({ ...outcome, pid: 123, startedAt: "2026-09-29T00:00:00Z", stdout: "", stderr: "" });
     const result = await execute({
       runId: "run-quiescence",
       agent: {
@@ -34,6 +34,25 @@ describe("process adapter Delegation delivery", () => {
     expect(result.nativeWriterQuiescence).toEqual(outcome.confirmed
       ? { status: "confirmed", source: "process_exit" }
       : { status: "unconfirmed", reason: "process exit was not observed" });
+  });
+
+  it("records pre-spawn cancellation as not started rather than process exit", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    mockRunChildProcess.mockResolvedValue({
+      exitCode: null, signal: "SIGTERM", timedOut: false,
+      pid: null, startedAt: null, stdout: "", stderr: "",
+    });
+    const result = await execute({
+      runId: "run-not-started",
+      agent: { id: "agent-1", orgId: "org-1", name: "Target", agentRuntimeType: "process", agentRuntimeConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "worker" }, context: {}, onLog: async () => {}, abortSignal: controller.signal,
+    });
+    expect(result).toMatchObject({
+      submissionPhase: "pre_submission", errorCode: "cancelled",
+      nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+    });
   });
 
   it("passes the bounded task through stdin and the dedicated environment key", async () => {

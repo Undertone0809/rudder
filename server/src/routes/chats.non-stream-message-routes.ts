@@ -255,9 +255,7 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
           }
         }
 
-        if (!sideChatFirstInput.replayed) {
-          await touchSideChat(req, conversation as ChatConversation);
-        }
+        await touchSideChat(req, conversation as ChatConversation);
         if (!sideChatFirstInput.replayed && !req.body.editUserMessageId) {
           startChatTitleGeneration(conversation as ChatConversation, userMessage);
         }

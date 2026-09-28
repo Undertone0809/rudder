@@ -3281,6 +3281,7 @@ describe("chat routes", { retry: 2 }, () => {
       userMessageId: userMessage.id,
     });
     expect(createdRunIds).toEqual(["run-non-stream-recovery"]);
+    expect(mockSideChatService.touch).toHaveBeenCalledOnce();
     expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
     expect(mockChatAssistantService.streamChatAssistantReply.mock.calls[0]?.[0].runContext).toEqual({
       chatMode: "non_stream",
