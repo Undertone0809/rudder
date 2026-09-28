@@ -134,7 +134,7 @@ describe("organization mutation authority fence", () => {
         attachments: [],
       }),
       "delete",
-      [],
+      [{ orgId: ORGANIZATION_ID }],
     ],
     [
       "project resource create",
