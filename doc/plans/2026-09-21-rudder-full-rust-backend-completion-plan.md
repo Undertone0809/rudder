@@ -48,12 +48,17 @@ at `e2e603f07c7d4b7410fea7792b9a4d0667d3777e`. Delivery records followed in
 PR #232; the independent test-runner increment followed in PR #231. The last
 observed Main is now `4422039540f8926f5021466061f1bbd1b890dd01` (PR #234 records).
 
-The current bounded Project DELETE candidate is `9e459a5a3204285885c50b08e49915d8a2f38215`,
-rebased onto that Main with packet v26. Renewed stage review accepted the
+The current bounded Project DELETE candidate is `82a28fa7f8a998cb5c444137a8f094affa6f2258`,
+with runtime content identical to `9e459a5a3204285885c50b08e49915d8a2f38215`,
+rebased onto that Main with packet v26.2. Renewed stage review accepted the
 large-response/receipt rollback repair. Author public API smoke passed complete
 1,180,164-byte response/replay and pending-outbox restart followed by actual
 WebSocket delivery and persisted publication, preserving a recreated UUID.
-Independent installed acceptance and final review remain pending. This does
+Independent host-installed workflow and upgrade passed; the verifier retains
+QUESTION until normal six-target package acceptance. All six foundation artifacts
+and D1 real-entry CI passed on runtime-equivalent f416. Compatibility declaration
+and exact manifest test assertions were corrected without changing runtime code;
+fresh exact-head CI and final review remain required. This does
 not flip default writers or retire Project creation/organization deletion.
 
 PR #233 merged generic installed member-directory reads defaulting to required
