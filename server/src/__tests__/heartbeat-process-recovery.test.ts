@@ -477,6 +477,30 @@ describe("heartbeat orphaned process recovery", () => {
     return { orgId, agentId, runId, wakeupRequestId, issueId, goalId };
   }
 
+  function heartbeatForControlledRetry(agentId: string, sourceRunId: string) {
+    return heartbeatService(db, {
+      beforeRunClaim: async (queuedRun) => {
+        if (queuedRun.retryOfRunId !== sourceRunId) return;
+        await db.update(agents).set({
+          agentRuntimeType: "process",
+          agentRuntimeConfig: {
+            command: process.execPath,
+            args: ["-e", "setInterval(() => {}, 1000)"],
+            graceSec: 1,
+          },
+        }).where(eq(agents.id, agentId));
+      },
+    });
+  }
+
+  async function trackControlledRetryChild(runId: string) {
+    const child = await waitForTrackedChild(runId);
+    childProcesses.add(child);
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBeNull();
+    return child;
+  }
+
   it("times out long-running active runs and releases issue execution locks", async () => {
     const child = spawnAliveProcess();
     childProcesses.add(child);
@@ -1582,19 +1606,7 @@ describe("heartbeat orphaned process recovery", () => {
     });
     runningProcesses.set(runId, { child, graceSec: 1 });
 
-    const heartbeat = heartbeatService(db, {
-      beforeRunClaim: async (queuedRun) => {
-        if (queuedRun.retryOfRunId !== runId) return;
-        await db.update(agents).set({
-          agentRuntimeType: "process",
-          agentRuntimeConfig: {
-            command: process.execPath,
-            args: ["-e", "setInterval(() => {}, 1000)"],
-            graceSec: 1,
-          },
-        }).where(eq(agents.id, agentId));
-      },
-    });
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
     const retried = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
@@ -1602,11 +1614,8 @@ describe("heartbeat orphaned process recovery", () => {
     });
 
     expect(await waitForProcessExit(child.pid ?? 0)).toBe(true);
-    const retryChild = await waitForTrackedChild(retried.id);
-    childProcesses.add(retryChild);
+    const retryChild = await trackControlledRetryChild(retried.id);
     expect(retryChild.pid).not.toBe(child.pid);
-    expect(retryChild.exitCode).toBeNull();
-    expect(retryChild.signalCode).toBeNull();
     const source = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).then((rows) => rows[0]);
     expect(source?.processExitedAt).not.toBeNull();
     expect(retried.retryOfRunId).toBe(runId);
@@ -2111,7 +2120,7 @@ describe("heartbeat orphaned process recovery", () => {
         goalId: randomUUID(),
       },
     }).where(eq(heartbeatRuns.id, runId));
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
 
     const result = await heartbeat.reapOrphanedRuns();
     expect(result.reaped).toBe(1);
@@ -2184,6 +2193,10 @@ describe("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBe(retryRun?.id ?? null);
     expect(issue?.checkoutRunId).toBe(runId);
+
+    await heartbeat.resumeQueuedRuns();
+    const retryChild = await trackControlledRetryChild(retryRun!.id);
+    expect(retryChild.pid).toBeTypeOf("number");
   });
 
   it("does not queue an automatic process-loss retry after the Issue is cancelled", async () => {
@@ -2346,7 +2359,7 @@ describe("heartbeat orphaned process recovery", () => {
       runErrorCode: "network_error",
       runError: "Model connection dropped after creating the agent",
     });
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
 
     const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
@@ -2397,6 +2410,7 @@ describe("heartbeat orphaned process recovery", () => {
       .then((rows) => rows[0] ?? null);
     expect(issue?.executionRunId).toBe(retriedRun.id);
     expect(issue?.checkoutRunId).toBe(runId);
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("preserves comment mention wake source when retrying a run linked to a closed issue", async () => {
@@ -2427,7 +2441,7 @@ describe("heartbeat orphaned process recovery", () => {
       })
       .where(eq(heartbeatRuns.id, runId));
 
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
     const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
@@ -2446,6 +2460,7 @@ describe("heartbeat orphaned process recovery", () => {
     });
 
     await heartbeat.resumeQueuedRuns();
+    await trackControlledRetryChild(retriedRun.id);
 
     const runs = await db
       .select()
@@ -2463,12 +2478,12 @@ describe("heartbeat orphaned process recovery", () => {
   });
 
   it("allows a cancelled adapter run to be retried manually", async () => {
-    const { runId } = await seedRunFixture({
+    const { agentId, runId } = await seedRunFixture({
       runStatus: "cancelled",
       runErrorCode: "cancelled",
       runError: "Adapter failed",
     });
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
 
     const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
@@ -2489,6 +2504,7 @@ describe("heartbeat orphaned process recovery", () => {
         recoveryMode: "continue_preferred",
       },
     });
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("preserves Delegation provenance when retrying a terminal Delegation Run", async () => {
@@ -2530,7 +2546,8 @@ describe("heartbeat orphaned process recovery", () => {
       })
       .where(eq(heartbeatRuns.id, runId));
 
-    const retriedRun = await heartbeatService(db).retryRun(runId, {
+    const heartbeat = heartbeatForControlledRetry(agentId, runId);
+    const retriedRun = await heartbeat.retryRun(runId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
       now: new Date("2026-03-19T00:06:00.000Z"),
@@ -2554,6 +2571,7 @@ describe("heartbeat orphaned process recovery", () => {
       .where(eq(agentWakeupRequests.id, retriedRun.wakeupRequestId!))
       .then((rows) => rows[0]);
     expect(retryWakeup?.source).toBe("delegation");
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("backfills recovery context from the retry chain when the source retry run is lossy", async () => {
@@ -2605,7 +2623,7 @@ describe("heartbeat orphaned process recovery", () => {
       updatedAt: new Date("2026-03-19T00:10:00.000Z"),
     });
 
-    const heartbeat = heartbeatService(db);
+    const heartbeat = heartbeatForControlledRetry(agentId, lossyRetryRunId);
     const retriedRun = await heartbeat.retryRun(lossyRetryRunId, {
       requestedByActorType: "user",
       requestedByActorId: "local-board",
@@ -2624,6 +2642,7 @@ describe("heartbeat orphaned process recovery", () => {
         recoveryTrigger: "manual",
       },
     });
+    await trackControlledRetryChild(retriedRun.id);
   });
 
   it("does not queue a second retry after the first process-loss retry was already used", async () => {
