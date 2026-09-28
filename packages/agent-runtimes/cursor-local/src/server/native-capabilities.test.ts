@@ -2,7 +2,7 @@ import type { AgentRuntimeControlHandle, ChatAskUserRequest } from "@rudderhq/ag
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseCursorStdoutLine } from "../ui/parse-stdout.js";
 import { sessionCodec } from "./index.js";
 import {
@@ -28,8 +28,9 @@ const binding: CursorProviderBindingRef = {
 
 function createSpawnFixture(
   respond: (request: JsonRecord, output: PassThrough) => void,
-): { spawn: SpawnFn; requests: JsonRecord[] } {
+): { spawn: SpawnFn; requests: JsonRecord[]; readonly kills: number } {
   const requests: JsonRecord[] = [];
+  let kills = 0;
   const spawn = ((_command: string, _args: readonly string[], _options: unknown) => {
     const stdout = new PassThrough();
     const stderr = new PassThrough();
@@ -49,6 +50,7 @@ function createSpawnFixture(
       exitCode: null,
       killed: false,
       kill: () => {
+        kills += 1;
         Object.defineProperty(child, "killed", { configurable: true, value: true, writable: true });
         Object.defineProperty(child, "exitCode", { configurable: true, value: 0, writable: true });
         child.emit("close", 0, null);
@@ -57,7 +59,7 @@ function createSpawnFixture(
     });
     return child as ChildProcessWithoutNullStreams;
   }) as unknown as SpawnFn;
-  return { spawn, requests };
+  return { spawn, requests, get kills() { return kills; } };
 }
 
 function initializeResult(authMethods: JsonRecord[] = [], loadSession: boolean | null = true): JsonRecord {
@@ -120,6 +122,90 @@ function requestForSession(
 }
 
 describe("Cursor ACP native capabilities", () => {
+  function boundedReplayFixture(frames: (id: unknown) => Buffer[]) {
+    return createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/load") {
+        for (const frame of frames(request.id)) output.write(frame);
+      }
+    });
+  }
+  const replayFrame = (text: string, sessionUpdate = "agent_message_chunk") => Buffer.from(`${JSON.stringify({
+    jsonrpc: "2.0", method: "session/update", params: { sessionId: "cursor-session-1", update: {
+      sessionUpdate, executionRef: "cursor-execution-1", content: { type: "text", text },
+    } },
+  })}\n`);
+  const loadAck = (id: unknown) => Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id, result: loadedSessionResult() })}\n`);
+
+  it.each(["single", "fragmented", "unterminated"])("bounds %s UTF-8 frames before JSON.parse", async (shape) => {
+    const oversized = replayFrame("😀".repeat(600));
+    const fixture = boundedReplayFixture((id) => [
+      ...(shape === "fragmented" ? [oversized.subarray(0, 511), oversized.subarray(511)]
+        : [shape === "unterminated" ? oversized.subarray(0, -1) : oversized]), loadAck(id),
+    ]);
+    const parse = vi.spyOn(JSON, "parse");
+    try {
+      const result = await createCursorLocalProviderCapabilities(profile(fixture.spawn))!.transcript.readRange({
+        ...requestForSession(fixture.spawn), readerInput: { maxBytes: 8192, maxItemBytes: 1024 },
+      });
+      expect(result).toMatchObject({ items: [], nextCursor: null, completeness: "partial", limitReached: { reason: "item_bytes", maximum: 1024 } });
+      expect(parse.mock.calls.some(([raw]) => typeof raw === "string" && raw.includes("😀"))).toBe(false);
+      expect(fixture.kills).toBe(1);
+      expect(fixture.requests.map(r => r.method)).toEqual(["initialize", "initialized", "session/load"]);
+    } finally { parse.mockRestore(); }
+  });
+
+  it("bounds cumulative replay before parsing the crossing frame in a coalesced chunk", async () => {
+    const frames = Array.from({ length: 30 }, (_, i) => replayFrame(`entry-${i}`));
+    const fixture = boundedReplayFixture(id => [Buffer.concat([...frames, loadAck(id)])]);
+    const parse = vi.spyOn(JSON, "parse");
+    try {
+      const result = await createCursorLocalProviderCapabilities(profile(fixture.spawn))!.transcript.readRange({
+        ...requestForSession(fixture.spawn), readerInput: { maxBytes: 1024, maxItemBytes: 1024 },
+      });
+      expect(result).toMatchObject({ items: [], nextCursor: null, completeness: "partial", limitReached: { reason: "page_bytes", maximum: 1024 } });
+      expect(parse.mock.calls.filter(([raw]) => typeof raw === "string" && raw.includes("entry-")).length).toBeLessThan(5);
+      expect(fixture.kills).toBe(1);
+    } finally { parse.mockRestore(); }
+  });
+
+  it("preserves tool call/result update kinds within budgets without inventing native paging", async () => {
+    const fixture = boundedReplayFixture(id => [replayFrame("call", "tool_call"), replayFrame("result", "tool_call_update"), loadAck(id)]);
+    const adapter = createCursorLocalProviderCapabilities(profile(fixture.spawn))!;
+    const input = { ...requestForSession(fixture.spawn), readerInput: { maxBytes: 8192, maxItemBytes: 4096, limit: 2 } };
+    const result = await adapter.transcript.readRange(input);
+    expect(result.items.map(item => item.kind)).toEqual(["cursor:acp:tool_call", "cursor:acp:tool_call_update"]);
+    expect(result).toMatchObject({ nextCursor: null, completeness: "partial" });
+    expect(result.limitReached).toBeUndefined();
+    const limited = await adapter.transcript.readRange({ ...input, readerInput: { ...input.readerInput, limit: 1 } });
+    expect(limited.items).toHaveLength(1);
+    expect(limited).toMatchObject({ nextCursor: null, completeness: "partial", limitReached: { reason: "total_items", maximum: 1 } });
+    const before = fixture.requests.length;
+    expect(await adapter.transcript.readRange({ ...input, cursor: "invented" })).toMatchObject({ availability: "incompatible", nextCursor: null, completeness: "partial" });
+    expect(fixture.requests).toHaveLength(before);
+  });
+
+  it("decodes UTF-8 split into individual bytes without replacing code points", async () => {
+    const fixture = boundedReplayFixture(id => [...replayFrame("你好😀")].map(byte => Buffer.from([byte])).concat(loadAck(id)));
+    const result = await createCursorLocalProviderCapabilities(profile(fixture.spawn))!.transcript.readRange({
+      ...requestForSession(fixture.spawn), readerInput: { maxBytes: 8192, maxItemBytes: 4096 },
+    });
+    expect(result.items.map(item => item.text)).toEqual(["你好😀"]);
+    expect(result.limitReached).toBeUndefined();
+  });
+
+  it.each([
+    { maxBytes: 4096, maxItemBytes: 1024, reason: "item_bytes", maximum: 1024 },
+    { maxBytes: 1200, maxItemBytes: 4096, reason: "page_bytes", maximum: 1200 },
+  ])("also bounds projected records by $reason without claiming complete", async ({ reason, maximum, ...readerInput }) => {
+    const fixture = boundedReplayFixture(id => [replayFrame("x".repeat(600)), loadAck(id)]);
+    const result = await createCursorLocalProviderCapabilities(profile(fixture.spawn))!.transcript.readRange({
+      ...requestForSession(fixture.spawn), readerInput,
+    });
+    expect(result).toMatchObject({ items: [], nextCursor: null, completeness: "partial", limitReached: { reason, maximum } });
+  });
+
   it("loads an ACP session replay fixture and preserves the protocol request contract", async () => {
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {

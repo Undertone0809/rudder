@@ -96,6 +96,7 @@ export type CursorNativeTranscriptReadRequest = {
   through?: string | null;
   cursor?: string | null;
   signal?: AbortSignal;
+  readerInput?: { maxBytes?: number; maxItemBytes?: number; limit?: number } | null;
 };
 
 export type CursorNativeTranscriptReadResult = {
@@ -105,7 +106,25 @@ export type CursorNativeTranscriptReadResult = {
   revision: string;
   availability: "available" | "offline" | "missing" | "expired" | "incompatible";
   completeness: "complete" | "partial" | "terminal_only" | "unknown";
+  limitReached?: { reason: "page_bytes" | "item_bytes" | "total_items"; maximum: number };
 };
+
+type CursorReadBudget = { maxBytes: number; maxItemBytes: number; limit: number };
+class CursorReadLimitError extends Error {
+  constructor(readonly reason: "page_bytes" | "item_bytes", readonly maximum: number) {
+    super(`Cursor ACP bounded replay reached ${reason} (${maximum}); native continuation is unavailable.`);
+  }
+}
+
+function cursorReadBudget(input: CursorNativeTranscriptReadRequest["readerInput"]): CursorReadBudget {
+  const bounded = (value: unknown, fallback: number, cap: number) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? Math.min(value, cap) : fallback;
+  return {
+    maxBytes: bounded(input?.maxBytes, 2 * 1024 * 1024, 8 * 1024 * 1024),
+    maxItemBytes: bounded(input?.maxItemBytes, 1024 * 1024, 8 * 1024 * 1024),
+    limit: bounded(input?.limit, 100, 200),
+  };
+}
 
 type JsonRecord = Record<string, unknown>;
 type CursorAcpProcess = ChildProcessWithoutNullStreams;
@@ -185,7 +204,6 @@ const CURSOR_RPC_INTERNAL_ERROR = -32603;
 const CURSOR_PROFILE_CAPABILITY_CACHE_SIZE = 128;
 
 const CURSOR_ACP_PROTOCOL_VERSION = 1;
-const CURSOR_NATIVE_PAGE_SIZE = 100;
 const CURSOR_NATIVE_CLIENT_VERSION = "rudder-native-capabilities";
 const CURSOR_DEFAULT_COMMAND = "agent";
 const CURSOR_EXTENSION_APPROVAL_TIMEOUT_MS = 10 * 60_000;
@@ -663,20 +681,6 @@ function applyRange(
   return { items: selected };
 }
 
-function decodeCursor(cursor: string | null | undefined, revision: string): number {
-  if (!cursor) return 0;
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as { revision?: string; offset?: number };
-    return parsed.revision === revision && Number.isInteger(parsed.offset) && parsed.offset! >= 0 ? parsed.offset! : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function encodeCursor(revision: string, offset: number): string {
-  return Buffer.from(JSON.stringify({ revision, offset }), "utf8").toString("base64url");
-}
-
 function errorText(value: unknown): string {
   if (typeof value === "string") return value;
   const record = recordValue(value);
@@ -786,12 +790,17 @@ class CursorAcpClient {
   private closed = false;
   private readonly providerRequests = new Map<CursorAcpRequestId, CursorAcpProviderRequestState>();
   private readonly requestDiagnostics: CursorAcpRequestDiagnostic[] = [];
+  private frameBuffer: Buffer | null = null;
+  private frameBytes = 0;
+  private replayBytes: number | null = null;
+  private readLimit: CursorReadLimitError | null = null;
 
   constructor(
     private readonly profile: CursorLocalProfileTransport,
     private readonly onNotification: (message: CursorAcpMessage) => void,
     signal?: AbortSignal,
     private readonly onRequest?: (method: string, params: JsonRecord, id: string | number) => Promise<unknown>,
+    private readonly readBudget?: CursorReadBudget,
   ) {
     this.timeoutMs = Math.max(250, profile.requestTimeoutMs ?? 15_000);
     const command = profile.command?.trim() || CURSOR_DEFAULT_COMMAND;
@@ -801,8 +810,16 @@ class CursorAcpClient {
       env: { ...process.env, ...(profile.env ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    this.child.stdout.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk: Buffer | string) => this.consume(chunk.toString()));
+    if (readBudget) {
+      // Count the entire read connection, including handshake/protocol overhead;
+      // notifications before session/load must not escape the allocation cap.
+      this.replayBytes = 0;
+      this.frameBuffer = Buffer.allocUnsafe(Math.min(readBudget.maxBytes, readBudget.maxItemBytes));
+      this.child.stdout.on("data", (chunk: Buffer | string) => this.consumeBounded(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    } else {
+      this.child.stdout.setEncoding("utf8");
+      this.child.stdout.on("data", (chunk: Buffer | string) => this.consume(chunk.toString()));
+    }
     this.child.stderr.on("data", () => {
       // Drain provider diagnostics without persisting credentials from stderr.
     });
@@ -906,11 +923,49 @@ class CursorAcpClient {
   }
 
   close(error: unknown = new Error("Cursor ACP connection was closed")): void {
+    if (error instanceof CursorReadLimitError) this.readLimit = error;
     this.closed = true;
+    this.frameBuffer = null;
+    this.frameBytes = 0;
+    this.buffer = "";
     this.failPending(error);
     if (this.child.exitCode === null && !this.child.killed) {
       this.child.stdin.end();
       this.child.kill("SIGTERM");
+    }
+  }
+
+  assertReadBudget(): void {
+    if (this.readLimit) throw this.readLimit;
+  }
+
+  private consumeBounded(chunk: Buffer): void {
+    const budget = this.readBudget!;
+    for (let start = 0; start < chunk.length && !this.closed;) {
+      const newline = chunk.indexOf(10, start);
+      const end = newline < 0 ? chunk.length : newline + 1;
+      const size = end - start;
+      // Check raw UTF-8 bytes before concatenation, decoding, JSON.parse, or
+      // notification accumulation. Include unrelated replay frames in the cap.
+      if (this.frameBytes + size > budget.maxItemBytes) {
+        this.close(new CursorReadLimitError("item_bytes", budget.maxItemBytes));
+        return;
+      }
+      if (this.replayBytes !== null && this.replayBytes + size > budget.maxBytes) {
+        this.close(new CursorReadLimitError("page_bytes", budget.maxBytes));
+        return;
+      }
+      if (this.replayBytes !== null) this.replayBytes += size;
+      // A single fixed buffer avoids retaining the incoming backing chunk or
+      // allocating one fragment object per byte on highly fragmented streams.
+      chunk.copy(this.frameBuffer!, this.frameBytes, start, end);
+      this.frameBytes += size;
+      if (newline >= 0) {
+        const frame = this.frameBuffer!.subarray(0, this.frameBytes).toString("utf8");
+        this.frameBytes = 0;
+        this.consume(frame);
+      }
+      start = end;
     }
   }
 
@@ -1463,6 +1518,7 @@ async function loadCursorSession(
   signal: AbortSignal | undefined,
   persistedAuthMethodId?: string | null,
   observeCapability?: CursorProfileCapabilityObserver,
+  budget?: CursorReadBudget,
 ): Promise<JsonRecord[]> {
   const updates: JsonRecord[] = [];
   let sessionMismatch = false;
@@ -1476,14 +1532,16 @@ async function loadCursorSession(
       return;
     }
     updates.push(update);
-  }, signal);
+  }, signal, undefined, budget);
   try {
     await initializeCursorClient(client, profile, true, persistedAuthMethodId, observeCapability);
+    client.assertReadBudget();
     const loaded = await client.request("session/load", {
       sessionId,
       cwd: profile.cwd,
       mcpServers: profile.mcpServers ?? [],
     });
+    client.assertReadBudget();
     requireLoadedCursorSession(loaded, sessionId);
     if (sessionMismatch) {
       throw new CursorNativeCapabilityError(
@@ -1498,6 +1556,8 @@ async function loadCursorSession(
     });
     return updates;
   } catch (error) {
+    client.assertReadBudget();
+    if (error instanceof CursorReadLimitError) throw error;
     observeCapability?.(profileCapabilityObservationFromFailure(error));
     throw normalizeRpcFailure(error, "session/load", profileSecrets(profile));
   } finally {
@@ -1931,6 +1991,11 @@ async function readProfileSession(
     Object.assign(capabilityEvidence.sessionResume, evidence);
     Object.assign(capabilityEvidence.transcript, evidence);
   };
+  const budget = cursorReadBudget(request.readerInput);
+  if (request.cursor) {
+    return { items: [], nextCursor: null, source: "native", revision: "unsupported-native-continuation",
+      availability: "incompatible", completeness: "partial" };
+  }
   try {
     const updates = await loadCursorSession(
       profile,
@@ -1938,6 +2003,7 @@ async function readProfileSession(
       request.signal,
       stringValue(params.cursorAcpAuthMethodId),
       observeCapability,
+      budget,
     );
     const revision = stableHash(updates);
     const scoped = selectRunUpdates(sessionId, updates, request.selector);
@@ -1969,12 +2035,21 @@ async function readProfileSession(
         completeness: "partial",
       };
     }
-    const offset = decodeCursor(request.cursor, revision);
-    const page = ranged.items.slice(offset, offset + CURSOR_NATIVE_PAGE_SIZE);
-    const nextCursor = offset + page.length < ranged.items.length ? encodeCursor(revision, offset + page.length) : null;
+    const page: CursorNativeTranscriptRawItem[] = [];
+    let bytes = 0;
+    let limitReached: CursorNativeTranscriptReadResult["limitReached"];
+    for (const item of ranged.items) {
+      const size = Buffer.byteLength(JSON.stringify(item));
+      if (size > budget.maxItemBytes) { limitReached = { reason: "item_bytes", maximum: budget.maxItemBytes }; break; }
+      if (bytes + size > budget.maxBytes) { limitReached = { reason: "page_bytes", maximum: budget.maxBytes }; break; }
+      if (page.length >= budget.limit) { limitReached = { reason: "total_items", maximum: budget.limit }; break; }
+      page.push(item);
+      bytes += size;
+    }
     return {
       items: page,
-      nextCursor,
+      nextCursor: null,
+      ...(limitReached ? { limitReached } : {}),
       source: "native",
       revision,
       availability: "available",
@@ -1983,6 +2058,10 @@ async function readProfileSession(
       completeness: "partial",
     };
   } catch (error) {
+    if (error instanceof CursorReadLimitError) {
+      return { items: [], nextCursor: null, source: "native", revision: `bounded-replay:${stableHash({ binding, sessionId, selector: request.selector })}`,
+        availability: "available", completeness: "partial", limitReached: { reason: error.reason, maximum: error.maximum } };
+    }
     return unavailableResult(normalizeRpcFailure(error, "session/load", profileSecrets(profile)));
   }
 }
