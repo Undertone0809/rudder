@@ -17,7 +17,7 @@ const packagingNodeModulesDir = path.join(desktopRoot, "node_modules");
 const hiddenPackagingNodeModulesDir = path.join(desktopRoot, "node_modules-packaging-hidden");
 const requireFromScript = createRequire(import.meta.url);
 const electronBuilderCliPath = requireFromScript.resolve("electron-builder/cli.js");
-const { path7za } = createRequire(electronBuilderCliPath)("7zip-bin");
+const path7za = resolve7zaPath();
 const targetArch = process.env.RUDDER_DESKTOP_TARGET_ARCH || process.arch;
 const WINDOWS_BUILDER_BINARIES_MIRROR =
   "https://npmmirror.com/mirrors/electron-builder-binaries/";
@@ -31,6 +31,10 @@ const desktopCliKeepFiles = new Set([
   "rudder-cli-package.json",
   "package.json",
 ]);
+
+export function resolve7zaPath(moduleUrl = import.meta.url) {
+  return createRequire(moduleUrl)("7zip-bin").path7za;
+}
 
 function archFlagFor(arch) {
   if (arch === "arm64") return "--arm64";
