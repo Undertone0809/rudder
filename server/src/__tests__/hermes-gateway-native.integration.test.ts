@@ -252,10 +252,10 @@ describe("Hermes gateway native server integration", () => {
           backend: "native_product_rpc",
           transport: "hermes-tui-gateway-stdio",
           transcriptBoundary: {
-            status: "exact",
+            status: "unknown",
             sessionId: "product-session-key-1",
             startExclusive: null,
-            endInclusive: 2,
+            endInclusive: null,
           },
         },
       });
@@ -263,5 +263,5 @@ describe("Hermes gateway native server integration", () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });

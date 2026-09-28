@@ -689,7 +689,8 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(executed).toMatchObject({
       exitCode: 1,
       errorCode: "runtime_driver_required",
-      submissionPhase: "indeterminate",
+      submissionPhase: "pre_submission",
+      nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
       resultJson: { runtimeType: "codex_local", nativeDriverRequired: true },
     });
     expect(resolveDriver).toHaveBeenCalledTimes(1);
