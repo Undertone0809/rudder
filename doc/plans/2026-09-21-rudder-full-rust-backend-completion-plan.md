@@ -1044,6 +1044,15 @@ independent review and verification. Every worker has explicit file ownership an
 a concrete terminal output. Required native CI runs collect all failing crates
 with `--no-fail-fast`, avoiding one new failure per full matrix cycle.
 
+Give verification workers an exact command, checkout, disposable-data boundary,
+evidence destination, and terminal result. Once those boundaries are established,
+execute rather than repeatedly rediscovering surrounding release or startup docs.
+On failure, report the failing stage first and investigate that stage only; retain
+unaffected passing evidence. Fixture repairs must preserve the intended rejection
+assertion and prove the fixture actually reaches the ownership fence. Test-only
+repairs require focused independent review and an explicit runtime-equivalence
+record, not automatic repetition of unchanged real-entry journeys.
+
 The canonical checkpoint records the latest implementation SHA, published head,
 runtime evidence SHA and content-equivalence explanation separately. A metadata-only
 commit does not recursively invalidate its own evidence. Historical status blocks

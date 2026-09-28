@@ -38,7 +38,7 @@ current_candidate:
   branch: codex/rudder-d1-candidate-20260928
   tested_commit: c8c8e5b2a049c8b7cc02998f7e719882a64c7035
   tested_commit_equivalence: backend_unchanged_after_c8_CI_manifest_literals_fixed_and_unrelated_updater_changes_removed
-  pr_head_pushed: 44366d918c710ef33dbea6a5c7e2cfbb7709233b
+  pr_head_pushed: 8512ef9ffe78c62dfe2559553d982e5b7daccf06
   head_equivalence: D1_runtime_unchanged_after_945_docs_CI_and_private_request_planner_fix_are_separate_deltas
   planner_delta: {commit: 5fa6f66b8, tests: PASS_18, clippy: PASS, stage_review: Newton_accept}
   real_entry_CI: {head: 8b5691fbfd43267edc453c6878c104ac66d790fe, run: 36458516771, verdict: PASS}
@@ -46,12 +46,13 @@ current_candidate:
   independent_verifier: Hubble_PASS_v24_2_runtime_lease_current_at_5fa6f66b8
   independent_verifier_evidence: doc/plans/artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json
   pr_url: https://github.com/Undertone0809/rudder/pull/225
-  pr_state: reviewer_and_verifier_accepted_current_head_CI_pending_not_merged
-  final_review: Newton_accept_44366d918_tree_and_fingerprint_verified
+  pr_state: reviewer_and_verifier_accepted_8512_fence_tests_repaired_current_CI_running_not_merged
+  final_review: Newton_accept_8512ef9ff_tree_and_fingerprint_verified_26_fence_tests_PASS_integration_gates_separate
   reviewer_portability_test: PASS_29_company_portability_test_ts
-  source_sha: 44366d918c710ef33dbea6a5c7e2cfbb7709233b
-  source_tree: fecce12c406ece254d86b459c29cbef4914e3286
-  dirty_fingerprint: 8446909887b2b54956a9993f18e6212e43beeca9ac5d083505fb84dcacaa34a8
+  source_sha: 8512ef9ffe78c62dfe2559553d982e5b7daccf06
+  source_tree: 0511326ce5580cfabcbf7478349b46adca25628f
+  dirty_fingerprint: cd2aedaf822bd394cf8d0fd547eb54d9c4de18dd7a44a5d41a21bdbd73947f0f
+  test_fixture_delta: project_resource_replacement_supplies_existing_project_before_ownership_fence_no_runtime_change_Newton_stage_accept_15_tests_PASS
   runtime_verified_source: 945a0d5d4b25bae6ae5132ab65badf8161e14d3e
   latest_delta: CI_and_test_expectations_only_no_runtime_change
   backup_E2E: {verdict: PASS_2, mode: Rust_required, log: /private/tmp/rudder-backup-e2e.1nXiS4/playwright.log, sha256: 05038e2b880fcce72e7ec5eb906bce710cbe5c1af7d90eaec2e27f14a2b09953}
@@ -60,8 +61,19 @@ current_candidate:
   origin_main: 66b500aef009a0554ebf658de4fca6ddfa8466f1
   scope_correction: updater_files_equal_Main_receipt_experiment_removed_foundation_staging_retained
   updater_checks: {focused_tests: PASS_62, desktop_typecheck: PASS, architecture_ratchet: PASS_no_regressions}
-  ci: final_443_published_for_current_head_CI_prior_9df_real_entry_Linux_native_Mac_arm_native_and_Mac_verify_PASS
-  active_workers: {}
+  ci: final_443_real_entry_Desktop_packaged_all_four_native_targets_Mac_and_Windows_verify_PASS_Ubuntu_verify_FAIL_project_resource_replacement_fence_fixture
+  active_workers:
+    Zeno: {agent: 01a0e942-d767-7770-89ae-0a119442e3d1, scope: local_packaged_verification_only_disposable_profiles_no_source_edits}
+    Euler: {agent: 01a0e94b-6b14-7281-af6f-9ff61ad37dc9, scope: organization_mutation_fence_test_failure_minimal_fix_no_runtime_edits_without_proven_bug}
+    Dirac: {agent: 01a0e94c-052f-7961-a2b2-aab803a8bc9f, scope: next_default_read_supported_install_matrix_read_only}
+  integration_blocker: both_fence_test_failures_fixed_85_tests_PASS_current_CI_and_local_packaged_pending
+  local_packaged_verification: full_chain_FAILED_dev_clean_terminal_constrained_layout_line6540_packaged_stages_continuing_independently
+  current_ci_runs: {full_matrix: 36467579086, real_entry: 36467579033, superseded_cancelled_matrix: 36466799602, previous_real_entry_PASS: 36463835983}
+  ci_watch_exec_session: 84986
+  local_packaged_progress: computer_use_package_PASS_account_gate_PASS_auto_update_loopback_scenario_running
+  local_packaged_log: /tmp/rudder-d1-desktop-verify.ZjaBt0/desktop-packaged-followup.log
+  next_executable: poll_CI_run36467579086_and_Zeno_packaged_result_then_exact_head_Main_preflight_before_PR225_merge
+  metadata_checkpoint: 7a83351ec_published_in_2e8_ancestry_after_test_fix_required_new_CI_run
   next_slice_preparation: generic_startup_signer_absent_package_foundation_payload_missing_resolver_lacks_installed_path_and_Windows_exe
   next_slice_ownership: runtime_config_bridge_bootstrap__packaging_server_assets_supported_platforms__workflow_default_API_CLI_MCP_outage_and_no_repo_binaries
   next_slice: generic_member_directory_default_server_CLI_MCP_path_after_D1_merge
@@ -594,7 +606,7 @@ interrupt_resume:
   last_durable_source_commit: 44366d918c710ef33dbea6a5c7e2cfbb7709233b
   prior_accepted_candidate: older_receipts_historical_current_stage_review_pending
   remaining_work: update_PR225_for_CI_resolve_stage_findings_independent_verifier_final_review_then_protected_merge
-  next_command: wait_443_CI_then_protected_PR225_merge_then_metadata_followup_and_generic_member_default_slice
+  next_command: wait_443_CI_and_Zeno_local_packaged_verification_then_protected_PR225_merge_then_metadata_followup_and_generic_member_default_slice
 
 historical_candidate_2026_09_28:
   authority: historical_only_top_level_current_candidate_is_authoritative
