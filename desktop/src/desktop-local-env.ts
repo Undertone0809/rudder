@@ -7,14 +7,28 @@ export type LocalEnvProfile = {
   embeddedPostgresPort: string;
 };
 
+const DEV_RUNTIME_OVERRIDE_ENV = "RUDDER_DESKTOP_DEV_RUNTIME_OVERRIDE";
+
+function canUseDevRuntimeOverrides(
+  profile: LocalEnvProfile,
+  env: NodeJS.ProcessEnv,
+  isPackaged: boolean,
+): boolean {
+  return !isPackaged
+    && profile.name === "dev"
+    && env[DEV_RUNTIME_OVERRIDE_ENV] === "1";
+}
+
 export function resolveDesktopOwnedPorts(
   profile: LocalEnvProfile,
   env: NodeJS.ProcessEnv = process.env,
+  isPackaged = app?.isPackaged ?? false,
 ): Pick<LocalEnvProfile, "port" | "embeddedPostgresPort"> {
   const smokeRun = env.RUDDER_DESKTOP_APP_NAME?.startsWith("Rudder-smoke-") === true;
+  const devRuntimeOverride = canUseDevRuntimeOverrides(profile, env, isPackaged);
   return {
-    port: smokeRun ? (env.PORT?.trim() || profile.port) : profile.port,
-    embeddedPostgresPort: smokeRun
+    port: smokeRun || devRuntimeOverride ? (env.PORT?.trim() || profile.port) : profile.port,
+    embeddedPostgresPort: smokeRun || devRuntimeOverride
       ? (env.RUDDER_EMBEDDED_POSTGRES_PORT?.trim() || profile.embeddedPostgresPort)
       : profile.embeddedPostgresPort,
   };
@@ -31,8 +45,20 @@ function normalizeLocalEnvName(value: string | null | undefined): LocalEnvProfil
   return Object.hasOwn(LOCAL_ENV_PROFILES, normalized) ? (normalized as LocalEnvProfile["name"]) : null;
 }
 
-export function resolveDesktopLocalEnvProfile(): LocalEnvProfile {
-  const explicit = normalizeLocalEnvName(process.env.RUDDER_LOCAL_ENV);
-  if (explicit) return LOCAL_ENV_PROFILES[explicit];
-  return app.isPackaged ? LOCAL_ENV_PROFILES.prod_local : LOCAL_ENV_PROFILES.dev;
+export function resolveDesktopLocalEnvProfile(
+  env: NodeJS.ProcessEnv = process.env,
+  isPackaged = app?.isPackaged ?? false,
+): LocalEnvProfile {
+  const explicit = normalizeLocalEnvName(env.RUDDER_LOCAL_ENV);
+  const profile = explicit
+    ? LOCAL_ENV_PROFILES[explicit]
+    : isPackaged ? LOCAL_ENV_PROFILES.prod_local : LOCAL_ENV_PROFILES.dev;
+  if (!canUseDevRuntimeOverrides(profile, env, isPackaged)) return profile;
+
+  const instanceId = env.RUDDER_INSTANCE_ID?.trim();
+  if (!instanceId) return profile;
+  if (!/^[a-zA-Z0-9_-]+$/.test(instanceId)) {
+    throw new Error(`Invalid RUDDER_INSTANCE_ID '${instanceId}'.`);
+  }
+  return { ...profile, instanceId };
 }
