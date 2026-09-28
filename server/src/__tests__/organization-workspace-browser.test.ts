@@ -218,7 +218,10 @@ describe("organization workspace browser", () => {
   });
 
   it("previews agent-generated files without exposing managed paths or cross-organization symlinks", async () => {
-    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-agent-local-preview-"));
+    // Match the acceptance instance's /tmp path on macOS, where the physical
+    // root is /private/tmp. Platform aliases must not reject generated files.
+    const fixtureTemp = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+    const rudderHome = await fs.mkdtemp(path.join(fixtureTemp, "rudder-agent-local-preview-"));
     cleanupDirs.add(rudderHome);
     process.env.RUDDER_HOME = rudderHome;
     process.env.RUDDER_INSTANCE_ID = "test-instance";
@@ -236,6 +239,10 @@ describe("organization workspace browser", () => {
     const generatedPath = path.join(agentRoot, "acceptance-note.txt");
     const generatedContent = "Agent-generated acceptance note\n";
     await fs.writeFile(generatedPath, generatedContent);
+    if (process.platform === "darwin") {
+      expect(generatedPath.startsWith("/tmp/")).toBe(true);
+      expect((await fs.realpath(generatedPath)).startsWith("/private/tmp/")).toBe(true);
+    }
     const relativePath = await workspaceBrowser.resolveLocalWorkspaceFilePath(orgId, generatedPath);
     expect(relativePath).toBe("agents/codex-native-acceptance--example/acceptance-note.txt");
     await expect(workspaceBrowser.readFile(orgId, relativePath)).resolves.toMatchObject({
