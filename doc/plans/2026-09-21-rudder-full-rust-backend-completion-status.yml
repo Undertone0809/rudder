@@ -1,29 +1,29 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-28
+updated_at: 2026-09-29
 status: in_progress
 current_main_reconciliation:
-  worktree: /Users/zeeland/.codex/worktrees/7b2a/rudder-oss
-  branch: codex/rudder-full-rust-backend-completion-20260923
-  source_sha: c54001819ca38079b627994557db0a18ed278fc0
-  source_tree: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
-  base_sha: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
-  dirty_fingerprint: 988893885b35008f334a8f0183f32462601360ffa71ec5e77235fa75de0942d0
-  state: current_checkout_imported_plan_rebound_main_drift_and_stage_review_pending
-  pending_product_patch: current_dirty_branding_project_goal_auth_cli_mcp_and_desktop_runtime_receipt_slice_unfrozen
-  pending_patch_checks: focused_rust_cli_server_and_desktop_checks_not_yet_rebound_to_current_candidate
-  main_drift: origin_main_cf131_contains_150_paths_since_c540_direct_overlap_desktop_main_and_native_cargo_lock_requires_isolated_reconciliation
-  publication: blocked_pending_current_candidate_review_verifier_final_review_and_scoped_commit
-  checks: {}
+  worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
+  branch: codex/rudder-d1-candidate-20260928
+  source_sha: dd02646c2f2e1be5ec3c04edd0d349486dcedb46
+  source_tree: 5d32f4815f53ab506e6f4639811dbc791c9db8fa
+  base_sha: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+  dirty_fingerprint: a206f49434ad44c74fee7dc80acdf858939eec6a3cc496ac2308c096b3961b50
+  state: committed_d1_fence_fix_stage_review_in_progress
+  pending_product_patch: none_current_fence_fix_committed
+  pending_patch_checks: serial_branding_and_project_goal_real_entry_rerun_then_independent_verifier
+  main_drift: origin_main_66b500aef_current_candidate_contains_145_source_paths_excluding_plan_records
+  publication: blocked_pending_current_candidate_review_verifier_final_review_ci_and_pr_update
+  checks: {server_fence_tests: PASS_20, server_typecheck: PASS, changed_import_lint: PASS}
 current_checkout_override:
   authority: this section overrides imported historical candidate identities below
-  source: c54001819ca38079b627994557db0a18ed278fc0
-  tree: 663b978687e09fd800c7b4fd1e311d0b8359e8a4
-  dirty_fingerprint: 988893885b35008f334a8f0183f32462601360ffa71ec5e77235fa75de0942d0
-  changed_paths: 23_tracked_plus_1_untracked_before_plan_records
-  main_observed: cf131c6de87ac7d29ad4acbda3da6729dc2c52a4
-  rebase_status: not_performed_preserve_dirty_worktree
-  next_executable: run_focused_checks_then_reconcile_desktop_and_cargo_lock_overlap_before_freezing_candidate
+  source: dd02646c2f2e1be5ec3c04edd0d349486dcedb46
+  tree: 5d32f4815f53ab506e6f4639811dbc791c9db8fa
+  dirty_fingerprint: a206f49434ad44c74fee7dc80acdf858939eec6a3cc496ac2308c096b3961b50
+  changed_paths: 145_source_paths_excluding_all_doc_plans_records
+  main_observed: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+  rebase_status: current_candidate_reconciled_with_origin_main
+  next_executable: serial_real_entry_rerun_then_verifier_and_final_review_before_pr_update
   prior_diagnostic_package:
     account_gate: PASS_author_Sagan
     account_gate_log: /tmp/codex-rudder-v20-account-gate.hzyZnX/smoke.log
@@ -33,6 +33,17 @@ current_checkout_override:
     direct_preserved_target_probation: PASS_exit0_4451ms_existing_fixture
     limitation: diagnostic_artifact_not_final_e739_package_unexplained_helper_failure_still_blocks_update_acceptance
   packaging_stage_review: Arendt_accept_ed1fed27700df2ea84fa2855fc55f39538a7ab51_no_final_handoff_claim
+current_candidate:
+  worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
+  branch: codex/rudder-d1-candidate-20260928
+  source_sha: dd02646c2f2e1be5ec3c04edd0d349486dcedb46
+  source_tree: 5d32f4815f53ab506e6f4639811dbc791c9db8fa
+  dirty_fingerprint: a206f49434ad44c74fee7dc80acdf858939eec6a3cc496ac2308c096b3961b50
+  origin_main: 66b500aef009a0554ebf658de4fca6ddfa8466f1
+  packet: doc/plans/2026-09-28-rudder-full-rust-backend-completion-delivery-packet-v24.json
+  real_entry: prior_author_pass_historical_exact_candidate_rerun_pending
+  authority: {default_rust_listener: false, first_party_node_writers_retired: false, full_rust_migration: false}
+  terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 active_candidate:
   worktree: /private/tmp/rudder-rust-mainline-probe-20260923
   branch: codex/rudder-rust-mainline-probe-20260923
