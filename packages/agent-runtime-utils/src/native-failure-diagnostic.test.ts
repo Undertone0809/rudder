@@ -5,6 +5,17 @@ import {
 } from "./native-failure-diagnostic.js";
 
 describe("OpenCode native failure diagnostics", () => {
+  it.each([
+    "Request failed: 0123456789abcdef01234567",
+    "Request failed: Qx4Wz8Nk6Rt2Pv9M",
+    "Request failed: abc123abc123",
+  ])("does not persist short opaque credential-like values: %s", (message) => {
+    const diagnostic = diagnoseOpenCodeNativeFailure({ name: "UnknownError", data: { message } });
+    expect(diagnostic).toMatchObject({ messageClassification: "rejected", message: null });
+    expect(parseOpenCodeNativeFailureDiagnostic({ ...diagnostic, message, messageClassification: "present" }))
+      .toMatchObject({ messageClassification: "rejected", message: null });
+  });
+
   it("extracts nested provider context and re-allowlists persisted diagnostics", () => {
     const diagnostic = diagnoseOpenCodeNativeFailure({
       name: "UnknownError",

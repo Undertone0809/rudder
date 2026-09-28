@@ -27,6 +27,10 @@ function safeMessage(value: unknown): string | null {
   if (!message || message.length > 300 || !/^[A-Za-z0-9 .,:;!?()/_+-]+$/u.test(message)) return null;
   if (/(?:https?:\/\/|\b(?:api[ _-]*key|token|password|secret|authorization|cookie|bearer|basic|credential)\b|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{4,}\b|@)/iu.test(message)) return null;
   if (/[A-Za-z0-9+/_=-]{28,}/u.test(message)) return null;
+  // Short opaque values can still be credentials. Reject hexadecimal and
+  // mixed alphanumeric tokens rather than retaining them as error prose.
+  if (/\b[a-f0-9]{12,}\b/iu.test(message)
+    || /\b(?=[A-Za-z0-9]{12,}\b)(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]+\b/u.test(message)) return null;
   return message;
 }
 
