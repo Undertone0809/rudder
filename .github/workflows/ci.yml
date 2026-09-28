@@ -613,6 +613,16 @@ jobs:
         with:
           arch: x64_arm64
 
+      - name: Bind Windows ARM64 MSVC linker
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $linker = Join-Path $env:VCToolsInstallDir 'bin/Hostx64/arm64/link.exe'
+          if (-not (Test-Path -LiteralPath $linker -PathType Leaf)) {
+            throw "Windows ARM64 MSVC linker is unavailable: $linker"
+          }
+          "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build server foundation artifact
         env:
           SERVER_FOUNDATION_TARGET: ${{ matrix.target }}
