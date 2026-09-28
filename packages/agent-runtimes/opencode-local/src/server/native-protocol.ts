@@ -2298,7 +2298,6 @@ export async function executeOpenCodeNativeChat(input: {
   let turnActivityObserved = false;
   let idleObserved = false;
   let terminalResponseObserved = false;
-  let providerTerminalObserved = false;
   let eventStreamConnected = false;
   let providerAbortSent = false;
   let providerAbortTask: Promise<void> | null = null;
@@ -2549,7 +2548,6 @@ export async function executeOpenCodeNativeChat(input: {
         if (!turnActivityObserved) return;
         if (!idleObserved) {
           idleObserved = true;
-          providerTerminalObserved = true;
           if (idleTimeout) clearTimeout(idleTimeout);
           resolveIdle();
         }
@@ -2791,7 +2789,7 @@ export async function executeOpenCodeNativeChat(input: {
         ? { observedAssistantMessageIds: [...observedAssistantMessageIds] }
         : {}),
       ...(providerAbortAcknowledged !== null ? { providerAbortAcknowledged } : {}),
-      terminalObserved: providerTerminalObserved || terminalResponseObserved,
+      terminalObserved: terminalResponseObserved,
     };
     const abortDiagnostic = providerAbortAcknowledged === false ? " Provider abort request was not acknowledged." : "";
     if (error instanceof OpenCodeNativeCapabilityError) {

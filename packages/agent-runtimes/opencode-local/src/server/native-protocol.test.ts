@@ -877,6 +877,32 @@ describe("OpenCode native protocol contract", () => {
     });
   });
 
+  it("does not treat stale same-session activity followed by idle as this input's terminal", async () => {
+    const directory = await makeFixtureDirectory("rudder-opencode-stale-idle-terminal-");
+    const command = await makeOpenCodeFixture(directory, {
+      messageResponse: { status: 200, body: { info: { role: "user" }, parts: [{ type: "text", text: "not an assistant" }] } },
+      streamEvents: [
+        { type: "message.part.delta", properties: { sessionID: "oc-session-1", messageID: "$FOREIGN_ASSISTANT", delta: "older activity" } },
+        { type: "session.idle", properties: { sessionID: "oc-session-1" } },
+      ],
+    });
+    const result = await executeOpenCodeAdapter({
+      runId: "run-stale-idle-terminal",
+      agent: { id: "agent-1", orgId: "organization-1", name: "OpenCode Agent", agentRuntimeType: "opencode_local", agentRuntimeConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command, cwd: directory, model: "provider/model", promptTemplate: "{{context.chatPrompt}}", env: { HOME: directory } },
+      context: { chatMode: true, chatPrompt: "current input" },
+      authToken: "fixture-token",
+      onLog: async () => {},
+    });
+    expect(result).toMatchObject({
+      exitCode: 1,
+      submissionPhase: "accepted",
+      errorMessage: expect.stringContaining("without an assistant message for the accepted input"),
+      nativeWriterQuiescence: { status: "unconfirmed" },
+    });
+  });
+
   it("returns an indeterminate submission with its bound session when the prompt response is unconfirmed", async () => {
     const directory = await makeFixtureDirectory("rudder-opencode-adapter-prompt-unconfirmed-");
     const command = await makeOpenCodeFixture(directory, { rejectPrompt: true });
