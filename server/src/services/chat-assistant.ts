@@ -543,7 +543,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       resultSentinel,
       visibleText: () => sentinelStream.visibleText,
       isFinalized: isRunFinalized,
-      finalize: async (state) => {
+      finalize: async (state: Parameters<typeof chatRunsSvc.finalizeRun>[1]) => {
         if (!providerDispatched) {
           const recorded = await guardActiveRun(() => chatRunsSvc.recordNativeExecutionResult(runId, {
             exitCode: null,
