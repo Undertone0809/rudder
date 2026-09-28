@@ -1,4 +1,9 @@
-import { buildModelAttemptSpecs, isAgentRuntimeNetworkSuspension, type TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import {
+  buildModelAttemptSpecs,
+  isAgentRuntimeNetworkSuspension,
+  type AgentRuntimeExecutionResult,
+  type TranscriptEntry,
+} from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import { runRuntimeSpans, runtimeBindings } from "@rudderhq/db";
 import {
@@ -124,13 +129,23 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const runtimeAgentId = runtimeSource.descriptor.runtimeAgentId;
     const resultSentinel = `${CHAT_RESULT_SENTINEL_PREFIX}${randomUUID()}__`;
     const workspace = asRecord(sceneContext.rudderWorkspace);
-    const config = await prepareRuntimeProviderProfile({
-      runtimeType: runtimeAgentType,
-      orgId: input.conversation.orgId,
-      agentId: runtimeAgentId,
-      config: rawConfig,
-      workspace,
-    });
+    let config = rawConfig;
+    let runtimeProfilePreparationFailed = false;
+    let runtimeProfilePreparationError: unknown;
+    try {
+      config = await prepareRuntimeProviderProfile({
+        runtimeType: runtimeAgentType,
+        orgId: input.conversation.orgId,
+        agentId: runtimeAgentId,
+        config: rawConfig,
+        workspace,
+      });
+    } catch (error) {
+      // Admission can still record this pre-provider failure against a real
+      // Chat Attempt; never let the profile probe escape before Run creation.
+      runtimeProfilePreparationFailed = true;
+      runtimeProfilePreparationError = error;
+    }
     const existingRuntimeBinding = await db
       .select()
       .from(runtimeBindings)
@@ -221,15 +236,22 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       hostId,
       profileId,
       workspaceBindingId,
-      instructionsRevision: revisionForRuntimeConfig(config, ["apiKey", "authToken", "token", "password"]),
+      // A failed profile probe must not reinterpret a good active Binding
+      // using the unprepared config and supersede its native session.
+      instructionsRevision: runtimeProfilePreparationFailed && existingRuntimeBinding
+        ? existingRuntimeBinding.instructionsRevision
+        : revisionForRuntimeConfig(config, ["apiKey", "authToken", "token", "password"]),
       capabilityRevision,
       parentBindingId: forkSource?.sourceBinding?.id ?? parentRuntimeBinding?.id ?? null,
     };
-    let claudeDeferredFork = sideChatFirstSend && !input.resumeRunId && forkSource && runtimeAgentType === "claude_local"
+    let claudeDeferredFork = !runtimeProfilePreparationFailed
+      && sideChatFirstSend && !input.resumeRunId && forkSource && runtimeAgentType === "claude_local"
       ? await admitClaudeDeferredFork({
         db, source: forkSource, sourceBindingMatchesTarget, bindingInput, providerBinding, config, conversationId: input.conversation.id,
       }) : null;
-    const sideChatRuntimeAdmission: SideChatRuntimeAdmission | null = claudeDeferredFork?.admission ?? (sideChatFirstSend && forkSource
+    const sideChatRuntimeAdmission: SideChatRuntimeAdmission | null = runtimeProfilePreparationFailed
+      ? null
+      : claudeDeferredFork?.admission ?? (sideChatFirstSend && forkSource
       ? await admitSideChatRuntimeFork({
         driver: nativeForkDriver,
         source: forkSource,
@@ -542,6 +564,67 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     let cleanupPreparedAttachments: (() => Promise<void>) | null = null;
     let durableTranscriptImages = new Map<string, { contentPath: string; displayName: string }>();
     try {
+      if (runtimeProfilePreparationFailed) {
+        const errorMessage = redactChatInlineVisualDiagnosticText(
+          runtimeProfilePreparationError instanceof Error
+            ? runtimeProfilePreparationError.message
+            : String(runtimeProfilePreparationError),
+          "Chat runtime profile preparation failed",
+        );
+        const failureResult: AgentRuntimeExecutionResult = {
+          summary: "",
+          resultJson: null,
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          errorMessage,
+          errorCode: "chat_runtime_boot_failed",
+          submissionPhase: "pre_submission",
+          nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+        };
+        const recordedSpan = await guardActiveRun(() => chatRunsSvc.recordNativeExecutionResult(runId, failureResult, {
+          orgId: chatRun.orgId,
+          spanId: chatRun.runtimeSpanId ?? null,
+          attemptId: chatRun.runtimeAttemptRef?.id,
+          ownerToken: chatRun.runtimeSpanOwnerToken,
+          attemptEpoch: chatRun.runtimeSpanAttemptEpoch,
+          error: true,
+        }));
+        if (!recordedSpan) throw new Error("Chat runtime profile failure could not be recorded against its admitted Attempt");
+        await guardActiveRun(() => chatRunsSvc.finishRuntimeAttempt(chatRun, {
+          status: "failed",
+          submissionPhase: "pre_submission",
+          providerThreadId: null,
+          providerTurnId: null,
+          sessionDisplayId: null,
+          sessionParamsJson: null,
+          errorCode: "chat_runtime_boot_failed",
+          error: errorMessage,
+        }));
+        await finalizeChatRun({
+          status: "failed",
+          error: errorMessage,
+          errorCode: "chat_runtime_boot_failed",
+          resultJson: {
+            outcome: "failed",
+            recoverable: false,
+            fallbackEnvelope: true,
+            retryable: false,
+            failurePhase: "runtime_boot",
+            action: "repair_runtime",
+            submissionPhase: "pre_submission",
+            nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+            partialBody: "",
+          },
+        });
+        throw new ChatAssistantStreamError(errorMessage, "", [], {
+          errorCode: "chat_runtime_boot_failed",
+          partialBodyUserVisible: false,
+          retryable: false,
+          failurePhase: "runtime_boot",
+          action: "repair_runtime",
+        });
+      }
       if (input.resumeRunId && runtimeAgentType === "claude_local" && input.conversation.conversationKind === "side_chat") {
         claudeDeferredFork = await recoverClaudeDeferredForkRun({
           db, orgId: input.conversation.orgId, conversationId: input.conversation.id,

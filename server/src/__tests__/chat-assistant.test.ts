@@ -7,8 +7,12 @@ import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NATIVE_CHAT_RUNTIME_TYPES } from "../services/runtime-kernel/runtime-driver.js";
 
+const mockPrepareRuntimeProviderProfile = vi.hoisted(() =>
+  vi.fn(async ({ config }: { config: Record<string, unknown> }) => config),
+);
+
 vi.mock("../agent-runtimes/prepare-runtime-provider-profile.js", () => ({
-  prepareRuntimeProviderProfile: async ({ config }: { config: Record<string, unknown> }) => config,
+  prepareRuntimeProviderProfile: mockPrepareRuntimeProviderProfile,
 }));
 
 const mockAdapter = vi.hoisted(() => ({
@@ -4395,6 +4399,145 @@ describe("chatAssistantService operator profile prompt injection", () => {
           action: "repair_runtime",
         }),
       }),
+    );
+  });
+
+  it("records provider profile preparation failures as linked pre-submission boot attempts", async () => {
+    const profileError = new Error(
+      "Command failed: /tmp/codex-error --version\nError: Missing optional dependency @openai/codex-darwin-arm64",
+    );
+    mockPrepareRuntimeProviderProfile.mockRejectedValueOnce(profileError);
+    const svc = chatAssistantService({} as any);
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      message: profileError.message,
+      errorCode: "chat_runtime_boot_failed",
+      retryable: false,
+      failurePhase: "runtime_boot",
+      action: "repair_runtime",
+    });
+
+    expect(mockChatAgentRuns.createRun).toHaveBeenCalledTimes(1);
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.recordNativeExecutionResult).toHaveBeenCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        errorCode: "chat_runtime_boot_failed",
+        errorMessage: profileError.message,
+        submissionPhase: "pre_submission",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      }),
+      expect.objectContaining({
+        orgId: "organization-1",
+        spanId: "span-1",
+        attemptId: "attempt-1",
+        ownerToken: "owner-1",
+        attemptEpoch: 1,
+        error: true,
+      }),
+    );
+    expect(mockChatAgentRuns.finishRuntimeAttempt).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "chat_runtime_boot_failed",
+        submissionPhase: "pre_submission",
+        providerThreadId: null,
+        providerTurnId: null,
+      }),
+    );
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "chat_runtime_boot_failed",
+        resultJson: expect.objectContaining({
+          retryable: false,
+          failurePhase: "runtime_boot",
+          action: "repair_runtime",
+          submissionPhase: "pre_submission",
+          nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+        }),
+      }),
+    );
+  });
+
+  it("preserves an existing native binding and session when provider profile preparation fails", async () => {
+    const [{ currentNativeSession, ensureRuntimeBinding }] = await Promise.all([
+      import("../services/runtime-kernel/native-session.js"),
+    ]);
+    const existingBinding = {
+      ...mockRuntimeBinding,
+      principalScopeRef: "",
+      workspaceBindingId: process.cwd(),
+      instructionsRevision: "prepared-profile-revision",
+      bindingEpoch: 4,
+      currentSegmentId: "existing-segment",
+    };
+    const existingSegment = {
+      ...mockRuntimeSegment,
+      id: "existing-segment",
+      bindingId: existingBinding.id,
+      nativeSessionId: "existing-codex-thread",
+      rootSessionId: "existing-codex-thread",
+      state: "active" as const,
+      providerStateJson: { threadId: "existing-codex-thread" },
+    };
+    const existingSession = {
+      binding: existingBinding,
+      segment: existingSegment,
+      sessionId: "existing-codex-thread",
+      sessionParams: { threadId: "existing-codex-thread" },
+      sessionDisplayId: "existing-codex-thread",
+    };
+    chatTestSelection.limit.mockResolvedValueOnce([existingBinding] as any);
+    vi.mocked(ensureRuntimeBinding).mockResolvedValueOnce(existingBinding as any);
+    vi.mocked(currentNativeSession).mockResolvedValueOnce(existingSession as any);
+    const profileError = new Error(
+      "Command failed: /tmp/codex-error --version\nError: Missing optional dependency @openai/codex-darwin-arm64",
+    );
+    mockPrepareRuntimeProviderProfile.mockRejectedValueOnce(profileError);
+
+    await expect(chatAssistantService({} as any).streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      errorCode: "chat_runtime_boot_failed",
+      retryable: false,
+    });
+
+    expect(ensureRuntimeBinding).toHaveBeenCalledTimes(1);
+    expect(ensureRuntimeBinding.mock.calls[0]?.[1]).toMatchObject({
+      orgId: existingBinding.orgId,
+      principalScopeRef: existingBinding.principalScopeRef,
+      agentId: existingBinding.agentId,
+      runtimeType: existingBinding.runtimeType,
+      hostId: existingBinding.hostId,
+      profileId: existingBinding.profileId,
+      workspaceBindingId: existingBinding.workspaceBindingId,
+      instructionsRevision: existingBinding.instructionsRevision,
+      capabilityRevision: existingBinding.capabilityRevision,
+    });
+    expect(mockChatAgentRuns.createRun).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeBinding: existingBinding,
+      runtimeSegment: existingSegment,
+      nativeSessionId: "existing-codex-thread",
+      nativeSessionParams: { threadId: "existing-codex-thread" },
+    }));
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+    expect(mockChatAgentRuns.recordNativeExecutionResult).toHaveBeenCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        errorCode: "chat_runtime_boot_failed",
+        submissionPhase: "pre_submission",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      }),
+      expect.objectContaining({ spanId: "span-1", attemptId: "attempt-1", error: true }),
     );
   });
 
