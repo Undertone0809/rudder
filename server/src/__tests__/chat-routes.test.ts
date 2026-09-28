@@ -5128,8 +5128,15 @@ describe("chat routes", { retry: 2 }, () => {
       controlOwnerToken: "lease-1",
     });
     mockChatService.acknowledgeServerQueuedMessageDelivery.mockResolvedValue(queuedItem);
+    let persistedAttemptEpoch = 0;
+    mockChatService.beginGenerationControlAttempt.mockImplementation(async ({ attemptEpoch }) => {
+      persistedAttemptEpoch = attemptEpoch;
+    });
     let transcriptAdmissionCount = 0;
     mockChatService.generationProtocol.appendVisibleEventAndProject.mockImplementation(async (input) => {
+      if (input.expectedAttemptEpoch !== persistedAttemptEpoch) {
+        throw conflict("Chat generation runtime attempt changed");
+      }
       if (input.eventKind === "transcript") {
         transcriptAdmissionCount += 1;
         if (transcriptAdmissionCount === 2) {
@@ -5150,6 +5157,7 @@ describe("chat routes", { retry: 2 }, () => {
       };
     });
     mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onTranscriptEntry?.(transcriptEntries[0]);
       const attempt = await input.controlCoordinator?.beginAttempt({
         attemptIndex: 0,
         runtimeType: "codex_local",
@@ -5163,7 +5171,6 @@ describe("chat routes", { retry: 2 }, () => {
         interrupt: async () => ({ disposition: "interrupted" }),
         dispose: async () => undefined,
       });
-      await input.onTranscriptEntry?.(transcriptEntries[0]);
       await input.onTranscriptEntry?.(transcriptEntries[1]);
       await attempt?.complete();
       return {
@@ -5190,6 +5197,7 @@ describe("chat routes", { retry: 2 }, () => {
       const transcriptCalls = visibleProjectionCalls.filter(([input]) => input.eventKind === "transcript");
       expect(transcriptCalls).toHaveLength(2);
       expect(transcriptCalls.map(([input]) => input.payload.entry)).toEqual(transcriptEntries);
+      expect(transcriptCalls.map(([input]) => input.expectedAttemptEpoch)).toEqual([0, 1]);
       expect(transcriptCalls.every(([input]) => !Object.hasOwn(input, "transcript"))).toBe(true);
       expect(transcriptCalls.every(([input]) => input.replyingAgentId === "agent-1")).toBe(true);
       expect(visibleProjectionCalls.find(([input]) => input.eventKind === "runtime_output")?.[0])

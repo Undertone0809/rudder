@@ -1417,10 +1417,7 @@ export function chatRoutes(
     let nativeTranscriptObserved = false;
     let partialBody = "";
     let assistantProjectionMessageId: string | null = null;
-    let activeAttemptEpoch = Math.max(
-      1,
-      getActiveChatGeneration(conversation.id)?.attemptEpoch ?? 1,
-    );
+    let activeAttemptEpoch = getActiveChatGeneration(conversation.id)?.attemptEpoch ?? 0;
     try {
       const userMessage = await svc.getMessage(conversation.id, claim.userMessageId) as ChatMessage | null;
       if (!userMessage) throw new Error("Queued chat continuation user message is missing");
