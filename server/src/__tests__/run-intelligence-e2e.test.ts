@@ -784,6 +784,7 @@ describe("run intelligence real route workflow", () => {
             toolName: "exec_command",
             isError: true,
             content: marker + "x".repeat(8_192 - marker.length),
+            ...(index === 0 ? { errors: Array.from({ length: 16 }, () => "😀".repeat(8_192)) } : {}),
           },
         }),
         createdAt: new Date(startMs + (index + 1) * 1_000),
@@ -820,6 +821,12 @@ describe("run intelligence real route workflow", () => {
             source: "legacy",
             revision: expect.any(String),
           });
+          const wrongOrgCursor = Buffer.from(JSON.stringify({ ...encoded, orgId: randomUUID() }), "utf8")
+            .toString("base64url");
+          const wrongOrg = await request(app)
+            .get(`/api/run-intelligence/runs/${runId}/errors`)
+            .query({ cursor: wrongOrgCursor });
+          expect(wrongOrg.status).toBe(400);
           const wrongRunCursor = Buffer.from(JSON.stringify({ ...encoded, runId: randomUUID() }), "utf8")
             .toString("base64url");
           const wrongRun = await request(app)
@@ -834,7 +841,7 @@ describe("run intelligence real route workflow", () => {
     expect(pageCount).toBeGreaterThan(1);
     expect(seen).toHaveLength(itemCount);
     expect(new Set(seen).size).toBe(itemCount);
-    expect(seen[0]).toBe("step-1");
+    expect(seen.slice(0, 2)).toEqual(["step-1", "step-2"]);
     expect(seen.at(-1)).toBe(`step-${itemCount}`);
   });
 

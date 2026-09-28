@@ -2,6 +2,7 @@ import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { TranscriptItem, TranscriptPage } from "./runtime-kernel/transcript-reader.js";
 
 export const MAX_DIAGNOSTIC_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
+export const MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES = 1024 * 1024;
 
 export interface RunDiagnosticProjection {
   completeness: "complete" | "partial" | "terminal_only" | "unknown";

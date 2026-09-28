@@ -52,6 +52,7 @@ import {
 import { getRunLogStore } from "./run-log-store.js";
 import {
   MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
+  MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
   readBoundedRunDiagnosticTranscript,
   type RunDiagnosticEntryPosition,
   type RunDiagnosticProjection,
@@ -1017,9 +1018,9 @@ async function createHistoricalRunTranscriptReader(
   const legacyReader = createLegacyTranscriptReader({
     logStore,
     ...(options.diagnosticProjection ? {
-      maxReadBytes: 256 * 1024,
+      maxReadBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
       maxTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
-      maxItemBytes: 1024 * 1024,
+      maxItemBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
     } : {
       ...(options.maxLegacyReadBytes === undefined ? {} : { maxReadBytes: options.maxLegacyReadBytes }),
       ...(options.maxLegacyItemBytes === undefined ? {} : { maxItemBytes: options.maxLegacyItemBytes }),
@@ -1041,9 +1042,9 @@ async function createHistoricalRunTranscriptReader(
     },
     ...(options.diagnosticProjection ? {
       diagnosticProjection: true,
-      maxLegacyReadBytes: 256 * 1024,
+      maxLegacyReadBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
       maxLegacyTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
-      maxLegacyItemBytes: 1024 * 1024,
+      maxLegacyItemBytes: MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
     } : {
       ...(options.maxLegacyReadBytes === undefined ? {} : { maxLegacyReadBytes: options.maxLegacyReadBytes }),
       ...(options.maxLegacyItemBytes === undefined ? {} : { maxLegacyItemBytes: options.maxLegacyItemBytes }),
