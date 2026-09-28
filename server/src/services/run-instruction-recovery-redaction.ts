@@ -6,6 +6,10 @@ const CREDENTIAL_ASSIGNMENT = /((?:^|[\s{\[,;?&])["']?(?:[a-z0-9]+[_-])*(?:api[_
 
 export function redactRecoveredInstructionText(value: string): string {
   return redactSensitiveText(value
+    .replace(/((?:^|[\s{\[,;?&])["']?(?:[a-z0-9]+[_-])*service[_-]?role[_-]?key["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;&}\]]+)/gimu, (_match, prefix: string, secret: string) => {
+      const quote = secret.startsWith('"') ? '"' : secret.startsWith("'") ? "'" : "";
+      return `${prefix}${quote}[REDACTED]${quote}`;
+    })
     .replace(/^(\s*(?:set-cookie|cookie)\s*:\s*)[^\r\n]+/gimu, "$1[REDACTED]")
     .replace(CREDENTIAL_ASSIGNMENT, (_match, prefix: string, secret: string) => {
       const quote = secret.startsWith('"') ? '"' : secret.startsWith("'") ? "'" : "";
