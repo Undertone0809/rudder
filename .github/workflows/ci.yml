@@ -163,7 +163,7 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Install dependencies without Electron binary
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --lockfile=false
 
       - name: Run affected workspace checks
         run: |
@@ -260,7 +260,7 @@ jobs:
       - name: Install dependencies without Electron binary
         run: |
           for attempt in 1 2 3; do
-            if pnpm install --frozen-lockfile; then
+            if pnpm install --no-frozen-lockfile --lockfile=false; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
@@ -337,7 +337,7 @@ jobs:
         if: matrix.test == 'full'
         run: |
           for attempt in 1 2 3; do
-            if pnpm install --frozen-lockfile; then
+            if pnpm install --no-frozen-lockfile --lockfile=false; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
@@ -366,7 +366,7 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
         run: |
           for attempt in 1 2 3; do
-            if pnpm install --frozen-lockfile; then
+            if pnpm install --no-frozen-lockfile --lockfile=false; then
               exit 0
             fi
             if [ "$attempt" -eq 3 ]; then
@@ -454,7 +454,7 @@ jobs:
           corepack prepare pnpm@9.15.4 --activate
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --lockfile=false
 
       - name: Verify migration manifest differential parity
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -599,7 +599,7 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-arm64-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --lockfile=false
 
       - name: Cache Playwright Chromium
         uses: actions/cache@v5

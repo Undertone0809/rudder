@@ -28,6 +28,15 @@ test("plans affected and merge-boundary qualification from one Test workflow", (
   assert.doesNotMatch(workflow, /test "\$DISPATCH_REF_SHA" = "\$SOURCE_SHA"/);
 });
 
+test("validates manifest changes without requiring PR-owned lockfile edits", () => {
+  const installs = workflow.split("\n").filter((line) => /(?:run:|if)\s+pnpm install/.test(line));
+  assert.ok(installs.length > 0);
+  for (const install of installs) {
+    assert.match(install, /--no-frozen-lockfile --lockfile=false/);
+    assert.doesNotMatch(install, /(?:^|\s)--frozen-lockfile(?:\s|$)/);
+  }
+});
+
 test("keeps the full graph behind planner outputs and affected checks separate", () => {
   const affected = workflowJob("affected");
   const architecture = workflowJob("architecture");
