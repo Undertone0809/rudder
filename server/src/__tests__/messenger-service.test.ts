@@ -74,6 +74,7 @@ import {
 } from "../services/messenger-saved-views.ts";
 import { messengerService } from "../services/messenger.ts";
 import * as productAnalyticsService from "../services/product-analytics.ts";
+import { sideChatService } from "../services/side-chats.ts";
 import { createTranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
 
 type EmbeddedPostgresInstance = {
@@ -7925,7 +7926,6 @@ describe("messengerService and issue follows", () => {
   it("accepts the exact completed parent anchor in a Side Chat and binds its files to the child user message", async () => {
     const orgId = randomUUID();
     const parentConversationId = randomUUID();
-    const sideConversationId = randomUUID();
     const annotationId = randomUUID();
     const sourceBody = "Parent response with selected guidance.";
     const selectedText = "selected guidance";
@@ -7950,20 +7950,14 @@ describe("messengerService and issue follows", () => {
       parentConversationId,
       sourceBody,
     );
-    await db.insert(chatConversations).values({
-      id: sideConversationId,
+    const sideConversation = await sideChatService(db).create({
       orgId,
-      title: "Side annotation chat",
-      conversationKind: "side_chat",
-      messengerVisible: false,
-      sideChatState: "active",
-      sideChatExpiresAt: new Date(Date.now() + 60_000),
-      forkedFromConversationId: parentConversationId,
-      forkedFromMessageId: source.id,
-      issueCreationMode: "manual_approval",
-      planMode: false,
-      createdByUserId: "board-user-side-annotation",
+      userId: "board-user-side-annotation",
+      sourceConversationId: parentConversationId,
+      sourceMessageId: source.id,
+      clientMutationId: randomUUID(),
     });
+    const sideConversationId = sideConversation.id;
     const annotation = {
       id: annotationId,
       surface: "assistant_body" as const,
@@ -8652,6 +8646,7 @@ describe("messengerService and issue follows", () => {
       completeness: "complete",
       openedAt,
       closedAt,
+      writerLeaseReleasedAt: closedAt,
       updatedAt: closedAt,
     });
     const objectStore = createTranscriptObjectStore(transcriptObjectDir);

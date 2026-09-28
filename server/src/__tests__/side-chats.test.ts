@@ -33,7 +33,7 @@ import {
   deriveOrganizationUrlKey,
   MESSENGER_FORK_GROUP_DEFAULT_ICON,
 } from "@rudderhq/shared";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -153,6 +153,14 @@ describe("sideChatService", () => {
   }, 60_000);
 
   afterEach(async () => {
+    // This suite owns its disposable DB and seeds provider rows without
+    // launching native writers; retire only those synthetic leases at teardown.
+    const cleanedAt = new Date();
+    await db.update(runRuntimeSpans).set({
+      state: "unresolved",
+      closedAt: cleanedAt,
+      writerLeaseReleasedAt: cleanedAt,
+    }).where(isNull(runRuntimeSpans.writerLeaseReleasedAt));
     await db.delete(activityLog);
     await db.delete(sideChatCloseIntents);
     await db.delete(sideChatFirstInputs);
@@ -252,9 +260,12 @@ describe("sideChatService", () => {
   async function seedProviderForkForCleanup(
     source: Awaited<ReturnType<typeof createSource>>,
     sideChat: Awaited<ReturnType<typeof createSideChat>>,
-    options: { runtimeType?: string } = {},
+    options: { runtimeType?: string; initialRunStatus?: "completed" | "running" } = {},
   ) {
     const runtimeType = options.runtimeType ?? "test_runtime";
+    const initialRunStatus = options.initialRunStatus ?? "completed";
+    const spanClosedAt = new Date();
+    const spanOpenedAt = new Date(spanClosedAt.getTime() - 1_000);
     const agentId = randomUUID();
     const forkRunId = randomUUID();
     const parentBindingId = randomUUID();
@@ -343,7 +354,7 @@ describe("sideChatService", () => {
       id: forkRunId,
       orgId: source.orgId,
       agentId,
-      status: "completed",
+      status: initialRunStatus,
       chatConversationId: sideChat.id,
       scene: "side_chat",
       targetType: "chat_conversation",
@@ -378,6 +389,13 @@ describe("sideChatService", () => {
       ownerToken: "test-run-owner",
       ordinal: 0,
       selectorJson: { kind: "opencode_message", sessionId: nativeSessionId },
+      state: initialRunStatus === "completed" ? "sealed" : "open",
+      completeness: initialRunStatus === "completed" ? "complete" : "partial",
+      openedAt: spanOpenedAt,
+      updatedAt: initialRunStatus === "completed" ? spanClosedAt : spanOpenedAt,
+      ...(initialRunStatus === "completed"
+        ? { closedAt: spanClosedAt, writerLeaseReleasedAt: spanClosedAt }
+        : {}),
     });
     return { agentId, bindingId, forkRunId, nativeSessionId, parentSessionId, runtimeType, segmentId: segment!.id };
   }
@@ -1443,22 +1461,22 @@ describe("sideChatService", () => {
     };
     const claim = await service.claimFirstInput(firstRequest);
     if (claim.kind !== "claimed") throw new Error("Expected initial Side Chat first-input claim");
-    await chats.addUserChatMessage(sideChat.id, source.orgId, "Same message content", null, {
+    const acceptedMessage = await chats.addUserChatMessage(sideChat.id, source.orgId, "Same message content", null, {
       clientMutationId: firstRequest.clientMutationId,
       clientMutationFingerprint: firstRequest.requestFingerprint,
       sideChatFirstInputClaimToken: claim.claimToken,
       sideChatFirstInputFingerprint: firstRequest.requestFingerprint,
     });
-    await expect(service.claimFirstInput({
-      ...firstRequest,
-      clientMutationId: "second-send-before-generation",
-      requestFingerprint: "different-follow-up-content",
-    })).resolves.toEqual({ kind: "not_first" });
-    const [generation] = await db.insert(chatGenerations).values({
+    const { generation } = await chats.ensureSideChatFirstInputGeneration({
       orgId: source.orgId,
       conversationId: sideChat.id,
-      status: "running",
-    }).returning();
+      userMessageId: acceptedMessage.id,
+    });
+    await expect(service.claimFirstInput({
+      ...firstRequest,
+      clientMutationId: "second-send-before-first-reply",
+      requestFingerprint: "different-follow-up-content",
+    })).resolves.toEqual({ kind: "not_first" });
 
     await expect(service.claimFirstInput({
       ...firstRequest,
@@ -1698,7 +1716,7 @@ describe("sideChatService", () => {
   it("waits for the child Run terminal and writes provider cleanup only after destruction", async () => {
     const source = await createSource();
     const sideChat = await createSideChat(source);
-    const fork = await seedProviderForkForCleanup(source, sideChat);
+    const fork = await seedProviderForkForCleanup(source, sideChat, { initialRunStatus: "running" });
     const [generation] = await db.insert(chatGenerations).values({
       orgId: source.orgId, conversationId: sideChat.id, status: "running",
     }).returning();
@@ -1737,6 +1755,14 @@ describe("sideChatService", () => {
 
     await db.update(heartbeatRuns).set({ status: "completed", finishedAt: new Date() })
       .where(eq(heartbeatRuns.id, fork.forkRunId));
+    const runClosedAt = new Date();
+    await db.update(runRuntimeSpans).set({
+      state: "sealed",
+      completeness: "complete",
+      closedAt: runClosedAt,
+      writerLeaseReleasedAt: runClosedAt,
+      updatedAt: runClosedAt,
+    }).where(eq(runRuntimeSpans.runId, fork.forkRunId));
     await db.update(sideChatCloseIntents).set({ nextAttemptAt: new Date(0) })
       .where(eq(sideChatCloseIntents.id, intent.id));
     expect(await close.processIntent(intent.id)).toBe("pending");
@@ -2180,6 +2206,7 @@ describe("sideChatService", () => {
       .where(eq(runtimeBindings.id, seeded.bindingId));
 
     const rotatedRunId = randomUUID();
+    const rotatedSpanClosedAt = new Date();
     await db.insert(heartbeatRuns).values({
       id: rotatedRunId,
       orgId: source.orgId,
@@ -2206,6 +2233,12 @@ describe("sideChatService", () => {
       ownerToken: "rotated-test-run-owner",
       ordinal: 0,
       selectorJson: { kind: "opencode_message", sessionId: rotatedSessionId },
+      state: "sealed",
+      completeness: "complete",
+      openedAt: new Date(rotatedSpanClosedAt.getTime() - 1_000),
+      closedAt: rotatedSpanClosedAt,
+      writerLeaseReleasedAt: rotatedSpanClosedAt,
+      updatedAt: rotatedSpanClosedAt,
     });
 
     const aliasRefs = ["side-chat-history-alias", "side-chat-current-alias", "side-chat-conversation-alias"];
