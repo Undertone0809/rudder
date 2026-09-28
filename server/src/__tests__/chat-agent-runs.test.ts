@@ -510,7 +510,7 @@ describe("chatAgentRunService", () => {
     } }],
     ["pi_local", { resultJson: { leafId: "pi-leaf" } }],
     ["cursor", { resultJson: { nativeRangeRef: "cursor-range" } }],
-  ] as const)("proves and cleans a %s Chat Run without a native-source precondition", async (runtimeType, providerResult) => {
+  ] as const)("applies source-aware retention to a %s Chat Run without a native-source precondition", async (runtimeType, providerResult) => {
     const readSpans: string[] = [];
     const proofSvc = chatAgentRunService(db, {
       transcriptObjectStore: objectStore,
@@ -586,6 +586,21 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, run.id),
       eq(heartbeatRunEvents.eventType, "transcript.entry"),
     ));
+    if (runtimeType === "cursor") {
+      // Cursor's captured object is the durable history source. A hypothetical
+      // native reader must not justify deleting the only complete transcript.
+      expect(readSpans).toEqual([]);
+      expect(finalized?.contextSnapshot).toMatchObject({
+        nativeTranscriptRetention: { status: "incomplete", reason: "native_range_read_incomplete" },
+      });
+      expect(cleanedSpan?.supplementalObjectRef).toBe(supplementSpan!.supplementalObjectRef);
+      expect((await objectStore.readRange({
+        objectRef: cleanedSpan!.supplementalObjectRef!, orgId: run.orgId,
+        runId: run.id, spanId: run.runtimeSpanId!, ownerToken: run.runtimeSpanOwnerToken!,
+      })).entries.map((item) => item.text)).toContain(entry.text);
+      expect(transcriptEvents).toHaveLength(0);
+      return;
+    }
     expect(new Set(readSpans)).toEqual(new Set([`${run.id}:${run.runtimeSpanId}`]));
     expect(finalized?.contextSnapshot).toMatchObject({
       transcriptSource: "legacy",
@@ -2547,11 +2562,21 @@ describe("chatAgentRunService", () => {
       resumeSource: "fresh",
     });
     await recoveredSvc.reconcileAcceptance(recoveredRun, {
-      state: "accepted",
-      providerTurnId: "first-attempt-turn",
+      state: "rejected",
+      reason: "provider confirmed that the first submission was not accepted",
     });
     await recoveredSvc.finishRuntimeAttempt(recoveredRun, {
-      status: "succeeded",
+      status: "failed",
+    });
+    await recoveredSvc.recordNativeExecutionResult(recoveredRun.id, {
+      exitCode: 1, signal: null, timedOut: false,
+      nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+    }, {
+      orgId: recoveredRun.orgId,
+      spanId: recoveredRun.runtimeSpanId,
+      ownerToken: recoveredRun.runtimeSpanOwnerToken!,
+      attemptEpoch: recoveredRun.runtimeSpanAttemptEpoch,
+      error: true,
     });
     const staleAttemptRun = {
       ...recoveredRun,
@@ -2615,6 +2640,21 @@ describe("chatAgentRunService", () => {
         retry: "allowed",
         reason: "provider call was never made",
       },
+    });
+    // Rejection permits retry only after the invocation writer has stopped.
+    await expect(svc.beginRuntimeAttempt(run, {
+      attemptIndex: 1, fallbackIndex: 1, runtimeType: "codex_local",
+      model: "fallback-model", isFallback: true, resumeSource: "pristine_replay",
+    })).rejects.toThrow("prior native writer is confirmed quiescent");
+    await svc.recordNativeExecutionResult(run.id, {
+      exitCode: 1, signal: null, timedOut: false,
+      nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken!,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+      error: true,
     });
     await expect(svc.beginRuntimeAttempt(run, {
       attemptIndex: 1,

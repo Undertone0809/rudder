@@ -494,6 +494,7 @@ describe("chatWorkManifestService", () => {
       completeness: "complete",
       openedAt,
       closedAt,
+      writerLeaseReleasedAt: closedAt,
       updatedAt: closedAt,
     });
     const objectStore = createTranscriptObjectStore(transcriptObjectDir);
