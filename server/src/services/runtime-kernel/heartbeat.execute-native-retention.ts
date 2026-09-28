@@ -1,7 +1,7 @@
 import type { AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import type { Db } from "@rudderhq/db";
 import type { AgentRuntimeInvocationMeta } from "../../agent-runtimes/index.js";
 import { logger } from "../../middleware/logger.js";
-import type { Db } from "@rudderhq/db";
 import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
 import type { RunLogStore } from "../run-log-store.js";
 import { retainNativeHeartbeatResultJson } from "./heartbeat-transcript-retention.js";
@@ -13,8 +13,8 @@ import {
   proveSealedNativeRunTranscript,
   type NativeTranscriptRunProof,
 } from "./native-transcript-retention.js";
-import { markLegacyTranscriptSource } from "./transcript-source.js";
 import { getTranscriptObjectStore } from "./transcript-object-store.js";
+import { markLegacyTranscriptSource } from "./transcript-source.js";
 
 export type NativeTranscriptRetentionOwner = {
   spanId: string;

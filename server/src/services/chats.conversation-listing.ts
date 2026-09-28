@@ -11,6 +11,11 @@ import {
 import { shortRefFor, type ChatRuntimeContinuity } from "@rudderhq/shared";
 import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import {
+  listActiveChatGenerationIds,
+  listPendingChatProposalConversationIds,
+} from "./chats.attention-order.js";
+import { conversationMutability } from "./chats.fork-helpers.js";
+import {
   buildSearchSnippet,
   escapeLikePattern,
   incomingMessagePreviewSql,
@@ -20,11 +25,6 @@ import {
   truncatePreview,
   visibleIncomingMessageSql,
 } from "./chats.helpers.js";
-import { conversationMutability } from "./chats.fork-helpers.js";
-import {
-  listActiveChatGenerationIds,
-  listPendingChatProposalConversationIds,
-} from "./chats.attention-order.js";
 import type { ConversationSourceMetadata, ConversationSummaryCursor } from "./chats.types.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;

@@ -2,6 +2,11 @@ import { useMemo } from "react";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { renderTranscriptBlock } from "./RunTranscriptView.blocks";
 import {
+  TranscriptChatTurn,
+  TranscriptTextContext,
+  filterChatAssistantTranscriptEntries,
+} from "./RunTranscriptView.chat";
+import {
   TranscriptAgentInspection,
   TranscriptAnnotationSourceContext,
   TranscriptDensity,
@@ -9,15 +14,9 @@ import {
   TranscriptRunAnnotationContext,
   TranscriptSentAnnotationContext,
   TranscriptSkillTarget,
-  isInternalTranscriptLifecycleEntry,
-  transcriptBlockStableKey,
+  transcriptBlockStableKey
 } from "./RunTranscriptView.common";
 import { normalizeChatTranscriptTurns } from "./RunTranscriptView.normalize";
-import {
-  TranscriptChatTurn,
-  TranscriptTextContext,
-  filterChatAssistantTranscriptEntries,
-} from "./RunTranscriptView.chat";
 
 const CHAT_READING_COLUMN_CLASS = "w-full min-w-0 max-w-3xl px-1";
 const CHAT_FULL_COLUMN_CLASS = "w-full min-w-0";

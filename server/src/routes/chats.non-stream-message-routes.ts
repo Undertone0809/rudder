@@ -12,8 +12,8 @@ import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   chatAssistantErrorForLog,
   ChatAssistantStreamError,
-  type chatAssistantService,
   userVisiblePartialBodyFromError,
+  type chatAssistantService,
 } from "../services/chat-assistant.js";
 import { claimChatGeneration, getActiveChatGeneration } from "../services/chat-generation-locks.js";
 import type { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";

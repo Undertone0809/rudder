@@ -1,8 +1,8 @@
+import { logger } from "../../middleware/logger.js";
 import {
   ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
   type AssignmentRunGuardrailCheckpoint,
 } from "./assignment-run-guardrail.js";
-import { logger } from "../../middleware/logger.js";
 
 type AssignmentGuardrailCheckpointInput = {
   finalizedRun: { id: string };

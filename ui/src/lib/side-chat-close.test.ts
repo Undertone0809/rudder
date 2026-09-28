@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { ApiError } from "@/api/client";
 import { getTerminalSideChatCloseStatus, isKeptSideChatConflict } from "@/lib/side-chat-close";
+import { describe, expect, it } from "vitest";
 
 describe("Side Chat close conflicts", () => {
   it("recognizes only the stable kept code as a terminal 409", () => {

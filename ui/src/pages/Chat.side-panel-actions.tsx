@@ -1,5 +1,5 @@
-import { PanelRight } from "lucide-react";
 import type { SidePanelTarget } from "@/lib/side-panel-targets";
+import { PanelRight } from "lucide-react";
 import { ChatSideChatHistoryMenu } from "./Chat.side-chat-history";
 
 export function ChatSidePanelActions({

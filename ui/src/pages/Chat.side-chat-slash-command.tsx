@@ -1,6 +1,6 @@
-import { createPortal } from "react-dom";
 import { CirclePlus } from "lucide-react";
 import { useEffect, type CSSProperties, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { createPortal } from "react-dom";
 
 export function ChatSideChatSlashCommandMenu({
   visible,

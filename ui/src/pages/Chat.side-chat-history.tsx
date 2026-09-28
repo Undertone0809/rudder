@@ -6,13 +6,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { ChevronDown, LoaderCircle, MessageSquare } from "lucide-react";
-import type { ChatConversation } from "@rudderhq/shared";
+import { useOptionalSidePanel } from "@/context/SidePanelContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { sideChatIsReadOnly } from "@/lib/side-chat";
 import { sideChatTargetFromConversation, type SidePanelTarget } from "@/lib/side-panel-targets";
-import { useOptionalSidePanel } from "@/context/SidePanelContext";
+import type { ChatConversation } from "@rudderhq/shared";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { ChevronDown, LoaderCircle, MessageSquare } from "lucide-react";
 
 export function ChatSideChatHistoryMenu({
   organizationId,

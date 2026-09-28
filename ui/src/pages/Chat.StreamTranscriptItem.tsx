@@ -1,11 +1,11 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
 import type {
   TranscriptAgentDirectoryEntry,
   TranscriptAgentInspection,
   TranscriptRunAnnotationContext,
   TranscriptSkillTarget,
 } from "@/components/transcript/RunTranscriptView";
+import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
 import { ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { formatChatProcessDuration, lastTranscriptAtMs } from "@/lib/chat-process-duration";
 import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";

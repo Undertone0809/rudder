@@ -1,5 +1,5 @@
-import { Button } from "@/components/ui/button";
 import type { ChatRuntimeSensitiveInputRequest as ChatRuntimeSensitiveInputMetadata } from "@/api/chats";
+import { Button } from "@/components/ui/button";
 import { useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
 export interface ChatRuntimeSensitiveInputRequest extends ChatRuntimeSensitiveInputMetadata {

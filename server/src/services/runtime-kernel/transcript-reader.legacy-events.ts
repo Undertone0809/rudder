@@ -1,5 +1,5 @@
-import { heartbeatRunEvents } from "@rudderhq/db";
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { heartbeatRunEvents } from "@rudderhq/db";
 import { and, asc, desc, eq, gt, inArray, isNotNull, lte, or, sql } from "drizzle-orm";
 import type {
   HeartbeatRunRecord,
@@ -25,8 +25,8 @@ import { decodeLegacyCursor, encodeLegacyCursor } from "./transcript-reader.lega
 import {
   asRecord,
   isoDate,
-  normalizeItems,
   nonEmptyString,
+  normalizeItems,
   stableHash,
   stringAt,
   transcriptEntry,

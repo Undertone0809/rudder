@@ -3,7 +3,6 @@ import { check, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizz
 import { agents } from "./agents.js";
 import { chatConversations } from "./chat_conversations.js";
 import { chatGenerations } from "./chat_generations.js";
-import { chatMessages } from "./chat_messages.js";
 import { organizations } from "./organizations.js";
 
 export const sideChatFirstInputs = pgTable(

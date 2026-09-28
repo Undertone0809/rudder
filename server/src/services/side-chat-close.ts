@@ -15,13 +15,13 @@ import { randomUUID } from "node:crypto";
 import { startingChatGenerationGates } from "../routes/chats.stream-support.js";
 import type { StorageService } from "../storage/types.js";
 import { logActivity } from "./activity-log.js";
-import { queuedAnnotationAssetState } from "./chat-queued-message-materialization.js";
 import {
   cancelActiveChatGeneration,
   getActiveChatGeneration,
   hasActiveChatGeneration,
 } from "./chat-generation-locks.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
+import { queuedAnnotationAssetState } from "./chat-queued-message-materialization.js";
 import { ACTIVE_CHAT_GENERATION_STATUSES } from "./chats.constants.js";
 import { sideChatRunReference, sideChatService } from "./side-chats.js";
 

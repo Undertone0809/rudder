@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-import { useRef } from "react";
-import { act } from "react";
+import { act, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualizedActivityTimeline } from "./VirtualizedActivityTimeline";

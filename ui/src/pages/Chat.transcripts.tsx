@@ -1,5 +1,8 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import { chatsApi } from "@/api/chats";
+import type {
+  TranscriptRunAnnotationContext,
+  TranscriptRunAnnotationInput,
+} from "@/components/transcript/RunTranscriptView";
 import { TranscriptContinuationControls } from "@/components/transcript/TranscriptContinuationControls";
 import {
   chatTranscriptEntriesForMessage,
@@ -9,7 +12,6 @@ import {
   type AgentRunTranscriptNavigation,
   type AgentRunTranscriptState,
 } from "@/components/transcript/useAgentRunTranscripts";
-import { queryKeys } from "@/lib/queryKeys";
 import {
   hashChatAnnotationSource,
 } from "@/lib/chat-response-annotation-selection";
@@ -18,16 +20,13 @@ import {
   validateChatResponseAnnotationAdd,
   type ChatResponseAnnotationState,
 } from "@/lib/chat-response-annotations";
+import { queryKeys } from "@/lib/queryKeys";
 import type {
   ChatInlineAnnotationInput,
   ChatMessage,
 } from "@rudderhq/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode } from "react";
-import type {
-  TranscriptRunAnnotationContext,
-  TranscriptRunAnnotationInput,
-} from "@/components/transcript/RunTranscriptView";
 
 type AnnotationAddAction = Extract<Parameters<typeof responseAnnotationReducer>[1], { type: "add" }>;
 type ChatTranscriptToast = { title: string; body?: string; tone: "error" };

@@ -8,8 +8,8 @@ import {
   runtimeRetentionClaims,
   runtimeSourceAliases,
   sideChatProviderCleanupIntents,
-  type SideChatProviderCleanupProtectionRefs,
   type Db,
+  type SideChatProviderCleanupProtectionRefs,
 } from "@rudderhq/db";
 import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";

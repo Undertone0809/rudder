@@ -1,18 +1,18 @@
 import { chatsApi } from "@/api/chats";
+import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
+import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
 import { queryKeys } from "@/lib/queryKeys";
+import { useLocation, useNavigate } from "@/lib/router";
 import { getTerminalSideChatCloseStatus } from "@/lib/side-chat-close";
 import { reconcileSideChatCloseCache } from "@/lib/side-chat-close-cache";
-import { cacheKeptSideChat } from "@/lib/side-chat-history-cache";
 import { clearSideChatSendDraft } from "@/lib/side-chat-draft-storage";
+import { cacheKeptSideChat } from "@/lib/side-chat-history-cache";
 import {
   sideChatGenerationScopeKey,
   sidePanelTargetKey,
   type SidePanelTarget,
 } from "@/lib/side-panel-targets";
-import { useLocation, useNavigate } from "@/lib/router";
-import { applyOrganizationPrefix, extractOrganizationPrefixFromPath } from "@/lib/organization-routes";
-import { useSidePanel } from "@/context/SidePanelContext";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 

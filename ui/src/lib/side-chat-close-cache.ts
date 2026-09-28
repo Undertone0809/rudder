@@ -1,6 +1,6 @@
-import type { QueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
 import { invalidateSideChatHistoryForTarget } from "@/lib/side-chat-history-cache";
+import type { QueryClient } from "@tanstack/react-query";
 
 type SideChatCloseTarget = { sourceConversationId: string };
 
