@@ -209,6 +209,20 @@ jobs:
             echo "Test run $QUALIFICATION_RUN_ID has no successful Qualification summary for exact source $SOURCE_SHA." >&2
             exit 1
           }
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN_ID/artifacts?per_page=100")"
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            aarch64-unknown-linux-gnu \
+            x86_64-unknown-linux-gnu \
+            aarch64-pc-windows-msvc \
+            x86_64-pc-windows-msvc; do
+            jq -e --arg name "server-foundation-$target" \
+              '.artifacts[] | select(.name == $name and .expired == false)' <<< "$artifacts" >/dev/null || {
+              echo "Test run $QUALIFICATION_RUN_ID is missing unexpired $target server foundation output; qualification artifacts are retained for 7 days." >&2
+              exit 1
+            }
+          done
           plan_path="$(find dist/qualification-plan -type f -name 'ci-impact-plan.json' -print -quit)"
           test -n "$plan_path"
           source_tree_sha="$(git rev-parse "${SOURCE_SHA}^{tree}")"
@@ -390,6 +404,7 @@ jobs:
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+      RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR: ${{ github.workspace }}/dist/server-foundation-artifacts
     steps:
       - uses: actions/checkout@v6
         with:
@@ -399,6 +414,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      - name: Download exact-source server foundation artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: server-foundation-*
+          path: dist/server-foundation-artifacts
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.qualification_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Stage server foundation artifacts before package build
+        run: node server/scripts/stage-native.mjs --artifact-dir "$RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR"
 
       - name: Enable pnpm
         run: |
@@ -482,6 +509,7 @@ jobs:
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+      RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR: ${{ github.workspace }}/dist/server-foundation-artifacts
     steps:
       - uses: actions/checkout@v6
         with:
@@ -491,6 +519,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      - name: Download exact-source server foundation artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: server-foundation-*
+          path: dist/server-foundation-artifacts
+          merge-multiple: true
+          run-id: ${{ needs.preflight.outputs.qualification_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Stage server foundation artifacts before Desktop build
+        run: node server/scripts/stage-native.mjs --artifact-dir "$RUDDER_SERVER_FOUNDATION_ARTIFACT_DIR"
 
       - name: Enable pnpm
         run: |
