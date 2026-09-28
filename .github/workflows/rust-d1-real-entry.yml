@@ -54,7 +54,7 @@ jobs:
       - name: Install JavaScript prerequisites
         run: |
           set -o pipefail
-          pnpm install --frozen-lockfile 2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          pnpm install --no-frozen-lockfile --lockfile=false 2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
       - name: Build Rust server foundation and migration preflight
         run: |
