@@ -858,6 +858,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         nativeDriverRequired,
         signal: executionSignal,
         isExecutionInactive,
+        isOwnerLost: isOwnerExecutionLost,
         ownerLostError,
         getAttempt: () => chatRun.runtimeAttemptRef ?? null,
         getSpanFence: () => ({

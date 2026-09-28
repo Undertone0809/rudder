@@ -22,6 +22,7 @@ export function createChatNativeAttemptCallbacks(input: {
   nativeDriverRequired: boolean;
   signal: AbortSignal;
   isExecutionInactive: () => boolean;
+  isOwnerLost: () => boolean;
   ownerLostError: Error;
   getAttempt: () => NativeAttemptRef | null | undefined;
   getSpanFence: () => Omit<NativeSpanFence, "orgId" | "attemptId" | "spanId" | "suspended"> & {
@@ -70,7 +71,9 @@ export function createChatNativeAttemptCallbacks(input: {
       result: AgentRuntimeExecutionResult,
       phase: AgentRuntimeNetworkSubmissionPhase,
     ) => {
-      if (input.isExecutionInactive()) throw input.ownerLostError;
+      // Stop freezes visible output, but the current owner must still record
+      // the returning provider's writer-exit proof before finalizing the Run.
+      if (input.isOwnerLost()) throw input.ownerLostError;
       const identity = currentIdentity(attempt);
       if (!identity) {
         throw new Error("Chat provider result has no matching durable attempt and native span");

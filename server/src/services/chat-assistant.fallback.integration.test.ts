@@ -28,6 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { chatAgentRunService } from "./chat-agent-runs.js";
+import { createChatNativeAttemptCallbacks } from "./chat-assistant.native-attempt.js";
 import {
   chatAttemptFailureFinishInput,
   createChatAssistantRuntimeDriverPorts,
@@ -39,6 +40,7 @@ import {
   createHeartbeatUnifiedAgentRunAdapter,
   createUnifiedAgentRunExecutionService,
 } from "./runtime-kernel/unified-agent-run.integration.js";
+import { sideChatService } from "./side-chats.js";
 
 type ChatRunService = ReturnType<typeof chatAgentRunService>;
 type ChatRun = Awaited<ReturnType<ChatRunService["createRun"]>>;
@@ -317,6 +319,52 @@ describe("Chat native fallback Attempt persistence", () => {
     expect(recorded).toMatchObject({ id: spanId, attemptRef: { id: attemptRef?.id } });
     return recorded;
   }
+
+  it.each([true, false])("keeps Stop and native writer exit independent before Side Chat deletion (confirmed=%s)", async (confirmed) => {
+    const { run, runs, orgId, conversationId } = await createRunFixture("Stopped Side Chat writer");
+    await db.update(chatConversations).set({
+      conversationKind: "side_chat", sideChatState: "completed", messengerVisible: false,
+      createdByUserId: "operator",
+    }).where(eq(chatConversations.id, conversationId));
+    const attempt: ModelAttemptSpec = {
+      index: 0, agentRuntimeType: "codex_local", model: "primary-model", config: null,
+      isFallback: false, fallbackIndex: null, totalFallbacks: 0,
+    };
+    run.runtimeAttemptRef = await runs.beginRuntimeAttempt(run, {
+      attemptIndex: 0, fallbackIndex: null, runtimeType: "codex_local", model: "primary-model",
+      isFallback: false, resumeSource: "fresh",
+    });
+    const stop = new AbortController();
+    const handlers = createChatNativeAttemptCallbacks({
+      orgId, runtimeAgentType: "codex_local", nativeDriverRequired: true, signal: stop.signal,
+      isExecutionInactive: () => stop.signal.aborted, isOwnerLost: () => false,
+      ownerLostError: new Error("owner lost"), getAttempt: () => run.runtimeAttemptRef,
+      getSpanFence: () => ({ spanId: run.runtimeSpanId ?? null,
+        ownerToken: run.runtimeSpanOwnerToken!, attemptEpoch: run.runtimeSpanAttemptEpoch! }),
+      markAcceptanceUnknown: (value) => runs.markAcceptanceUnknown(run, value),
+      recordNativeExecutionResult: (result, fence) => runs.recordNativeExecutionResult(run.id, result, fence),
+      onAttemptResult: async () => undefined,
+    });
+    await handlers.onAttemptSubmissionStart(attempt);
+    stop.abort();
+    await handlers.onAttemptResult(attempt, {
+      exitCode: null, signal: "SIGTERM", timedOut: false,
+      nativeWriterQuiescence: confirmed
+        ? { status: "confirmed", source: "process_exit" }
+        : { status: "unconfirmed", reason: "writer exit not observed" },
+    }, "accepted");
+    await runs.finalizeRun(run.id, { status: "cancelled", errorCode: "chat_stopped" });
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    expect(span?.writerLeaseReleasedAt).toEqual(confirmed ? expect.any(Date) : null);
+    const deletion = sideChatService(db).destroy({ conversationId, userId: "operator" });
+    if (confirmed) {
+      await expect(deletion).resolves.toEqual({ id: conversationId });
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.id, conversationId))).toEqual([]);
+    } else {
+      await expect(deletion).rejects.toThrow();
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.id, conversationId))).toHaveLength(1);
+    }
+  });
 
   it("finishes a known pre-submission attempt in PostgreSQL before Chat starts fallback", async () => {
     const { run, runs, orgId, conversationId } = await createRunFixture("Chat safe fallback");
