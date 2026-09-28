@@ -1,6 +1,6 @@
 use crate::{
-    CommittedMutation, Outcome, Receipt, ResultState, StoreError, branding_kind, project_goal_kind,
-    project_goal_set_kind,
+    CommittedMutation, Outcome, ProjectDeleteCommand, Receipt, ResultState, StoreError,
+    branding_kind, project_delete_kind, project_goal_kind, project_goal_set_kind,
 };
 use rudder_organization_mutation_core::{
     OrganizationBrandingCommand, OrganizationSettingsSnapshot,
@@ -18,6 +18,7 @@ pub(crate) const MAX_RESULT_BYTES: usize = 1024 * 1024;
 const BRANDING_RECEIPT_FORMAT: i32 = 1;
 const PROJECT_GOAL_RECEIPT_FORMAT: i32 = 2;
 const PROJECT_GOAL_SET_RECEIPT_FORMAT: i32 = 1;
+const PROJECT_DELETE_RECEIPT_FORMAT: i32 = 1;
 const MAX_COMMAND_BYTES: usize = MAX_RESULT_BYTES / 2;
 pub(crate) const MAX_PROJECT_GOALS: usize = 1024;
 const MAX_TEXT_BYTES: usize = 256;
@@ -57,6 +58,9 @@ pub(crate) enum ExpectedReceipt {
         goal_ids: Option<Vec<String>>,
         primary_goal_after: Option<Option<String>>,
         resource_attachment_operation: Option<ProjectResourceAttachmentOperationIdentity>,
+    },
+    ProjectDelete {
+        project_id: String,
     },
 }
 
@@ -338,6 +342,56 @@ impl Metadata {
         })
     }
 
+    pub fn project_delete(command: &ProjectDeleteCommand) -> Result<Self, StoreError> {
+        let actor_kind = match command.actor_kind.as_str() {
+            "board" => "board",
+            "agent" => "agent",
+            _ => return Err(StoreError::Unauthorized),
+        };
+        let actor = actor_metadata(actor_kind, &command.actor_id)?;
+        let org = uuid(&command.organization_id)?.to_owned();
+        let project_id = uuid(&command.project_id)?.to_owned();
+        let key = bounded_text(&command.idempotency_key, false)?;
+        let run_id = command
+            .run_id
+            .as_deref()
+            .map(|value| uuid(value).map(str::to_owned))
+            .transpose()?;
+        let identity = json!({
+            "adapter_format": 1,
+            "kind": project_delete_kind(),
+            "operation": "delete",
+            "organization_id": org,
+            "project_id": project_id,
+            "actor_kind": actor.kind,
+            "actor_id": actor.principal_id,
+            "run_id": run_id,
+            "idempotency_key": key,
+        });
+        ensure_json_size(&identity, MAX_COMMAND_BYTES)?;
+        signed(command.expected_version)?;
+        signed(command.fence_epoch)?;
+        let fingerprint = hex_digest(Sha256::digest(
+            serde_json::to_vec(&identity).map_err(|_| StoreError::InvalidInput)?,
+        ));
+
+        Ok(Self {
+            org,
+            key,
+            kind: project_delete_kind(),
+            fingerprint,
+            expected_version: command.expected_version,
+            fence_epoch: command.fence_epoch,
+            actor,
+            run_id,
+            project_id: Some(project_id.clone()),
+            goal_id: None,
+            link_identifier: None,
+            expected_receipt: ExpectedReceipt::ProjectDelete { project_id },
+            receipt_format: PROJECT_DELETE_RECEIPT_FORMAT,
+        })
+    }
+
     pub fn check_fresh(&self, version: u64, fence_epoch: u64) -> Result<(), StoreError> {
         if self.expected_version != version {
             return Err(StoreError::StaleVersion);
@@ -439,6 +493,94 @@ pub(crate) async fn lock_scope(
 }
 
 pub(crate) async fn lock_scope_for_project_patch(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+) -> Result<LockedScope, StoreError> {
+    lock_scope_with_agent_policy(tx, metadata, true).await
+}
+
+pub(crate) async fn lock_organization_boundary(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+) -> Result<(), StoreError> {
+    let state = sqlx::query(
+        "SELECT org_id FROM organization_mutation_state WHERE org_id=$1::uuid FOR UPDATE",
+    )
+    .bind(&metadata.org)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if state.is_none() {
+        let organization_exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1::uuid)",
+        )
+        .bind(&metadata.org)
+        .fetch_one(&mut **tx)
+        .await?;
+        return Err(if organization_exists {
+            StoreError::NotOwned
+        } else {
+            StoreError::NotFound
+        });
+    }
+    Ok(())
+}
+
+pub(crate) async fn authorize_project_delete_caller(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+) -> Result<(), StoreError> {
+    match metadata.actor.kind {
+        "board" => {}
+        "agent" => {
+            let agent =
+                sqlx::query("SELECT status FROM agents WHERE id=$1::uuid AND org_id=$2::uuid")
+                    .bind(&metadata.actor.principal_id)
+                    .bind(&metadata.org)
+                    .fetch_optional(&mut **tx)
+                    .await?
+                    .ok_or(StoreError::Unauthorized)?;
+            if matches!(
+                agent.try_get::<String, _>("status")?.as_str(),
+                "terminated" | "pending_approval"
+            ) {
+                return Err(StoreError::Unauthorized);
+            }
+        }
+        _ => return Err(StoreError::Unauthorized),
+    }
+
+    if let Some(run_id) = metadata.run_id.as_deref() {
+        let exists = if let Some(agent_id) = metadata.actor.agent_id.as_deref() {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(
+                   SELECT 1 FROM heartbeat_runs
+                   WHERE id=$1::uuid AND org_id=$2::uuid AND agent_id=$3::uuid
+                 )",
+            )
+            .bind(run_id)
+            .bind(&metadata.org)
+            .bind(agent_id)
+            .fetch_one(&mut **tx)
+            .await?
+        } else {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(
+                   SELECT 1 FROM heartbeat_runs WHERE id=$1::uuid AND org_id=$2::uuid
+                 )",
+            )
+            .bind(run_id)
+            .bind(&metadata.org)
+            .fetch_one(&mut **tx)
+            .await?
+        };
+        if !exists {
+            return Err(StoreError::InvalidInput);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn lock_scope_for_project_delete(
     tx: &mut Tx<'_>,
     metadata: &Metadata,
 ) -> Result<LockedScope, StoreError> {
@@ -627,7 +769,8 @@ pub(crate) async fn replay(
     let row = sqlx::query(
         "SELECT command_kind, command_fingerprint, receipt_format, outcome,
                 resulting_version, fence_epoch, activity_id::text,
-                CASE WHEN octet_length(result::text) <= $3
+                CASE WHEN ($4 AND command_kind='project_delete' AND command_fingerprint=$5)
+                          OR octet_length(result::text) <= $3
                      THEN result::text ELSE NULL END AS result_text
          FROM organization_mutation_receipts
          WHERE org_id=$1::uuid AND idempotency_key=$2",
@@ -635,6 +778,8 @@ pub(crate) async fn replay(
     .bind(&metadata.org)
     .bind(&metadata.key)
     .bind(i64::try_from(MAX_RESULT_BYTES).expect("result bound fits BIGINT"))
+    .bind(metadata.kind == project_delete_kind())
+    .bind(&metadata.fingerprint)
     .fetch_optional(&mut **tx)
     .await?;
     let Some(row) = row else {
@@ -1058,6 +1203,119 @@ pub(crate) async fn persist_branding(
     })
 }
 
+pub(crate) async fn persist_project_delete(
+    tx: &mut Tx<'_>,
+    metadata: &Metadata,
+    version: u64,
+    fence_epoch: u64,
+    response: Value,
+) -> Result<CommittedMutation, StoreError> {
+    signed(version)?;
+    signed(fence_epoch)?;
+    if version
+        != metadata
+            .expected_version
+            .checked_add(1)
+            .ok_or(StoreError::VersionRange)?
+        || fence_epoch != metadata.fence_epoch
+    {
+        return Err(StoreError::StaleFence);
+    }
+    let project_id = metadata
+        .project_id
+        .as_deref()
+        .ok_or(StoreError::InvalidInput)?;
+    let mut receipt = Receipt {
+        organization_id: metadata.org.clone(),
+        version,
+        fence_epoch,
+        fingerprint: metadata.fingerprint.clone(),
+        activity_id: String::new(),
+        outcome: Outcome::Applied,
+        result: ResultState::ProjectDeleted {
+            project_id: project_id.to_owned(),
+            response,
+        },
+    };
+    validate_receipt_result(metadata, &receipt)?;
+    let activity_type = if metadata.actor.kind == "board" {
+        "user"
+    } else {
+        "agent"
+    };
+    let details = json!({});
+    let activity_id: String = sqlx::query_scalar(
+        "INSERT INTO activity_log
+          (org_id, actor_type, actor_id, action, entity_type, entity_id,
+           agent_id, run_id, details, idempotency_key)
+         VALUES ($1::uuid, $2, $3, 'project.deleted', 'project', $4, $5::uuid,
+                 $6::uuid, $7::jsonb, $8)
+         RETURNING id::text",
+    )
+    .bind(&metadata.org)
+    .bind(activity_type)
+    .bind(&metadata.actor.principal_id)
+    .bind(project_id)
+    .bind(metadata.actor.agent_id.as_deref())
+    .bind(metadata.run_id.as_deref())
+    .bind(serde_json::to_string(&details).map_err(|_| StoreError::InvalidReceipt)?)
+    .bind(activity_idempotency_key(&metadata.key))
+    .fetch_one(&mut **tx)
+    .await?;
+
+    receipt.activity_id = activity_id;
+    // Legacy deletion returns the complete stored Project, whose text fields
+    // have no application byte cap. Serialize and persist before commit so a
+    // serialization or PostgreSQL storage failure rolls the deletion back.
+    let receipt_json = serde_json::to_string(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
+    sqlx::query(
+        "INSERT INTO organization_mutation_receipts
+          (org_id, idempotency_key, command_kind, command_fingerprint,
+           receipt_format, outcome, resulting_version, fence_epoch,
+           activity_id, result)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10::jsonb)",
+    )
+    .bind(&metadata.org)
+    .bind(&metadata.key)
+    .bind(metadata.kind)
+    .bind(&metadata.fingerprint)
+    .bind(metadata.receipt_format)
+    .bind(receipt.outcome.as_str())
+    .bind(signed(receipt.version)?)
+    .bind(signed(receipt.fence_epoch)?)
+    .bind(&receipt.activity_id)
+    .bind(&receipt_json)
+    .execute(&mut **tx)
+    .await?;
+
+    let event_payload = json!({
+        "actorType": activity_type,
+        "actorId": metadata.actor.principal_id,
+        "action": "project.deleted",
+        "entityType": "project",
+        "entityId": project_id,
+        "agentId": metadata.actor.agent_id,
+        "runId": metadata.run_id,
+        "details": details,
+    });
+    ensure_json_size(&event_payload, MAX_RESULT_BYTES)?;
+    sqlx::query(
+        "INSERT INTO organization_mutation_outbox
+          (org_id, activity_id, event_type, payload)
+         VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb)",
+    )
+    .bind(&metadata.org)
+    .bind(&receipt.activity_id)
+    .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(CommittedMutation {
+        replayed: false,
+        receipt,
+    })
+}
+
 fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(), StoreError> {
     if receipt.organization_id != metadata.org
         || !is_sha256_hex(&receipt.fingerprint)
@@ -1350,6 +1608,49 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 return Err(StoreError::InvalidReceipt);
             }
         }
+        (
+            ResultState::ProjectDeleted {
+                project_id,
+                response,
+            },
+            kind,
+        ) if *kind == *project_delete_kind() => {
+            let ExpectedReceipt::ProjectDelete {
+                project_id: expected_project_id,
+            } = &metadata.expected_receipt
+            else {
+                return Err(StoreError::InvalidReceipt);
+            };
+            let response = response.as_object().ok_or(StoreError::InvalidReceipt)?;
+            let response_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidReceipt)?;
+            let response_org = response
+                .get("orgId")
+                .and_then(Value::as_str)
+                .ok_or(StoreError::InvalidReceipt)?;
+            if Some(project_id) != metadata.project_id.as_ref()
+                || expected_project_id != project_id
+                || uuid(project_id)? != project_id
+                || response_id != project_id
+                || response_org != metadata.org
+                || response.get("icon").and_then(Value::as_str).is_none()
+                || response
+                    .get("urlKey")
+                    .and_then(Value::as_str)
+                    .is_none_or(str::is_empty)
+                || receipt.outcome != Outcome::Applied
+                || receipt.version
+                    != metadata
+                        .expected_version
+                        .checked_add(1)
+                        .ok_or(StoreError::InvalidReceipt)?
+                || receipt.fence_epoch != metadata.fence_epoch
+            {
+                return Err(StoreError::InvalidReceipt);
+            }
+        }
         _ => return Err(StoreError::InvalidReceipt),
     }
     Ok(())
@@ -1612,4 +1913,81 @@ fn hex_digest(digest: impl IntoIterator<Item = u8>) -> String {
         .into_iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+#[cfg(test)]
+mod project_delete_tests {
+    use super::*;
+
+    fn command() -> ProjectDeleteCommand {
+        ProjectDeleteCommand {
+            organization_id: "10000000-0000-4000-8000-000000000001".to_owned(),
+            project_id: "20000000-0000-4000-8000-000000000001".to_owned(),
+            actor_kind: "board".to_owned(),
+            actor_id: "board-user".to_owned(),
+            run_id: None,
+            idempotency_key: "project-delete-test".to_owned(),
+            expected_version: 4,
+            fence_epoch: 7,
+        }
+    }
+
+    #[test]
+    fn project_delete_fingerprint_binds_org_project_actor_run_and_key() {
+        let base = Metadata::project_delete(&command()).unwrap().fingerprint;
+        let mut changed = command();
+        changed.organization_id = "10000000-0000-4000-8000-000000000002".to_owned();
+        assert_ne!(
+            base,
+            Metadata::project_delete(&changed).unwrap().fingerprint
+        );
+
+        let mut changed = command();
+        changed.project_id = "20000000-0000-4000-8000-000000000002".to_owned();
+        assert_ne!(
+            base,
+            Metadata::project_delete(&changed).unwrap().fingerprint
+        );
+
+        let mut changed = command();
+        changed.actor_id = "another-board-user".to_owned();
+        assert_ne!(
+            base,
+            Metadata::project_delete(&changed).unwrap().fingerprint
+        );
+
+        let mut changed = command();
+        changed.actor_kind = "agent".to_owned();
+        changed.actor_id = "50000000-0000-4000-8000-000000000001".to_owned();
+        assert_ne!(
+            base,
+            Metadata::project_delete(&changed).unwrap().fingerprint
+        );
+
+        let mut changed = command();
+        changed.run_id = Some("60000000-0000-4000-8000-000000000001".to_owned());
+        assert_ne!(
+            base,
+            Metadata::project_delete(&changed).unwrap().fingerprint
+        );
+
+        let mut changed = command();
+        changed.idempotency_key = "another-key".to_owned();
+        assert_ne!(
+            base,
+            Metadata::project_delete(&changed).unwrap().fingerprint
+        );
+    }
+
+    #[test]
+    fn project_delete_fingerprint_does_not_depend_on_preflight_fence_snapshot() {
+        let base = Metadata::project_delete(&command()).unwrap().fingerprint;
+        let mut changed = command();
+        changed.expected_version = 40;
+        changed.fence_epoch = 70;
+        assert_eq!(
+            base,
+            Metadata::project_delete(&changed).unwrap().fingerprint
+        );
+    }
 }

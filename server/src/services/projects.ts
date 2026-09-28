@@ -29,7 +29,6 @@ import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-poli
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import {
   lockNodeProjectGoalMutationAuthority,
-  lockProjectGoalMutationAuthorityForDelete,
 } from "./project-goal-mutation-fence.js";
 import {
   listProjectResourceAttachmentsByProjectIds,
@@ -717,7 +716,7 @@ export function projectService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
 
-        await lockProjectGoalMutationAuthorityForDelete(tx, existing.orgId, id);
+        await lockNodeProjectGoalMutationAuthority(tx, existing.orgId, id);
         const row = await tx
           .delete(projects)
           .where(eq(projects.id, id))

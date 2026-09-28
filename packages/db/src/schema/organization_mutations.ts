@@ -64,7 +64,10 @@ export const organizationMutationReceipts = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
     commandKind: text("command_kind")
       .$type<
-        "organization_branding" | "project_goal_link" | "project_goal_set_replacement"
+        | "organization_branding"
+        | "project_goal_link"
+        | "project_goal_set_replacement"
+        | "project_delete"
       >()
       .notNull(),
     commandFingerprint: text("command_fingerprint").notNull(),
@@ -99,7 +102,7 @@ export const organizationMutationReceipts = pgTable(
     ),
     kindCheck: check(
       "organization_mutation_receipts_kind_ck",
-      sql`${table.commandKind} in ('organization_branding', 'project_goal_link', 'project_goal_set_replacement')`,
+      sql`${table.commandKind} in ('organization_branding', 'project_goal_link', 'project_goal_set_replacement', 'project_delete')`,
     ),
     outcomeCheck: check(
       "organization_mutation_receipts_outcome_ck",

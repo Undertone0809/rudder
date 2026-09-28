@@ -47,6 +47,14 @@ export interface RustFoundationBridge {
     body: Buffer,
     requestPath?: string,
   ): Promise<RustFoundationResponse>;
+  projectDelete(
+    req: Request,
+    orgId: string,
+    projectId: string,
+    body: Buffer,
+    idempotencyKey: string,
+    requestPath?: string,
+  ): Promise<RustFoundationResponse>;
   close(): Promise<void>;
 }
 
@@ -86,6 +94,7 @@ const ACTOR_ENVELOPE_AUDIENCE = "rudder-server-foundation";
 const ACTOR_ENVELOPE_ACTION = "organization.members.directory.read";
 const ORGANIZATION_BRANDING_ACTION = "organization.branding.update";
 const PROJECT_GOAL_SET_ACTION = "project.goal_set.replace";
+const PROJECT_DELETE_ACTION = "project.delete";
 const ACTOR_ENVELOPE_PROTOCOL_VERSION = 2;
 const ACTOR_ENVELOPE_SCHEMA = "rudder.actor-envelope.v2";
 const ACTOR_ENVELOPE_LIFETIME_SECONDS = 60;
@@ -633,6 +642,59 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
       }
       const responseBody = Buffer.from(await response.arrayBuffer());
       debugBridge(`project-goal response status=${response.status} body=${responseBody.toString("utf8").slice(0, 512)}`);
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? "application/json",
+        body: responseBody,
+      } satisfies RustFoundationResponse;
+    },
+    async projectDelete(
+      req,
+      orgId,
+      projectId,
+      body,
+      idempotencyKey,
+      requestPath = `/api/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectId)}`,
+    ) {
+      if (projectGoalSetMode !== "required") {
+        throw new RustFoundationBridgeError("request_failed", "Rust Project deletion requires required mode");
+      }
+      await ensureStarted();
+      if (!baseUrl) throw new RustFoundationBridgeError("request_failed", "Rust foundation bridge is not running");
+      const requestId = randomUUID();
+      const normalizedIdempotencyKey = idempotencyKey.trim();
+      if (!normalizedIdempotencyKey) {
+        throw new RustFoundationBridgeError("request_failed", "Rust Project deletion requires an idempotency key");
+      }
+      const envelope = createRustActorEnvelope({
+        actor: req.actor,
+        organizationId: orgId,
+        method: "DELETE",
+        path: requestPath,
+        action: PROJECT_DELETE_ACTION,
+        body,
+        secret: actorEnvelopeKey,
+        requestId,
+        idempotencyKey: normalizedIdempotencyKey,
+      });
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}${requestPath}`, {
+          method: "DELETE",
+          headers: {
+            "content-type": req.header("content-type") ?? "application/json",
+            "x-rudder-actor-envelope": JSON.stringify(envelope),
+            "x-rudder-request-id": requestId,
+            "x-rudder-idempotency-key": normalizedIdempotencyKey,
+          },
+          body: body as unknown as BodyInit,
+          signal: AbortSignal.timeout(requestTimeoutMs),
+        });
+      } catch (error) {
+        throw new RustFoundationBridgeError("request_failed", "Rust foundation request failed", { cause: error });
+      }
+      const responseBody = Buffer.from(await response.arrayBuffer());
+      debugBridge(`project-delete response status=${response.status} body=${responseBody.toString("utf8").slice(0, 512)}`);
       return {
         status: response.status,
         contentType: response.headers.get("content-type") ?? "application/json",

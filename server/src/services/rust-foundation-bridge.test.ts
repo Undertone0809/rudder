@@ -68,7 +68,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set")) {
+    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.method === "DELETE") {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -733,5 +733,73 @@ describe("rust foundation bridge lifecycle", () => {
       mode: "off",
       projectGoalSetMode: "invalid" as never,
     })).toThrow("RUDDER_RUST_PROJECT_GOAL_SET_MODE");
+  });
+
+  it("binds Project DELETE to the signed private bridge contract", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "required" });
+    const body = Buffer.from(JSON.stringify({ runId: "run-1" }), "utf8");
+    const req = {
+      actor: {
+        type: "agent",
+        source: "agent_key",
+        agentId: "agent-1",
+        orgId: "org-1",
+        runId: "run-1",
+        sessionId: "session-1",
+        authEpoch: 3,
+      },
+      originalUrl: "/api/projects/project-1",
+      header(name: string) {
+        return name.toLowerCase() === "content-type" ? "application/json" : undefined;
+      },
+    } as unknown as Request;
+    const requestPath = "/api/orgs/org-1/projects/project-1";
+
+    const response = await bridge.projectDelete(
+      req,
+      "org-1",
+      "project-1",
+      body,
+      "project-delete-client-key",
+      requestPath,
+    );
+
+    expect(response.status).toBe(200);
+    expect(bridge.projectGoalSetMode).toBe("required");
+    expect(bridge.requiresStartup).toBe(true);
+    const captured = await fixture.readRequest();
+    expect(captured.method).toBe("DELETE");
+    expect(captured.url).toBe(requestPath);
+    expect(captured.body).toBe(body.toString("utf8"));
+    expect(captured.headers["x-rudder-idempotency-key"]).toBe("project-delete-client-key");
+    expect(captured.headers["content-type"]).toBe("application/json");
+    expectEnvelopeSignedWith(captured, {
+      actor: req.actor,
+      organizationId: "org-1",
+      method: "DELETE",
+      path: requestPath,
+      action: "project.delete",
+      body,
+      idempotencyKey: "project-delete-client-key",
+    }, "bridge-test-secret");
+  });
+
+  it("does not activate Project DELETE from an independent undocumented mode", () => {
+    const previousMode = process.env.RUDDER_RUST_PROJECT_DELETE_MODE;
+    process.env.RUDDER_RUST_PROJECT_DELETE_MODE = "required";
+    try {
+      const bridge = createRustFoundationBridge({
+        databaseUrl: "postgres://bridge-test",
+        mode: "off",
+        projectGoalSetMode: "off",
+      });
+      activeBridges.add(bridge);
+      expect(bridge.projectGoalSetMode).toBe("off");
+      expect(bridge.requiresStartup).toBe(false);
+    } finally {
+      if (previousMode === undefined) delete process.env.RUDDER_RUST_PROJECT_DELETE_MODE;
+      else process.env.RUDDER_RUST_PROJECT_DELETE_MODE = previousMode;
+    }
   });
 });

@@ -8,6 +8,7 @@
 mod branding;
 mod goal_sets;
 mod links;
+mod project_deletions;
 mod project_patches;
 mod transaction;
 
@@ -25,6 +26,7 @@ use thiserror::Error;
 const COMMAND_KIND_BRANDING: &str = "organization_branding";
 const COMMAND_KIND_PROJECT_GOAL_LINK: &str = "project_goal_link";
 const COMMAND_KIND_PROJECT_GOAL_SET: &str = "project_goal_set_replacement";
+const COMMAND_KIND_PROJECT_DELETE: &str = "project_delete";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +80,10 @@ pub enum ResultState {
         primary_goal_after: Option<String>,
         state_integrity: String,
     },
+    ProjectDeleted {
+        project_id: String,
+        response: Value,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +97,24 @@ pub struct ProjectPatchCommand {
     pub expected_version: u64,
     pub fence_epoch: u64,
     pub patch: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectDeleteCommand {
+    pub organization_id: String,
+    pub project_id: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub run_id: Option<String>,
+    pub idempotency_key: String,
+    pub expected_version: u64,
+    pub fence_epoch: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectDeleteContext {
+    pub expected_version: u64,
+    pub fence_epoch: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -399,6 +423,68 @@ impl MutationStore {
         let result = project_patches::apply(&mut tx, command, patch, &metadata).await;
         transaction::finish(tx, result).await
     }
+
+    /// Read the optimistic component context for deletion or a durable replay.
+    /// A matching receipt survives the Project fence cascade and takes
+    /// precedence over any Project row recreated with the same UUID.
+    pub async fn project_delete_context_for_idempotency(
+        &self,
+        organization_id: &str,
+        project_id: &str,
+        idempotency_key: &str,
+    ) -> Result<ProjectDeleteContext, StoreError> {
+        let organization_id = transaction::uuid(organization_id)?.to_owned();
+        let project_id = transaction::uuid(project_id)?.to_owned();
+        if idempotency_key.is_empty() || idempotency_key.len() > 256 {
+            return Err(StoreError::InvalidInput);
+        }
+
+        let receipt = sqlx::query(
+            "SELECT command_kind, resulting_version, fence_epoch
+             FROM organization_mutation_receipts
+             WHERE org_id=$1::uuid AND idempotency_key=$2",
+        )
+        .bind(&organization_id)
+        .bind(idempotency_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(receipt) = receipt {
+            if receipt.try_get::<String, _>("command_kind")? != COMMAND_KIND_PROJECT_DELETE {
+                return Ok(ProjectDeleteContext {
+                    expected_version: 0,
+                    fence_epoch: 0,
+                });
+            }
+            let resulting_version =
+                transaction::unsigned(receipt.try_get::<i64, _>("resulting_version")?)?;
+            return Ok(ProjectDeleteContext {
+                expected_version: resulting_version
+                    .checked_sub(1)
+                    .ok_or(StoreError::InvalidReceipt)?,
+                fence_epoch: transaction::unsigned(receipt.try_get("fence_epoch")?)?,
+            });
+        }
+
+        let scope = self.project_scope(&project_id).await?;
+        if scope.organization_id != organization_id {
+            return Err(StoreError::NotFound);
+        }
+        Ok(ProjectDeleteContext {
+            expected_version: scope.version,
+            fence_epoch: scope.fence_epoch,
+        })
+    }
+
+    /// Delete one Project only while Rust owns its Project component fence.
+    pub async fn project_delete(
+        &self,
+        command: ProjectDeleteCommand,
+    ) -> Result<CommittedMutation, StoreError> {
+        let metadata = transaction::Metadata::project_delete(&command)?;
+        let mut tx = transaction::begin(&self.pool).await?;
+        let result = project_deletions::apply(&mut tx, command, &metadata).await;
+        transaction::finish(tx, result).await
+    }
 }
 
 pub(crate) const fn branding_kind() -> &'static str {
@@ -411,4 +497,8 @@ pub(crate) const fn project_goal_kind() -> &'static str {
 
 pub(crate) const fn project_goal_set_kind() -> &'static str {
     COMMAND_KIND_PROJECT_GOAL_SET
+}
+
+pub(crate) const fn project_delete_kind() -> &'static str {
+    COMMAND_KIND_PROJECT_DELETE
 }
