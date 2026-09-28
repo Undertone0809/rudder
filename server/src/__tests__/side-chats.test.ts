@@ -44,6 +44,7 @@ import type { RuntimeDriver } from "../agent-runtimes/index.js";
 import { hashChatAnnotationSource } from "../services/chat-inline-annotations.js";
 import { chatWorkManifestService } from "../services/chat-work-manifest.js";
 import { chatService } from "../services/chats.js";
+import { lockNodeMutationAuthority } from "../services/organization-mutation-fence.js";
 import { lockRuntimeRetentionScope, type RuntimeRetentionDb } from "../services/runtime-kernel/runtime-retention.js";
 import { sideChatCloseService } from "../services/side-chat-close.js";
 import { sideChatProviderCleanupService } from "../services/side-chat-provider-cleanup.js";
@@ -1624,6 +1625,48 @@ describe("sideChatService", () => {
       .toBe("running");
   });
 
+  it("shares Chat authority between writers while fencing a Rust ownership handoff", async () => {
+    const source = await createSource();
+    let release!: () => void;
+    let acquired!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const writer = db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, source.orgId, "shared");
+      acquired();
+      await held;
+    });
+    let handoff: Promise<unknown> | undefined;
+    try {
+      await ready;
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL lock_timeout = '1s'`);
+        await lockNodeMutationAuthority(tx, source.orgId, "shared");
+      });
+      let handedOff = false;
+      handoff = db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL lock_timeout = '10s'`);
+        await tx.execute(sql`UPDATE organization_mutation_state
+          SET owner = 'rust', fence_epoch = fence_epoch + 1, fence_token = gen_random_uuid()
+          WHERE org_id = ${source.orgId}::uuid`);
+      }).then(() => { handedOff = true; });
+      await waitForDatabaseLockWaiters(db, 1);
+      expect(handedOff).toBe(false);
+      release();
+      await writer;
+      await handoff;
+      await expect(db.transaction((tx) => lockNodeMutationAuthority(tx, source.orgId, "shared")))
+        .rejects.toMatchObject({ status: 409 });
+    } finally {
+      release();
+      await writer;
+      await handoff;
+      await db.execute(sql`UPDATE organization_mutation_state
+        SET owner = 'node', fence_epoch = fence_epoch + 1, fence_token = gen_random_uuid()
+        WHERE org_id = ${source.orgId}::uuid`);
+    }
+  }, 15_000);
+
   it("serializes close with new user and queued writes without blocking the parent chat", async () => {
     const source = await createSource();
     const sideChat = await createSideChat(source);
@@ -1632,6 +1675,7 @@ describe("sideChatService", () => {
     const released = new Promise<void>((resolve) => { releaseClose = resolve; });
     const locked = new Promise<void>((resolve) => { closeLocked = resolve; });
     const closing = db.transaction(async (tx) => {
+      await lockNodeMutationAuthority(tx, source.orgId, "shared");
       await lockRuntimeRetentionScope(tx as unknown as RuntimeRetentionDb, source.orgId);
       await tx.select({ id: chatConversations.id }).from(chatConversations)
         .where(eq(chatConversations.id, sideChat.id)).for("update");

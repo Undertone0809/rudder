@@ -210,7 +210,7 @@ export function createChatAnnotationMessagePersistence(
     options: AddUserChatMessageOptions = {},
   ) {
     const persist = () => db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, orgId);
+      await lockNodeMutationAuthority(tx, orgId, "shared");
       const isSideChat = await assertChatWriteAdmitted(tx, orgId, conversationId);
       const firstInputIntent = isSideChat
         ? await tx.select().from(sideChatFirstInputs).where(and(

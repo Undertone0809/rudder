@@ -253,7 +253,7 @@ export function sideChatService(db: Db) {
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (!seed) return;
-      await lockNodeMutationAuthority(tx, seed.orgId);
+      await lockNodeMutationAuthority(tx, seed.orgId, "shared");
       await lockRuntimeRetentionScope(txRetention, seed.orgId);
       const existing = await tx.select().from(chatConversations)
         .where(and(
@@ -313,7 +313,7 @@ export function sideChatService(db: Db) {
     assertOwner(conversation as ConversationRow, userId);
     await db.transaction(async (tx) => {
       const txRetention = tx as unknown as RuntimeRetentionDb;
-      await lockNodeMutationAuthority(tx, conversation.orgId);
+      await lockNodeMutationAuthority(tx, conversation.orgId, "shared");
       await lockRuntimeRetentionScope(txRetention, conversation.orgId);
       const latest = await tx.select().from(chatConversations)
         .where(and(
@@ -640,7 +640,7 @@ export function sideChatService(db: Db) {
 
   async function create(input: SideChatCreateInput) {
     const createdId = await db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, input.orgId);
+      await lockNodeMutationAuthority(tx, input.orgId, "shared");
       const mutationScope = `${input.orgId}:${input.clientMutationId}`;
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${mutationScope}, 0))`);
       const existingRows = await tx
@@ -933,7 +933,7 @@ export function sideChatService(db: Db) {
         .where(eq(chatConversations.id, input.conversationId)).limit(1);
       if (!seed) throw notFound("Side Chat not found");
       const txRetention = tx as unknown as RuntimeRetentionDb;
-      await lockNodeMutationAuthority(tx, seed.orgId);
+      await lockNodeMutationAuthority(tx, seed.orgId, "shared");
       await lockRuntimeRetentionScope(txRetention, seed.orgId);
       const [conversation] = await tx.select().from(chatConversations)
         .where(and(eq(chatConversations.id, input.conversationId), eq(chatConversations.orgId, seed.orgId)))
@@ -1009,7 +1009,7 @@ export function sideChatService(db: Db) {
         .limit(1);
       if (!seed) throw notFound("Side Chat not found");
       const txRetention = tx as unknown as RuntimeRetentionDb;
-      await lockNodeMutationAuthority(tx, seed.orgId);
+      await lockNodeMutationAuthority(tx, seed.orgId, "shared");
       await lockRuntimeRetentionScope(txRetention, seed.orgId);
       // Serialize deletion with new generation/run FK references. Checking only
       // in the route allows a send to be admitted between the check and delete.
@@ -1186,7 +1186,7 @@ export function sideChatService(db: Db) {
 
     const outcome = await db.transaction(async (tx) => {
       const txRetention = tx as unknown as RuntimeRetentionDb;
-      await lockNodeMutationAuthority(tx, conversation.orgId);
+      await lockNodeMutationAuthority(tx, conversation.orgId, "shared");
       await lockRuntimeRetentionScope(txRetention, conversation.orgId);
       const current = await tx
         .select()

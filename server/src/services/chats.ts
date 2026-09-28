@@ -1795,7 +1795,7 @@ export function chatService(db: Db, storage?: StorageService) {
       throw unprocessable("Queued annotation files require an explicit annotation replacement");
     }
     return db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, input.orgId);
+      await lockNodeMutationAuthority(tx, input.orgId, "shared");
       const current = await tx
         .select()
         .from(chatQueuedMessages)
@@ -2006,7 +2006,7 @@ export function chatService(db: Db, storage?: StorageService) {
   }) {
     if (input.assetIds.length === 0) return [];
     return db.transaction(async (tx) => {
-      await lockNodeMutationAuthority(tx, input.orgId);
+      await lockNodeMutationAuthority(tx, input.orgId, "shared");
       const linkedRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
@@ -3959,7 +3959,7 @@ export function chatService(db: Db, storage?: StorageService) {
         .where(eq(chatConversations.id, id))
         .then((rows) => rows[0] ?? null);
       if (!conversation) return null;
-      await lockNodeMutationAuthority(tx, conversation.orgId);
+      await lockNodeMutationAuthority(tx, conversation.orgId, "shared");
       const attachmentRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
@@ -4564,7 +4564,7 @@ export function chatService(db: Db, storage?: StorageService) {
       }
 
       return db.transaction(async (tx) => {
-        await lockNodeMutationAuthority(tx, input.orgId);
+        await lockNodeMutationAuthority(tx, input.orgId, "shared");
         const [asset] = await tx
           .insert(assets)
           .values({
@@ -4622,7 +4622,7 @@ export function chatService(db: Db, storage?: StorageService) {
         .then((rows) => rows[0] ?? null);
       if (!existing) return null;
 
-      await lockNodeMutationAuthority(tx, existing.orgId);
+      await lockNodeMutationAuthority(tx, existing.orgId, "shared");
       await tx.delete(chatAttachments).where(eq(chatAttachments.id, attachmentId));
       const hasRemainingAttachment = await tx
         .select({ id: chatAttachments.id })

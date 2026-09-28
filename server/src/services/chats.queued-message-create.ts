@@ -54,7 +54,7 @@ export async function createQueuedMessageWithStagedAttachments(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       return await db.transaction(async (tx) => {
-        await lockNodeMutationAuthority(tx, input.orgId);
+        await lockNodeMutationAuthority(tx, input.orgId, "shared");
         await assertChatWriteAdmitted(tx, input.orgId, input.conversationId);
         const existing = await tx
           .select()
