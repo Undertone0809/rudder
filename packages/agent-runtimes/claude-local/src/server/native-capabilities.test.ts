@@ -52,8 +52,30 @@ const sessionJsonl = [
   },
 ].map((entry) => JSON.stringify(entry)).join("\n");
 
-function profile(readFile: ClaudeLocalProfileTransport["readFile"] = async () => sessionJsonl): ClaudeLocalProfileTransport {
-  return { binding, cwd, configDir, providerVersion: "2.1.216", readFile };
+function profile(source: string | NonNullable<ClaudeLocalProfileTransport["readFile"]> = sessionJsonl): ClaudeLocalProfileTransport {
+  let bytes: Buffer | null = typeof source === "string" ? Buffer.from(source, "utf8") : null;
+  const readBytes = async () => {
+    if (!bytes) {
+      const content = typeof source === "string" ? source : await source("fixture");
+      bytes = Buffer.from(content, "utf8");
+    }
+    return bytes;
+  };
+  return {
+    binding,
+    cwd,
+    configDir,
+    providerVersion: "2.1.216",
+    readFile: async () => (await readBytes()).toString("utf8"),
+    readStream: async function* (_filePath, range) {
+      const sourceBytes = await readBytes();
+      const start = range?.start ?? 0;
+      const end = range?.end === undefined ? sourceBytes.length - 1 : Math.min(range.end, sourceBytes.length - 1);
+      for (let offset = start; offset <= end; offset += 64 * 1024) {
+        yield sourceBytes.subarray(offset, Math.min(end + 1, offset + 64 * 1024));
+      }
+    },
+  };
 }
 
 function request(overrides: Partial<ClaudeNativeTranscriptReadRequest> = {}): ClaudeNativeTranscriptReadRequest {
@@ -110,6 +132,68 @@ describe("Claude profile-bound native capabilities", () => {
       "Finished.",
     ]);
     expect(result.items.some((item) => item.text === "Do not include me.")).toBe(false);
+  });
+
+  it("streams a large session into bounded, revision-bound pages without omissions", async () => {
+    const entries = Array.from({ length: 130 }, (_unused, index) => ({
+      type: "assistant",
+      uuid: `large-${index}`,
+      ...(index > 0 ? { parentUuid: `large-${index - 1}` } : {}),
+      message: { content: [{ type: "text", text: `turn-${index} ${"x".repeat(8_500)}` }] },
+    }));
+    const content = entries.map((entry) => JSON.stringify(entry)).join("\n");
+    const sourceBytes = Buffer.byteLength(content, "utf8");
+    expect(sourceBytes).toBeGreaterThan(1024 * 1024);
+
+    const nativeProfile = profile(content);
+    const openStream = nativeProfile.readStream!;
+    const rangedReads: number[] = [];
+    let maxChunkBytes = 0;
+    nativeProfile.readStream = async function* (filePath, range) {
+      if (range) rangedReads.push(range.end! - range.start! + 1);
+      for await (const chunk of openStream(filePath, range)) {
+        maxChunkBytes = Math.max(maxChunkBytes, chunk.byteLength);
+        yield chunk;
+      }
+    };
+
+    const adapter = createClaudeLocalProviderCapabilities(nativeProfile);
+    const selector = { kind: "claude_chain", throughInclusiveUuid: "large-129" };
+    const pageBudget = 96 * 1024;
+    const allIds: string[] = [];
+    let cursor: string | null = null;
+    let firstCursor: string | null = null;
+    let pages = 0;
+    do {
+      const result = await adapter.transcript.readRange(request({
+        selector,
+        cursor,
+        readerInput: { limit: 100, maxBytes: pageBudget, maxItemBytes: 64 * 1024 },
+      }));
+      expect(result.availability).toBe("available");
+      expect(Buffer.byteLength(JSON.stringify(result.items), "utf8")).toBeLessThanOrEqual(pageBudget);
+      allIds.push(...result.items.map((item) => item.sourceEntryId));
+      cursor = result.nextCursor;
+      firstCursor ??= cursor;
+      pages += 1;
+      expect(pages).toBeLessThan(100);
+    } while (cursor);
+
+    expect(pages).toBeGreaterThan(1);
+    expect(allIds).toEqual(entries.map((_entry, index) => `large-${index}:block:0`));
+    expect(new Set(allIds).size).toBe(allIds.length);
+    expect(maxChunkBytes).toBeLessThanOrEqual(64 * 1024);
+    expect(rangedReads.length).toBeGreaterThan(0);
+    expect(Math.max(...rangedReads)).toBeLessThan(sourceBytes);
+
+    const stale = await createClaudeLocalProviderCapabilities(profile(`${content}\n${JSON.stringify({
+      type: "assistant", uuid: "later", parentUuid: "large-129", message: { content: "later" },
+    })}`)).transcript.readRange(request({
+      selector,
+      cursor: firstCursor,
+      readerInput: { limit: 100, maxBytes: pageBudget, maxItemBytes: 64 * 1024 },
+    }));
+    expect(stale).toMatchObject({ items: [], nextCursor: null, availability: "incompatible" });
   });
 
   it("continues after a prior result marker by its verified assistant parent", async () => {
