@@ -65,12 +65,16 @@ Complete only this bounded task and report the result through the normal Run evi
     ...(runtimePrompt !== null ? { stdin: runtimePrompt } : {}),
     abortSignal,
   });
+  const nativeWriterQuiescence = proc.exitCode !== null || proc.signal
+    ? { status: "confirmed" as const, source: "process_exit" as const }
+    : { status: "unconfirmed" as const, reason: "process exit was not observed" };
 
   if (proc.timedOut) {
     return {
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: true,
+      nativeWriterQuiescence,
       errorMessage: `Timed out after ${timeoutSec}s`,
     };
   }
@@ -80,6 +84,7 @@ Complete only this bounded task and report the result through the normal Run evi
       exitCode: proc.exitCode,
       signal: proc.signal,
       timedOut: false,
+      nativeWriterQuiescence,
       errorMessage: `Process exited with code ${proc.exitCode ?? -1}`,
       resultJson: {
         stdout: proc.stdout,
@@ -92,6 +97,7 @@ Complete only this bounded task and report the result through the normal Run evi
     exitCode: proc.exitCode,
     signal: proc.signal,
     timedOut: false,
+    nativeWriterQuiescence,
     ...(runtimePrompt !== null && proc.stdout.trim().length > 0
       ? { summary: proc.stdout.trim() }
       : {}),

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockRunChildProcess = vi.hoisted(() => vi.fn());
 vi.mock("../utils.js", () => ({
@@ -14,6 +14,28 @@ vi.mock("../utils.js", () => ({
 import { execute } from "./execute.js";
 
 describe("process adapter Delegation delivery", () => {
+  beforeEach(() => vi.clearAllMocks());
+  it.each([
+    { exitCode: 0, signal: null, timedOut: false, confirmed: true },
+    { exitCode: 1, signal: null, timedOut: false, confirmed: true },
+    { exitCode: null, signal: "SIGTERM", timedOut: true, confirmed: true },
+    { exitCode: null, signal: null, timedOut: true, confirmed: false },
+  ])("reports writer quiescence only with observed process exit: %j", async (outcome) => {
+    mockRunChildProcess.mockResolvedValue({ ...outcome, stdout: "", stderr: "" });
+    const result = await execute({
+      runId: "run-quiescence",
+      agent: {
+        id: "agent-1", orgId: "org-1", name: "Target",
+        agentRuntimeType: "process", agentRuntimeConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "worker" }, context: {}, onLog: async () => {},
+    });
+    expect(result.nativeWriterQuiescence).toEqual(outcome.confirmed
+      ? { status: "confirmed", source: "process_exit" }
+      : { status: "unconfirmed", reason: "process exit was not observed" });
+  });
+
   it("passes the bounded task through stdin and the dedicated environment key", async () => {
     mockRunChildProcess.mockResolvedValue({
       timedOut: false,
