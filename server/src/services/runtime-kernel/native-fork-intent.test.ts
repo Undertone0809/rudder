@@ -5,6 +5,7 @@ import {
   chatConversations,
   createDb,
   ensurePostgresDatabase,
+  heartbeatRunAttempts,
   heartbeatRuns,
   nativeSegments,
   organizations,
@@ -12,7 +13,7 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -35,6 +36,7 @@ import {
   type NativeForkIntentInput,
   type NativeForkIntentRunFence,
 } from "./native-fork-intent.js";
+import { releaseTerminalRunRuntimeSpanWriters } from "./native-session.js";
 import type { RuntimeProviderForkResult, RuntimeProviderSessionRef } from "./provider-capabilities.js";
 import { createHeartbeatUnifiedAgentRunAdapter } from "./unified-agent-run.integration.js";
 
@@ -181,6 +183,45 @@ describe("durable native fork intent", () => {
     createdOrgIds.clear();
     if (orgIds.length === 0) return;
     const where = inArray(organizations.id, orgIds);
+    const spans = await db.select().from(runRuntimeSpans).where(inArray(runRuntimeSpans.orgId, orgIds));
+    for (const span of spans) {
+      if (span.writerLeaseReleasedAt) continue;
+      const [run] = await db.select().from(heartbeatRuns).where(and(
+        eq(heartbeatRuns.id, span.runId),
+        eq(heartbeatRuns.orgId, span.orgId),
+      ));
+      const [latestAttempt] = await db.select().from(heartbeatRunAttempts).where(and(
+        eq(heartbeatRunAttempts.orgId, span.orgId),
+        eq(heartbeatRunAttempts.runId, span.runId),
+      )).orderBy(desc(heartbeatRunAttempts.attemptIndex)).limit(1);
+      if (!run || run.processPid !== null || !latestAttempt || span.attemptId !== latestAttempt.id) {
+        throw new Error(`Cannot clean test writer without exact unstarted-attempt proof for span ${span.id}`);
+      }
+
+      // This suite admits fork targets but never starts their execution process.
+      const exitedAt = new Date();
+      await db.update(heartbeatRuns).set({
+        status: "failed",
+        finishedAt: exitedAt,
+        processExitedAt: exitedAt,
+        executionLeaseExpiresAt: null,
+        terminalEffectsPending: false,
+      }).where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.orgId, run.orgId)));
+      const releasedSpanIds = await releaseTerminalRunRuntimeSpanWriters(db, {
+        orgId: span.orgId,
+        runId: span.runId,
+        spanId: span.id,
+        proof: {
+          exitCode: null,
+          signal: "process-exit-confirmed",
+          timedOut: false,
+          nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+        },
+      });
+      if (!releasedSpanIds.includes(span.id)) {
+        throw new Error(`Test writer release did not acknowledge exact span ${span.id}`);
+      }
+    }
     await db.delete(runRuntimeSpans).where(inArray(runRuntimeSpans.orgId, orgIds));
     await db.delete(nativeSegments).where(inArray(nativeSegments.orgId, orgIds));
     await db.delete(runtimeBindings).where(inArray(runtimeBindings.orgId, orgIds));
@@ -339,6 +380,7 @@ describe("durable native fork intent", () => {
       completeness: "complete",
       openedAt: createdAt,
       closedAt: sealedAt,
+      writerLeaseReleasedAt: sealedAt,
       updatedAt: sealedAt,
     });
 
@@ -534,6 +576,7 @@ describe("durable native fork intent", () => {
       sessionDisplayId: "child-session",
       sessionParams: child(fixtureValue).session.sessionParams,
       resultJson: { turnId: "child-run-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
     }, {
       orgId: fixtureValue.orgId,
       spanId: runFence.spanId,
@@ -739,6 +782,7 @@ describe("durable native fork intent", () => {
       completeness: "complete",
       openedAt: secondTimestamp,
       closedAt: secondTimestamp,
+      writerLeaseReleasedAt: secondTimestamp,
       updatedAt: secondTimestamp,
     });
 

@@ -66,6 +66,7 @@ import {
   type FeishuOutboundSender,
 } from "../services/integrations/feishu/runtime.js";
 import { feishuIntegrationUserBindingService } from "../services/integrations/feishu/user-bindings.js";
+import { releaseTerminalRunRuntimeSpanWriters } from "../services/runtime-kernel/native-session.js";
 
 const mockFeishuSessionSummaryExecute = vi.hoisted(() => vi.fn());
 
@@ -235,6 +236,24 @@ describe("Feishu inbound dispatcher DB deps", () => {
   afterEach(async () => {
     mockFeishuSessionSummaryExecute.mockReset();
     clearActiveChatGenerationsForTest();
+    // These dispatcher fixtures admit Runs but never launch a native writer.
+    // Close each admitted lease explicitly before removing its history.
+    for (const span of await db.select().from(runRuntimeSpans)) {
+      if (span.writerLeaseReleasedAt) continue;
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, span.runId));
+      expect(run?.processPid).toBeNull();
+      await db.update(heartbeatRuns).set({
+        status: "cancelled", processExitedAt: new Date(),
+      }).where(eq(heartbeatRuns.id, span.runId));
+      const released = await releaseTerminalRunRuntimeSpanWriters(db, {
+        orgId: span.orgId, runId: span.runId, spanId: span.id,
+        proof: {
+          exitCode: null, signal: null, timedOut: false,
+          nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+        },
+      });
+      expect(released).toContain(span.id);
+    }
     await db.delete(agentIntegrationOutboundMessages);
     await db.delete(agentIntegrationInboundAudit);
     await db.delete(agentIntegrationInboundDedup);

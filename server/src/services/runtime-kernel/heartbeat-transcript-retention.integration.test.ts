@@ -15,7 +15,7 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -353,6 +353,30 @@ describe("heartbeat native transcript retention integration", () => {
     fakeNativeProvider.reset();
     fakeTerminalEffect.releasePending();
     if (!db) return;
+    const spans = await db.select().from(runRuntimeSpans);
+    for (const span of spans) {
+      if (span.writerLeaseReleasedAt) continue;
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, span.runId));
+      const [latestAttempt] = await db.select().from(heartbeatRunAttempts).where(eq(heartbeatRunAttempts.runId, span.runId))
+        .orderBy(desc(heartbeatRunAttempts.attemptIndex)).limit(1);
+      if (!run?.processExitedAt || !latestAttempt || span.attemptId !== latestAttempt.id) {
+        throw new Error(`Cannot clean test writer without exact terminal-attempt proof for span ${span.id}`);
+      }
+      const releasedSpanIds = await releaseTerminalRunRuntimeSpanWriters(db, {
+        orgId: span.orgId,
+        runId: span.runId,
+        spanId: span.id,
+        proof: {
+          exitCode: null,
+          signal: "process-exit-confirmed",
+          timedOut: false,
+          nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+        },
+      });
+      if (!releasedSpanIds.includes(span.id)) {
+        throw new Error(`Test writer release did not acknowledge exact span ${span.id}`);
+      }
+    }
     await db.delete(heartbeatRunEvents);
     await db.delete(runRuntimeSpans);
     await db.delete(heartbeatRunAttempts);
@@ -443,11 +467,44 @@ describe("heartbeat native transcript retention integration", () => {
     });
   }
 
-  it("releases a historical sealed span on process exit only when the retained PID is confirmed gone", async () => {
+  it("releases only the current attempt span when its process-exit proof names that span", async () => {
     const { orgId, agentId } = await seedAgent();
     const queued = await queueRun(agentId);
     const exitedAt = new Date();
     const closedAt = new Date(Date.now() + 1_000);
+    const existingAttempts = await db.select().from(heartbeatRunAttempts)
+      .where(eq(heartbeatRunAttempts.runId, queued.run.id));
+    const firstAttemptIndex = existingAttempts.reduce((max, attempt) => Math.max(max, attempt.attemptIndex), -1) + 1;
+    const previousAttemptId = randomUUID();
+    const currentAttemptId = randomUUID();
+    const [previousAttempt, currentAttempt] = await db.insert(heartbeatRunAttempts).values([
+      {
+        id: previousAttemptId,
+        orgId,
+        runId: queued.run.id,
+        agentId,
+        attemptIndex: firstAttemptIndex,
+        runtimeType: "codex_local",
+        status: "succeeded",
+        ownerToken: `previous-attempt-${previousAttemptId}`,
+        attemptEpoch: firstAttemptIndex + 1,
+        finishedAt: exitedAt,
+      },
+      {
+        id: currentAttemptId,
+        orgId,
+        runId: queued.run.id,
+        agentId,
+        attemptIndex: firstAttemptIndex + 1,
+        runtimeType: "codex_local",
+        status: "timed_out",
+        ownerToken: `current-attempt-${currentAttemptId}`,
+        attemptEpoch: firstAttemptIndex + 2,
+        finishedAt: exitedAt,
+      },
+    ]).returning();
+    expect(previousAttempt?.id).toBe(previousAttemptId);
+    expect(currentAttempt?.id).toBe(currentAttemptId);
     await db.update(heartbeatRuns).set({
       status: "timed_out",
       processPid: null,
@@ -460,7 +517,26 @@ describe("heartbeat native transcript retention integration", () => {
       bindingId: queued.bindingId,
       segmentId: queued.segmentId,
       attemptRef: `legacy-span-${randomUUID()}`,
+      attemptId: previousAttempt!.id,
+      attemptEpoch: firstAttemptIndex + 1,
       ownerToken: `legacy-owner-${randomUUID()}`,
+      ordinal: 0,
+      state: "sealed",
+      completeness: "unknown",
+      closedAt,
+      writerLeaseReleasedAt: exitedAt,
+    }).returning();
+    const [currentSpan] = await db.insert(runRuntimeSpans).values({
+      orgId,
+      runId: queued.run.id,
+      bindingId: queued.bindingId,
+      segmentId: queued.segmentId,
+      attemptRef: `current-span-${randomUUID()}`,
+      attemptId: currentAttempt!.id,
+      attemptEpoch: firstAttemptIndex + 2,
+      ownerToken: `current-owner-${randomUUID()}`,
+      ordinal: 1,
+      relation: "continuation",
       state: "sealed",
       completeness: "unknown",
       closedAt,
@@ -490,9 +566,17 @@ describe("heartbeat native transcript retention integration", () => {
       orgId,
       runId: queued.run.id,
       proof: processExitProof,
-    })).resolves.toEqual([historicalSpan!.id]);
-    const [releasedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, historicalSpan!.id));
+    })).resolves.toEqual([]);
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId,
+      runId: queued.run.id,
+      spanId: currentSpan!.id,
+      proof: processExitProof,
+    })).resolves.toEqual([currentSpan!.id]);
+    const [releasedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, currentSpan!.id));
+    const [unchangedHistoricalSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, historicalSpan!.id));
     expect(releasedSpan?.writerLeaseReleasedAt).toBeInstanceOf(Date);
+    expect(unchangedHistoricalSpan?.writerLeaseReleasedAt).toEqual(exitedAt);
   });
 
   it("avoids raw mirrors for a verified native profile and retains native read-back authority", async () => {
@@ -529,6 +613,7 @@ describe("heartbeat native transcript retention integration", () => {
       const events = await db.select().from(heartbeatRunEvents)
         .where(eq(heartbeatRunEvents.runId, native.run.id));
       const subagentSpanId = randomUUID();
+      const closedAtForSubagent = new Date();
       fakeNativeProvider.sessions.set(sessionId, [
         ...(fakeNativeProvider.sessions.get(sessionId) ?? []),
         {
@@ -564,7 +649,8 @@ describe("heartbeat native transcript retention integration", () => {
         state: "sealed",
         completeness: "complete",
         openedAt: new Date(Date.now() - 1_000),
-        closedAt: new Date(),
+        closedAt: closedAtForSubagent,
+        writerLeaseReleasedAt: closedAtForSubagent,
       }).returning();
 
       expect(binding?.continuity).toBe("native");
