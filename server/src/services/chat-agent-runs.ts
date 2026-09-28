@@ -3,12 +3,13 @@ import type { Db } from "@rudderhq/db";
 import { chatMessages, goals, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { logger } from "../middleware/logger.js";
 import { redactSensitiveText } from "../redaction.js";
 import { getStorageService, type ContentAddressedStorageService } from "../storage/index.js";
+import { retainNativeChatRunResultJson } from "./chat-run-result-retention.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
@@ -59,7 +60,6 @@ import type {
 } from "./runtime-kernel/unified-agent-run.js";
 
 const MAX_EVENT_TEXT_CHARS = 2_000;
-const MAX_NATIVE_CHAT_REPLY_CHARS = 2_000;
 const NATIVE_CHAT_TRANSCRIPT_RETENTION = {
   mode: "native",
   persistRawTranscript: false,
@@ -145,43 +145,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function nonEmptyText(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function retainNativeChatRunResultJson(
-  resultJson: Record<string, unknown> | null | undefined,
-  spanId: string,
-): Record<string, unknown> {
-  const source = asRecord(resultJson) ?? {};
-  const body = typeof source.body === "string" ? source.body : null;
-  const retainedBody = body?.slice(0, MAX_NATIVE_CHAT_REPLY_CHARS) ?? null;
-  return {
-    ...(nonEmptyText(source.outcome) ? { outcome: nonEmptyText(source.outcome) } : {}),
-    ...(nonEmptyText(source.kind) ? { kind: nonEmptyText(source.kind) } : {}),
-    ...(body !== null ? {
-      body: retainedBody,
-      productReply: {
-        textStored: true,
-        characterLength: body.length,
-        utf8ByteLength: Buffer.byteLength(body, "utf8"),
-        sha256: createHash("sha256").update(body, "utf8").digest("hex"),
-        truncated: body.length > MAX_NATIVE_CHAT_REPLY_CHARS,
-      },
-    } : {}),
-    ...(typeof source.generatedAttachmentCount === "number"
-      && Number.isFinite(source.generatedAttachmentCount)
-      ? { generatedAttachmentCount: source.generatedAttachmentCount }
-      : {}),
-    retention: {
-      transcriptSource: "native",
-      transcriptSpanId: spanId,
-      rawTranscriptPersisted: false,
-      rawTranscriptEventPersisted: false,
-      rawLogPersisted: false,
-      rawResultPersisted: false,
-      productReplyStored: body !== null,
-      productReplyTruncated: body !== null && body.length > MAX_NATIVE_CHAT_REPLY_CHARS,
-    },
-  };
 }
 
 function runtimeSkillsFromInvocationPayload(payload: Record<string, unknown>) {

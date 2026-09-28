@@ -77,6 +77,7 @@ import {
   createHeartbeatExecutionTranscriptSupplement,
   resolveHeartbeatExecutionTranscriptRetention,
 } from "./heartbeat.execute-transcript-retention.js";
+import { acknowledgeUnstartedWriter, buildPersistableHeartbeatContext, EXECUTOR_OWNED_CONTEXT_KEYS, providerIdentityFromResult } from "./heartbeat.execution-state.js";
 import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
@@ -95,26 +96,6 @@ import * as heartbeatSessions from "./heartbeat.sessions.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, networkWaitBackoffMs, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
-function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
-  return sanitizeStartupContextContextForPersistence(context) ?? {};
-}
-
-const EXECUTOR_OWNED_CONTEXT_KEYS = [
-  "executionWorkspaceId",
-  "rudderGitIdentity",
-  "rudderScene",
-  "rudderWorkspace",
-  "rudderWorkspaces",
-  "rudderStartupContext",
-  "rudderStartupContextMetrics",
-  "rudderRuntimeServiceIntents",
-  "rudderSessionHandoffMarkdown",
-  "rudderSessionRotationReason",
-  "rudderPreviousSessionId",
-  "rudderRuntimeServices",
-  "rudderRuntimePrimaryUrl",
-  "managedMcpPolicySnapshot",
-] as const;
 
 export function createHeartbeatExecuteHandlers(context: any) {
     const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, beforeAssignmentRecoveryEnqueue, ensureCommonRunExecutionBoundary, resolveHeartbeatNativeResources, unifiedRunAdapter } = context;
@@ -263,31 +244,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
         || entry.ownerFence.attemptEpoch !== commonAttemptEpoch
       ) return null;
       return entry;
-    };
-    const providerIdentityFromResult = (result: Record<string, unknown>) => {
-      const payload = result.resultJson && typeof result.resultJson === "object" && !Array.isArray(result.resultJson)
-        ? result.resultJson as Record<string, unknown>
-        : {};
-      const read = (...values: unknown[]) => values.find(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      )?.trim() ?? null;
-      return {
-        providerThreadId: read(
-          result.providerThreadId,
-          result.sessionDisplayId,
-          result.sessionId,
-          payload.providerThreadId,
-          payload.providerSessionId,
-          payload.threadId,
-        ),
-        providerTurnId: read(
-          result.providerTurnId,
-          payload.providerTurnId,
-          payload.turnId,
-          payload.executionId,
-          payload.messageId,
-        ),
-      };
     };
     const recordUnifiedAttemptResult = async (
       result: Record<string, unknown>,
@@ -1841,19 +1797,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
           }
         } finally {
           if (executionLeaseTimer) clearInterval(executionLeaseTimer);
-          // Only this fresh executor can prove that it never called a provider.
-          // A recovered running Run may still have a writer from its old owner.
-          if (!runWasRunningAtEntry && !providerDispatchStarted && commonSpanId) {
-            await acknowledgeRunProcessExit(run.id, {
-              exitCode: null,
-              signal: null,
-              timedOut: false,
-              submissionPhase: "pre_submission",
-              nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
-            }, commonSpanId).catch((error) => {
-              logger.error({ err: error, runId, spanId: commonSpanId }, "failed to persist pre-dispatch writer quiescence");
-            });
-          }
+          await acknowledgeUnstartedWriter({
+            runId: run.id, spanId: commonSpanId, runWasRunningAtEntry,
+            providerDispatchStarted, acknowledge: acknowledgeRunProcessExit,
+          });
           await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
           runAbortControllers.delete(run.id);
           activeRunExecutions.delete(run.id);
