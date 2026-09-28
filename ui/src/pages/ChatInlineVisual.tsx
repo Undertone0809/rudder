@@ -18,7 +18,7 @@ import {
 } from "css-tree";
 import createDOMPurify from "dompurify";
 import { AlertTriangle } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 
 export const INLINE_VISUAL_CSP = [
   "default-src 'none'",
@@ -391,6 +391,12 @@ function InlineVisualFallback() {
 
 function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; theme: "light" | "dark" }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const attachFrame = useCallback((frame: HTMLIFrameElement | null) => {
+    iframeRef.current = frame;
+    // React versions differ on whether this is a known boolean DOM attribute.
+    // Set its presence explicitly rather than passing an empty, falsy JSX value.
+    frame?.setAttribute("credentialless", "");
+  }, []);
   const measurementFrameRef = useRef<number | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [srcDoc, setSrcDoc] = useState<string | null>(null);
@@ -472,12 +478,12 @@ function InlineVisualFrame({ attachment, theme }: { attachment: ChatAttachment; 
   if (!srcDoc) return <div className="my-2 h-32 animate-pulse rounded-md bg-muted/25" aria-label="Loading visual artifact" />;
   return (
     <iframe
-      ref={iframeRef}
+      ref={attachFrame}
       {...{ [CHAT_ANNOTATION_IGNORE_ATTRIBUTE]: "" }}
       className="my-2 block w-full border-0 bg-transparent"
       title={attachment.originalFilename ?? "Visual artifact"}
       sandbox="allow-same-origin"
-      {...({ csp: INLINE_VISUAL_CSP, credentialless: "" } as Record<string, string>)}
+      {...({ csp: INLINE_VISUAL_CSP } as Record<string, string>)}
       referrerPolicy="no-referrer"
       srcDoc={srcDoc}
       style={{ height }}

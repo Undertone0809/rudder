@@ -206,7 +206,7 @@ describe("ChatInlineVisualContent", () => {
 
   it("renders the bundled Rudder visualize example through the production sanitizer", () => {
     const example = fs.readFileSync(
-      path.join(process.cwd(), "server/resources/bundled-skills/visualize/assets/example-chart.html"),
+      path.resolve(__dirname, "../../../server/resources/bundled-skills/visualize/assets/example-chart.html"),
       "utf8",
     );
     const srcdoc = buildInlineVisualSrcDoc(example, "light");
