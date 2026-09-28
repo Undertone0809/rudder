@@ -162,13 +162,13 @@ describe("server runtime postinstall compatibility", () => {
     assert.throws(() => statSync(path.join(external.runtimeRoot, "share", "timezone")));
   });
 
-  it("ships the bridge as the server package postinstall hook", () => {
+  it("ships the PostgreSQL bridge after native permission repair in postinstall", () => {
     const packageJson = JSON.parse(
       readFileSync(path.resolve(import.meta.dirname, "../server/package.json"), "utf8"),
     );
     assert.equal(
       packageJson.scripts.postinstall,
-      "node resources/postinstall-postgres-compat.mjs",
+      "node resources/postinstall-native-mode.mjs && node resources/postinstall-postgres-compat.mjs",
     );
     assert.equal(packageJson.files.includes("resources"), true);
   });
