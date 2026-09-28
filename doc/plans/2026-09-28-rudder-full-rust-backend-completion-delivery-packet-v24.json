@@ -175,19 +175,19 @@
       "ui/src/api/projects.ts"
     ],
     "build": {
-      "id": "d1-v24-945a0d5d4-exact-real-entry-build-pending",
+      "id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
       "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
       "artifact_hash": "ab2037ad26350518277177e43d8b911750f297329ad6f49e7df3fd49926a9b03;96d26f7b274854800d6666dae420ab857d154c9f7ec722a03d58af35637a6d70",
       "verification": "Locked Cargo build completed at c8c8e5b2a. Rust backend content is unchanged at 945a0d5d4: subsequent changes repaired CI compatibility literals and restored Desktop updater files to Main. Independent runtime verification remains pending."
     },
     "runtime": {
-      "id": "pending-exact-945a0d5d4-node-actix-sqlx-embedded-postgres-main-66b500aef",
+      "id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
       "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
       "topology": "Node public API listener -> private Actix/SQLx authority for D1 -> CLI/MCP through public HTTP; other domains remain Node-owned"
     },
     "organization_data": {
-      "organization_id": "pending-independent-disposable-fixture",
-      "data_id": "pending-independent-disposable-fixture"
+      "organization_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606"
     },
     "workload_fixture": "Fresh disposable embedded PostgreSQL bootstrap/current/restart workflows for scalar organization branding and Project-Goal mutations, authenticated API, private Actix, SQLx transactions, CLI/MCP subprocesses, audit rollback, idempotency conflict/replay, organization isolation, ownership fencing, and outbox recovery.",
     "budget_lease": {
@@ -225,30 +225,36 @@
   },
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
+      "verdict": "accept",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "level": "stage_verdict",
+      "scope": "Whole D1 branding and Project-Goal: prior review plus sole updater compatibility blocker resolved at 945a0d5d4. Final handoff remains pending.",
       "candidate_fingerprint": "9961b0dc417a0bab15e3d70d7d04dc33b2b05c365b3b2a0bb23377d3f4ee1586",
       "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
-      "build_id": "d1-v24-945a0d5d4-exact-real-entry-build-pending",
-      "runtime_id": "pending-exact-945a0d5d4-node-actix-sqlx-embedded-postgres-main-66b500aef",
-      "data_id": "pending-independent-disposable-fixture",
+      "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+      "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
       "packet_version": "v24.2"
     },
     "verifier": {
-      "verdict": "pending",
+      "verdict": "PASS",
+      "agent_id": "01a0e90e-d2df-7092-a9a6-4ac0e3d80c1f",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json",
+      "lease_recheck": "current: runtime content unchanged at 5fa6f66b8; private planner delta tested separately, delta review pending",
       "candidate_fingerprint": "9961b0dc417a0bab15e3d70d7d04dc33b2b05c365b3b2a0bb23377d3f4ee1586",
       "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
-      "build_id": "d1-v24-945a0d5d4-exact-real-entry-build-pending",
-      "runtime_id": "pending-exact-945a0d5d4-node-actix-sqlx-embedded-postgres-main-66b500aef",
-      "data_id": "pending-independent-disposable-fixture",
+      "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+      "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
       "packet_version": "v24.2"
     },
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "9961b0dc417a0bab15e3d70d7d04dc33b2b05c365b3b2a0bb23377d3f4ee1586",
       "source_sha": "945a0d5d4b25bae6ae5132ab65badf8161e14d3e",
-      "build_id": "d1-v24-945a0d5d4-exact-real-entry-build-pending",
-      "runtime_id": "pending-exact-945a0d5d4-node-actix-sqlx-embedded-postgres-main-66b500aef",
-      "data_id": "pending-independent-disposable-fixture",
+      "build_id": "d1-v24-foundation-ab2037ad-preflight-96d26f7b",
+      "runtime_id": "rust-branding-real-entry-97769;rust-project-goal-real-entry-967",
+      "data_id": "e2ce3ccf-f370-4d9c-a417-a02b6622ff56;941a21f2-cb76-47d6-9b44-f359e095f606",
       "packet_version": "v24.2"
     },
     "history": [

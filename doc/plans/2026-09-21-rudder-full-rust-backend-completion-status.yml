@@ -38,7 +38,13 @@ current_candidate:
   branch: codex/rudder-d1-candidate-20260928
   tested_commit: c8c8e5b2a049c8b7cc02998f7e719882a64c7035
   tested_commit_equivalence: backend_unchanged_after_c8_CI_manifest_literals_fixed_and_unrelated_updater_changes_removed
-  pr_head_pushed: 945a0d5d4b25bae6ae5132ab65badf8161e14d3e
+  pr_head_pushed: 5fa6f66b8
+  head_equivalence: D1_runtime_unchanged_after_945_docs_CI_and_private_request_planner_fix_are_separate_deltas
+  planner_delta: {commit: 5fa6f66b8, tests: PASS_18, clippy: PASS, stage_review: pending}
+  real_entry_CI: {head: 8b5691fbfd43267edc453c6878c104ac66d790fe, run: 36458516771, verdict: PASS}
+  stage_review: Newton_accept_whole_D1_945a0d5d4
+  independent_verifier: Hubble_PASS_v24_2_runtime_lease_current_at_5fa6f66b8
+  independent_verifier_evidence: doc/plans/artifacts/2026-09-29-rudder-d1-independent-verifier-v24.json
   pr_url: https://github.com/Undertone0809/rudder/pull/225
   pr_state: unaccepted_candidate_published_for_CI_not_merge_qualified
   source_sha: 945a0d5d4b25bae6ae5132ab65badf8161e14d3e
@@ -50,7 +56,7 @@ current_candidate:
   ci: plan_qualification_fixed_native_matrix_failed_diagnosis_in_progress_other_jobs_pending
   next_slice: workspace_backup_metadata_list_Volta_isolated_rust_backup_list_worktree
   packet: doc/plans/2026-09-28-rudder-full-rust-backend-completion-delivery-packet-v24.json
-  real_entry: author_PASS_branding_25408_project_goal_26485_independent_acceptance_pending
+  real_entry: independent_PASS_branding_97769_project_goal_967
   author_project_goal_log: /tmp/rudder-d1-c8c8e5b2a-project-goal-author.log
   authority: {default_rust_listener: false, first_party_node_writers_retired: false, full_rust_migration: false}
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
@@ -571,10 +577,10 @@ historical_v16_receipts:
   verifier: {agent_id: 01a0c903-973c-77a0-8116-8867ff5f43e5, verdict: PASS, data_id: rust-project-goal-real-entry-16304, packet: v16}
   final_review: {agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3, verdict: accept, level: final_handoff_verdict}
 interrupt_resume:
-  last_durable_commit: 945a0d5d4b25bae6ae5132ab65badf8161e14d3e
+  last_durable_commit: 5fa6f66b8
   prior_accepted_candidate: older_receipts_historical_current_stage_review_pending
   remaining_work: update_PR225_for_CI_resolve_stage_findings_independent_verifier_final_review_then_protected_merge
-  next_command: inspect_PR225_CI_and_reconcile_Newton_stage_review_then_spawn_independent_verifier
+  next_command: resolve_native_CI_failure_receive_Hubble_verifier_then_Newton_final_review_and_protected_merge
 
 historical_candidate_2026_09_28:
   authority: historical_only_top_level_current_candidate_is_authoritative
