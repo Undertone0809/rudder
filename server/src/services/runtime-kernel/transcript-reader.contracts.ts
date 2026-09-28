@@ -399,13 +399,13 @@ export type TranscriptCursor = CursorPayload;
 export const DEFAULT_PAGE_LIMIT = 50;
 export const MAX_PAGE_LIMIT = 200;
 export const DEFAULT_LEGACY_READ_BYTES = 256 * 1024;
-export const MAX_LEGACY_READ_BYTES = 2 * 1024 * 1024;
+export const MAX_LEGACY_READ_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_LEGACY_TOTAL_READ_BYTES = 64 * 1024 * 1024;
 export const MAX_LEGACY_TOTAL_READ_BYTES = 256 * 1024 * 1024;
 export const DEFAULT_LEGACY_TOTAL_ITEMS = 20_000;
 export const MAX_LEGACY_TOTAL_ITEMS = 100_000;
 export const DEFAULT_LEGACY_ITEM_BYTES = 1024 * 1024;
-export const MAX_LEGACY_ITEM_BYTES = 2 * 1024 * 1024;
+export const MAX_LEGACY_ITEM_BYTES = 8 * 1024 * 1024;
 export const MAX_CONVERSATION_SOURCE_SCAN = MAX_PAGE_LIMIT * 4;
 
 export type TranscriptReaderErrorCode =

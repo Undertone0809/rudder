@@ -1006,7 +1006,11 @@ function transcriptEntryFromReaderItem(item: TranscriptItem): TranscriptEntry | 
 async function createHistoricalRunTranscriptReader(
   db: Db,
   run: RunRow,
-  options: { diagnosticProjection?: boolean } = {},
+  options: {
+    diagnosticProjection?: boolean;
+    maxLegacyReadBytes?: number;
+    maxLegacyItemBytes?: number;
+  } = {},
 ) {
   const revisionsByAgentId = await loadRevisionsForRuns(db, [run]);
   const logStore = getRunLogStore();
@@ -1016,7 +1020,10 @@ async function createHistoricalRunTranscriptReader(
       maxReadBytes: 256 * 1024,
       maxTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
       maxItemBytes: 1024 * 1024,
-    } : {}),
+    } : {
+      ...(options.maxLegacyReadBytes === undefined ? {} : { maxReadBytes: options.maxLegacyReadBytes }),
+      ...(options.maxLegacyItemBytes === undefined ? {} : { maxItemBytes: options.maxLegacyItemBytes }),
+    }),
   });
   return createTranscriptReader(db, {
     nativeReader: createRuntimeNativeTranscriptReaderHook(
@@ -1037,7 +1044,10 @@ async function createHistoricalRunTranscriptReader(
       maxLegacyReadBytes: 256 * 1024,
       maxLegacyTotalBytes: MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
       maxLegacyItemBytes: 1024 * 1024,
-    } : {}),
+    } : {
+      ...(options.maxLegacyReadBytes === undefined ? {} : { maxLegacyReadBytes: options.maxLegacyReadBytes }),
+      ...(options.maxLegacyItemBytes === undefined ? {} : { maxLegacyItemBytes: options.maxLegacyItemBytes }),
+    }),
   });
 }
 
@@ -1071,6 +1081,8 @@ async function loadRunTranscriptFromReader(db: Db, orgId: string, runId: string)
 export interface ObservedRunTranscriptPageInput {
   cursor?: string | null;
   limit?: number;
+  maxLegacyReadBytes?: number;
+  maxLegacyItemBytes?: number;
   spanId?: string | null;
   range?: TranscriptRange | null;
   visibilityCutoffRef?: string | null;
@@ -1094,7 +1106,10 @@ export async function getObservedRunTranscript(
   ]);
   if (!run || !observedRun) throw notFound("Agent run not found");
 
-  const reader = await createHistoricalRunTranscriptReader(db, run);
+  const reader = await createHistoricalRunTranscriptReader(db, run, {
+    maxLegacyReadBytes: input.maxLegacyReadBytes,
+    maxLegacyItemBytes: input.maxLegacyItemBytes,
+  });
   const page = await reader.readRun({
     orgId,
     runId: resolvedRunId,

@@ -116,6 +116,7 @@ type TranscriptProjectionCursor = {
 const MAX_TRANSCRIPT_PROJECTION_ITEMS = 50_000;
 const MAX_TRANSCRIPT_PROJECTION_BYTES = 32 * 1024 * 1024;
 const MAX_TRANSCRIPT_PROJECTION_READ_MS = 10_000;
+const MAX_TRANSCRIPT_SOURCE_PAGE_BYTES = 8 * 1024 * 1024;
 
 function encodeTranscriptProjectionCursor(input: TranscriptProjectionCursor): string {
   return Buffer.from(JSON.stringify(input), "utf8").toString("base64url");
@@ -499,6 +500,8 @@ async function readTranscriptPages(
     const pageResult = await getObservedRunTranscript(db, runId, scope, {
       cursor: readerCursor,
       limit: 200,
+      maxLegacyReadBytes: MAX_TRANSCRIPT_SOURCE_PAGE_BYTES,
+      maxLegacyItemBytes: MAX_TRANSCRIPT_SOURCE_PAGE_BYTES,
     });
     result = pageResult;
     for (const item of pageResult.page.items) {
@@ -787,7 +790,9 @@ export function runIntelligenceRoutes(db: Db) {
     // bounded projection cursor that retains the reader's opaque source cursor
     // instead of replacing it with a synthetic step-N position.
     const scanned = await readTranscriptPages(db, runId, scope, {
-      cursor: projectionCursor?.sourceCursor ?? (legacyCursorIndex === null ? cursor : null),
+      cursor: projectionCursor
+        ? projectionCursor.sourceCursor
+        : legacyCursorIndex === null ? cursor : null,
     });
     const pageResult = scanned.result;
     if (!pageResult) throw notFound("Agent run transcript not found");
@@ -857,7 +862,9 @@ export function runIntelligenceRoutes(db: Db) {
         kind: "run_transcript_projection",
         runId,
         orgId: pageResult.orgId,
-        sourceCursor: projectionCursor?.sourceCursor ?? (legacyCursorIndex === null ? cursor : null),
+        sourceCursor: projectionCursor
+          ? projectionCursor.sourceCursor
+          : legacyCursorIndex === null ? cursor : null,
         source: pageResult.page.source,
         revision: pageResult.page.revision,
         order,

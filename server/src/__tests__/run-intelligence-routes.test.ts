@@ -13,6 +13,7 @@ const mockGetRunSummary = vi.hoisted(() => vi.fn());
 const mockGetObservedRunEvents = vi.hoisted(() => vi.fn());
 const mockGetObservedRunLog = vi.hoisted(() => vi.fn());
 const mockGetObservedRunDetail = vi.hoisted(() => vi.fn());
+const mockGetObservedRunDiagnosticDetail = vi.hoisted(() => vi.fn());
 const mockGetObservedRunTranscript = vi.hoisted(() => vi.fn());
 const mockListNativeForkIntents = vi.hoisted(() => vi.fn());
 const mockReadNativeForkIntent = vi.hoisted(() => vi.fn());
@@ -28,6 +29,7 @@ vi.mock("../services/run-intelligence.js", () => ({
   getObservedRunEvents: mockGetObservedRunEvents,
   getObservedRunLog: mockGetObservedRunLog,
   getObservedRunDetail: mockGetObservedRunDetail,
+  getObservedRunDiagnosticDetail: mockGetObservedRunDiagnosticDetail,
   getObservedRunTranscript: mockGetObservedRunTranscript,
 }));
 
@@ -186,6 +188,33 @@ beforeEach(async () => {
       { kind: "tool_result", ts: "2026-06-11T00:00:03.000Z", toolUseId: "tool-1", toolName: "exec_command", content: "ERR".repeat(1000), isError: true },
       { kind: "result", ts: "2026-06-11T00:00:04.000Z", text: "failed", inputTokens: 1, outputTokens: 1, cachedTokens: 0, costUsd: 0, subtype: "error", isError: true, errors: ["boom"] },
     ],
+  });
+  mockGetObservedRunDiagnosticDetail.mockImplementation(async () => {
+    const detail = await mockGetObservedRunDetail();
+    return {
+      detail,
+      projection: {
+        completeness: "complete",
+        source: "legacy",
+        availability: "available",
+        limitReached: null,
+        truncatedItems: 0,
+        omittedSources: [],
+        readFailure: false,
+      },
+      entryPositions: detail.transcript.map((_: unknown, index: number) => ({
+        stepIndex: index + 1,
+        turnIndex: 1,
+        after: {
+          sourceCursor: null,
+          itemOffset: index + 1,
+          stepOffset: index + 1,
+          traceState: { nextTurnIndex: 1, activeTurnIndex: 1 },
+        },
+      })),
+      nextPosition: null,
+      revision: "route-test-revision",
+    };
   });
   mockGetObservedRunTranscript.mockImplementation(async (_db: unknown, _runId: string, _scope: unknown, input: { range?: { fromExclusive?: number } | null } = {}) => {
     const transcript = [

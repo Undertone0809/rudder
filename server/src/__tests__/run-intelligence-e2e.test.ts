@@ -336,14 +336,14 @@ describe("run intelligence real route workflow", () => {
       {
         kind: "result",
         ts: "2026-07-14T10:00:06.000Z",
-        text: "Second turn ended",
+        text: "Second turn failed",
         inputTokens: 100,
         outputTokens: 20,
         cachedTokens: 50,
         costUsd: 0.01,
-        subtype: "success",
-        isError: false,
-        errors: [],
+        subtype: "error",
+        isError: true,
+        errors: ["second command failed"],
       },
     ];
     await db.insert(heartbeatRunEvents).values(entries.map((payload, index) => transcriptEvent({
@@ -456,7 +456,7 @@ describe("run intelligence real route workflow", () => {
     expect(errors.body.projection).toMatchObject({
       completeness: "partial",
       source: "legacy",
-      truncatedItems: 1,
+      truncatedItems: 2,
       omittedSources: ["resultJson"],
       limitReached: null,
       readFailure: false,
@@ -501,6 +501,46 @@ describe("run intelligence real route workflow", () => {
     expect(transcript.body.entries[2].entry.content).toHaveLength((5 * 1024 * 1024) + 15);
     expect(transcript.body.transcript).toBeUndefined();
     expect(JSON.stringify(transcript.body)).not.toContain("second-turn-marker");
+
+    const transcriptErrorPages: string[] = [];
+    const transcriptCursors = new Set<string>();
+    let transcriptCursor: string | null = null;
+    for (let pageCount = 0; pageCount < 5; pageCount += 1) {
+      const page = await request(app)
+        .get(`/api/run-intelligence/runs/${runId}/transcript`)
+        .query({
+          ...(transcriptCursor ? { cursor: transcriptCursor } : {}),
+          errorsOnly: "true",
+          maxChars: "80",
+          order: "oldest",
+          turnLimit: "1",
+        });
+      expect(page.status, JSON.stringify(page.body)).toBe(200);
+      expect(Buffer.byteLength(JSON.stringify(page.body), "utf8")).toBeLessThan(400_000);
+      transcriptErrorPages.push(...page.body.rows.map((row: { id: string }) => row.id));
+      if (!page.body.page.hasMore) {
+        expect(page.body.page.nextCursor).toBeNull();
+        break;
+      }
+      transcriptCursor = page.body.page.nextCursor;
+      expect(transcriptCursor).toEqual(expect.any(String));
+      expect(transcriptCursor).not.toMatch(/^step-\d+$/);
+      expect(transcriptCursors.has(transcriptCursor!)).toBe(false);
+      transcriptCursors.add(transcriptCursor!);
+      const decodedCursor = JSON.parse(Buffer.from(transcriptCursor!, "base64url").toString("utf8"));
+      expect(decodedCursor).toMatchObject({
+        kind: "run_transcript_projection",
+        runId,
+        orgId,
+        errorsOnly: true,
+        order: "oldest",
+      });
+    }
+    expect(transcriptErrorPages).toEqual(["step-3", "step-4", "step-6"]);
+    expect(new Set(transcriptErrorPages).size).toBe(transcriptErrorPages.length);
+    expect(errors.body.errors
+      .filter((error: { id: string }) => error.id.startsWith("step-"))
+      .map((error: { id: string }) => error.id)).toEqual(transcriptErrorPages);
 
     let offset = 0;
     let reconstructedLog = "";
@@ -547,6 +587,10 @@ describe("run intelligence real route workflow", () => {
     const otherOrgLog = await request(app).get(`/api/run-intelligence/runs/${otherRunId}/log`);
     expect(otherOrgLog.status).toBe(403);
     expect(otherOrgLog.body.error).toContain("does not have access");
+
+    const otherOrgTranscript = await request(app).get(`/api/run-intelligence/runs/${otherRunId}/transcript`);
+    expect(otherOrgTranscript.status).toBe(403);
+    expect(otherOrgTranscript.body.error).toContain("does not have access");
   });
 
   it("reports original detail length and partial status for one clipped errors[] member", async () => {
