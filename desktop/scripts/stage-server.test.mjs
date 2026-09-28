@@ -128,11 +128,13 @@ function createStageServerRepo() {
     "const path = require('node:path');",
     "const repo = process.cwd();",
     "if (process.argv.includes('install')) {",
-    "  const required = process.platform === 'win32'",
+    "  const ci = process.env.CI === 'true' || process.env.CI === '1';",
+    "  const required = ci ? ['--no-frozen-lockfile', '--lockfile=false'] : process.platform === 'win32'",
     "    ? ['--frozen-lockfile']",
     "    : ['--offline', '--frozen-lockfile'];",
     "  if (process.argv.includes('--force')) process.exit(47);",
     "  if (process.platform === 'win32' && process.argv.includes('--offline')) process.exit(48);",
+    "  if (ci && (process.argv.includes('--offline') || process.argv.includes('--frozen-lockfile'))) process.exit(49);",
     "  if (process.argv.includes('--ignore-scripts')) process.exit(46);",
     "  if (!required.every((arg) => process.argv.includes(arg))) process.exit(45);",
     "  fs.writeFileSync(path.join(repo, '.workspace-install-restored'), 'ok\\n');",
@@ -286,7 +288,7 @@ describe("desktop stage-server", () => {
     expect(readFileSync(join(preparedBinDir, "..", "share", "timezone", "UTC"), "utf8")).toBe("timezone data\n");
   });
 
-  it("does not bundle PostgreSQL runtime by default", () => {
+  it.each(["", "true"])("does not bundle PostgreSQL runtime by default (CI=%s)", (ci) => {
     const { repo, binDir } = createStageServerRepo();
     const pgBinDir = join(repo, "prepared-pg", "bin");
     writeFakePostgresBinDir(pgBinDir);
@@ -295,6 +297,7 @@ describe("desktop stage-server", () => {
       cwd: repo,
       env: {
         ...process.env,
+        CI: ci,
         PATH: `${binDir}${delimiter}${process.env.PATH}`,
         RUDDER_POSTGRES_BIN_DIR: "",
         RUDDER_FAKE_PREPARED_POSTGRES_BIN_DIR: pgBinDir,

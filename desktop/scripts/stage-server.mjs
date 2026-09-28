@@ -93,14 +93,17 @@ async function restoreSourcePackageManifests(snapshots) {
 }
 
 async function restoreWorkspaceDependencyLinks() {
+  // CI resolves changed manifests without committing a lockfile (see DEVELOPING).
+  // The post-deploy restoration must use the same policy as the initial install.
+  const ci = process.env.CI === "true" || process.env.CI === "1";
   const args = [
     "install",
-    "--frozen-lockfile",
+    ...(ci ? ["--no-frozen-lockfile", "--lockfile=false"] : ["--frozen-lockfile"]),
   ];
   // Forced installs traverse optional packages that do not exist on the
   // current platform. Windows also needs network access when a fresh lockfile
   // references a tarball that is not present in the local store yet.
-  if (process.platform !== "win32") args.push("--offline");
+  if (!ci && process.platform !== "win32") args.push("--offline");
   await run(pnpmBin, args, repoRoot);
 }
 
