@@ -108,8 +108,7 @@ export {
 } from "./product-analytics.js";
 export { productIntelligenceService } from "./product-intelligence.js";
 export {
-  handoffProjectGoalMutationAuthority,
-  lockNodeProjectGoalMutationAuthority
+  handoffProjectGoalMutationAuthority, lockNodeProjectGoalMutationAuthority, lockProjectGoalMutationAuthoritiesForOrganizationDeletion
 } from "./project-goal-mutation-fence.js";
 export { projectService } from "./projects.js";
 export { blockerFingerprint, requestService } from "./requests.js";

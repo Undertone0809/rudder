@@ -68,6 +68,7 @@ import {
 import { lockNodeMutationAuthority } from "./organization-mutation-fence.js";
 import { isPostgresError } from "./postgres-errors.js";
 import { recordProductAnalyticsEvent } from "./product-analytics.js";
+import { lockProjectGoalMutationAuthoritiesForOrganizationDeletion } from "./project-goal-mutation-fence.js";
 
 type OrganizationCreationPath = "onboarding" | "manual" | "import" | "fixture";
 type OrganizationCreateInput = typeof organizations.$inferInsert & {
@@ -493,20 +494,7 @@ export function organizationService(db: Db) {
     remove: (id: string) =>
       db.transaction(async (tx) => {
         await lockOrganizationBrandingAuthorityForDeletion(tx, id);
-        await lockNodeMutationAuthority(tx, id);
-        const projectGoalStates = await tx.execute(sql`
-          SELECT project_id, owner
-          FROM project_goal_mutation_state
-          WHERE org_id = ${id}::uuid
-          ORDER BY project_id
-          FOR UPDATE
-        `) as { rows?: Array<{ project_id: string; owner: string }> } | Array<{ project_id: string; owner: string }>;
-        const projectGoalRows = Array.isArray(projectGoalStates)
-          ? projectGoalStates
-          : projectGoalStates.rows ?? [];
-        if (projectGoalRows.some((row) => row.owner !== "node" && row.owner !== "rust")) {
-          throw conflict("Project goal mutation authority has an invalid owner");
-        }
+        await lockProjectGoalMutationAuthoritiesForOrganizationDeletion(tx, id);
         // Delete from child tables in dependency order
         await tx.delete(issueBlockAuditAttempts).where(eq(issueBlockAuditAttempts.orgId, id));
         await tx.delete(requests).where(eq(requests.orgId, id));

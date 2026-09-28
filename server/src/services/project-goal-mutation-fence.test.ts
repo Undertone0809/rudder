@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   configuredProjectGoalMutationProjectIds,
   handoffProjectGoalMutationAuthorityInTransaction,
+  lockProjectGoalMutationAuthoritiesForOrganizationDeletion,
 } from "./project-goal-mutation-fence.js";
 
 describe("Project-Goal authority scope", () => {
@@ -128,5 +129,43 @@ describe("Project-Goal authority scope", () => {
       ],
     )).rejects.toThrow("invalid owner");
     expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it("locks organization and all Project-Goal rows in deletion order", async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce([{
+        owner: "node",
+        mutation_version: "4",
+        fence_epoch: "1",
+        fence_token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }])
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            project_id: "11111111-1111-4111-8111-111111111111",
+            org_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            mutation_version: "2",
+            fence_epoch: "1",
+            fence_token: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            owner: "rust",
+          },
+          {
+            project_id: "22222222-2222-4222-8222-222222222222",
+            org_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            mutation_version: "0",
+            fence_epoch: "0",
+            fence_token: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            owner: "node",
+          },
+        ],
+      });
+
+    await expect(lockProjectGoalMutationAuthoritiesForOrganizationDeletion(
+      { execute },
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    )).resolves.toHaveLength(2);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(execute.mock.calls[1]?.[0])).toContain("ORDER BY project_id");
+    expect(JSON.stringify(execute.mock.calls[1]?.[0])).toContain("FOR UPDATE");
   });
 });

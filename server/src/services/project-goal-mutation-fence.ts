@@ -44,6 +44,29 @@ function resultRows<T>(result: unknown): T[] {
   return ((result as { rows?: T[] }).rows ?? []) as T[];
 }
 
+function validateProjectGoalMutationStateRow(
+  row: ProjectGoalMutationStateRow,
+  organizationId: string,
+  projectId?: string,
+) {
+  if (row.org_id !== organizationId || (projectId !== undefined && row.project_id !== projectId)) {
+    throw conflict("Project goal mutation authority has an invalid scope");
+  }
+  try {
+    if (BigInt(row.mutation_version) < 0n || BigInt(row.fence_epoch) < 0n) {
+      throw new Error("negative project goal mutation fence counter");
+    }
+  } catch {
+    throw conflict("Project goal mutation fence counters are invalid");
+  }
+  if (!UUID_PATTERN.test(row.fence_token)) {
+    throw conflict("Project goal mutation fencing token is invalid");
+  }
+  if (row.owner !== "node" && row.owner !== "rust") {
+    throw conflict("Project goal mutation authority has an invalid owner");
+  }
+}
+
 /**
  * Lock the organization boundary first, then the Project-Goal component row.
  * The order is shared with the Rust transaction and the organization delete
@@ -79,23 +102,32 @@ export async function lockProjectGoalMutationAuthorityForDelete(
   `);
   const row = firstRow(result);
   if (!row) throw conflict("Project goal mutation authority is not provisioned");
-  if (row.org_id !== organizationId || row.project_id !== projectId) {
-    throw conflict("Project goal mutation authority has an invalid scope");
-  }
-  try {
-    if (BigInt(row.mutation_version) < 0n || BigInt(row.fence_epoch) < 0n) {
-      throw new Error("negative project goal mutation fence counter");
-    }
-  } catch {
-    throw conflict("Project goal mutation fence counters are invalid");
-  }
-  if (!UUID_PATTERN.test(row.fence_token)) {
-    throw conflict("Project goal mutation fencing token is invalid");
-  }
-  if (row.owner !== "node" && row.owner !== "rust") {
-    throw conflict("Project goal mutation authority has an invalid owner");
-  }
+  validateProjectGoalMutationStateRow(row, organizationId, projectId);
   return row;
+}
+
+/**
+ * Lock every Project-Goal component before an organization deletion. The
+ * organization fence is acquired first, then component rows in deterministic
+ * order, matching Rust writers and preventing a deletion/writer race.
+ */
+export async function lockProjectGoalMutationAuthoritiesForOrganizationDeletion(
+  tx: TransactionClient,
+  organizationId: string,
+): Promise<ProjectGoalMutationStateRow[]> {
+  await lockNodeMutationAuthority(tx, organizationId);
+  const result = await tx.execute(sql`
+    SELECT project_id, org_id, mutation_version, fence_epoch, fence_token, owner
+    FROM project_goal_mutation_state
+    WHERE org_id = ${organizationId}::uuid
+    ORDER BY project_id
+    FOR UPDATE
+  `);
+  const rows = resultRows<ProjectGoalMutationStateRow>(result);
+  for (const row of rows) {
+    validateProjectGoalMutationStateRow(row, organizationId);
+  }
+  return rows;
 }
 
 /** Advance the selected Project-Goal components into the Rust epoch. */
