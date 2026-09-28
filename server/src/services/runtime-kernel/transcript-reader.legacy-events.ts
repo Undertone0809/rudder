@@ -21,11 +21,11 @@ import {
   MAX_LEGACY_TOTAL_READ_BYTES,
   MAX_PAGE_LIMIT,
 } from "./transcript-reader.contracts.js";
-import { decodeLegacyCursor, encodeLegacyCursor } from "./transcript-reader.legacy-cursor.js";
 import {
-  diagnosticLegacyEventProjection,
   DIAGNOSTIC_TEXT_CHARS,
+  diagnosticLegacyEventProjection,
 } from "./transcript-reader.diagnostic-projection.js";
+import { decodeLegacyCursor, encodeLegacyCursor } from "./transcript-reader.legacy-cursor.js";
 import {
   asRecord,
   isoDate,

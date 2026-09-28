@@ -49,7 +49,6 @@ import {
   sideChatVisibilityCondition,
   type RunIntelligenceAccessScope
 } from "./run-intelligence-access.js";
-import { getRunLogStore } from "./run-log-store.js";
 import {
   MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
   MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
@@ -58,6 +57,7 @@ import {
   type RunDiagnosticProjection,
   type RunDiagnosticReaderPosition,
 } from "./run-intelligence-diagnostic-reader.js";
+import { getRunLogStore } from "./run-log-store.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import {
   createRuntimeNativeTranscriptReaderHook,

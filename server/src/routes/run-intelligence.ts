@@ -11,18 +11,17 @@ import { Router, type Request } from "express";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { logActivity } from "../services/activity-log.js";
 import { formatShortRunId } from "../services/heartbeat-run-reference.js";
+import type { RunDiagnosticReaderPosition } from "../services/run-intelligence-diagnostic-reader.js";
 import {
   getObservedRun,
   getObservedRunDiagnosticDetail,
-  getObservedRunDetail,
   getObservedRunEvents,
   getObservedRunLog,
   getObservedRunTranscript,
   getRunSummary,
   listObservedRuns,
-  listRunSummaries,
+  listRunSummaries
 } from "../services/run-intelligence.js";
-import type { RunDiagnosticReaderPosition } from "../services/run-intelligence-diagnostic-reader.js";
 import {
   listNativeForkIntents,
   NativeForkIntentError,
