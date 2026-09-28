@@ -23,30 +23,42 @@ const allProjects = [
   "desktop",
   "scripts",
 ];
-const requestedProjects = process.env.RUDDER_TEST_PROJECTS
-  ?.split(",")
-  .map((project) => project.trim())
-  .filter(Boolean);
-const projects = requestedProjects?.length ? requestedProjects : allProjects;
-const unknownProjects = projects.filter((project) => !allProjects.includes(project));
-if (unknownProjects.length > 0) {
-  throw new Error(`Unknown test project(s): ${unknownProjects.join(", ")}`);
-}
 const forwardedArgs = process.argv.slice(2).filter((arg, index) => index !== 0 || arg !== "--");
 const forwardedMaxWorkers = forwardedArgs.some(
   (arg) => arg === "--maxWorkers" || arg.startsWith("--maxWorkers="),
 );
 const activeChildren = new Set();
+let receivedSignal;
 
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.once(signal, () => {
-    for (const child of activeChildren) child.kill(signal);
-  });
+function signalExitCode(signal) {
+  return signal === "SIGINT" ? 130 : 143;
 }
 
-function runProject(project, testFiles = []) {
+function resolveProcessExitCode(resultExitCode, signal = receivedSignal) {
+  return signal ? signalExitCode(signal) : resultExitCode;
+}
+
+function throwIfInterrupted() {
+  if (!receivedSignal) return;
+  const error = new Error(`Test run interrupted by ${receivedSignal}`);
+  error.exitCode = signalExitCode(receivedSignal);
+  throw error;
+}
+
+function installSignalHandlers() {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      receivedSignal = signal;
+      process.exitCode = signalExitCode(signal);
+      for (const child of activeChildren) child.kill(signal);
+    });
+  }
+}
+
+export function runProject(project, testFiles = [], { spawnChild = spawn } = {}) {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(
+    throwIfInterrupted();
+    const child = spawnChild(
       pnpmBin,
       [
         "exec",
@@ -71,18 +83,19 @@ function runProject(project, testFiles = []) {
       },
     );
     activeChildren.add(child);
-    child.once("error", reject);
+    child.once("error", (error) => {
+      activeChildren.delete(child);
+      reject(error);
+    });
     child.once("exit", (code, signal) => {
       activeChildren.delete(child);
       if (signal) {
-        reject(new Error(`${project} tests terminated by ${signal}`));
+        const error = new Error(`${project} tests terminated by ${signal}`);
+        if (receivedSignal) error.exitCode = signalExitCode(receivedSignal);
+        reject(error);
         return;
       }
-      if (code !== 0) {
-        reject(new Error(`${project} tests failed with exit code ${code ?? "unknown"}`));
-        return;
-      }
-      resolveRun();
+      resolveRun({ code: code ?? 1 });
     });
   });
 }
@@ -103,26 +116,62 @@ async function listTestFiles(directory, relativeDirectory = "") {
   return files.sort();
 }
 
-async function runIsolatedProject(project, concurrency = 1) {
-  const testFiles = await listTestFiles(resolve(repoRoot, project));
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(concurrency, testFiles.length) }, async () => {
-    while (nextIndex < testFiles.length) {
-      const testFile = testFiles[nextIndex++];
-      process.stdout.write(`\n[test:run] ${project}/${testFile}\n`);
-      await runProject(project, [testFile]);
+export async function runProjects(
+  projects,
+  {
+    run = runProject,
+    listFiles = (project) => listTestFiles(resolve(repoRoot, project)),
+    write = (text) => process.stdout.write(text),
+  } = {},
+) {
+  const failures = [];
+  for (const project of projects) {
+    throwIfInterrupted();
+    write(`\n[test:run] ${project}\n`);
+    if (project === "server") {
+      const testFiles = await listFiles(project);
+      for (const testFile of testFiles) {
+        throwIfInterrupted();
+        write(`\n[test:run] ${project}/${testFile}\n`);
+        const { code } = await run(project, [testFile]);
+        if (code !== 0) failures.push({ project, testFile, code });
+      }
+    } else {
+      const { code } = await run(project);
+      if (code !== 0) failures.push({ project, code });
     }
-  });
-  const results = await Promise.allSettled(workers);
-  const failure = results.find((result) => result.status === "rejected");
-  if (failure?.status === "rejected") throw failure.reason;
+  }
+
+  if (failures.length > 0) {
+    const details = failures.map(({ project, testFile, code }) =>
+      `  ${testFile ? `${project}/${testFile}` : project} (exit ${code})`
+    );
+    write(`\n[test:run] ${failures.length} Vitest command(s) failed:\n${details.join("\n")}\n`);
+  }
+  return { failures, exitCode: failures.length > 0 ? 1 : 0 };
 }
 
-for (const project of projects) {
-  process.stdout.write(`\n[test:run] ${project}\n`);
-  if (project === "server") {
-    await runIsolatedProject(project);
-  } else {
-    await runProject(project);
+async function main() {
+  const requestedProjects = process.env.RUDDER_TEST_PROJECTS
+    ?.split(",")
+    .map((project) => project.trim())
+    .filter(Boolean);
+  const projects = requestedProjects?.length ? requestedProjects : allProjects;
+  const unknownProjects = projects.filter((project) => !allProjects.includes(project));
+  if (unknownProjects.length > 0) {
+    throw new Error(`Unknown test project(s): ${unknownProjects.join(", ")}`);
   }
+
+  installSignalHandlers();
+  try {
+    const result = await runProjects(projects);
+    process.exitCode = resolveProcessExitCode(result.exitCode);
+  } catch (error) {
+    process.stderr.write(`[test:run] ${error.message}\n`);
+    process.exitCode = error.exitCode ?? resolveProcessExitCode(1);
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
 }
