@@ -8,6 +8,7 @@ import {
   runtimeSourceAliases,
 } from "@rudderhq/db";
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { retryFailedNativeTranscriptCleanup } from "./native-transcript-retention-recovery.js";
 import type {
   TranscriptObjectStore,
   TranscriptObjectSweepCandidate,
@@ -897,6 +898,7 @@ export type RuntimeRetentionMaintenanceResult = {
   releasedAliasCount: number;
   deletedClaimCount: number;
   deletedAliasCount: number;
+  nativeTranscriptRecovery: { attempted: number; recovered: number };
   objectSweep: TranscriptObjectSweepResult;
 };
 
@@ -1068,6 +1070,8 @@ export async function runRuntimeRetentionMaintenance(
     throw new Error("invalid_runtime_retention_object_grace_ms");
   }
 
+  const nativeTranscriptRecovery = await retryFailedNativeTranscriptCleanup(db, { now });
+
   const claims = await db.select().from(runtimeRetentionClaims);
   const aliases = await db.select().from(runtimeSourceAliases);
   const spans = await db.select({
@@ -1127,6 +1131,7 @@ export async function runRuntimeRetentionMaintenance(
     releasedAliasCount,
     deletedClaimCount,
     deletedAliasCount,
+    nativeTranscriptRecovery,
     objectSweep,
   };
 }

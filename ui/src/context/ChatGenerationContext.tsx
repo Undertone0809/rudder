@@ -1,4 +1,5 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
+import type { ChatRuntimeSensitiveInputRequest } from "@/api/chats";
 import { useActivityCoordinator } from "@/context/ActivityCoordinatorContext";
 import { FirstChatTurnProvider } from "@/context/FirstChatTurnContext";
 import { setChatFlagState, setChatScopedState } from "@/lib/chat-stream-state";
@@ -19,6 +20,7 @@ export type ChatStreamDraft = {
   streamKey: string;
   // The generation epoch that owns this local stream attempt.
   generationEpoch?: number;
+  generationOwnerKey?: string;
   // Stable per-message id used to replay a request after a lost stream response.
   clientMutationId?: string | null;
   userBody: string;
@@ -43,23 +45,33 @@ export type ChatStreamDraft = {
 export type ChatGenerationScopeStart = {
   epoch: number;
   conversationId: string | null;
+  ownerSignal?: AbortSignal;
 };
 
 export type ChatGenerationScopeClose = ChatGenerationScopeStart;
+
+export function chatGenerationOwnerStateKey(scopeKey: string, ownerKey: string) {
+  return JSON.stringify([scopeKey, ownerKey]);
+}
 
 type ChatGenerationScopeState = {
   epoch: number;
   conversationId: string | null;
   closeRequested: boolean;
   sendClaimed: boolean;
+  ownerKey: string | null;
+  sendStateKey: string;
+  ownerController: AbortController | null;
 };
 
 type ChatGenerationContextValue = {
   activeChatIds: ReadonlySet<string>;
   streamDrafts: Record<string, ChatStreamDraft>;
+  runtimeSensitiveInputs: Record<string, ChatRuntimeSensitiveInputRequest>;
   sendInFlightByChatId: Record<string, true>;
   isChatGenerationActive: (chatId: string | null | undefined) => boolean;
   setChatSendInFlight: (chatId: string, inFlight: boolean) => void;
+  setRuntimeSensitiveInputRequest: (chatId: string, request: ChatRuntimeSensitiveInputRequest | null) => void;
   setStreamDraftForChat: (
     chatId: string,
     nextDraft:
@@ -75,7 +87,13 @@ type ChatGenerationContextValue = {
     streamKey?: string | null,
   ) => boolean;
   beginChatGeneration: (scopeKey: string, conversationId: string | null) => ChatGenerationScopeStart;
-  tryBeginChatGeneration: (scopeKey: string, conversationId: string | null) => ChatGenerationScopeStart | null;
+  tryBeginChatGeneration: (
+    scopeKey: string,
+    conversationId: string | null,
+    ownerKey?: string,
+  ) => ChatGenerationScopeStart | null;
+  invalidateChatGenerationsForOwner: (ownerKey: string) => void;
+  completeChatGenerationOwner: (ownerKey: string, ownerSignal: AbortSignal | undefined) => void;
   rememberChatGenerationConversation: (scopeKey: string, conversationId: string) => void;
   setChatGenerationConversation: (scopeKey: string, epoch: number, conversationId: string) => boolean;
   getChatGenerationEpoch: (scopeKey: string) => number | null;
@@ -96,12 +114,15 @@ type ChatGenerationActions = Pick<
   ChatGenerationContextValue,
   | "isChatGenerationActive"
   | "setChatSendInFlight"
+  | "setRuntimeSensitiveInputRequest"
   | "setStreamDraftForChat"
   | "setStreamAbortController"
   | "abortChatStream"
   | "clearChatGenerationProviderState"
   | "beginChatGeneration"
   | "tryBeginChatGeneration"
+  | "invalidateChatGenerationsForOwner"
+  | "completeChatGenerationOwner"
   | "rememberChatGenerationConversation"
   | "setChatGenerationConversation"
   | "getChatGenerationEpoch"
@@ -143,15 +164,19 @@ const emptyActiveChatIds = new Set<string>();
 const defaultValue: ChatGenerationContextValue = {
   activeChatIds: emptyActiveChatIds,
   streamDrafts: {},
+  runtimeSensitiveInputs: {},
   sendInFlightByChatId: {},
   isChatGenerationActive: () => false,
   setChatSendInFlight: () => {},
+  setRuntimeSensitiveInputRequest: () => {},
   setStreamDraftForChat: () => {},
   setStreamAbortController: () => {},
   abortChatStream: () => {},
   clearChatGenerationProviderState: () => false,
   beginChatGeneration: () => ({ epoch: 0, conversationId: null }),
   tryBeginChatGeneration: () => null,
+  invalidateChatGenerationsForOwner: () => {},
+  completeChatGenerationOwner: () => {},
   rememberChatGenerationConversation: () => {},
   setChatGenerationConversation: () => false,
   getChatGenerationEpoch: () => null,
@@ -174,6 +199,7 @@ const ChatGenerationStatusStoreContext = createContext<ChatGenerationStatusStore
 export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   const activityCoordinator = useActivityCoordinator();
   const [streamDrafts, setStreamDrafts] = useState<Record<string, ChatStreamDraft>>({});
+  const [runtimeSensitiveInputs, setRuntimeSensitiveInputs] = useState<Record<string, ChatRuntimeSensitiveInputRequest>>({});
   const [sendInFlightByChatId, setSendInFlightByChatId] = useState<Record<string, true>>({});
   const streamDraftsRef = useRef(streamDrafts);
   const statusStoreRef = useRef<ChatGenerationStatusStore | null>(null);
@@ -182,6 +208,7 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   const streamAbortControllersRef = useRef<Record<string, AbortController>>({});
   const generationScopesRef = useRef<Record<string, ChatGenerationScopeState>>({});
   const generationEpochRef = useRef(0);
+  const ownerControllersRef = useRef<Record<string, AbortController[]>>({});
   const destructionPromisesRef = useRef<Record<string, {
     conversationId: string;
     promise: Promise<void>;
@@ -247,6 +274,13 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
 
   const setChatSendInFlight = useCallback((chatId: string, inFlight: boolean) => {
     setSendInFlightByChatId((current) => setChatFlagState(current, chatId, inFlight));
+  }, []);
+
+  const setRuntimeSensitiveInputRequest = useCallback((
+    chatId: string,
+    request: ChatRuntimeSensitiveInputRequest | null,
+  ) => {
+    setRuntimeSensitiveInputs((current) => setChatScopedState(current, chatId, request));
   }, []);
 
   const setStreamDraftForChat = useCallback((
@@ -317,14 +351,53 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
 
     streamAbortControllersRef.current[scopeKey]?.abort();
     setStreamAbortController(scopeKey, null);
-    setChatSendInFlight(scopeKey, false);
+    setChatSendInFlight(scope.sendStateKey, false);
+    if (scope.conversationId) setRuntimeSensitiveInputRequest(scope.conversationId, null);
     setStreamDraftForChat(scopeKey, (current) => (
       expectedStreamKey && current && current.streamKey !== expectedStreamKey
         ? current
         : null
     ));
     return true;
-  }, [setChatSendInFlight, setStreamAbortController, setStreamDraftForChat]);
+  }, [setChatSendInFlight, setRuntimeSensitiveInputRequest, setStreamAbortController, setStreamDraftForChat]);
+
+  const invalidateChatGenerationsForOwner = useCallback((ownerKey: string) => {
+    for (const controller of ownerControllersRef.current[ownerKey] ?? []) {
+      controller.abort();
+    }
+    const { [ownerKey]: _removed, ...remainingControllers } = ownerControllersRef.current;
+    ownerControllersRef.current = remainingControllers;
+
+    for (const [scopeKey, scope] of Object.entries(generationScopesRef.current)) {
+      if (scope.ownerKey !== ownerKey) continue;
+      clearChatGenerationProviderState(scopeKey, scope.epoch);
+      scope.epoch = ++generationEpochRef.current;
+      scope.conversationId = null;
+      scope.closeRequested = false;
+      scope.sendClaimed = false;
+      scope.ownerKey = null;
+      scope.sendStateKey = scopeKey;
+      scope.ownerController?.abort();
+      scope.ownerController = null;
+    }
+  }, [clearChatGenerationProviderState]);
+
+  const completeChatGenerationOwner = useCallback((ownerKey: string, ownerSignal: AbortSignal | undefined) => {
+    if (!ownerSignal) return;
+    const controllers = ownerControllersRef.current[ownerKey];
+    if (!controllers) return;
+    const remaining = controllers.filter((controller) => controller.signal !== ownerSignal);
+    if (remaining.length === controllers.length) return;
+    if (remaining.length === 0) {
+      const { [ownerKey]: _removed, ...rest } = ownerControllersRef.current;
+      ownerControllersRef.current = rest;
+      return;
+    }
+    ownerControllersRef.current = {
+      ...ownerControllersRef.current,
+      [ownerKey]: remaining,
+    };
+  }, []);
 
   const ensureGenerationScope = useCallback((scopeKey: string) => {
     const existing = generationScopesRef.current[scopeKey];
@@ -334,6 +407,9 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       conversationId: null,
       closeRequested: false,
       sendClaimed: false,
+      ownerKey: null,
+      sendStateKey: scopeKey,
+      ownerController: null,
     };
     generationScopesRef.current = {
       ...generationScopesRef.current,
@@ -345,27 +421,55 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   const beginChatGeneration = useCallback((
     scopeKey: string,
     conversationId: string | null,
+    ownerKey?: string,
   ): ChatGenerationScopeStart => {
     const scope = ensureGenerationScope(scopeKey);
     const previousConversationId = scope.closeRequested ? null : scope.conversationId;
+    if (scope.ownerController && scope.ownerKey !== ownerKey) {
+      scope.ownerController.abort();
+    }
+    const ownerController = ownerKey ? new AbortController() : null;
+    if (ownerKey && ownerController) {
+      ownerControllersRef.current = {
+        ...ownerControllersRef.current,
+        [ownerKey]: [...(ownerControllersRef.current[ownerKey] ?? []), ownerController],
+      };
+    }
     scope.epoch = ++generationEpochRef.current;
     scope.closeRequested = false;
     scope.sendClaimed = true;
     scope.conversationId = conversationId ?? previousConversationId;
+    scope.ownerKey = ownerKey ?? null;
+    scope.sendStateKey = ownerKey
+      ? chatGenerationOwnerStateKey(scopeKey, ownerKey)
+      : scopeKey;
+    scope.ownerController = ownerController;
     return {
       epoch: scope.epoch,
       conversationId: scope.conversationId,
+      ...(ownerController ? { ownerSignal: ownerController.signal } : {}),
     };
   }, [ensureGenerationScope]);
 
   const tryBeginChatGeneration = useCallback((
     scopeKey: string,
     conversationId: string | null,
+    ownerKey?: string,
   ): ChatGenerationScopeStart | null => {
     const scope = ensureGenerationScope(scopeKey);
-    if (scope.sendClaimed && !scope.closeRequested) return null;
-    return beginChatGeneration(scopeKey, conversationId);
-  }, [beginChatGeneration, ensureGenerationScope]);
+    if (scope.sendClaimed && !scope.closeRequested) {
+      if (!ownerKey || !scope.ownerKey || scope.ownerKey === ownerKey) return null;
+      clearChatGenerationProviderState(scopeKey, scope.epoch);
+      scope.epoch = ++generationEpochRef.current;
+      scope.conversationId = null;
+      scope.sendClaimed = false;
+      scope.ownerKey = null;
+      scope.sendStateKey = scopeKey;
+      scope.ownerController?.abort();
+      scope.ownerController = null;
+    }
+    return beginChatGeneration(scopeKey, conversationId, ownerKey);
+  }, [beginChatGeneration, clearChatGenerationProviderState, ensureGenerationScope]);
 
   const rememberChatGenerationConversation = useCallback((scopeKey: string, conversationId: string) => {
     const scope = generationScopesRef.current[scopeKey];
@@ -439,7 +543,8 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   const clearChatGenerationConversation = useCallback((scopeKey: string, conversationId: string) => {
     const scope = generationScopesRef.current[scopeKey];
     if (scope?.conversationId === conversationId) scope.conversationId = null;
-  }, []);
+    setRuntimeSensitiveInputRequest(conversationId, null);
+  }, [setRuntimeSensitiveInputRequest]);
 
   const destroyChatGenerationConversation = useCallback((
     scopeKey: string,
@@ -475,10 +580,12 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
   const actions = useMemo<ChatGenerationActions>(() => ({
     abortChatStream,
     beginChatGeneration,
+    completeChatGenerationOwner,
     clearChatGenerationConversation,
     clearChatGenerationProviderState,
     destroyChatGenerationConversation,
     getChatGenerationEpoch,
+    invalidateChatGenerationsForOwner,
     tryBeginChatGeneration,
     isChatGenerationActive,
     isChatGenerationCurrent,
@@ -489,15 +596,18 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     resetChatGenerationClose,
     setChatGenerationConversation,
     setChatSendInFlight,
+    setRuntimeSensitiveInputRequest,
     setStreamDraftForChat,
     setStreamAbortController,
   }), [
     abortChatStream,
     beginChatGeneration,
+    completeChatGenerationOwner,
     clearChatGenerationConversation,
     clearChatGenerationProviderState,
     destroyChatGenerationConversation,
     getChatGenerationEpoch,
+    invalidateChatGenerationsForOwner,
     tryBeginChatGeneration,
     isChatGenerationActive,
     isChatGenerationCurrent,
@@ -508,6 +618,7 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     resetChatGenerationClose,
     setChatGenerationConversation,
     setChatSendInFlight,
+    setRuntimeSensitiveInputRequest,
     setStreamAbortController,
     setStreamDraftForChat,
   ]);
@@ -516,13 +627,16 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
     () => ({
       activeChatIds,
       streamDrafts,
+      runtimeSensitiveInputs,
       sendInFlightByChatId,
       beginChatGeneration,
+      completeChatGenerationOwner,
       tryBeginChatGeneration,
       clearChatGenerationConversation,
       clearChatGenerationProviderState,
       destroyChatGenerationConversation,
       getChatGenerationEpoch,
+      invalidateChatGenerationsForOwner,
       isChatGenerationActive,
       isChatGenerationCurrent,
       isChatGenerationClosePending,
@@ -532,6 +646,7 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       resetChatGenerationClose,
       setChatGenerationConversation,
       setChatSendInFlight,
+      setRuntimeSensitiveInputRequest,
       setStreamDraftForChat,
       setStreamAbortController,
       abortChatStream,
@@ -540,10 +655,12 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       abortChatStream,
       activeChatIds,
       beginChatGeneration,
+      completeChatGenerationOwner,
       clearChatGenerationConversation,
       clearChatGenerationProviderState,
       destroyChatGenerationConversation,
       getChatGenerationEpoch,
+      invalidateChatGenerationsForOwner,
       isChatGenerationActive,
       isChatGenerationCurrent,
       isChatGenerationClosePending,
@@ -554,9 +671,11 @@ export function ChatGenerationProvider({ children }: { children: ReactNode }) {
       resetChatGenerationClose,
       setChatGenerationConversation,
       setChatSendInFlight,
+      setRuntimeSensitiveInputRequest,
       setStreamAbortController,
       setStreamDraftForChat,
       streamDrafts,
+      runtimeSensitiveInputs,
       tryBeginChatGeneration,
     ],
   );

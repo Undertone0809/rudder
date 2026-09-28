@@ -6,10 +6,12 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conflict, unprocessable } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
+import { requestBodyForLogs } from "../middleware/logger.js";
 import { createChatBackgroundRuntime, type ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { chatRoutes } from "../routes/chats.js";
 import { createChatStreamGenerationOwner, persistChatStreamGenerationTerminal } from "../routes/chats.stream-generation-owner.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { chatRuntimeSensitiveInputBroker } from "../services/chat-runtime-sensitive-input.js";
 import { CHAT_TITLE_PROMPT_TOKEN_LIMIT, countChatTitlePromptTokens } from "../services/title-generation.js";
 
 const mockChatService = vi.hoisted(() => ({
@@ -97,6 +99,7 @@ const mockChatService = vi.hoisted(() => ({
   claimNextQueuedMessage: vi.fn(),
   releaseQueuedMessageClaim: vi.fn(),
   createGeneration: vi.fn(),
+  ensureSideChatFirstInputGeneration: vi.fn(),
   markGenerationTerminal: vi.fn(),
   getLatestActiveGeneration: vi.fn(),
   getLatestGeneration: vi.fn(),
@@ -106,11 +109,15 @@ const mockChatService = vi.hoisted(() => ({
 }));
 
 const mockSideChatService = vi.hoisted(() => ({
+  claimFirstInput: vi.fn(),
+  hasAcceptedFirstInputMutation: vi.fn(),
   create: vi.fn(),
   findExistingForCreate: vi.fn(),
+  listForSource: vi.fn(),
   requestClose: vi.fn(),
   destroy: vi.fn(),
   keepInMessenger: vi.fn(),
+  releaseFirstInputClaim: vi.fn(),
   assertAccessible: vi.fn(),
   assertMutable: vi.fn(),
   touch: vi.fn(),
@@ -418,11 +425,23 @@ function createApp(
   },
   backgroundRuntime?: ChatBackgroundRuntime,
   registerNetworkWaitingRunHandler?: (handler: (run: any) => Promise<boolean>) => void,
+  captureRequestBodyForLogs?: (body: unknown) => void,
 ) {
   const runtime = backgroundRuntime ?? createChatBackgroundRuntime();
   testBackgroundRuntimes.add(runtime);
   const app = express();
   app.use(express.json());
+  if (captureRequestBodyForLogs) {
+    app.use((req, res, next) => {
+      res.once("finish", () => {
+        const errorBody = (res as typeof res & {
+          __errorContext?: { reqBody?: unknown };
+        }).__errorContext?.reqBody;
+        captureRequestBodyForLogs(requestBodyForLogs(req, errorBody ?? req.body));
+      });
+      next();
+    });
+  }
   app.use((req, _res, next) => {
     (req as any).actor = actor;
     next();
@@ -513,6 +532,9 @@ describe("chat routes", { retry: 2 }, () => {
     mockSideChatService.assertAccessible.mockImplementation(async (conversation) => conversation);
     mockSideChatService.assertMutable.mockImplementation(async (conversation) => conversation);
     mockSideChatService.touch.mockImplementation(async (conversation) => conversation);
+    mockSideChatService.claimFirstInput.mockResolvedValue({ kind: "not_first" });
+    mockSideChatService.hasAcceptedFirstInputMutation.mockResolvedValue(false);
+    mockSideChatService.releaseFirstInputClaim.mockResolvedValue(undefined);
     mockHeartbeatService.wakeup.mockResolvedValue({ id: "wake-1" });
     mockAccessService.canUser.mockResolvedValue(true);
     mockAccessService.hasPermission.mockResolvedValue(true);
@@ -762,6 +784,10 @@ describe("chat routes", { retry: 2 }, () => {
     mockChatService.claimNextQueuedMessage.mockResolvedValue(null);
     mockChatService.releaseQueuedMessageClaim.mockResolvedValue(null);
     mockChatService.createGeneration.mockResolvedValue({ id: "generation-1" });
+    mockChatService.ensureSideChatFirstInputGeneration.mockResolvedValue({
+      generation: { id: "generation-1", attemptEpoch: 1 },
+      executionAdmitted: false,
+    });
     mockChatService.markGenerationTerminal.mockResolvedValue(undefined);
     mockChatService.getLatestActiveGeneration.mockResolvedValue(null);
     mockChatService.assertQueuedMessageClaimedForDelivery.mockResolvedValue(undefined);
@@ -1494,6 +1520,52 @@ describe("chat routes", { retry: 2 }, () => {
     }));
   });
 
+  it("returns a cursor page of only the requesting owner's Side Chats for an accessible parent", async () => {
+    const sourceConversation = createConversation({ id: "chat-source", title: "Original topic" });
+    const expiredSideChat = createConversation({
+      id: "chat-side-expired",
+      title: "Side chat from: Original topic",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "expired",
+      sideChatClientMutationId: "side-chat-expired-mutation",
+      forkedFromConversationId: sourceConversation.id,
+      forkedFromMessageId: "source-message",
+    });
+    mockChatService.getById.mockResolvedValue(sourceConversation);
+    mockSideChatService.listForSource.mockResolvedValue({
+      items: [expiredSideChat],
+      nextCursor: "next-side-chat-page",
+    });
+
+    const res = await request(createApp())
+      .get(`/api/chats/${sourceConversation.id}/side-chats?cursor=prior-page&limit=25`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      items: [expect.objectContaining({ id: expiredSideChat.id, sideChatState: "expired" })],
+      nextCursor: "next-side-chat-page",
+    });
+    expect(mockSideChatService.listForSource).toHaveBeenCalledWith({
+      orgId: "organization-1",
+      sourceConversationId: sourceConversation.id,
+      userId: "user-1",
+      cursor: "prior-page",
+      limit: 25,
+    });
+  });
+
+  it("rejects Side Chat history limits outside the supported range", async () => {
+    const sourceConversation = createConversation({ id: "chat-source", title: "Original topic" });
+    mockChatService.getById.mockResolvedValue(sourceConversation);
+
+    const res = await request(createApp())
+      .get(`/api/chats/${sourceConversation.id}/side-chats?limit=101`);
+
+    expect(res.status).toBe(400);
+    expect(mockSideChatService.listForSource).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])("recovers a Side Chat retry before checking provider availability (explicit Agent: %s)", async (explicitAgent) => {
     const sourceMessageId = "10000000-0000-4000-8000-000000000010";
     const clientMutationId = "side-chat-lost-ack";
@@ -1593,6 +1665,40 @@ describe("chat routes", { retry: 2 }, () => {
       .post("/api/chats/chat-side/side-chat/complete")
       .send({});
     expect(legacyComplete.status).toBe(404);
+  });
+
+  it("returns a stable code when closing a Side Chat that was already kept", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation({
+      id: "chat-side",
+      conversationKind: "side_chat",
+      messengerVisible: true,
+      sideChatState: "kept",
+    }));
+
+    const res = await request(createApp()).delete("/api/chats/chat-side/side-chat");
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: "A kept Side Chat is a normal Messenger chat",
+      details: { code: "side_chat_kept" },
+    });
+    expect(mockSideChatService.requestClose).not.toHaveBeenCalled();
+  });
+
+  it("does not label an unrelated Side Chat close conflict as already kept", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation({
+      id: "chat-side",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+    }));
+    mockSideChatService.requestClose.mockRejectedValue(conflict("The active generation is still running"));
+
+    const res = await request(createApp()).delete("/api/chats/chat-side/side-chat");
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("The active generation is still running");
+    expect(res.body.details).toBeUndefined();
   });
 
   it("accepts a durable close request while the Side Chat generation is active", async () => {
@@ -2805,6 +2911,426 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
     expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
     expect(hasActiveChatGeneration("chat-1")).toBe(false);
+  });
+
+  it("acknowledges an accepted Side Chat replay when its Run is already admitted", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-first-input",
+      "user",
+      "message",
+      "Inspect this selected answer",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation.mockResolvedValue(true);
+    mockChatService.ensureSideChatFirstInputGeneration.mockResolvedValue({
+      generation: { id: "generation-side-chat-first", attemptEpoch: 1 },
+      executionAdmitted: true,
+    });
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "pending" })
+      .mockResolvedValueOnce({ kind: "replay", userMessageId: userMessage.id });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "retried-message-mutation" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(200);
+    expect(String(res.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        type: "ack",
+        userMessage: expect.objectContaining({ id: userMessage.id, body: userMessage.body }),
+      }),
+      { type: "final", messages: [] },
+    ]);
+    expect(mockSideChatService.claimFirstInput).toHaveBeenCalledTimes(2);
+    expect(mockSideChatService.claimFirstInput).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      userId: "user-1",
+      clientMutationId: "retried-message-mutation",
+    }));
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledWith({
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      userMessageId: userMessage.id,
+    });
+    expect(mockChatService.createQueuedMessageWithStagedAttachments).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("releases a failed Side Chat first-input claim, then replays the accepted key without another Run", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-first-input",
+      "user",
+      "message",
+      "Inspect this selected answer",
+    );
+    const assistantMessage = createMessage(
+      "message-side-chat-first-reply",
+      "assistant",
+      "message",
+      "I inspected the selected answer.",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage
+      .mockRejectedValueOnce(new Error("simulated message transaction failure"))
+      .mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "first-claim" })
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "retry-claim" })
+      .mockResolvedValueOnce({ kind: "replay", userMessageId: userMessage.id });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValue({
+      outcome: "completed",
+      partialBody: assistantMessage.body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: assistantMessage.body,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: userMessage.body, clientMutationId: "side-chat-first-send" });
+
+    const failed = await send();
+    expect(failed.status).toBe(502);
+    expect(mockSideChatService.releaseFirstInputClaim).toHaveBeenCalledWith({
+      conversationId: conversation.id,
+      claimToken: "first-claim",
+    });
+
+    const accepted = await send();
+    expect(accepted.status).toBe(201);
+    expect(accepted.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: userMessage.id, role: "user" }),
+      expect.objectContaining({ id: assistantMessage.id, role: "assistant" }),
+    ]));
+
+    const replayed = await send();
+    expect(replayed.status).toBe(200);
+    expect(replayed.body.messages).toEqual([
+      expect.objectContaining({ id: userMessage.id, role: "user" }),
+    ]);
+    expect(mockSideChatService.claimFirstInput).toHaveBeenCalledTimes(3);
+    const claimInputs = mockSideChatService.claimFirstInput.mock.calls.map(([input]) => input);
+    expect(claimInputs).toEqual([
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        userId: "user-1",
+        clientMutationId: "side-chat-first-send",
+      }),
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        userId: "user-1",
+        clientMutationId: "side-chat-first-send",
+      }),
+      expect.objectContaining({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        userId: "user-1",
+        clientMutationId: "side-chat-first-send",
+      }),
+    ]);
+    expect(new Set(claimInputs.map((input) => input.requestFingerprint)).size).toBe(1);
+    expect(claimInputs[0]?.requestFingerprint).toEqual(expect.any(String));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledTimes(2);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a second ordinary message after a successful Side Chat first send", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const firstUser = createMessage("message-side-chat-first", "user", "message", "First question");
+    const firstReply = createMessage("message-side-chat-first-reply", "assistant", "message", "First answer");
+    const secondUser = createMessage("message-side-chat-second", "user", "message", "A different follow-up");
+    const secondReply = createMessage("message-side-chat-second-reply", "assistant", "message", "Second answer");
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([firstUser, firstReply, secondUser, secondReply]);
+    mockChatService.addUserChatMessage
+      .mockResolvedValueOnce(firstUser)
+      .mockResolvedValueOnce(secondUser);
+    mockChatService.addMessage
+      .mockResolvedValueOnce(firstReply)
+      .mockResolvedValueOnce(secondReply);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "first-send-claim" })
+      .mockResolvedValueOnce({ kind: "not_first" });
+    mockChatAssistantService.streamChatAssistantReply
+      .mockResolvedValueOnce({
+        outcome: "completed",
+        partialBody: firstReply.body,
+        replyingAgentId: "agent-1",
+        reply: { kind: "message", body: firstReply.body, structuredPayload: null, replyingAgentId: "agent-1" },
+      })
+      .mockResolvedValueOnce({
+        outcome: "completed",
+        partialBody: secondReply.body,
+        replyingAgentId: "agent-1",
+        reply: { kind: "message", body: secondReply.body, structuredPayload: null, replyingAgentId: "agent-1" },
+      });
+
+    const first = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: firstUser.body, clientMutationId: "ordinary-first-send" });
+    const second = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: secondUser.body, clientMutationId: "ordinary-second-send" });
+
+    expect(first.status).toBe(201);
+    expect(first.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: firstUser.id }),
+      expect.objectContaining({ id: firstReply.id }),
+    ]));
+    expect(second.status).toBe(201);
+    expect(second.body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: secondUser.id }),
+      expect.objectContaining({ id: secondReply.id }),
+    ]));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledTimes(2);
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledTimes(2);
+    expect(mockSideChatService.claimFirstInput.mock.calls.map(([input]) => input.clientMutationId))
+      .toEqual(["ordinary-first-send", "ordinary-second-send"]);
+  });
+
+  it("passes the Side Chat first-input claim through a no-mutation-id first send", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage("message-side-chat-no-key", "user", "message", "First send without a key");
+    const assistantMessage = createMessage("message-side-chat-no-key-reply", "assistant", "message", "Accepted");
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage, assistantMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.claimFirstInput.mockResolvedValueOnce({
+      kind: "claimed",
+      claimToken: "no-key-first-input-claim",
+    });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: assistantMessage.body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: assistantMessage.body,
+        structuredPayload: null,
+        replyingAgentId: "agent-1",
+      },
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: userMessage.body });
+
+    expect(res.status).toBe(201);
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledWith(
+      conversation.id,
+      conversation.orgId,
+      userMessage.body,
+      null,
+      expect.objectContaining({
+        sideChatFirstInputClaimToken: "no-key-first-input-claim",
+        sideChatFirstInputFingerprint: expect.any(String),
+      }),
+    );
+  });
+
+  it("repairs a failed Side Chat first-message activity write on the accepted-key replay", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-audit-retry",
+      "user",
+      "message",
+      "Retry the first send after its audit write failed",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "audit-retry-claim" })
+      .mockResolvedValueOnce({
+        kind: "replay",
+        userMessageId: userMessage.id,
+        activityLogged: false,
+      });
+    mockLogActivity
+      .mockRejectedValueOnce(new Error("simulated activity store failure"))
+      .mockResolvedValue(undefined);
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: userMessage.body, clientMutationId: "audit-recovery-key" });
+    const failed = await send();
+    const replayed = await send();
+
+    expect(failed.status).toBe(502);
+    expect(replayed.status).toBe(200);
+    expect(replayed.body.messages).toEqual([expect.objectContaining({ id: userMessage.id })]);
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledOnce();
+    const messageActivities = mockLogActivity.mock.calls
+      .map(([, activity]) => activity)
+      .filter((activity) => (
+        activity.action === "chat.message_added"
+        && activity.details?.messageId === userMessage.id
+      ));
+    expect(messageActivities).toHaveLength(2);
+    expect(messageActivities.map((activity) => activity.idempotencyKey)).toEqual([
+      `chat.message_added:${userMessage.id}`,
+      `chat.message_added:${userMessage.id}`,
+    ]);
+  });
+
+  it("recovers and executes an accepted Side Chat input after restart before Generation admission", async () => {
+    const conversation = createConversation({
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      sideChatExpiresAt: new Date(Date.now() + 60_000),
+      sideChatClientMutationId: "side-chat-create-intent",
+      forkedFromConversationId: "parent-chat",
+      forkedFromMessageId: "parent-answer",
+    });
+    const userMessage = createMessage(
+      "message-side-chat-stream-audit-retry",
+      "user",
+      "message",
+      "Recover the stream first-send audit",
+    );
+    const assistantMessage = createMessage(
+      "message-side-chat-stream-recovery-reply",
+      "assistant",
+      "message",
+      "Recovered execution completed.",
+    );
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getMessage.mockResolvedValue(userMessage);
+    mockChatService.listMessages.mockResolvedValue([userMessage, assistantMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(assistantMessage);
+    mockSideChatService.hasAcceptedFirstInputMutation
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    mockSideChatService.claimFirstInput
+      .mockResolvedValueOnce({ kind: "claimed", claimToken: "stream-audit-retry-claim" })
+      .mockResolvedValueOnce({
+        kind: "replay",
+        userMessageId: userMessage.id,
+        activityLogged: false,
+      });
+    mockChatAssistantService.streamChatAssistantReply.mockResolvedValueOnce({
+      outcome: "completed",
+      partialBody: assistantMessage.body,
+      replyingAgentId: "agent-1",
+      reply: {
+        kind: "message",
+        body: assistantMessage.body,
+        replyingAgentId: "agent-1",
+      },
+    });
+    mockLogActivity
+      .mockRejectedValueOnce(new Error("simulated activity store failure"))
+      .mockResolvedValue(undefined);
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "stream-audit-recovery-key" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+    const failed = await send();
+    clearActiveChatGenerationsForTest();
+    const replayed = await send();
+    const failedEvents = String(failed.body).trim().split("\n").map((line) => JSON.parse(line));
+    const replayedEvents = String(replayed.body).trim().split("\n").map((line) => JSON.parse(line));
+
+    expect(failed.status).toBe(201);
+    expect(failedEvents).toEqual([
+      expect.objectContaining({ type: "error", messageId: userMessage.id }),
+    ]);
+    expect(replayed.status).toBe(201);
+    expect(replayedEvents[0]).toEqual(expect.objectContaining({
+      type: "ack",
+      userMessage: expect.objectContaining({ id: userMessage.id }),
+      generationId: "generation-1",
+    }));
+    expect(replayedEvents.at(-1)).toEqual(expect.objectContaining({
+      type: "final",
+      messages: [expect.objectContaining({ role: "assistant", body: assistantMessage.body })],
+    }));
+    expect(mockChatService.addUserChatMessage).toHaveBeenCalledOnce();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatService.ensureSideChatFirstInputGeneration).toHaveBeenCalledOnce();
+    expect(mockChatAssistantService.streamChatAssistantReply).toHaveBeenCalledOnce();
+    const messageActivities = mockLogActivity.mock.calls
+      .map(([, activity]) => activity)
+      .filter((activity) => (
+        activity.action === "chat.message_added"
+        && activity.details?.messageId === userMessage.id
+      ));
+    expect(messageActivities.map((activity) => activity.idempotencyKey)).toEqual([
+      `chat.message_added:${userMessage.id}`,
+      `chat.message_added:${userMessage.id}`,
+    ]);
   });
 
   it("replays the accepted user-message acknowledgement for a repeated send mutation", async () => {
@@ -10159,4 +10685,104 @@ describe("chat routes", { retry: 2 }, () => {
     expect(res.body).toEqual({ error: "Fork this Feishu chat to continue in Rudder" });
     expect(mockChatService.resolve).not.toHaveBeenCalled();
   });
+
+  it.each(["chat", "side_chat"] as const)(
+    "serves one-shot native input only in memory for %s and redacts HTTP request logs",
+    async (conversationKind) => {
+      const conversation = createConversation({ conversationKind });
+      const binding = {
+        principalId: "user:user-1",
+        orgId: conversation.orgId,
+        chatId: conversation.id,
+        runId: `run-${conversationKind}`,
+        attemptId: `attempt-${conversationKind}`,
+      };
+      const submittedSecret = `private-${conversationKind}-sudo-value`;
+      const retrySecret = `private-${conversationKind}-retry-value`;
+      const invalidSecret = `private-${conversationKind}-invalid-value`;
+      const exceptionSecret = `private-${conversationKind}-exception-value`;
+      const loggedBodies: unknown[] = [];
+      const pending = chatRuntimeSensitiveInputBroker.request({ binding, kind: "sudo" });
+      const pendingRequestIds = [pending.requestId];
+      mockChatService.getById.mockResolvedValue(conversation);
+
+      try {
+        const app = createApp(undefined, undefined, undefined, (body) => loggedBodies.push(body));
+        const listed = await request(app).get(`/api/chats/${conversation.id}/runtime-sensitive-inputs`);
+
+        expect(listed.status).toBe(200);
+        expect(listed.body).toEqual({
+          requests: [{ requestId: pending.requestId, kind: "sudo" }],
+        });
+        expect(JSON.stringify(listed.body)).not.toContain(submittedSecret);
+
+        const invalidResponse = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${pending.requestId}/respond`)
+          .send({ value: { nested: invalidSecret } });
+        expect(invalidResponse.status).toBe(422);
+        expect(JSON.stringify(invalidResponse.body)).not.toContain(invalidSecret);
+        expect(JSON.stringify(loggedBodies)).not.toContain(invalidSecret);
+        expect(loggedBodies.at(-1)).toBe("[REDACTED]");
+
+        const response = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${pending.requestId}/respond`)
+          .send({ value: submittedSecret });
+        const retriedResponse = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${pending.requestId}/respond`)
+          .send({ value: retrySecret });
+
+        expect(response.status).toBe(202);
+        expect(response.body).toEqual({ status: "accepted" });
+        expect(retriedResponse.status).toBe(200);
+        expect(retriedResponse.body).toEqual({ status: "already_accepted" });
+        expect(JSON.stringify([response.body, retriedResponse.body])).not.toContain(submittedSecret);
+        await expect(pending.result).resolves.toEqual({ status: "provided", value: submittedSecret });
+        expect(chatRuntimeSensitiveInputBroker.pendingForPrincipal({
+          orgId: binding.orgId,
+          chatId: binding.chatId,
+          principalId: binding.principalId,
+        })).toEqual([]);
+        expect(JSON.stringify(loggedBodies)).not.toContain(submittedSecret);
+        expect(JSON.stringify(loggedBodies)).not.toContain(retrySecret);
+        expect(loggedBodies).toContain("[REDACTED]");
+        expect(mockChatService.addMessage).not.toHaveBeenCalled();
+        expect(mockChatService.updateMessage).not.toHaveBeenCalled();
+        expect(mockChatService.generationProtocol.appendGenerationEvent).not.toHaveBeenCalled();
+
+        const cancelPending = chatRuntimeSensitiveInputBroker.request({ binding, kind: "secret" });
+        pendingRequestIds.push(cancelPending.requestId);
+        const cancel = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${cancelPending.requestId}/cancel`)
+          .send({});
+        const cancelRetry = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${cancelPending.requestId}/cancel`)
+          .send({});
+
+        expect(cancel.status).toBe(200);
+        expect(cancel.body).toEqual({ cancelled: true });
+        expect(cancelRetry.status).toBe(200);
+        await expect(cancelPending.result).resolves.toEqual({ status: "cancelled" });
+
+        const exceptionPending = chatRuntimeSensitiveInputBroker.request({ binding, kind: "secret" });
+        pendingRequestIds.push(exceptionPending.requestId);
+        mockSideChatService.assertMutable.mockRejectedValueOnce(new Error("Synthetic Side Chat mutation failure"));
+        const exceptionResponse = await request(app)
+          .post(`/api/chats/${conversation.id}/runtime-sensitive-inputs/${exceptionPending.requestId}/respond`)
+          .send({ value: exceptionSecret });
+        expect(exceptionResponse.status).toBe(500);
+        expect(exceptionResponse.body).toEqual({ error: "Internal server error" });
+        expect(JSON.stringify(loggedBodies)).not.toContain(exceptionSecret);
+        expect(loggedBodies.at(-1)).toBe("[REDACTED]");
+      } finally {
+        for (const requestId of pendingRequestIds) {
+          chatRuntimeSensitiveInputBroker.cancelFromPrincipal({
+            requestId,
+            orgId: binding.orgId,
+            chatId: binding.chatId,
+            principalId: binding.principalId,
+          });
+        }
+      }
+    },
+  );
 });

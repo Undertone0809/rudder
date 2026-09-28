@@ -18,17 +18,23 @@ export async function ensureProviderWriterStopped(input: {
     agentRuntimeType: string,
   ) => Promise<boolean>;
 }) {
-  if (input.run.processExitedAt) return { ok: true as const, kind: "recorded_exit" as const };
   if (!isTrackedLocalChildProcessAdapter(input.agentRuntimeType)) {
     return { ok: false as const, reason: "unsupported_runtime" as const };
   }
   if (!Number.isInteger(input.run.processPid) || !input.run.processPid || input.run.processPid <= 0) {
     return { ok: false as const, reason: "missing_process_identity" as const };
   }
+  if (input.activeRunExecutions.has(input.run.id)) {
+    return { ok: false as const, reason: "execution_not_quiescent" as const };
+  }
+  if (!isProcessAlive(input.run.processPid)) {
+    return { ok: true as const, kind: input.run.processExitedAt ? "recorded_exit" as const : "process_stopped" as const };
+  }
+  if (input.run.processExitedAt) return { ok: false as const, reason: "process_still_alive" as const };
 
   const stopped = await input.terminateRunProcessAndWait(input.run, input.agentRuntimeType);
   if (!stopped) return { ok: false as const, reason: "process_still_alive" as const };
-  if (input.activeRunExecutions.has(input.run.id)) {
+  if (input.activeRunExecutions.has(input.run.id) || isProcessAlive(input.run.processPid)) {
     return { ok: false as const, reason: "execution_not_quiescent" as const };
   }
   return { ok: true as const, kind: "process_stopped" as const };
@@ -251,6 +257,7 @@ export function createHeartbeatReaperHandlers(context: { db: Db; [key: string]: 
         expectedExecutionOwnerToken: recoveryOwnerToken,
       });
       if (!finalizedRun) continue;
+      await acknowledgeRunProcessExit(finalizedRun.id);
       if (shouldRetry) {
         finalizedRun = await suppressUnsafePendingProcessLossRetry(db, finalizedRun.id);
         if (!finalizedRun) continue;

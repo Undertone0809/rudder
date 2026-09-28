@@ -23,8 +23,21 @@ describe("Chat transcript source attestation", () => {
     const persist = vi.fn(async () => undefined);
     expect(await transcript.onNativeTranscriptSource(persist)).toBe(true);
     expect(persist).toHaveBeenCalledOnce();
-    expect(transcript.delivery).toMatchObject({ source: "native", persistRaw: false, persistSupplement: false });
+    expect(transcript.delivery).toMatchObject({
+      source: "native",
+      runId: "run-1",
+      spanId: "span-1",
+      persistRaw: false,
+      persistSupplement: true,
+    });
     expect(transcript.terminalResult({ outcome: "succeeded" })).toEqual({ outcome: "succeeded" });
+
+    await transcript.onTranscriptSource("legacy");
+    expect(transcript.delivery).toMatchObject({
+      source: "legacy",
+      persistRaw: true,
+      persistSupplement: false,
+    });
   });
 
   it("keeps legacy evidence on failed attestation or an explicitly legacy recovered run", async () => {
@@ -37,5 +50,11 @@ describe("Chat transcript source attestation", () => {
     const persist = vi.fn(async () => undefined);
     expect(await recovered.onNativeTranscriptSource(persist)).toBe(false);
     expect(persist).not.toHaveBeenCalled();
+    expect(recovered.delivery).toMatchObject({
+      source: "legacy",
+      runId: "run-1",
+      spanId: "span-1",
+      persistRaw: true,
+    });
   });
 });

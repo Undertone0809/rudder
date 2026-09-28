@@ -61,8 +61,9 @@ function fakeDb(selectRows: unknown[][]) {
   const select = vi.fn(() => queryFor(remainingRows.shift() ?? []));
   const execute = vi.fn().mockResolvedValue([]);
   const insertReturning = vi.fn();
+  const insertValues = vi.fn(() => ({ returning: insertReturning }));
   const insert = vi.fn(() => ({
-    values: vi.fn(() => ({ returning: insertReturning })),
+    values: insertValues,
   }));
   const updateReturning = vi.fn().mockResolvedValue([]);
   const updateWhere = vi.fn(() => ({ returning: updateReturning }));
@@ -77,7 +78,7 @@ function fakeDb(selectRows: unknown[][]) {
     update,
     transaction: vi.fn(async (callback: (transaction: typeof tx) => unknown) => callback(tx)),
   };
-  return { db, tx, insertReturning, update, updateReturning };
+  return { db, tx, insertReturning, insertValues, update, updateReturning };
 }
 
 function execution() {
@@ -155,6 +156,29 @@ describe("runtime approval bridge", () => {
     expect(fake.tx.execute).toHaveBeenCalledTimes(1);
     expect(fake.insertReturning).toHaveBeenCalledTimes(1);
     expect(approvals.create).not.toHaveBeenCalled();
+  });
+
+  it("uses a native numeric request id as the stable approval identity", async () => {
+    const fake = fakeDb([
+      ...currentSelectRows(),
+      ...currentSelectRows(),
+      [],
+    ]);
+    fake.insertReturning.mockResolvedValueOnce([approval({ payload: payload({ requestId: "42" }) })]);
+    const bridge = createRuntimeApprovalBridge({
+      db: fake.db as any,
+      approvals: { create: vi.fn(), getById: vi.fn() },
+      execution: execution(),
+    });
+
+    await expect(bridge.requestApproval({
+      type: "agent_runtime",
+      payload: { runtimeType: "cursor", nativeRequestId: 42 },
+    })).resolves.toEqual({ id: "approval-1", status: "pending" });
+
+    expect(fake.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ requestId: "42" }),
+    }));
   });
 
   it("cancels an owned stale approval but never updates a cross-run approval", async () => {

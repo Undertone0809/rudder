@@ -9,8 +9,8 @@ import {
   classifyClaudeDeferredForkRecovery,
   type ClaudeDeferredForkAdmission,
 } from "./claude-deferred-fork-admission.js";
-import { readNativeForkIntent, type NativeForkIntentChild } from "./runtime-kernel/native-fork-intent.js";
 import type { NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
+import { readNativeForkIntent, type NativeForkIntentChild } from "./runtime-kernel/native-fork-intent.js";
 import type { RuntimeBindingRecord } from "./runtime-kernel/native-session.js";
 
 type ChatRuns = ReturnType<typeof chatAgentRunService>;

@@ -67,6 +67,27 @@ describe("HTTP request-body logging", () => {
     expect(JSON.stringify(requestBodyForLogs(request, body))).not.toContain("private clipboard value");
   });
 
+  it("redacts sensitive chat input before route middleware marks the request", () => {
+    const body = { value: "private-hermes-sudo-input" };
+
+    expect(requestBodyForLogs({
+      method: "POST",
+      originalUrl: "/api/chats/chat-1/runtime-sensitive-inputs/request-1/respond?source=side-chat",
+    }, body)).toBe("[REDACTED]");
+    expect(requestBodyForLogs({
+      method: "post",
+      url: "/API/CHATS/chat-1/RUNTIME-SENSITIVE-INPUTS/request-1/RESPOND/",
+    }, body)).toBe("[REDACTED]");
+    expect(requestBodyForLogs({
+      method: "POST",
+      originalUrl: "/api/chats/chat-1/messages",
+    }, body)).toBe(body);
+    expect(requestBodyForLogs({
+      method: "GET",
+      originalUrl: "/api/chats/chat-1/runtime-sensitive-inputs/request-1/respond",
+    }, body)).toBe(body);
+  });
+
   it("keeps ordinary request bodies available for diagnostics", () => {
     const body = { status: "todo" };
 

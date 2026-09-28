@@ -12,7 +12,7 @@ import { sideChatIsReadOnly } from "@/lib/side-chat";
 import { sidePanelTargetSupportsSavedView, type SidePanelTarget } from "@/lib/side-panel-targets";
 import { useQuery } from "@tanstack/react-query";
 import { CopyPlus, MessageSquare, X } from "lucide-react";
-import { useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 
 export type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
 
@@ -38,6 +38,8 @@ export function ChatSidePanelTabContextMenu({
   onMoveSideChat: (tab: SideChatTarget) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerTabRef = useRef<HTMLButtonElement | null>(null);
+  const restoreTriggerTabFocusRef = useRef(false);
   const sideChat = tab.kind === "side_chat" ? tab : null;
   const conversationQuery = useQuery({
     queryKey: queryKeys.chats.detail(organizationId ?? "__none__", sideChat?.conversationId ?? "__side-chat-draft__"),
@@ -63,6 +65,11 @@ export function ChatSidePanelTabContextMenu({
       : canMoveSideChat
         ? "Make this Side Chat a regular Messenger chat. This tab will close."
         : "This Side Chat can no longer be moved. Close it instead.";
+  const closeLabel = sideChat
+    ? sideChat.conversationId
+      ? "Close Side Chat"
+      : "Discard Side Chat Draft"
+    : "Close";
 
   return (
     <ContextMenu
@@ -71,11 +78,28 @@ export function ChatSidePanelTabContextMenu({
         if (nextOpen && sideChat?.conversationId) void conversationQuery.refetch();
       }}
     >
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger
+        asChild
+        onContextMenu={(event) => {
+          triggerTabRef.current = event.currentTarget.querySelector<HTMLButtonElement>('[role="tab"]');
+        }}
+      >
+        {children}
+      </ContextMenuTrigger>
       <ContextMenuContent
         data-testid="chat-side-panel-tab-context-menu"
         className="surface-overlay z-[70] w-48 text-foreground"
         onContextMenu={(event) => event.preventDefault()}
+        onEscapeKeyDown={() => {
+          restoreTriggerTabFocusRef.current = true;
+        }}
+        onCloseAutoFocus={(event) => {
+          if (!restoreTriggerTabFocusRef.current) return;
+          restoreTriggerTabFocusRef.current = false;
+          if (!triggerTabRef.current?.isConnected) return;
+          event.preventDefault();
+          triggerTabRef.current.focus();
+        }}
       >
         {sideChat ? (
           <>
@@ -131,7 +155,7 @@ export function ChatSidePanelTabContextMenu({
           }}
         >
           <X />
-          Close
+          {closeLabel}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

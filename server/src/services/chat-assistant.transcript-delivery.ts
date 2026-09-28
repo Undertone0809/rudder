@@ -14,10 +14,10 @@ export function createChatTranscriptDelivery(input: {
   let isLegacy = input.retention.mode === "legacy" || recoveredLegacy;
   const delivery = {
     source: isLegacy ? "legacy" as "legacy" | "native" : "native" as "legacy" | "native",
-    persistRaw: isLegacy || input.retention.persistRawLog,
-    persistSupplement: !isLegacy
-      ? input.runtimeAgentType === "cursor" || input.retention.reason !== "native_transcript_capability"
-      : undefined as boolean | undefined,
+    // A capability can select the native source, but only terminal Reader
+    // proof may retire the complete recovery transcript.
+    persistRaw: isLegacy,
+    persistSupplement: !isLegacy,
     runId: input.runId,
     spanId: input.spanId,
   };
@@ -35,7 +35,7 @@ export function createChatTranscriptDelivery(input: {
       isLegacy = false;
       delivery.source = "native";
       delivery.persistRaw = false;
-      delivery.persistSupplement = false;
+      delivery.persistSupplement = true;
       return true;
     },
     async onTranscriptSource(source: "legacy") {

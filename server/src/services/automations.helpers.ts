@@ -1,5 +1,5 @@
-import type { Automation } from "@rudderhq/shared";
 import { automations } from "@rudderhq/db";
+import type { Automation } from "@rudderhq/shared";
 
 type AutomationRow = typeof automations.$inferSelect;
 

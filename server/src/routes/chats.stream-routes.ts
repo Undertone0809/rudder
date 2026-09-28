@@ -17,7 +17,6 @@ import {
   type ChatStreamTranscriptEntry,
 } from "@rudderhq/shared";
 import {
-  coalesceChatTranscriptTextEntries,
   withChatTranscriptGenerationProvenance,
 } from "@rudderhq/shared/chat-transcript-provenance";
 import type { Request } from "express";
@@ -43,14 +42,18 @@ import {
   setActiveChatGenerationId,
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
-import { CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS } from "../services/chat-generation-provenance.js";
 import { replayChatStreamMessage } from "../services/chat-message-mutation-fingerprint.js";
 import { logActivity } from "../services/index.js";
 import { getActorInfo } from "./authz.js";
 import { wakeIssueAssigneeAfterChatConversion } from "./chat-issue-assignment-wakeup.js";
 import { registerChatAttachmentRoute } from "./chats.attachment-route.js";
 import { chatRuntimeSnapshot } from "./chats.runtime-controls.js";
+import {
+  createChatRuntimeSensitiveInputStreamHandler,
+  registerChatRuntimeSensitiveInputRoutes,
+} from "./chats.runtime-sensitive-input-routes.js";
 import { registerChatStopRoute } from "./chats.stop-route.js";
+import { admitChatStreamSideChatFirstInput } from "./chats.stream-first-input.js";
 import { createChatStreamGenerationOwner, persistChatStreamGenerationTerminal, persistOwnedChatStreamProjection, retryStoppedChatStreamProjection } from "./chats.stream-generation-owner.js";
 import {
   CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE,
@@ -67,67 +70,11 @@ import {
   type AtomicChatFirstTurn,
   type ChatStreamRouteContext,
 } from "./chats.stream-support.js";
+import {
+  appendChatStreamTranscriptMemory,
+  boundedChatStreamTranscriptWindow,
+} from "./chats.stream-transcript-memory.js";
 import { registerChatUserStateRoutes } from "./chats.user-state-routes.js";
-
-const MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_ENTRIES = CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS.entries;
-const MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES = CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS.bytes;
-
-function chatStreamTranscriptEntryBytes(entry: TranscriptEntry) {
-  try {
-    return Buffer.byteLength(JSON.stringify(entry), "utf8");
-  } catch {
-    return MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES;
-  }
-}
-
-function boundChatStreamTranscriptMemory(transcript: TranscriptEntry[]) {
-  while (transcript.length > MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_ENTRIES) transcript.shift();
-  let bytes = 0;
-  for (let index = transcript.length - 1; index >= 0; index -= 1) {
-    bytes += chatStreamTranscriptEntryBytes(transcript[index]!);
-    if (bytes <= MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES) continue;
-    transcript.splice(0, index + 1);
-    break;
-  }
-}
-
-function boundedChatStreamTranscriptWindow(transcript: readonly TranscriptEntry[]) {
-  const retained: TranscriptEntry[] = [];
-  let bytes = 0;
-  for (
-    let index = transcript.length - 1;
-    index >= 0 && retained.length < MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_ENTRIES;
-    index -= 1
-  ) {
-    const entry = transcript[index]!;
-    const entryBytes = chatStreamTranscriptEntryBytes(entry);
-    if (bytes + entryBytes > MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES) break;
-    retained.push(entry);
-    bytes += entryBytes;
-  }
-  return retained.reverse();
-}
-
-function appendChatStreamTranscriptMemory(transcript: TranscriptEntry[], entry: TranscriptEntry) {
-  const previous = transcript.at(-1);
-  if (previous) {
-    const coalesced = coalesceChatTranscriptTextEntries([
-      previous as ChatStreamTranscriptEntry,
-      entry as ChatStreamTranscriptEntry,
-    ]);
-    if (
-      coalesced.length === 1
-      && chatStreamTranscriptEntryBytes(coalesced[0] as TranscriptEntry) <= MAX_CHAT_STREAM_TRANSCRIPT_MEMORY_BYTES
-    ) {
-      transcript[transcript.length - 1] = coalesced[0] as TranscriptEntry;
-    } else {
-      transcript.push(entry);
-    }
-  } else {
-    transcript.push(entry);
-  }
-  boundChatStreamTranscriptMemory(transcript);
-}
 
 export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   const {
@@ -146,6 +93,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     assertChatLocalMutationAllowed,
     assertSideChatMutationAllowed,
     touchSideChat,
+    sideChats,
     boardUserId,
     assertCanAssignTasks,
     runSingleFileUpload,
@@ -158,6 +106,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
     addUserMessage,
+    recoverSideChatFirstInputActivity,
     inlineAnnotations,
     storeUserMessageFiles,
     cleanupStoredUserMessageFiles,
@@ -242,6 +191,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     const clientMutationId = parsedBody.data.clientMutationId ?? null;
+    const deferAcceptedSideChatFirstInputReplay = conversation.conversationKind === "side_chat"
+      && await sideChats.hasAcceptedFirstInputMutation({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        clientMutationId,
+      });
     const clientMutationFingerprint = await replayChatStreamMessage({
       atomicFirstTurn: Boolean(atomicFirstTurn),
       clientMutationId,
@@ -255,6 +210,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       orgId: conversation.orgId,
       conversationId: conversation.id,
       lookup: svc.getUserMessageMutationByClientMutationId,
+      deferExistingReplay: deferAcceptedSideChatFirstInputReplay,
       response: res,
       writeStreamEvent,
     });
@@ -293,6 +249,31 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     if (!runtimeSnapshot) throw new Error("Chat runtime snapshot is unavailable");
 
+    const sideChatFirstInput = await admitChatStreamSideChatFirstInput({
+      atomicFirstTurn: Boolean(atomicFirstTurn),
+      conversation: conversation as ChatConversation,
+      request: req,
+      clientMutationId,
+      clientMutationFingerprint,
+      body: parsedBody.data.body,
+      editUserMessageId: parsedBody.data.editUserMessageId ?? null,
+      inlineAnnotationsProvided,
+      inlineAnnotations: parsedBody.data.inlineAnnotations,
+      modelOverride: parsedBody.data.modelOverride ?? null,
+      effortOverride: parsedBody.data.effortOverride ?? null,
+      files: messageFiles,
+      sideChats,
+      boardUserId,
+      getMessage: (conversationId, messageId) => svc.getMessage(conversationId, messageId),
+      recoverSideChatFirstInputActivity,
+      actor,
+    });
+    let sideChatFirstInputClaimToken = sideChatFirstInput.claimToken;
+    const sideChatFirstInputFingerprint = sideChatFirstInput.requestFingerprint;
+    const acceptedSideChatFirstInput = Boolean(
+      sideChatFirstInputClaimToken || sideChatFirstInput.replayed,
+    );
+
     const abortController = new AbortController();
     const releaseGeneration = claimChatGeneration(
       conversation.id,
@@ -301,6 +282,20 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       clientMutationId,
     );
     if (!releaseGeneration) {
+      if (sideChatFirstInput.replayed) {
+        throw conflict("The accepted Side Chat first input is already executing", {
+          code: "side_chat_first_input_in_progress",
+        });
+      }
+      if (sideChatFirstInputClaimToken) {
+        await sideChats.releaseFirstInputClaim({
+          conversationId: conversation.id,
+          claimToken: sideChatFirstInputClaimToken,
+        });
+        throw conflict("A Side Chat response is already being generated", {
+          code: "side_chat_first_input_in_progress",
+        });
+      }
       if (parsedBody.data.editUserMessageId) {
         res.status(409).json({ error: "Stop the current response before editing this message" });
         return;
@@ -410,7 +405,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     }
     const stagedMessageFiles = createChatStreamFileStaging({
       conversation: conversation as ChatConversation,
-      shouldStage: !atomicFirstTurn,
+      shouldStage: !atomicFirstTurn && !sideChatFirstInput.replayed,
       files: messageFiles,
       store: storeUserMessageFiles,
       cleanup: cleanupStoredUserMessageFiles,
@@ -419,6 +414,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       await stagedMessageFiles.stage();
     } catch (error) {
       releaseGeneration();
+      if (sideChatFirstInputClaimToken) {
+        await sideChats.releaseFirstInputClaim({
+          conversationId: conversation.id,
+          claimToken: sideChatFirstInputClaimToken,
+        });
+      }
       throw error;
     }
     const startupGate = createStartingChatGenerationGate();
@@ -433,6 +434,9 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       inlineAnnotationsProvided,
       clientMutationId,
       clientMutationFingerprint,
+      sideChatFirstInputClaimToken,
+      sideChatFirstInputFingerprint,
+      replayedUserMessage: sideChatFirstInput.userMessage,
       svc,
       addUserMessage,
       actor,
@@ -441,6 +445,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       stagedMessageFiles,
     });
     if (messagePersistence.kind === "error") {
+      if (sideChatFirstInputClaimToken) {
+        await sideChats.releaseFirstInputClaim({
+          conversationId: conversation.id,
+          claimToken: sideChatFirstInputClaimToken,
+        });
+      }
       logger.warn({ err: chatAssistantErrorForLog(messagePersistence.error), conversationId: conversation.id }, "chat user-message persistence failed before generation");
       res.status(201);
       res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
@@ -451,6 +461,12 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       return;
     }
     if (messagePersistence.kind === "replayed") {
+      if (sideChatFirstInputClaimToken) {
+        await sideChats.releaseFirstInputClaim({
+          conversationId: conversation.id,
+          claimToken: sideChatFirstInputClaimToken,
+        });
+      }
       res.status(200);
       res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -460,6 +476,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       res.end();
       return;
     }
+    sideChatFirstInputClaimToken = null;
     let { userMessagePersisted, committedUserMessageId } = messagePersistence;
     const persistedUserMessage = messagePersistence.userMessage;
 
@@ -470,10 +487,42 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       controlOwnerToken?: string | null;
     } | null = null;
     try {
-      const createdGeneration = await svc.createGeneration(conversation.orgId, conversation.id);
+      let createdGeneration: Awaited<ReturnType<typeof svc.createGeneration>>;
+      let executionAdmitted = false;
+      if (acceptedSideChatFirstInput) {
+        const admission = await svc.ensureSideChatFirstInputGeneration({
+          orgId: conversation.orgId,
+          conversationId: conversation.id,
+          userMessageId: persistedUserMessage!.id,
+        });
+        createdGeneration = admission.generation;
+        executionAdmitted = admission.executionAdmitted;
+      } else {
+        createdGeneration = await svc.createGeneration(conversation.orgId, conversation.id);
+      }
       generation = createdGeneration;
       setActiveChatGenerationId(conversation.id, createdGeneration.id);
       startupGate.resolveGeneration(createdGeneration.id);
+      if (executionAdmitted) {
+        startingChatGenerationGates.delete(conversation.id);
+        releaseGeneration();
+        await stagedMessageFiles.cleanup();
+        res.status(200);
+        res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("X-Accel-Buffering", "no");
+        writeStreamEvent(res, {
+          type: "ack",
+          userMessage: persistedUserMessage,
+          generationId: createdGeneration.id,
+          attemptEpoch: createdGeneration.attemptEpoch ?? 1,
+          generationSeq: 0,
+          bodyHash: hashChatGenerationBody(""),
+        });
+        writeStreamEvent(res, { type: "final", messages: [] });
+        res.end();
+        return;
+      }
     } catch (error) {
       startupGate.resolveGeneration(null);
       startingChatGenerationGates.delete(conversation.id);
@@ -725,6 +774,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
               onRunCreated: (runId: string) => {
                 activeChatRunId = runId;
               },
+              requestRuntimeSensitiveInput: createChatRuntimeSensitiveInputStreamHandler({
+                orgId: conversation.orgId,
+                chatId: conversation.id,
+                principalId: `${actor.actorType}:${actor.actorId}`,
+                response: res,
+                writeStreamEvent,
+              }),
               onWaitingForNetwork: async (suspension: AgentRuntimeNetworkSuspension) => {
                 const attemptFence = generationOwner.capture();
                 if (!generationOwner.isCurrent(attemptFence)) return;
@@ -1191,6 +1247,13 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
   };
 
   router.post("/chats/:id/messages/stream", handleChatMessageStream);
+
+  registerChatRuntimeSensitiveInputRoutes({
+    router,
+    assertConversationAccess,
+    assertChatLocalMutationAllowed,
+    assertSideChatMutationAllowed,
+  });
 
   router.post("/orgs/:orgId/chats/messages/stream", async (req, res) => {
     let uploadPrepared = false;

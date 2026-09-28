@@ -964,6 +964,9 @@ describe("applyPendingMigrations", () => {
           "0170_side_chat_provider_cleanup_intents.sql",
           "0171_side_chat_close_intents.sql",
           "0172_side_chat_provider_cleanup_protection_refs.sql",
+          "0173_side_chat_first_inputs.sql",
+          "0174_native_resource_writer_fencing.sql",
+          "0175_side_chat_first_input_generation.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1157,6 +1160,9 @@ describe("applyPendingMigrations", () => {
           "0170_side_chat_provider_cleanup_intents.sql",
           "0171_side_chat_close_intents.sql",
           "0172_side_chat_provider_cleanup_protection_refs.sql",
+          "0173_side_chat_first_inputs.sql",
+          "0174_native_resource_writer_fencing.sql",
+          "0175_side_chat_first_input_generation.sql",
         ],
         reason: "pending-migrations",
       });
@@ -2126,6 +2132,286 @@ describe("applyPendingMigrations", () => {
       }
     },
     migrationTestTimeout(60_000),
+  );
+
+  it(
+    "preserves legacy spans and fences concurrent writers by binding and physical session",
+    async () => {
+      const connectionString = await createTempDatabase();
+      const migrationsThrough0172 = createCurrentMigrationsFolderThrough(172);
+      const sql = postgres(connectionString, { max: 4, onnotice: () => {} });
+      try {
+        await migratePg(drizzlePg(sql), { migrationsFolder: migrationsThrough0172 });
+        const [org] = await sql`
+          INSERT INTO organizations (name, url_key, issue_prefix)
+          VALUES ('Native writer migration', 'native-writer-migration', 'NWM') RETURNING id
+        `;
+        const [agent] = await sql`INSERT INTO agents (org_id, name) VALUES (${org!.id}, 'Writer agent') RETURNING id`;
+        const [runA] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status, process_exited_at)
+          VALUES (${org!.id}, ${agent!.id}, 'timed_out', now()) RETURNING id
+        `;
+        const [runB] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id`;
+        const [runC] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id`;
+        const [runD] = await sql`INSERT INTO heartbeat_runs (org_id, agent_id, status) VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id`;
+        const [duplicateBindingRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status, process_exited_at)
+          VALUES (${org!.id}, ${agent!.id}, 'timed_out', now()) RETURNING id
+        `;
+        const [bindingRetryRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status)
+          VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id
+        `;
+        const [legacyAliasRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status, process_exited_at)
+          VALUES (${org!.id}, ${agent!.id}, 'cancelled', now()) RETURNING id
+        `;
+        const [bindingA] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-a')
+          RETURNING id
+        `;
+        const [bindingB] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-b')
+          RETURNING id
+        `;
+        const [bindingC] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-c')
+          RETURNING id
+        `;
+        const [segmentA] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingA!.id}, 'pi_local', '/tmp/shared-session.jsonl', 'assistant-a') RETURNING id
+        `;
+        const [segmentB] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingB!.id}, 'pi_local', '/tmp/shared-session.jsonl', 'assistant-b') RETURNING id
+        `;
+        const [segmentB2] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, segment_ordinal, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingB!.id}, 'pi_local', 1, '/tmp/other-binding-session.jsonl', 'assistant-b2') RETURNING id
+        `;
+        const [segmentC] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, native_session_id, leaf_id)
+          VALUES (${org!.id}, ${bindingC!.id}, 'pi_local', '/tmp/shared-session.jsonl', 'assistant-c') RETURNING id
+        `;
+        const [legacySpan] = await sql`
+          INSERT INTO run_runtime_spans
+            (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, state, completeness, closed_at)
+          VALUES (${org!.id}, ${runA!.id}, ${bindingA!.id}, ${segmentA!.id},
+            'legacy-timeout-attempt', 'legacy-timeout-owner', 'sealed', 'unknown', now()) RETURNING id
+        `;
+        const [legacyDuplicateBindingSpan] = await sql`
+          INSERT INTO run_runtime_spans
+            (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, state, completeness, closed_at)
+          VALUES (${org!.id}, ${duplicateBindingRun!.id}, ${bindingA!.id}, ${segmentA!.id},
+            'legacy-duplicate-binding-attempt', 'legacy-duplicate-binding-owner', 'sealed', 'unknown', now()) RETURNING id
+        `;
+        const [legacyAliasSpan] = await sql`
+          INSERT INTO run_runtime_spans
+            (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token, state, completeness, closed_at)
+          VALUES (${org!.id}, ${legacyAliasRun!.id}, ${bindingB!.id}, ${segmentB!.id},
+            'legacy-cancel-attempt', 'legacy-cancel-owner', 'sealed', 'unknown', now()) RETURNING id
+        `;
+
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe('upToDate');
+        const [upgradedSpan] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref, writer_lease_released_at
+          FROM run_runtime_spans WHERE id = ${legacySpan!.id}
+        `;
+        expect(upgradedSpan).toMatchObject({
+          writer_binding_ref: null,
+          writer_resource_ref: null,
+          writer_lease_released_at: null,
+        });
+        const [upgradedDuplicateBindingSpan] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref, writer_lease_released_at
+          FROM run_runtime_spans WHERE id = ${legacyDuplicateBindingSpan!.id}
+        `;
+        expect(upgradedDuplicateBindingSpan).toEqual({
+          writer_binding_ref: null,
+          writer_resource_ref: null,
+          writer_lease_released_at: null,
+        });
+        const [upgradedAliasSpan] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref, writer_lease_released_at
+          FROM run_runtime_spans WHERE id = ${legacyAliasSpan!.id}
+        `;
+        expect(upgradedAliasSpan).toMatchObject({
+          writer_binding_ref: expect.any(String),
+          writer_resource_ref: null,
+          writer_lease_released_at: null,
+        });
+
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runB!.id}, ${bindingB!.id}, ${segmentB!.id}, 'alias-attempt', 'alias-owner')
+        `).rejects.toMatchObject({ code: '23505' });
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runD!.id}, ${bindingA!.id}, ${segmentA!.id}, 'duplicate-binding-retry', 'retry-owner')
+        `).rejects.toMatchObject({ code: '23505' });
+        await expect(sql`DELETE FROM heartbeat_runs WHERE id = ${runA!.id}`).rejects.toMatchObject({ code: '23514' });
+        expect(await sql`SELECT id FROM run_runtime_spans WHERE id IN (${legacySpan!.id}, ${legacyDuplicateBindingSpan!.id}, ${legacyAliasSpan!.id})`).toHaveLength(3);
+
+        await sql`UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${legacySpan!.id}`;
+        await sql`UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${legacyDuplicateBindingSpan!.id}`;
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runB!.id}, ${bindingC!.id}, ${segmentC!.id}, 'still-fenced', 'owner-c')
+        `).rejects.toMatchObject({ code: '23505' });
+        await sql`UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${legacyAliasSpan!.id}`;
+
+        const [recoveredBindingRetry] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${bindingRetryRun!.id}, ${bindingA!.id}, ${segmentA!.id}, 'duplicate-binding-recovered', 'retry-owner')
+          RETURNING id
+        `;
+        expect(recoveredBindingRetry).toBeDefined();
+        await sql`
+          UPDATE run_runtime_spans
+          SET state = 'sealed', closed_at = now(), writer_lease_released_at = now()
+          WHERE id = ${recoveredBindingRetry!.id}
+        `;
+
+        const [capturedBinding] = await sql`
+          INSERT INTO runtime_bindings
+            (org_id, agent_id, principal_scope_ref, runtime_type, profile_id, workspace_binding_id, target_type, target_id)
+          VALUES (${org!.id}, ${agent!.id}, 'test:owner', 'pi_local', 'default', 'workspace-a', 'manual', 'writer-d-captured')
+          RETURNING id
+        `;
+        const [capturedSegment] = await sql`
+          INSERT INTO native_segments (org_id, binding_id, runtime_type, leaf_id)
+          VALUES (${org!.id}, ${capturedBinding!.id}, 'pi_local', 'assistant-d') RETURNING id
+        `;
+        const [capturedRun] = await sql`
+          INSERT INTO heartbeat_runs (org_id, agent_id, status)
+          VALUES (${org!.id}, ${agent!.id}, 'running') RETURNING id
+        `;
+        const [capturedSpan] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${capturedRun!.id}, ${capturedBinding!.id}, ${capturedSegment!.id},
+            'captured-session-attempt', 'captured-session-owner') RETURNING id
+        `;
+        expect(await sql`
+          SELECT writer_resource_ref FROM run_runtime_spans WHERE id = ${capturedSpan!.id}
+        `).toEqual([{ writer_resource_ref: null }]);
+        await sql`UPDATE native_segments SET native_session_id = '/tmp/shared-session.jsonl' WHERE id = ${capturedSegment!.id}`;
+        await sql`UPDATE run_runtime_spans SET segment_id = ${capturedSegment!.id} WHERE id = ${capturedSpan!.id}`;
+        const [capturedWriterKeys] = await sql`
+          SELECT writer_binding_ref, writer_resource_ref FROM run_runtime_spans WHERE id = ${capturedSpan!.id}
+        `;
+        expect(capturedWriterKeys).toMatchObject({
+          writer_binding_ref: expect.any(String),
+          writer_resource_ref: expect.any(String),
+        });
+        await sql`
+          UPDATE run_runtime_spans
+          SET writer_binding_ref = 'forged-binding-ref', writer_resource_ref = 'forged-resource-ref'
+          WHERE id = ${capturedSpan!.id}
+        `;
+        expect(await sql`
+          SELECT writer_binding_ref, writer_resource_ref FROM run_runtime_spans WHERE id = ${capturedSpan!.id}
+        `).toEqual([capturedWriterKeys]);
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runC!.id}, ${bindingC!.id}, ${segmentC!.id}, 'captured-session-alias', 'owner-c')
+        `).rejects.toMatchObject({ code: '23505' });
+        await expect(sql`
+          UPDATE run_runtime_spans SET writer_lease_released_at = now() WHERE id = ${capturedSpan!.id}
+        `).rejects.toMatchObject({ code: '23514' });
+        await sql`
+          UPDATE run_runtime_spans
+          SET state = 'unresolved', closed_at = now(), writer_lease_released_at = now()
+          WHERE id = ${capturedSpan!.id}
+        `;
+
+        let releaseFirstTransaction!: () => void;
+        let firstInsertReady!: () => void;
+        const firstReady = new Promise<void>((resolve) => { firstInsertReady = resolve; });
+        const firstTransactionGate = new Promise<void>((resolve) => { releaseFirstTransaction = resolve; });
+        const firstWriter = sql.begin(async (tx) => {
+          await tx.unsafe(
+            `INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [org!.id, runB!.id, bindingB!.id, segmentB!.id, 'concurrent-b', 'owner-b'],
+          );
+          firstInsertReady();
+          await firstTransactionGate;
+        });
+        await firstReady;
+        const secondWriter = sql.begin((tx) => tx.unsafe(
+          `INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [org!.id, runC!.id, bindingC!.id, segmentC!.id, 'concurrent-c', 'owner-c'],
+        )).then(
+          () => ({ status: 'inserted' as const }),
+          (error: unknown) => ({ status: 'rejected' as const, error }),
+        );
+        let secondWriterWaitingOnLock = false;
+        const lockWaitDeadline = Date.now() + 5_000;
+        while (!secondWriterWaitingOnLock && Date.now() < lockWaitDeadline) {
+          const [waitState] = await sql`
+            SELECT EXISTS (
+              SELECT 1
+              FROM pg_stat_activity
+              WHERE pid <> pg_backend_pid()
+                AND wait_event_type = 'Lock'
+                AND query LIKE 'INSERT INTO run_runtime_spans%'
+            ) AS waiting
+          `;
+          secondWriterWaitingOnLock = waitState?.waiting === true;
+          if (!secondWriterWaitingOnLock) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(secondWriterWaitingOnLock).toBe(true);
+        releaseFirstTransaction();
+        await expect(firstWriter).resolves.toBeUndefined();
+        const competingResult = await secondWriter;
+        expect(competingResult.status).toBe('rejected');
+        if (competingResult.status === 'rejected') {
+          expect(competingResult.error).toMatchObject({ code: '23505' });
+        }
+
+        const [activeBindingSpan] = await sql`
+          SELECT id FROM run_runtime_spans WHERE run_id = ${runB!.id} AND writer_lease_released_at IS NULL
+        `;
+        const [activeBindingWriterKey] = await sql`
+          SELECT writer_binding_ref FROM run_runtime_spans WHERE id = ${activeBindingSpan!.id}
+        `;
+        await sql`UPDATE run_runtime_spans SET writer_binding_ref = 'forged-binding-ref' WHERE id = ${activeBindingSpan!.id}`;
+        expect(await sql`
+          SELECT writer_binding_ref FROM run_runtime_spans WHERE id = ${activeBindingSpan!.id}
+        `).toEqual([activeBindingWriterKey]);
+        await expect(sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runD!.id}, ${bindingB!.id}, ${segmentB2!.id}, 'same-binding', 'owner-d')
+        `).rejects.toMatchObject({ code: '23505' });
+
+        await sql`
+          UPDATE run_runtime_spans
+          SET state = 'unresolved', closed_at = now(), writer_lease_released_at = now()
+          WHERE id = ${activeBindingSpan!.id}
+        `;
+        const [retrySpan] = await sql`
+          INSERT INTO run_runtime_spans (org_id, run_id, binding_id, segment_id, attempt_ref, owner_token)
+          VALUES (${org!.id}, ${runC!.id}, ${bindingC!.id}, ${segmentC!.id}, 'released-retry', 'owner-c')
+          RETURNING id
+        `;
+        expect(retrySpan).toBeDefined();
+        await expect(sql`
+          UPDATE run_runtime_spans SET writer_lease_released_at = NULL WHERE id = ${capturedSpan!.id}
+        `).rejects.toMatchObject({ code: '23505' });
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(120_000),
   );
 
   it(

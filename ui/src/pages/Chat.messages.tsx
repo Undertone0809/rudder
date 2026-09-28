@@ -2610,7 +2610,7 @@ export function ChatMessageItem({
     && canShowAssistantMessageActions
     && message.kind === "message"
     && message.status === "completed"
-    && !message.supersededAt;
+    && (!message.supersededAt || Boolean(turnBranchControls));
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
@@ -2734,7 +2734,7 @@ export function ChatMessageItem({
               {canOpenSideChat ? (
                 <button
                   type="button"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                  className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground md:inline-flex"
                   aria-label="Open Side Chat"
                   title="Open Side Chat"
                   onClick={() => onOpenSideChat?.(message)}
@@ -2753,6 +2753,20 @@ export function ChatMessageItem({
                   <GitFork className="h-4 w-4" />
                 </button>
               ) : null}
+            </div>
+          ) : null}
+          {canOpenSideChat ? (
+            <div className="mt-1 flex justify-end md:hidden">
+              <button
+                type="button"
+                data-testid="chat-open-side-chat-touch-action"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                aria-label="Open Side Chat"
+                title="Open Side Chat"
+                onClick={() => onOpenSideChat?.(message)}
+              >
+                <CirclePlus className="h-4 w-4" />
+              </button>
             </div>
           ) : null}
         </div>

@@ -1,5 +1,6 @@
 import type { Db } from "@rudderhq/db";
 import {
+  activityLog,
   assets,
   chatAttachments,
   chatContextLinks,
@@ -10,14 +11,15 @@ import {
   heartbeatRuns,
   runtimeBindings,
   sideChatCloseIntents,
+  sideChatFirstInputs,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
   type ChatConversation,
 } from "@rudderhq/shared";
-import { and, asc, eq, gt, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { conflict, notFound, unprocessable } from "../errors.js";
+import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { hasActiveChatGeneration } from "./chat-generation-locks.js";
@@ -38,8 +40,83 @@ import {
 import { persistSideChatProviderCleanupIntents } from "./side-chat-provider-cleanup.js";
 
 export const SIDE_CHAT_TTL_MS = 2 * 60 * 60 * 1000;
+export const SIDE_CHAT_FIRST_INPUT_CLAIM_TTL_MS = 60 * 1000;
+export const SIDE_CHAT_HISTORY_DEFAULT_LIMIT = 50;
+export const SIDE_CHAT_HISTORY_MAX_LIMIT = 100;
+export const SIDE_CHAT_KEPT_ERROR_CODE = "side_chat_kept";
 const SIDE_CHAT_TITLE_PREFIX = "Side chat from: ";
 const CHAT_TITLE_MAX_LENGTH = 200;
+
+type SideChatHistoryCursor = {
+  version: 1;
+  orgId: string;
+  sourceConversationId: string;
+  userId: string;
+  createdAt: string;
+  id: string;
+};
+
+type SideChatHistoryScope = Pick<SideChatHistoryCursor, "orgId" | "sourceConversationId" | "userId">;
+
+function isCanonicalSideChatHistoryTimestamp(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value)) return false;
+  const millisecondPrefix = `${value.slice(0, 23)}Z`;
+  const date = new Date(millisecondPrefix);
+  return Number.isFinite(date.getTime()) && date.toISOString() === millisecondPrefix;
+}
+
+function normalizeSideChatHistoryLimit(value: number | undefined) {
+  if (value === undefined) return SIDE_CHAT_HISTORY_DEFAULT_LIMIT;
+  if (!Number.isSafeInteger(value) || value < 1 || value > SIDE_CHAT_HISTORY_MAX_LIMIT) {
+    throw badRequest(`'limit' must be between 1 and ${SIDE_CHAT_HISTORY_MAX_LIMIT}`);
+  }
+  return value;
+}
+
+function encodeSideChatHistoryCursor(cursor: SideChatHistoryCursor) {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeSideChatHistoryCursor(
+  value: string | null | undefined,
+  scope: SideChatHistoryScope,
+): SideChatHistoryCursor | null {
+  if (value === undefined || value === null) return null;
+  try {
+    if (value.length === 0 || value.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+      throw new Error("invalid cursor encoding");
+    }
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    if (Buffer.from(decoded, "utf8").toString("base64url") !== value) {
+      throw new Error("non-canonical cursor encoding");
+    }
+    const parsed = JSON.parse(decoded) as Partial<SideChatHistoryCursor>;
+    if (
+      !parsed
+      || typeof parsed !== "object"
+      || parsed.version !== 1
+      || parsed.orgId !== scope.orgId
+      || parsed.sourceConversationId !== scope.sourceConversationId
+      || parsed.userId !== scope.userId
+      || typeof parsed.createdAt !== "string"
+      || typeof parsed.id !== "string"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.id)
+      || !isCanonicalSideChatHistoryTimestamp(parsed.createdAt)
+    ) {
+      throw new Error("invalid cursor payload");
+    }
+    return {
+      version: 1,
+      orgId: parsed.orgId,
+      sourceConversationId: parsed.sourceConversationId,
+      userId: parsed.userId,
+      createdAt: parsed.createdAt,
+      id: parsed.id,
+    };
+  } catch {
+    throw badRequest("Invalid Side Chat history cursor.");
+  }
+}
 
 export function sideChatRetentionPurpose(conversationId: string) {
   return `side_chat:${conversationId}`;
@@ -278,6 +355,7 @@ export function sideChatService(db: Db) {
   function assertIdempotentCreateMatches(existing: ConversationRow, input: SideChatCreateInput) {
     if (
       existing.conversationKind !== "side_chat"
+      || existing.createdByUserId !== input.userId
       || existing.forkedFromConversationId !== input.sourceConversationId
       || existing.forkedFromMessageId !== input.sourceMessageId
       || (
@@ -295,26 +373,283 @@ export function sideChatService(db: Db) {
       .from(chatConversations)
       .where(and(
         eq(chatConversations.orgId, input.orgId),
-        eq(chatConversations.createdByUserId, input.userId),
         eq(chatConversations.sideChatClientMutationId, input.clientMutationId),
-      ))
-      .then((rows) => rows[0] ?? null);
-    if (!existing) return null;
-    assertIdempotentCreateMatches(existing, input);
-    return hydrated(existing.id, input.userId);
+      ));
+    if (existing.length === 0) return null;
+    if (existing.length !== 1) {
+      throw conflict("Side Chat creation id is ambiguous within this organization");
+    }
+    assertIdempotentCreateMatches(existing[0]!, input);
+    return hydrated(existing[0]!.id, input.userId);
+  }
+
+  function assertFirstInputIntentMatches(
+    intent: typeof sideChatFirstInputs.$inferSelect,
+    conversation: ConversationRow,
+  ) {
+    const creationMutationId = conversation.sideChatClientMutationId
+      ?? `legacy:${conversation.id}`;
+    if (
+      intent.orgId !== conversation.orgId
+      || intent.conversationId !== conversation.id
+      || intent.ownerUserId !== conversation.createdByUserId
+      || intent.creationMutationId !== creationMutationId
+      || intent.sourceConversationId !== conversation.forkedFromConversationId
+      || intent.sourceMessageId !== conversation.forkedFromMessageId
+      || intent.preferredAgentId !== conversation.preferredAgentId
+    ) {
+      throw conflict("Side Chat creation intent no longer matches its conversation");
+    }
+  }
+
+  async function claimFirstInput(input: {
+    orgId: string;
+    conversationId: string;
+    userId: string;
+    clientMutationId: string | null;
+    requestFingerprint: string;
+  }) {
+    return db.transaction(async (tx) => {
+      const conversation = await tx.select().from(chatConversations).where(and(
+        eq(chatConversations.id, input.conversationId),
+        eq(chatConversations.orgId, input.orgId),
+      )).for("update").then((rows) => rows[0] ?? null);
+      if (!conversation || conversation.conversationKind !== "side_chat") {
+        throw notFound("Side Chat not found");
+      }
+      assertOwner(conversation, input.userId);
+
+      const intent = await tx.select().from(sideChatFirstInputs).where(and(
+        eq(sideChatFirstInputs.orgId, input.orgId),
+        eq(sideChatFirstInputs.conversationId, input.conversationId),
+      )).for("update").then((rows) => rows[0] ?? null);
+      if (!intent) throw notFound("Side Chat creation intent not found");
+      assertFirstInputIntentMatches(intent, conversation);
+
+      const now = new Date();
+      if (intent.status === "awaiting") {
+        const claimToken = randomUUID();
+        await tx.update(sideChatFirstInputs).set({
+          status: "pending",
+          requestClientMutationId: input.clientMutationId,
+          requestFingerprint: input.requestFingerprint,
+          claimToken,
+          claimExpiresAt: new Date(now.getTime() + SIDE_CHAT_FIRST_INPUT_CLAIM_TTL_MS),
+          updatedAt: now,
+        }).where(eq(sideChatFirstInputs.conversationId, input.conversationId));
+        return { kind: "claimed" as const, claimToken };
+      }
+
+      if (intent.status === "pending") {
+        if (
+          intent.requestClientMutationId !== input.clientMutationId
+          || intent.requestFingerprint !== input.requestFingerprint
+        ) {
+          throw conflict("Side Chat first input is already claimed by a different request", {
+            code: "side_chat_first_input_conflict",
+          });
+        }
+        if (intent.claimExpiresAt && intent.claimExpiresAt.getTime() <= now.getTime()) {
+          const claimToken = randomUUID();
+          await tx.update(sideChatFirstInputs).set({
+            claimToken,
+            claimExpiresAt: new Date(now.getTime() + SIDE_CHAT_FIRST_INPUT_CLAIM_TTL_MS),
+            updatedAt: now,
+          }).where(eq(sideChatFirstInputs.conversationId, input.conversationId));
+          return { kind: "claimed" as const, claimToken };
+        }
+        return { kind: "pending" as const };
+      }
+
+      if (
+        input.clientMutationId !== null
+        && intent.requestClientMutationId === input.clientMutationId
+      ) {
+        if (
+          intent.requestFingerprint !== null
+          && intent.requestFingerprint !== input.requestFingerprint
+        ) {
+          throw conflict("Side Chat first-input mutation key was used for different content", {
+            code: "chat_mutation_conflict",
+          });
+        }
+        if (!intent.userMessageId) throw new Error("Accepted Side Chat first input has no user message");
+        const activity = await tx.select({ id: activityLog.id })
+          .from(activityLog)
+          .where(and(
+            eq(activityLog.orgId, input.orgId),
+            eq(activityLog.action, "chat.message_added"),
+            eq(activityLog.entityType, "chat"),
+            eq(activityLog.entityId, input.conversationId),
+            sql`${activityLog.details}->>'messageId' = ${intent.userMessageId}`,
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        return {
+          kind: "replay" as const,
+          userMessageId: intent.userMessageId,
+          activityLogged: Boolean(activity),
+        };
+      }
+
+      if (intent.status === "accepted" && !intent.generationId) {
+        const sameUnkeyedRequest = input.clientMutationId === null
+          && intent.requestClientMutationId === null
+          && intent.requestFingerprint === input.requestFingerprint;
+        if (!sameUnkeyedRequest) {
+          throw conflict("Side Chat first-input Generation admission is pending; retry the accepted first input first", {
+            code: "side_chat_first_input_generation_pending",
+          });
+        }
+      }
+
+      if (intent.requestClientMutationId !== input.clientMutationId) {
+        return { kind: "not_first" as const };
+      }
+
+      const latestGeneration = await tx.select({ status: chatGenerations.status })
+        .from(chatGenerations)
+        .where(and(
+          eq(chatGenerations.orgId, input.orgId),
+          eq(chatGenerations.conversationId, input.conversationId),
+        ))
+        .orderBy(desc(chatGenerations.createdAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null);
+      const firstInputIsUnfinished = !latestGeneration
+        || ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status);
+      const isUnkeyedRetry = input.clientMutationId === null
+        && intent.requestClientMutationId === null
+        && intent.requestFingerprint === input.requestFingerprint;
+      if (firstInputIsUnfinished && isUnkeyedRetry) {
+        if (!intent.userMessageId) throw new Error("Accepted Side Chat first input has no user message");
+        const activity = await tx.select({ id: activityLog.id })
+          .from(activityLog)
+          .where(and(
+            eq(activityLog.orgId, input.orgId),
+            eq(activityLog.action, "chat.message_added"),
+            eq(activityLog.entityType, "chat"),
+            eq(activityLog.entityId, input.conversationId),
+            sql`${activityLog.details}->>'messageId' = ${intent.userMessageId}`,
+          ))
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        return {
+          kind: "replay" as const,
+          userMessageId: intent.userMessageId,
+          activityLogged: Boolean(activity),
+        };
+      }
+      return { kind: "not_first" as const };
+    });
+  }
+
+  async function hasAcceptedFirstInputMutation(input: {
+    orgId: string;
+    conversationId: string;
+    clientMutationId: string | null;
+  }) {
+    if (!input.clientMutationId) return false;
+    const intent = await db.select({
+      requestClientMutationId: sideChatFirstInputs.requestClientMutationId,
+      status: sideChatFirstInputs.status,
+    }).from(sideChatFirstInputs).where(and(
+      eq(sideChatFirstInputs.orgId, input.orgId),
+      eq(sideChatFirstInputs.conversationId, input.conversationId),
+    )).limit(1).then((rows) => rows[0] ?? null);
+    return intent?.status === "accepted"
+      && intent.requestClientMutationId === input.clientMutationId;
+  }
+
+  async function releaseFirstInputClaim(input: {
+    conversationId: string;
+    claimToken: string;
+  }) {
+    await db.update(sideChatFirstInputs).set({
+      status: "awaiting",
+      requestClientMutationId: null,
+      requestFingerprint: null,
+      claimToken: null,
+      claimExpiresAt: null,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(sideChatFirstInputs.conversationId, input.conversationId),
+      eq(sideChatFirstInputs.status, "pending"),
+      eq(sideChatFirstInputs.claimToken, input.claimToken),
+    ));
+  }
+
+  async function listForSource(input: {
+    orgId: string;
+    sourceConversationId: string;
+    userId: string;
+    cursor?: string | null;
+    limit?: number;
+  }) {
+    const limit = normalizeSideChatHistoryLimit(input.limit);
+    const cursor = decodeSideChatHistoryCursor(input.cursor, input);
+    const predicates = [
+      eq(chatConversations.orgId, input.orgId),
+      eq(chatConversations.forkedFromConversationId, input.sourceConversationId),
+      eq(chatConversations.conversationKind, "side_chat"),
+      eq(chatConversations.createdByUserId, input.userId),
+      eq(chatConversations.messengerVisible, false),
+      inArray(chatConversations.sideChatState, ["active", "expired"]),
+    ];
+    if (cursor) {
+      predicates.push(or(
+        sql`${chatConversations.createdAt} < ${cursor.createdAt}::timestamptz`,
+        and(
+          sql`${chatConversations.createdAt} = ${cursor.createdAt}::timestamptz`,
+          gt(chatConversations.id, cursor.id),
+        ),
+      )!);
+    }
+
+    // Use immutable creation time plus ID so activity updates cannot move rows across page boundaries.
+    const rows = await db
+      .select({
+        id: chatConversations.id,
+        createdAt: sql<string>`to_char(${chatConversations.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      })
+      .from(chatConversations)
+      .where(and(...predicates))
+      .orderBy(desc(chatConversations.createdAt), asc(chatConversations.id))
+      .limit(limit + 1);
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const items = await Promise.all(pageRows.map(({ id }) => hydrated(id, input.userId)));
+    const last = pageRows.at(-1);
+    return {
+      items,
+      nextCursor: hasMore && last
+        ? encodeSideChatHistoryCursor({
+            version: 1,
+            orgId: input.orgId,
+            sourceConversationId: input.sourceConversationId,
+            userId: input.userId,
+            createdAt: last.createdAt,
+            id: last.id,
+          })
+        : null,
+    };
   }
 
   async function create(input: SideChatCreateInput) {
     const createdId = await db.transaction(async (tx) => {
-      const existing = await tx
+      const mutationScope = `${input.orgId}:${input.clientMutationId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${mutationScope}, 0))`);
+      const existingRows = await tx
         .select()
         .from(chatConversations)
         .where(and(
           eq(chatConversations.orgId, input.orgId),
-          eq(chatConversations.createdByUserId, input.userId),
           eq(chatConversations.sideChatClientMutationId, input.clientMutationId),
-        ))
-        .then((rows) => rows[0] ?? null);
+        ));
+      if (existingRows.length > 1) {
+        throw conflict("Side Chat creation id is ambiguous within this organization");
+      }
+      const existing = existingRows[0] ?? null;
       if (existing) {
         assertIdempotentCreateMatches(existing, input);
         await ensureSideChatRetentionClaim(tx as unknown as RuntimeRetentionDb, existing, input.userId);
@@ -392,16 +727,25 @@ export function sideChatService(db: Db) {
           .from(chatConversations)
           .where(and(
             eq(chatConversations.orgId, input.orgId),
-            eq(chatConversations.createdByUserId, input.userId),
             eq(chatConversations.sideChatClientMutationId, input.clientMutationId),
           ))
-        .then((rows) => rows[0] ?? null);
+          .then((rows) => rows[0] ?? null);
         if (!raced) throw new Error("Failed to create Side Chat");
         assertIdempotentCreateMatches(raced, input);
         await ensureSideChatRetentionClaim(tx as unknown as RuntimeRetentionDb, raced, input.userId);
         return raced.id;
       }
 
+      await tx.insert(sideChatFirstInputs).values({
+        orgId: input.orgId,
+        conversationId: child.id,
+        ownerUserId: input.userId,
+        creationMutationId: input.clientMutationId,
+        sourceConversationId: source.id,
+        sourceMessageId: anchor.id,
+        preferredAgentId: child.preferredAgentId,
+        status: "awaiting",
+      });
       await ensureSideChatRetentionClaim(tx as unknown as RuntimeRetentionDb, child, input.userId);
 
       await recordProductAnalyticsChatCreated(tx as unknown as Db, {
@@ -592,7 +936,7 @@ export function sideChatService(db: Db) {
       if (!conversation || conversation.conversationKind !== "side_chat") throw notFound("Side Chat not found");
       assertOwner(conversation, input.userId);
       if (conversation.sideChatState === "kept" || conversation.messengerVisible) {
-        throw conflict("A kept Side Chat is a normal Messenger chat");
+        throw conflict("A kept Side Chat is a normal Messenger chat", { code: SIDE_CHAT_KEPT_ERROR_CODE });
       }
       const [existing] = await tx.select().from(sideChatCloseIntents).where(and(
         eq(sideChatCloseIntents.orgId, conversation.orgId),
@@ -670,7 +1014,7 @@ export function sideChatService(db: Db) {
       if (!conversation || conversation.conversationKind !== "side_chat") throw notFound("Side Chat not found");
       assertOwner(conversation, input.userId);
       if (conversation.sideChatState === "kept" || conversation.messengerVisible) {
-        throw conflict("A kept Side Chat is a normal Messenger chat");
+        throw conflict("A kept Side Chat is a normal Messenger chat", { code: SIDE_CHAT_KEPT_ERROR_CODE });
       }
       if (hasActiveChatGeneration(conversation.id)) {
         throw conflict("Side Chat has an active response; stop it before closing");
@@ -952,8 +1296,12 @@ export function sideChatService(db: Db) {
   }
 
   return {
+    claimFirstInput,
     create,
     findExistingForCreate,
+    hasAcceptedFirstInputMutation,
+    listForSource,
+    releaseFirstInputClaim,
     requestClose,
     destroy,
     keepInMessenger,

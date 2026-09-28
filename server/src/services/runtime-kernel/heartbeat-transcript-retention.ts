@@ -1,4 +1,9 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import {
+  runtimeProviderBindingsMatch,
+  type RuntimeProviderBindingRef,
+  type RuntimeProviderCapabilityResolution,
+} from "./provider-capabilities.js";
 
 export type HeartbeatTranscriptCapabilityStatus = "supported" | "unsupported" | "unknown";
 export type HeartbeatTranscriptBindingContinuity = "native" | "context_handoff" | "legacy";
@@ -6,6 +11,7 @@ export type HeartbeatTranscriptRetentionMode = "native" | "legacy";
 
 export type HeartbeatTranscriptRetentionReason =
   | "native_transcript_capability"
+  | "native_profile_unverified"
   | "missing_native_binding"
   | "legacy_binding"
   | "native_transcript_unknown"
@@ -28,6 +34,12 @@ export interface HeartbeatTranscriptRetentionInput {
   hasBinding: boolean;
   bindingContinuity?: HeartbeatTranscriptBindingContinuity | null;
   capabilityStatus?: HeartbeatTranscriptCapabilityStatus | null;
+  profileCapability?: {
+    runtimeType: string;
+    binding: RuntimeProviderBindingRef;
+    driverStatus: HeartbeatTranscriptCapabilityStatus;
+    resolution: RuntimeProviderCapabilityResolution | null;
+  } | null;
 }
 
 const MAX_NATIVE_TRANSCRIPT_MEMORY_ENTRIES = 128;
@@ -69,6 +81,20 @@ const NATIVE_RETENTION = {
   persistRawResult: false,
 } as const;
 
+export function hasVerifiedHeartbeatNativeTranscriptProfile(input: NonNullable<HeartbeatTranscriptRetentionInput["profileCapability"]>): boolean {
+  const resolution = input.resolution;
+  const transcript = resolution?.adapter.transcript;
+  const evidence = transcript?.evidence;
+  return input.driverStatus === "supported"
+    && resolution?.profileResolved === true
+    && resolution.adapter.runtimeType === input.runtimeType
+    && runtimeProviderBindingsMatch(resolution.binding, input.binding)
+    && evidence?.status === "supported"
+    && evidence.profileBound === true
+    && transcript != null
+    && typeof transcript.readRange === "function";
+}
+
 /**
  * Native retention is enabled only after both the durable binding continuity
  * and the profile-bound transcript capability are explicitly supported.
@@ -88,6 +114,9 @@ export function resolveHeartbeatTranscriptRetention(
   }
   if (input.capabilityStatus !== "supported") {
     return { ...LEGACY_RETENTION, reason: "native_transcript_unsupported" };
+  }
+  if (!input.profileCapability || !hasVerifiedHeartbeatNativeTranscriptProfile(input.profileCapability)) {
+    return { ...LEGACY_RETENTION, reason: "native_profile_unverified" };
   }
   return NATIVE_RETENTION;
 }
@@ -179,6 +208,7 @@ export function retainNativeHeartbeatResultJson(
 
   if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return retained;
   for (const [key, value] of Object.entries(resultJson)) {
+    if (normalizedKey(key) === "retention") continue;
     if (RAW_NATIVE_RESULT_KEYS.has(normalizedKey(key))) continue;
     const bounded = boundedNativeDiagnosticValue(value, 0);
     if (bounded === undefined) continue;

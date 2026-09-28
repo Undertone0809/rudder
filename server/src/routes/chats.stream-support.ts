@@ -174,6 +174,9 @@ export async function persistChatStreamUserMessageBeforeGeneration(input: {
   inlineAnnotationsProvided: boolean;
   clientMutationId: string | null;
   clientMutationFingerprint: string | null;
+  sideChatFirstInputClaimToken?: string | null;
+  sideChatFirstInputFingerprint?: string | null;
+  replayedUserMessage?: ChatMessage | null;
   svc: any;
   addUserMessage: any;
   actor: any;
@@ -202,6 +205,18 @@ export async function persistChatStreamUserMessageBeforeGeneration(input: {
       return { kind: "error" as const, error, messageId: committedUserMessageId };
     }
   }
+  if (input.replayedUserMessage) {
+    persistedUserMessage = input.replayedUserMessage;
+    userMessagePersisted = true;
+    committedUserMessageId = input.replayedUserMessage.id;
+    input.stagedMessageFiles.markCommitted();
+    return {
+      kind: "ready" as const,
+      userMessage: input.replayedUserMessage,
+      userMessagePersisted,
+      committedUserMessageId,
+    };
+  }
   if (!input.atomicFirstTurn) {
     try {
       const persistence = await input.addUserMessage(
@@ -220,6 +235,8 @@ export async function persistChatStreamUserMessageBeforeGeneration(input: {
           },
           clientMutationId: input.clientMutationId,
           clientMutationFingerprint: input.clientMutationFingerprint,
+          sideChatFirstInputClaimToken: input.sideChatFirstInputClaimToken,
+          sideChatFirstInputFingerprint: input.sideChatFirstInputFingerprint,
         },
       );
       persistedUserMessage = persistence.message;

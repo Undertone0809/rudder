@@ -1,12 +1,4 @@
 import type {
-  UnifiedAdmissionResult,
-  UnifiedAgentRunAdmission,
-  UnifiedAgentRunEntry,
-  UnifiedAgentRunLedger,
-  UnifiedFenceResult,
-  UnifiedOwnerFence,
-} from "./unified-agent-run.js";
-import type {
   Awaitable,
   UnifiedAgentRunAdapter,
   UnifiedAgentRunAttemptPort,
@@ -14,10 +6,13 @@ import type {
   UnifiedAgentRunPersistenceAdapter,
   UnifiedAgentRunService,
 } from "./unified-agent-run.contracts.js";
+import type {
+  UnifiedAgentRunLedger
+} from "./unified-agent-run.js";
 
 export * from "./unified-agent-run.contracts.js";
-export type { UnifiedSessionIntentInput } from "./unified-agent-run.js";
 export { createHeartbeatUnifiedAgentRunAdapter } from "./unified-agent-run.heartbeat-persistence.js";
+export type { UnifiedSessionIntentInput } from "./unified-agent-run.js";
 
 function delegate<T>(operation: () => Awaitable<T>): Promise<T> {
   return Promise.resolve().then(operation);

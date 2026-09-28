@@ -18,8 +18,9 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq } from "drizzle-orm";
-import { createHash, randomUUID } from "node:crypto";
+import { and, eq, isNull } from "drizzle-orm";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -29,7 +30,13 @@ import { chatAgentRunService } from "../services/chat-agent-runs.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { getRunSummary } from "../services/run-intelligence.ts";
 import { createCursorTranscriptSupplementCapture } from "../services/runtime-kernel/cursor-transcript-supplement.ts";
-import { attachRuntimeSpanSupplement, currentNativeSession, ensureRuntimeBinding } from "../services/runtime-kernel/native-session.ts";
+import {
+  attachRuntimeSpanSupplement,
+  currentNativeSession,
+  ensureRuntimeBinding,
+  finishRunRuntimeSpan,
+} from "../services/runtime-kernel/native-session.ts";
+import { proveSealedNativeRunTranscript } from "../services/runtime-kernel/native-transcript-retention.ts";
 import { persistNativeTransportProfile } from "../services/runtime-kernel/native-transport-profile.ts";
 import { createTranscriptObjectReader, createTranscriptObjectStore, type TranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
 import { createTranscriptReader, type NativeTranscriptReadInput } from "../services/runtime-kernel/transcript-reader.ts";
@@ -55,6 +62,26 @@ type EmbeddedPostgresCtor = new (opts: {
 async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
   const mod = await import("embedded-postgres");
   return mod.default as EmbeddedPostgresCtor;
+}
+
+async function createExitedProcessPid(): Promise<number> {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+  const pid = child.pid;
+  if (!pid) throw new Error("Failed to start process-exit probe");
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", () => resolve());
+  });
+  let probeError: unknown;
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    probeError = error;
+  }
+  if ((probeError as NodeJS.ErrnoException | undefined)?.code !== "ESRCH") {
+    throw new Error(`Expected process ${pid} to be verifiably stopped`);
+  }
+  return pid;
 }
 
 async function getAvailablePort(): Promise<number> {
@@ -127,6 +154,12 @@ describe("chatAgentRunService", () => {
   afterEach(async () => {
     await db.delete(chatMessages);
     await db.delete(heartbeatRunEvents);
+    await db.update(runRuntimeSpans).set({
+      state: "unresolved",
+      closedAt: new Date(),
+      writerLeaseReleasedAt: new Date(),
+    })
+      .where(isNull(runRuntimeSpans.writerLeaseReleasedAt));
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(runRuntimeSpans);
@@ -152,7 +185,8 @@ describe("chatAgentRunService", () => {
     label: string,
     maxConcurrentRuns?: number,
     runService = svc,
-    runtimeType: "codex_local" | "cursor" | "pi_local" = "codex_local",
+    runtimeType: "codex_local" | "claude_local" | "hermes_local" | "hermes_gateway" | "cursor" | "pi_local" | "opencode_local" = "codex_local",
+    runContext?: Record<string, unknown>,
   ) {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -205,6 +239,7 @@ describe("chatAgentRunService", () => {
         transcriptSource: "legacy",
         runtimeProviderProfile: { runtimeType: "pi_local", providerVersion: "0.76.0" },
       } } : {}),
+      ...(runContext ? { runContext } : {}),
     });
   }
 
@@ -321,7 +356,7 @@ describe("chatAgentRunService", () => {
     await expect(persistNativeTransportProfile(db, input)).rejects.toThrow("stale Run owner");
   });
 
-  it("compacts adapter invocation and terminal result only after final native source and span attestation", async () => {
+  it("retains invocation and full terminal result until a real native range read-back succeeds", async () => {
     const run = await createChatRunFixture("Native invocation retention", undefined, svc, "pi_local");
     const prompt = `Chat prompt ${"p".repeat(20_000)}`;
     const instructionStack = `Instruction stack ${"i".repeat(12_000)}`;
@@ -373,50 +408,1038 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, run.id),
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
-    const compactedEvent = compactedEvents.find((event) => event.payload?.invocationAttemptId === run.runtimeAttemptRef!.id);
+    const retainedEvent = compactedEvents.find((event) => event.payload?.invocationAttemptId === run.runtimeAttemptRef!.id);
     const earlierInvoke = compactedEvents.find((event) => event.payload?.invocationAttemptId === "earlier-attempt-id");
-    const payload = compactedEvent?.payload as Record<string, unknown>;
-    const invocationContent = payload.invocationContent as Record<string, unknown>;
-    const promptEvidence = invocationContent.prompt as Record<string, unknown>;
-    const contextEvidence = invocationContent.context as Record<string, unknown>;
+    const payload = retainedEvent?.payload as Record<string, unknown>;
     const [finalizedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
     const retainedResult = finalizedRun?.resultJson as Record<string, unknown>;
 
-    expect(compactedEvent?.seq).toBe(stagedEvent?.seq);
+    expect(retainedEvent?.seq).toBe(stagedEvent?.seq);
     expect(earlierInvoke?.payload).toMatchObject({
       prompt: earlierAttemptPrompt,
       agentInstructionStack: earlierAttemptPrompt,
     });
-    expect(payload).not.toHaveProperty("prompt");
-    expect(payload).not.toHaveProperty("agentInstructionStack");
-    expect(payload).not.toHaveProperty("context");
-    expect(JSON.stringify(payload)).not.toContain(prompt);
-    expect(JSON.stringify(payload)).not.toContain(instructionStack);
-    expect(invocationContent).toMatchObject({ textStored: false, textSource: "agent_run_transcript_reader" });
-    expect(promptEvidence).toMatchObject({ present: true, sourceCharacterLength: prompt.length });
-    expect(promptEvidence.sanitizedSha256).toBe(createHash("sha256").update(prompt, "utf8").digest("hex"));
-    expect(contextEvidence).toMatchObject({ present: true, keys: ["chatMode", "privatePromptContext"] });
+    expect(payload).toMatchObject({ prompt, agentInstructionStack: instructionStack });
+    expect(payload.context).toMatchObject({ chatMode: true, privatePromptContext: "private context marker" });
     expect(payload.desiredSkillKeys).toEqual(["run-skill"]);
     expect(payload.usedSkillKeys).toEqual(["proof-skill"]);
-    expect(Buffer.byteLength(JSON.stringify(payload), "utf8")).toBeLessThan(8_000);
+    expect(Buffer.byteLength(JSON.stringify(payload), "utf8")).toBeGreaterThan(8_000);
     expect(retainedResult).toMatchObject({
       outcome: "completed",
       kind: "message",
-      body: productReply.slice(0, 2_000),
-      productReply: {
-        textStored: true,
-        characterLength: productReply.length,
-        sha256: createHash("sha256").update(productReply, "utf8").digest("hex"),
-        truncated: true,
-      },
-      retention: {
-        transcriptSource: "native",
-        transcriptSpanId: run.runtimeSpanId,
-        rawResultPersisted: false,
-        productReplyStored: true,
-        productReplyTruncated: true,
+      body: productReply,
+    });
+    expect((finalizedRun?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
+      status: "incomplete",
+    });
+  });
+
+  it("marks an unresolved terminal span incomplete and keeps its raw transcript", async () => {
+    const run = await createChatRunFixture("Unresolved Chat retention proof");
+    const entry = {
+      kind: "assistant" as const,
+      ts: new Date().toISOString(),
+      text: "recoverable raw transcript without an exact native boundary",
+    };
+    await svc.appendTranscriptEntry(run, entry, { persistRaw: true, spanId: run.runtimeSpanId });
+
+    await svc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed", body: "product reply remains intact" },
+      transcriptDelivery: { source: "legacy", runId: run.id, spanId: run.runtimeSpanId! },
+    });
+
+    const [finalized] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const transcriptEvents = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    expect(span?.state).toBe("unresolved");
+    expect(finalized?.resultJson).toEqual({ outcome: "completed", body: "product reply remains intact" });
+    expect(finalized?.contextSnapshot).toMatchObject({
+      nativeTranscriptRetention: { status: "incomplete", reason: "span_attempt_identity_incomplete" },
+    });
+    expect(transcriptEvents).toHaveLength(1);
+    expect(transcriptEvents[0]?.payload).toMatchObject({ text: entry.text, spanId: run.runtimeSpanId });
+  });
+
+  it("marks stale Chat terminalization incomplete without deleting recovery events", async () => {
+    const run = await createChatRunFixture("Stale Chat retention terminal");
+    const entry = {
+      kind: "assistant" as const,
+      ts: new Date().toISOString(),
+      text: "stale terminal raw recovery event",
+    };
+    await svc.appendTranscriptEntry(run, entry, { persistRaw: true, spanId: run.runtimeSpanId });
+    const now = new Date();
+    await db.update(heartbeatRuns).set({
+      executionLeaseExpiresAt: new Date(now.getTime() - 1_000),
+      updatedAt: new Date(now.getTime() - 60_000),
+    }).where(eq(heartbeatRuns.id, run.id));
+
+    await expect(svc.finalizeStaleRuns({
+      olderThanMs: 0,
+      now,
+      recoveryCutoff: now,
+    })).resolves.toBe(1);
+
+    const [finalized] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const transcriptEvents = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    expect(finalized?.status).toBe("timed_out");
+    expect(finalized?.contextSnapshot).toMatchObject({
+      nativeTranscriptRetention: {
+        status: "incomplete",
+        reason: "chat_run_stale_terminal_without_reader_proof",
       },
     });
+    expect(transcriptEvents).toHaveLength(1);
+    expect(transcriptEvents[0]?.payload).toMatchObject({ text: entry.text, spanId: run.runtimeSpanId });
+  });
+
+  it.each([
+    ["codex_local", { resultJson: { threadId: "codex-thread" } }],
+    ["claude_local", { resultJson: { transcriptBoundary: { status: "exact" } } }],
+    ["hermes_gateway", { resultJson: { transcriptBoundary: { status: "exact" } } }],
+    ["opencode_local", { resultJson: {
+      userMessageId: "opencode-user",
+      transcriptBoundary: { status: "exact", observedAssistantMessageIds: ["opencode-assistant"] },
+    } }],
+    ["pi_local", { resultJson: { leafId: "pi-leaf" } }],
+    ["cursor", { resultJson: { nativeRangeRef: "cursor-range" } }],
+  ] as const)("proves and cleans a %s Chat Run without a native-source precondition", async (runtimeType, providerResult) => {
+    const readSpans: string[] = [];
+    const proofSvc = chatAgentRunService(db, {
+      transcriptObjectStore: objectStore,
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async (input) => {
+          readSpans.push(`${input.run.id}:${input.span.id}`);
+          return {
+            items: [{ kind: "assistant", ts: new Date().toISOString(), text: `${runtimeType} native transcript` }],
+            revision: `${runtimeType}-reader-r1`,
+            availability: "available",
+            completeness: "complete",
+          };
+        } },
+      }),
+    });
+    const run = await createChatRunFixture(
+      `${runtimeType} legacy-source proof`,
+      undefined,
+      proofSvc,
+      runtimeType,
+      { transcriptSource: "legacy" },
+    );
+    const entry = {
+      kind: "assistant" as const,
+      ts: new Date().toISOString(),
+      text: `W12_CHAT_NATIVE_${runtimeType}_${randomUUID()} ${"raw transcript duplicate ".repeat(500)}`,
+    };
+    await proofSvc.appendTranscriptEntry(run, entry, {
+      persistRaw: false,
+      persistSupplement: true,
+      spanId: run.runtimeSpanId,
+    });
+    const [supplementSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    expect(supplementSpan?.supplementalObjectRef).toEqual(expect.any(String));
+    const supplement = await objectStore.readRange({
+      objectRef: supplementSpan!.supplementalObjectRef!,
+      orgId: run.orgId,
+      runId: run.id,
+      spanId: run.runtimeSpanId!,
+      ownerToken: run.runtimeSpanOwnerToken!,
+    });
+    expect(supplement.entries.map((item) => item.text)).toContain(entry.text);
+    const preProofTranscriptEvents = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    expect(preProofTranscriptEvents).toEqual([]);
+    expect(JSON.stringify(preProofTranscriptEvents)).not.toContain(entry.text);
+    await proofSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: `${runtimeType}-session`,
+      providerTurnId: `${runtimeType}-terminal`,
+      ...providerResult,
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+
+    await proofSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed", body: `${runtimeType} product reply` },
+      transcriptDelivery: { source: "legacy", runId: run.id, spanId: run.runtimeSpanId! },
+    });
+
+    const [finalized] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [cleanedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const transcriptEvents = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    expect(new Set(readSpans)).toEqual(new Set([`${run.id}:${run.runtimeSpanId}`]));
+    expect(finalized?.contextSnapshot).toMatchObject({
+      transcriptSource: "legacy",
+      nativeTranscriptRetention: { status: "reference_only", proofRunId: run.id },
+    });
+    expect(cleanedSpan?.supplementalObjectRef).toBeNull();
+    expect(fs.existsSync(path.join(objectDir, "transcript-objects", `${supplementSpan!.supplementalObjectRef}.ndjson`))).toBe(false);
+    expect(transcriptEvents).toHaveLength(0);
+    expect(JSON.stringify({ finalized, transcriptEvents, cleanedSpan })).not.toContain(entry.text);
+  });
+
+  it("keeps Hermes local recovery evidence when shared Reader identity rejects its selector", async () => {
+    const run = await createChatRunFixture(
+      "Hermes local Reader identity blocker",
+      undefined,
+      svc,
+      "hermes_local",
+      { transcriptSource: "legacy" },
+    );
+    const entry = {
+      kind: "assistant" as const,
+      ts: new Date().toISOString(),
+      text: "preserve Hermes local recovery evidence",
+    };
+    await svc.appendTranscriptEntry(run, entry, { persistRaw: true, spanId: run.runtimeSpanId });
+    await svc.appendTranscriptEntry(run, entry, { persistRaw: false, spanId: run.runtimeSpanId });
+
+    await expect(svc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "hermes-local-session",
+      providerTurnId: "hermes-local-execution",
+      resultJson: { transcriptBoundary: { status: "exact" } },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    })).rejects.toThrow("selector.runtimeType=hermes_gateway");
+
+    await expect(svc.finalizeRun(run.id, {
+      status: "failed",
+      resultJson: { outcome: "failed", recoverable: true },
+      transcriptDelivery: { source: "legacy", runId: run.id, spanId: run.runtimeSpanId! },
+    })).rejects.toThrow("selector.runtimeType=hermes_gateway");
+
+    const [stillRunning] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const transcriptEvents = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    expect(stillRunning?.status).toBe("running");
+    expect(transcriptEvents).toHaveLength(1);
+    expect(transcriptEvents[0]?.payload).toMatchObject({ text: entry.text, spanId: run.runtimeSpanId });
+    await expect(objectStore.readRange({
+      objectRef: span!.supplementalObjectRef!,
+      orgId: run.orgId,
+      runId: run.id,
+      spanId: run.runtimeSpanId!,
+      ownerToken: run.runtimeSpanOwnerToken!,
+      allowOwnerRecovery: true,
+    })).resolves.toMatchObject({ completeness: "partial", entries: [entry] });
+  });
+
+  it("cleans Chat duplicates only after complete stable Reader proof and verifies again after cleanup", async () => {
+    let nativeRevision = "native-chat-proof-r1";
+    const proofSvc = chatAgentRunService(db, {
+      transcriptObjectStore: objectStore,
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async () => ({
+          items: nativeEntries,
+          revision: nativeRevision,
+          availability: "available",
+          completeness: "complete",
+        }) },
+      }),
+    });
+    const run = await createChatRunFixture("Native Chat retention proof", undefined, proofSvc, "codex_local", {
+      transcriptSource: "native",
+    });
+    const prompt = `retained prompt ${"x".repeat(5_000)}`;
+    const reply = `native reply ${"y".repeat(2_500)}`;
+    const nativeEntries = Array.from({ length: 225 }, (_, index) => ({
+      kind: "assistant" as const,
+      ts: new Date().toISOString(),
+      text: index === 0 ? reply : `native detail ${index}`,
+    }));
+    await proofSvc.appendAdapterInvoke(run, {
+      agentRuntimeType: "codex_local",
+      command: "codex",
+      prompt,
+      agentInstructionStack: prompt,
+      context: { chatMode: true },
+    }, []);
+    for (const entry of nativeEntries) {
+      await proofSvc.appendTranscriptEntry(run, entry, { persistRaw: false, spanId: run.runtimeSpanId });
+    }
+    await proofSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "native-chat-thread",
+      providerThreadId: "native-chat-thread",
+      providerTurnId: "native-chat-turn",
+      resultJson: { threadId: "native-chat-thread", turnId: "native-chat-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+    const objectRef = await db.select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef })
+      .from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!)).then((rows) => rows[0]?.supplementalObjectRef);
+    expect(objectRef).toBeTruthy();
+    await proofSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed", kind: "message", body: reply },
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+    });
+
+    const [finalized] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const invokes = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+    ));
+    expect(finalized?.resultJson).toMatchObject({
+      outcome: "completed",
+      kind: "message",
+      body: reply.slice(0, 2_000),
+      retention: { transcriptSource: "native", rawResultPersisted: false },
+    });
+    expect(finalized?.contextSnapshot).toMatchObject({
+      nativeTranscriptRetention: { status: "reference_only", itemCount: 225 },
+    });
+    expect(span?.supplementalObjectRef).toBeNull();
+    expect(invokes).toHaveLength(1);
+    expect(invokes[0]?.payload).not.toHaveProperty("prompt");
+    expect(JSON.stringify(invokes[0]?.payload)).not.toContain(prompt);
+    expect(fs.existsSync(path.join(objectDir, "transcript-objects", `${objectRef}.ndjson`))).toBe(false);
+
+    const reread = createTranscriptReader(db as any, {
+      nativeReader: { readRange: async () => ({
+        items: nativeEntries,
+        revision: nativeRevision,
+        availability: "available",
+        completeness: "complete",
+      }) },
+    });
+    const rereadPages: Array<Awaited<ReturnType<typeof reread.readRun>>> = [];
+    let cursor: string | null = null;
+    for (let pageIndex = 0; pageIndex < 3; pageIndex += 1) {
+      const page = await reread.readRun({
+        orgId: run.orgId,
+        runId: run.id,
+        spanId: run.runtimeSpanId,
+        principal: { type: "board", orgId: run.orgId, authorized: true },
+        cursor,
+        limit: 200,
+      });
+      rereadPages.push(page);
+      cursor = page.nextCursor ?? null;
+      if (!cursor) break;
+    }
+    const rereadItems = rereadPages.flatMap((page) => page.items);
+    expect(cursor).toBeNull();
+    expect(rereadPages).toHaveLength(2);
+    expect(rereadPages.every((page) => page.source === "native"
+      && page.availability === "available"
+      && page.completeness === "complete")).toBe(true);
+    expect(rereadItems).toHaveLength(225);
+    expect(rereadItems[0]).toMatchObject({ runId: run.id, spanId: run.runtimeSpanId, text: reply });
+  });
+
+  it("attempts exact Reader proof for a legacy recovered source and cleans only the matching Run span", async () => {
+    const requestedSpans: string[] = [];
+    const sourceSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore });
+    const run = await createChatRunFixture("Legacy recovered Chat proof", undefined, sourceSvc, "codex_local", {
+      transcriptSource: "legacy",
+    });
+    const prompt = "retain until the recovered Run span is proved";
+    await sourceSvc.appendAdapterInvoke(run, {
+      agentRuntimeType: "codex_local",
+      command: "codex",
+      prompt,
+      agentInstructionStack: prompt,
+      context: { chatMode: true },
+    }, []);
+    await sourceSvc.appendTranscriptEntry(run, {
+      kind: "assistant",
+      ts: new Date().toISOString(),
+      text: "recoverable raw transcript",
+    }, { persistRaw: true, spanId: run.runtimeSpanId });
+
+    await db.update(heartbeatRuns)
+      .set({ executionLeaseExpiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(heartbeatRuns.id, run.id));
+    const recoveryClaim = await createHeartbeatUnifiedAgentRunAdapter(db).claimOwner(run.id);
+    expect(recoveryClaim.ok).toBe(true);
+    if (!recoveryClaim.ok) throw new Error(`expected recovery owner, got ${recoveryClaim.reason}`);
+    sourceSvc.releaseOwnedRun(run.id, run.runtimeSpanOwnerToken);
+
+    const proofSvc = chatAgentRunService(db, {
+      transcriptObjectStore: objectStore,
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async (input) => {
+          requestedSpans.push(`${input.run.id}:${input.span.id}`);
+          return {
+            items: [{ kind: "assistant", ts: new Date().toISOString(), text: "reader-owned transcript" }],
+            revision: "legacy-recovery-native-r1",
+            availability: "available",
+            completeness: "complete",
+          };
+        } },
+      }),
+    });
+    const recoveredRun = await proofSvc.adoptRecoveredRun(run.id, recoveryClaim.value.ownerToken);
+    expect(recoveredRun).not.toBeNull();
+    if (!recoveredRun) throw new Error("expected recovered Chat Run");
+    expect(recoveredRun.runtimeSpanId).toBe(run.runtimeSpanId);
+    expect(recoveredRun.runtimeSpanOwnerToken).not.toBe(run.runtimeSpanOwnerToken);
+
+    await proofSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "legacy-recovery-thread",
+      providerThreadId: "legacy-recovery-thread",
+      providerTurnId: "legacy-recovery-turn",
+      resultJson: { threadId: "legacy-recovery-thread", turnId: "legacy-recovery-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: recoveredRun.runtimeSpanId,
+      ownerToken: recoveredRun.runtimeSpanOwnerToken,
+      attemptEpoch: recoveredRun.runtimeSpanAttemptEpoch,
+    });
+
+    await proofSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed", body: "retained product reply" },
+      transcriptDelivery: { source: "legacy", runId: run.id, spanId: recoveredRun.runtimeSpanId! },
+    });
+
+    const [finalized] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const transcriptEvents = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    const invokes = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+    ));
+    expect(requestedSpans.length).toBeGreaterThan(1);
+    expect(new Set(requestedSpans)).toEqual(new Set([`${run.id}:${recoveredRun.runtimeSpanId}`]));
+    expect(transcriptEvents).toHaveLength(0);
+    expect(invokes[0]?.payload).not.toHaveProperty("prompt");
+    expect(finalized?.contextSnapshot).toMatchObject({
+      transcriptSource: "legacy",
+      nativeTranscriptRetention: {
+        status: "reference_only",
+        proofRunId: run.id,
+        spans: [{ spanId: run.runtimeSpanId, sourceRevision: expect.stringMatching(/\S/) }],
+      },
+    });
+  });
+
+  it("preserves Chat fallback copies when the full-page native read is incomplete", async () => {
+    const failingSvc = chatAgentRunService(db, {
+      transcriptObjectStore: objectStore,
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async () => ({
+          items: [entry],
+          revision: "native-chat-partial-r1",
+          availability: "available",
+          completeness: "partial",
+        }) },
+        objectReader: createTranscriptObjectReader(objectStore),
+      }),
+    });
+    const run = await createChatRunFixture("Native Chat partial proof", undefined, failingSvc, "codex_local", {
+      transcriptSource: "native",
+    });
+    const prompt = `keep this prompt ${"p".repeat(1_000)}`;
+    await failingSvc.appendAdapterInvoke(run, {
+      agentRuntimeType: "codex_local",
+      command: "codex",
+      prompt,
+      agentInstructionStack: prompt,
+      context: { chatMode: true },
+    }, []);
+    const entry = { kind: "assistant" as const, ts: new Date().toISOString(), text: "saved supplement" };
+    await failingSvc.appendTranscriptEntry(run, entry, { persistRaw: true, spanId: run.runtimeSpanId });
+    await failingSvc.appendTranscriptEntry(run, entry, { persistRaw: false, spanId: run.runtimeSpanId });
+    await failingSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "native-chat-partial-thread",
+      providerThreadId: "native-chat-partial-thread",
+      providerTurnId: "native-chat-partial-turn",
+      resultJson: { threadId: "native-chat-partial-thread", turnId: "native-chat-partial-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+    const objectRef = await db.select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef })
+      .from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!)).then((rows) => rows[0]!.supplementalObjectRef!);
+    const rawResult = { outcome: "completed", body: "fallback result" };
+    await failingSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: rawResult,
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+    });
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const [invoke] = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+    ));
+    const rawTranscriptEvents = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    expect(persisted?.resultJson).toEqual(rawResult);
+    expect(persisted?.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "incomplete" } });
+    expect(span?.supplementalObjectRef).toBe(objectRef);
+    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(rawTranscriptEvents).toHaveLength(1);
+    expect(rawTranscriptEvents[0]?.payload).toMatchObject({ text: entry.text, spanId: run.runtimeSpanId });
+    await expect(objectStore.readRange({
+      objectRef,
+      orgId: run.orgId,
+      runId: run.id,
+      spanId: run.runtimeSpanId!,
+      ownerToken: run.runtimeSpanOwnerToken!,
+      allowOwnerRecovery: true,
+    })).resolves.toMatchObject({ completeness: "partial", entries: [entry] });
+  });
+
+  it("keeps full identity-fenced Chat transcript events until native Reader proof succeeds", async () => {
+    const unavailableSvc = chatAgentRunService(db, {
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async () => ({
+          items: [],
+          revision: "native-chat-offline-r1",
+          availability: "offline",
+          completeness: "unknown",
+        }) },
+      }),
+    });
+    const run = await createChatRunFixture("Native Chat event fallback", undefined, unavailableSvc, "pi_local", {
+      transcriptSource: "native",
+    });
+    const fullText = `complete transcript event ${"chat fallback ".repeat(400)}`;
+    await unavailableSvc.appendTranscriptEntry(run, {
+      kind: "assistant",
+      ts: new Date().toISOString(),
+      text: fullText,
+    }, { persistRaw: true, spanId: run.runtimeSpanId });
+    await unavailableSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "native-chat-fallback-thread",
+      providerThreadId: "native-chat-fallback-thread",
+      providerTurnId: "native-chat-fallback-turn",
+      resultJson: { threadId: "native-chat-fallback-thread", turnId: "native-chat-fallback-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+    await unavailableSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed", body: "business result stays full" },
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+    });
+
+    const [event] = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "transcript.entry"),
+    ));
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    expect(event?.payload).toMatchObject({
+      kind: "assistant",
+      text: fullText,
+      spanId: run.runtimeSpanId,
+      attemptId: run.runtimeAttemptRef?.id,
+    });
+    expect(persisted?.resultJson).toEqual({ outcome: "completed", body: "business result stays full" });
+    expect(persisted?.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "incomplete" } });
+  });
+
+  it("preserves Chat fallback copies when the native revision changes during read-back", async () => {
+    let readCount = 0;
+    const changingRevisionSvc = chatAgentRunService(db, {
+      transcriptObjectStore: objectStore,
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async () => ({
+          items: [{ kind: "assistant", ts: new Date().toISOString(), text: "native response" }],
+          revision: readCount++ === 0 ? "native-chat-revision-r1" : "native-chat-revision-r2",
+          availability: "available",
+          completeness: "complete",
+        }) },
+      }),
+    });
+    const run = await createChatRunFixture("Native Chat changing revision", undefined, changingRevisionSvc, "codex_local", {
+      transcriptSource: "native",
+    });
+    const prompt = `preserve until revision is stable ${"r".repeat(500)}`;
+    const entry = { kind: "assistant" as const, ts: new Date().toISOString(), text: "recoverable supplement" };
+    await changingRevisionSvc.appendAdapterInvoke(run, {
+      agentRuntimeType: "codex_local",
+      command: "codex",
+      prompt,
+      agentInstructionStack: prompt,
+      context: { chatMode: true },
+    }, []);
+    await changingRevisionSvc.appendTranscriptEntry(run, entry, { persistRaw: false, spanId: run.runtimeSpanId });
+    await changingRevisionSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "native-chat-changing-thread",
+      providerThreadId: "native-chat-changing-thread",
+      providerTurnId: "native-chat-changing-turn",
+      resultJson: { threadId: "native-chat-changing-thread", turnId: "native-chat-changing-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+    const [before] = await db.select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef })
+      .from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const rawResult = { outcome: "completed", body: "full fallback" };
+    await changingRevisionSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: rawResult,
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+    });
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const [invoke] = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+    ));
+    expect(readCount).toBe(2);
+    expect(persisted?.resultJson).toEqual(rawResult);
+    expect(persisted?.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "incomplete" } });
+    expect(span?.supplementalObjectRef).toBe(before?.supplementalObjectRef);
+    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+  });
+
+  it("rejects a sealed native proof bound to another owner and Attempt", async () => {
+    const run = await createChatRunFixture("Native Chat proof owner fence", undefined, svc, "codex_local", {
+      transcriptSource: "native",
+    });
+    await svc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "native-chat-owner-thread",
+      providerThreadId: "native-chat-owner-thread",
+      providerTurnId: "native-chat-owner-turn",
+      resultJson: { threadId: "native-chat-owner-thread", turnId: "native-chat-owner-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+    await svc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed", body: "keep full result" },
+    });
+    const reader = createTranscriptReader(db, {
+      nativeReader: { readRange: async () => ({
+        items: [{ kind: "assistant", ts: new Date().toISOString(), text: "native response" }],
+        revision: "native-chat-owner-r1",
+        availability: "available",
+        completeness: "complete",
+      }) },
+    });
+    await expect(proveSealedNativeRunTranscript({
+      db,
+      reader,
+      orgId: run.orgId,
+      runId: run.id,
+      expectedOwner: {
+        spanId: run.runtimeSpanId!,
+        ownerToken: "different-owner",
+        attemptEpoch: run.runtimeSpanAttemptEpoch!,
+        attemptId: "different-attempt",
+      },
+    })).resolves.toMatchObject({ ok: false, reason: "owner_fence_mismatch" });
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    expect(persisted?.resultJson).toEqual({ outcome: "completed", body: "keep full result" });
+  });
+
+  it("keeps Chat fallback state when supplemental object deletion fails", async () => {
+    const failingObjectStore: TranscriptObjectStore = {
+      ...objectStore,
+      stageSealedRemoval: async () => { throw new Error("simulated object staging failure"); },
+    };
+    const deletionFailureSvc = chatAgentRunService(db, {
+      transcriptObjectStore: failingObjectStore,
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async () => ({
+          items: [{ kind: "assistant", ts: new Date().toISOString(), text: "native complete" }],
+          revision: "native-chat-delete-failure-r1",
+          availability: "available",
+          completeness: "complete",
+        }) },
+      }),
+    });
+    const run = await createChatRunFixture("Native Chat object cleanup failure", undefined, deletionFailureSvc, "codex_local", {
+      transcriptSource: "native",
+    });
+    const prompt = `preserve invocation ${"z".repeat(500)}`;
+    const entry = { kind: "assistant" as const, ts: new Date().toISOString(), text: "recoverable object transcript" };
+    await deletionFailureSvc.appendAdapterInvoke(run, {
+      agentRuntimeType: "codex_local",
+      command: "codex",
+      prompt,
+      agentInstructionStack: prompt,
+      context: { chatMode: true },
+    }, []);
+    await deletionFailureSvc.appendTranscriptEntry(run, entry, { persistRaw: false, spanId: run.runtimeSpanId });
+    await deletionFailureSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "native-chat-object-failure-thread",
+      providerThreadId: "native-chat-object-failure-thread",
+      providerTurnId: "native-chat-object-failure-turn",
+      resultJson: { threadId: "native-chat-object-failure-thread", turnId: "native-chat-object-failure-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+    const [before] = await db.select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef })
+      .from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const rawResult = { outcome: "completed", body: "preserved Chat result" };
+    await deletionFailureSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: rawResult,
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+    });
+
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    const [invoke] = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+    ));
+    expect(persisted?.resultJson).toEqual(rawResult);
+    expect(persisted?.contextSnapshot).toMatchObject({
+      nativeTranscriptRetention: { status: "cleanup_failed", reason: expect.stringContaining("simulated object staging failure") },
+    });
+    expect(span?.supplementalObjectRef).toBe(before?.supplementalObjectRef);
+    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    await expect(objectStore.readRange({
+      objectRef: before!.supplementalObjectRef!,
+      orgId: run.orgId,
+      runId: run.id,
+      spanId: run.runtimeSpanId!,
+      ownerToken: run.runtimeSpanOwnerToken!,
+      allowOwnerRecovery: true,
+    })).resolves.toMatchObject({ completeness: "partial", entries: [entry] });
+  });
+
+  it("keeps a sealed object copy recoverable when final object purge fails", async () => {
+    let staged: { objectRef: string; stageId: string } | null = null;
+    const failingPurgeStore: TranscriptObjectStore = {
+      ...objectStore,
+      purgeStagedRemoval: async (input) => {
+        staged = input;
+        const [pending] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+        expect((pending?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
+          status: "cleanup_pending",
+          recovery: [{ kind: "transcript_object", objectRef: input.objectRef, stageId: input.stageId }],
+        });
+        throw new Error("simulated final object purge failure");
+      },
+    };
+    const proofSvc = chatAgentRunService(db, {
+      transcriptObjectStore: failingPurgeStore,
+      transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
+        nativeReader: { readRange: async () => ({
+          items: [{ kind: "assistant", ts: "2026-09-28T00:00:00.000Z", text: "verified native response" }],
+          revision: "native-chat-object-purge-r1",
+          availability: "available",
+          completeness: "complete",
+        }) },
+      }),
+    });
+    const run = await createChatRunFixture("Native Chat final object purge failure", undefined, proofSvc, "codex_local", {
+      transcriptSource: "native",
+    });
+    const recoveryText = "recoverable raw Chat supplement";
+    await proofSvc.appendTranscriptEntry(run, {
+      kind: "assistant",
+      ts: new Date().toISOString(),
+      text: recoveryText,
+    }, { persistRaw: false, spanId: run.runtimeSpanId });
+    await proofSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      sessionId: "native-chat-purge-thread",
+      providerThreadId: "native-chat-purge-thread",
+      providerTurnId: "native-chat-purge-turn",
+      resultJson: { threadId: "native-chat-purge-thread", turnId: "native-chat-purge-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+    });
+    await proofSvc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed", body: "business reply" },
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+    });
+
+    const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+    expect(staged).toBeTruthy();
+    expect(persisted?.contextSnapshot).toMatchObject({
+      nativeTranscriptRetention: {
+        status: "cleanup_failed",
+        reason: expect.stringContaining("simulated final object purge failure"),
+        recovery: [{
+          kind: "transcript_object",
+          objectRef: staged!.objectRef,
+          spanId: run.runtimeSpanId,
+          stageId: staged!.stageId,
+        }],
+      },
+    });
+    expect(span?.supplementalObjectRef).toBeNull();
+    const stagedPayload = path.join(
+      objectDir,
+      "transcript-objects",
+      `.retention-${staged!.objectRef}-${staged!.stageId}`,
+      `${staged!.objectRef}.ndjson`,
+    );
+    expect(fs.readFileSync(stagedPayload, "utf8")).toContain(recoveryText);
+  });
+
+  it.each(["partial", "unknown", "missing", "terminal_only"] as const)(
+    "keeps OpenCode %s native history and invocation recovery evidence after successful exit",
+    async (boundaryStatus) => {
+      const run = await createChatRunFixture("OpenCode partial boundary", undefined, svc, "opencode_local", {
+        transcriptSource: "native",
+      });
+      const prompt = `OpenCode invocation recovery ${"p".repeat(2_000)}`;
+      await svc.appendAdapterInvoke(run, {
+        agentRuntimeType: "opencode_local",
+        command: "opencode",
+        prompt,
+        agentInstructionStack: prompt,
+        context: { nativeTranscriptBoundary: "partial" },
+      }, []);
+      const supplementMarker = `W12_CHAT_RECOVERY_${randomUUID()} ${"supplemented recovery detail ".repeat(1_000)}`;
+      await svc.appendTranscriptEntry(run, {
+        kind: "tool_result",
+        ts: new Date().toISOString(),
+        text: supplementMarker,
+      }, { persistRaw: false, spanId: run.runtimeSpanId });
+
+      const span = await finishRunRuntimeSpan(db, {
+        orgId: run.orgId,
+        runId: run.id,
+        spanId: run.runtimeSpanId,
+        ownerToken: run.runtimeSpanOwnerToken!,
+        attemptEpoch: run.runtimeSpanAttemptEpoch,
+        runtimeType: "opencode_local",
+        result: {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+          sessionId: "opencode-session-r1",
+          providerTurnId: "opencode-turn-r1",
+          resultJson: {
+            userMessageId: "opencode-user-r1",
+            transcriptBoundary: {
+              status: boundaryStatus,
+              observedAssistantMessageIds: ["opencode-assistant-r1"],
+            },
+          },
+        },
+      });
+      expect(span).toMatchObject({
+        state: "sealed",
+        completeness: "partial",
+      });
+      if (boundaryStatus === "partial") {
+        expect(span?.selectorJson).toMatchObject({
+          kind: "opencode_input",
+          completeness: "partial",
+          observedAssistantMessageIds: ["opencode-assistant-r1"],
+          boundaryStatus: "partial",
+        });
+      }
+
+      await svc.finalizeRun(run.id, {
+        status: "succeeded",
+        resultJson: { outcome: "completed" },
+        transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+      });
+      const [finalizedRun] = await db.select({
+        resultJson: heartbeatRuns.resultJson,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
+        .from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+      expect(finalizedRun?.resultJson).toEqual({ outcome: "completed" });
+      expect(finalizedRun?.contextSnapshot).toMatchObject({
+        nativeTranscriptRetention: {
+          status: "incomplete",
+          recovery: [expect.objectContaining({
+            kind: "transcript_supplement",
+            objectRef: expect.any(String),
+            spanId: run.runtimeSpanId,
+          })],
+        },
+      });
+      const [retainedSpan] = await db.select({ supplementalObjectRef: runRuntimeSpans.supplementalObjectRef })
+        .from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+      expect(retainedSpan?.supplementalObjectRef).toBeTruthy();
+      const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, run.id));
+      expect(events.filter((event) => event.eventType === "transcript.entry")).toEqual([]);
+      expect(JSON.stringify({ finalizedRun, events, retainedSpan })).not.toContain(supplementMarker);
+      const supplement = await objectStore.readRange({
+        objectRef: retainedSpan!.supplementalObjectRef!,
+        orgId: run.orgId,
+        runId: run.id,
+        spanId: run.runtimeSpanId!,
+        ownerToken: run.runtimeSpanOwnerToken!,
+      });
+      expect(supplement.entries.map((item) => item.text)).toContain(supplementMarker);
+
+      const reader = createTranscriptReader(db, {
+        nativeReader: { readRange: async () => ({
+          items: [{ kind: "assistant", ts: new Date().toISOString(), text: "observed partial native response" }],
+          revision: "opencode-partial-r1",
+          availability: "available",
+          completeness: "partial",
+        }) },
+        objectReader: createTranscriptObjectReader(objectStore),
+      });
+      const page = await reader.readRun({
+        orgId: run.orgId,
+        runId: run.id,
+        principal: { type: "board", orgId: run.orgId, authorized: true },
+      });
+      expect(page).toMatchObject({ source: "native_plus_objects", availability: "available", completeness: "partial" });
+      expect(page.items.map((item) => item.text)).toEqual(expect.arrayContaining([
+        "observed partial native response",
+        supplementMarker,
+      ]));
+
+      const [invoke] = await db.select().from(heartbeatRunEvents).where(and(
+        eq(heartbeatRunEvents.runId, run.id),
+        eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+      ));
+      expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+      expect(JSON.stringify(invoke?.payload)).toContain(prompt);
+    },
+  );
+
+  it.each([
+    ["partial", "partial"],
+    ["unknown", "unknown"],
+    ["missing", "missing"],
+    ["terminal_only", "terminal_only"],
+    ["legacy selector without boundary attestation", null],
+  ] as const)("does not prove or compact an OpenCode span with a %s boundary", async (_label, boundaryStatus) => {
+    const run = await createChatRunFixture("OpenCode selector proof fence", undefined, svc, "opencode_local", {
+      transcriptSource: "native",
+    });
+    const prompt = `Retain invocation when selector boundary is ${boundaryStatus ?? "unattested"}`;
+    await svc.appendAdapterInvoke(run, {
+      agentRuntimeType: "opencode_local",
+      command: "opencode",
+      prompt,
+      agentInstructionStack: prompt,
+      context: { nativeTranscriptBoundary: boundaryStatus ?? "absent" },
+    }, []);
+    await finishRunRuntimeSpan(db, {
+      orgId: run.orgId,
+      runId: run.id,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken!,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+      runtimeType: "opencode_local",
+      result: {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        sessionId: "opencode-session-proof-fence",
+        providerTurnId: "opencode-turn-proof-fence",
+        resultJson: {
+          userMessageId: "opencode-user-proof-fence",
+          ...(boundaryStatus ? { transcriptBoundary: {
+            status: boundaryStatus,
+            observedAssistantMessageIds: ["opencode-assistant-proof-fence"],
+          } } : {}),
+        },
+      },
+    });
+    const legacySelector = {
+      kind: "opencode_input",
+      sessionId: "opencode-session-proof-fence",
+      userMessageId: "opencode-user-proof-fence",
+      terminalMessageIds: ["opencode-turn-proof-fence"],
+    };
+    await db.update(runRuntimeSpans).set({
+      ...(boundaryStatus === null ? { selectorJson: legacySelector } : {}),
+      completeness: "complete",
+    })
+      .where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+
+    await svc.finalizeRun(run.id, {
+      status: "succeeded",
+      resultJson: { outcome: "completed" },
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! },
+    });
+
+    const [finalizedRun] = await db.select({ resultJson: heartbeatRuns.resultJson })
+      .from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    const [invoke] = await db.select().from(heartbeatRunEvents).where(and(
+      eq(heartbeatRunEvents.runId, run.id),
+      eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+    ));
+    expect(finalizedRun?.resultJson).toEqual({ outcome: "completed" });
+    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
   });
 
   it("does not trust a preflight native hint or compact failure evidence", async () => {
@@ -667,9 +1690,14 @@ describe("chatAgentRunService", () => {
     })).resolves.toBe(0);
 
     const recoveryNow = new Date(Date.now() + 10 * 60_000);
+    const exitedProviderPid = await createExitedProcessPid();
     await db
       .update(heartbeatRuns)
-      .set({ executionLeaseExpiresAt: new Date(recoveryNow.getTime() - 1) })
+      .set({
+        executionLeaseExpiresAt: new Date(recoveryNow.getTime() - 1),
+        processExitedAt: recoveryNow,
+        processPid: exitedProviderPid,
+      })
       .where(eq(heartbeatRuns.id, firstRun.id));
     const recoveryResults = await Promise.all([
       heartbeatService(db).reapOrphanedRuns({ now: recoveryNow, recoveryCutoff: recoveryNow }),
@@ -679,13 +1707,19 @@ describe("chatAgentRunService", () => {
 
     const [timedOutRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, firstRun.id));
     expect(timedOutRun?.status).toBe("failed");
-    expect(timedOutRun?.errorCode).toBe("process_lost");
+    expect(timedOutRun?.errorCode).toBe("process_lost_acceptance_unresolved");
     const [reapedAttempt] = await db.select().from(heartbeatRunAttempts)
       .where(eq(heartbeatRunAttempts.runId, firstRun.id));
     const [reapedSpan] = await db.select().from(runRuntimeSpans)
       .where(eq(runRuntimeSpans.runId, firstRun.id));
     expect(reapedAttempt).toMatchObject({ status: "failed", id: firstRun.runtimeAttemptRef?.id });
-    expect(reapedSpan).toMatchObject({ state: "sealed", attemptId: reapedAttempt?.id });
+    expect(reapedSpan).toMatchObject({
+      state: "unresolved",
+      completeness: "unknown",
+      attemptId: reapedAttempt?.id,
+      closedAt: expect.any(Date),
+      writerLeaseReleasedAt: expect.any(Date),
+    });
 
     await svc.finalizeRun(firstRun.id, {
       status: "succeeded",
@@ -695,7 +1729,7 @@ describe("chatAgentRunService", () => {
     const [lateFinalizedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, firstRun.id));
     expect(lateFinalizedRun).toMatchObject({
       status: "failed",
-      errorCode: "process_lost",
+      errorCode: "process_lost_acceptance_unresolved",
       resultJson: { summary: "late chat completion" },
     });
 
@@ -965,6 +1999,12 @@ describe("chatAgentRunService", () => {
       settleProvider();
       await providerWork;
       execution.release();
+      const exitedProviderPid = await createExitedProcessPid();
+      await db.update(heartbeatRuns).set({
+        processPid: exitedProviderPid,
+        processExitedAt: new Date(),
+      })
+        .where(eq(heartbeatRuns.id, run.id));
       expect(await recovery.reapOrphanedRuns({ now: new Date(), recoveryCutoff: new Date() }))
         .toMatchObject({ reaped: 1 });
       expect(providerWorkCount).toBe(1);
@@ -1296,6 +2336,7 @@ describe("chatAgentRunService", () => {
       sessionDisplayId: "codex-thread-1",
       sessionParams: { sessionId: "codex-thread-1", cwd: "/tmp/native-span" },
       resultJson: { turnId: "turn-1" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
     };
     await svc.recordNativeExecutionResult(firstRun.id, firstResult, {
       orgId,
@@ -1505,10 +2546,12 @@ describe("chatAgentRunService", () => {
       isFallback: false,
       resumeSource: "fresh",
     });
+    await recoveredSvc.reconcileAcceptance(recoveredRun, {
+      state: "accepted",
+      providerTurnId: "first-attempt-turn",
+    });
     await recoveredSvc.finishRuntimeAttempt(recoveredRun, {
       status: "succeeded",
-      submissionPhase: "accepted",
-      providerTurnId: "first-attempt-turn",
     });
     const staleAttemptRun = {
       ...recoveredRun,

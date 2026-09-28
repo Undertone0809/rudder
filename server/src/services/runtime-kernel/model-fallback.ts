@@ -45,6 +45,8 @@ export interface ModelFallbackExecutionOptions {
     result: AgentRuntimeExecutionResult,
     submissionPhase: AgentRuntimeNetworkSubmissionPhase,
   ) => Promise<void> | void;
+  /** Persist acceptance uncertainty before the native provider call is dispatched. */
+  onAttemptSubmissionStart?: (attempt: ModelAttemptSpec) => Promise<void> | void;
 }
 
 function isSubmissionPhase(value: unknown): value is AgentRuntimeNetworkSubmissionPhase {
@@ -88,7 +90,8 @@ function runtimeDriverRequiredFailure(runtimeType: string, reason: string): Agen
     timedOut: false,
     errorMessage: reason,
     errorCode: "runtime_driver_required",
-    submissionPhase: "indeterminate",
+    submissionPhase: "pre_submission",
+    nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
     resultJson: { runtimeType, nativeDriverRequired: true },
   };
 }
@@ -402,6 +405,7 @@ export async function executeAdapterWithModelFallbacks(
 
     let controlAttempt: Awaited<ReturnType<NonNullable<typeof ctx.controlCoordinator>["beginAttempt"]>> | null = null;
     let networkSuspended = false;
+    let nativeSubmissionCheckpointStarted = false;
     try {
       const attemptConfig = buildAttemptConfig(
         ctx.config,
@@ -513,19 +517,37 @@ export async function executeAdapterWithModelFallbacks(
               : undefined,
           };
           if (options.executeThroughDriver) {
-            result = await driver.execute(driverContext);
+            if (options.nativeDriverRequired && !options.onAttemptSubmissionStart) {
+              result = runtimeDriverRequiredFailure(
+                attemptRuntimeType,
+                `No durable submission checkpoint is available for ${attemptRuntimeType}.`,
+              );
+            } else {
+              nativeSubmissionCheckpointStarted = Boolean(options.onAttemptSubmissionStart);
+              await options.onAttemptSubmissionStart?.(attempt);
+              result = await driver.execute(driverContext);
+            }
           } else {
-            const prompt = typeof attemptContext.context.chatPrompt === "string"
-              ? attemptContext.context.chatPrompt
-              : "";
-            result = await driver.submitInput({
-              context: driverContext,
-              session: sessionInput?.status === "supported" ? sessionInput.value : null,
-              input: {
-                text: prompt,
-                ...(attemptContext.media ? { media: attemptContext.media } : {}),
-              },
-            });
+            if (options.nativeDriverRequired && !options.onAttemptSubmissionStart) {
+              result = runtimeDriverRequiredFailure(
+                attemptRuntimeType,
+                `No durable submission checkpoint is available for ${attemptRuntimeType}.`,
+              );
+            } else {
+              nativeSubmissionCheckpointStarted = Boolean(options.onAttemptSubmissionStart);
+              await options.onAttemptSubmissionStart?.(attempt);
+              const prompt = typeof attemptContext.context.chatPrompt === "string"
+                ? attemptContext.context.chatPrompt
+                : "";
+              result = await driver.submitInput({
+                context: driverContext,
+                session: sessionInput?.status === "supported" ? sessionInput.value : null,
+                input: {
+                  text: prompt,
+                  ...(attemptContext.media ? { media: attemptContext.media } : {}),
+                },
+              });
+            }
           }
         }
       } else {
@@ -595,6 +617,9 @@ export async function executeAdapterWithModelFallbacks(
       previousFailure = result;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+      if (options.nativeDriverRequired && nativeSubmissionCheckpointStarted) {
+        throw err;
+      }
       if (ctx.abortSignal?.aborted || attempt.index === attempts.length - 1) {
         throw err;
       }

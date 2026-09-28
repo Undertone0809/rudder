@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { Db } from "@rudderhq/db";
+import { describe, expect, it } from "vitest";
 import type { StreamChatAssistantReplyInput } from "./chat-assistant.helpers.js";
 import {
   chatContinuationTransportProfile,

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { buildRuntimeProviderProfileSnapshot } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
 import {
   createHistoricalRunRuntimeProviderCapabilityResolver,
   resolveHistoricalRunRuntimeProfile,
   type HistoricalRunConfigRevision,
   type HistoricalRunProfileRun,
 } from "./run-intelligence.js";
-import { buildRuntimeProviderProfileSnapshot } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
 
 function profileRun(overrides: Partial<HistoricalRunProfileRun> = {}): HistoricalRunProfileRun {
   return {

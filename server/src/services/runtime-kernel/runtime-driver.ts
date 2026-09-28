@@ -17,22 +17,28 @@ import type {
   ServerAgentRuntimeModule,
 } from "@rudderhq/agent-runtime-utils";
 import { findServerAdapter } from "../../agent-runtimes/registry.js";
+import { resolveExecutionSubmissionPhase } from "./model-fallback.js";
+import type {
+  NativeSessionState,
+  RuntimeBindingInput,
+  RuntimeBindingRecord,
+} from "./native-session.js";
 import type {
   NativeSpanSelector,
-  NativeTranscriptReadInput,
   NativeTranscriptRawItem,
+  NativeTranscriptReadInput,
   RuntimeProviderBindingRef,
   RuntimeProviderCapabilityAdapter,
   RuntimeProviderCapabilityDeclaration,
   RuntimeProviderCapabilityEvidence,
-  RuntimeProviderCapabilityResolver,
   RuntimeProviderCapabilityResolution,
+  RuntimeProviderCapabilityResolver,
+  RuntimeProviderCapabilityResolverContext,
   RuntimeProviderControlOperation,
   RuntimeProviderForkResult,
   RuntimeProviderSessionRef,
-  RuntimeProviderTranscriptReadResult,
-  RuntimeProviderCapabilityResolverContext,
   RuntimeProviderSideChatForkCleanupRequest,
+  RuntimeProviderTranscriptReadResult,
 } from "./provider-capabilities.js";
 import {
   PROVIDER_CAPABILITY_GAP_REASONS,
@@ -41,11 +47,6 @@ import {
   resolveRegisteredRuntimeProviderCapabilities,
   runtimeProviderBindingsMatch,
 } from "./provider-capabilities.js";
-import type {
-  NativeSessionState,
-  RuntimeBindingInput,
-  RuntimeBindingRecord,
-} from "./native-session.js";
 import type {
   RuntimeRetentionInspection,
   runtimeRetentionService,
@@ -62,7 +63,6 @@ import type {
   UnifiedAgentRunService,
 } from "./unified-agent-run.contracts.js";
 import type { UnifiedAgentRunEntry, UnifiedOwnerFence } from "./unified-agent-run.js";
-import { resolveExecutionSubmissionPhase } from "./model-fallback.js";
 
 /** Runtime adapters with a native-chat facade in this slice. */
 export const NATIVE_CHAT_RUNTIME_TYPES = [

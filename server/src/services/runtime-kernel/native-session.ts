@@ -1,4 +1,4 @@
-import type { AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
+import { hasConfirmedNativeWriterQuiescence, type AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import type { Db, RuntimeBindingTargetType } from "@rudderhq/db";
 import {
   heartbeatRunAttempts,
@@ -331,7 +331,7 @@ export function nativeSessionIdFromResult(result: AgentRuntimeExecutionResult) {
 }
 
 function nativeExecutionRefFromResult(result: AgentRuntimeExecutionResult) {
-  return providerString(result, [
+  return stringValue(result.providerTurnId) ?? providerString(result, [
     "executionRef",
     "execution_ref",
     "providerTurnId",
@@ -405,13 +405,18 @@ export function selectorForRuntime(input: {
             terminalMessageIds: [],
             observedAssistantMessageIds,
             completeness: "partial",
+            boundaryStatus: "partial",
           };
         }
+        const terminalMessageIds = [input.executionRef ?? terminalRef]
+          .filter((value): value is string => Boolean(value));
         return {
           kind: "opencode_input",
           sessionId: input.sessionId,
           userMessageId,
-          terminalMessageIds: [input.executionRef ?? terminalRef].filter((value): value is string => Boolean(value)),
+          terminalMessageIds,
+          boundaryStatus: stringValue(transcriptBoundary?.status)
+            ?? (terminalMessageIds.length > 0 ? "exact" : "unknown"),
         };
       }
     case "pi_local":
@@ -446,6 +451,47 @@ export function selectorForRuntime(input: {
         runId: input.runId,
       };
   }
+}
+
+export function nativeExecutionSpanCompleteness(input: {
+  runtimeType: string;
+  sessionId: string | null;
+  executionRef: string | null;
+  selector: unknown;
+  result: AgentRuntimeExecutionResult;
+  error?: boolean;
+  suspended?: boolean;
+}): "complete" | "partial" | "unknown" {
+  if (input.suspended) return "partial";
+
+  const selector = jsonRecord(input.selector);
+  const selectorKind = stringValue(selector?.kind);
+  const boundary = jsonRecord(providerResult(input.result).transcriptBoundary);
+  const boundaryStatus = stringValue(boundary?.status);
+  const selectorBoundaryStatus = stringValue(selector?.boundaryStatus);
+  const incompleteBoundaryStatuses = new Set(["missing", "unknown", "partial", "terminal_only"]);
+  const incompleteBoundary = (boundaryStatus !== null && incompleteBoundaryStatuses.has(boundaryStatus))
+    || (selectorBoundaryStatus !== null && incompleteBoundaryStatuses.has(selectorBoundaryStatus))
+    || ["partial", "unknown", "missing", "terminal_only"].includes(stringValue(selector?.completeness) ?? "");
+  const unresolvedSelector = !selectorKind || selectorKind === "pending" || selectorKind === "unresolved";
+  const exactOpenCodeRange = input.runtimeType !== "opencode_local" || Boolean(
+    selectorKind === "opencode_input"
+    && stringValue(selector?.sessionId) === input.sessionId
+    && stringValue(selector?.boundaryStatus) === "exact"
+    && stringValue(selector?.userMessageId)
+    && Array.isArray(selector?.terminalMessageIds)
+    && selector.terminalMessageIds.some((id) => stringValue(id)),
+  );
+  const complete = !input.error
+    && !input.result.errorMessage
+    && !input.result.timedOut
+    && input.result.exitCode === 0
+    && input.sessionId !== null
+    && input.executionRef !== null
+    && !unresolvedSelector
+    && !incompleteBoundary
+    && exactOpenCodeRange;
+  return complete ? "complete" : input.sessionId ? "partial" : "unknown";
 }
 
 async function selectBinding(
@@ -1024,6 +1070,7 @@ export async function finishRunRuntimeSpan(db: Db, input: {
   orgId: string;
   runId: string;
   spanId?: string | null;
+  attemptId?: string | null;
   ownerToken: string;
   runtimeType: string;
   attemptEpoch?: number;
@@ -1043,6 +1090,7 @@ export async function finishRunRuntimeSpan(db: Db, input: {
         eq(runRuntimeSpans.orgId, input.orgId),
         eq(runRuntimeSpans.runId, input.runId),
         ...(input.spanId ? [eq(runRuntimeSpans.id, input.spanId)] : []),
+        ...(input.attemptId ? [eq(runRuntimeSpans.attemptId, input.attemptId)] : []),
         eq(runRuntimeSpans.ownerToken, input.ownerToken),
         eq(runRuntimeSpans.state, "open"),
         ...(input.attemptEpoch === undefined ? [] : [eq(runRuntimeSpans.attemptEpoch, input.attemptEpoch)]),
@@ -1061,6 +1109,7 @@ export async function finishRunRuntimeSpan(db: Db, input: {
           eq(runRuntimeSpans.orgId, input.orgId),
           eq(runRuntimeSpans.runId, input.runId),
           ...(input.spanId ? [eq(runRuntimeSpans.id, input.spanId)] : []),
+          ...(input.attemptId ? [eq(runRuntimeSpans.attemptId, input.attemptId)] : []),
           eq(runRuntimeSpans.ownerToken, input.ownerToken),
           eq(runRuntimeSpans.state, "sealed"),
           ...(input.attemptEpoch === undefined ? [] : [eq(runRuntimeSpans.attemptEpoch, input.attemptEpoch)]),
@@ -1165,11 +1214,6 @@ export async function finishRunRuntimeSpan(db: Db, input: {
       segment = updated ?? segment;
     }
 
-    const transcriptBoundaryStatus = stringValue(jsonRecord(providerResult(input.result).transcriptBoundary)?.status);
-    const incompleteTranscriptBoundary = transcriptBoundaryStatus === "missing" || transcriptBoundaryStatus === "unknown";
-    const complete = !input.error && !input.result.errorMessage && !input.result.timedOut
-      && input.result.exitCode === 0 && executionRef !== null
-      && !incompleteTranscriptBoundary;
     const selector = sessionId
       ? selectorForRuntime({
         runtimeType: segment.runtimeType,
@@ -1185,20 +1229,29 @@ export async function finishRunRuntimeSpan(db: Db, input: {
         inputCorrelationRef: span.inputCorrelationRef,
         runId: input.runId,
       };
+    const completeness = nativeExecutionSpanCompleteness({
+      runtimeType: segment.runtimeType,
+      sessionId,
+      executionRef,
+      selector,
+      result: input.result,
+      error: input.error,
+      suspended: input.suspended,
+    });
     const suspended = input.suspended === true;
+    const writerQuiesced = hasConfirmedNativeWriterQuiescence(input.result);
+    const sealed = !suspended && writerQuiesced;
     const [updatedSpan] = await tx
       .update(runRuntimeSpans)
       .set({
         segmentId: segment.id,
+        writerLeaseReleasedAt: sealed ? new Date() : span.writerLeaseReleasedAt,
         nativeExecutionRef: executionRef,
         selectorJson: selector,
-        // A transport suspension is not a terminal provider span. Keeping it
-        // open lets recovery claim the same native range instead of inventing
-        // a fresh conversation or losing the continuation boundary.
-        state: suspended ? "open" : "sealed",
-        completeness: suspended ? "partial" : complete ? "complete" : sessionId ? "partial" : "unknown",
+        state: sealed ? "sealed" : "open",
+        completeness,
         visibilityCutoffRef: input.visibilityCutoffRef ?? null,
-        closedAt: suspended ? null : new Date(),
+        closedAt: sealed ? new Date() : null,
         updatedAt: new Date(),
       })
       .where(and(
@@ -1209,7 +1262,7 @@ export async function finishRunRuntimeSpan(db: Db, input: {
       ))
       .returning();
     if (!updatedSpan) return null;
-    if (suspended) return updatedSpan;
+    if (!sealed) return updatedSpan;
     const [updatedRun] = await tx
       .update(heartbeatRuns)
       .set({
@@ -1229,6 +1282,55 @@ export async function finishRunRuntimeSpan(db: Db, input: {
       throw new Error("Runtime span completion lost the active Run owner lease");
     }
     return updatedSpan;
+  });
+}
+
+export async function releaseTerminalRunRuntimeSpanWriters(db: Db, input: {
+  orgId: string;
+  runId: string;
+  /** A process exit proves only its invocation, never all historical Run writers. */
+  spanId?: string | null;
+  proof: AgentRuntimeExecutionResult;
+  quiescedAt?: Date;
+}) {
+  const proof = input.proof;
+  if (!hasConfirmedNativeWriterQuiescence(proof)) return [];
+  const spanId = stringValue(input.spanId);
+  if (!spanId) return [];
+  const quiescedAt = input.quiescedAt ?? new Date();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${input.runId}))`);
+    const [run] = await tx.select({
+      status: heartbeatRuns.status,
+      processExitedAt: heartbeatRuns.processExitedAt,
+    })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.orgId, input.orgId)))
+      .limit(1);
+    if (!run || run.status === "running" || run.status === "queued" || !run.processExitedAt) return [];
+
+    const spans = await tx.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.orgId, input.orgId),
+      eq(runRuntimeSpans.runId, input.runId),
+      eq(runRuntimeSpans.id, spanId),
+      isNull(runRuntimeSpans.writerLeaseReleasedAt),
+    ));
+    for (const span of spans) {
+      const open = span.state === "open";
+      await tx.update(runRuntimeSpans).set({
+        state: open ? "unresolved" : span.state,
+        completeness: open ? "unknown" : span.completeness,
+        closedAt: open ? quiescedAt : span.closedAt,
+        writerLeaseReleasedAt: quiescedAt,
+        updatedAt: quiescedAt,
+      }).where(and(
+        eq(runRuntimeSpans.id, span.id),
+        eq(runRuntimeSpans.orgId, input.orgId),
+        eq(runRuntimeSpans.runId, input.runId),
+        isNull(runRuntimeSpans.writerLeaseReleasedAt),
+      ));
+    }
+    return spans.map((span) => span.id);
   });
 }
 

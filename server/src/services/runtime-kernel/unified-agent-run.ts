@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
 import type { AgentRuntimeExecutionResult } from "@rudderhq/agent-runtime-utils";
 import type {
   AgentRunTargetType,
   HeartbeatRunAttemptResumeSource,
   HeartbeatRunAttemptStatus,
 } from "@rudderhq/shared";
+import { randomUUID } from "node:crypto";
 
 /**
  * The common admission vocabulary deliberately lives below routes and above
@@ -227,7 +227,11 @@ function recordOrNull(value: unknown, field: string): Record<string, unknown> | 
 
 export function normalizeUnifiedSessionIntent(input: UnifiedSessionIntentInput): UnifiedSessionIntent {
   if (input.kind === "fresh") {
-    if (input.sourceRunId !== undefined || input.sessionId !== undefined || input.sessionParams !== undefined) {
+    if (
+      (input.sourceRunId !== undefined && input.sourceRunId !== null)
+      || (input.sessionId !== undefined && input.sessionId !== null)
+      || (input.sessionParams !== undefined && input.sessionParams !== null)
+    ) {
       throw new UnifiedAgentRunContractError(
         "invalid_session_intent",
         "fresh session intent cannot carry a source or session parameters",
@@ -410,6 +414,7 @@ export type UnifiedAttemptFinishInput = UnifiedAttemptWaitingInput & {
 
 export type UnifiedNativeExecutionInput = {
   spanId?: string | null;
+  attemptId?: string | null;
   result: AgentRuntimeExecutionResult;
   error?: boolean;
   suspended?: boolean;
@@ -924,10 +929,17 @@ export function createUnifiedAgentRunLedger(options: {
     fence: UnifiedOwnerFence,
     input: UnifiedNativeExecutionInput,
   ): UnifiedFenceResult<UnifiedRunSpan> {
+    const boundary = input.result.resultJson?.transcriptBoundary;
+    const boundaryStatus = boundary && typeof boundary === "object" && !Array.isArray(boundary)
+      ? (boundary as Record<string, unknown>).status
+      : null;
+    const incompleteBoundary = ["missing", "unknown", "partial", "terminal_only"].includes(String(boundaryStatus));
     const complete = !input.error
       && !input.result.errorMessage
       && !input.result.timedOut
-      && (input.result.exitCode ?? 0) === 0;
+      && (input.result.exitCode ?? 0) === 0
+      && Boolean(input.result.sessionId?.trim())
+      && !incompleteBoundary;
     return sealSpan(runId, fence, {
       completeness: input.suspended ? "partial" : complete ? "complete" : input.result.sessionId ? "partial" : "unknown",
       visibilityCutoffRef: input.visibilityCutoffRef,

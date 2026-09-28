@@ -15,19 +15,16 @@ import { and, eq } from "drizzle-orm";
 import {
   markNativeForkIntentRejected,
   markNativeForkIntentUnknown,
-  nativeForkIntentKey,
   persistNativeForkChild,
+  readNativeForkIntent,
   reserveNativeForkIntent,
   type NativeForkIntentRecord,
-  type NativeForkIntentRunFence,
-  readNativeForkIntent,
   type NativeForkIntentReference,
+  type NativeForkIntentRunFence
 } from "./runtime-kernel/native-fork-intent.js";
 import {
   currentNativeSession,
-  ensureRuntimeBinding,
-  type NativeSegmentRecord,
-  type RuntimeBindingRecord,
+  ensureRuntimeBinding
 } from "./runtime-kernel/native-session.js";
 import type { RuntimeProviderBindingRef } from "./runtime-kernel/provider-capabilities.js";
 import type { SideChatForkSource, SideChatRuntimeAdmission } from "./side-chat-runtime-admission.js";

@@ -13,18 +13,22 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { heartbeatService } from "../heartbeat.js";
 import { createHeartbeatAdmissionHandlers } from "./heartbeat.admission.js";
-import { checkProcessLossRetrySubmission } from "./heartbeat.reapers.js";
+import { checkProcessLossRetrySubmission, ensureProviderWriterStopped } from "./heartbeat.reapers.js";
 import { transitionHeartbeatRunToTerminal } from "./heartbeat.terminal.js";
-import { currentNativeSession, ensureRuntimeBinding } from "./native-session.js";
+import {
+  currentNativeSession,
+  ensureRuntimeBinding,
+  releaseTerminalRunRuntimeSpanWriters,
+} from "./native-session.js";
 import type { UnifiedAgentRunPersistenceAdapter } from "./unified-agent-run.integration.js";
 import {
   createHeartbeatUnifiedAgentRunAdapter,
@@ -262,6 +266,12 @@ describe("heartbeat-backed unified agent run adapter", () => {
 
   afterEach(async () => {
     await db.delete(heartbeatRunEvents);
+    await db.update(runRuntimeSpans).set({
+      state: "unresolved",
+      closedAt: new Date(),
+      writerLeaseReleasedAt: new Date(),
+    })
+      .where(isNull(runRuntimeSpans.writerLeaseReleasedAt));
     await db.delete(runRuntimeSpans);
     await db.delete(nativeSegments);
     await db.delete(runtimeBindings);
@@ -364,7 +374,7 @@ describe("heartbeat-backed unified agent run adapter", () => {
     expect(runs[0]).toMatchObject({ status: "running", processPid: null });
   });
 
-  it("does not retry a native submission after a recorded exit with no remaining PID", async () => {
+  it("keeps an accepted native run fenced when its exit has no process identity", async () => {
     const { runId, agentId } = await admitOrphanedNativeRun("accepted");
     const now = new Date();
     await db.update(heartbeatRuns).set({
@@ -372,10 +382,10 @@ describe("heartbeat-backed unified agent run adapter", () => {
       executionLeaseExpiresAt: new Date(now.getTime() - 1),
     }).where(eq(heartbeatRuns.id, runId));
     const result = await heartbeatService(db).reapOrphanedRuns({ now, recoveryCutoff: now });
-    expect(result.reaped).toBe(1);
+    expect(result.reaped).toBe(0);
     const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
     expect(runs).toHaveLength(1);
-    expect(runs[0]).toMatchObject({ id: runId, status: "failed", processPid: null });
+    expect(runs[0]).toMatchObject({ id: runId, status: "running", processPid: null });
   });
 
   it("still blocks retry from durable submission evidence with a legacy-shaped Run readback", async () => {
@@ -685,11 +695,29 @@ describe("heartbeat-backed unified agent run adapter", () => {
 
     const renewed = await service.renewOwner(first.entry.runId, first.entry.ownerFence);
     expect(renewed).toMatchObject({ ok: true, value: { ownerToken: first.entry.ownerFence.ownerToken, attemptEpoch: 1 } });
-    await expect(execution.acceptSubmission(first.entry.runId, first.entry.ownerFence, {
-      providerThreadId: "thread-1",
-      providerTurnId: "turn-1",
-    })).resolves.toMatchObject({ ok: true, value: { state: "accepted", retry: "not_allowed" } });
-    await expect(execution.finishAttempt(first.entry.runId, first.entry.ownerFence, "failed"))
+    await expect(execution.markAcceptanceUnknown(first.entry.runId, first.entry.ownerFence, {
+      phase: "indeterminate",
+      reason: "provider dispatch response was lost",
+    })).resolves.toMatchObject({ ok: true, value: { state: "acceptance_unknown", retry: "blocked_until_reconciled" } });
+    await expect(execution.reconcileAcceptance(first.entry.runId, first.entry.ownerFence, {
+      state: "rejected",
+      reason: "provider confirms no submission was accepted",
+    })).resolves.toMatchObject({ ok: true, value: { state: "rejected", retry: "allowed" } });
+    await expect(execution.recordExecutionResult(first.entry.runId, first.entry.ownerFence, {
+      spanId: first.entry.span.id,
+      attemptId: first.entry.attempt.ref.id,
+      result: {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        submissionPhase: "pre_submission",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      },
+      error: true,
+    })).resolves.toMatchObject({ ok: true, value: { state: "sealed" } });
+    await expect(execution.finishAttempt(first.entry.runId, first.entry.ownerFence, "failed", {
+      submissionPhase: "pre_submission",
+    }))
       .resolves.toMatchObject({ ok: true, value: { status: "failed" } });
 
     await db.update(heartbeatRuns)
@@ -716,25 +744,27 @@ describe("heartbeat-backed unified agent run adapter", () => {
       resumeSource: "same_session",
     });
     expect(retry).toMatchObject({ ok: true, value: { ref: { attemptIndex: 1 }, submission: { key: "chat-turn-1:attempt:1" } } });
-    await expect(execution.markAcceptanceUnknown(first.entry.runId, claimed.value, {
+    const retryEntry = await adapter.get(first.entry.runId);
+    if (!retryEntry) throw new Error("expected the retry Run entry to reload");
+    await expect(execution.markAcceptanceUnknown(first.entry.runId, retryEntry.ownerFence, {
       phase: "indeterminate",
       reason: "connection closed after provider submission",
     })).resolves.toMatchObject({ ok: true, value: { state: "acceptance_unknown", retry: "blocked_until_reconciled" } });
-    await expect(execution.reconcileAcceptance(first.entry.runId, claimed.value, {
+    await expect(execution.reconcileAcceptance(first.entry.runId, retryEntry.ownerFence, {
       state: "rejected",
       reason: "provider did not accept the turn",
     })).resolves.toMatchObject({ ok: true, value: { state: "rejected", retry: "allowed" } });
-    await expect(execution.finishAttempt(first.entry.runId, claimed.value, "failed"))
+    await expect(execution.finishAttempt(first.entry.runId, retryEntry.ownerFence, "failed"))
       .resolves.toMatchObject({ ok: true, value: { status: "failed" } });
-    await expect(execution.sealSpan(first.entry.runId, claimed.value, {
+    await expect(execution.sealSpan(first.entry.runId, retryEntry.ownerFence, {
       completeness: "partial",
       sourceRevision: "native-revision-2",
       visibilityCutoffRef: "cutoff-1",
     })).resolves.toMatchObject({ ok: true, value: { state: "unresolved", completeness: "partial" } });
-    await expect(execution.finishRun(first.entry.runId, claimed.value, "failed"))
+    await expect(execution.finishRun(first.entry.runId, retryEntry.ownerFence, "failed"))
       .resolves.toMatchObject({ ok: true, value: { status: "failed", span: { state: "unresolved" } } });
 
-    const [finalSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, first.entry.runId));
+    const [finalSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, retryEntry.span.id));
     const [finalRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, first.entry.runId));
     expect(finalSpan).toMatchObject({ state: "unresolved", completeness: "partial", ownerToken: "recovered-owner" });
     expect(finalRun).toMatchObject({ status: "failed", executionOwnerToken: null, executionLeaseExpiresAt: null });
@@ -768,6 +798,7 @@ describe("heartbeat-backed unified agent run adapter", () => {
       providerThreadId: "thread-1",
       providerTurnId: "turn-1",
       resultJson: { providerExecutionRef: "turn-1" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" } as const,
     };
 
     await expect(execution.acceptSubmission(admitted.entry.runId, admitted.entry.ownerFence, {
@@ -832,6 +863,312 @@ describe("heartbeat-backed unified agent run adapter", () => {
     expect(finishedRun?.status).toBe("succeeded");
     expect(finishedAttempt).toMatchObject({ status: "succeeded", ownerToken: "recovered-result-owner" });
     expect(finishedSpan).toMatchObject({ state: "sealed", ownerToken: "recovered-result-owner" });
+  });
+
+  it("keeps a terminal Run's native writer fenced until provider quiescence is proven", async () => {
+    const seeded = await seedNativeChatIdentity(db);
+    await db.update(nativeSegments).set({ nativeSessionId: "shared-native-writer-session" })
+      .where(eq(nativeSegments.id, seeded.segmentId));
+    const adapter = createHeartbeatUnifiedAgentRunAdapter(db);
+    const execution = createUnifiedAgentRunExecutionService(adapter);
+    const admissionInput = {
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      scene: "chat" as const,
+      target: { type: "chat_conversation" as const, id: seeded.conversationId },
+      idempotencyKey: "native-writer-quiescence-first",
+      runtimeType: "codex_local",
+      sessionIntent: { kind: "fresh" as const },
+      runtimeBindingId: seeded.bindingId,
+      runtimeSegmentId: seeded.segmentId,
+    };
+    const aliasConversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: aliasConversationId,
+      orgId: seeded.orgId,
+      title: "Native Writer Alias Conversation",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    const aliasBinding = await ensureRuntimeBinding(db, {
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      runtimeType: "codex_local",
+      principalScopeRef: "test:principal",
+      profileId: "default",
+      target: { type: "chat_conversation", id: aliasConversationId },
+      continuity: "native",
+    });
+    const aliasSession = await currentNativeSession(db, aliasBinding);
+    await db.update(nativeSegments).set({ nativeSessionId: "shared-native-writer-session" })
+      .where(eq(nativeSegments.id, aliasSession.segment.id));
+    const nextAdmission = {
+      ...admissionInput,
+      target: { type: "chat_conversation" as const, id: aliasConversationId },
+      idempotencyKey: "native-writer-quiescence-next",
+      runtimeBindingId: aliasBinding.id,
+      runtimeSegmentId: aliasSession.segment.id,
+    };
+    const first = await adapter.admit(admissionInput);
+
+    await expect(execution.finishRun(first.entry.runId, first.entry.ownerFence, "timed_out", {
+      terminalEffectsPending: false,
+      processExitedAt: null,
+    })).resolves.toMatchObject({ ok: true, value: { status: "timed_out", span: { state: "unresolved" } } });
+
+    const [terminalRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, first.entry.runId));
+    const [activeSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, first.entry.runId));
+    expect(terminalRun).toMatchObject({ status: "timed_out", processExitedAt: null });
+    expect(activeSpan).toMatchObject({ state: "unresolved", writerLeaseReleasedAt: null });
+    await expect(adapter.admit(nextAdmission))
+      .rejects.toThrow();
+
+    const confirmedWriterResult = {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+    } as const;
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId: seeded.orgId,
+      runId: first.entry.runId,
+      proof: { ...confirmedWriterResult, nativeWriterQuiescence: { status: "unconfirmed", reason: "stop not observed" } },
+    })).resolves.toHaveLength(0);
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId: seeded.orgId,
+      runId: first.entry.runId,
+      proof: confirmedWriterResult,
+    })).resolves.toHaveLength(0);
+
+    await db.update(heartbeatRuns).set({ processPid: process.pid, processExitedAt: new Date() })
+      .where(eq(heartbeatRuns.id, first.entry.runId));
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId: seeded.orgId,
+      runId: first.entry.runId,
+      proof: confirmedWriterResult,
+    })).resolves.toHaveLength(0);
+
+    await db.update(heartbeatRuns).set({ processPid: 987654321 })
+      .where(eq(heartbeatRuns.id, first.entry.runId));
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId: seeded.orgId,
+      runId: first.entry.runId,
+      proof: confirmedWriterResult,
+    })).resolves.toHaveLength(0);
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId: seeded.orgId,
+      runId: first.entry.runId,
+      spanId: activeSpan!.id,
+      proof: confirmedWriterResult,
+    })).resolves.toHaveLength(1);
+    const [releasedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, activeSpan!.id));
+    expect(releasedSpan).toMatchObject({ state: "unresolved", completeness: "unknown" });
+    expect(releasedSpan?.writerLeaseReleasedAt).toBeInstanceOf(Date);
+    expect(releasedSpan?.closedAt).toBeInstanceOf(Date);
+
+    await expect(adapter.admit(nextAdmission))
+      .resolves.toMatchObject({ created: true });
+  });
+
+  it("scopes a dead current process to its latest Attempt span", async () => {
+    const seeded = await seedNativeChatIdentity(db);
+    const adapter = createHeartbeatUnifiedAgentRunAdapter(db);
+    const execution = createUnifiedAgentRunExecutionService(adapter);
+    const admitted = await adapter.admit({
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      scene: "chat",
+      target: { type: "chat_conversation", id: seeded.conversationId },
+      idempotencyKey: "process-exit-current-attempt-span",
+      runtimeType: "codex_local",
+      sessionIntent: { kind: "fresh" },
+      runtimeBindingId: seeded.bindingId,
+      runtimeSegmentId: seeded.segmentId,
+    });
+    const firstSpanId = admitted.entry.span.id;
+    const firstAttemptId = admitted.entry.attempt.ref.id;
+
+    await execution.markAcceptanceUnknown(admitted.entry.runId, admitted.entry.ownerFence, {
+      phase: "indeterminate",
+      reason: "first attempt was dispatched",
+    });
+    await execution.reconcileAcceptance(admitted.entry.runId, admitted.entry.ownerFence, {
+      state: "rejected",
+      reason: "provider confirmed rejection",
+    });
+    await execution.finishAttempt(admitted.entry.runId, admitted.entry.ownerFence, "failed", {
+      submissionPhase: "pre_submission",
+    });
+    await execution.recordExecutionResult(admitted.entry.runId, admitted.entry.ownerFence, {
+      spanId: firstSpanId,
+      attemptId: firstAttemptId,
+      result: {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        submissionPhase: "pre_submission",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      },
+      error: true,
+    });
+    const retry = await execution.beginAttempt(admitted.entry.runId, admitted.entry.ownerFence, {
+      attemptIndex: 1,
+      runtimeType: "codex_local",
+      model: "fallback-model",
+      isFallback: true,
+      resumeSource: "same_session",
+    });
+    if (!retry.ok) throw new Error(`expected retry attempt to be admitted, got ${retry.reason}`);
+    const currentEntry = await adapter.get(admitted.entry.runId);
+    if (!currentEntry) throw new Error("expected the current Attempt span to reload");
+
+    const aliasConversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: aliasConversationId,
+      orgId: seeded.orgId,
+      title: "Historical Attempt Writer",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    const aliasBinding = await ensureRuntimeBinding(db, {
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      runtimeType: "codex_local",
+      principalScopeRef: "test:principal",
+      profileId: "default",
+      target: { type: "chat_conversation", id: aliasConversationId },
+      continuity: "native",
+    });
+    const aliasSession = await currentNativeSession(db, aliasBinding);
+    await db.update(runRuntimeSpans).set({
+      bindingId: aliasBinding.id,
+      segmentId: aliasSession.segment.id,
+      state: "unresolved",
+      completeness: "partial",
+      writerLeaseReleasedAt: null,
+    }).where(eq(runRuntimeSpans.id, firstSpanId));
+
+    await expect(execution.finishRun(admitted.entry.runId, currentEntry.ownerFence, "failed", {
+      terminalEffectsPending: true,
+      processExitedAt: null,
+    })).resolves.toMatchObject({ ok: true, value: { status: "failed" } });
+    await db.update(heartbeatRuns).set({ processPid: 987654321, processExitedAt: null })
+      .where(eq(heartbeatRuns.id, admitted.entry.runId));
+
+    await expect(heartbeatService(db).reapOrphanedRuns())
+      .resolves.toMatchObject({ reaped: 1, runIds: [admitted.entry.runId] });
+
+    const [historicalSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, firstSpanId));
+    const [currentSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, currentEntry.span.id));
+    expect(historicalSpan).toMatchObject({ attemptId: firstAttemptId, writerLeaseReleasedAt: null });
+    expect(currentSpan).toMatchObject({
+      attemptId: currentEntry.attempt.ref.id,
+      writerLeaseReleasedAt: expect.any(Date),
+    });
+  });
+
+  it("requires provider rejection and writer quiescence before creating a distinct retry span", async () => {
+    const seeded = await seedNativeChatIdentity(db);
+    const adapter = createHeartbeatUnifiedAgentRunAdapter(db);
+    const execution = createUnifiedAgentRunExecutionService(adapter);
+    const admitted = await adapter.admit({
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      scene: "chat",
+      target: { type: "chat_conversation", id: seeded.conversationId },
+      idempotencyKey: "native-retry-span-fence",
+      runtimeType: "codex_local",
+      sessionIntent: { kind: "fresh" },
+      runtimeBindingId: seeded.bindingId,
+      runtimeSegmentId: seeded.segmentId,
+    });
+    const firstAttemptId = admitted.entry.attempt.ref.id;
+    await execution.markAcceptanceUnknown(admitted.entry.runId, admitted.entry.ownerFence, {
+      phase: "indeterminate",
+      reason: "provider call was dispatched",
+    });
+    await execution.reconcileAcceptance(admitted.entry.runId, admitted.entry.ownerFence, {
+      state: "rejected",
+      reason: "provider confirms it did not accept the input",
+    });
+    await execution.finishAttempt(admitted.entry.runId, admitted.entry.ownerFence, "failed", {
+      submissionPhase: "pre_submission",
+    });
+
+    await expect(execution.beginAttempt(admitted.entry.runId, admitted.entry.ownerFence, {
+      attemptIndex: 1,
+      runtimeType: "codex_local",
+      model: "fallback-model",
+      isFallback: true,
+      resumeSource: "same_session",
+    })).rejects.toMatchObject({ code: "attempt_conflict" });
+    await expect(db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, admitted.entry.runId)))
+      .resolves.toHaveLength(1);
+
+    await expect(execution.recordExecutionResult(admitted.entry.runId, admitted.entry.ownerFence, {
+      spanId: admitted.entry.span.id,
+      attemptId: firstAttemptId,
+      result: {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        submissionPhase: "pre_submission",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      },
+      error: true,
+    })).resolves.toMatchObject({ ok: true, value: { state: "sealed" } });
+
+    const retry = await execution.beginAttempt(admitted.entry.runId, admitted.entry.ownerFence, {
+      attemptIndex: 1,
+      runtimeType: "codex_local",
+      model: "fallback-model",
+      isFallback: true,
+      resumeSource: "same_session",
+    });
+    if (!retry.ok) throw new Error(`expected retry attempt to be admitted, got ${retry.reason}`);
+    expect(retry.value.ref.attemptIndex).toBe(1);
+    expect(retry.value.ref.id).not.toBe(firstAttemptId);
+    const spans = await db.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.runId, admitted.entry.runId))
+      .orderBy(runRuntimeSpans.ordinal);
+    expect(spans).toHaveLength(2);
+    expect(spans[0]).toMatchObject({
+      attemptId: firstAttemptId,
+      state: "sealed",
+      writerLeaseReleasedAt: expect.any(Date),
+    });
+    expect(spans[1]).toMatchObject({
+      attemptId: retry.value.ref.id,
+      ordinal: 1,
+      state: "open",
+      writerLeaseReleasedAt: null,
+    });
+    await expect(execution.recordExecutionResult(admitted.entry.runId, admitted.entry.ownerFence, {
+      spanId: spans[0]!.id,
+      attemptId: firstAttemptId,
+      result: {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+      },
+    })).resolves.toMatchObject({ ok: false, reason: "stale_owner" });
+  });
+
+  it("does not accept a stale process-exit timestamp while its provider PID is still alive", async () => {
+    const { runId } = await admitOrphanedNativeRun("pending");
+    await db.update(heartbeatRuns).set({ processPid: process.pid, processExitedAt: new Date() })
+      .where(eq(heartbeatRuns.id, runId));
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    const terminate = vi.fn(async () => true);
+
+    await expect(ensureProviderWriterStopped({
+      run: run!,
+      agentRuntimeType: "codex_local",
+      activeRunExecutions: new Set(),
+      terminateRunProcessAndWait: terminate,
+    })).resolves.toEqual({ ok: false, reason: "process_still_alive" });
+    expect(terminate).not.toHaveBeenCalled();
   });
 
   it("preserves terminal CAS watermarks, attempt atomicity, and pending effects", async () => {
@@ -908,7 +1245,12 @@ describe("heartbeat-backed unified agent run adapter", () => {
       attempt: { errorCode: "process_lost", error: "process lost" },
       nativeExecution: {
         spanId: admitted.entry.span.id,
-        result: { exitCode: 1, signal: null, timedOut: false },
+        result: {
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+        },
         error: true,
       },
     })).resolves.toMatchObject({ ok: true, value: { status: "failed" } });
@@ -1076,7 +1418,8 @@ describe("heartbeat-backed unified agent run adapter", () => {
       issueCreationMode: "manual_approval",
       planMode: false,
     });
-    const service = createUnifiedAgentRunService(createHeartbeatUnifiedAgentRunAdapter(db));
+    const adapter = createHeartbeatUnifiedAgentRunAdapter(db);
+    const service = createUnifiedAgentRunService(adapter);
     await expect(service.admit({
       orgId,
       agentId,
@@ -1138,7 +1481,9 @@ describe("heartbeat-backed unified agent run adapter", () => {
       .set({ currentSegmentId: segmentId })
       .where(and(eq(runtimeBindings.id, bindingId), eq(runtimeBindings.orgId, orgId)));
 
-    const service = createUnifiedAgentRunService(createHeartbeatUnifiedAgentRunAdapter(db));
+    const adapter = createHeartbeatUnifiedAgentRunAdapter(db);
+    const service = createUnifiedAgentRunService(adapter);
+    const execution = createUnifiedAgentRunExecutionService(adapter);
     const admitted = await service.admit({
       orgId,
       agentId,
@@ -1158,6 +1503,23 @@ describe("heartbeat-backed unified agent run adapter", () => {
       target: { type: "issue", id: issueId },
       span: { id: expect.any(String), state: "open" },
     });
+
+    await expect(execution.finishRun(admitted.entry.runId, admitted.entry.ownerFence, "succeeded", {
+      nativeExecution: {
+        spanId: admitted.entry.span.id,
+        result: {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          sessionId: "issue-native-session",
+          providerThreadId: "issue-native-session",
+          providerTurnId: "issue-native-turn",
+          resultJson: { providerExecutionRef: "issue-native-turn" },
+          nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+        },
+      },
+      terminalEffectsPending: false,
+    })).resolves.toMatchObject({ ok: true, value: { status: "succeeded", span: { state: "sealed" } } });
 
     const delegated = await service.admit({
       orgId,

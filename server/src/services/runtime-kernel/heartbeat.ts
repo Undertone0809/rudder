@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
+  hasConfirmedNativeWriterQuiescence,
   hasSessionCompactionThresholds
 } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
@@ -10,6 +11,7 @@ import {
   agentWakeupRequests,
   goalResultProposals,
   goals,
+  heartbeatRunAttempts,
   heartbeatRunEvents,
   heartbeatRuns,
   issues,
@@ -53,6 +55,7 @@ import { appendHeartbeatRunEvent } from "../run-events.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { workspaceOperationService } from "../workspace-operations.js";
 import { finishLatestHeartbeatRunAttempt } from "./heartbeat-attempt-ledger.js";
+import { releaseTerminalRunRuntimeSpanWriters } from "./native-session.js";
 import { isNativeTranscriptSource } from "./transcript-source.js";
 import {
   lockUnifiedAgentRunCapacity,
@@ -794,23 +797,7 @@ export function heartbeatService(
     };
     let usedUnifiedTerminal = false;
     if (commonAdmission && commonEntry && commonOwnerFence && runBeforeTerminal && commonExpectedOwnerToken === commonOwnerFence.ownerToken) {
-      const spanResult = {
-        resultJson: patch.resultJson ?? runBeforeTerminal.resultJson ?? null,
-        sessionId: patch.sessionIdAfter ?? runBeforeTerminal.sessionIdAfter ?? null,
-        sessionDisplayId: patch.sessionIdAfter ?? runBeforeTerminal.sessionIdAfter ?? null,
-        sessionParams: patch.sessionParamsAfterJson ?? runBeforeTerminal.sessionParamsAfterJson ?? null,
-        errorMessage: patch.error ?? runBeforeTerminal.error ?? null,
-        timedOut: status === "timed_out",
-        exitCode: patch.exitCode ?? runBeforeTerminal.exitCode ?? (status === "succeeded" ? 0 : 1),
-        signal: patch.signal ?? runBeforeTerminal.signal ?? null,
-      } as unknown as AgentRuntimeExecutionResult;
-      const nativeExecution = opts?.nativeExecution ?? (commonEntry.span.state === "open"
-        ? {
-          spanId: commonEntry.span.id,
-          result: spanResult,
-          error: status !== "succeeded",
-        }
-        : undefined);
+      const nativeExecution = opts?.nativeExecution;
       const terminal = await unifiedRunAdapter.finishRun(runId, commonOwnerFence, status, {
         error: patch.error ?? null,
         errorCode: patch.errorCode ?? null,
@@ -1088,8 +1075,71 @@ export function heartbeatService(
     return !activeRunExecutions.has(run.id);
   }
 
-  async function acknowledgeRunProcessExit(runId: string) {
-    return markHeartbeatRunProcessExited(db, runId);
+  async function acknowledgeRunProcessExit(
+    runId: string,
+    runtimeResult?: AgentRuntimeExecutionResult,
+    runtimeSpanId?: string | null,
+  ) {
+    const updated = await markHeartbeatRunProcessExited(db, runId);
+    const run = updated ?? await getRun(runId);
+    if (!run) return updated;
+
+    const resolveCurrentProofSpanId = async (candidateSpanId: string | null | undefined) => {
+      if (!candidateSpanId || !readCommonRunAdmission(run)) return null;
+      const [attempt] = await db.select({ id: heartbeatRunAttempts.id })
+        .from(heartbeatRunAttempts)
+        .where(and(
+          eq(heartbeatRunAttempts.orgId, run.orgId),
+          eq(heartbeatRunAttempts.runId, runId),
+        ))
+        .orderBy(desc(heartbeatRunAttempts.attemptIndex))
+        .limit(1);
+      const [span] = await db.select({ id: runRuntimeSpans.id, attemptId: runRuntimeSpans.attemptId })
+        .from(runRuntimeSpans)
+        .where(and(
+          eq(runRuntimeSpans.id, candidateSpanId),
+          eq(runRuntimeSpans.orgId, run.orgId),
+          eq(runRuntimeSpans.runId, runId),
+        ))
+        .limit(1);
+      return attempt && span?.attemptId === attempt.id ? span.id : null;
+    };
+
+    let quiescenceProof = runtimeResult && hasConfirmedNativeWriterQuiescence(runtimeResult)
+      ? runtimeResult
+      : null;
+    let proofSpanId: string | null = null;
+    if (quiescenceProof && runtimeSpanId && readCommonRunAdmission(run)) {
+      proofSpanId = await resolveCurrentProofSpanId(runtimeSpanId);
+    }
+    if (!quiescenceProof && !activeRunExecutions.has(runId)
+      && Number.isInteger(run.processPid) && run.processPid && run.processPid > 0) {
+      const agent = await getAgent(run.agentId);
+      if (agent && isTrackedLocalChildProcessAdapter(agent.agentRuntimeType) && !isProcessAlive(run.processPid)) {
+        const admission = readCommonRunAdmission(run);
+        const persistedSpanId = typeof admission?.stored.ownerFenceId === "string"
+          ? admission.stored.ownerFenceId
+          : null;
+        proofSpanId = await resolveCurrentProofSpanId(persistedSpanId);
+        if (proofSpanId) {
+          quiescenceProof = {
+            exitCode: null,
+            signal: "process-exit-confirmed",
+            timedOut: false,
+            nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+          };
+        }
+      }
+    }
+    if (quiescenceProof && proofSpanId) {
+      await releaseTerminalRunRuntimeSpanWriters(db, {
+        orgId: run.orgId,
+        runId,
+        spanId: proofSpanId,
+        proof: quiescenceProof,
+      });
+    }
+    return updated;
   }
 
   function abortRunExecution(runId: string) {

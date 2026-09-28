@@ -390,7 +390,7 @@ export async function transitionHeartbeatRunToTerminalInTransaction(
         status: input.status,
         ...(input.processExitedAt === undefined
           ? {}
-          : { processExitedAt: owner.processExitedAt ?? input.processExitedAt }),
+          : { processExitedAt: input.processExitedAt }),
         executionOwnerToken: null,
         executionLeaseExpiresAt: null,
         terminalEffectsPending,

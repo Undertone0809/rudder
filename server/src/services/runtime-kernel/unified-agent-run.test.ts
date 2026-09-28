@@ -30,6 +30,18 @@ function admission(overrides: Record<string, unknown> = {}) {
 }
 
 describe("unified agent run contract", () => {
+  it("normalizes an already normalized fresh session intent idempotently", () => {
+    const fresh = {
+      kind: "fresh" as const,
+      reuseScope: "none" as const,
+      sourceRunId: null,
+      sessionId: null,
+      sessionParams: null,
+    };
+    expect(normalizeUnifiedSessionIntent({ kind: "fresh" })).toEqual(fresh);
+    expect(normalizeUnifiedSessionIntent(fresh)).toEqual(fresh);
+  });
+
   it("covers the product scenes and normalizes session intent", () => {
     expect(UNIFIED_AGENT_RUN_SCENES).toEqual([
       "chat",
@@ -162,6 +174,47 @@ describe("unified agent run contract", () => {
       sourceRevision: "native-revision-2",
     })).toMatchObject({ ok: true, value: { state: "sealed", completeness: "complete" } });
     expect(ledger.get(admitted.entry.runId)?.attempt.ref.attemptIndex).toBe(1);
+  });
+
+  it.each(["partial", "unknown", "missing", "terminal_only"] as const)(
+    "does not mark a successful execution complete when its native transcript boundary is %s",
+    (boundaryStatus) => {
+      const ledger = createUnifiedAgentRunLedger();
+      const admitted = ledger.submit(admission());
+      const sealed = ledger.recordExecutionResult(admitted.entry.runId, admitted.entry.ownerFence, {
+        result: {
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          sessionId: "native-session-1",
+          resultJson: { transcriptBoundary: { status: boundaryStatus } },
+        },
+      });
+
+      expect(sealed).toMatchObject({
+        ok: true,
+        value: { state: "unresolved", completeness: "partial" },
+      });
+    },
+  );
+
+  it("does not complete a span when a successful native result has only a provider turn id", () => {
+    const ledger = createUnifiedAgentRunLedger();
+    const admitted = ledger.submit(admission({ runtimeType: "opencode_local" }));
+    const result = ledger.recordExecutionResult(admitted.entry.runId, admitted.entry.ownerFence, {
+      result: {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        sessionId: null,
+        providerTurnId: "provider-assistant-r1",
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { state: "unresolved", completeness: "unknown" },
+    });
   });
 
   it("does not mutate returned entries when a consumer edits its projection", () => {

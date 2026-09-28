@@ -1212,6 +1212,27 @@
       "when": 1790192000000,
       "tag": "0172_side_chat_provider_cleanup_protection_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1790578815000,
+      "tag": "0173_side_chat_first_inputs",
+      "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1790591887000,
+      "tag": "0174_native_resource_writer_fencing",
+      "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1790700000000,
+      "tag": "0175_side_chat_first_input_generation",
+      "breakpoints": true
     }
   ]
 }

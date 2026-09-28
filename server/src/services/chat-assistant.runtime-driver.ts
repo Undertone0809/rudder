@@ -1,8 +1,8 @@
 import type {
-  AgentRuntimeExecutionResult,
   AgentRuntimeApprovalDecision,
   AgentRuntimeApprovalRequest,
   AgentRuntimeExecutionContext,
+  AgentRuntimeExecutionResult,
   AgentRuntimeNetworkSubmissionPhase,
   ModelAttemptSpec,
   ServerAgentRuntimeModule,
@@ -13,9 +13,21 @@ import {
   createProfileBoundRuntimeProviderCapabilityResolverFromConfig,
   getRuntimeDriver,
 } from "../agent-runtimes/index.js";
-import { NATIVE_CHAT_RUNTIME_TYPES } from "./runtime-kernel/runtime-driver.js";
-import { currentNativeSession, ensureRuntimeBinding } from "./runtime-kernel/native-session.js";
 import { chatProviderResultIds } from "./chat-assistant.runtime-result.js";
+import type { ChatRuntimeSensitiveInputRequestHandler } from "./chat-runtime-sensitive-input.js";
+import type { RuntimeBindingInput } from "./runtime-kernel/native-session.js";
+import { currentNativeSession, ensureRuntimeBinding } from "./runtime-kernel/native-session.js";
+import type { RuntimeProviderBindingRef } from "./runtime-kernel/provider-capabilities.js";
+import type {
+  RuntimeDriver,
+  RuntimeDriverApprovalBridge,
+  RuntimeDriverFactoryOptions,
+  RuntimeDriverSessionBindingOwner,
+} from "./runtime-kernel/runtime-driver.js";
+import { NATIVE_CHAT_RUNTIME_TYPES } from "./runtime-kernel/runtime-driver.js";
+import type {
+  UnifiedAcceptanceReconciliationInput,
+} from "./runtime-kernel/unified-agent-run.contracts.js";
 import {
   createHeartbeatUnifiedAgentRunAdapter,
   createUnifiedAgentRunExecutionService,
@@ -23,18 +35,7 @@ import {
   type UnifiedAgentRunExecutionService,
   type UnifiedAgentRunService,
 } from "./runtime-kernel/unified-agent-run.integration.js";
-import type {
-  RuntimeDriver,
-  RuntimeDriverApprovalBridge,
-  RuntimeDriverFactoryOptions,
-  RuntimeDriverSessionBindingOwner,
-} from "./runtime-kernel/runtime-driver.js";
-import type { RuntimeProviderBindingRef } from "./runtime-kernel/provider-capabilities.js";
-import type {
-  UnifiedAcceptanceReconciliationInput,
-} from "./runtime-kernel/unified-agent-run.contracts.js";
 import type { UnifiedAttemptFinishInput } from "./runtime-kernel/unified-agent-run.js";
-import type { RuntimeBindingInput } from "./runtime-kernel/native-session.js";
 
 type ChatDriverPortsDependencies = {
   ensureBinding?: RuntimeDriverSessionBindingOwner["ensureBinding"];
@@ -58,9 +59,13 @@ type ChatAttemptDriverResolverInput = {
 };
 type ChatAttemptPortsInput = ChatAttemptDriverResolverInput & {
   runId: string;
+  orgId: string;
+  chatId: string;
   initialDriver: RuntimeDriver | null;
   nativeDriverRequired: boolean;
   getAttemptId: () => string | null | undefined;
+  abortSignal?: AbortSignal;
+  requestRuntimeSensitiveInput?: ChatRuntimeSensitiveInputRequestHandler;
   finishAttempt: (
     failure: AgentRuntimeExecutionResult | Error,
     phase: AgentRuntimeNetworkSubmissionPhase | null,
@@ -105,6 +110,16 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function runtimeRequestId(values: unknown[]) {
+  for (const value of values) {
+    const candidate = typeof value === "number" && Number.isSafeInteger(value)
+      ? String(value)
+      : nonEmptyString(value);
+    if (candidate) return candidate;
+  }
+  return randomUUID();
 }
 
 export function createChatAssistantRuntimeDriverPorts(
@@ -206,14 +221,15 @@ export function createChatAssistantRuntimeDriverPorts(
     return {
       requestApproval: async (request: AgentRuntimeApprovalRequest) => {
         const event = record(request.payload.event);
-        const requestId = nonEmptyString(
-          request.payload.requestId
-            ?? request.payload.providerRequestId
-            ?? request.payload.controlRequestId
-            ?? request.payload.request_id
-            ?? event?.requestId
-            ?? event?.request_id,
-        ) ?? randomUUID();
+        const requestId = runtimeRequestId([
+          request.payload.requestId,
+          request.payload.providerRequestId,
+          request.payload.controlRequestId,
+          request.payload.request_id,
+          request.payload.nativeRequestId,
+          event?.requestId,
+          event?.request_id,
+        ]);
         const bridgedRequest = { ...request, payload: { ...request.payload, requestId } };
         const handle = await bridge.requestApproval(bridgedRequest);
         requests.set(handle.id, bridgedRequest);
@@ -249,6 +265,15 @@ export function createChatAssistantRuntimeDriverPorts(
       },
       requestApproval: callbacks.requestApproval,
       waitForApproval: callbacks.waitForApproval,
+      requestTransientInput: async ({ kind }: { kind: "secret" | "sudo" }) => {
+        const attemptId = input.getAttemptId()?.trim();
+        if (!attemptId || !input.requestRuntimeSensitiveInput) return { status: "aborted" as const };
+        return input.requestRuntimeSensitiveInput({
+          binding: { orgId: input.orgId, chatId: input.chatId, runId: input.runId, attemptId },
+          kind,
+          ...(input.abortSignal ? { signal: input.abortSignal } : {}),
+        });
+      },
       onAttemptResult: async (_attempt: ModelAttemptSpec, result: AgentRuntimeExecutionResult, phase: AgentRuntimeNetworkSubmissionPhase) => {
         submissionPhase = phase;
         try {

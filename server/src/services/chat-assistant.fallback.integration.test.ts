@@ -1,3 +1,10 @@
+import type {
+  AgentRuntimeExecutionContext,
+  AgentRuntimeExecutionResult,
+  ModelAttemptSpec,
+  ServerAgentRuntimeModule,
+} from "@rudderhq/agent-runtime-utils";
+import { hasConfirmedNativeWriterQuiescence } from "@rudderhq/agent-runtime-utils";
 import {
   agents,
   applyPendingMigrations,
@@ -13,27 +20,21 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
-import { asc, eq, inArray } from "drizzle-orm";
-import fs from "node:fs";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type {
-  AgentRuntimeExecutionContext,
-  AgentRuntimeExecutionResult,
-  ModelAttemptSpec,
-  ServerAgentRuntimeModule,
-} from "@rudderhq/agent-runtime-utils";
 import { chatAgentRunService } from "./chat-agent-runs.js";
 import {
   chatAttemptFailureFinishInput,
   createChatAssistantRuntimeDriverPorts,
 } from "./chat-assistant.runtime-driver.js";
 import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
-import type { RuntimeDriver, RuntimeDriverApprovalBridge } from "./runtime-kernel/runtime-driver.js";
 import { currentNativeSession, ensureRuntimeBinding } from "./runtime-kernel/native-session.js";
+import type { RuntimeDriver, RuntimeDriverApprovalBridge } from "./runtime-kernel/runtime-driver.js";
 import {
   createHeartbeatUnifiedAgentRunAdapter,
   createUnifiedAgentRunExecutionService,
@@ -122,15 +123,21 @@ describe("Chat native fallback Attempt persistence", () => {
     const orgIds = [...createdOrgIds];
     createdOrgIds.clear();
     if (orgIds.length === 0) return;
-    await db.delete(heartbeatRunEvents).where(inArray(heartbeatRunEvents.orgId, orgIds));
-    await db.delete(heartbeatRunAttempts).where(inArray(heartbeatRunAttempts.orgId, orgIds));
-    await db.delete(runRuntimeSpans).where(inArray(runRuntimeSpans.orgId, orgIds));
-    await db.delete(heartbeatRuns).where(inArray(heartbeatRuns.orgId, orgIds));
-    await db.delete(nativeSegments).where(inArray(nativeSegments.orgId, orgIds));
-    await db.delete(runtimeBindings).where(inArray(runtimeBindings.orgId, orgIds));
-    await db.delete(chatConversations).where(inArray(chatConversations.orgId, orgIds));
-    await db.delete(agents).where(inArray(agents.orgId, orgIds));
-    await db.delete(organizations).where(inArray(organizations.id, orgIds));
+    const activeWriterSpans = await db.select({ orgId: runRuntimeSpans.orgId })
+      .from(runRuntimeSpans)
+      .where(and(inArray(runRuntimeSpans.orgId, orgIds), isNull(runRuntimeSpans.writerLeaseReleasedAt)));
+    const activeWriterOrgIds = new Set(activeWriterSpans.map((span) => span.orgId));
+    const cleanupOrgIds = orgIds.filter((orgId) => !activeWriterOrgIds.has(orgId));
+    if (cleanupOrgIds.length === 0) return;
+    await db.delete(heartbeatRunEvents).where(inArray(heartbeatRunEvents.orgId, cleanupOrgIds));
+    await db.delete(heartbeatRunAttempts).where(inArray(heartbeatRunAttempts.orgId, cleanupOrgIds));
+    await db.delete(runRuntimeSpans).where(inArray(runRuntimeSpans.orgId, cleanupOrgIds));
+    await db.delete(heartbeatRuns).where(inArray(heartbeatRuns.orgId, cleanupOrgIds));
+    await db.delete(nativeSegments).where(inArray(nativeSegments.orgId, cleanupOrgIds));
+    await db.delete(runtimeBindings).where(inArray(runtimeBindings.orgId, cleanupOrgIds));
+    await db.delete(chatConversations).where(inArray(chatConversations.orgId, cleanupOrgIds));
+    await db.delete(agents).where(inArray(agents.orgId, cleanupOrgIds));
+    await db.delete(organizations).where(inArray(organizations.id, cleanupOrgIds));
   });
 
   afterAll(async () => {
@@ -148,7 +155,7 @@ describe("Chat native fallback Attempt persistence", () => {
       id: orgId,
       name: orgName,
       urlKey: deriveOrganizationUrlKey(orgName),
-      issuePrefix: "CHAT",
+      issuePrefix: `C${orgId.replaceAll("-", "").slice(0, 6).toUpperCase()}`,
       requireBoardApprovalForNewAgents: false,
     });
     await db.insert(agents).values({
@@ -197,6 +204,8 @@ describe("Chat native fallback Attempt persistence", () => {
     run: ChatRun;
     runs: ChatRunService;
     driver: RuntimeDriver;
+    orgId: string;
+    chatId: string;
   }) {
     const approvalBridge = {
       requestApproval: vi.fn(),
@@ -213,6 +222,8 @@ describe("Chat native fallback Attempt persistence", () => {
       continuationTransport: {},
       approvalBridge,
       runId: input.run.id,
+      orgId: input.orgId,
+      chatId: input.chatId,
       initialDriver: input.driver,
       nativeDriverRequired: true,
       getAttemptId: () => input.run.runtimeAttemptRef?.id,
@@ -230,6 +241,7 @@ describe("Chat native fallback Attempt persistence", () => {
   async function executeFallback(input: {
     run: ChatRun;
     driver: RuntimeDriver;
+    onAttemptSubmissionStart: (attempt: ModelAttemptSpec) => Promise<void>;
     onAttemptStart: (attempt: ModelAttemptSpec) => Promise<void>;
     onAttemptResult: (
       attempt: ModelAttemptSpec,
@@ -275,6 +287,7 @@ describe("Chat native fallback Attempt persistence", () => {
       nativeDriverRequired: true,
       resolveDriver: () => input.driver,
       onAttemptStart: input.onAttemptStart,
+      onAttemptSubmissionStart: input.onAttemptSubmissionStart,
       onAttemptResult: input.onAttemptResult,
       onAttemptFailure: input.onAttemptFailure,
     });
@@ -282,8 +295,31 @@ describe("Chat native fallback Attempt persistence", () => {
     return result;
   }
 
+  async function recordAttemptResult(
+    run: ChatRun,
+    runs: ChatRunService,
+    orgId: string,
+    attempt: ModelAttemptSpec,
+    result: AgentRuntimeExecutionResult,
+  ) {
+    const attemptRef = run.runtimeAttemptRef;
+    const spanId = run.runtimeSpanId?.trim();
+    expect(attemptRef?.attemptIndex).toBe(attempt.index);
+    expect(spanId).toBeTruthy();
+    const recorded = await runs.recordNativeExecutionResult(run.id, result, {
+      orgId,
+      spanId,
+      attemptId: attemptRef!.id,
+      ownerToken: run.runtimeSpanOwnerToken!,
+      attemptEpoch: run.runtimeSpanAttemptEpoch!,
+    });
+    if (!recorded) throw new Error("Native execution result was not recorded");
+    expect(recorded).toMatchObject({ id: spanId, attemptRef: { id: attemptRef?.id } });
+    return recorded;
+  }
+
   it("finishes a known pre-submission attempt in PostgreSQL before Chat starts fallback", async () => {
-    const { run, runs } = await createRunFixture("Chat safe fallback");
+    const { run, runs, orgId, conversationId } = await createRunFixture("Chat safe fallback");
     const persistence = createHeartbeatUnifiedAgentRunAdapter(db);
     const execution = createUnifiedAgentRunExecutionService(persistence);
     let submissionCount = 0;
@@ -303,6 +339,7 @@ describe("Chat native fallback Attempt persistence", () => {
             errorCode: "provider_unavailable",
             errorMessage: "Primary provider was not submitted",
             submissionPhase: "pre_submission",
+            nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
           };
         }
         const persisted = await db.select({
@@ -323,14 +360,22 @@ describe("Chat native fallback Attempt persistence", () => {
           errorCode: "provider_unavailable",
           errorMessage: "Fallback provider was not submitted",
           submissionPhase: "pre_submission",
+          nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
         };
       },
     } as unknown as RuntimeDriver;
-    const ports = createAttemptPorts({ run, runs, driver });
+    const ports = createAttemptPorts({ run, runs, driver, orgId, chatId: conversationId });
 
     const result = await executeFallback({
       run,
       driver,
+      onAttemptSubmissionStart: async (attempt) => {
+        expect(run.runtimeAttemptRef?.attemptIndex).toBe(attempt.index);
+        expect(await runs.markAcceptanceUnknown(run, {
+          phase: "indeterminate",
+          reason: "test native provider dispatch",
+        })).not.toBeNull();
+      },
       onAttemptStart: async (attempt) => {
         await runs.beginRuntimeAttempt(run, {
           attemptIndex: attempt.index,
@@ -341,7 +386,10 @@ describe("Chat native fallback Attempt persistence", () => {
           resumeSource: "fresh",
         });
       },
-      onAttemptResult: ports.onAttemptResult,
+      onAttemptResult: async (attempt, attemptResult, submissionPhase) => {
+        await recordAttemptResult(run, runs, orgId, attempt, attemptResult);
+        await ports.onAttemptResult(attempt, attemptResult, submissionPhase);
+      },
       onAttemptFailure: ports.onAttemptFailure,
     });
 
@@ -370,7 +418,7 @@ describe("Chat native fallback Attempt persistence", () => {
   });
 
   it("keeps unknown native submission fenced from Chat fallback", async () => {
-    const { run, runs } = await createRunFixture("Chat unknown submission");
+    const { run, runs, orgId, conversationId } = await createRunFixture("Chat unknown submission");
     const persistence = createHeartbeatUnifiedAgentRunAdapter(db);
     const execution = createUnifiedAgentRunExecutionService(persistence);
     const driver = {
@@ -386,12 +434,20 @@ describe("Chat native fallback Attempt persistence", () => {
         errorCode: "provider_unavailable",
         errorMessage: "Provider acceptance is unknown",
         submissionPhase: "indeterminate",
+        nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
       })),
     } as unknown as RuntimeDriver;
-    const ports = createAttemptPorts({ run, runs, driver });
+    const ports = createAttemptPorts({ run, runs, driver, orgId, chatId: conversationId });
     const result = await executeFallback({
       run,
       driver,
+      onAttemptSubmissionStart: async (attempt) => {
+        expect(run.runtimeAttemptRef?.attemptIndex).toBe(attempt.index);
+        expect(await runs.markAcceptanceUnknown(run, {
+          phase: "indeterminate",
+          reason: "test native provider dispatch",
+        })).not.toBeNull();
+      },
       onAttemptStart: async (attempt) => {
         await runs.beginRuntimeAttempt(run, {
           attemptIndex: attempt.index,
@@ -402,7 +458,10 @@ describe("Chat native fallback Attempt persistence", () => {
           resumeSource: "fresh",
         });
       },
-      onAttemptResult: ports.onAttemptResult,
+      onAttemptResult: async (attempt, attemptResult, submissionPhase) => {
+        await recordAttemptResult(run, runs, orgId, attempt, attemptResult);
+        await ports.onAttemptResult(attempt, attemptResult, submissionPhase);
+      },
       onAttemptFailure: ports.onAttemptFailure,
     });
 
@@ -426,5 +485,157 @@ describe("Chat native fallback Attempt persistence", () => {
       resumeSource: "fresh",
     })).rejects.toThrow("cannot create a retry attempt before reconciling provider acceptance");
     await runs.finalizeRun(run.id, { status: "failed", error: "Provider acceptance is unknown" });
+  });
+
+  it("does not start another fallback when a provider throws after dispatch checkpoint", async () => {
+    const { run, runs, orgId, conversationId } = await createRunFixture("Chat thrown provider dispatch");
+    const driver = {
+      runtimeType: "codex_local",
+      submitInput: vi.fn(async (): Promise<AgentRuntimeExecutionResult> => {
+        throw new Error("Provider transport failed after dispatch");
+      }),
+    } as unknown as RuntimeDriver;
+    const ports = createAttemptPorts({ run, runs, driver, orgId, chatId: conversationId });
+    const startedAttemptIndices: number[] = [];
+    const onAttemptResult = vi.fn(ports.onAttemptResult);
+    const onAttemptFailure = vi.fn(ports.onAttemptFailure);
+
+    await expect(executeFallback({
+      run,
+      driver,
+      onAttemptSubmissionStart: async (attempt) => {
+        expect(run.runtimeAttemptRef?.attemptIndex).toBe(attempt.index);
+        expect(await runs.markAcceptanceUnknown(run, {
+          phase: "indeterminate",
+          reason: "test native provider dispatch",
+        })).not.toBeNull();
+      },
+      onAttemptStart: async (attempt) => {
+        startedAttemptIndices.push(attempt.index);
+        await runs.beginRuntimeAttempt(run, {
+          attemptIndex: attempt.index,
+          fallbackIndex: attempt.fallbackIndex,
+          runtimeType: attempt.agentRuntimeType ?? "codex_local",
+          model: attempt.model,
+          isFallback: attempt.isFallback,
+          resumeSource: "fresh",
+        });
+      },
+      onAttemptResult,
+      onAttemptFailure,
+    })).rejects.toThrow("Provider transport failed after dispatch");
+
+    expect(driver.submitInput).toHaveBeenCalledTimes(1);
+    expect(startedAttemptIndices).toEqual([0]);
+    expect(onAttemptResult).not.toHaveBeenCalled();
+    expect(onAttemptFailure).not.toHaveBeenCalled();
+    const attempts = await db.select({
+      attemptIndex: heartbeatRunAttempts.attemptIndex,
+      status: heartbeatRunAttempts.status,
+      submissionPhase: heartbeatRunAttempts.submissionPhase,
+    }).from(heartbeatRunAttempts)
+      .where(eq(heartbeatRunAttempts.runId, run.id))
+      .orderBy(asc(heartbeatRunAttempts.attemptIndex));
+    expect(attempts).toEqual([
+      expect.objectContaining({ attemptIndex: 0, status: "started", submissionPhase: "indeterminate" }),
+    ]);
+
+    await runs.finishRuntimeAttempt(run, {
+      status: "failed",
+      submissionPhase: "indeterminate",
+      error: "Provider acceptance remains unknown",
+    });
+    await runs.finalizeRun(run.id, { status: "failed", error: "Provider acceptance remains unknown" });
+  });
+
+  it("records the exact native result and writer quiescence before starting fallback", async () => {
+    const { run, runs, orgId, conversationId } = await createRunFixture("Chat fallback span result");
+    const persistence = createHeartbeatUnifiedAgentRunAdapter(db);
+    const execution = createUnifiedAgentRunExecutionService(persistence);
+    let submissionCount = 0;
+    let firstAttemptId: string | null = null;
+    const driver = {
+      runtimeType: "codex_local",
+      reconcileExecution: async (request: Parameters<RuntimeDriver["reconcileExecution"]>[0]) => ({
+        status: "supported" as const,
+        value: await execution.reconcileAcceptance(request.runId, request.fence, request.outcome),
+      }),
+      submitInput: async (): Promise<AgentRuntimeExecutionResult> => {
+        submissionCount += 1;
+        if (submissionCount === 1) {
+          firstAttemptId = run.runtimeAttemptRef?.id ?? null;
+          return {
+            exitCode: 1,
+            signal: null,
+            timedOut: false,
+            errorCode: "provider_unavailable",
+            errorMessage: "Primary provider was not submitted",
+            submissionPhase: "pre_submission",
+            nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+          };
+        }
+        const spans = await db.select({
+          attemptId: runRuntimeSpans.attemptId,
+          state: runRuntimeSpans.state,
+          writerLeaseReleasedAt: runRuntimeSpans.writerLeaseReleasedAt,
+        }).from(runRuntimeSpans)
+          .where(eq(runRuntimeSpans.runId, run.id))
+          .orderBy(asc(runRuntimeSpans.ordinal));
+        expect(firstAttemptId).toBeTruthy();
+        expect(spans[0]).toMatchObject({
+          attemptId: firstAttemptId,
+          state: "sealed",
+          writerLeaseReleasedAt: expect.any(Date),
+        });
+        return {
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          errorCode: "provider_unavailable",
+          errorMessage: "Fallback provider was not submitted",
+          submissionPhase: "pre_submission",
+          nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+        };
+      },
+    } as unknown as RuntimeDriver;
+    const ports = createAttemptPorts({ run, runs, driver, orgId, chatId: conversationId });
+    const result = await executeFallback({
+      run,
+      driver,
+      onAttemptSubmissionStart: async (attempt) => {
+        expect(run.runtimeAttemptRef?.attemptIndex).toBe(attempt.index);
+        expect(await runs.markAcceptanceUnknown(run, {
+          phase: "indeterminate",
+          reason: "test native provider dispatch",
+        })).not.toBeNull();
+      },
+      onAttemptStart: async (attempt) => {
+        await runs.beginRuntimeAttempt(run, {
+          attemptIndex: attempt.index,
+          fallbackIndex: attempt.fallbackIndex,
+          runtimeType: attempt.agentRuntimeType ?? "codex_local",
+          model: attempt.model,
+          isFallback: attempt.isFallback,
+          resumeSource: "fresh",
+        });
+      },
+      onAttemptResult: async (attempt, attemptResult, submissionPhase) => {
+        const recorded = await recordAttemptResult(run, runs, orgId, attempt, attemptResult);
+        expect(hasConfirmedNativeWriterQuiescence(attemptResult)).toBe(true);
+        if (!recorded) throw new Error("Native attempt result was not persisted before Chat fallback");
+        expect(recorded.state).toBe("sealed");
+        await ports.onAttemptResult(attempt, attemptResult, submissionPhase);
+      },
+      onAttemptFailure: ports.onAttemptFailure,
+    });
+
+    expect(result.errorMessage).toBe("Fallback provider was not submitted");
+    expect(submissionCount).toBe(2);
+    await runs.finishRuntimeAttempt(run, {
+      status: "failed",
+      submissionPhase: "pre_submission",
+      error: result.errorMessage,
+    });
+    await runs.finalizeRun(run.id, { status: "failed", error: result.errorMessage });
   });
 });

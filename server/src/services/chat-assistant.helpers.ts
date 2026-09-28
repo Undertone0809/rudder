@@ -53,6 +53,7 @@ import {
   buildChatInlineVisualPromptSection
 } from "./chat-assistant.inline-visuals.js";
 import { validateIssueProposalAttachmentSafety } from "./chat-assistant.proposal-validation.js";
+import type { ChatRuntimeSensitiveInputRequestHandler } from "./chat-runtime-sensitive-input.js";
 
 export * from "./chat-assistant.contracts.js";
 export * from "./chat-assistant.native-protocol.js";
@@ -126,6 +127,7 @@ export interface StreamChatAssistantReplyInput extends GenerateChatAssistantRepl
   stream?: boolean;
   abortSignal?: AbortSignal;
   controlCoordinator?: AgentRuntimeControlCoordinator;
+  requestRuntimeSensitiveInput?: ChatRuntimeSensitiveInputRequestHandler;
   onRunCreated?: (runId: string) => Promise<void> | void;
   onWaitingForNetwork?: (suspension: AgentRuntimeNetworkSuspension) => Promise<void> | void;
   onAssistantDelta?: (delta: string) => Promise<void> | void;

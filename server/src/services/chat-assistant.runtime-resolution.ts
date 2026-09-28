@@ -1,29 +1,83 @@
+import type { Db } from "@rudderhq/db";
 import type { AgentRuntimeType, ChatContextLink, ChatConversation } from "@rudderhq/shared";
 import { AGENT_RUNTIME_TYPES, shortRefFor } from "@rudderhq/shared";
-import type { Db } from "@rudderhq/db";
+import { randomUUID } from "node:crypto";
 import { discoverAgentRuntimeModels, findServerAdapter } from "../agent-runtimes/index.js";
 import { agentRunContextService } from "./agent-run-context.js";
 import { agentService } from "./agents.js";
 import {
   asRecord,
   CHAT_UNSUPPORTED_ADAPTER_TYPES,
-  chatExecutionConfig,
   ChatAssistantStreamError,
+  chatExecutionConfig,
   linkedGoalIdForChat,
   linkedIssueIdsForChat,
   linkedProjectIdForChat,
   modelLabel,
   safeTrim,
   summarizeRuntimeSkills,
-  type ResolvedChatRuntimeSource,
   unavailableAgentDescriptor,
   unconfiguredDescriptor,
+  type ResolvedChatRuntimeSource,
 } from "./chat-assistant.helpers.js";
 import { enrichConversationRuntimeDescriptors } from "./chat-assistant.runtime-batch.js";
 import { applyChatRuntimeOverrides, chatEffortFromConfig } from "./chat-assistant.runtime-overrides.js";
 
 export function isAgentRuntimeType(value: string): value is AgentRuntimeType {
   return (AGENT_RUNTIME_TYPES as readonly string[]).includes(value);
+}
+
+export function createChatAssistantAvailability(
+  resolveChatInvocation: ReturnType<typeof createChatAssistantRuntimeResolution>["resolveChatInvocation"],
+) {
+  return {
+    getChatAssistantAvailability: async (conversation: ChatConversation) => {
+      const resolved = await resolveChatInvocation({
+        conversation,
+        contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
+        materializeMissingRuntimeSkills: false,
+      });
+      return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
+        ? { ...resolved.runtimeSource.descriptor, available: true as const }
+        : {
+          ...resolved.runtimeSource.descriptor,
+          available: false as const,
+          error: resolved.availabilityError ?? resolved.runtimeSource.descriptor.error,
+        };
+    },
+    getDraftChatAssistantAvailability: async (input: {
+      orgId: string;
+      preferredAgentId: string | null;
+      modelOverride?: string | null;
+      effortOverride?: string | null;
+      contextLinks?: Array<Pick<ChatContextLink, "entityType" | "entityId"> & Partial<ChatContextLink>>;
+      planMode?: boolean;
+    }) => {
+      const contextLinks = (input.contextLinks ?? []) as ChatContextLink[];
+      const resolved = await resolveChatInvocation({
+        conversation: {
+          id: randomUUID(),
+          orgId: input.orgId,
+          preferredAgentId: input.preferredAgentId,
+          modelOverride: input.modelOverride ?? null,
+          effortOverride: input.effortOverride ?? null,
+          primaryIssueId: null,
+          contextLinks,
+          planMode: input.planMode ?? false,
+        },
+        contextLinks,
+        prepareExecutionContext: false,
+        materializeMissingRuntimeSkills: false,
+      });
+      return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
+        ? { ...resolved.runtimeSource.descriptor, available: true as const }
+        : {
+          ...resolved.runtimeSource.descriptor,
+          available: false as const,
+          error: resolved.availabilityError ?? resolved.runtimeSource.descriptor.error,
+        };
+    },
+  };
 }
 
 export function chatRuntimePreparationStreamError(error: unknown) {

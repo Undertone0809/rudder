@@ -1,10 +1,10 @@
+import { hasConfirmedNativeWriterQuiescence } from "@rudderhq/agent-runtime-utils";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasConfirmedNativeWriterQuiescence } from "@rudderhq/agent-runtime-utils";
 import { execute as executeOpenCodeAdapter } from "./execute.js";
 import {
   createOpenCodeLocalProviderCapabilityResolver,

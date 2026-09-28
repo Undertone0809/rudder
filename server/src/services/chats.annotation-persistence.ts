@@ -4,6 +4,7 @@ import {
   chatAttachments,
   chatConversations,
   chatMessages,
+  sideChatFirstInputs,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -91,6 +92,8 @@ export type AddUserChatMessageOptions = {
   attachmentFileIndexesByAnnotationId?: Map<string, number[]>;
   clientMutationId?: string | null;
   clientMutationFingerprint?: string | null;
+  sideChatFirstInputClaimToken?: string | null;
+  sideChatFirstInputFingerprint?: string | null;
   onIdempotentReplay?: (messageId: string) => void;
   onTransactionCommitted?: (messageId: string) => void;
 };
@@ -206,7 +209,39 @@ export function createChatAnnotationMessagePersistence(
     options: AddUserChatMessageOptions = {},
   ) {
     const persist = () => db.transaction(async (tx) => {
-      await assertChatWriteAdmitted(tx, orgId, conversationId);
+      const isSideChat = await assertChatWriteAdmitted(tx, orgId, conversationId);
+      const firstInputIntent = isSideChat
+        ? await tx.select().from(sideChatFirstInputs).where(and(
+          eq(sideChatFirstInputs.orgId, orgId),
+          eq(sideChatFirstInputs.conversationId, conversationId),
+        )).for("update").then((rows) => rows[0] ?? null)
+        : null;
+      if (isSideChat && !firstInputIntent) {
+        throw conflict("Side Chat creation intent is missing", {
+          code: "side_chat_first_input_intent_missing",
+        });
+      }
+      let acceptSideChatFirstInput = false;
+      if (options.sideChatFirstInputClaimToken) {
+        if (
+          !firstInputIntent
+          || firstInputIntent.status !== "pending"
+          || firstInputIntent.claimToken !== options.sideChatFirstInputClaimToken
+          || firstInputIntent.requestClientMutationId !== (options.clientMutationId ?? null)
+          || firstInputIntent.requestFingerprint !== options.sideChatFirstInputFingerprint
+        ) {
+          throw conflict("Side Chat first-input claim is no longer current", {
+            code: "side_chat_first_input_claim_lost",
+          });
+        }
+        acceptSideChatFirstInput = true;
+      } else if (firstInputIntent?.status === "pending") {
+        throw conflict("Side Chat first input is being accepted by another request", {
+          code: "side_chat_first_input_in_progress",
+        });
+      } else if (firstInputIntent?.status === "awaiting") {
+        acceptSideChatFirstInput = true;
+      }
       const now = new Date();
       let target: MessageRow | null = null;
       let turnId: string = randomUUID();
@@ -441,6 +476,30 @@ export function createChatAnnotationMessagePersistence(
           eq(chatConversations.id, conversationId),
           eq(chatConversations.orgId, orgId),
         ));
+      if (acceptSideChatFirstInput && firstInputIntent) {
+        const [acceptedIntent] = await tx.update(sideChatFirstInputs).set({
+          status: "accepted",
+          requestClientMutationId: options.clientMutationId ?? null,
+          requestFingerprint: options.sideChatFirstInputFingerprint
+            ?? options.clientMutationFingerprint
+            ?? firstInputIntent.requestFingerprint,
+          claimToken: null,
+          claimExpiresAt: null,
+          userMessageId: message.id,
+          updatedAt: now,
+        }).where(and(
+          eq(sideChatFirstInputs.conversationId, conversationId),
+          eq(sideChatFirstInputs.status, firstInputIntent.status),
+          firstInputIntent.status === "pending"
+            ? eq(sideChatFirstInputs.claimToken, options.sideChatFirstInputClaimToken!)
+            : undefined,
+        )).returning({ conversationId: sideChatFirstInputs.conversationId });
+        if (!acceptedIntent) {
+          throw conflict("Side Chat first-input claim changed before message acceptance", {
+            code: "side_chat_first_input_claim_lost",
+          });
+        }
+      }
       return { messageId: message.id, replayed: false };
     });
     let persisted: { messageId: string; replayed: boolean } | null = null;

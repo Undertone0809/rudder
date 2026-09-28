@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
+import type { AuthSession } from "@/api/auth";
 import { savedViewKeepInputFromSidePanelTarget } from "@/lib/messenger-saved-views";
+import { queryKeys } from "@/lib/queryKeys";
 import { sidePanelTargetKey, type SidePanelTarget } from "@/lib/side-panel-targets";
-import { act, useEffect, useRef } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, useEffect, useRef, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SidePanelProvider, useSidePanel } from "./SidePanelContext";
+
+const mockOrganizationSelection = vi.hoisted(() => ({ selectedOrganizationId: "org-1" as string | null }));
+
+vi.mock("@/context/OrganizationContext", () => ({
+  useOptionalOrganization: () => mockOrganizationSelection,
+}));
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -17,6 +26,16 @@ const issueTarget: SidePanelTarget = {
   ref: "ORZ-13",
   commentId: null,
   label: "ORZ-13 create coding agent",
+};
+
+const sideChatTarget: SidePanelTarget = {
+  kind: "side_chat",
+  sourceConversationId: "source-chat",
+  sourceMessageId: "source-answer",
+  sourcePreview: "Do not copy this message preview into panel state.",
+  conversationId: "side-chat-1",
+  clientMutationId: "side-chat-mutation-1",
+  label: "Side Chat",
 };
 
 function stubDesktopShell() {
@@ -57,6 +76,24 @@ function stubDesktopShell() {
 }
 
 let sidePanelControls: ReturnType<typeof useSidePanel> | null = null;
+let queryClient: QueryClient | null = null;
+
+function createSidePanelTestQueryClient() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(queryKeys.auth.session, {
+    session: { id: "session-1", userId: "user-1" },
+    user: { id: "user-1", email: "same@example.com", name: "Same User" },
+  });
+  return client;
+}
+
+function renderSidePanelTree(children: ReactNode) {
+  return (
+    <QueryClientProvider client={queryClient!}>
+      <SidePanelProvider>{children}</SidePanelProvider>
+    </QueryClientProvider>
+  );
+}
 
 function SidePanelProbe({
   onBeforeOpen,
@@ -170,13 +207,12 @@ function renderSidePanelProvider(
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  queryClient = createSidePanelTestQueryClient();
 
   act(() => {
-    root.render(
-      <SidePanelProvider>
-        <SidePanelProbe onBeforeOpen={onBeforeOpen} onCloseRequest={onCloseRequest} />
-      </SidePanelProvider>,
-    );
+    root.render(renderSidePanelTree(
+      <SidePanelProbe onBeforeOpen={onBeforeOpen} onCloseRequest={onCloseRequest} />,
+    ));
   });
 
   return { container, root };
@@ -207,13 +243,10 @@ function renderSidePanelOpenTargetEffectProbe() {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
+  queryClient = createSidePanelTestQueryClient();
 
   act(() => {
-    root.render(
-      <SidePanelProvider>
-        <SidePanelOpenTargetEffectProbe />
-      </SidePanelProvider>,
-    );
+    root.render(renderSidePanelTree(<SidePanelOpenTargetEffectProbe />));
   });
 
   return { container, root };
@@ -241,11 +274,21 @@ describe("SidePanelProvider context visibility", () => {
     }
     root = null;
     sidePanelControls = null;
+    queryClient?.clear();
+    queryClient = null;
+    mockOrganizationSelection.selectedOrganizationId = "org-1";
     container?.remove();
     container = null;
     vi.unstubAllGlobals();
     Reflect.deleteProperty(window, "desktopShell");
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    for (const key of [
+      "rudder:side-chat-panel-state:v1:user-user-1:org-org-1:chat%3Asource-chat",
+      "rudder:side-chat-panel-state:v1:user-user-1:org-org-2:chat%3Asource-chat",
+      "rudder:side-chat-panel-state:v1:user-user-2:org-org-1:chat%3Asource-chat",
+      "rudder:side-chat-panel-state:v1:user-session-user-2:org-org-1:chat%3Asource-chat",
+      "rudder:side-chat-panel-state:v1:user-legacy-user:org-org-1:chat%3Asource-chat",
+    ]) window.localStorage.removeItem(key);
     window.history.replaceState({}, "", "/");
   });
 
@@ -295,6 +338,141 @@ describe("SidePanelProvider context visibility", () => {
     expect(text(container, "open")).toBe("true");
     expect(text(container, "active-key")).toBe("run-debug-chat:org-a:run-1");
     expect(text(container, "tab-count")).toBe("1");
+  });
+
+  it("opens Side Chat in the mobile full-screen panel without routing to its parent", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    window.history.replaceState({}, "", "/rudder-studio/messenger/chat/source-chat");
+    ({ container, root } = renderSidePanelProvider());
+
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    act(() => sidePanelControls!.openTarget(sideChatTarget));
+
+    expect(window.location.pathname).toBe("/rudder-studio/messenger/chat/source-chat");
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("side-chat:side-chat-1");
+    expect(text(container, "tab-count")).toBe("1");
+  });
+
+  it("restores hidden Side Chat tabs after a provider reload without persisting message previews", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    act(() => sidePanelControls!.openTarget(sideChatTarget));
+    act(() => sidePanelControls!.hidePanel());
+    expect(text(container, "open")).toBe("false");
+
+    const persisted = window.localStorage.getItem(
+      "rudder:side-chat-panel-state:v1:user-user-1:org-org-1:chat%3Asource-chat",
+    );
+    expect(persisted).toContain("side-chat-1");
+    expect(persisted).not.toContain("Do not copy this message preview");
+
+    act(() => root!.unmount());
+    root = null;
+    container?.remove();
+    container = null;
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+
+    expect(text(container, "context-key")).toBe("chat:source-chat");
+    expect(text(container, "open")).toBe("false");
+    expect(text(container, "active-key")).toBe("side-chat:side-chat-1");
+    expect(text(container, "tab-count")).toBe("1");
+
+    act(() => sidePanelControls!.showPanelForContext("chat:source-chat"));
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("side-chat:side-chat-1");
+    expect(JSON.parse(window.localStorage.getItem(
+      "rudder:side-chat-panel-state:v1:user-user-1:org-org-1:chat%3Asource-chat",
+    ) ?? "{}")).toMatchObject({ open: true });
+
+    act(() => root!.unmount());
+    root = null;
+    container?.remove();
+    container = null;
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    expect(text(container, "open")).toBe("true");
+    expect(text(container, "active-key")).toBe("side-chat:side-chat-1");
+  });
+
+  it("scopes restored Side Chat targets to the authenticated user, organization, and parent context", async () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    act(() => sidePanelControls!.openTarget(sideChatTarget));
+    act(() => sidePanelControls!.hidePanel());
+
+    expect(window.localStorage.getItem(
+      "rudder:side-chat-panel-state:v1:user-user-1:org-org-1:chat%3Asource-chat",
+    )).toContain("side-chat-1");
+
+    mockOrganizationSelection.selectedOrganizationId = "org-2";
+    act(() => root!.render(renderSidePanelTree(<SidePanelProbe />)));
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    expect(text(container, "tab-count")).toBe("0");
+
+    mockOrganizationSelection.selectedOrganizationId = "org-1";
+    act(() => root!.render(renderSidePanelTree(<SidePanelProbe />)));
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    expect(text(container, "active-key")).toBe("side-chat:side-chat-1");
+
+    await act(async () => {
+      queryClient!.setQueryData(queryKeys.auth.session, {
+        session: { id: "session-2", userId: "session-user-2" },
+        user: { id: "user-2", email: "same@example.com", name: "Same User" },
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    await vi.waitFor(() => expect(text(container!, "tab-count")).toBe("0"));
+    expect(text(container, "active-key")).toBe("");
+
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    expect(text(container, "tab-count")).toBe("0");
+    expect(window.localStorage.getItem(
+      "rudder:side-chat-panel-state:v1:user-user-1:org-org-1:chat%3Asource-chat",
+    )).toContain("side-chat-1");
+
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    act(() => sidePanelControls!.openTarget(sideChatTarget));
+    expect(window.localStorage.getItem(
+      "rudder:side-chat-panel-state:v1:user-user-2:org-org-1:chat%3Asource-chat",
+    )).toContain("side-chat-1");
+    expect(window.localStorage.getItem(
+      "rudder:side-chat-panel-state:v1:user-session-user-2:org-org-1:chat%3Asource-chat",
+    )).toBeNull();
+
+    await act(async () => {
+      queryClient!.setQueryData(queryKeys.auth.session, {
+        session: { id: "legacy-session", userId: "legacy-user" },
+      } as AuthSession);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    await vi.waitFor(() => expect(sidePanelControls?.principalId).toBe("legacy-user"));
+    act(() => sidePanelControls!.setContextKey("chat:source-chat"));
+    act(() => sidePanelControls!.openTarget(sideChatTarget));
+    expect(window.localStorage.getItem(
+      "rudder:side-chat-panel-state:v1:user-legacy-user:org-org-1:chat%3Asource-chat",
+    )).toContain("side-chat-1");
+  });
+
+  it("keeps context snapshots isolated by organization for matching context keys", () => {
+    ({ container, root } = renderSidePanelProvider());
+    act(() => sidePanelControls!.setContextKey("chat:shared", "org-1"));
+    act(() => sidePanelControls!.openTarget(issueTarget));
+
+    mockOrganizationSelection.selectedOrganizationId = "org-2";
+    act(() => root!.render(renderSidePanelTree(<SidePanelProbe />)));
+    act(() => sidePanelControls!.setContextKey("chat:shared", "org-2"));
+    expect(text(container, "tab-count")).toBe("0");
+    act(() => sidePanelControls!.openTarget({
+      kind: "library_file",
+      filePath: "org-2/docs.md",
+      label: "Org 2",
+    }));
+
+    act(() => sidePanelControls!.setContextKey("chat:shared", "org-1"));
+    expect(text(container, "active-key")).toBe("issue:issue-1:");
+    expect(text(container, "tab-keys")).toBe("issue:issue-1:");
   });
 
   it("keeps a local file in the mobile Side Panel without redirecting to Library", () => {
@@ -870,6 +1048,84 @@ describe("SidePanelProvider context visibility", () => {
     click(container, "Chat A");
     expect(text(container, "tab-count")).toBe("1");
     expect(text(container, "active-key")).toBe("issue:issue-1:");
+  });
+
+  it("clears Browser tabs from retained non-current principal slots after a global reset", async () => {
+    const { emitBrowserReset } = stubDesktopShell();
+    ({ container, root } = renderSidePanelProvider());
+    const browserTarget = {
+      kind: "browser" as const,
+      label: "Shared Browser",
+      tabId: "browser-owner-reset",
+      viewInstanceId: "browser-owner-reset-instance",
+      url: "https://example.com/owner-reset",
+    };
+    const retainedIssue = {
+      kind: "issue" as const,
+      issueId: "ORZ-42",
+      ref: null,
+      commentId: null,
+      label: "Retained issue",
+    };
+
+    act(() => {
+      sidePanelControls!.openTargetForContext(
+        "chat:owner-reset",
+        browserTarget,
+        undefined,
+        "org-1",
+        "user-1",
+      );
+      sidePanelControls!.openTargetForContext(
+        "chat:owner-reset",
+        retainedIssue,
+        undefined,
+        "org-1",
+        "user-1",
+      );
+    });
+
+    await act(async () => {
+      queryClient!.setQueryData(queryKeys.auth.session, {
+        session: { id: "session-2", userId: "user-2" },
+        user: { id: "user-2", email: "same@example.com", name: "Same User" },
+      } satisfies AuthSession);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    act(() => sidePanelControls!.setContextKey("chat:owner-reset"));
+    act(() => {
+      sidePanelControls!.openTargetForContext(
+        "chat:owner-reset",
+        browserTarget,
+        undefined,
+        "org-1",
+        "user-2",
+      );
+      sidePanelControls!.openTargetForContext(
+        "chat:owner-reset",
+        retainedIssue,
+        undefined,
+        "org-1",
+        "user-2",
+      );
+    });
+    expect(text(container, "tab-count")).toBe("2");
+
+    act(() => emitBrowserReset());
+    expect(text(container, "tab-count")).toBe("1");
+    expect(text(container, "tab-keys")).toBe("issue:ORZ-42:");
+
+    await act(async () => {
+      queryClient!.setQueryData(queryKeys.auth.session, {
+        session: { id: "session-1", userId: "user-1" },
+        user: { id: "user-1", email: "same@example.com", name: "Same User" },
+      } satisfies AuthSession);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    act(() => sidePanelControls!.setContextKey("chat:owner-reset"));
+
+    expect(text(container, "tab-count")).toBe("1");
+    expect(text(container, "tab-keys")).toBe("issue:ORZ-42:");
   });
 
   it("bounds Browser tabs in one context without replacing existing Browser tabs", () => {

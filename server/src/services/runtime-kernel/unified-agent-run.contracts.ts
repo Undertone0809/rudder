@@ -5,6 +5,7 @@ import type {
   UnifiedAdmissionResult,
   UnifiedAgentRunAdmission,
   UnifiedAgentRunEntry,
+  UnifiedAttemptInput,
   UnifiedFenceResult,
   UnifiedOwnerFence,
   UnifiedRunAttempt,
@@ -13,7 +14,6 @@ import type {
   UnifiedSpanCompleteness,
   UnifiedSubmission,
   UnifiedSubmissionOutcome,
-  UnifiedAttemptInput,
 } from "./unified-agent-run.js";
 
 export type Awaitable<T> = T | PromiseLike<T>;

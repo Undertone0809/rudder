@@ -790,6 +790,17 @@ export interface ChatStreamTranscriptEntryEvent {
   bodyHash?: string;
 }
 
+export interface ChatRuntimeSensitiveInputRequest {
+  requestId: string;
+  kind: "secret" | "sudo";
+  generationId?: string;
+  attemptEpoch?: number;
+}
+
+export interface ChatStreamSensitiveInputRequestEvent extends ChatRuntimeSensitiveInputRequest {
+  type: "sensitive_input_request";
+}
+
 export interface ChatStreamFinalEvent {
   type: "final";
   messages: ChatMessage[];
@@ -817,6 +828,7 @@ export type ChatStreamEvent =
   | ChatStreamAssistantStateEvent
   | ChatStreamWaitingForNetworkEvent
   | ChatStreamTranscriptEntryEvent
+  | ChatStreamSensitiveInputRequestEvent
   | ChatStreamFinalEvent
   | ChatStreamErrorEvent
   | ChatStreamQueuedEvent;

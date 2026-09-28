@@ -14,28 +14,28 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq, inArray } from "drizzle-orm";
-import fs from "node:fs";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { chatAgentRunService } from "./chat-agent-runs.js";
+import { canRestartPristineClaudeFork, recoverClaudeDeferredForkRun } from "./chat-assistant.claude-fork-recovery.js";
 import { ChatAssistantStreamError } from "./chat-assistant.contracts.js";
 import {
   classifyClaudeDeferredForkRecovery,
   ClaudeDeferredForkRecoveryIdentityError,
 } from "./claude-deferred-fork-admission.js";
-import { canRestartPristineClaudeFork, recoverClaudeDeferredForkRun } from "./chat-assistant.claude-fork-recovery.js";
-import { ensureRuntimeBinding, existingNativeSession } from "./runtime-kernel/native-session.js";
-import {
-  createHeartbeatUnifiedAgentRunAdapter,
-} from "./runtime-kernel/unified-agent-run.integration.js";
 import {
   persistNativeForkChild,
   reserveNativeForkIntent,
   type NativeForkIntentRunFence,
 } from "./runtime-kernel/native-fork-intent.js";
+import { ensureRuntimeBinding, existingNativeSession } from "./runtime-kernel/native-session.js";
+import {
+  createHeartbeatUnifiedAgentRunAdapter,
+} from "./runtime-kernel/unified-agent-run.integration.js";
 import type { SideChatForkSource } from "./side-chat-runtime-admission.js";
 
 const verifySourceHead = vi.hoisted(() => vi.fn());

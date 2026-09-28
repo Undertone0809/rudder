@@ -21,8 +21,8 @@ import {
   type ChildProcessWithEvents,
   type RunProcessResult,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 const CONTROL_REPLAY_TIMEOUT_MS = 5_000;
 const CONTROL_APPROVAL_TIMEOUT_MS = 30 * 60_000;

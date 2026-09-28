@@ -1,7 +1,6 @@
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
 import { chatsApi } from "@/api/chats";
-import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
 import { organizationSkillsApi } from "@/api/organizationSkills";
 import { organizationsApi } from "@/api/orgs";
@@ -78,7 +77,6 @@ import {
   rememberSettingsOverlayBackgroundPath,
 } from "@/lib/settings-overlay-state";
 import {
-  sideChatGenerationScopeKey,
   sidePanelTargetKey,
   sidePanelTargetSupportsSavedView,
   type SidePanelTarget,
@@ -150,7 +148,8 @@ import {
 import { createPortal } from "react-dom";
 import { AutomationDetail } from "./AutomationDetail";
 import { conversationDisplayTitle } from "./Chat.parts";
-import { ChatSidePanelTabContextMenu, type SideChatTarget } from "./Chat.side-panel-tab-menu";
+import { useChatSideChatLifecycle } from "./Chat.side-chat-lifecycle";
+import { ChatSidePanelTabContextMenu } from "./Chat.side-panel-tab-menu";
 import {
   clearChatSidePanelMarkdownDraft,
   countChatSidePanelMarkdownWords,
@@ -1746,16 +1745,18 @@ export function ChatSidePanel({
   const navigate = useNavigate();
   const [draggedTabKey, setDraggedTabKey] = useState<string | null>(null);
   const [tabDropTarget, setTabDropTarget] = useState<{ key: string; position: "before" | "after" } | null>(null);
-  const [closingSideChatKeys, setClosingSideChatKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const [movingSideChatKey, setMovingSideChatKey] = useState<string | null>(null);
+  const {
+    closeSideChatTab,
+    closingSideChatKeys,
+    movingSideChatKey,
+    moveSideChatToMessenger,
+    registerSideChatCloseHandler,
+  } = useChatSideChatLifecycle(selectedOrganizationId);
   const [desktopExitComplete, setDesktopExitComplete] = useState(!sidePanel.open);
   const panelRef = useRef<HTMLElement>(null);
   const activeTabElementRef = useRef<HTMLDivElement>(null);
   const tabScrollerElementRef = useRef<HTMLDivElement>(null);
   const browserShortcutControllersRef = useRef(new Map<string, (action: BrowserShortcutAction) => void>());
-  const sideChatCloseHandlersRef = useRef(new Map<string, () => Promise<string | null>>());
-  const closingSideChatKeysRef = useRef(new Set<string>());
-  const movingSideChatKeyRef = useRef<string | null>(null);
   const lastOpenDesktopPanelRef = useRef<ReactElement | null>(null);
   const mobileFocusRestoreRef = useRef<HTMLElement | null>(null);
   const mobileFocusTrapActiveRef = useRef(false);
@@ -1824,13 +1825,6 @@ export function ChatSidePanel({
       overlayState ? { state: overlayState } : undefined,
     );
   }, [location, navigate]);
-  const registerSideChatCloseHandler = useCallback((
-    clientMutationId: string,
-    handler: (() => Promise<string | null>) | null,
-  ) => {
-    if (handler) sideChatCloseHandlersRef.current.set(clientMutationId, handler);
-    else sideChatCloseHandlersRef.current.delete(clientMutationId);
-  }, []);
   const selectSideChatResponseAnnotation = useCallback((
     annotation: ChatInlineAnnotation,
     ordinal: number,
@@ -2322,110 +2316,10 @@ export function ChatSidePanel({
       disposeLiveSurfaceTarget(tab);
       return;
     }
-    if (movingSideChatKeyRef.current === tabKey) return;
-    if (closingSideChatKeysRef.current.has(tabKey)) return;
-    closingSideChatKeysRef.current.add(tabKey);
-    setClosingSideChatKeys(new Set(closingSideChatKeysRef.current));
-    try {
-      const registeredClose = sideChatCloseHandlersRef.current.get(
-        sideChatGenerationScopeKey(selectedOrganizationId ?? "__none__", tab),
-      );
-      const destroyedConversationId = registeredClose
-        ? await registeredClose()
-        : tab.conversationId
-          ? await chatsApi.destroySideChat(tab.conversationId).then(() => tab.conversationId)
-          : null;
-      if (destroyedConversationId) {
-        queryClient.removeQueries({ queryKey: queryKeys.chats.detail(selectedOrganizationId ?? "__none__", destroyedConversationId) });
-        queryClient.removeQueries({ queryKey: queryKeys.chats.messages(selectedOrganizationId ?? "__none__", destroyedConversationId) });
-      }
-      sidePanel.closeTarget(tabKey);
-      if (destroyedConversationId && destroyedConversationId !== tab.conversationId) {
-        sidePanel.closeTarget(sidePanelTargetKey({ ...tab, conversationId: destroyedConversationId }));
-      }
-    } catch (error) {
-      if (error instanceof Error && error.name === "ChatGenerationCloseSupersededError") return;
-      if (error instanceof ApiError && (error.status === 404 || error.status === 409)) {
-        if (tab.conversationId) {
-          const detailQueryKey = queryKeys.chats.detail(
-            selectedOrganizationId ?? "__none__",
-            tab.conversationId,
-          );
-          if (error.status === 404) {
-            queryClient.removeQueries({ queryKey: detailQueryKey });
-            queryClient.removeQueries({
-              queryKey: queryKeys.chats.messages(
-                selectedOrganizationId ?? "__none__",
-                tab.conversationId,
-              ),
-            });
-          } else {
-            void queryClient.invalidateQueries({ queryKey: detailQueryKey });
-            void queryClient.invalidateQueries({
-              queryKey: ["messenger", selectedOrganizationId],
-            });
-          }
-        }
-        sidePanel.closeTarget(tabKey);
-        return;
-      }
-      pushToast({
-        title: "Could not close Side Chat",
-        body: error instanceof Error ? error.message : "Try again.",
-        tone: "error",
-      });
-    } finally {
-      closingSideChatKeysRef.current.delete(tabKey);
-      setClosingSideChatKeys(new Set(closingSideChatKeysRef.current));
-    }
+    await closeSideChatTab(tab);
   };
 
   useEffect(() => sidePanel.registerCloseRequestHandler(closeSidePanelTab), [closeSidePanelTab, sidePanel]);
-
-  const moveSideChatMutation = useMutation({
-    mutationFn: (tab: SideChatTarget) => chatsApi.keepSideChat(tab.conversationId!),
-    onSuccess: (updated, tab) => {
-      queryClient.setQueryData(
-        queryKeys.chats.detail(selectedOrganizationId ?? "__none__", updated.id),
-        updated,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["messenger", selectedOrganizationId] });
-      sidePanel.closeTarget(sidePanelTargetKey(tab));
-      pushToast({
-        title: "Moved to Messenger",
-        body: "This is now a normal Messenger chat.",
-        tone: "success",
-      });
-      const prefix = extractOrganizationPrefixFromPath(location.pathname);
-      navigate(applyOrganizationPrefix(`/messenger/chat/${updated.id}`, prefix));
-    },
-    onError: (error, tab) => {
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.chats.detail(
-          selectedOrganizationId ?? "__none__",
-          tab.conversationId ?? "__side-chat-draft__",
-        ),
-      });
-      pushToast({
-        title: "Could not move Side Chat",
-        body: error instanceof Error ? error.message : "Try again.",
-        tone: "error",
-      });
-    },
-  });
-  const moveSideChatToMessenger = (tab: SideChatTarget) => {
-    const tabKey = sidePanelTargetKey(tab);
-    if (movingSideChatKeyRef.current || closingSideChatKeysRef.current.has(tabKey)) return;
-    movingSideChatKeyRef.current = tabKey;
-    setMovingSideChatKey(tabKey);
-    void moveSideChatMutation.mutateAsync(tab)
-      .catch(() => undefined)
-      .finally(() => {
-        if (movingSideChatKeyRef.current !== tabKey) return;
-        movingSideChatKeyRef.current = null;
-        setMovingSideChatKey(null);
-      });
-  };
 
   const libraryDirectoryEntries = libraryDirectory?.entries ?? [];
   const libraryDirectoryFileCount = libraryDirectoryEntries.filter((entry) => !entry.isDirectory).length;

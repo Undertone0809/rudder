@@ -32,6 +32,7 @@ import {
   useResponseAnnotationEditorController,
 } from "@/components/chat/ResponseAnnotations";
 import { SelectionAnnotationToolbar } from "@/components/chat/SelectionAnnotationToolbar";
+import { ChatRuntimeSensitiveInput } from "@/components/ChatRuntimeSensitiveInput";
 import { type MarkdownLinkClickHandler } from "@/components/MarkdownBody";
 import { type MarkdownEditorRef, type MentionOption } from "@/components/MarkdownEditor";
 import type { MarkdownSkillReferencePreview } from "@/components/SkillReferenceToken";
@@ -60,6 +61,7 @@ import { useImagePreview } from "@/context/ImagePreviewContext";
 import { useOrganization } from "@/context/OrganizationContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
+import { useChatRuntimeSensitiveInput } from "@/hooks/useChatRuntimeSensitiveInput";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { useMessengerChatSidebarOpener } from "@/hooks/useWorkspaceSidebarLayout";
@@ -191,7 +193,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
-  CirclePlus,
   Copy,
   Folder,
   FolderInput,
@@ -201,7 +202,6 @@ import {
   Mail,
   MailOpen,
   MoreHorizontal,
-  PanelRight,
   Pencil,
   PencilLine,
   Pin,
@@ -235,6 +235,8 @@ import { ASK_USER_ANSWER_PREFIX, ApprovalAction, ChatAgentRunMenuItem, ChatBranc
 import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "./Chat.plan-mode-controls";
 import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annotation-selection";
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
+import { ChatSideChatSlashCommandMenu } from "./Chat.side-chat-slash-command";
+import { ChatSidePanelActions } from "./Chat.side-panel-actions";
 import { buildChatTimelineRows } from "./Chat.timeline";
 import {
   chatRunAnnotationContextForMessage,
@@ -272,6 +274,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     setStreamDraftForChat,
     streamDrafts, } = useChatGenerations(); const draftStorageOrgId = selectedOrganizationId!; const draftStorageConversationId = conversationId ?? (searchParams.get("firstTurnRecovery") ? `first-turn-recovery:${searchParams.get("firstTurnRecovery")}` : null) ?? localAppRecoveryDraftStorageScope(searchParams.get("localAppRecoveryDraft")) ?? null; const draftStorageScopeKey = resolveChatPendingAttachmentScopeKey(draftStorageOrgId, draftStorageConversationId); const activeDraftScopeRef = useRef(draftStorageScopeKey);
   const stopRecoveryImmediateRetryKeysRef = useRef(new Set<string>());
+  const {
+    request: runtimeSensitiveInputRequest,
+    setRequest: setRuntimeSensitiveInputRequest,
+    respond: respondToRuntimeSensitiveInput,
+    cancel: cancelRuntimeSensitiveInput,
+  } = useChatRuntimeSensitiveInput(conversationId);
   const stopRecoveryStreamKeysRef = useRef<Record<string, string>>({});
   const streamOwnershipRef = useRef<Record<string, { streamKey: string; controller: AbortController }>>({});
   const streamDraftsRef = useRef(streamDrafts);
@@ -333,6 +341,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     viewedOrganizationId && viewedOrganizationId === selectedOrganizationId,
   );
   const { isMobile, showChatSidebarOpener, openChatWorkspaceSidebar } = useMessengerChatSidebarOpener({ isMessengerChatRoute, sidePanelOpen });
+  const { tabs: sidePanelTabs } = useSidePanel();
   const checkpointDispatcherRef = useRef<ReturnType<typeof createChatClientCheckpointDispatcher> | null>(null);
   if (!checkpointDispatcherRef.current) {
     checkpointDispatcherRef.current = createChatClientCheckpointDispatcher((checkpoint) => {
@@ -1512,6 +1521,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               throw new Error("Chat stream emitted output before accepting the first message");
             }
             const streamScopeKey = activeStreamScopeKey ?? chatGenerationScopeKey(selectedOrganizationId, conversation);
+            if (event.type === "sensitive_input_request") {
+              setRuntimeSensitiveInputRequest({
+                requestId: event.requestId,
+                kind: event.kind,
+              });
+              return;
+            }
             if (event.type === "waiting_for_network") networkWaiting = true;
             if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
               setStreamDraftForChat(streamScopeKey, (current) => applyChatStreamProgressEvent(current, streamKey, event));
@@ -1690,6 +1706,13 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
               );
             }
             throw new Error(event.error);
+          }
+          if (event.type === "sensitive_input_request") {
+            setRuntimeSensitiveInputRequest({
+              requestId: event.requestId,
+              kind: event.kind,
+            });
+            return;
           }
           if (event.type === "waiting_for_network") networkWaiting = true;
           if (event.type === "assistant_delta" || event.type === "assistant_state" || event.type === "waiting_for_network" || event.type === "transcript_entry") {
@@ -2900,61 +2923,6 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     setDraft,
     sideChatSlashAnchor,
   ]);
-  useEffect(() => {
-    if (!showSideChatSlashCommand) {
-      setSideChatSlashMenuPosition(null);
-      return;
-    }
-    const updatePosition = () => {
-      const anchor = composerSurfaceRef.current;
-      if (!anchor) return;
-      setSideChatSlashMenuPosition(composerMenuPositionForAnchor(anchor));
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [showSideChatSlashCommand]);
-  const renderSideChatSlashCommandMenu = () => {
-    if (!showSideChatSlashCommand || !sideChatSlashMenuPosition || typeof document === "undefined") return null;
-    return createPortal(
-      <div
-        data-testid="chat-slash-command-menu"
-        role="menu"
-        aria-label="Chat commands"
-        className="chat-composer-context-menu motion-chat-composer-menu-pop surface-overlay fixed z-50 overflow-hidden rounded-[var(--radius-lg)] border p-1.5 text-foreground"
-        style={sideChatSlashMenuPosition}
-      >
-        <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Commands</div>
-        <button
-          type="button"
-          role="menuitem"
-          className="chat-composer-menu-row"
-          disabled={!sideChatSlashAnchor}
-          data-chat-composer-menu-item
-          data-testid="chat-slash-side-chat"
-          onClick={activateSideChatSlashCommand}
-        >
-          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] bg-[color:var(--surface-active)] text-[color:var(--accent-base)]">
-            <CirclePlus className="h-4 w-4" />
-          </span>
-          <span className="flex min-w-0 flex-1 items-baseline gap-2">
-            <span className="shrink-0 font-medium text-foreground">Side Chat</span>
-            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-              {sideChatSlashAnchor ? "Ask from the latest assistant answer" : "Wait for an assistant answer first"}
-            </span>
-          </span>
-          <kbd className="shrink-0 rounded-[calc(var(--radius-sm)-2px)] border border-[color:var(--border-soft)] bg-[color:var(--surface-inset)] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-            Enter
-          </kbd>
-        </button>
-      </div>,
-      document.body,
-    );
-  };
   const sendButtonDisabled = chatSendButtonDisabled({
     selectedConversationExternalBound,
     modelSelectionPending: runtimeSelectionPending,
@@ -3507,7 +3475,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {responseAnnotationAnnouncement}
       </div>
-      {renderSideChatSlashCommandMenu()}
+      <ChatSideChatSlashCommandMenu
+        visible={showSideChatSlashCommand}
+        hasAnchor={Boolean(sideChatSlashAnchor)}
+        position={sideChatSlashMenuPosition}
+        setPosition={setSideChatSlashMenuPosition}
+        composerSurfaceRef={composerSurfaceRef}
+        getMenuPosition={composerMenuPositionForAnchor}
+        onActivate={activateSideChatSlashCommand}
+      />
       {composerUnavailable && composerUnavailableMessage ? (
         <div className="chat-warning mt-2.5 rounded-[var(--radius-md)] px-3 py-2.5 text-sm">
           {composerUnavailableMessage}{" "}
@@ -3742,19 +3718,15 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       localizeText={localizeChatProcessText}
                     />
                   ) : null}
-                  {!isMobile && !sidePanelOpen ? (
-                    <button
-                      type="button"
-                      data-testid="chat-side-panel-trigger"
-                      aria-label="Open Side Panel"
-                      aria-pressed={false}
-                      title="Open Side Panel"
-                      className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                      onClick={() => showSidePanelForContext(resolveCurrentSidePanelChatContextKey())}
-                    >
-                      <PanelRight className="h-4 w-4" aria-hidden />
-                    </button>
-                  ) : null}
+                  <ChatSidePanelActions
+                    isMobile={isMobile}
+                    sidePanelOpen={sidePanelOpen}
+                    hasSideChatTargets={sidePanelTabs.some((target) => target.kind === "side_chat")}
+                    organizationId={selectedOrganizationId}
+                    sourceConversationId={selectedConversation?.id ?? null}
+                    onOpenPanel={() => showSidePanelForContext(resolveCurrentSidePanelChatContextKey())}
+                    onOpenSideChat={(target) => openSidePanelTargetForContext(resolveCurrentSidePanelChatContextKey(), target)}
+                  />
                   <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -4044,7 +4016,12 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                             const shouldRenderPersistedTranscript =
                               (persistedTranscript.length > 0 || messageSteerMessages.length > 0)
                               && messageCanShowProcess; const shouldRenderLazyTranscript = persistedTranscript.length === 0 && messageSteerMessages.length === 0 && messageCanShowProcess && Boolean(message.transcriptSummary && (message.runId ? !readerTranscriptState?.hasData : message.transcriptSummary.entryCount > 0)); const persistedProcessStartedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessStartedAt(visibleMessages, message, persistedTranscript) : null; const persistedProcessEndedAt = shouldRenderPersistedTranscript ? resolvePersistedChatProcessEndedAt(message, persistedTranscript) : null;
-                            const messageTurnBranchControls = turnBranchControlsFor(message);
+                            const messageTurnBranchControls = turnBranchControlsFor(message)
+                              ?? (message.role === "assistant"
+                                && branchPreview?.chatTurnId === message.chatTurnId
+                                && branchPreview.turnVariant === message.turnVariant
+                                ? turnBranchControlsForTurn(message.chatTurnId)
+                                : null);
                             const refreshTurnBranchControls = message.chatTurnId ? turnBranchControlsForTurn(message.chatTurnId) : null;
                             const historicalAnnotationsForMessage = historicalResponseAnnotations.filter(
                               (annotation) => annotation.sourceMessageId === message.id,
@@ -4164,6 +4141,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   animateAskUserAnswer={message.id === recentAskUserAnswerMessageId} /> </Fragment> ); }}
                           </VirtualizedActivityTimeline> </>
                       )} </div> </div> </div> </div>
+                {runtimeSensitiveInputRequest ? (
+                  <div className="w-full shrink-0 px-4 pb-3 md:px-5">
+                    <div className="mx-auto w-full max-w-4xl" data-testid="chat-runtime-sensitive-input">
+                      <ChatRuntimeSensitiveInput
+                        request={runtimeSensitiveInputRequest}
+                        onRespond={respondToRuntimeSensitiveInput}
+                        onCancel={cancelRuntimeSensitiveInput}
+                      />
+                    </div>
+                  </div>
+                ) : null}
                 {hasActionableApprovals || hasPendingLightweightProposal ? null : (
                   <div
                     data-testid="chat-composer-layout"
@@ -4172,7 +4160,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                     workManifestRailOpen && "xl:pr-[20rem]",
                   )}>
                   <div data-testid="chat-composer-content" className="mx-auto w-full max-w-4xl space-y-4">
-                    {selectedConversationExternalBound ? (
+                    {runtimeSensitiveInputRequest ? null : selectedConversationExternalBound ? (
                       renderComposer(false)
                     ) : pendingAskUserMessage && pendingAskUserRequest ? (
                       <AskUserPanel

@@ -1,0 +1,64 @@
+import { describe, expect, it } from "vitest";
+import {
+  compactHeartbeatAdapterInvokePayload,
+  projectHeartbeatAdapterResult,
+} from "./heartbeat.execute-native-retention.js";
+
+describe("heartbeat native retention projections", () => {
+  it("compacts invocation payloads and keeps native raw prompt content out", () => {
+    const compacted = compactHeartbeatAdapterInvokePayload({
+      agentRuntimeType: "claude",
+      command: "claude",
+      prompt: "private prompt content",
+      desiredSkills: [
+        { key: "  docs  ", runtimeName: " docs-runtime ", name: "Docs", description: "Reference docs" },
+        { key: "  " },
+        null,
+      ],
+    });
+
+    expect(compacted).not.toHaveProperty("prompt");
+    expect(compacted).toMatchObject({
+      desiredSkillCount: 1,
+      desiredSkillKeys: ["docs"],
+      desiredSkills: [{ key: "docs", runtimeName: " docs-runtime ", name: "Docs", description: "Reference docs" }],
+      invocationContent: {
+        textStored: false,
+        textSource: "agent_run_transcript_reader",
+        transcriptRetentionMode: "native",
+      },
+    });
+  });
+
+  it("projects native adapter results without raw transcript fields while preserving summary fallback", () => {
+    const projection = projectHeartbeatAdapterResult({
+      adapterResult: {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        model: "test-model",
+        summary: "short completion",
+        resultJson: { stdout: "large raw transcript", summary: "short completion", sessionId: "session-1" },
+      },
+      persistRawResult: false,
+      outcome: "succeeded",
+      status: "succeeded",
+      timestamp: "2026-09-28T00:00:00.000Z",
+    });
+
+    expect(projection.persistedResultJson).not.toHaveProperty("stdout");
+    expect(projection.persistedResultJson).toMatchObject({
+      summary: "short completion",
+      retention: { transcriptSource: "native", rawResultPersisted: false },
+    });
+    expect(projection.persistedAdapterResult.resultJson).toEqual(projection.persistedResultJson);
+    expect(projection.persistedResultSummary).toMatchObject({ summary: "short completion" });
+    expect(projection.transcriptFallbackResult).toMatchObject({
+      ts: "2026-09-28T00:00:00.000Z",
+      model: "test-model",
+      output: "short completion",
+      subtype: "succeeded",
+      isError: false,
+    });
+  });
+});

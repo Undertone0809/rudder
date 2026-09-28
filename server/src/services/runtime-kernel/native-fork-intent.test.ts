@@ -1,3 +1,4 @@
+import type { Db } from "@rudderhq/db";
 import {
   agents,
   applyPendingMigrations,
@@ -10,24 +11,21 @@ import {
   runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
-import type { Db } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq, inArray } from "drizzle-orm";
-import fs from "node:fs";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { chatAgentRunService } from "../chat-agent-runs.js";
-import { createHeartbeatUnifiedAgentRunAdapter } from "./unified-agent-run.integration.js";
-import type { RuntimeProviderForkResult, RuntimeProviderSessionRef } from "./provider-capabilities.js";
 import {
   executeNativeForkIntent,
   markNativeForkIntentRejected,
   markNativeForkIntentUnknown,
-  nativeForkIntentKey,
   NativeForkAcceptanceUnknownError,
+  nativeForkIntentKey,
   persistNativeForkChild,
   preserveNativeForkIntentProviderState,
   readNativeForkIntent,
@@ -37,6 +35,8 @@ import {
   type NativeForkIntentInput,
   type NativeForkIntentRunFence,
 } from "./native-fork-intent.js";
+import type { RuntimeProviderForkResult, RuntimeProviderSessionRef } from "./provider-capabilities.js";
+import { createHeartbeatUnifiedAgentRunAdapter } from "./unified-agent-run.integration.js";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;

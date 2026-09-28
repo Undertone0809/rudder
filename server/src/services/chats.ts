@@ -105,6 +105,7 @@ import type {
   TranscriptItem,
   TranscriptSource,
 } from "./runtime-kernel/transcript-reader.js";
+import { ensureSideChatFirstInputGeneration as ensureSideChatFirstInputGenerationInTransaction } from "./side-chat-first-input-generation.js";
 
 function messageShortRef(id: string): string | null {
   try {
@@ -550,6 +551,14 @@ export function chatService(db: Db, storage?: StorageService) {
       .returning();
     if (!row) throw new Error("Failed to create chat generation");
     return row;
+  }
+
+  async function ensureSideChatFirstInputGeneration(input: {
+    orgId: string;
+    conversationId: string;
+    userMessageId: string;
+  }) {
+    return db.transaction((tx) => ensureSideChatFirstInputGenerationInTransaction(tx, input));
   }
 
   async function markGenerationTerminal(
@@ -5144,6 +5153,7 @@ export function chatService(db: Db, storage?: StorageService) {
     markUnread,
     setPinned,
     createGeneration,
+    ensureSideChatFirstInputGeneration,
     beginGenerationControlAttempt,
     markGenerationControlReady,
     renewGenerationControlLease,

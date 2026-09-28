@@ -114,6 +114,7 @@ const mockChatAgentRuns = vi.hoisted(() => ({
   adoptRecoveredRun: vi.fn(),
   beginOwnedRunExecution: vi.fn(),
   beginRuntimeAttempt: vi.fn(),
+  markAcceptanceUnknown: vi.fn(),
   recordNativeExecutionResult: vi.fn(),
   markRuntimeAttemptWaiting: vi.fn(),
   finishRuntimeAttempt: vi.fn(),
@@ -450,8 +451,22 @@ function assistantSummary(ctx: { context?: Record<string, unknown> }, body: stri
 
 function createChatTestRuntimeDriver(options: any) {
   const adapter = options.adapter;
+  const capabilityResolution = options.providerCapabilityResolver?.(
+    options.runtimeType,
+    options.providerBinding,
+  );
+  const transcriptCapability = capabilityResolution?.adapter?.transcript;
+  const transcriptRangeSupported = capabilityResolution?.profileResolved === true
+    && transcriptCapability?.evidence?.status === "supported"
+    && transcriptCapability.evidence.profileBound === true
+    && typeof transcriptCapability.readRange === "function";
   return {
-    capabilities: { fork: { status: "unsupported", reason: "Chat unit fixture has no native fork." } },
+    capabilities: {
+      fork: { status: "unsupported", reason: "Chat unit fixture has no native fork." },
+      transcriptRange: transcriptRangeSupported
+        ? { status: "supported", reason: "Chat unit fixture provides profile transcript evidence." }
+        : { status: "unknown", reason: "Chat unit fixture has no verified profile transcript reader." },
+    },
     ensureSession: async (intent: any) => {
       const binding = await options.sessionBindingOwner.ensureBinding(intent);
       const state = await options.sessionBindingOwner.currentSession(binding);
@@ -559,7 +574,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     vi.clearAllMocks();
     mockGetRuntimeDriver.mockImplementation(((runtimeType: string, options: any) =>
       (NATIVE_CHAT_RUNTIME_TYPES as readonly string[]).includes(runtimeType)
-        ? createChatTestRuntimeDriver(options)
+        ? createChatTestRuntimeDriver({ ...options, runtimeType })
         : null) as any);
     currentAgentHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-chat-agent-home-"));
     cleanupDirs.add(currentAgentHome);
@@ -615,8 +630,52 @@ describe("chatAssistantService operator profile prompt injection", () => {
       signal: new AbortController().signal,
       release: vi.fn(),
     }));
-    mockChatAgentRuns.beginRuntimeAttempt.mockResolvedValue({ id: "attempt-1", attemptIndex: 0 });
-    mockChatAgentRuns.recordNativeExecutionResult.mockResolvedValue(null);
+    mockChatAgentRuns.beginRuntimeAttempt.mockImplementation(async (run, input) => {
+      const runIndex = Number(run.id.match(/(\d+)$/)?.[1] ?? 1);
+      return {
+        id: input.attemptIndex === 0
+          ? `attempt-${runIndex}`
+          : `attempt-${runIndex}-${input.attemptIndex + 1}`,
+        attemptIndex: input.attemptIndex,
+      };
+    });
+    mockChatAgentRuns.markAcceptanceUnknown.mockImplementation(async (_run, input) => ({
+      key: `submission:${input.phase}`,
+      state: "acceptance_unknown",
+      phase: input.phase,
+      retry: "blocked_until_reconciled",
+      providerThreadId: null,
+      providerTurnId: null,
+      reason: input.reason,
+    }));
+    mockChatAgentRuns.recordNativeExecutionResult.mockImplementation(async (
+      runId,
+      _result,
+      fence,
+    ) => {
+      const spanId = fence.spanId ?? "span-1";
+      const ownerFence = {
+        id: spanId,
+        ownerToken: fence.ownerToken,
+        attemptEpoch: fence.attemptEpoch,
+        leaseExpiresAt: new Date("2026-03-29T08:00:00.000Z"),
+      };
+      return {
+        id: spanId,
+        runId,
+        attemptRef: {
+          id: fence.attemptId ?? "attempt-1",
+          attemptIndex: mockChatAgentRuns.beginRuntimeAttempt.mock.lastCall?.[1]?.attemptIndex ?? 0,
+          ownerToken: fence.ownerToken,
+          attemptEpoch: fence.attemptEpoch,
+        },
+        ownerFence,
+        state: "sealed",
+        completeness: "unknown",
+        sourceRevision: null,
+        visibilityCutoffRef: null,
+      };
+    });
     mockChatAgentRuns.markRuntimeAttemptWaiting.mockResolvedValue(undefined);
     mockChatAgentRuns.finishRuntimeAttempt.mockResolvedValue(undefined);
     mockChatAgentRuns.markWaitingForNetwork.mockResolvedValue(undefined);
@@ -2498,6 +2557,10 @@ describe("chatAssistantService operator profile prompt injection", () => {
         orgId: "organization-1",
         agentId: "agent-1",
         status: "running",
+        runtimeSpanId: `span-${runSequence}`,
+        runtimeSpanOwnerToken: `owner-${runSequence}`,
+        runtimeSpanAttemptEpoch: 1,
+        runtimeAttemptRef: { id: `attempt-${runSequence}`, attemptIndex: 0 },
       };
     });
     mockChatAgentRuns.finalizeRun.mockImplementation(async (runId) => {
@@ -3981,9 +4044,12 @@ describe("chatAssistantService operator profile prompt injection", () => {
     mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
       _runtimeType: string, binding: Record<string, unknown>,
     ) => ({
-      adapter: { runtimeType: "cursor", transcript: { evidence: {
-        status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
-      } } },
+      adapter: { runtimeType: "cursor", transcript: {
+        evidence: {
+          status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
+        },
+        readRange: async () => ({}),
+      } },
       binding, profileResolved: true,
     }));
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
@@ -4011,9 +4077,12 @@ describe("chatAssistantService operator profile prompt injection", () => {
     mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
       _runtimeType: string, binding: Record<string, unknown>,
     ) => ({
-      adapter: { runtimeType: "cursor", transcript: { evidence: {
-        status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
-      } } },
+      adapter: { runtimeType: "cursor", transcript: {
+        evidence: {
+          status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
+        },
+        readRange: async () => ({}),
+      } },
       binding, profileResolved: true,
     }));
     mockAdapter.execute.mockImplementationOnce(async (ctx) => {
@@ -4050,9 +4119,12 @@ describe("chatAssistantService operator profile prompt injection", () => {
     mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
       _runtimeType: string, binding: Record<string, unknown>,
     ) => ({
-      adapter: { runtimeType: "cursor", transcript: { evidence: {
-        status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
-      } } }, binding, profileResolved: true,
+      adapter: { runtimeType: "cursor", transcript: {
+        evidence: {
+          status: "supported", profileBound: true, reason: "test profile", transport: "cursor-agent-acp-stdio",
+        },
+        readRange: async () => ({}),
+      } }, binding, profileResolved: true,
     }));
     mockChatAgentRuns.adoptRecoveredRun.mockResolvedValueOnce({
       id: "chat-run-1", orgId: "organization-1", agentId: "agent-1", status: "running",
@@ -4078,7 +4150,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(mockChatAgentRuns.markLegacyTranscriptSource).not.toHaveBeenCalled();
     expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
       expect.anything(), expect.objectContaining({ text: expect.stringContaining("CLI output after recovery") }),
-      expect.objectContaining({ source: "legacy", persistRaw: true, persistSupplement: undefined }),
+      expect.objectContaining({ source: "legacy", persistRaw: true, persistSupplement: false }),
     );
     expect(mockChatAgentRuns.finalizeRun).toHaveBeenCalledWith(
       "chat-run-1", expect.objectContaining({

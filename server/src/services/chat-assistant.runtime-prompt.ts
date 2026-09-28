@@ -1,5 +1,10 @@
 import type { AgentRuntimeType } from "@rudderhq/shared";
 import {
+  buildChatInlineAnnotationsPromptSection,
+  buildCurrentUserAttachmentPromptSection,
+  buildHistoricalUserImagePromptSection,
+} from "./chat-assistant.annotations.js";
+import {
   buildAutomationRunInputPromptSection,
   buildBaseSystemPromptSections,
   buildChatResultProtocolPromptParts,
@@ -18,11 +23,6 @@ import {
   type GenerateChatAssistantReplyInput,
   type ResolvedChatRuntimeSource,
 } from "./chat-assistant.helpers.js";
-import {
-  buildChatInlineAnnotationsPromptSection,
-  buildCurrentUserAttachmentPromptSection,
-  buildHistoricalUserImagePromptSection,
-} from "./chat-assistant.annotations.js";
 
 export interface ChatAssistantRuntimePrompt {
   prompt: string;

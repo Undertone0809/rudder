@@ -1,6 +1,6 @@
 import type { AgentRuntimeNetworkSuspension, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { chatMessages, goals, heartbeatRunAttempts, heartbeatRunEvents, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
+import { chatMessages, goals, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
@@ -8,18 +8,26 @@ import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
+import { getRunLogStore } from "./run-log-store.js";
 import { buildHeartbeatAdapterInvokePayload, networkWaitBackoffMs } from "./runtime-kernel/heartbeat.core.js";
 import { registerLiveChatRunExecution } from "./runtime-kernel/heartbeat.js";
 import {
   reconcileHeartbeatRunEvidence,
   RUN_EXECUTION_LEASE_RENEW_INTERVAL_MS,
 } from "./runtime-kernel/heartbeat.terminal.js";
+import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
 import {
   attachRuntimeSpanSupplement,
   type NativeSegmentRecord,
   type RuntimeBindingRecord,
 } from "./runtime-kernel/native-session.js";
+import {
+  cleanSealedNativeTranscriptMirrors,
+  markNativeTranscriptRetentionIncomplete,
+  proveSealedNativeRunTranscript,
+} from "./runtime-kernel/native-transcript-retention.js";
 import { getTranscriptObjectStore, type TranscriptObjectHandle, type TranscriptObjectStore } from "./runtime-kernel/transcript-object-store.js";
+import type { TranscriptReader } from "./runtime-kernel/transcript-reader.js";
 import {
   createHeartbeatUnifiedAgentRunAdapter,
   type UnifiedAcceptanceReconciliationInput,
@@ -61,15 +69,8 @@ type ChatRunFenceCarrier = Pick<typeof heartbeatRuns.$inferSelect, "id" | "orgId
 
 export type ChatRunTranscriptDeliveryInput = {
   source: "native" | "legacy";
+  runId?: string;
   spanId: string | null;
-};
-
-type NativeTranscriptProof = {
-  orgId: string;
-  spanId: string;
-  ownerToken: string;
-  attemptEpoch: number;
-  attemptId: string;
 };
 
 function sameOwnerIdentity(left: UnifiedOwnerFence, right: UnifiedOwnerFence) {
@@ -195,13 +196,6 @@ function compactNativeAdapterInvokePayload(payload: Record<string, unknown>) {
 }
 
 function transcriptEventPayload(entry: TranscriptEntry): Record<string, unknown> {
-  if ("text" in entry && typeof entry.text === "string") {
-    return {
-      ...entry,
-      text: boundedText(entry.text),
-      truncated: entry.text.length > MAX_EVENT_TEXT_CHARS,
-    };
-  }
   return entry as unknown as Record<string, unknown>;
 }
 
@@ -249,6 +243,7 @@ function serializeRun(row: typeof heartbeatRuns.$inferSelect): HeartbeatRun {
 
 export function chatAgentRunService(db: Db, options: {
   transcriptObjectStore?: TranscriptObjectStore;
+  transcriptReaderFactory?: (database: Pick<Db, "select">) => TranscriptReader;
   leaseRenewIntervalMs?: number;
 } = {}) {
   const unifiedRunAdapter: UnifiedAgentRunAdapter = createHeartbeatUnifiedAgentRunAdapter(db);
@@ -512,127 +507,39 @@ export function chatAgentRunService(db: Db, options: {
     });
   }
 
+  function transcriptReaderFor(database: Pick<Db, "select">) {
+    return options.transcriptReaderFactory?.(database)
+      ?? createHistoricalTranscriptReader(database, { includeObjects: false });
+  }
+
   async function finalNativeTranscriptProof(
     runId: string,
     delivery: ChatRunTranscriptDeliveryInput | undefined,
     fence: UnifiedOwnerFence | null,
     status: "succeeded" | "failed" | "cancelled" | "timed_out",
-  ): Promise<NativeTranscriptProof | null> {
-    const spanId = delivery?.spanId?.trim() || null;
-    if (status !== "succeeded" || delivery?.source !== "native" || !fence || !spanId || fence.id !== spanId) {
-      return null;
+    attemptId: string | null,
+  ) {
+    const spanId = delivery?.spanId?.trim() || fence?.id || null;
+    if (delivery?.runId && delivery.runId !== runId) {
+      return { ok: false as const, reason: "transcript_delivery_run_mismatch" };
     }
-    const [run] = await db.select({ orgId: heartbeatRuns.orgId, status: heartbeatRuns.status,
-      executionOwnerToken: heartbeatRuns.executionOwnerToken, contextSnapshot: heartbeatRuns.contextSnapshot })
+    if (!fence || !spanId || fence.id !== spanId) {
+      return { ok: false as const, reason: "transcript_delivery_span_mismatch" };
+    }
+    if (status !== "succeeded") return { ok: false as const, reason: "transcript_run_not_successful" };
+    if (!attemptId) return { ok: false as const, reason: "native_attempt_identity_missing" };
+    const [run] = await db.select({ orgId: heartbeatRuns.orgId })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))
       .limit(1);
-    if (!run || run.status !== "running" || run.executionOwnerToken !== fence.ownerToken
-      || asRecord(run.contextSnapshot)?.transcriptSource !== "native") return null;
-
-    const [span] = await db.select({ id: runRuntimeSpans.id, ownerToken: runRuntimeSpans.ownerToken,
-      attemptEpoch: runRuntimeSpans.attemptEpoch, attemptId: runRuntimeSpans.attemptId,
-      state: runRuntimeSpans.state, completeness: runRuntimeSpans.completeness })
-      .from(runRuntimeSpans)
-      .where(and(
-        eq(runRuntimeSpans.orgId, run.orgId),
-        eq(runRuntimeSpans.runId, runId),
-        eq(runRuntimeSpans.id, spanId),
-      ))
-      .limit(1);
-    if (!span || span.ownerToken !== fence.ownerToken || span.attemptEpoch !== fence.attemptEpoch
-      || span.state !== "sealed" || span.completeness !== "complete" || !span.attemptId) return null;
-    const [attempt] = await db.select({ id: heartbeatRunAttempts.id, ownerToken: heartbeatRunAttempts.ownerToken,
-      attemptEpoch: heartbeatRunAttempts.attemptEpoch })
-      .from(heartbeatRunAttempts)
-      .where(and(
-        eq(heartbeatRunAttempts.orgId, run.orgId),
-        eq(heartbeatRunAttempts.runId, runId),
-        eq(heartbeatRunAttempts.id, span.attemptId),
-      ))
-      .limit(1);
-    if (!attempt || attempt.ownerToken !== fence.ownerToken || attempt.attemptEpoch !== fence.attemptEpoch) return null;
-    return { orgId: run.orgId, spanId, ownerToken: fence.ownerToken,
-      attemptEpoch: fence.attemptEpoch, attemptId: attempt.id };
-  }
-
-  async function compactNativeAdapterInvokeEvents(runId: string, proof: NativeTranscriptProof) {
-    const updatedEvents = await db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${runId}))`);
-      const [run] = await tx.select({ status: heartbeatRuns.status, contextSnapshot: heartbeatRuns.contextSnapshot })
-        .from(heartbeatRuns)
-        .where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.orgId, proof.orgId)))
-        .for("update");
-      if (!run || run.status !== "succeeded" || asRecord(run.contextSnapshot)?.transcriptSource !== "native") {
-        return [];
-      }
-      const [span] = await tx.select({ ownerToken: runRuntimeSpans.ownerToken,
-        attemptEpoch: runRuntimeSpans.attemptEpoch, attemptId: runRuntimeSpans.attemptId,
-        state: runRuntimeSpans.state, completeness: runRuntimeSpans.completeness })
-        .from(runRuntimeSpans)
-        .where(and(
-          eq(runRuntimeSpans.orgId, proof.orgId),
-          eq(runRuntimeSpans.runId, runId),
-          eq(runRuntimeSpans.id, proof.spanId),
-        ))
-        .limit(1);
-      const [attempt] = await tx.select({ id: heartbeatRunAttempts.id, ownerToken: heartbeatRunAttempts.ownerToken,
-        attemptEpoch: heartbeatRunAttempts.attemptEpoch })
-        .from(heartbeatRunAttempts)
-        .where(and(
-          eq(heartbeatRunAttempts.orgId, proof.orgId),
-          eq(heartbeatRunAttempts.runId, runId),
-          eq(heartbeatRunAttempts.id, proof.attemptId),
-        ))
-        .limit(1);
-      if (!span || span.ownerToken !== proof.ownerToken || span.attemptEpoch !== proof.attemptEpoch
-        || span.attemptId !== proof.attemptId || span.state !== "sealed" || span.completeness !== "complete"
-        || !attempt || attempt.ownerToken !== proof.ownerToken || attempt.attemptEpoch !== proof.attemptEpoch) {
-        return [];
-      }
-      const events = await tx.select().from(heartbeatRunEvents).where(and(
-        eq(heartbeatRunEvents.orgId, proof.orgId),
-        eq(heartbeatRunEvents.runId, runId),
-        eq(heartbeatRunEvents.eventType, "adapter.invoke"),
-      ));
-      const updated = [];
-      for (const event of events) {
-        const payload = asRecord(event.payload);
-        if (!payload
-          || payload.invocationSpanId !== proof.spanId
-          || payload.invocationAttemptId !== proof.attemptId
-          || (!("prompt" in payload) && !("agentInstructionStack" in payload) && !("context" in payload))) {
-          continue;
-        }
-        const [row] = await tx.update(heartbeatRunEvents)
-          .set({ payload: compactNativeAdapterInvokePayload(payload) })
-          .where(and(
-            eq(heartbeatRunEvents.id, event.id),
-            eq(heartbeatRunEvents.orgId, proof.orgId),
-            eq(heartbeatRunEvents.runId, runId),
-          ))
-          .returning();
-        if (row) updated.push(row);
-      }
-      return updated;
+    if (!run) return { ok: false as const, reason: "transcript_run_missing" };
+    return proveSealedNativeRunTranscript({
+      db,
+      reader: transcriptReaderFor(db),
+      orgId: run.orgId,
+      runId,
+      expectedOwner: { spanId, ownerToken: fence.ownerToken, attemptEpoch: fence.attemptEpoch, attemptId },
     });
-
-    for (const event of updatedEvents) {
-      publishLiveEvent({
-        orgId: event.orgId,
-        type: "heartbeat.run.event",
-        payload: {
-          runId: event.runId,
-          agentId: event.agentId,
-          seq: event.seq,
-          eventType: event.eventType,
-          stream: event.stream,
-          level: event.level,
-          message: event.message,
-          payload: event.payload,
-        },
-      });
-    }
   }
 
   async function createRun(input: {
@@ -988,12 +895,18 @@ export function chatAgentRunService(db: Db, options: {
       });
       return;
     }
+    const spanId = options.spanId?.trim() || run.runtimeSpanId?.trim() || null;
+    const attemptId = run.runtimeAttemptRef?.id?.trim() || null;
     await appendEvent(run, {
       eventType: "transcript.entry",
       stream: entry.kind === "stderr" ? "stderr" : entry.kind === "stdout" ? "stdout" : "system",
       level: entry.kind === "stderr" ? "warn" : "info",
       message: "chat transcript entry",
-      payload: transcriptEventPayload(entry),
+      payload: {
+        ...transcriptEventPayload(entry),
+        ...(spanId ? { spanId } : {}),
+        ...(attemptId ? { attemptId } : {}),
+      },
     });
   }
 
@@ -1023,6 +936,7 @@ export function chatAgentRunService(db: Db, options: {
       orgId: string;
       ownerToken: string;
       spanId?: string | null;
+      attemptId?: string | null;
       attemptEpoch?: number;
       error?: boolean;
       suspended?: boolean;
@@ -1031,10 +945,13 @@ export function chatAgentRunService(db: Db, options: {
   ) {
     const entry = await unifiedRunAdapter.get(runId);
     const spanId = input.spanId?.trim() || null;
+    const attemptId = input.attemptId?.trim() || entry?.attempt.ref.id || null;
     if (
       !entry
       || entry.orgId !== input.orgId
       || !spanId
+      || !attemptId
+      || attemptId !== entry.attempt.ref.id
       || !input.ownerToken?.trim()
       || !Number.isInteger(input.attemptEpoch)
       || (input.attemptEpoch as number) <= 0
@@ -1053,6 +970,7 @@ export function chatAgentRunService(db: Db, options: {
       ...fence,
     }, {
       spanId,
+      attemptId,
       result,
       error: input.error,
       suspended: input.suspended,
@@ -1350,10 +1268,19 @@ export function chatAgentRunService(db: Db, options: {
     },
   ) {
     const fence = staleChatRunFences.has(runId) ? null : trackedFenceForRun(runId);
-    const nativeProof = await finalNativeTranscriptProof(runId, input.transcriptDelivery, fence, input.status);
-    const resultJson = nativeProof
-      ? retainNativeChatRunResultJson(input.resultJson, nativeProof.spanId)
-      : input.resultJson ?? null;
+    const [runIdentity] = await db.select({ orgId: heartbeatRuns.orgId })
+      .from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)).limit(1);
+    const [spanIdentity] = fence
+      ? await db.select({ attemptId: runRuntimeSpans.attemptId }).from(runRuntimeSpans).where(and(
+        eq(runRuntimeSpans.orgId, runIdentity?.orgId ?? ""),
+        eq(runRuntimeSpans.runId, runId),
+        eq(runRuntimeSpans.id, fence.id),
+        eq(runRuntimeSpans.ownerToken, fence.ownerToken),
+        eq(runRuntimeSpans.attemptEpoch, fence.attemptEpoch),
+      )).limit(1)
+      : [];
+    const currentAttemptId = spanIdentity?.attemptId ?? null;
+    const resultJson = input.resultJson ?? null;
     const evidence = {
       resultJson,
       resultSummaryJson: summarizeHeartbeatRunResultJson(resultJson),
@@ -1370,7 +1297,7 @@ export function chatAgentRunService(db: Db, options: {
           ...terminalInput,
           ...evidence,
           terminalEffectsPending: input.terminalEffectsPending ?? false,
-          processExitedAt: input.processExitedAt ?? new Date(),
+          processExitedAt: input.processExitedAt !== undefined ? input.processExitedAt : new Date(),
         })
       : { ok: false as const, reason: "run_not_found" as const };
     noteFenceResult(runId, terminal);
@@ -1387,7 +1314,63 @@ export function chatAgentRunService(db: Db, options: {
     // transition. A stale recovery caller must not seal the current owner's
     // open supplement before its own terminal write is rejected.
     await sealNativeSupplements(runId);
-    if (nativeProof) await compactNativeAdapterInvokeEvents(runId, nativeProof);
+    if (fence) {
+      const expectedOwner = {
+        spanId: fence.id,
+        ownerToken: fence.ownerToken,
+        attemptEpoch: fence.attemptEpoch,
+        attemptId: currentAttemptId ?? "",
+      };
+      const delivery = input.transcriptDelivery ?? {
+        source: "legacy" as const,
+        runId,
+        spanId: fence.id,
+      };
+      let proofResult: Awaited<ReturnType<typeof finalNativeTranscriptProof>>;
+      try {
+        proofResult = await finalNativeTranscriptProof(
+          runId,
+          delivery,
+          fence,
+          input.status,
+          currentAttemptId,
+        );
+      } catch (error) {
+        proofResult = {
+          ok: false,
+          reason: error instanceof Error ? error.message : "native_range_read_failed",
+        };
+      }
+      if (proofResult.ok) {
+        const cleanup = await cleanSealedNativeTranscriptMirrors({
+          db,
+          proof: proofResult.proof,
+          runLogStore: getRunLogStore(),
+          transcriptObjectStore,
+          readerFactory: transcriptReaderFor,
+          retainResultJson: retainNativeChatRunResultJson,
+          compactAdapterInvokePayload: compactNativeAdapterInvokePayload,
+        });
+        if (!cleanup.cleaned) {
+          await markNativeTranscriptRetentionIncomplete({
+            db,
+            orgId: runIdentity?.orgId ?? "",
+            runId,
+            expectedOwner,
+            status: "cleanup_failed",
+            reason: cleanup.reason,
+            recovery: cleanup.recovery,
+          }).catch(() => undefined);
+        }
+      } else {
+        await markNativeTranscriptRetentionIncomplete({
+          db,
+          orgId: runIdentity?.orgId ?? "",
+          runId,
+          reason: proofResult.reason,
+        }).catch(() => undefined);
+      }
+    }
     stopOwningChatRun(runId, fence?.ownerToken, false);
     const updated = await db
       .select()
@@ -1455,12 +1438,19 @@ export function chatAgentRunService(db: Db, options: {
         error: input.error ?? "Chat run execution lease expired",
         errorCode: input.errorCode ?? "chat_run_stale",
         terminalEffectsPending: false,
-        processExitedAt: now,
+        processExitedAt: null,
       });
       noteFenceResult(run.id, terminal);
       if (terminal.ok) {
         finalized += 1;
         stopOwningChatRun(run.id, claim.value.ownerToken);
+        await sealNativeSupplements(run.id);
+        await markNativeTranscriptRetentionIncomplete({
+          db,
+          orgId: run.orgId,
+          runId: run.id,
+          reason: "chat_run_stale_terminal_without_reader_proof",
+        }).catch(() => undefined);
       }
     }
     return finalized;

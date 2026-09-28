@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { listCodexSkills } from "./skills.js";
 import { resolveManagedCodexHomeDir } from "./codex-home.js";
+import { listCodexSkills } from "./skills.js";
 
 describe("Codex skill source projection", () => {
   const tempRoots: string[] = [];

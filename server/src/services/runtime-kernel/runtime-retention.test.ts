@@ -19,13 +19,13 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { attachRuntimeSpanSupplement } from "./native-session.js";
 import {
   EXPIRED_SIDE_CHAT_TRANSCRIPT_RETENTION_MS,
   runRuntimeRetentionMaintenance,
   runtimeRetentionService,
   startRuntimeRetentionMaintenance,
 } from "./runtime-retention.js";
-import { attachRuntimeSpanSupplement } from "./native-session.js";
 import {
   createTranscriptObjectReader,
   createTranscriptObjectStore,

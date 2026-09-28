@@ -86,6 +86,7 @@ export async function replayChatStreamMessage(input: {
   orgId: string;
   conversationId: string;
   lookup: Parameters<typeof replayChatMessageMutation>[0];
+  deferExistingReplay?: boolean;
   response: any;
   writeStreamEvent: (response: any, event: any) => void;
 }) {
@@ -98,9 +99,10 @@ export async function replayChatStreamMessage(input: {
       modelOverride: input.modelOverride ?? null,
       effortOverride: input.effortOverride ?? null,
       files: input.files,
-    })
+  })
     : null;
   if (input.atomicFirstTurn || !input.clientMutationId) return fingerprint;
+  if (input.deferExistingReplay) return fingerprint;
   const replayedMutation = await input.lookup(
     input.orgId,
     input.conversationId,

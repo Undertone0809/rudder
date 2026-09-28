@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { CHAT_TRANSCRIPT_KEY } from "./chats.helpers.js";
 import { publishAutomationRunOutputToChat } from "./automation-chat-output.js";
+import { CHAT_TRANSCRIPT_KEY } from "./chats.helpers.js";
 
 describe("publishAutomationRunOutputToChat", () => {
   it("does not mirror native transcript entries into automation chat output", async () => {

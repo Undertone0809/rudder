@@ -1,7 +1,7 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { ChatConversation, ChatMessage } from "@rudderhq/shared";
-import type { chatService } from "./chats.js";
 import { CHAT_GENERATION_TRANSCRIPT_MEMORY_LIMITS } from "./chat-generation-provenance.js";
+import type { chatService } from "./chats.js";
 
 const LEGACY_TRANSCRIPT_PROGRESS_MIN_ENTRIES = 32;
 const LEGACY_TRANSCRIPT_PROGRESS_INTERVAL_MS = 1_000;

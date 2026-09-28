@@ -1,4 +1,5 @@
 import {
+  agentRuntimeState,
   agentWakeupRequests,
   agents,
   applyPendingMigrations,
@@ -8,6 +9,7 @@ import {
   heartbeatRunEvents,
   heartbeatRuns,
   nativeSegments,
+  organizationSkills,
   organizations,
   runRuntimeSpans,
   runtimeBindings,
@@ -21,13 +23,26 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { releaseTerminalRunRuntimeSpanWriters } from "./native-session.js";
+import {
+  cleanSealedNativeTranscriptMirrors,
+  proveSealedNativeRunTranscript,
+} from "./native-transcript-retention.js";
+import type { NativeTranscriptReadResult } from "./transcript-reader.js";
 
 const fakeNativeProvider = vi.hoisted(() => {
-  type Fixture = { sessionId: string; turnId: string; rawTranscript: string; decoy: string };
+  type Fixture = {
+    sessionId: string;
+    turnId: string;
+    rawTranscript: string;
+    decoy: string;
+    readProofFault?: "partial" | "throw";
+  };
   const fixtures = new Map<string, Fixture>();
   const sessions = new Map<string, Array<{ runId: string; turnId: string; entry: Record<string, unknown> }>>();
   const executedRunIds: string[] = [];
   const readInputs: any[] = [];
+  let profileMode: "supported" | "unsupported" | "unresolved" | "missing_reader" = "supported";
   const sessionCodec = {
     deserialize: (raw: unknown) =>
       typeof raw === "object" && raw !== null && !Array.isArray(raw)
@@ -73,6 +88,7 @@ const fakeNativeProvider = vi.hoisted(() => {
         exitCode: 0,
         signal: null,
         timedOut: false,
+        nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
         sessionId: fixture.sessionId,
         sessionDisplayId: fixture.sessionId,
         sessionParams: { sessionId: fixture.sessionId },
@@ -97,16 +113,21 @@ const fakeNativeProvider = vi.hoisted(() => {
     executedRunIds,
     readInputs,
     adapter,
+    profileMode: () => profileMode,
+    setProfileMode(mode: typeof profileMode) {
+      profileMode = mode;
+    },
     reset() {
       fixtures.clear();
       sessions.clear();
       executedRunIds.length = 0;
       readInputs.length = 0;
+      profileMode = "supported";
     },
     register(runId: string, fixture: Fixture) {
       fixtures.set(runId, fixture);
     },
-    async readRange(input: any) {
+    async readRange(input: any): Promise<NativeTranscriptReadResult> {
       readInputs.push(input);
       const selector = input.selector;
       if (selector?.kind !== "codex_turn" || !selector.threadId || !selector.turnId || !selector.runId) {
@@ -115,12 +136,14 @@ const fakeNativeProvider = vi.hoisted(() => {
       const entries = (sessions.get(selector.threadId) ?? [])
         .filter((candidate) => candidate.runId === selector.runId && candidate.turnId === selector.turnId)
         .map((candidate) => candidate.entry);
+      const fixture = fixtures.get(selector.runId);
+      if (fixture?.readProofFault === "throw") throw new Error("simulated native transcript read failure");
       return {
         items: entries,
         revision: `fake-native:${selector.turnId}`,
         source: "native",
         availability: "available",
-        completeness: "complete",
+        completeness: fixture?.readProofFault === "partial" ? "partial" : "complete",
       };
     },
   };
@@ -177,36 +200,44 @@ vi.mock("../budgets.js", async (importOriginal) => {
 
 vi.mock("../../agent-runtimes/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../agent-runtimes/index.js")>();
-  const evidence = {
-    status: "supported" as const,
-    reason: "W12 fake provider reads exact accepted turns",
-    transport: "w12-fake-native",
-    profileBound: true,
-    profileRequired: true,
-  };
   return {
     ...actual,
     getServerAdapter: vi.fn(() => fakeNativeProvider.adapter),
     findServerAdapter: vi.fn(() => fakeNativeProvider.adapter),
-    createProfileBoundRuntimeProviderCapabilityResolverFromConfig: vi.fn(() => (
+    createProfileBoundRuntimeProviderCapabilityResolverFromConfig: vi.fn((config: { resolutionMode?: string } = {}) => (
       runtimeType: string,
       binding: Record<string, unknown> | null,
-    ) => ({
-      adapter: {
-        runtimeType,
-        transcript: {
-          evidence,
-          readRange: async ({ readerInput }: { readerInput: unknown }) => fakeNativeProvider.readRange(readerInput),
+    ) => {
+      const mode = config.resolutionMode === "historical" ? "supported" : fakeNativeProvider.profileMode();
+      const status = mode === "unsupported" ? "unsupported" : mode === "unresolved" ? "unknown" : "supported";
+      const profileBound = mode !== "unresolved";
+      return {
+        adapter: {
+          runtimeType,
+          transcript: {
+            evidence: {
+              status,
+              reason: "W12 fake provider reads exact accepted turns",
+              transport: "w12-fake-native",
+              profileBound,
+              profileRequired: true,
+            },
+            ...(mode === "missing_reader" ? {} : {
+              readRange: async ({ readerInput }: { readerInput: unknown }) => fakeNativeProvider.readRange(readerInput),
+            }),
+          },
         },
-      },
-      binding,
-      profileResolved: Boolean(binding),
-    })),
+        binding,
+        profileResolved: Boolean(binding) && profileBound,
+      };
+    }),
     runningProcesses: new Map(),
   };
 });
 
 import { heartbeatService } from "../heartbeat.js";
+import { getRunLogStore } from "../run-log-store.js";
+import { runRuntimeRetentionMaintenance } from "./runtime-retention.js";
 import { createTranscriptReader } from "./transcript-reader.js";
 
 type EmbeddedPostgresInstance = {
@@ -275,7 +306,7 @@ async function waitForCondition(check: () => Promise<boolean>, timeoutMs = 20_00
 }
 
 async function filesBelow(directory: string): Promise<string[]> {
-  let entries: Awaited<ReturnType<typeof fsp.readdir>>;
+  let entries: import("node:fs").Dirent[];
   try {
     entries = await fsp.readdir(directory, { withFileTypes: true });
   } catch (error) {
@@ -329,7 +360,9 @@ describe("heartbeat native transcript retention integration", () => {
     await db.delete(runtimeBindings);
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
+    await db.delete(agentRuntimeState);
     await db.delete(agents);
+    await db.delete(organizationSkills);
     await db.delete(organizations);
   });
 
@@ -402,7 +435,67 @@ describe("heartbeat native transcript retention integration", () => {
     });
   }
 
-  it("omits duplicate raw evidence for an accepted native Run and keeps it on legacy fallback", async () => {
+  async function waitForNativeRetentionComplete(runId: string) {
+    await waitForCondition(async () => {
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+      const retention = (run?.contextSnapshot as Record<string, any> | null)?.nativeTranscriptRetention;
+      return retention?.status === "reference_only" || retention?.status === "incomplete" || retention?.status === "cleanup_failed";
+    });
+  }
+
+  it("releases a historical sealed span on process exit only when the retained PID is confirmed gone", async () => {
+    const { orgId, agentId } = await seedAgent();
+    const queued = await queueRun(agentId);
+    const exitedAt = new Date();
+    const closedAt = new Date(Date.now() + 1_000);
+    await db.update(heartbeatRuns).set({
+      status: "timed_out",
+      processPid: null,
+      processExitedAt: exitedAt,
+      terminalEffectsPending: true,
+    }).where(eq(heartbeatRuns.id, queued.run.id));
+    const [historicalSpan] = await db.insert(runRuntimeSpans).values({
+      orgId,
+      runId: queued.run.id,
+      bindingId: queued.bindingId,
+      segmentId: queued.segmentId,
+      attemptRef: `legacy-span-${randomUUID()}`,
+      ownerToken: `legacy-owner-${randomUUID()}`,
+      state: "sealed",
+      completeness: "unknown",
+      closedAt,
+    }).returning();
+
+    const processExitProof = {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+    } as const;
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId,
+      runId: queued.run.id,
+      proof: processExitProof,
+    })).resolves.toEqual([]);
+
+    await db.update(heartbeatRuns).set({ processPid: process.pid }).where(eq(heartbeatRuns.id, queued.run.id));
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId,
+      runId: queued.run.id,
+      proof: processExitProof,
+    })).resolves.toEqual([]);
+
+    await db.update(heartbeatRuns).set({ processPid: 987654321 }).where(eq(heartbeatRuns.id, queued.run.id));
+    await expect(releaseTerminalRunRuntimeSpanWriters(db, {
+      orgId,
+      runId: queued.run.id,
+      proof: processExitProof,
+    })).resolves.toEqual([historicalSpan!.id]);
+    const [releasedSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, historicalSpan!.id));
+    expect(releasedSpan?.writerLeaseReleasedAt).toBeInstanceOf(Date);
+  });
+
+  it("avoids raw mirrors for a verified native profile and retains native read-back authority", async () => {
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     const { orgId, agentId } = await seedAgent();
     const sessionId = `w12-native-session-${randomUUID()}`;
@@ -410,17 +503,18 @@ describe("heartbeat native transcript retention integration", () => {
     const nativeToken = `W12_NATIVE_RAW_${randomUUID()}`;
     const nativeRaw = `${nativeToken}::${"native transcript payload ".repeat(1_750)}`;
     const nativeTurnId = `turn-${native.run.id}`;
+    const subagentTurnId = `${nativeTurnId}-subagent`;
+    const subagentRaw = `W12_NATIVE_SUBAGENT_RAW_${randomUUID()}`;
     fakeNativeProvider.register(native.run.id, {
       sessionId,
       turnId: nativeTurnId,
       rawTranscript: nativeRaw,
       decoy: `OUT_OF_SCOPE_${randomUUID()}`,
     });
-    await db.update(nativeSegments)
-      .set({ nativeSessionId: sessionId, rootSessionId: sessionId, state: "open" })
-      .where(eq(nativeSegments.id, native.segmentId));
 
     const nativeTerminalGate = fakeTerminalEffect.arm();
+    let nativeRevision = "";
+    let primarySpanId: string | null = null;
     try {
       await heartbeatService(db).startNextQueuedRunForAgent(agentId);
       await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
@@ -429,13 +523,53 @@ describe("heartbeat native transcript retention integration", () => {
       const nativeRun = await waitForTerminalEffectsPending(native.run.id);
       const [binding] = await db.select().from(runtimeBindings).where(eq(runtimeBindings.id, native.bindingId));
       const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+      primarySpanId = span!.id;
       const attempts = await db.select().from(heartbeatRunAttempts)
         .where(eq(heartbeatRunAttempts.runId, native.run.id));
       const events = await db.select().from(heartbeatRunEvents)
         .where(eq(heartbeatRunEvents.runId, native.run.id));
+      const subagentSpanId = randomUUID();
+      fakeNativeProvider.sessions.set(sessionId, [
+        ...(fakeNativeProvider.sessions.get(sessionId) ?? []),
+        {
+          runId: native.run.id,
+          turnId: subagentTurnId,
+          entry: {
+            kind: "assistant",
+            ts: "2026-09-24T00:00:02.000Z",
+            text: subagentRaw,
+          },
+        },
+      ]);
+      const [subagentSpan] = await db.insert(runRuntimeSpans).values({
+        id: subagentSpanId,
+        orgId,
+        runId: native.run.id,
+        bindingId: native.bindingId,
+        segmentId: native.segmentId,
+        attemptId: attempts[0]!.id,
+        attemptRef: `native-subagent-${subagentSpanId}`,
+        attemptEpoch: span!.attemptEpoch,
+        ownerToken: span!.ownerToken,
+        ordinal: span!.ordinal + 1,
+        relation: "native_subagent",
+        nativeExecutionRef: `execution:${subagentTurnId}`,
+        inputCorrelationRef: `input:${subagentTurnId}`,
+        selectorJson: {
+          kind: "codex_turn",
+          threadId: sessionId,
+          turnId: subagentTurnId,
+          runId: native.run.id,
+        },
+        state: "sealed",
+        completeness: "complete",
+        openedAt: new Date(Date.now() - 1_000),
+        closedAt: new Date(),
+      }).returning();
 
       expect(binding?.continuity).toBe("native");
       expect(nativeRun.resultJson).toMatchObject({
+        summary: "bounded fake provider summary",
         retention: {
           transcriptSource: "native",
           rawTranscriptPersisted: false,
@@ -444,7 +578,13 @@ describe("heartbeat native transcript retention integration", () => {
           rawResultPersisted: false,
         },
       });
-      expect(nativeRun).toMatchObject({ status: "succeeded", logRef: null, logStore: null });
+      expect(nativeRun).toMatchObject({
+        status: "succeeded",
+        logRef: null,
+        logStore: null,
+        stdoutExcerpt: null,
+        stderrExcerpt: null,
+      });
       expect(attempts).toHaveLength(1);
       expect(attempts[0]).toMatchObject({
         submissionPhase: "accepted",
@@ -457,14 +597,18 @@ describe("heartbeat native transcript retention integration", () => {
         turnId: nativeTurnId,
         runId: native.run.id,
       });
+      expect(span?.supplementalObjectRef).toEqual(expect.any(String));
+      expect(await readAllFiles(transcriptObjectRoot)).toContain(nativeRaw);
       expect(nativeRun.terminalEffectsJson).toMatchObject({
-        automation: { transcript: [], transcriptSource: "native" },
+        automation: { output: "bounded fake provider summary" },
       });
+      expect(JSON.stringify(nativeRun.terminalEffectsJson)).not.toContain(nativeRaw);
 
-      const sqlEvidence = JSON.stringify({ run: nativeRun, attempts, events, span });
+      const sqlEvidence = JSON.stringify({ run: nativeRun, attempts, events, span, subagentSpan });
       expect(sqlEvidence).not.toContain(nativeRaw);
-      expect(await filesBelow(runLogRoot)).toEqual([]);
-      expect(await filesBelow(path.join(transcriptObjectRoot, "transcript-objects"))).toEqual([]);
+      expect(sqlEvidence).not.toContain(subagentRaw);
+      expect(events.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
+      expect(await readAllFiles(runLogRoot)).not.toContain(nativeRaw);
 
       const readerInputs: any[] = [];
       const transcriptReader = createTranscriptReader(db, {
@@ -493,12 +637,105 @@ describe("heartbeat native transcript retention integration", () => {
         span: { id: span!.id },
         selector: { kind: "codex_turn", threadId: sessionId, turnId: nativeTurnId, runId: native.run.id },
       });
+      expect(page.revision).toEqual(expect.any(String));
+      nativeRevision = page.revision;
     } finally {
       nativeTerminalGate.release();
+      await waitForTerminalEffectsComplete(native.run.id);
     }
-    await waitForTerminalEffectsComplete(native.run.id);
+
+    await waitForNativeRetentionComplete(native.run.id);
+    if (!primarySpanId) throw new Error("Expected the native primary span to be recorded");
+    const [cleanedNativeRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    const cleanedNativeSpans = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+    const cleanedNativeSpan = cleanedNativeSpans.find((candidate) => candidate.id === primarySpanId);
+    const cleanedSubagentSpan = cleanedNativeSpans.find((candidate) => candidate.relation === "native_subagent");
+    const cleanedNativeEvents = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
+    expect(cleanedNativeRun).toMatchObject({
+      status: "succeeded",
+      logRef: null,
+      logStore: null,
+      stdoutExcerpt: null,
+      stderrExcerpt: null,
+      resultJson: { retention: { transcriptSource: "native", rawResultPersisted: false, rawLogPersisted: false } },
+      contextSnapshot: { nativeTranscriptRetention: { status: "reference_only", itemCount: 2 } },
+    });
+    expect(cleanedNativeSpans).toHaveLength(2);
+    expect(cleanedSubagentSpan?.id).toEqual(expect.any(String));
+    expect(cleanedNativeSpan?.supplementalObjectRef).toBeNull();
+    expect(cleanedSubagentSpan?.supplementalObjectRef).toBeNull();
+    expect(cleanedNativeEvents.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
+    expect(JSON.stringify(cleanedNativeEvents)).not.toContain(nativeRaw);
+    expect(JSON.stringify(cleanedNativeEvents)).not.toContain(subagentRaw);
+    expect(await filesBelow(runLogRoot)).toEqual([]);
+    expect(await filesBelow(path.join(transcriptObjectRoot, "transcript-objects"))).toEqual([]);
+
+    const rereadAfterCleanup = createTranscriptReader(db, {
+      nativeReader: { readRange: async (input) => await fakeNativeProvider.readRange(input) },
+    });
+    const rereadPage = await rereadAfterCleanup.readRun({
+      orgId,
+      runId: native.run.id,
+      spanId: cleanedNativeSpan!.id,
+      principal: { orgId, principalScopeRef: `org:${orgId}`, authorized: true },
+    });
+    expect(rereadPage).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    expect(rereadPage.items.map((item) => item.text)).toEqual([nativeRaw]);
+    expect(rereadPage.revision).toBe(nativeRevision);
+
+    const rereadSubagentPage = await rereadAfterCleanup.readRun({
+      orgId,
+      runId: native.run.id,
+      spanId: cleanedSubagentSpan!.id,
+      principal: { orgId, principalScopeRef: `org:${orgId}`, authorized: true },
+    });
+    expect(rereadSubagentPage).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    expect(rereadSubagentPage.items.map((item) => item.text)).toEqual([subagentRaw]);
+
+    const verifiedProof = await proveSealedNativeRunTranscript({
+      db,
+      reader: rereadAfterCleanup,
+      orgId,
+      runId: native.run.id,
+    });
+    expect(verifiedProof.ok).toBe(true);
+    if (!verifiedProof.ok) throw new Error(`Expected complete native proof, got ${verifiedProof.reason}`);
+    await db.delete(runRuntimeSpans).where(eq(runRuntimeSpans.id, cleanedSubagentSpan!.id));
+    const cleanupWithMissingSpan = await cleanSealedNativeTranscriptMirrors({
+      db,
+      proof: verifiedProof.proof,
+      runLogStore: {} as any,
+      transcriptObjectStore: {} as any,
+      readerFactory: () => rereadAfterCleanup,
+      retainResultJson: (value) => value ?? {},
+    });
+    expect(cleanupWithMissingSpan).toMatchObject({ cleaned: false, reason: "cleanup_identity_mismatch" });
+
+    const retainedAttempts = await db.select().from(heartbeatRunAttempts)
+      .where(eq(heartbeatRunAttempts.runId, native.run.id));
+    expect(retainedAttempts).toHaveLength(1);
+    const missingSpanAttemptId = randomUUID();
+    await db.insert(heartbeatRunAttempts).values({
+      id: missingSpanAttemptId,
+      orgId,
+      runId: native.run.id,
+      agentId,
+      attemptIndex: retainedAttempts[0]!.attemptIndex + 1,
+      runtimeType: "codex_local",
+      status: "succeeded",
+      ownerToken: `missing-span-owner-${missingSpanAttemptId}`,
+      attemptEpoch: (retainedAttempts[0]!.attemptEpoch ?? 0) + 1,
+      finishedAt: new Date(),
+    });
+    await expect(proveSealedNativeRunTranscript({
+      db,
+      reader: rereadAfterCleanup,
+      orgId,
+      runId: native.run.id,
+    })).resolves.toMatchObject({ ok: false, reason: "span_attempt_set_mismatch" });
 
     const legacy = await queueRun(agentId);
+    fakeNativeProvider.setProfileMode("unsupported");
     const legacyToken = `W12_LEGACY_RAW_${randomUUID()}`;
     const legacyRaw = `${legacyToken}::${"legacy transcript payload ".repeat(1_750)}`;
     const legacyTurnId = `turn-${legacy.run.id}`;
@@ -528,13 +765,336 @@ describe("heartbeat native transcript retention integration", () => {
       });
       expect(legacyRun.logRef).toEqual(expect.any(String));
       expect((legacyRun.terminalEffectsJson as any).automation).toMatchObject({
-        transcriptSource: "legacy",
-        transcript: [{ kind: "assistant", text: legacyRaw }],
+        output: "bounded fake provider summary",
       });
+      expect(JSON.stringify(legacyRun.terminalEffectsJson)).not.toContain(legacyRaw);
       expect(await readAllFiles(runLogRoot)).toContain(legacyRaw);
     } finally {
       legacyTerminalGate.release();
+      await waitForTerminalEffectsComplete(legacy.run.id);
     }
-    await waitForTerminalEffectsComplete(legacy.run.id);
+  }, 60_000);
+
+  it("keeps raw fallback for an unresolved profile until the terminal native range is proven", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    fakeNativeProvider.setProfileMode("unresolved");
+    const { agentId } = await seedAgent();
+    const native = await queueRun(agentId);
+    const sessionId = `w12-unresolved-session-${randomUUID()}`;
+    const nativeTurnId = `turn-${native.run.id}`;
+    const nativeRaw = `W12_UNRESOLVED_PROFILE_${randomUUID()} ${"fallback evidence ".repeat(200)}`;
+    fakeNativeProvider.register(native.run.id, {
+      sessionId,
+      turnId: nativeTurnId,
+      rawTranscript: nativeRaw,
+      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
+    });
+
+    const terminalGate = fakeTerminalEffect.arm();
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
+      await terminalGate.entered;
+
+      const persisted = await waitForTerminalEffectsPending(native.run.id);
+      expect(persisted.resultJson).toMatchObject({
+        stdout: nativeRaw,
+        stderr: nativeRaw,
+        output: nativeRaw,
+        transcript: [{ text: nativeRaw }],
+        retention: { transcriptSource: "legacy" },
+      });
+      expect(persisted.logRef).toEqual(expect.any(String));
+      expect(persisted.stdoutExcerpt).toContain(nativeRaw.slice(0, 100));
+      expect(await readAllFiles(runLogRoot)).toContain(nativeRaw);
+    } finally {
+      terminalGate.release();
+      await waitForTerminalEffectsComplete(native.run.id);
+    }
+    await waitForNativeRetentionComplete(native.run.id);
+    const [afterReadBack] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    expect(afterReadBack?.resultJson).toMatchObject({
+      retention: { transcriptSource: "native", rawResultPersisted: false },
+    });
+    expect((afterReadBack?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
+      status: "reference_only",
+      itemCount: 1,
+    });
+  }, 60_000);
+
+  it("preserves the business result and marks retention incomplete when terminal native proof is partial or fails", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    const { agentId } = await seedAgent();
+
+    for (const readProofFault of ["partial", "throw"] as const) {
+      const native = await queueRun(agentId);
+      const sessionId = `w12-incomplete-session-${randomUUID()}`;
+      const nativeTurnId = `turn-${native.run.id}`;
+      const nativeRaw = `W12_${readProofFault.toUpperCase()}_READER_${randomUUID()} ${"recovery evidence ".repeat(200)}`;
+      fakeNativeProvider.register(native.run.id, {
+        sessionId,
+        turnId: nativeTurnId,
+        rawTranscript: nativeRaw,
+        decoy: `OUT_OF_SCOPE_${randomUUID()}`,
+        readProofFault,
+      });
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
+      await waitForTerminalEffectsComplete(native.run.id);
+      await waitForNativeRetentionComplete(native.run.id);
+
+      const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      const retention = (persisted?.contextSnapshot as Record<string, any> | null)?.nativeTranscriptRetention;
+      expect(persisted).toMatchObject({
+        status: "succeeded",
+        logRef: null,
+        logStore: null,
+        stdoutExcerpt: null,
+        stderrExcerpt: null,
+        resultJson: {
+          summary: "bounded fake provider summary",
+          retention: { transcriptSource: "native", rawResultPersisted: false, rawLogPersisted: false },
+        },
+      });
+      expect(retention).toMatchObject({ status: "incomplete", reason: "native_range_read_incomplete" });
+      expect(retention.recovery).toEqual([
+        expect.objectContaining({
+          kind: "transcript_supplement",
+          objectRef: expect.any(String),
+          spanId: expect.any(String),
+        }),
+      ]);
+      const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+      const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
+      expect(span?.supplementalObjectRef).toEqual(expect.any(String));
+      expect(JSON.stringify({ persisted, events, span, recovery: retention })).not.toContain(nativeRaw);
+      expect(events.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
+      expect(await readAllFiles(transcriptObjectRoot)).toContain(nativeRaw);
+      expect(await readAllFiles(runLogRoot)).not.toContain(nativeRaw);
+    }
+  }, 60_000);
+
+  it("retains the complete Run fallback when run-log staging fails", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    fakeNativeProvider.setProfileMode("unsupported");
+    const { orgId, agentId } = await seedAgent();
+    const native = await queueRun(agentId);
+    const sessionId = `w12-log-failure-session-${randomUUID()}`;
+    const nativeTurnId = `turn-${native.run.id}`;
+    const nativeRaw = `W12_LOG_STAGE_FAILURE_${randomUUID()} ${"raw fallback ".repeat(200)}`;
+    fakeNativeProvider.register(native.run.id, {
+      sessionId,
+      turnId: nativeTurnId,
+      rawTranscript: nativeRaw,
+      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
+    });
+    await db.update(nativeSegments)
+      .set({ nativeSessionId: sessionId, rootSessionId: sessionId, state: "open" })
+      .where(eq(nativeSegments.id, native.segmentId));
+
+    const store = getRunLogStore();
+    const originalStage = store.stageRunRemoval;
+    if (!originalStage) throw new Error("Expected the local run-log store to support staged deletion");
+    store.stageRunRemoval = async () => { throw new Error("simulated run-log staging failure"); };
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
+      await waitForTerminalEffectsComplete(native.run.id);
+      await waitForNativeRetentionComplete(native.run.id);
+
+      const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+      const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
+      expect(persisted).toMatchObject({
+        status: "succeeded",
+        logStore: "local_file",
+        logRef: expect.any(String),
+        resultJson: { stdout: nativeRaw, transcript: [{ text: nativeRaw }] },
+        contextSnapshot: {
+          nativeTranscriptRetention: {
+            status: "cleanup_failed",
+            reason: expect.stringContaining("simulated run-log staging failure"),
+          },
+        },
+      });
+      expect(span?.state).toBe("sealed");
+      expect(events.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
+      expect(await readAllFiles(runLogRoot)).toContain(nativeRaw);
+    } finally {
+      store.stageRunRemoval = originalStage;
+    }
+    const stageRetry = await runRuntimeRetentionMaintenance(db, { now: new Date(Date.now() + 2 * 60 * 60 * 1000) });
+    expect(stageRetry.nativeTranscriptRecovery).toMatchObject({ attempted: 1, recovered: 1 });
+    const [retriedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    expect((retriedRun?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
+      status: "reference_only",
+      recovery: [],
+    });
+    expect(await readAllFiles(runLogRoot)).not.toContain(nativeRaw);
+  }, 60_000);
+
+  it("keeps the staged Run log recoverable and reports a final log purge failure", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    const { orgId, agentId } = await seedAgent();
+    const native = await queueRun(agentId);
+    const sessionId = `w12-log-purge-session-${randomUUID()}`;
+    const nativeTurnId = `turn-${native.run.id}`;
+    const nativeRaw = `W12_LOG_PURGE_FAILURE_${randomUUID()} ${"recovery evidence ".repeat(150)}`;
+    fakeNativeProvider.register(native.run.id, {
+      sessionId,
+      turnId: nativeTurnId,
+      rawTranscript: nativeRaw,
+      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
+    });
+    await db.update(nativeSegments)
+      .set({ nativeSessionId: sessionId, rootSessionId: sessionId, state: "open" })
+      .where(eq(nativeSegments.id, native.segmentId));
+
+    const store = getRunLogStore();
+    const originalPurge = store.purgeStagedRunRemoval;
+    if (!originalPurge) throw new Error("Expected the local run-log store to support staged deletion");
+    let staged: { handle: { logRef: string }; stageId: string; expectedSha256: string } | null = null;
+    let supplementStageDirectory: string | null = null;
+    store.purgeStagedRunRemoval = async (input) => {
+      staged = input;
+      const [pending] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      const recovery = (pending?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.recovery;
+      expect((pending?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.status).toBe("cleanup_pending");
+      expect(recovery).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "run_log",
+          store: "local_file",
+          logRef: input.handle.logRef,
+          stageId: input.stageId,
+        }),
+        expect.objectContaining({ kind: "transcript_object", stageId: expect.any(String) }),
+      ]));
+      throw new Error("simulated final run-log purge failure");
+    };
+    const terminalGate = fakeTerminalEffect.arm();
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
+      await terminalGate.entered;
+      await waitForTerminalEffectsPending(native.run.id);
+      const retainedFallback = await store.begin({ orgId, agentId, runId: native.run.id });
+      await store.append(retainedFallback, {
+        stream: "stdout",
+        chunk: nativeRaw,
+        ts: new Date().toISOString(),
+      });
+      const fallbackSummary = await store.finalize(retainedFallback);
+      await db.update(heartbeatRuns).set({
+        logStore: retainedFallback.store,
+        logRef: retainedFallback.logRef,
+        logBytes: fallbackSummary.bytes,
+        logSha256: fallbackSummary.sha256,
+        logCompressed: fallbackSummary.compressed,
+      }).where(eq(heartbeatRuns.id, native.run.id));
+      terminalGate.release();
+      await waitForTerminalEffectsComplete(native.run.id);
+      await waitForNativeRetentionComplete(native.run.id);
+
+      const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      expect(staged).toBeTruthy();
+      expect(persisted).toMatchObject({
+        status: "succeeded",
+        logStore: null,
+        logRef: null,
+        resultJson: { retention: { transcriptSource: "native", rawResultPersisted: false, rawLogPersisted: false } },
+        contextSnapshot: {
+          nativeTranscriptRetention: {
+            status: "cleanup_failed",
+            reason: expect.stringContaining("simulated final run-log purge failure"),
+          },
+        },
+      });
+      const recovery = (persisted?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.recovery;
+      expect(recovery).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "run_log",
+          store: "local_file",
+          logRef: staged!.handle.logRef,
+          stageId: staged!.stageId,
+        }),
+        expect.objectContaining({ kind: "transcript_object", stageId: expect.any(String) }),
+      ]));
+      const initialStageDirectory = path.join(
+        path.dirname(path.join(runLogRoot, staged!.handle.logRef)),
+        `.${path.basename(staged!.handle.logRef)}.retention-${staged!.stageId}`,
+      );
+      expect(await readAllFiles(initialStageDirectory)).toContain(nativeRaw);
+      const supplementStage = recovery.find((entry: any) => entry.kind === "transcript_object");
+      supplementStageDirectory = path.join(
+        transcriptObjectRoot,
+        "transcript-objects",
+        `.retention-${supplementStage.objectRef}-${supplementStage.stageId}`,
+      );
+      expect(await readAllFiles(supplementStageDirectory)).toContain(nativeRaw);
+    } finally {
+      terminalGate.release();
+      store.purgeStagedRunRemoval = originalPurge;
+    }
+
+    const [spanBeforeRecovery] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+    if (!spanBeforeRecovery) throw new Error("Expected the sealed native span to remain available for recovery proof");
+    const recoveryStage = staged as { handle: { logRef: string }; stageId: string; expectedSha256: string } | null;
+    if (!recoveryStage) throw new Error("Expected the failed purge to persist its recovery location");
+    const stageDirectory = path.join(
+      path.dirname(path.join(runLogRoot, recoveryStage.handle.logRef)),
+      `.${path.basename(recoveryStage.handle.logRef)}.retention-${recoveryStage.stageId}`,
+    );
+    const retryBase = Date.now() + 2 * 60 * 60 * 1000;
+
+    await db.update(runRuntimeSpans).set({ ownerToken: `${spanBeforeRecovery.ownerToken}-changed` })
+      .where(eq(runRuntimeSpans.id, spanBeforeRecovery.id));
+    await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase) });
+    expect(await readAllFiles(stageDirectory)).toContain(nativeRaw);
+    const [identityRejected] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    expect((identityRejected?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
+      status: "cleanup_failed",
+      reason: expect.stringContaining("span_attempt_identity_incomplete"),
+    });
+
+    await db.update(runRuntimeSpans).set({
+      ownerToken: spanBeforeRecovery.ownerToken,
+      selectorJson: {
+        ...(spanBeforeRecovery.selectorJson as Record<string, unknown>),
+        turnId: `${nativeTurnId}-changed`,
+      },
+    }).where(eq(runRuntimeSpans.id, spanBeforeRecovery.id));
+    await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase + 2 * 60 * 60 * 1000) });
+    expect(await readAllFiles(stageDirectory)).toContain(nativeRaw);
+    const [rangeRejected] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    expect((rangeRejected?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
+      status: "cleanup_failed",
+      reason: expect.stringContaining("native_range_read_incomplete"),
+    });
+
+    await db.update(runRuntimeSpans).set({ selectorJson: spanBeforeRecovery.selectorJson })
+      .where(eq(runRuntimeSpans.id, spanBeforeRecovery.id));
+    await db.update(heartbeatRuns).set({ status: "failed" }).where(eq(heartbeatRuns.id, native.run.id));
+    await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase + 4 * 60 * 60 * 1000) });
+    expect(await readAllFiles(stageDirectory)).toContain(nativeRaw);
+
+    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, native.run.id));
+    const maintenance = await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase + 6 * 60 * 60 * 1000) });
+    expect(maintenance.nativeTranscriptRecovery).toMatchObject({ attempted: 1, recovered: 1 });
+    const [recovered] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    expect((recovered?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
+      status: "reference_only",
+      recovery: [],
+    });
+    expect(await readAllFiles(stageDirectory)).not.toContain(nativeRaw);
+    expect(await readAllFiles(runLogRoot)).not.toContain(nativeRaw);
+    if (supplementStageDirectory) expect(await filesBelow(supplementStageDirectory)).toEqual([]);
+    await originalPurge({
+      orgId,
+      agentId,
+      runId: native.run.id,
+      handle: { store: "local_file", logRef: recoveryStage.handle.logRef },
+      expectedSha256: recoveryStage.expectedSha256,
+      stageId: recoveryStage.stageId,
+    });
   }, 60_000);
 });

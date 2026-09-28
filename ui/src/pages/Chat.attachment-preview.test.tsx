@@ -453,6 +453,18 @@ vi.mock("@tanstack/react-query", () => ({
     }
     return { data: [], isPending: false, isLoading: false, error: null };
   },
+  useInfiniteQuery: () => ({
+    data: { pages: [] },
+    error: null,
+    hasNextPage: false,
+    isError: false,
+    isFetchNextPageError: false,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isPending: false,
+    fetchNextPage: vi.fn(),
+    refetch: vi.fn(),
+  }),
   useQueries: ({ queries }: { queries: Array<{ queryKey: readonly unknown[] }> }) => queries.map(({ queryKey }) => {
     mockState.allQueryKeys.push([...queryKey]);
     return {
@@ -593,6 +605,7 @@ vi.mock("@/context/I18nContext", () => ({
 
 vi.mock("@/context/ChatGenerationContext", () => ({
   ChatGenerationCloseSupersededError: mockState.ChatGenerationCloseSupersededError,
+  chatGenerationOwnerStateKey: (scopeKey: string, ownerKey: string) => JSON.stringify([scopeKey, ownerKey]),
   useChatGenerations: () => ({
     abortChatStream: mockState.abortChatStream,
     sendInFlightByChatId: mockState.sendInFlightByChatId,
@@ -660,6 +673,7 @@ vi.mock("@/context/ChatGenerationContext", () => ({
 vi.mock("@/api/chats", () => ({
   chatsApi: {
     create: mockState.createConversation,
+    listSideChats: vi.fn(async () => ({ items: [], nextCursor: null })),
     preflightDraft: mockState.preflightDraft,
     sendFirstMessageStream: mockState.sendFirstMessageStream,
     get: vi.fn(),
@@ -2347,7 +2361,8 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
     const closeItem = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"))
-      .find((candidate) => candidate.textContent?.trim() === "Close");
+      .find((candidate) => candidate.textContent?.trim() === "Close Side Chat");
+    expect(closeItem).toBeDefined();
     expect(closeItem?.getAttribute("aria-disabled")).toBe("true");
     const inlineClose = container.querySelector<HTMLButtonElement>("[data-testid='chat-side-panel-tab-close']");
     expect(inlineClose?.disabled).toBe(true);
@@ -2413,7 +2428,8 @@ describe("Chat Side Panel link handling", () => {
     });
     const menuItems = Array.from(document.querySelectorAll<HTMLElement>("[role='menuitem']"));
     const moveItem = menuItems.find((candidate) => candidate.textContent?.trim() === "Move to Messenger");
-    const closeItem = menuItems.find((candidate) => candidate.textContent?.trim() === "Close");
+    const closeItem = menuItems.find((candidate) => candidate.textContent?.trim() === "Close Side Chat");
+    expect(closeItem).toBeDefined();
     expect(moveItem?.getAttribute("aria-disabled")).toBe("true");
     expect(closeItem?.getAttribute("aria-disabled")).toBe("true");
 
@@ -2460,7 +2476,7 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+    expect(mockState.destroySideChat).toHaveBeenCalledWith(sideChat.id);
     expect(mockState.removeQueries).toHaveBeenCalledTimes(2);
     expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "error" }));
   });
@@ -2474,7 +2490,9 @@ describe("Chat Side Panel link handling", () => {
       messengerVisible: true,
     });
     mockState.conversations = [chat({ id: "chat-1", title: "Source chat" }), sideChat];
-    mockState.destroySideChat.mockRejectedValue(new ApiError("Side Chat is already kept", 409, {}));
+    mockState.destroySideChat.mockRejectedValue(new ApiError("Side Chat is already kept", 409, {
+      details: { code: "side_chat_kept" },
+    }));
     const container = await renderPersistedSideChatPanel(sideChat.id);
 
     await act(async () => {
@@ -2483,7 +2501,9 @@ describe("Chat Side Panel link handling", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+    await vi.waitFor(() => {
+      expect(container.querySelectorAll("[data-testid='chat-side-panel-tab']")).toHaveLength(0);
+    });
     expect(mockState.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["messenger", "org-1"] });
     expect(mockState.removeQueries).not.toHaveBeenCalled();
     expect(mockState.pushToast).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "error" }));

@@ -49,10 +49,6 @@ import {
 import { scheduleSettingsPrefetchQueries } from "../lib/settings-prefetch";
 import { cn } from "../lib/utils";
 import {
-  SIDE_PANEL_DEFAULT_WIDTH,
-  SIDE_PANEL_RESIZER_HIT_WIDTH,
-  SIDE_PANEL_RESIZER_WIDTH,
-  SIDE_PANEL_WIDTH_KEY,
   clampSidePanelWidth,
   getCurrentViewportWidth,
   readRememberedSidePanelWidth,
@@ -61,6 +57,10 @@ import {
   resolveSidePanelCollapseWidth,
   resolveSidePanelDragWidth,
   shouldAutoExpandSidePanel,
+  SIDE_PANEL_DEFAULT_WIDTH,
+  SIDE_PANEL_RESIZER_HIT_WIDTH,
+  SIDE_PANEL_RESIZER_WIDTH,
+  SIDE_PANEL_WIDTH_KEY,
   useAutoCollapseWorkspaceWidth,
   useViewportResizeTransition,
   widthRatio,
@@ -79,6 +79,10 @@ import { NewProjectDialog } from "./NewProjectDialog";
 import { PrimaryRail } from "./PrimaryRail";
 import { hasCompletedProductTour, hasPendingProductTour } from "./ProductTourOverlay";
 import { SettingsSidebar } from "./SettingsSidebar";
+import {
+  isSidePanelRouteContextReady,
+  SidePanelRouteContextBinder,
+} from "./SidePanelRouteContext";
 import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
@@ -93,6 +97,7 @@ export {
   resolveSidePanelDragWidth,
   shouldAutoCollapseContextSidebar, shouldAutoExpandSidePanel, shouldShowContextSidebar
 } from "../lib/workspace-shell-layout";
+export { isSidePanelRouteContextReady } from "./SidePanelRouteContext";
 
 const INSTANCE_SETTINGS_MEMORY_KEY = "rudder.lastInstanceSettingsPath";
 const LAST_WORKSPACE_PATH_KEY = "rudder.lastWorkspacePath";
@@ -814,23 +819,6 @@ function DesktopSidePanelSlot({
   );
 }
 
-function SidePanelRouteContextBinder({
-  contextKey,
-  preserveHold,
-}: {
-  contextKey: string;
-  preserveHold: boolean;
-}) {
-  const { clearDisplayedContextHold, setContextKey } = useSidePanel();
-
-  useLayoutEffect(() => {
-    if (!preserveHold) clearDisplayedContextHold();
-    setContextKey(contextKey);
-  }, [clearDisplayedContextHold, contextKey, preserveHold, setContextKey]);
-
-  return null;
-}
-
 function CollapsedWorkspaceSidebarReveal({
   onOpen,
   alwaysVisible = false,
@@ -892,6 +880,8 @@ export function Layout() {
   const {
     contextKey: sidePanelContextKey,
     displayedContextHold,
+    hidePanel,
+    ownerOrganizationId: sidePanelOwnerOrganizationId,
     open: sidePanelOpen,
   } = useSidePanel();
   const {
@@ -993,7 +983,12 @@ export function Layout() {
     matchedOrganization?.id,
     displayedContextHold,
   );
-  const sidePanelContextReady = sidePanelContextKey === displayedSidePanelContext.contextKey;
+  const sidePanelContextReady = isSidePanelRouteContextReady({
+    sidePanelContextKey,
+    sidePanelOwnerOrganizationId,
+    routeContextKey: displayedSidePanelContext.contextKey,
+    routeOrganizationId: matchedOrganization?.id,
+  });
   const sidePanelOrganizationId = sidePanelContextReady ? matchedOrganization?.id : null;
   const {
     autoCollapseContextSidebar,
@@ -1488,6 +1483,7 @@ export function Layout() {
       <MarkdownMentionsProvider>
       <SidePanelRouteContextBinder
         contextKey={displayedSidePanelContext.contextKey}
+        organizationId={matchedOrganization?.id ?? null}
         preserveHold={displayedSidePanelContext.preserveHold}
       />
       <CalendarWorkspaceProvider>

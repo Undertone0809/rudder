@@ -6,7 +6,7 @@ import {
   type ChatConversation,
 } from "@rudderhq/shared";
 import type { Request, Router } from "express";
-import { conflict } from "../errors.js";
+import { badRequest, conflict } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import type { logActivity } from "../services/activity-log.js";
 import type { agentService } from "../services/agents.js";
@@ -14,7 +14,11 @@ import type { chatAssistantService } from "../services/chat-assistant.js";
 import { hasActiveChatGeneration } from "../services/chat-generation-locks.js";
 import type { chatService } from "../services/chats.js";
 import { sideChatCloseService } from "../services/side-chat-close.js";
-import type { sideChatService } from "../services/side-chats.js";
+import {
+  SIDE_CHAT_HISTORY_MAX_LIMIT,
+  SIDE_CHAT_KEPT_ERROR_CODE,
+  type sideChatService,
+} from "../services/side-chats.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, getActorInfo } from "./authz.js";
 
@@ -24,6 +28,27 @@ type AssertConversationAccess = (
   conversationId: string,
   expectedOrgId?: string,
 ) => Promise<Awaited<ReturnType<ChatService["getById"]>>>;
+
+function parseSideChatHistoryQuery(query: Request["query"]) {
+  const rawCursor = query.cursor;
+  if (rawCursor !== undefined && typeof rawCursor !== "string") {
+    throw badRequest("Invalid Side Chat history cursor.");
+  }
+
+  const rawLimit = query.limit;
+  let limit: number | undefined;
+  if (rawLimit !== undefined) {
+    if (typeof rawLimit !== "string" || !/^\d+$/.test(rawLimit)) {
+      throw badRequest(`'limit' must be between 1 and ${SIDE_CHAT_HISTORY_MAX_LIMIT}`);
+    }
+    limit = Number(rawLimit);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > SIDE_CHAT_HISTORY_MAX_LIMIT) {
+      throw badRequest(`'limit' must be between 1 and ${SIDE_CHAT_HISTORY_MAX_LIMIT}`);
+    }
+  }
+
+  return { cursor: rawCursor ?? null, limit };
+}
 
 export function registerChatForkSideChatRoutes(input: {
   router: Router;
@@ -50,6 +75,22 @@ export function registerChatForkSideChatRoutes(input: {
     boardUserId,
   } = input;
   const closeSideChats = sideChatCloseService(db, storage, sideChats);
+
+  router.get("/chats/:id/side-chats", async (req, res) => {
+    assertBoard(req);
+    const source = await assertConversationAccess(req, req.params.id as string);
+    if (!source) {
+      res.status(404).json({ error: "Chat conversation not found" });
+      return;
+    }
+    const sideChatPage = await sideChats.listForSource({
+      orgId: source.orgId,
+      sourceConversationId: source.id,
+      userId: boardUserId(req),
+      ...parseSideChatHistoryQuery(req.query),
+    });
+    res.json({ items: sideChatPage.items, nextCursor: sideChatPage.nextCursor });
+  });
 
   router.post("/chats/:id/fork", validate(forkChatConversationSchema), async (req, res) => {
     assertBoard(req);
@@ -171,7 +212,7 @@ export function registerChatForkSideChatRoutes(input: {
       return;
     }
     if (existing.sideChatState === "kept" || existing.messengerVisible) {
-      throw conflict("A kept Side Chat is a normal Messenger chat");
+      throw conflict("A kept Side Chat is a normal Messenger chat", { code: SIDE_CHAT_KEPT_ERROR_CODE });
     }
     const userId = boardUserId(req);
     const intent = await sideChats.requestClose({

@@ -135,6 +135,7 @@ export {
 export { nativeSegments, runRuntimeSpans, runtimeBindings, type RuntimeBindingTargetType } from "./runtime_bindings.js";
 export { runtimeRetentionClaims, runtimeSourceAliases } from "./runtime_retention.js";
 export { sideChatCloseIntents, type SideChatCloseAttachment, type SideChatCloseState } from "./side_chat_close_intents.js";
+export { sideChatFirstInputs } from "./side_chat_first_inputs.js";
 export {
   sideChatProviderCleanupIntents,
   type SideChatProviderCleanupProtectionRefs,

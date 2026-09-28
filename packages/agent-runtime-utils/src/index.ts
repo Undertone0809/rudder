@@ -31,12 +31,12 @@ export {
   type ModelAttemptSpec
 } from "./model-fallbacks.js";
 export { resolveNativeCommand, type NativeCommand } from "./native-command.js";
+export { hasConfirmedNativeWriterQuiescence } from "./native-writer-quiescence.js";
 export {
   classifyAgentRuntimeNetworkFailure,
   isAgentRuntimeNetworkSuspension,
   type AgentRuntimeNetworkFailureEvidence
 } from "./network-suspension.js";
-export { hasConfirmedNativeWriterQuiescence } from "./native-writer-quiescence.js";
 export {
   assertUniqueOrganizationStorageKeys,
   normalizeOrganizationStoragePathSegment,
@@ -118,14 +118,10 @@ export type {
   AgentRuntimeEnvironmentCheckLevel,
   AgentRuntimeEnvironmentTestContext,
   AgentRuntimeEnvironmentTestResult,
-  AgentRuntimeEnvironmentTestStatus, AgentRuntimeExecutionContext,
-  AgentRuntimeTransientInputKind, AgentRuntimeTransientInputRequest, AgentRuntimeTransientInputResult,
-  AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta,
-  AgentRuntimeNativeWriterQuiescence,
-  AgentRuntimeLoadedMcpServerMeta,
+  AgentRuntimeEnvironmentTestStatus, AgentRuntimeExecutionContext, AgentRuntimeExecutionResult, AgentRuntimeInvocationMeta, AgentRuntimeLoadedMcpServerMeta,
   AgentRuntimeLoadedSkillMeta,
   AgentRuntimeMediaAttachment,
-  AgentRuntimeModel, AgentRuntimeNetworkContinuation,
+  AgentRuntimeModel, AgentRuntimeNativeWriterQuiescence, AgentRuntimeNetworkContinuation,
   AgentRuntimeNetworkSubmissionPhase,
   AgentRuntimeNetworkSuspension,
   AgentRuntimeNetworkTransport, AgentRuntimeServiceReport,
@@ -136,8 +132,7 @@ export type {
   AgentRuntimeSkillSnapshot,
   AgentRuntimeSkillState,
   AgentRuntimeSkillSyncMode,
-  AgentRuntimeState,
-  CLIAgentRuntimeModule,
+  AgentRuntimeState, AgentRuntimeTransientInputKind, AgentRuntimeTransientInputRequest, AgentRuntimeTransientInputResult, CLIAgentRuntimeModule,
   CreateConfigValues,
   HireApprovedHookResult,
   HireApprovedPayload,

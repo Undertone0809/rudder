@@ -9,7 +9,6 @@ import {
   type Db,
 } from "@rudderhq/db";
 import {
-  addChatMessageSchema,
   cancelChatQueuedMessageSchema,
   chatAutomationCreateFromStructuredPayload,
   chatDraftSchema,
@@ -41,13 +40,12 @@ import { chatAgentRunService } from "../services/chat-agent-runs.js";
 import { buildChatNativeSteerFeedback } from "../services/chat-assistant.annotations.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
-  chatAssistantErrorForLog,
   chatAssistantService,
   ChatAssistantStreamError,
   prepareChatAttachmentReferences,
   userVisiblePartialBodyFromError,
   type ChatAssistantResult,
-  type ChatGeneratedAttachment,
+  type ChatGeneratedAttachment
 } from "../services/chat-assistant.js";
 import {
   cancelAndReleaseActiveChatGeneration,
@@ -60,7 +58,6 @@ import {
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
-import { chatMessageMutationFingerprint, replayChatMessageMutation } from "../services/chat-message-mutation-fingerprint.js";
 import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import {
   buildChatTitlePromptFromMessages,
@@ -116,9 +113,9 @@ import {
   validateUploadedMessageFiles,
 } from "./chats.helpers.js";
 import { registerChatMessageQueryRoutes } from "./chats.message-query-routes.js";
+import { registerChatNonStreamMessageRoutes } from "./chats.non-stream-message-routes.js";
 import { createChatDraftPreflight } from "./chats.preflight.js";
 import {
-  chatRuntimeInvocationSnapshot,
   chatRuntimeSnapshot,
   prepareChatConversationPatch,
   queuedChatRuntimeInvocationSnapshot,
@@ -174,6 +171,7 @@ export function chatRoutes(
     addAgentAuthoredMessage,
     addUserMessage,
     cleanupStoredUserMessageFiles,
+    recoverSideChatFirstInputActivity,
     storeUserMessageFiles,
   } = createChatAnnotationRouteHelpers({
     db,
@@ -3156,239 +3154,35 @@ export function chatRoutes(
   });
   registerChatMessageQueryRoutes({ router, svc, assertConversationAccess });
 
-  router.post(
-    "/chats/:id/messages",
-    (req, res, next) => {
-      res.locals.inlineAnnotationsProvided = Object.hasOwn(
-        req.body ?? {},
-        "inlineAnnotations",
-      );
-      next();
-    },
-    validate(addChatMessageSchema),
-    async (req, res) => {
-    const conversation = await assertConversationAccess(req, req.params.id as string);
-    if (!conversation) {
-      res.status(404).json({ error: "Chat conversation not found" });
-      return;
-    }
-
-    const actor = getActorInfo(req);
-    assertChatLocalMutationAllowed(conversation as ChatConversation);
-    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
-    if (actor.actorType === "agent") {
-      if (!req.body.body.trim()) {
-        res.status(422).json({ error: "Agent-authored chat messages require a nonempty body" });
-        return;
-      }
-      if (res.locals.inlineAnnotationsProvided === true) {
-        res.status(422).json({ error: "Agent-authored chat messages cannot include response annotations" });
-        return;
-      }
-      if (req.body.editUserMessageId) {
-        res.status(422).json({ error: "Agent-authored chat messages cannot edit operator messages" });
-        return;
-      }
-      const message = await addAgentAuthoredMessage(conversation as ChatConversation, req.body.body, actor);
-      res.status(201).json({ messages: [message] });
-      return;
-    }
-
-    const inlineAnnotationsProvided = res.locals.inlineAnnotationsProvided === true;
-    const clientMutationFingerprint = req.body.clientMutationId
-      ? chatMessageMutationFingerprint({ body: req.body.body, editUserMessageId: req.body.editUserMessageId ?? null, inlineAnnotationsProvided, inlineAnnotations: req.body.inlineAnnotations, modelOverride: req.body.modelOverride ?? null, effortOverride: req.body.effortOverride ?? null, files: [] })
-      : null;
-    const replayedUserMessage = await replayChatMessageMutation(svc.getUserMessageMutationByClientMutationId, {
-      orgId: conversation.orgId,
-      conversationId: conversation.id,
-      clientMutationId: req.body.clientMutationId,
-      body: req.body.body,
-      fingerprint: clientMutationFingerprint,
-    });
-    if (replayedUserMessage) {
-      res.status(200).json({ messages: [replayedUserMessage] });
-      return;
-    }
-
-    const preparedAnnotations = inlineAnnotationsProvided
-      ? await inlineAnnotations.prepare({
-        orgId: conversation.orgId,
-        conversationId: conversation.id,
-        annotations: req.body.inlineAnnotations ?? [],
-        uploadedFileCount: 0,
-        editUserMessageId: req.body.editUserMessageId ?? null,
-        ...(req.body.inlineAnnotations?.some((annotation: { surface?: string }) => annotation.surface === "agent_run_transcript")
-          ? { requesterUserId: req.actor.type === "board" ? req.actor.userId ?? null : null }
-          : {}),
-      })
-      : null;
-    const assistantAvailability = await assistantSvc.getChatAssistantAvailability(conversation as ChatConversation);
-    if (!assistantAvailability.available) {
-      res.status(503).json({ error: assistantAvailability.error });
-      return;
-    }
-
-    const releaseGeneration = claimChatGeneration(conversation.id, null, null);
-    if (!releaseGeneration) {
-      if (req.body.editUserMessageId) {
-        res.status(409).json({ error: "Stop the current response before editing this message" });
-        return;
-      }
-      const item = await svc.createQueuedMessage({
-        orgId: conversation.orgId,
-        conversationId: conversation.id,
-        clientMutationId: req.body.clientMutationId ?? `message:${randomUUID()}`,
-        mutationFingerprint: clientMutationFingerprint ?? undefined,
-        runtimeSnapshotVersion: 1,
-        expectedGenerationId: getActiveChatGeneration(conversation.id)?.generationId ?? null,
-        requestActor: queueRequestActor(req),
-        payload: {
-          body: req.body.body,
-          attachmentIds: [],
-          ...(inlineAnnotationsProvided
-            ? { inlineAnnotations: preparedAnnotations?.annotations ?? [] }
-            : {}),
-          skillRefs: [],
-          projectId: null,
-          accessMode: null,
-          ...chatRuntimeSnapshot(assistantAvailability),
-          metadata: {
-            source: "messages_endpoint_during_active_generation",
-          },
-        },
-      });
-      wakeServerQueue();
-      res.status(202).json({ queued: item });
-      return;
-    }
-
-    try {
-      const persistence = await addUserMessage(
-        conversation as ChatConversation,
-        req.body.body,
-        actor,
-        req.body.editUserMessageId ?? null,
-        {
-          provided: inlineAnnotationsProvided,
-          prepared: preparedAnnotations,
-          clientMutationId: req.body.clientMutationId ?? null,
-          clientMutationFingerprint,
-        },
-      );
-      const userMessage = persistence.message;
-      if (!persistence.accepted) {
-        res.status(200).json({ messages: [userMessage] });
-        return;
-      }
-      await touchSideChat(req, conversation as ChatConversation);
-      if (!req.body.editUserMessageId) {
-        startChatTitleGeneration(conversation as ChatConversation, userMessage);
-      }
-      const turnContext = turnContextFromUserMessage(userMessage);
-      let activeChatRunId: string | null = null;
-      let networkWaiting = false;
-      const persistedAssistantMessages = await (async () => {
-          const assistantInput = await loadAssistantInput(conversation as ChatConversation, actor);
-          const transcript: TranscriptEntry[] = [];
-          let persistTranscript = true;
-          let fallbackOutput: string | null = null;
-          try {
-            const streamed = await assistantSvc.streamChatAssistantReply({
-              ...assistantInput,
-              ...chatRuntimeInvocationSnapshot(assistantAvailability),
-              userMessageId: userMessage.id,
-              chatTurnId: turnContext.chatTurnId,
-              turnVariant: turnContext.turnVariant,
-              runContext: { chatMode: "non_stream" },
-              stream: false,
-              onRunCreated: (runId) => {
-                activeChatRunId = runId;
-              },
-              onTranscriptEntry: async (entry, delivery) => {
-                if (activeChatRunId || delivery?.runId) persistTranscript = false;
-                transcript.push(entry);
-              },
-            });
-            fallbackOutput = streamed.partialBody;
-            if (streamed.outcome === "waiting_for_network") {
-              networkWaiting = true;
-              return [];
-            }
-            if (streamed.outcome !== "completed") {
-              throw new Error("Chat assistant reply was stopped before completion");
-            }
-            const created = await persistAssistantReply(
-              req,
-              assistantInput.conversation,
-              actor,
-              streamed.reply,
-              turnContext,
-              transcript,
-              streamed.replyingAgentId,
-              null,
-              activeChatRunId,
-              persistTranscript,
-            );
-            await linkChatRunMessages(assistantInput.conversation, activeChatRunId, created);
-            await logChatMessagesAdded(assistantInput.conversation, created, {
-              actorType: "system",
-              actorId: "chat-assistant",
-              agentId: streamed.replyingAgentId,
-            });
-            return created;
-          } catch (error) {
-            if (error instanceof ChatAssistantStreamError) {
-              fallbackOutput = userVisiblePartialBodyFromError(error);
-              const failurePayload = recoverableFailurePayload(error, activeChatRunId);
-              const failureBody = fallbackOutput || recoverableFailureBody(failurePayload) || CHAT_ASSISTANT_USER_ERROR_MESSAGE;
-              const failedMessage = await persistPartialAssistantMessage(
-                assistantInput.conversation,
-                failureBody,
-                "failed",
-                turnContext,
-                transcript,
-                chatReplyingAgentId(assistantInput.conversation),
-                null,
-                activeChatRunId,
-                failurePayload,
-                persistTranscript,
-              );
-              const failedMessages = failedMessage ? [failedMessage as ChatMessage] : [];
-              await linkChatRunMessages(assistantInput.conversation, activeChatRunId, failedMessages);
-              if (failedMessages.length > 0) {
-                await logChatMessagesAdded(assistantInput.conversation, failedMessages, {
-                  actorType: "system",
-                  actorId: "chat-assistant",
-                  agentId: chatReplyingAgentId(assistantInput.conversation),
-                });
-              }
-              fallbackOutput = failureBody;
-              return failedMessages;
-            }
-            throw error;
-          }
-      })();
-      const createdMessages: ChatMessage[] = [userMessage, ...persistedAssistantMessages];
-      res.status(networkWaiting ? 202 : 201).json({
-        messages: createdMessages,
-        ...(networkWaiting ? { waitingForNetwork: true, runId: activeChatRunId } : {}),
-      });
-    } catch (err) {
-      logger.warn({
-        err: chatAssistantErrorForLog(err),
-        conversationId: conversation.id,
-      }, "chat assistant reply failed");
-      if (err instanceof HttpError) {
-        throw err;
-      }
-      res.status(502).json({
-        error: CHAT_ASSISTANT_USER_ERROR_MESSAGE,
-      });
-    } finally {
-      releaseGeneration();
-    }
-    },
-  );
+  registerChatNonStreamMessageRoutes({
+    router,
+    db,
+    storage,
+    svc,
+    assistantSvc,
+    assertConversationAccess,
+    assertChatLocalMutationAllowed,
+    assertSideChatMutationAllowed,
+    addAgentAuthoredMessage,
+    inlineAnnotations,
+    sideChats,
+    boardUserId,
+    recoverSideChatFirstInputActivity,
+    addUserMessage,
+    queueRequestActor,
+    wakeServerQueue,
+    touchSideChat,
+    startChatTitleGeneration,
+    turnContextFromUserMessage,
+    loadAssistantInput,
+    persistAssistantReply,
+    linkChatRunMessages,
+    logChatMessagesAdded,
+    chatReplyingAgentId,
+    recoverableFailurePayload,
+    recoverableFailureBody,
+    persistPartialAssistantMessage,
+  });
 
   registerChatStreamRoutes({
     router,
@@ -3407,6 +3201,7 @@ export function chatRoutes(
     assertChatLocalMutationAllowed,
     assertSideChatMutationAllowed,
     touchSideChat,
+    sideChats,
     boardUserId,
     assertCanAssignTasks,
     runSingleFileUpload,
@@ -3419,6 +3214,7 @@ export function chatRoutes(
     assertContextLinksBelongToCompany,
     turnContextFromUserMessage,
     addUserMessage,
+    recoverSideChatFirstInputActivity,
     inlineAnnotations,
     storeUserMessageFiles,
     cleanupStoredUserMessageFiles,

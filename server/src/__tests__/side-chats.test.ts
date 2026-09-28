@@ -25,6 +25,7 @@ import {
   runtimeRetentionClaims,
   runtimeSourceAliases,
   sideChatCloseIntents,
+  sideChatFirstInputs,
   sideChatProviderCleanupIntents,
 } from "@rudderhq/db";
 import {
@@ -32,7 +33,7 @@ import {
   deriveOrganizationUrlKey,
   MESSENGER_FORK_GROUP_DEFAULT_ICON,
 } from "@rudderhq/shared";
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -67,6 +68,15 @@ type EmbeddedPostgresCtor = new (opts: {
 }) => EmbeddedPostgresInstance;
 
 async function getAvailablePort() {
+  const configuredPort = process.env.RUDDER_SIDE_CHAT_TEST_PORT?.trim();
+  if (configuredPort) {
+    const port = Number(configuredPort);
+    if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
+      throw new Error("RUDDER_SIDE_CHAT_TEST_PORT must be a valid TCP port");
+    }
+    return port;
+  }
+
   return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
     server.unref();
@@ -145,6 +155,7 @@ describe("sideChatService", () => {
   afterEach(async () => {
     await db.delete(activityLog);
     await db.delete(sideChatCloseIntents);
+    await db.delete(sideChatFirstInputs);
     await db.delete(sideChatProviderCleanupIntents);
     await db.delete(runtimeRetentionClaims);
     await db.delete(runtimeBindings);
@@ -534,6 +545,219 @@ describe("sideChatService", () => {
     ]);
     expect(await db.select().from(messengerCustomGroups)).toHaveLength(0);
     expect(await db.select().from(messengerCustomGroupEntries)).toHaveLength(0);
+  });
+
+  it("lists active and expired Side Chats for one parent and creator without touching their lifecycle", async () => {
+    const source = await createSource();
+    const active = await service.create({
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-list-active",
+    });
+    const expired = await service.create({
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-list-expired",
+    });
+    const otherOwner = await service.create({
+      orgId: source.orgId,
+      userId: "another-user",
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-list-other-owner",
+    });
+    await db.update(chatConversations)
+      .set({ sideChatState: "expired", sideChatExpiresAt: null })
+      .where(eq(chatConversations.id, expired.id));
+
+    const ownerSideChats = await service.listForSource({
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: source.userId,
+    });
+    const otherOwnersSideChats = await service.listForSource({
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: "another-user",
+    });
+    const expiredAfterRead = await db.select({ sideChatState: chatConversations.sideChatState })
+      .from(chatConversations)
+      .where(eq(chatConversations.id, expired.id));
+
+    expect(ownerSideChats.items.map(({ id }) => id)).toEqual(expect.arrayContaining([active.id, expired.id]));
+    expect(ownerSideChats.items).toHaveLength(2);
+    expect(ownerSideChats.nextCursor).toBeNull();
+    expect(otherOwnersSideChats.items.map(({ id }) => id)).toEqual([otherOwner.id]);
+    expect(expiredAfterRead[0]?.sideChatState).toBe("expired");
+  });
+
+  it("paginates Side Chat history across tied timestamps with a stable creation-time cursor", async () => {
+    const source = await createSource();
+    const tiedCreatedAt = new Date("2026-08-01T12:00:00.000Z");
+    const makeRow = (overrides: Partial<typeof chatConversations.$inferInsert> = {}) => ({
+      id: randomUUID(),
+      orgId: source.orgId,
+      title: "Side Chat history row",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      createdByUserId: source.userId,
+      forkedFromConversationId: source.sourceConversationId,
+      forkedFromMessageId: source.anchorMessageId,
+      createdAt: tiedCreatedAt,
+      updatedAt: tiedCreatedAt,
+      ...overrides,
+    });
+    const matchingRows = Array.from({ length: 63 }, (_, index) => makeRow({
+      sideChatState: index % 2 === 0 ? "active" : "expired",
+    }));
+    const foreignOrganization = await createSource(source.userId, "Foreign organization");
+    await db.insert(chatConversations).values([
+      ...matchingRows,
+      makeRow({ createdByUserId: "another-user" }),
+      makeRow({ sideChatState: "kept" }),
+      makeRow({ messengerVisible: true }),
+      makeRow({ conversationKind: "chat" }),
+      makeRow({ orgId: foreignOrganization.orgId }),
+    ]);
+
+    const input = {
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: source.userId,
+      limit: 25,
+    };
+    const firstPage = await service.listForSource(input);
+    const pageLengths = [firstPage.items.length];
+    const returnedIds = firstPage.items.map(({ id }) => id);
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    await db.update(chatConversations)
+      .set({ updatedAt: new Date("2030-01-01T00:00:00.000Z") })
+      .where(eq(chatConversations.id, matchingRows[40]!.id));
+
+    let cursor = firstPage.nextCursor;
+    while (cursor) {
+      const page = await service.listForSource({ ...input, cursor });
+      pageLengths.push(page.items.length);
+      returnedIds.push(...page.items.map(({ id }) => id));
+      cursor = page.nextCursor;
+    }
+
+    expect(pageLengths).toEqual([25, 25, 13]);
+    expect(returnedIds).toEqual(matchingRows.map(({ id }) => id).sort((left, right) => left.localeCompare(right)));
+    expect(new Set(returnedIds).size).toBe(63);
+  });
+
+  it("preserves PostgreSQL microseconds in Side Chat history cursors", async () => {
+    const source = await createSource();
+    const matchingRows = Array.from({ length: 3 }, () => ({
+      id: randomUUID(),
+      orgId: source.orgId,
+      title: "Microsecond Side Chat",
+      conversationKind: "side_chat",
+      messengerVisible: false,
+      sideChatState: "active",
+      createdByUserId: source.userId,
+      forkedFromConversationId: source.sourceConversationId,
+      forkedFromMessageId: source.anchorMessageId,
+    }));
+    await db.insert(chatConversations).values(matchingRows);
+    for (const [index, createdAt] of [
+      "2026-08-01T12:00:00.123001Z",
+      "2026-08-01T12:00:00.123400Z",
+      "2026-08-01T12:00:00.123999Z",
+    ].entries()) {
+      await db.update(chatConversations)
+        .set({ createdAt: sql`${createdAt}::timestamptz` })
+        .where(eq(chatConversations.id, matchingRows[index]!.id));
+    }
+
+    const input = {
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: source.userId,
+      limit: 1,
+    };
+    const returnedIds: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await service.listForSource({ ...input, cursor });
+      returnedIds.push(...page.items.map(({ id }) => id));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(returnedIds).toEqual(matchingRows.map(({ id }) => id).reverse());
+  });
+
+  it("rejects malformed and cross-scope Side Chat history cursors", async () => {
+    const source = await createSource();
+    await db.insert(chatConversations).values([
+      {
+        id: randomUUID(),
+        orgId: source.orgId,
+        title: "First row",
+        conversationKind: "side_chat",
+        messengerVisible: false,
+        sideChatState: "active",
+        createdByUserId: source.userId,
+        forkedFromConversationId: source.sourceConversationId,
+        forkedFromMessageId: source.anchorMessageId,
+      },
+      {
+        id: randomUUID(),
+        orgId: source.orgId,
+        title: "Second row",
+        conversationKind: "side_chat",
+        messengerVisible: false,
+        sideChatState: "active",
+        createdByUserId: source.userId,
+        forkedFromConversationId: source.sourceConversationId,
+        forkedFromMessageId: source.anchorMessageId,
+      },
+    ]);
+    const firstPage = await service.listForSource({
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: source.userId,
+      limit: 1,
+    });
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    await expect(service.listForSource({
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: source.userId,
+      cursor: "not-a-valid-cursor",
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(service.listForSource({
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: "another-user",
+      cursor: firstPage.nextCursor,
+    })).rejects.toMatchObject({ status: 400 });
+
+    const otherOrganization = await createSource(source.userId, "Other organization");
+    await expect(service.listForSource({
+      orgId: otherOrganization.orgId,
+      sourceConversationId: otherOrganization.sourceConversationId,
+      userId: source.userId,
+      cursor: firstPage.nextCursor,
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it.each([0, 101, 1.5])("rejects out-of-range Side Chat history page size %s", async (limit) => {
+    const source = await createSource();
+    await expect(service.listForSource({
+      orgId: source.orgId,
+      sourceConversationId: source.sourceConversationId,
+      userId: source.userId,
+      limit,
+    })).rejects.toMatchObject({ status: 400 });
   });
 
   it("copies the selected completed historical turn variant instead of the stopped active variant", async () => {
@@ -1002,6 +1226,324 @@ describe("sideChatService", () => {
       },
     ]);
     expect(events.filter((event) => event.eventName === "chat_created")).toHaveLength(1);
+  });
+
+  it("coalesces concurrent Side Chat creation and conflicts on owner, source, or Agent reuse", async () => {
+    const source = await createSource();
+    const input = {
+      orgId: source.orgId,
+      userId: source.userId,
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: source.anchorMessageId,
+      clientMutationId: "side-chat-create-intent-race",
+    };
+    const [first, concurrentRetry] = await Promise.all([
+      service.create(input),
+      service.create(input),
+    ]);
+
+    expect(concurrentRetry.id).toBe(first.id);
+    await expect(service.create({ ...input, userId: "different-owner" }))
+      .rejects.toMatchObject({ status: 409 });
+    await expect(service.create({ ...input, sourceConversationId: randomUUID() }))
+      .rejects.toMatchObject({ status: 409 });
+    await expect(service.create({ ...input, preferredAgentId: randomUUID() }))
+      .rejects.toMatchObject({ status: 409 });
+
+    const crossOwnerMutationId = "side-chat-cross-owner-race";
+    const crossOwnerAttempts = await Promise.allSettled([
+      service.create({ ...input, clientMutationId: crossOwnerMutationId }),
+      service.create({ ...input, userId: "different-owner", clientMutationId: crossOwnerMutationId }),
+    ]);
+    expect(crossOwnerAttempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    expect(crossOwnerAttempts.filter((attempt) => attempt.status === "rejected")).toMatchObject([
+      { reason: { status: 409 } },
+    ]);
+    expect(await db.select().from(chatConversations).where(eq(
+      chatConversations.sideChatClientMutationId,
+      crossOwnerMutationId,
+    ))).toHaveLength(1);
+
+    const replayed = await sideChatService(db).findExistingForCreate(input);
+    const persistedIntents = await db.select().from(sideChatFirstInputs)
+      .where(eq(sideChatFirstInputs.conversationId, first.id));
+    expect(replayed?.id).toBe(first.id);
+    expect(persistedIntents).toMatchObject([{
+      ownerUserId: source.userId,
+      creationMutationId: input.clientMutationId,
+      sourceConversationId: source.sourceConversationId,
+      sourceMessageId: source.anchorMessageId,
+      status: "awaiting",
+    }]);
+  });
+
+  it("serializes the first input, retries a released claim, and reads its accepted state after service recreation", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const input = {
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      userId: source.userId,
+      clientMutationId: "side-chat-first-input-mutation",
+      requestFingerprint: "side-chat-first-input-fingerprint",
+    };
+    const [claimA, claimB] = await Promise.all([
+      service.claimFirstInput(input),
+      service.claimFirstInput(input),
+    ]);
+    const claim = claimA.kind === "claimed" ? claimA : claimB;
+    expect([claimA.kind, claimB.kind].sort()).toEqual(["claimed", "pending"]);
+    if (claim.kind !== "claimed") throw new Error("Expected one Side Chat first-input claim");
+
+    await expect(service.claimFirstInput({
+      ...input,
+      requestFingerprint: "different-first-input",
+    })).rejects.toMatchObject({ status: 409 });
+
+    await expect(chats.addUserChatMessage(
+      sideChat.id,
+      source.orgId,
+      "First Side Chat input",
+      null,
+      {
+        clientMutationId: input.clientMutationId,
+        clientMutationFingerprint: input.requestFingerprint,
+        sideChatFirstInputClaimToken: randomUUID(),
+        sideChatFirstInputFingerprint: input.requestFingerprint,
+      },
+    )).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, sideChat.id),
+      eq(chatMessages.clientMutationId, input.clientMutationId),
+    ))).toHaveLength(0);
+
+    await service.releaseFirstInputClaim({ conversationId: sideChat.id, claimToken: claim.claimToken });
+    const retryClaim = await sideChatService(db).claimFirstInput(input);
+    expect(retryClaim.kind).toBe("claimed");
+    if (retryClaim.kind !== "claimed") throw new Error("Expected released Side Chat input claim to retry");
+    const acceptedMessage = await chats.addUserChatMessage(
+      sideChat.id,
+      source.orgId,
+      "First Side Chat input",
+      null,
+      {
+        clientMutationId: input.clientMutationId,
+        clientMutationFingerprint: input.requestFingerprint,
+        sideChatFirstInputClaimToken: retryClaim.claimToken,
+        sideChatFirstInputFingerprint: input.requestFingerprint,
+      },
+    );
+
+    const readbackService = sideChatService(db);
+    await expect(readbackService.claimFirstInput(input)).resolves.toMatchObject({
+      kind: "replay",
+      userMessageId: acceptedMessage.id,
+      activityLogged: false,
+    });
+    await expect(readbackService.claimFirstInput({
+      ...input,
+      requestFingerprint: "different-first-input-after-acceptance",
+    })).rejects.toMatchObject({ status: 409 });
+    const [persistedIntent] = await db.select().from(sideChatFirstInputs)
+      .where(eq(sideChatFirstInputs.conversationId, sideChat.id));
+    const acceptedMessages = await db.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, sideChat.id),
+      eq(chatMessages.clientMutationId, input.clientMutationId),
+    ));
+    const generations = await db.select().from(chatGenerations)
+      .where(eq(chatGenerations.conversationId, sideChat.id));
+    expect(persistedIntent).toMatchObject({
+      creationMutationId: "side-chat-test-mutation",
+      requestClientMutationId: input.clientMutationId,
+      requestFingerprint: input.requestFingerprint,
+      status: "accepted",
+      userMessageId: acceptedMessage.id,
+      claimToken: null,
+      claimExpiresAt: null,
+    });
+    expect(acceptedMessages).toHaveLength(1);
+    expect(generations).toHaveLength(0);
+  });
+
+  it("recovers an accepted first input after a crash before Generation admission without duplicating either row", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const input = {
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      userId: source.userId,
+      clientMutationId: "first-input-crash-boundary",
+      requestFingerprint: "first-input-crash-boundary-fingerprint",
+    };
+    const claim = await service.claimFirstInput(input);
+    if (claim.kind !== "claimed") throw new Error("Expected first-input claim before simulated crash");
+    const userMessage = await chats.addUserChatMessage(
+      sideChat.id,
+      source.orgId,
+      "Resume this accepted first input",
+      null,
+      {
+        clientMutationId: input.clientMutationId,
+        clientMutationFingerprint: input.requestFingerprint,
+        sideChatFirstInputClaimToken: claim.claimToken,
+        sideChatFirstInputFingerprint: input.requestFingerprint,
+      },
+    );
+
+    const acceptedBeforeRestart = await db.select().from(sideChatFirstInputs)
+      .where(eq(sideChatFirstInputs.conversationId, sideChat.id));
+    expect(acceptedBeforeRestart[0]).toMatchObject({
+      status: "accepted",
+      userMessageId: userMessage.id,
+      generationId: null,
+    });
+    expect(await db.select().from(chatGenerations)
+      .where(eq(chatGenerations.conversationId, sideChat.id))).toHaveLength(0);
+
+    const restartedChatService = chatService(db);
+    const recovered = await Promise.all([
+      restartedChatService.ensureSideChatFirstInputGeneration({
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        userMessageId: userMessage.id,
+      }),
+      restartedChatService.ensureSideChatFirstInputGeneration({
+        orgId: source.orgId,
+        conversationId: sideChat.id,
+        userMessageId: userMessage.id,
+      }),
+    ]);
+
+    expect(recovered.map(({ generation }) => generation.id)).toEqual([
+      recovered[0]!.generation.id,
+      recovered[0]!.generation.id,
+    ]);
+    expect(recovered.map(({ executionAdmitted }) => executionAdmitted)).toEqual([false, false]);
+    expect(await db.select().from(chatGenerations)
+      .where(eq(chatGenerations.conversationId, sideChat.id))).toHaveLength(1);
+    expect(await db.select().from(chatMessages).where(and(
+      eq(chatMessages.conversationId, sideChat.id),
+      eq(chatMessages.clientMutationId, input.clientMutationId),
+    ))).toHaveLength(1);
+    expect(await db.select().from(sideChatFirstInputs)
+      .where(eq(sideChatFirstInputs.conversationId, sideChat.id))).toMatchObject([{
+      generationId: recovered[0]!.generation.id,
+    }]);
+  });
+
+  it("treats distinct mutation keys as new sends before, during, and after the first reply", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const firstRequest = {
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      userId: source.userId,
+      clientMutationId: "first-send-key",
+      requestFingerprint: "same-message-content",
+    };
+    const claim = await service.claimFirstInput(firstRequest);
+    if (claim.kind !== "claimed") throw new Error("Expected initial Side Chat first-input claim");
+    await chats.addUserChatMessage(sideChat.id, source.orgId, "Same message content", null, {
+      clientMutationId: firstRequest.clientMutationId,
+      clientMutationFingerprint: firstRequest.requestFingerprint,
+      sideChatFirstInputClaimToken: claim.claimToken,
+      sideChatFirstInputFingerprint: firstRequest.requestFingerprint,
+    });
+    await expect(service.claimFirstInput({
+      ...firstRequest,
+      clientMutationId: "second-send-before-generation",
+      requestFingerprint: "different-follow-up-content",
+    })).resolves.toEqual({ kind: "not_first" });
+    const [generation] = await db.insert(chatGenerations).values({
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      status: "running",
+    }).returning();
+
+    await expect(service.claimFirstInput({
+      ...firstRequest,
+      clientMutationId: "second-send-during-generation",
+    })).resolves.toEqual({ kind: "not_first" });
+
+    await db.update(chatGenerations)
+      .set({ status: "completed", runtimeTerminalAt: new Date() })
+      .where(eq(chatGenerations.id, generation!.id));
+    await expect(service.claimFirstInput({
+      ...firstRequest,
+      clientMutationId: "second-send-after-generation",
+      requestFingerprint: "different-follow-up-content",
+    })).resolves.toEqual({ kind: "not_first" });
+  });
+
+  it("validates a migrated source-less Side Chat against the legacy creation-id fallback", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const legacyMessage = await chats.addUserChatMessage(
+      sideChat.id,
+      source.orgId,
+      "Previously accepted Side Chat input",
+      null,
+      {
+        clientMutationId: "legacy-first-message",
+        clientMutationFingerprint: "legacy-first-message-fingerprint",
+      },
+    );
+    await db.update(chatConversations).set({
+      sideChatClientMutationId: null,
+      forkedFromConversationId: null,
+      forkedFromMessageId: null,
+    }).where(eq(chatConversations.id, sideChat.id));
+    await db.update(sideChatFirstInputs).set({
+      creationMutationId: `legacy:${sideChat.id}`,
+      sourceConversationId: null,
+      sourceMessageId: null,
+    }).where(eq(sideChatFirstInputs.conversationId, sideChat.id));
+
+    await expect(service.claimFirstInput({
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      userId: source.userId,
+      clientMutationId: "legacy-first-message",
+      requestFingerprint: "legacy-first-message-fingerprint",
+    })).resolves.toMatchObject({
+      kind: "replay",
+      userMessageId: legacyMessage.id,
+      activityLogged: false,
+    });
+  });
+
+  it("reclaims an expired first-input lease with a new fencing token", async () => {
+    const source = await createSource();
+    const sideChat = await createSideChat(source);
+    const input = {
+      orgId: source.orgId,
+      conversationId: sideChat.id,
+      userId: source.userId,
+      clientMutationId: "side-chat-expired-first-input",
+      requestFingerprint: "same-request-on-retry",
+    };
+    const original = await service.claimFirstInput(input);
+    if (original.kind !== "claimed") throw new Error("Expected initial first-input claim");
+    await db.update(sideChatFirstInputs)
+      .set({ claimExpiresAt: new Date(Date.now() - 1) })
+      .where(eq(sideChatFirstInputs.conversationId, sideChat.id));
+
+    const reclaimed = await service.claimFirstInput(input);
+    expect(reclaimed.kind).toBe("claimed");
+    if (reclaimed.kind !== "claimed") throw new Error("Expected expired first-input claim to be reclaimed");
+    expect(reclaimed.claimToken).not.toBe(original.claimToken);
+    await expect(chats.addUserChatMessage(
+      sideChat.id,
+      source.orgId,
+      "Fenced stale claimant",
+      null,
+      {
+        clientMutationId: input.clientMutationId,
+        clientMutationFingerprint: input.requestFingerprint,
+        sideChatFirstInputClaimToken: original.claimToken,
+        sideChatFirstInputFingerprint: input.requestFingerprint,
+      },
+    )).rejects.toMatchObject({ status: 409 });
   });
 
   it("keeps Side Chat data until the active provider generation is terminal", async () => {
@@ -2068,7 +2610,14 @@ describe("sideChatService", () => {
       `chat:${source.sourceConversationId}`,
       `chat:${sideChat.id}`,
     ]);
-    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({ status: 409 });
+    await expect(service.requestClose({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({
+      status: 409,
+      details: { code: "side_chat_kept" },
+    });
+    await expect(service.destroy({ conversationId: sideChat.id, userId: source.userId })).rejects.toMatchObject({
+      status: 409,
+      details: { code: "side_chat_kept" },
+    });
   });
 
   it("creates a fork-family Messenger group when the source is not grouped", async () => {

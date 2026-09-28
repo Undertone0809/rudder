@@ -889,7 +889,13 @@ describe("assistant chat message rendering", () => {
     expect(openSideChatButton?.title).toBe("Open Side Chat");
     expect(openSideChatButton?.hasAttribute("data-slot")).toBe(false);
     openSideChatButton?.click();
-    expect(onOpenSideChat).toHaveBeenCalledWith(sourceMessage);
+    const touchAction = container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-open-side-chat-touch-action"]',
+    );
+    expect(touchAction).not.toBeNull();
+    touchAction?.click();
+    expect(onOpenSideChat).toHaveBeenNthCalledWith(1, sourceMessage);
+    expect(onOpenSideChat).toHaveBeenNthCalledWith(2, sourceMessage);
   });
 
   it("does not expose Side Chat for an incomplete assistant response", () => {

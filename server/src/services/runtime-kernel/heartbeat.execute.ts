@@ -8,9 +8,11 @@
  * @see doc/product/domains/agents/instruction-loading.md - AGENT.INSTRUCTIONS.001 runtime instruction frame
  */
 import {
+  hasConfirmedNativeWriterQuiescence,
   isAgentRuntimeNetworkSuspension,
   type AgentRuntimeApprovalHandle,
   type AgentRuntimeApprovalRequest,
+  type AgentRuntimeExecutionResult,
   type TranscriptEntry
 } from "@rudderhq/agent-runtime-utils";
 import { heartbeatRuns } from "@rudderhq/db";
@@ -29,7 +31,6 @@ import {
 import { parseObject } from "../../agent-runtimes/utils.js";
 import { redactCurrentUserText } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
-import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
 import { publishLiveEvent } from "../live-events.js";
 import {
   isManagedWorkspaceConfigurationError,
@@ -44,10 +45,8 @@ import {
   releaseRuntimeServicesForRun
 } from "../workspace-runtime.js";
 import {
-  ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
   formatAssignmentRunGuardrailError
 } from "./assignment-run-guardrail.js";
-import { createCursorTranscriptSupplementCapture } from "./cursor-transcript-supplement.js";
 import {
   beginHeartbeatRunAttempt,
   finishHeartbeatRunAttempt,
@@ -55,13 +54,23 @@ import {
   type HeartbeatAttemptRef,
 } from "./heartbeat-attempt-ledger.js";
 import {
-  boundNativeHeartbeatTranscriptMemory,
   resolveHeartbeatTranscriptRetention,
-  retainNativeHeartbeatResultJson,
   transcriptForHeartbeatRetention,
 } from "./heartbeat-transcript-retention.js";
 import { createHeartbeatRuntimeDriver } from "./heartbeat.admission.js";
+import { handleAssignmentGuardrailCheckpoint } from "./heartbeat.execute-assignment-recovery.js";
 import { prepareHeartbeatRunExecution } from "./heartbeat.execute-context.js";
+import {
+  captureNativeTranscriptRetentionOwner,
+  finalizeHeartbeatNativeTranscriptRetention,
+  projectHeartbeatAdapterResult,
+  type NativeTranscriptRetentionOwner,
+} from "./heartbeat.execute-native-retention.js";
+import {
+  createHeartbeatExecutionTranscriptAppender,
+  createHeartbeatExecutionTranscriptSupplement,
+  resolveHeartbeatExecutionTranscriptRetention,
+} from "./heartbeat.execute-transcript-retention.js";
 import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
@@ -76,7 +85,7 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
-const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, networkWaitBackoffMs, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, createHeartbeatTranscriptFinalizer, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
+const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, networkWaitBackoffMs, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, buildHeartbeatAdapterInvokePayload, sanitizeStartupContextContextForPersistence, sanitizeStartupContextPromptForPersistence, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, resolveForbiddenRuntimeSkillMarkers, detectForbiddenRuntimeSkillMarker, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
 function buildPersistableHeartbeatContext(context: Record<string, unknown>) {
@@ -157,6 +166,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
       attemptEpoch: number;
       leaseExpiresAt: Date;
     } | null = null;
+    let terminalTranscriptOwner: NativeTranscriptRetentionOwner | null = null;
+    let adapterResultForQuiescence: AgentRuntimeExecutionResult | null = null;
     let activeRuntimeDriver: RuntimeDriver | null = null;
     const inspectUnifiedEntry = async (attemptId?: string | null) => {
       if (!unifiedRunAdapter) return null;
@@ -318,12 +329,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
         if (!unknown.ok) throw new Error(`Unified Run ${run.id} submission uncertainty rejected: ${unknown.reason}`);
       }
       const suspended = Boolean(result.networkSuspension || result.suspension);
-      if (!suspended) return;
+      if (!suspended && !hasConfirmedNativeWriterQuiescence(result as AgentRuntimeExecutionResult)) return;
       const recorded = await unifiedRunAdapter.recordExecutionResult(run.id, current.ownerFence, {
         spanId: current.span.id,
+        attemptId: current.attempt.ref.id,
         result: result as any,
         error: Boolean(result.errorMessage) || result.exitCode !== 0 || result.timedOut === true,
-        suspended: true,
+        suspended,
       });
       if (!recorded.ok) throw new Error(`Unified Run ${run.id} native execution result rejected: ${recorded.reason}`);
       commonSpanId = recorded.value.id;
@@ -433,10 +445,22 @@ export function createHeartbeatExecuteHandlers(context: any) {
     }
 
     const executionTranscript: TranscriptEntry[] = [];
-    const cursorTranscriptCapture = createCursorTranscriptSupplementCapture(db, undefined,
-      (error) => logger.warn({ err: error, runId }, "failed to seal Cursor transcript supplement"));
     let transcriptRetention = resolveHeartbeatTranscriptRetention({ hasBinding: false });
     let nativeResources: any = null;
+    const nativeTranscriptSupplement = createHeartbeatExecutionTranscriptSupplement({
+      db,
+      runId,
+      retentionMode: () => transcriptRetention.mode,
+      owner: () => nativeResources?.binding?.continuity === "native" && commonSpanId && executionOwnerToken
+        ? {
+            orgId: run.orgId,
+            runId: run.id,
+            spanId: commonSpanId,
+            ownerToken: executionOwnerToken,
+            attemptEpoch: commonAttemptEpoch,
+          }
+        : null,
+    });
     const stdoutTranscriptBuffer = { pending: "", droppingOverlongLine: false };
     const stderrTranscriptBuffer = { pending: "", droppingOverlongLine: false };
     let stdoutTranscriptParser: ((line: string, ts: string) => TranscriptEntry[]) | null = null;
@@ -455,27 +479,17 @@ export function createHeartbeatExecuteHandlers(context: any) {
     let finalRunOutput: string | null = null;
     let ownsTerminalState = false;
     let shouldCompleteTerminalEffects = false;
+    let providerExecutionQuiesced = false;
     let assignmentRecoveryEligible = false;
     let assignmentRecoveryRequestedAt: Date | null = null;
     let activeAttemptSpec: { index: number; fallbackIndex: number | null } | null = null;
-    const finalizeExecutionTranscript = createHeartbeatTranscriptFinalizer({
+    const appendExecutionTranscriptChunk = createHeartbeatExecutionTranscriptAppender({
       transcript: executionTranscript,
       stdoutBuffer: stdoutTranscriptBuffer,
       stderrBuffer: stderrTranscriptBuffer,
       stdoutParser: () => stdoutTranscriptParser,
-      appendFinalizedStdoutEntries: async (entries) => {
-        if (agent.agentRuntimeType === "cursor" && transcriptRetention.mode === "native" && nativeResources) {
-          await cursorTranscriptCapture.append({
-            orgId: run.orgId,
-            runId: run.id,
-            spanId: commonSpanId ?? "",
-            ownerToken: executionOwnerToken ?? "",
-            attemptEpoch: commonAttemptEpoch,
-          }, entries).catch((error) => {
-            logger.warn({ err: error, runId }, "failed to append Cursor transcript supplement tail");
-          });
-        }
-      },
+      persistRawTranscript: () => transcriptRetention.persistRawTranscript,
+      supplement: nativeTranscriptSupplement,
     });
     const preparedExecution = await prepareHeartbeatRunExecution({
       db,
@@ -590,35 +604,15 @@ export function createHeartbeatExecuteHandlers(context: any) {
           runtimeType: agent.agentRuntimeType,
         });
         if (nativeResources) {
-          let capabilityStatus: "supported" | "unsupported" | "unknown" = "unknown";
-          try {
-            const driver = createHeartbeatRuntimeDriver({ db, unifiedRunAdapter }, agent.agentRuntimeType, {
-              adapter,
-              providerCapabilityResolver: createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
-                runtimeType: agent.agentRuntimeType,
-                runtimeConfig,
-                cwd: executionWorkspace.cwd,
-                resolutionMode: "live",
-              }),
-              providerBinding: {
-                id: nativeResources.binding.id,
-                orgId: nativeResources.binding.orgId,
-                hostId: nativeResources.binding.hostId,
-                profileId: nativeResources.binding.profileId,
-                workspaceBindingId: nativeResources.binding.workspaceBindingId,
-                capabilityRevision: nativeResources.binding.capabilityRevision,
-              },
-            });
-            capabilityStatus = nativeResources.segment.nativeSessionId
-              ? driver.capabilities.transcriptRange.status
-              : "unknown";
-          } catch (error) {
-            logger.warn({ err: error, runId: run.id }, "native transcript retention capability could not be resolved");
-          }
-          transcriptRetention = resolveHeartbeatTranscriptRetention({
-            hasBinding: true,
-            bindingContinuity: nativeResources.binding.continuity,
-            capabilityStatus,
+          transcriptRetention = await resolveHeartbeatExecutionTranscriptRetention({
+            db,
+            runId: run.id,
+            runtimeType: agent.agentRuntimeType,
+            runtimeConfig,
+            cwd: executionWorkspace.cwd,
+            adapter,
+            unifiedRunAdapter,
+            binding: nativeResources.binding,
           });
         }
       } catch (error) {
@@ -653,8 +647,10 @@ export function createHeartbeatExecuteHandlers(context: any) {
       const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
       const onLog = async (stream: "stdout" | "stderr", chunk: string) => {
         const sanitizedChunk = redactCurrentUserText(chunk, currentUserRedactionOptions);
-        if (stream === "stdout") stdoutExcerpt = appendExcerpt(stdoutExcerpt, sanitizedChunk);
-        if (stream === "stderr") stderrExcerpt = appendExcerpt(stderrExcerpt, sanitizedChunk);
+        if (transcriptRetention.persistRawTranscript) {
+          if (stream === "stdout") stdoutExcerpt = appendExcerpt(stdoutExcerpt, sanitizedChunk);
+          if (stream === "stderr") stderrExcerpt = appendExcerpt(stderrExcerpt, sanitizedChunk);
+        }
         const ts = new Date().toISOString();
 
         if (handle && transcriptRetention.persistRawLog) {
@@ -692,18 +688,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
         });
 
         if (stream === "stdout") {
-          const before = executionTranscript.length;
-          appendTranscriptEntriesFromChunk({
-            buffer: stdoutTranscriptBuffer,
-            chunk: sanitizedChunk,
-            transcript: executionTranscript,
-            parser: stdoutTranscriptParser,
-            kind: "stdout",
-          });
-          if (agent.agentRuntimeType === "cursor" && transcriptRetention.mode === "native" && nativeResources) await cursorTranscriptCapture.append({
-            orgId: run.orgId, runId: run.id, spanId: commonSpanId ?? "", ownerToken: executionOwnerToken ?? "", attemptEpoch: commonAttemptEpoch,
-          }, executionTranscript.slice(before));
-          if (!transcriptRetention.persistRawTranscript) boundNativeHeartbeatTranscriptMemory(executionTranscript);
+          await appendExecutionTranscriptChunk.appendChunk("stdout", sanitizedChunk);
           const checkpoint = assignmentFailureBudget?.observe(executionTranscript) ?? null;
           if (checkpoint && !assignmentGuardrailCheckpoint) {
             const completedWorkSummary = [...executionTranscript]
@@ -730,13 +715,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           return;
         }
 
-        appendTranscriptEntriesFromChunk({
-          buffer: stderrTranscriptBuffer,
-          chunk: sanitizedChunk,
-          transcript: executionTranscript,
-          kind: "stderr",
-        });
-        if (!transcriptRetention.persistRawTranscript) boundNativeHeartbeatTranscriptMemory(executionTranscript);
+        await appendExecutionTranscriptChunk.appendChunk("stderr", sanitizedChunk);
       };
       for (const warning of runtimeWorkspaceWarnings) {
         const logEntry = formatRuntimeWorkspaceWarningLog(warning);
@@ -1039,6 +1018,28 @@ export function createHeartbeatExecuteHandlers(context: any) {
           }
           stdoutTranscriptParser = attemptAdapter.parseStdoutLine ?? null;
         },
+        onAttemptSubmissionStart: async (attempt) => {
+          if (!executeThroughRuntimeDriver) return;
+          const current = await currentUnifiedEntry();
+          const expectedAttemptId = activeAttemptRef?.id;
+          if (!current || !expectedAttemptId
+            || current.attempt.ref.id !== expectedAttemptId
+            || current.span.attemptRef?.id !== expectedAttemptId
+            || current.attempt.ref.attemptIndex !== resolveLedgerAttemptIndex(attempt)) {
+            throw new Error("Native provider dispatch has no matching durable Run attempt and span");
+          }
+          const unknown = await unifiedRunAdapter.markAcceptanceUnknown(run.id, current.ownerFence, {
+            phase: "indeterminate",
+            reason: [
+              "native provider dispatch starting",
+              `attemptId=${expectedAttemptId}`,
+              `spanId=${current.span.id}`,
+              `runtimeType=${attempt.agentRuntimeType ?? agent.agentRuntimeType}`,
+              `model=${attempt.model}`,
+            ].join("; "),
+          });
+          if (!unknown.ok) throw new Error(`Unified Run ${run.id} dispatch checkpoint rejected: ${unknown.reason}`);
+        },
         onAttemptResult: async (_attempt, result, submissionPhase) => {
           await recordUnifiedAttemptResult(result as unknown as Record<string, unknown>, submissionPhase);
         },
@@ -1062,6 +1063,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
           });
         },
       });
+      adapterResultForQuiescence = adapterResult;
+      providerExecutionQuiesced = hasConfirmedNativeWriterQuiescence(adapterResult);
       if (assignmentGuardrailCheckpoint) {
         assignmentRecoveryEligible = assignmentContinuationAttempt < 1
           && assignmentGuardrailCheckpoint.automaticContinuationAllowed;
@@ -1291,35 +1294,15 @@ export function createHeartbeatExecuteHandlers(context: any) {
             : outcome === "timed_out"
             ? "timed_out"
               : "failed";
-      const persistedResultJson = transcriptRetention.persistRawResult
-        ? markLegacyTranscriptSource(adapterResult.resultJson)
-        : retainNativeHeartbeatResultJson(adapterResult.resultJson);
-      const persistedAdapterResult = transcriptRetention.persistRawResult
-        ? adapterResult
-        : {
-            ...adapterResult,
-            resultJson: persistedResultJson,
-          };
-      const adapterResultSummary = summarizeHeartbeatRunResultJson(adapterResult.resultJson);
-      const persistedResultSummary = summarizeHeartbeatRunResultJson({
-        ...(persistedResultJson ?? {}),
-        ...(readNonEmptyString(adapterResult.summary) ? { summary: adapterResult.summary } : {}),
+      const resultProjection = projectHeartbeatAdapterResult({
+        adapterResult,
+        persistRawResult: transcriptRetention.persistRawResult,
+        outcome,
+        status,
+        timestamp: new Date().toISOString(),
       });
-      transcriptFallbackResult = {
-        ts: new Date().toISOString(),
-        model: readNonEmptyString(adapterResult.model),
-        output:
-          readNonEmptyString(adapterResult.summary)
-          ?? readNonEmptyString(adapterResultSummary?.result)
-          ?? readNonEmptyString(adapterResultSummary?.summary)
-          ?? readNonEmptyString(adapterResultSummary?.message)
-          ?? null,
-        usage: adapterResult.usage ?? null,
-        costUsd: typeof adapterResult.costUsd === "number" ? adapterResult.costUsd : null,
-        subtype: status,
-        isError: outcome !== "succeeded",
-        errors: adapterResult.errorMessage ? [adapterResult.errorMessage] : [],
-      };
+      const { persistedResultJson, persistedAdapterResult, persistedResultSummary } = resultProjection;
+      transcriptFallbackResult = resultProjection.transcriptFallbackResult;
 
       const usageJson =
         normalizedUsage || adapterResult.costUsd != null
@@ -1348,7 +1331,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
             } as Record<string, unknown>)
           : null;
 
-      await finalizeExecutionTranscript();
+      await appendExecutionTranscriptChunk.finalize();
       const terminalEvidence = {
         finishedAt: new Date(),
         error:
@@ -1379,8 +1362,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ? null
           : nextSessionState.displayId ?? nextSessionState.legacySessionId,
         sessionParamsAfterJson: adapterResult.clearSession ? {} : nextSessionState.params,
-        stdoutExcerpt,
-        stderrExcerpt,
+        stdoutExcerpt: transcriptRetention.persistRawTranscript ? stdoutExcerpt : null,
+        stderrExcerpt: transcriptRetention.persistRawTranscript ? stderrExcerpt : null,
         logBytes: logSummary?.bytes,
         logSha256: logSummary?.sha256,
         logCompressed: logSummary?.compressed ?? false,
@@ -1425,6 +1408,12 @@ export function createHeartbeatExecuteHandlers(context: any) {
           : {}),
       };
       const commonAttemptFinished = Boolean(commonSpanId && executionOwnerToken);
+      terminalTranscriptOwner = captureNativeTranscriptRetentionOwner({
+        spanId: commonSpanId,
+        ownerToken: executionOwnerToken,
+        attemptEpoch: commonAttemptEpoch,
+        attemptId: activeAttemptRef?.id,
+      });
       const terminalAttemptInput: UnifiedAttemptFinishInput = {
         submissionPhase: adapterResult.submissionPhase,
         providerThreadId: adapterResult.providerThreadId,
@@ -1445,6 +1434,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ? {
               nativeExecution: {
                 spanId: commonSpanId,
+                attemptId: activeAttemptRef?.id,
                 result: adapterResult,
                 error: status !== "succeeded",
               },
@@ -1453,7 +1443,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
         ...(commonAttemptFinished ? { attempt: terminalAttemptInput } : {}),
       });
       ownsTerminalState = Boolean(claimedTerminalRun);
-      if (ownsTerminalState) await cursorTranscriptCapture.seal();
       if (commonAttemptFinished) activeAttemptRef = null;
       if (!commonAttemptFinished) {
         await finishActiveAttempt({
@@ -1535,90 +1524,15 @@ export function createHeartbeatExecuteHandlers(context: any) {
           shouldCompleteTerminalEffects = true;
         }
         if (ownsTerminalState && assignmentGuardrailCheckpoint) {
-          const continuationRequired = assignmentContinuationAttempt < 1
-            && assignmentGuardrailCheckpoint.automaticContinuationAllowed;
-          await appendRunEvent(finalizedRun, {
-            eventType: "runtime.assignment_checkpoint",
-            stream: "system",
-            level: "warn",
-            message: "assignment run checkpoint created",
-            payload: {
-              completed: assignmentGuardrailCheckpoint.completedWorkSummary,
-              unresolvedError: assignmentGuardrailCheckpoint.unresolvedError,
-              nextRecoveryCommand: assignmentGuardrailCheckpoint.nextRecoveryCommand,
-              continuationRequired,
-              failureCount: assignmentGuardrailCheckpoint.failureCount,
-              unresolvedFailureCount: assignmentGuardrailCheckpoint.unresolvedFailureCount,
-              failureClass: assignmentGuardrailCheckpoint.failureClass,
-              continuationBlockReason: assignmentGuardrailCheckpoint.continuationBlockReason,
-              fingerprint: assignmentGuardrailCheckpoint.fingerprint,
-            },
+          assignmentRecoveryRequestedAt = await handleAssignmentGuardrailCheckpoint({
+            finalizedRun,
+            agent,
+            assignmentGuardrailCheckpoint,
+            assignmentContinuationAttempt,
+            appendRunEvent,
+            beforeAssignmentRecoveryEnqueue,
+            enqueueRecoveryRun,
           });
-          if (continuationRequired) {
-            const recoveryRequestedAt = new Date(Date.now() + ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS);
-            let recoveryRun = null;
-            try {
-              await beforeAssignmentRecoveryEnqueue?.(finalizedRun);
-              recoveryRun = await enqueueRecoveryRun(finalizedRun, agent, {
-                recoveryTrigger: "automatic",
-                source: "automation",
-                triggerDetail: "system",
-                wakeReason: "assignment_failure_budget_continuation",
-                requestedByActorType: "system",
-                requestedByActorId: null,
-                contextPatch: {
-                  assignmentGuardrailContinuationAttempt: assignmentContinuationAttempt + 1,
-                  assignmentGuardrailCheckpoint,
-                  assignmentGuardrailRecovery: {
-                    attempt: assignmentContinuationAttempt + 1,
-                    maxAttempts: 1,
-                    backoffMs: ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
-                    requestedAt: recoveryRequestedAt.toISOString(),
-                  },
-                },
-                startImmediately: false,
-                notBefore: recoveryRequestedAt,
-                suppressSourceAutomationOutput: true,
-                now: new Date(),
-              });
-            } catch (recoveryError) {
-              const recoveryErrorMessage = recoveryError instanceof Error
-                ? recoveryError.message
-                : "Unknown recovery enqueue failure";
-              await appendRunEvent(finalizedRun, {
-                eventType: "runtime.assignment_recovery_request_failed",
-                stream: "system",
-                level: "error",
-                message: "bounded assignment recovery request failed",
-                payload: {
-                  attempt: assignmentContinuationAttempt + 1,
-                  maxAttempts: 1,
-                  failureClass: assignmentGuardrailCheckpoint.failureClass,
-                  error: recoveryErrorMessage,
-                },
-              });
-              logger.error({ err: recoveryError, runId: finalizedRun.id }, "failed to enqueue bounded assignment recovery");
-            }
-            if (recoveryRun) {
-              assignmentRecoveryRequestedAt = recoveryRequestedAt;
-              await appendRunEvent(finalizedRun, {
-                eventType: "runtime.assignment_recovery_requested",
-                stream: "system",
-                level: "warn",
-                message: "bounded assignment recovery requested",
-                payload: {
-                  recoveryRunId: recoveryRun.id,
-                  attempt: assignmentContinuationAttempt + 1,
-                  maxAttempts: 1,
-                  backoffMs: ASSIGNMENT_RUN_RECOVERY_BACKOFF_MS,
-                  requestedAt: recoveryRequestedAt.toISOString(),
-                  failureClass: assignmentGuardrailCheckpoint.failureClass,
-                },
-              }).catch((eventError) => {
-                logger.error({ err: eventError, runId: finalizedRun.id }, "failed to record bounded assignment recovery request");
-              });
-            }
-          }
         }
       }
     } catch (err) {
@@ -1658,8 +1572,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
           lateLogSummary = await runLogStore.finalize(handle).catch(() => null);
         }
         await reconcileRunEvidence(run.id, {
-          stdoutExcerpt,
-          stderrExcerpt,
+          stdoutExcerpt: transcriptRetention.persistRawTranscript ? stdoutExcerpt : null,
+          stderrExcerpt: transcriptRetention.persistRawTranscript ? stderrExcerpt : null,
           logBytes: lateLogSummary?.bytes,
           logSha256: lateLogSummary?.sha256,
           logCompressed: lateLogSummary?.compressed,
@@ -1686,13 +1600,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
         ...(transcriptRetention.persistRawResult
           ? { resultJson: markLegacyTranscriptSource(adapterResultJsonForTerminal ?? run.resultJson) }
           : {}),
-        stdoutExcerpt,
-        stderrExcerpt,
+        stdoutExcerpt: transcriptRetention.persistRawTranscript ? stdoutExcerpt : null,
+        stderrExcerpt: transcriptRetention.persistRawTranscript ? stderrExcerpt : null,
         logBytes: logSummary?.bytes,
         logSha256: logSummary?.sha256,
         logCompressed: logSummary?.compressed ?? false,
       };
-      await finalizeExecutionTranscript();
+      await appendExecutionTranscriptChunk.finalize();
       const failureIntent = {
         version: 1 as const,
         automation: {
@@ -1730,6 +1644,12 @@ export function createHeartbeatExecuteHandlers(context: any) {
           : {}),
       };
       const commonAttemptFinished = Boolean(commonSpanId && executionOwnerToken);
+      terminalTranscriptOwner = captureNativeTranscriptRetentionOwner({
+        spanId: commonSpanId,
+        ownerToken: executionOwnerToken,
+        attemptEpoch: commonAttemptEpoch,
+        attemptId: activeAttemptRef?.id,
+      });
       const currentCommonEntry = commonAttemptFinished
         ? await currentUnifiedEntry().catch(() => null)
         : null;
@@ -1752,7 +1672,6 @@ export function createHeartbeatExecuteHandlers(context: any) {
         ...(commonAttemptFinished ? { attempt: unifiedFailureAttempt } : {}),
       });
       ownsTerminalState = Boolean(claimedFailedRun);
-      if (ownsTerminalState) await cursorTranscriptCapture.seal();
       if (commonAttemptFinished) activeAttemptRef = null;
       if (!commonAttemptFinished) {
         await finishActiveAttempt({
@@ -1800,17 +1719,33 @@ export function createHeartbeatExecuteHandlers(context: any) {
       }
 
     } finally {
-      await finalizeExecutionTranscript();
+      await appendExecutionTranscriptChunk.finalize();
       finalRunOutput = transcriptFallbackResult?.output ?? null;
       if (ownsTerminalState || shouldCompleteTerminalEffects) {
         const terminalRun = await getRun(run.id).catch(() => null);
         if (terminalRun?.terminalEffectsPending) {
-          await acknowledgeRunProcessExit(terminalRun.id);
+          await acknowledgeRunProcessExit(
+            terminalRun.id,
+            providerExecutionQuiesced ? adapterResultForQuiescence ?? undefined : undefined,
+            commonSpanId,
+          );
           await completeTerminalControlEffects(terminalRun, ownsTerminalState
             ? { automationOutput: finalRunOutput }
             : undefined);
-          }
         }
+        await finalizeHeartbeatNativeTranscriptRetention({
+          db,
+          getRun,
+          runId,
+          runLogStore,
+          bindingContinuity: nativeResources?.binding?.continuity,
+          expectedOwner: terminalTranscriptOwner,
+          supplementFailure: nativeTranscriptSupplement.failure,
+        });
+      }
+      if (providerExecutionQuiesced) {
+        await acknowledgeRunProcessExit(run.id, adapterResultForQuiescence ?? undefined, commonSpanId);
+      }
       if (assignmentRecoveryRequestedAt) {
         const delayMs = Math.max(0, assignmentRecoveryRequestedAt.getTime() - Date.now());
         const recoveryTimer = setTimeout(() => {

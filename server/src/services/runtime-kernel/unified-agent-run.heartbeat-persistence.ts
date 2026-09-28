@@ -12,7 +12,7 @@ import {
   AGENT_RUN_CONCURRENCY_MAX,
   AGENT_RUN_CONCURRENCY_MIN,
 } from "@rudderhq/shared";
-import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   beginHeartbeatRunAttempt,
@@ -27,7 +27,6 @@ import {
   type TerminalEffectIntent,
 } from "./heartbeat.terminal.js";
 import {
-  bindRunRuntimeSpanAttempt,
   finishRunRuntimeSpan,
   startRunRuntimeSpanInTransaction,
 } from "./native-session.js";
@@ -41,6 +40,7 @@ import type {
   UnifiedRunTerminalStatus,
   UnifiedSpanSealInput,
 } from "./unified-agent-run.contracts.js";
+import { startHeartbeatRetrySpan } from "./unified-agent-run.heartbeat-retry-persistence.js";
 import {
   UnifiedAgentRunContractError,
   type UnifiedAdmissionResult,
@@ -749,12 +749,15 @@ export function createHeartbeatUnifiedAgentRunAdapter(
         .where(and(
           eq(runRuntimeSpans.orgId, claim.run.orgId),
           eq(runRuntimeSpans.runId, runId),
-          eq(runRuntimeSpans.state, "open"),
+          or(
+            eq(runRuntimeSpans.state, "open"),
+            and(inArray(runRuntimeSpans.state, ["sealed", "unresolved"]), isNotNull(runRuntimeSpans.writerLeaseReleasedAt)),
+          ),
         ))
         .orderBy(desc(runRuntimeSpans.ordinal))
         .limit(1)
         .then((rows) => rows[0] ?? null);
-      if (!span) throw persistenceError("contract", `claimed heartbeat run ${runId} has no open native span to fence`);
+      if (!span) throw persistenceError("contract", `claimed heartbeat run ${runId} has no quiescent native span to fence`);
       const storedBeforeClaim = readPersistedAdmission(claim.run);
       if (!storedBeforeClaim) throw persistenceError("contract", `claimed heartbeat run ${runId} has no unified admission metadata`);
       const currentAttemptBeforeClaim = await tx
@@ -791,7 +794,8 @@ export function createHeartbeatUnifiedAgentRunAdapter(
           eq(runRuntimeSpans.id, span.id),
           eq(runRuntimeSpans.orgId, claim.run.orgId),
           eq(runRuntimeSpans.runId, runId),
-          eq(runRuntimeSpans.state, "open"),
+          eq(runRuntimeSpans.state, span.state),
+          ...(span.writerLeaseReleasedAt ? [isNotNull(runRuntimeSpans.writerLeaseReleasedAt)] : []),
           eq(runRuntimeSpans.ownerToken, span.ownerToken),
         ))
         .returning();
@@ -917,8 +921,23 @@ export function createHeartbeatUnifiedAgentRunAdapter(
           "cannot create a retry attempt before reconciling provider acceptance",
         );
       }
+      if (currentSubmission.state !== "rejected" || currentSubmission.retry !== "allowed") {
+        throw new UnifiedAgentRunContractError(
+          "attempt_conflict",
+          "cannot create a retry attempt without a confirmed provider rejection",
+        );
+      }
       if (!["succeeded", "failed", "cancelled", "timed_out"].includes(current.status)) {
         throw new UnifiedAgentRunContractError("attempt_conflict", "current attempt must be terminal before a retry");
+      }
+      if (owner.span.attemptId !== current.id) {
+        throw persistenceError("contract", `heartbeat run ${runId} native span does not match the current attempt`);
+      }
+      if (owner.span.state === "open" || !owner.span.writerLeaseReleasedAt) {
+        throw new UnifiedAgentRunContractError(
+          "attempt_conflict",
+          "cannot create a retry attempt until the prior native writer is confirmed quiescent",
+        );
       }
       if (input.attemptIndex <= current.attemptIndex) {
         throw new UnifiedAgentRunContractError("attempt_conflict", "attempt index must increase monotonically");
@@ -951,60 +970,16 @@ export function createHeartbeatUnifiedAgentRunAdapter(
         );
       }
       const retryAdmission = admissionInputFromStored(owner.run, stored, nextAttempt);
-      const existingSpan = owner.span.state === "open"
-        ? owner.span
-        : null;
-      if (existingSpan) {
-        const bound = await bindRunRuntimeSpanAttempt(tx as unknown as Parameters<typeof bindRunRuntimeSpanAttempt>[0], {
-          orgId: owner.run.orgId,
-          runId,
-          spanId: existingSpan.id,
-          ownerToken: fence.ownerToken,
-          runtimeType,
-          attemptEpoch: fence.attemptEpoch,
-          attemptId: nextAttempt.id,
-        });
-        if (!bound) throw persistenceError("contract", `heartbeat run ${runId} open native span could not bind retry attempt`);
-      } else {
-        const nativeSpan = await resolveNativeSpan({
-          db: tx,
-          admission: retryAdmission,
-          runId,
-          attemptId: nextAttempt.id,
-          attemptIndex: nextAttempt.attemptIndex,
-          ownerToken: fence.ownerToken,
-          attemptEpoch: fence.attemptEpoch,
-        });
-        if (!nativeSpan) throw persistenceError("unsupported", `heartbeat run ${runId} has no native resources for retry span`);
-        if (
-          nativeSpan.binding.orgId !== owner.run.orgId
-          || nativeSpan.binding.agentId !== owner.run.agentId
-          || nativeSpan.binding.runtimeType !== runtimeType
-          || nativeSpan.segment.orgId !== owner.run.orgId
-          || nativeSpan.segment.bindingId !== nativeSpan.binding.id
-        ) {
-          throw persistenceError("contract", `heartbeat run ${runId} retry resolver returned a mismatched native identity`);
-        }
-        assertPersistedRuntimeIdentity({
-          binding: nativeSpan.binding,
-          segment: nativeSpan.segment,
-          driverRuntimeType: runtimeType,
-          context: `heartbeat run ${runId} retry span`,
-        });
-        await startRunRuntimeSpanInTransaction(tx as unknown as Pick<Db, "select" | "insert" | "update" | "execute">, {
-          orgId: owner.run.orgId,
-          runId,
-          binding: nativeSpan.binding,
-          segment: nativeSpan.segment,
-          runtimeType,
-          attemptRef: `${stored.idempotencyKey}:attempt:${nextAttempt.attemptIndex}`,
-          attemptId: nextAttempt.id,
-          attemptEpoch: fence.attemptEpoch,
-          ownerToken: fence.ownerToken,
-          inputCorrelationRef: nativeSpan.inputCorrelationRef ?? `${stored.idempotencyKey}:attempt:${nextAttempt.attemptIndex}`,
-          relation: "continuation",
-        });
-      }
+      const retrySpan = await startHeartbeatRetrySpan({
+        tx,
+        resolveNativeSpan,
+        run: owner.run,
+        stored,
+        admission: retryAdmission,
+        attempt: nextAttempt,
+        runtimeType,
+        fence,
+      });
       const submission: UnifiedStoredSubmission = {
         key: `${stored.idempotencyKey}:attempt:${nextAttempt.attemptIndex}`,
         state: "pending",
@@ -1127,10 +1102,16 @@ export function createHeartbeatUnifiedAgentRunAdapter(
   ): Promise<UnifiedFenceResult<UnifiedRunSpan>> {
     const owner = await selectOwnerState(db, runId, fence, now());
     if (!owner.ok) return owner;
+    const spanId = input.spanId?.trim() || owner.span.id;
+    const attemptId = input.attemptId?.trim() || owner.attempt.id;
+    if (spanId !== owner.span.id || attemptId !== owner.attempt.id || owner.span.attemptId !== attemptId) {
+      return { ok: false, reason: "stale_owner" };
+    }
     const updated = await finishRunRuntimeSpan(db, {
       orgId: owner.run.orgId,
       runId,
-      spanId: input.spanId ?? owner.span.id,
+      spanId,
+      attemptId,
       ownerToken: fence.ownerToken,
       runtimeType: owner.attempt.runtimeType,
       attemptEpoch: fence.attemptEpoch,
@@ -1385,7 +1366,7 @@ export function createHeartbeatUnifiedAgentRunAdapter(
         activityWatermark: input.activityWatermark,
         terminalEffectsPending: input.terminalEffectsPending ?? true,
         terminalEffectsIntent: input.terminalEffectsIntent as TerminalEffectIntent | null | undefined,
-        processExitedAt: input.processExitedAt ?? observedAt,
+        processExitedAt: input.processExitedAt !== undefined ? input.processExitedAt : observedAt,
         expectedExecutionOwnerToken: fence.ownerToken,
       });
       if (!terminal) {

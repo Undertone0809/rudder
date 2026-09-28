@@ -1,10 +1,6 @@
 import { buildModelAttemptSpecs, isAgentRuntimeNetworkSuspension, type TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import { runRuntimeSpans, runtimeBindings } from "@rudderhq/db";
-import type {
-  ChatContextLink,
-  ChatConversation,
-} from "@rudderhq/shared";
 import {
   createRudderInlineVisualStreamSuppressor,
   redactRudderInlineVisualSources,
@@ -32,6 +28,7 @@ import {
   type ChatAssistantStaleOutcome,
 } from "./chat-assistant.execution-owner.js";
 import { asRecord, asString, CHAT_RESULT_SENTINEL_PREFIX, ChatAssistantResult, ChatAssistantStreamError, ChatAttachmentPromptReference, createAssistantTextAccumulator, createSentinelStream, extractCodexInlineVisualArtifacts, extractGeneratedAttachments, finalBodyFromRawAssistantText, GenerateChatAssistantReplyInput, maybeEmitAssistantDelta, maybeEmitAssistantState, parseAssistantTextBlock, parseCompletedAssistantReply, partialBodyFromRawAssistantText, prepareChatAttachmentReferences, recoverableFailureMessage, redactChatInlineVisualDiagnosticText, resultText, safeTrim, shouldSuppressChatTranscriptEntry, StreamChatAssistantReplyInput, StreamChatAssistantReplyResult, stubAgent, type ChatRecoverableFailureCode } from "./chat-assistant.helpers.js";
+import { createChatNativeAttemptCallbacks } from "./chat-assistant.native-attempt.js";
 import { persistChatNativeTransport, resolveChatTranscriptCapability } from "./chat-assistant.native-transcript.js";
 import { userImageContentPathsFromMessages } from "./chat-assistant.proposal-validation.js";
 import { normalizeReplyInlineVisuals } from "./chat-assistant.reply-artifacts.js";
@@ -40,6 +37,7 @@ import { buildChatAssistantRuntimePrompt } from "./chat-assistant.runtime-prompt
 import {
   chatRuntimeAvailabilityStreamError,
   chatRuntimePreparationStreamError,
+  createChatAssistantAvailability,
   createChatAssistantRuntimeResolution,
   isAgentRuntimeType,
 } from "./chat-assistant.runtime-resolution.js";
@@ -369,6 +367,12 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       capabilityStatus: transcriptCapabilityResolution?.profileResolved && transcriptEvidence?.profileBound
         ? transcriptEvidence.status
         : "unknown",
+      profileCapability: {
+        runtimeType: runtimeAgentType,
+        binding: transcriptProviderBinding,
+        driverStatus: runtimeDriver?.capabilities.transcriptRange?.status ?? "unknown",
+        resolution: transcriptCapabilityResolution ?? null,
+      },
     });
     const recoveredChatRun = input.resumeRunId
       ? await chatRunsSvc.adoptRecoveredRun(
@@ -463,6 +467,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         ...finalState, resultJson: transcript.terminalResult(finalState.resultJson),
         transcriptDelivery: {
           source: transcript.delivery.source,
+          runId: transcript.delivery.runId,
           spanId: chatRun.runtimeSpanId ?? null,
         },
       }),
@@ -1002,6 +1007,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         continuationTransport,
         approvalBridge,
         runId,
+        orgId: input.conversation.orgId,
+        chatId: input.conversation.id,
+        abortSignal: executionSignal,
+        requestRuntimeSensitiveInput: input.requestRuntimeSensitiveInput,
         initialDriver: runtimeDriver,
         nativeDriverRequired,
         getAttemptId: () => chatRun.runtimeAttemptRef?.id,
@@ -1009,6 +1018,25 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           chatRun,
           chatAttemptFailureFinishInput(failure, phase, resumeSession),
         ),
+      });
+      const nativeAttemptCallbacks = createChatNativeAttemptCallbacks({
+        orgId: chatRun.orgId,
+        runtimeAgentType,
+        nativeDriverRequired,
+        signal: executionSignal,
+        isExecutionInactive,
+        ownerLostError,
+        getAttempt: () => chatRun.runtimeAttemptRef ?? null,
+        getSpanFence: () => ({
+          spanId: chatRun.runtimeSpanId ?? null,
+          ownerToken: chatRun.runtimeSpanOwnerToken,
+          attemptEpoch: chatRun.runtimeSpanAttemptEpoch,
+        }),
+        markAcceptanceUnknown: (value) => chatRunsSvc.markAcceptanceUnknown(chatRun, value),
+        recordNativeExecutionResult: (attemptResult, fence) => guardActiveRun(
+          () => chatRunsSvc.recordNativeExecutionResult(runId, attemptResult, fence),
+        ),
+        onAttemptResult: attemptPorts.onAttemptResult,
       });
 
       const executeChatAdapter = async (chatPrompt: string) => {
@@ -1081,6 +1109,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           controlCoordinator: input.controlCoordinator,
           requestApproval: attemptPorts.requestApproval,
           waitForApproval: attemptPorts.waitForApproval,
+          requestTransientInput: attemptPorts.requestTransientInput,
           onLog: async (stream, chunk) => {
             if (isExecutionInactive()) return;
             if (stream === "stdout") {
@@ -1125,7 +1154,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             });
             chatRun.runtimeAttemptRef = attemptRef;
           },
-          onAttemptResult: attemptPorts.onAttemptResult,
+          ...nativeAttemptCallbacks,
           onAttemptFailure: attemptPorts.onAttemptFailure,
         });
       };
@@ -1164,6 +1193,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       await guardActiveRun(() => chatRunsSvc.recordNativeExecutionResult(runId, result, {
         orgId: chatRun.orgId,
         spanId: chatRun.runtimeSpanId ?? null,
+        attemptId: chatRun.runtimeAttemptRef?.id,
         ownerToken: chatRun.runtimeSpanOwnerToken,
         attemptEpoch: chatRun.runtimeSpanAttemptEpoch,
         suspended: Boolean(networkSuspension),
@@ -1474,55 +1504,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
   return {
     enrichConversation,
     enrichConversations,
-    getChatAssistantAvailability: async (conversation: ChatConversation) => {
-      const resolved = await resolveChatInvocation({
-        conversation,
-        contextLinks: Array.isArray(conversation.contextLinks) ? conversation.contextLinks : [],
-        materializeMissingRuntimeSkills: false,
-      });
-      return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
-        ? {
-          ...resolved.runtimeSource.descriptor,
-          available: true as const,
-        }
-        : {
-          ...resolved.runtimeSource.descriptor,
-          available: false as const,
-          error: resolved.availabilityError ?? resolved.runtimeSource.descriptor.error,
-        };
-    },
-    getDraftChatAssistantAvailability: async (input: {
-      orgId: string;
-      preferredAgentId: string | null;
-      modelOverride?: string | null;
-      effortOverride?: string | null;
-      contextLinks?: Array<Pick<ChatContextLink, "entityType" | "entityId"> & Partial<ChatContextLink>>;
-      planMode?: boolean;
-    }) => {
-      const contextLinks = (input.contextLinks ?? []) as ChatContextLink[];
-      const resolved = await resolveChatInvocation({
-        conversation: {
-          id: randomUUID(),
-          orgId: input.orgId,
-          preferredAgentId: input.preferredAgentId,
-          modelOverride: input.modelOverride ?? null,
-          effortOverride: input.effortOverride ?? null,
-          primaryIssueId: null,
-          contextLinks,
-          planMode: input.planMode ?? false,
-        },
-        contextLinks,
-        prepareExecutionContext: false,
-        materializeMissingRuntimeSkills: false,
-      });
-      return resolved.runtimeSource.descriptor.available && !resolved.availabilityError
-        ? { ...resolved.runtimeSource.descriptor, available: true as const }
-        : {
-          ...resolved.runtimeSource.descriptor,
-          available: false as const,
-          error: resolved.availabilityError ?? resolved.runtimeSource.descriptor.error,
-        };
-    },
+    ...createChatAssistantAvailability(resolveChatInvocation),
     generateChatAssistantReply: async (
       input: GenerateChatAssistantReplyInput,
     ): Promise<ChatAssistantResult> => {

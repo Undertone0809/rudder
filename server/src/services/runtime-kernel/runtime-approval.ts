@@ -1,15 +1,14 @@
 import type {
+  AgentRuntimeApprovalDecision,
   AgentRuntimeApprovalHandle,
   AgentRuntimeApprovalRequest,
-  AgentRuntimeApprovalDecision,
 } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
 import {
   approvals,
-  chatConversations,
   heartbeatRunAttempts,
   heartbeatRuns,
-  runRuntimeSpans,
+  runRuntimeSpans
 } from "@rudderhq/db";
 import {
   chatAskUserRequestSchema,
@@ -202,14 +201,22 @@ function inputRequestFromRuntimeRequest(
 function requestIdFromRuntimeRequest(request: AgentRuntimeApprovalRequest) {
   const payload = asRecord(request.payload) ?? {};
   const event = asRecord(payload.event);
-  return nonEmptyString(
-    payload.requestId
-      ?? payload.providerRequestId
-      ?? payload.controlRequestId
-      ?? payload.request_id
-      ?? event?.requestId
-      ?? event?.request_id,
-  ) ?? randomUUID();
+  const values = [
+    payload.requestId,
+    payload.providerRequestId,
+    payload.controlRequestId,
+    payload.request_id,
+    payload.nativeRequestId,
+    event?.requestId,
+    event?.request_id,
+  ];
+  for (const value of values) {
+    const candidate = typeof value === "number" && Number.isSafeInteger(value)
+      ? String(value)
+      : nonEmptyString(value);
+    if (candidate) return candidate;
+  }
+  return randomUUID();
 }
 
 function safeRuntimePayloadFields(request: AgentRuntimeApprovalRequest) {

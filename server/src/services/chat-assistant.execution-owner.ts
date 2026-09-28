@@ -3,8 +3,8 @@ import {
   maybeEmitAssistantState,
   partialBodyFromRawAssistantText,
   safeTrim,
-  type StreamChatAssistantReplyResult,
   type StreamChatAssistantReplyInput,
+  type StreamChatAssistantReplyResult,
 } from "./chat-assistant.helpers.js";
 
 export type ChatAssistantStaleOutcome = {

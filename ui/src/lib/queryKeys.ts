@@ -110,6 +110,8 @@ export const queryKeys = {
     search: (orgId: string, q: string, status: "active" | "resolved" | "archived" | "all" = "all") =>
       ["chats", orgId, status, "search", q] as const,
     detail: (orgId: string, chatId: string) => ["chats", orgId, "detail", chatId] as const,
+    sideChats: (orgId: string, chatId: string, principalId: string | null) =>
+      ["chats", orgId, "side-chats", chatId, principalId] as const,
     messages: (orgId: string, chatId: string) => ["chats", orgId, "messages", chatId] as const,
     messageTranscript: (orgId: string, chatId: string, messageId: string) =>
       ["chats", orgId, "messages", chatId, "transcript", messageId] as const,

@@ -1,17 +1,17 @@
 import path from "node:path";
 import {
+  deleteOpenCodeSideChatForkSession,
   forkOpenCodeNativeSession,
   isManagedOpenCodeRunConfigEnvironment,
-  deleteOpenCodeSideChatForkSession,
   OpenCodeNativeCapabilityError,
   readOpenCodeNativeTranscript,
   type OpenCodeBinding,
   type OpenCodeForkRequest,
   type OpenCodeForkResult,
   type OpenCodeSession,
-  type OpenCodeWorkspaceIdentity,
   type OpenCodeTranscriptRequest,
   type OpenCodeTranscriptResult,
+  type OpenCodeWorkspaceIdentity,
 } from "./native-protocol.js";
 
 export type OpenCodeCapabilityStatus = "supported" | "unsupported" | "unknown";
