@@ -552,8 +552,8 @@ export function organizationService(db: Db) {
         await tx.delete(organizationIssuePrefixAliases).where(eq(organizationIssuePrefixAliases.orgId, id));
         await tx.delete(assets).where(eq(assets.orgId, id));
         await tx.delete(projectGoals).where(eq(projectGoals.orgId, id));
-        await tx.delete(goals).where(eq(goals.orgId, id));
         await tx.delete(projects).where(eq(projects.orgId, id));
+        await tx.delete(goals).where(eq(goals.orgId, id));
         await tx.delete(agents).where(eq(agents.orgId, id));
         const rows = await tx
           .delete(organizations)

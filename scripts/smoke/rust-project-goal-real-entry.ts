@@ -346,8 +346,11 @@ async function main() {
       },
       body: JSON.stringify({ goalIds: [goalA] }),
     }));
-    assert.equal(unlistedGoalSet.status, 409);
-    assert.equal(bodyError(unlistedGoalSet), "mutation_not_owned");
+    assert.equal(unlistedGoalSet.status, 503);
+    assert.equal(
+      (unlistedGoalSet.body as { code?: string }).code,
+      "rust_foundation_project_goal_set_not_allowlisted",
+    );
 
     // A required startup with the same allowlist must be a no-op for rows that
     // already belong to Rust. This is the recovery path after a clean restart.
@@ -1309,12 +1312,6 @@ async function main() {
       if (privateFoundation) await stopPrivateFoundation(privateFoundation);
     }
 
-    const rustOwnedOrganizationDelete = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`, {
-      method: "DELETE",
-    }));
-    assert.equal(rustOwnedOrganizationDelete.status, 409);
-    assert.match(bodyError(rustOwnedOrganizationDelete), /Organization deletion is unavailable/u);
-
     const toolingState = await sql.unsafe(
       "SELECT owner, mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch "
         + "FROM project_goal_mutation_state WHERE project_id = $1",
@@ -1434,6 +1431,21 @@ async function main() {
       [organizationId, projectId],
     );
     assert.deepEqual(finalCounts[0], { receipts: "2", activities: "2", links: "0", version: "2" });
+
+    // Organization deletion is a supported recovery path after the Rust
+    // Project-Goal handoff. Run it after all component readbacks so the
+    // deletion itself can be asserted without destroying the fixture early.
+    const rustOwnedOrganizationDelete = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`, {
+      method: "DELETE",
+    }));
+    assert.equal(rustOwnedOrganizationDelete.status, 200, bodyError(rustOwnedOrganizationDelete));
+    const deletedOrganization = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}`));
+    assert.equal(deletedOrganization.status, 404);
+    const deletedOrganizationRows = await sql.unsafe(
+      "SELECT count(*)::text AS organizations FROM organizations WHERE id = $1",
+      [organizationId],
+    );
+    assert.deepEqual(deletedOrganizationRows[0], { organizations: "0" });
 
     console.log(JSON.stringify({
       marker: "RUST_PROJECT_GOAL_REAL_ENTRY_PASS",

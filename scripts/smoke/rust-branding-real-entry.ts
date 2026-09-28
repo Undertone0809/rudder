@@ -190,7 +190,7 @@ async function main() {
       "SELECT owner FROM organization_branding_mutation_state WHERE org_id = $1",
       [unlistedOrganizationId],
     );
-    assert.deepEqual(unlistedStateRows, [{ owner: "node" }]);
+    assert.deepEqual(Array.from(unlistedStateRows), [{ owner: "node" }]);
     assert.deepEqual(receiptRows[0], { outcome: "applied", resulting_version: "1", fence_epoch: "1" });
     assert.deepEqual(Array.from(activityRows), [{ action: "organization.branding_updated" }]);
     assert.equal(outboxRows.length, 1);
@@ -206,7 +206,7 @@ async function main() {
       "SELECT owner FROM organization_branding_mutation_state WHERE org_id = $1",
       [unlistedOrganizationId],
     );
-    assert.deepEqual(unlistedRestartStateRows, [{ owner: "node" }]);
+    assert.deepEqual(Array.from(unlistedRestartStateRows), [{ owner: "node" }]);
 
     const replay = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/branding`, {
       method: "PATCH",

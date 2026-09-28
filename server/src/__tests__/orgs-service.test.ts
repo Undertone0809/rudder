@@ -11,6 +11,7 @@ import {
   documents,
   ensurePostgresDatabase,
   executionWorkspaces,
+  goals,
   heartbeatRuns,
   issueBlockAuditAttempts,
   issueDocuments,
@@ -469,11 +470,20 @@ describe("organization service", () => {
       issuePrefix: "ROR",
       requireBoardApprovalForNewAgents: false,
     });
+    const goal = await db
+      .insert(goals)
+      .values({
+        id: randomUUID(),
+        orgId: organization.id,
+        title: "Goal linked to a project",
+      })
+      .returning({ id: goals.id })
+      .then((rows) => rows[0]!);
     const projectsSvc = projectService(db);
     const project = await projectsSvc.create(organization.id, {
       name: "Rust-Owned Project Removal",
       description: "",
-      goalIds: [],
+      goalIds: [goal.id],
     });
     await db.execute(sql`
       UPDATE organization_branding_mutation_state
