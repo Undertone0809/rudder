@@ -231,5 +231,11 @@ describe("chatService transcript persistence", () => {
     await expect(chats.getMessageTranscript(conversationId, runMessage.id)).resolves.toMatchObject({
       transcript: [expect.objectContaining(runEntry)],
     });
+    // This Reader fixture never starts a provider. Close its synthetic writer
+    // after the assertions so normal fenced deletion remains enforced.
+    await db.update(runRuntimeSpans).set({
+      state: "unresolved", completeness: "unknown", closedAt: new Date(),
+      writerLeaseReleasedAt: new Date(),
+    }).where(eq(runRuntimeSpans.runId, run.id));
   });
 });

@@ -278,6 +278,7 @@ describe("chatInlineAnnotationService", () => {
       completeness: "complete",
       openedAt,
       closedAt,
+      writerLeaseReleasedAt: closedAt,
       updatedAt: closedAt,
     });
     const objectRef = await createTranscriptObjectStore(transcriptObjectDir).write({
