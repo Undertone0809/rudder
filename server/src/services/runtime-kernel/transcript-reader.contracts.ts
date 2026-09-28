@@ -31,6 +31,7 @@ export type NativeSpanSelector =
     terminalMessageIds: string[];
     observedAssistantMessageIds?: string[];
     completeness?: "partial";
+    boundaryStatus?: string | null;
     inputCorrelationRef?: string | null;
   }
   | { kind: "pi_branch_range"; sessionResourceRef: string; fromExclusive: string | null; throughInclusive: string | null; leafId: string | null; inputCorrelationRef?: string | null }
@@ -101,6 +102,14 @@ export interface TranscriptPage {
   revision: string;
   availability: TranscriptAvailability;
   completeness: TranscriptCompleteness;
+  limitReached?: TranscriptReadLimit | null;
+}
+
+export type TranscriptReadLimitReason = "page_bytes" | "total_bytes" | "total_items" | "item_bytes";
+
+export interface TranscriptReadLimit {
+  reason: TranscriptReadLimitReason;
+  maximum: number;
 }
 
 export interface ReadTranscriptScope {
@@ -178,15 +187,35 @@ export interface LegacyTranscriptReadInput {
   run: HeartbeatRunRecord;
   runtimeType: string;
   spanId?: string | null;
+  cursor?: string | null;
+  limit?: number;
   events?: readonly Record<string, unknown>[];
+  readEvents?: (input: {
+    cursor?: string | null;
+    limit: number;
+    maxBytes: number;
+    maxItemBytes: number;
+    signal?: AbortSignal;
+  }) => Promise<LegacyTranscriptEventPage>;
   signal?: AbortSignal;
+}
+
+export interface LegacyTranscriptEventPage {
+  events: readonly Record<string, unknown>[];
+  nextCursor: string | null;
+  revision: string;
+  readBytes: number;
+  limitReached?: TranscriptReadLimit | null;
 }
 
 export interface LegacyTranscriptReadResult {
   entries: readonly TranscriptEntry[];
+  itemOffset?: number;
+  nextCursor?: string | null;
   revision?: string | null;
   availability?: TranscriptAvailability;
   completeness?: TranscriptCompleteness;
+  limitReached?: TranscriptReadLimit | null;
 }
 
 export interface LegacyTranscriptReaderHook {
@@ -200,6 +229,9 @@ export interface TranscriptReaderOptions {
   legacyReader?: LegacyTranscriptReaderHook | null;
   logStore?: RunLogStore;
   maxLegacyReadBytes?: number;
+  maxLegacyTotalBytes?: number;
+  maxLegacyTotalItems?: number;
+  maxLegacyItemBytes?: number;
   authorizePrincipal?: (input: {
     orgId: string;
     principal: TranscriptPrincipal;
@@ -357,6 +389,12 @@ export const DEFAULT_PAGE_LIMIT = 50;
 export const MAX_PAGE_LIMIT = 200;
 export const DEFAULT_LEGACY_READ_BYTES = 256 * 1024;
 export const MAX_LEGACY_READ_BYTES = 2 * 1024 * 1024;
+export const DEFAULT_LEGACY_TOTAL_READ_BYTES = 64 * 1024 * 1024;
+export const MAX_LEGACY_TOTAL_READ_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_LEGACY_TOTAL_ITEMS = 20_000;
+export const MAX_LEGACY_TOTAL_ITEMS = 100_000;
+export const DEFAULT_LEGACY_ITEM_BYTES = 1024 * 1024;
+export const MAX_LEGACY_ITEM_BYTES = 2 * 1024 * 1024;
 export const MAX_CONVERSATION_SOURCE_SCAN = MAX_PAGE_LIMIT * 4;
 
 export type TranscriptReaderErrorCode =
@@ -395,6 +433,7 @@ export type ResolvedSource = {
   providerRevision?: string | null;
   availability: TranscriptAvailability;
   completeness: TranscriptCompleteness;
+  limitReached?: TranscriptReadLimit | null;
   providerCursor: string | null;
   providerNextCursor: string | null;
   /** Visible-item position in the selected Run before this provider page, including preceding spans. */

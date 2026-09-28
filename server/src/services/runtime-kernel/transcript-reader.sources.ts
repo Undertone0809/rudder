@@ -2,28 +2,18 @@ import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
   chatConversations,
   chatMessages,
-  heartbeatRunEvents,
   heartbeatRuns,
   nativeSegments,
   runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
-import { buildTranscript, getTranscriptParser, parseNdjsonLog } from "@rudderhq/run-intelligence-core";
 import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { forbidden, notFound } from "../../errors.js";
 import {
   getRunLogStore,
   type RunLogHandle,
-  type RunLogReadResult,
   type RunLogStore,
 } from "../run-log-store.js";
-import { isExplicitLegacyTranscriptSource, isNativeTranscriptSource } from "./transcript-source.js";
-import {
-  DEFAULT_LEGACY_READ_BYTES,
-  MAX_CONVERSATION_SOURCE_SCAN,
-  MAX_LEGACY_READ_BYTES,
-  MAX_PAGE_LIMIT,
-} from "./transcript-reader.contracts.js";
 import type {
   ConversationMessageRecord,
   ConversationSourceAnchor,
@@ -31,29 +21,46 @@ import type {
   ConversationSourceKind,
   ConversationSourceRow,
   HeartbeatRunRecord,
+  LegacyTranscriptEventPage,
+  LegacyTranscriptReadResult,
+  LegacyTranscriptReaderHook,
   NativeSegmentRecord,
+  NativeTranscriptRawItem,
   NativeTranscriptReadInput,
   NativeTranscriptReadResult,
-  NativeTranscriptRawItem,
   ReadDatabase,
   ReadRunTranscript,
   ResolvedSource,
   RunRuntimeSpanRecord,
   RuntimeBindingRecord,
-  TranscriptAvailability,
-  TranscriptCompleteness,
-  TranscriptItem,
   TranscriptPrincipal,
   TranscriptRange,
+  TranscriptReadLimit,
   TranscriptReaderOptions,
-  TranscriptSource,
-  LegacyTranscriptReaderHook,
-  LegacyTranscriptReadResult,
+  TranscriptSource
 } from "./transcript-reader.contracts.js";
+import {
+  DEFAULT_LEGACY_ITEM_BYTES,
+  DEFAULT_LEGACY_READ_BYTES,
+  DEFAULT_LEGACY_TOTAL_ITEMS,
+  DEFAULT_LEGACY_TOTAL_READ_BYTES,
+  MAX_LEGACY_ITEM_BYTES,
+  MAX_LEGACY_READ_BYTES,
+  MAX_LEGACY_TOTAL_ITEMS,
+  MAX_LEGACY_TOTAL_READ_BYTES,
+  MAX_PAGE_LIMIT
+} from "./transcript-reader.contracts.js";
+import { decodeLegacyCursor, encodeLegacyCursor, type LegacyReadCursor } from "./transcript-reader.legacy-cursor.js";
+import {
+  entriesFromLegacyEvents,
+  eventSpanId,
+  readLegacyEventPage,
+  readNativeBoundLegacySpan,
+} from "./transcript-reader.legacy-events.js";
+import { readLegacyLogPage, type LegacyLogPage } from "./transcript-reader.legacy-log.js";
 import {
   asRecord,
   assertSpanRuntimeConsistency,
-  isoDate,
   isUnavailable,
   mergeAvailability,
   mergeCompleteness,
@@ -64,12 +71,11 @@ import {
   normalizeNativeResult,
   principalScopeRefs,
   runtimeTypeFromRun,
-  selectedPrincipalScope,
   selectorFromSpan,
   stableHash,
   stringAt,
   transcriptEntry,
-  transcriptReaderError,
+  transcriptReaderError
 } from "./transcript-reader.normalize.js";
 import {
   applyVisibilityCutoff,
@@ -77,7 +83,17 @@ import {
   normalizeLimit,
   numericRangeEndReached,
   pageItemsForRange,
+  runRangeWithItemIds,
+  selectRunItemsForItemIdRange,
+  spanRangeWithoutItemIds,
+  type RunItemIdRangeState,
 } from "./transcript-reader.pages.js";
+import { isExplicitLegacyTranscriptSource, isNativeTranscriptSource } from "./transcript-source.js";
+
+type RunResolvedSource = ResolvedSource & {
+  runItemIdRangeState?: RunItemIdRangeState;
+  runItemIdRangeEnded?: boolean;
+};
 
 function rawItemsFromResult(result: NativeTranscriptReadResult): readonly NativeTranscriptRawItem[] {
   if (Array.isArray(result.items)) return result.items;
@@ -106,108 +122,83 @@ function defaultRevision(run: HeartbeatRunRecord, prefix: string): string {
   });
 }
 
-function transcriptCandidates(payload: unknown): TranscriptEntry[] {
+interface LegacyOutputEntry {
+  entry: TranscriptEntry;
+  offset: number;
+}
+
+function throwIfReadAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const error = signal.reason instanceof Error ? signal.reason : new Error("Legacy transcript read cancelled");
+  if (error.name === "Error") error.name = "AbortError";
+  throw error;
+}
+
+function transcriptCandidateArrays(payload: unknown): unknown[][] {
   const record = asRecord(payload);
   if (!record) return [];
-  const candidates = [record.__chatTranscript, record.transcript, record.entries, record.items];
-  for (const candidate of candidates) {
-    if (!Array.isArray(candidate)) continue;
-    const entries = candidate.map(transcriptEntry).filter((entry): entry is TranscriptEntry => Boolean(entry));
-    if (entries.length > 0) return entries;
-  }
-  return [];
+  return [record.__chatTranscript, record.transcript, record.entries, record.items]
+    .filter((candidate): candidate is unknown[] => Array.isArray(candidate) && candidate.length > 0);
 }
 
-function entriesFromLegacyEvents(events: readonly Record<string, unknown>[]): TranscriptEntry[] {
-  const entries: TranscriptEntry[] = [];
-  for (const event of events) {
-    // Durable transcript events are the legacy compatibility source. Live-only
-    // projections use seq=null and must never become historical transcript.
-    if (event.eventType !== "transcript.entry" || event.seq === null) continue;
-    const sourceEntryId = typeof event.id === "string" || typeof event.id === "number"
-      ? String(event.id)
-      : null;
-    const payload = asRecord(event.payload);
-    const candidates = [payload?.entry, payload?.transcriptEntry, payload?.transcript, event.payload];
-    let found = false;
-    for (const candidate of candidates) {
-      const entry = transcriptEntry(candidate);
-      if (entry) {
-        entries.push(sourceEntryId && !entry.sourceEntryId ? { ...entry, sourceEntryId } : entry);
-        found = true;
-        break;
-      }
-    }
-    if (found) continue;
-    const message = nonEmptyString(event.message);
-    if (!message) continue;
-    const stream = event.stream === "stderr" ? "stderr" : event.stream === "system" ? "system" : "stdout";
-    entries.push({
-      kind: stream,
-      ts: isoDate(event.createdAt),
-      text: message,
-      ...(sourceEntryId ? { sourceEntryId } : {}),
-    });
-  }
-  return entries;
+function hasTranscriptCandidates(payload: unknown): boolean {
+  return transcriptCandidateArrays(payload).length > 0;
 }
 
-function eventSpanId(event: Record<string, unknown>): string | null {
-  const payload = asRecord(event.payload);
-  const nested = asRecord(payload?.entry ?? payload?.transcriptEntry ?? payload?.transcript);
-  return stringAt(payload, ["spanId", "span_id"])
-    ?? stringAt(nested, ["spanId", "span_id"]);
+function initialLegacyCursor(run: HeartbeatRunRecord): string {
+  const phase: LegacyReadCursor["phase"] = run.logStore && run.logRef
+    ? "log"
+    : hasTranscriptCandidates(run.resultJson)
+      ? "result"
+      : hasTranscriptCandidates(run.contextSnapshot)
+        ? "context"
+        : "events";
+  return encodeLegacyCursor({
+    version: 1,
+    phase,
+    offset: 0,
+    skipEntries: 0,
+    totalBytes: 0,
+    totalItems: 0,
+  });
 }
 
-async function readAllLegacyLog(
-  store: RunLogStore,
-  handle: RunLogHandle,
-  options: { maxReadBytes: number; signal?: AbortSignal },
-): Promise<string> {
-  let offset = 0;
-  let content = "";
-  for (let page = 0; page < 100_000; page += 1) {
-    if (options.signal?.aborted) throw new Error("legacy transcript read cancelled");
-    const result: RunLogReadResult = await store.read(handle, {
-      offset,
-      limitBytes: options.maxReadBytes,
-      signal: options.signal,
-    });
-    content += result.content;
-    if (result.eof) return content;
-    const nextOffset = result.nextOffset ?? result.endOffset;
-    if (!Number.isSafeInteger(nextOffset) || nextOffset <= offset) throw new Error("Legacy transcript reader made no progress");
-    offset = nextOffset;
-  }
-  throw new Error("Legacy transcript exceeds the readable page limit");
-}
-
-function legacyEntriesFromRun(run: HeartbeatRunRecord, rawLog: string, runtimeType: string, events: readonly Record<string, unknown>[]): TranscriptEntry[] {
-  let rawLogFallback: TranscriptEntry[] = [];
-  if (rawLog) {
-    const chunks = parseNdjsonLog(rawLog);
-    if (chunks.length > 0) {
-      const entries = buildTranscript(chunks, getTranscriptParser(runtimeType));
-      if (entries.length > 0) return entries;
-    }
-    rawLogFallback = [{ kind: "stdout", ts: isoDate(run.startedAt ?? run.createdAt), text: rawLog }];
-  }
-  const fromResult = transcriptCandidates(run.resultJson);
-  if (fromResult.length > 0) return fromResult;
-  const fromContext = transcriptCandidates(run.contextSnapshot);
-  if (fromContext.length > 0) return fromContext;
-  const fromEvents = entriesFromLegacyEvents(events);
-  return fromEvents.length > 0 ? fromEvents : rawLogFallback;
+function transcriptResult(
+  entries: readonly TranscriptEntry[],
+  input: {
+    revision: string;
+    itemOffset?: number;
+    nextCursor?: string | null;
+    limitReached?: TranscriptReadLimit | null;
+  },
+): LegacyTranscriptReadResult {
+  return {
+    entries,
+    itemOffset: input.itemOffset ?? 0,
+    nextCursor: input.nextCursor ?? null,
+    revision: input.revision,
+    availability: "available",
+    completeness: input.limitReached || input.nextCursor ? "partial" : entries.length > 0 ? "complete" : "terminal_only",
+    ...(input.limitReached ? { limitReached: input.limitReached } : {}),
+  };
 }
 
 export function createLegacyTranscriptReader(options: {
   logStore?: RunLogStore;
   maxReadBytes?: number;
+  maxTotalBytes?: number;
+  maxTotalItems?: number;
+  maxItemBytes?: number;
 } = {}): LegacyTranscriptReaderHook {
   const store = options.logStore ?? getRunLogStore();
   const maxReadBytes = Math.max(4, Math.min(MAX_LEGACY_READ_BYTES, Math.floor(options.maxReadBytes ?? DEFAULT_LEGACY_READ_BYTES)));
+  const maxTotalBytes = Math.max(4, Math.min(MAX_LEGACY_TOTAL_READ_BYTES, Math.floor(options.maxTotalBytes ?? DEFAULT_LEGACY_TOTAL_READ_BYTES)));
+  const maxTotalItems = Math.max(1, Math.min(MAX_LEGACY_TOTAL_ITEMS, Math.floor(options.maxTotalItems ?? DEFAULT_LEGACY_TOTAL_ITEMS)));
+  const maxItemBytes = Math.max(4, Math.min(MAX_LEGACY_ITEM_BYTES, Math.floor(options.maxItemBytes ?? DEFAULT_LEGACY_ITEM_BYTES)));
+
   return {
     async readRun(input) {
+      throwIfReadAborted(input.signal);
       if (input.run.logCompressed) {
         return {
           entries: [],
@@ -216,13 +207,48 @@ export function createLegacyTranscriptReader(options: {
           completeness: "unknown",
         };
       }
-      let rawLog = "";
-      if (input.run.logStore && input.run.logRef) {
+
+      const revision = defaultRevision(input.run, "legacy");
+      const state = decodeLegacyCursor(input.cursor) ?? {
+        version: 1 as const,
+        phase: input.run.logStore && input.run.logRef ? "log" as const
+          : hasTranscriptCandidates(input.run.resultJson) ? "result" as const
+            : hasTranscriptCandidates(input.run.contextSnapshot) ? "context" as const
+              : "events" as const,
+        offset: 0,
+        skipEntries: 0,
+        totalBytes: 0,
+        totalItems: 0,
+      };
+      const limit = normalizeLimit(input.limit);
+
+      if (state.totalBytes >= maxTotalBytes) {
+        return transcriptResult([], {
+          revision,
+          limitReached: { reason: "total_bytes", maximum: maxTotalBytes },
+        });
+      }
+
+      if (state.phase === "log" && input.run.logStore && input.run.logRef) {
+        let page: LegacyLogPage;
         try {
-          rawLog = await readAllLegacyLog(store, {
+          page = await readLegacyLogPage(store, {
             store: input.run.logStore as RunLogHandle["store"],
             logRef: input.run.logRef,
-          }, { maxReadBytes, signal: input.signal });
+          }, {
+            run: input.run,
+            runtimeType: input.runtimeType,
+            offset: state.offset,
+            skipEntries: state.skipEntries,
+            totalBytes: state.totalBytes,
+            totalItems: state.totalItems,
+            pageBytes: Math.min(maxReadBytes, maxTotalBytes - state.totalBytes),
+            totalBytesLimit: maxTotalBytes,
+            totalItemsLimit: maxTotalItems,
+            itemBytesLimit: maxItemBytes,
+            limit,
+            signal: input.signal,
+          });
         } catch (error) {
           if ((error as { status?: unknown }).status === 404) {
             return {
@@ -234,14 +260,199 @@ export function createLegacyTranscriptReader(options: {
           }
           throw error;
         }
+        const totalBytes = state.totalBytes + page.readBytes;
+        const totalItems = state.totalItems + page.entries.length;
+        if (page.next || page.limitReached) {
+          return transcriptResult(page.entries, {
+            revision,
+            itemOffset: state.totalItems,
+            nextCursor: page.next && !page.limitReached ? encodeLegacyCursor({
+              ...state,
+              offset: page.offset,
+              skipEntries: page.skipEntries,
+              totalBytes,
+              totalItems,
+            }) : null,
+            limitReached: page.limitReached,
+          });
+        }
+        if (page.entries.length > 0) return transcriptResult(page.entries, { revision, itemOffset: state.totalItems });
+        if (state.totalItems > 0 && page.eof) {
+          return {
+            ...transcriptResult([], { revision, itemOffset: state.totalItems }),
+            completeness: "complete",
+          };
+        }
+        state.totalBytes = totalBytes;
+        state.totalItems = totalItems;
+        state.phase = hasTranscriptCandidates(input.run.resultJson) ? "result"
+          : hasTranscriptCandidates(input.run.contextSnapshot) ? "context"
+            : "events";
+        state.offset = 0;
+        state.skipEntries = 0;
       }
-      const entries = legacyEntriesFromRun(input.run, rawLog, input.runtimeType, input.events ?? []);
-      return {
-        entries,
-        revision: defaultRevision(input.run, rawLog ? "log" : "payload"),
-        availability: "available",
-        completeness: entries.length > 0 ? "complete" : "terminal_only",
-      };
+
+      let pageBytesUsed = state.totalBytes;
+      let pageItemsUsed = state.totalItems;
+      const remainingPageBytes = () => Math.min(maxReadBytes, maxTotalBytes - pageBytesUsed);
+      const remainingPageItems = () => Math.min(limit, maxTotalItems - pageItemsUsed);
+
+      for (const phase of ["result", "context"] as const) {
+        if (state.phase !== phase) continue;
+        const arrays = transcriptCandidateArrays(phase === "result" ? input.run.resultJson : input.run.contextSnapshot);
+        const candidate = arrays[0];
+        if (!candidate) {
+          state.phase = phase === "result" && hasTranscriptCandidates(input.run.contextSnapshot) ? "context" : "events";
+          state.offset = 0;
+          continue;
+        }
+        const entries: TranscriptEntry[] = [];
+        let index = state.offset;
+        let bytesRead = 0;
+        let itemsRead = 0;
+        let limitReached: TranscriptReadLimit | null = null;
+        while (index < candidate.length && itemsRead < remainingPageItems()) {
+          throwIfReadAborted(input.signal);
+          const raw = candidate[index];
+          const encoded = JSON.stringify(raw) ?? "null";
+          const byteLength = Buffer.byteLength(encoded, "utf8");
+          if (byteLength > maxItemBytes) {
+            limitReached = { reason: "item_bytes", maximum: maxItemBytes };
+            break;
+          }
+          if (byteLength > remainingPageBytes() - bytesRead) {
+            limitReached = {
+              reason: pageBytesUsed + bytesRead >= maxTotalBytes ? "total_bytes" : "page_bytes",
+              maximum: pageBytesUsed + bytesRead >= maxTotalBytes ? maxTotalBytes : maxReadBytes,
+            };
+            break;
+          }
+          const entry = transcriptEntry(raw);
+          index += 1;
+          itemsRead += 1;
+          bytesRead += byteLength;
+          if (entry) entries.push(entry);
+        }
+        pageBytesUsed += bytesRead;
+        pageItemsUsed += itemsRead;
+        const hasMore = index < candidate.length;
+        if (hasMore && pageItemsUsed >= maxTotalItems && !limitReached) {
+          return transcriptResult(entries, {
+            revision,
+            itemOffset: state.totalItems,
+            limitReached: { reason: "total_items", maximum: maxTotalItems },
+          });
+        }
+        if (hasMore && !limitReached && entries.length < remainingPageItems()) {
+          return transcriptResult(entries, {
+            revision,
+            itemOffset: state.totalItems,
+            nextCursor: encodeLegacyCursor({ ...state, offset: index, skipEntries: 0, totalBytes: pageBytesUsed, totalItems: pageItemsUsed }),
+          });
+        }
+        if (limitReached) {
+          return transcriptResult(entries, { revision, itemOffset: state.totalItems, limitReached });
+        }
+        if (entries.length > 0 || hasMore) {
+          return transcriptResult(entries, {
+            revision,
+            itemOffset: state.totalItems,
+            nextCursor: hasMore
+              ? encodeLegacyCursor({ ...state, offset: index, skipEntries: 0, totalBytes: pageBytesUsed, totalItems: pageItemsUsed })
+              : null,
+          });
+        }
+        state.phase = phase === "result" && hasTranscriptCandidates(input.run.contextSnapshot) ? "context" : "events";
+        state.offset = 0;
+      }
+
+      if (state.phase === "events") {
+        const eventLimit = remainingPageItems();
+        const eventBytes = remainingPageBytes();
+        if (eventLimit <= 0) {
+          return transcriptResult([], { revision, limitReached: { reason: "total_items", maximum: maxTotalItems } });
+        }
+        if (eventBytes <= 0) {
+          return transcriptResult([], { revision, limitReached: { reason: "total_bytes", maximum: maxTotalBytes } });
+        }
+        let eventPage: LegacyTranscriptEventPage;
+        if (input.readEvents) {
+          eventPage = await input.readEvents({
+            cursor: state.eventCursor,
+            limit: eventLimit,
+            maxBytes: eventBytes,
+            maxItemBytes,
+            signal: input.signal,
+          });
+        } else {
+          const allEvents = input.events ?? [];
+          const pageEvents: Record<string, unknown>[] = [];
+          let pageEventBytes = 0;
+          let directLimit: TranscriptReadLimit | null = null;
+          for (const event of allEvents.slice(state.offset, state.offset + eventLimit)) {
+            const byteLength = Buffer.byteLength(JSON.stringify(event) ?? "null", "utf8");
+            if (byteLength > maxItemBytes) {
+              if (pageEvents.length === 0) directLimit = { reason: "item_bytes", maximum: maxItemBytes };
+              break;
+            }
+            if (byteLength > eventBytes - pageEventBytes) {
+              if (pageEvents.length === 0) {
+                directLimit = {
+                  reason: eventBytes < maxReadBytes ? "total_bytes" : "page_bytes",
+                  maximum: eventBytes < maxReadBytes ? maxTotalBytes : maxReadBytes,
+                };
+              }
+              break;
+            }
+            pageEvents.push(event);
+            pageEventBytes += byteLength;
+          }
+          eventPage = {
+            events: pageEvents,
+            nextCursor: state.offset + pageEvents.length < allEvents.length ? String(state.offset + pageEvents.length) : null,
+            revision,
+            readBytes: pageEventBytes,
+            limitReached: directLimit,
+          };
+        }
+        throwIfReadAborted(input.signal);
+        const filteredEvents = input.spanId
+          ? eventPage.events.filter((event) => eventSpanId(event) === null || eventSpanId(event) === input.spanId)
+          : eventPage.events;
+        const entries = entriesFromLegacyEvents(filteredEvents);
+        const nextTotalBytes = pageBytesUsed + eventPage.readBytes;
+        const nextTotalItems = pageItemsUsed + eventPage.events.length;
+        const totalLimit = nextTotalBytes >= maxTotalBytes && eventPage.nextCursor
+          ? { reason: "total_bytes" as const, maximum: maxTotalBytes }
+          : nextTotalItems >= maxTotalItems && eventPage.nextCursor
+            ? { reason: "total_items" as const, maximum: maxTotalItems }
+            : null;
+        const eventBudgetLimit = eventPage.limitReached?.reason === "page_bytes"
+          && eventBytes < maxReadBytes
+          ? { reason: "total_bytes" as const, maximum: maxTotalBytes }
+          : eventPage.limitReached;
+        const itemBudgetLimit = state.totalItems >= maxTotalItems && eventPage.events.length > 0
+          ? { reason: "total_items" as const, maximum: maxTotalItems }
+          : null;
+        const limitReached = eventBudgetLimit ?? itemBudgetLimit ?? totalLimit;
+        const hasMore = Boolean(eventPage.nextCursor) && !limitReached;
+        return transcriptResult(entries, {
+          revision: eventPage.revision,
+          itemOffset: state.totalItems,
+          nextCursor: hasMore ? encodeLegacyCursor({
+            ...state,
+            phase: "events",
+            offset: input.readEvents ? 0 : Number(eventPage.nextCursor),
+            eventCursor: input.readEvents ? eventPage.nextCursor : null,
+            skipEntries: 0,
+            totalBytes: nextTotalBytes,
+            totalItems: nextTotalItems,
+          }) : null,
+          limitReached,
+        });
+      }
+
+      return transcriptResult([], { revision });
     },
   };
 }
@@ -298,15 +509,6 @@ async function selectSpans(db: ReadDatabase, orgId: string, runId: string): Prom
     .from(runRuntimeSpans)
     .where(and(eq(runRuntimeSpans.orgId, orgId), eq(runRuntimeSpans.runId, runId)))
     .orderBy(asc(runRuntimeSpans.ordinal), asc(runRuntimeSpans.id));
-}
-
-async function selectLegacyEvents(db: ReadDatabase, orgId: string, runId: string): Promise<Record<string, unknown>[]> {
-  const rows = await db
-    .select()
-    .from(heartbeatRunEvents)
-    .where(and(eq(heartbeatRunEvents.orgId, orgId), eq(heartbeatRunEvents.runId, runId)))
-    .orderBy(asc(heartbeatRunEvents.seq), asc(heartbeatRunEvents.id));
-  return rows as Record<string, unknown>[];
 }
 
 export function conversationDateKey(value: Date | string | null | undefined): string {
@@ -671,27 +873,41 @@ async function readNativeSources(
     spans: RunRuntimeSpanRecord[];
     bindings: Map<string, RuntimeBindingRecord>;
     segments: Map<string, NativeSegmentRecord>;
+    spanScoped?: boolean;
     range?: TranscriptRange | null;
+    runItemIdRangeState?: RunItemIdRangeState;
     visibilityCutoffRef?: string | null;
     activeSpanId?: string | null;
     providerCursor?: string | null;
+    providerSource?: TranscriptSource | null;
     providerOffset?: number;
     allowLegacyFallback?: boolean;
     limit?: number;
     itemId?: string | null;
     signal?: AbortSignal;
   },
-): Promise<ResolvedSource> {
+): Promise<RunResolvedSource> {
   const sources: ResolvedSource[] = [];
   const activeSpanIndex = input.activeSpanId
     ? input.spans.findIndex((candidate) => candidate.id === input.activeSpanId)
     : 0;
   if (activeSpanIndex < 0) throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor span is not part of this run");
   const pageLimit = normalizeLimit(input.limit);
+  const applyRunGlobalItemIds = !input.spanScoped && input.spans.length > 1;
+  const spanRange = applyRunGlobalItemIds ? spanRangeWithoutItemIds(input.range) : input.range;
+  const runItemIdRange = applyRunGlobalItemIds ? runRangeWithItemIds(input.range) : null;
+  const incomingRunItemIdRangeState = {
+    resolvedBoundaryKeys: [...(input.runItemIdRangeState?.resolvedBoundaryKeys ?? [])],
+  };
+  let runItemIdRangeState = incomingRunItemIdRangeState;
+  let selectedItems: ResolvedSource["items"] = [];
+  let runItemIdRangeEnded = false;
   const spans = input.spans.slice(activeSpanIndex);
   let sourceOffset = input.providerOffset ?? 0;
   for (const [spanOffset, span] of spans.entries()) {
-    const collectedCount = sources.reduce((count, source) => count + source.items.length, 0);
+    const collectedCount = runItemIdRange
+      ? selectedItems.length
+      : sources.reduce((count, source) => count + source.items.length, 0);
     if (collectedCount >= pageLimit) break;
     const providerCursor = spanOffset === 0 ? input.providerCursor ?? null : null;
     const providerOffset = sourceOffset;
@@ -710,7 +926,7 @@ async function readNativeSources(
       cursor: providerCursor,
       limit: pageLimit - collectedCount,
       itemId: input.itemId ?? null,
-      range: providerRangeForRead(input.range),
+      range: providerRangeForRead(spanRange),
       visibilityCutoffRef: input.visibilityCutoffRef ?? span.visibilityCutoffRef,
       signal: input.signal,
     };
@@ -720,15 +936,38 @@ async function readNativeSources(
     const itemsForSpan = (candidate: ResolvedSource) => candidate.items.filter((item) =>
       item.runId === input.run.id && item.spanId === span.id,
     );
-    const explicitLegacySource = isExplicitLegacyTranscriptSource(input.run, {
+    const hasNativeSpanIdentity = binding?.continuity === "native"
+      || binding?.continuity === "context_handoff"
+      || Boolean(segment?.nativeSessionId)
+      || (hookInput.selector.kind !== "pending" && hookInput.selector.kind !== "unresolved");
+    const explicitLegacySource = !hasNativeSpanIdentity && isExplicitLegacyTranscriptSource(input.run, {
       bindingContinuity: binding?.continuity,
     });
-    let result = explicitLegacySource
+    const nativeSourceContract = isNativeTranscriptSource(input.run, {
+      bindingContinuity: binding?.continuity,
+    });
+    const legacyContinuation = spanOffset === 0 && input.providerSource === "legacy";
+    const nativeLegacyContinuation = legacyContinuation
+      && nativeSourceContract
+      && !explicitLegacySource;
+    let result = nativeLegacyContinuation
+      ? await readNativeBoundLegacySpan(db, options, {
+        orgId: input.orgId,
+        run: input.run,
+        span,
+        cursor: providerCursor,
+        limit: pageLimit - collectedCount,
+        providerOffset,
+        signal: input.signal,
+      })
+      : explicitLegacySource || legacyContinuation
       ? await readLegacySource(db, options, {
         orgId: input.orgId,
         run: input.run,
         binding,
         spanId: span.id,
+        cursor: providerCursor,
+        limit: pageLimit - collectedCount,
         signal: input.signal,
       })
       : cursorObjectSource
@@ -740,7 +979,7 @@ async function readNativeSources(
       : objectRef && options.objectReader
         ? await readNativeSpan(options, hookInput, "object")
         : await readNativeSpan(options, hookInput, "native");
-    if (!explicitLegacySource && !cursorObjectSource && !expiredSupplement && objectRef
+    if (!explicitLegacySource && !legacyContinuation && !cursorObjectSource && !expiredSupplement && objectRef
       && options.objectReader
       && (isUnavailable(result.availability) || result.completeness !== "complete")) {
       // A partial native range is not authoritative for the missing tail. Read
@@ -765,21 +1004,41 @@ async function readNativeSources(
       };
     }
     let spanItems = itemsForSpan(result);
-    // A native binding is an explicit source contract. Old duplicated logs
-    // cannot silently replace an offline or pruned provider history.
-    const nativeSourceContract = isNativeTranscriptSource(input.run, {
-      bindingContinuity: binding?.continuity,
-    });
+    // Native-bound spans may show only event copies carrying this exact span/Attempt identity.
     const allowLegacyFallback = input.allowLegacyFallback !== false && !nativeSourceContract;
-    if (!explicitLegacySource && allowLegacyFallback && spanItems.length === 0 && isUnavailable(result.availability)) {
+    const hasRetainedLegacyFallback = isExplicitLegacyTranscriptSource(input.run);
+    const shouldReadNativeLegacyFallback = !nativeLegacyContinuation
+      && !explicitLegacySource
+      && nativeSourceContract
+      && spanItems.length === 0
+      && result.availability === "offline";
+    if (shouldReadNativeLegacyFallback) {
+      const legacy = await readNativeBoundLegacySpan(db, options, {
+        orgId: input.orgId,
+        run: input.run,
+        span,
+        limit: pageLimit - collectedCount,
+        providerOffset,
+        signal: input.signal,
+      });
+      if (legacy.items.length > 0 || legacy.providerNextCursor || legacy.limitReached) {
+        result = legacy;
+        spanItems = itemsForSpan(result);
+      }
+    }
+    const shouldReadLegacyNow = spanItems.length === 0
+      && (isUnavailable(result.availability)
+        || (hasRetainedLegacyFallback && result.completeness === "partial"));
+    if (!explicitLegacySource && !legacyContinuation && allowLegacyFallback && shouldReadLegacyNow) {
       const legacy = await readLegacySource(db, options, {
         orgId: input.orgId,
         run: input.run,
         binding,
         spanId: span.id,
+        limit: pageLimit - collectedCount,
         signal: input.signal,
       });
-      if (legacy.items.length > 0) {
+      if (legacy.items.length > 0 || legacy.providerNextCursor || legacy.limitReached) {
         result = legacy;
         spanItems = itemsForSpan(result);
       } else if (legacy.availability !== "available") {
@@ -791,6 +1050,15 @@ async function readNativeSources(
           completeness: mergeCompleteness([result.completeness, legacy.completeness]),
         };
       }
+    } else if (!explicitLegacySource && !legacyContinuation && allowLegacyFallback
+      && hasRetainedLegacyFallback && result.completeness === "partial"
+      && !result.providerNextCursor) {
+      result = {
+        ...result,
+        providerSource: "legacy",
+        providerRevision: defaultRevision(input.run, "legacy"),
+        providerNextCursor: initialLegacyCursor(input.run),
+      };
     }
     const visibilityCutoffRef = input.visibilityCutoffRef ?? span.visibilityCutoffRef;
     const rangeVisibleItems = applyVisibilityCutoff(spanItems, visibilityCutoffRef);
@@ -799,7 +1067,7 @@ async function readNativeSources(
       // Keep each span's visibility boundary, but index numeric ranges over
       // all visible Run items before range selection.
       items: pageItemsForRange(spanItems, {
-        range: input.range,
+        range: spanRange,
         visibilityCutoffRef,
         sourceOffset: providerOffset,
       }),
@@ -810,19 +1078,35 @@ async function readNativeSources(
     } satisfies ResolvedSource;
     sources.push(source);
     sourceOffset = source.providerNextOffset;
+    const mergedItems = sources.flatMap((entry) => entry.items);
+    if (runItemIdRange) {
+      const selection = selectRunItemsForItemIdRange(
+        mergedItems,
+        runItemIdRange,
+        incomingRunItemIdRangeState,
+        Boolean(source.providerNextCursor) || spanOffset < spans.length - 1,
+      );
+      selectedItems = selection.items;
+      runItemIdRangeState = selection.state;
+      runItemIdRangeEnded = selection.endReached;
+    } else {
+      selectedItems = mergedItems;
+    }
 
     // A provider continuation owns the remainder of this page. Do not read
     // another span until that continuation has been consumed.
+    if (runItemIdRangeEnded) break;
     if (numericRangeEndReached(input.range ?? null, sourceOffset)) break;
     // A resumed cursor is bound to this span's provider revision. Move to the
     // next span with an explicit transition cursor after this source is read.
     if (input.activeSpanId) break;
-    if (source.providerNextCursor || source.items.length >= pageLimit - collectedCount) break;
+    if (source.providerNextCursor
+      || (runItemIdRange ? selectedItems.length >= pageLimit : source.items.length >= pageLimit - collectedCount)) break;
     if (!allowLegacyFallback
       && source.items.length === 0
       && isUnavailable(source.availability)) break;
   }
-  const items = sources.flatMap((source) => source.items);
+  const items = selectedItems;
   const source = mergeSource(sources.map((entry) => entry.source));
   const activeSource = sources.at(-1);
   const activeSpanIndexForCursor = activeSource
@@ -832,16 +1116,18 @@ async function readNativeSources(
     items,
     source,
     revision: stableHash(sources.map((entry) => entry.revision)),
-    providerSource: activeSource?.source ?? null,
+    providerSource: activeSource?.providerSource ?? activeSource?.source ?? null,
     providerRevision: activeSource?.providerRevision ?? null,
     availability: mergeAvailability(sources.map((entry) => entry.availability)),
     completeness: mergeCompleteness(sources.map((entry) => entry.completeness)),
+    limitReached: activeSource?.limitReached ?? null,
     providerCursor: activeSource?.providerCursor ?? null,
-    providerNextCursor: activeSource?.providerNextCursor ?? null,
+    providerNextCursor: runItemIdRangeEnded ? null : activeSource?.providerNextCursor ?? null,
     providerOffset: activeSource?.providerOffset ?? 0,
     providerNextOffset: activeSource?.providerNextOffset ?? activeSource?.providerOffset ?? 0,
     spanId: activeSource?.spanId ?? null,
-    nextSpanId: input.spans[activeSpanIndexForCursor + 1]?.id ?? null,
+    nextSpanId: runItemIdRangeEnded ? null : input.spans[activeSpanIndexForCursor + 1]?.id ?? null,
+    ...(runItemIdRange ? { runItemIdRangeState, runItemIdRangeEnded } : {}),
     legacyFallbackEligible: sources.length > 0
       && items.length === 0
       && sources.some((entry) => entry.legacyFallbackEligible === true),
@@ -856,46 +1142,49 @@ async function readLegacySource(
     run: HeartbeatRunRecord;
     binding: RuntimeBindingRecord | null;
     spanId?: string | null;
+    cursor?: string | null;
+    limit?: number;
     signal?: AbortSignal;
   },
 ): Promise<ResolvedSource> {
   const legacyReader = options.legacyReader ?? createLegacyTranscriptReader({
     logStore: options.logStore,
     maxReadBytes: options.maxLegacyReadBytes,
+    maxTotalBytes: options.maxLegacyTotalBytes,
+    maxTotalItems: options.maxLegacyTotalItems,
+    maxItemBytes: options.maxLegacyItemBytes,
   });
-  let events: Record<string, unknown>[] = [];
-  if (transcriptCandidates(input.run.resultJson).length === 0
-    && transcriptCandidates(input.run.contextSnapshot).length === 0) {
-    // A finalized log can be empty or unparsable while durable transcript
-    // events still contain the only readable history.
-    events = await selectLegacyEvents(db, input.orgId, input.run.id);
-  }
-  if (input.spanId) {
-    events = events.filter((event) => {
-      const spanId = eventSpanId(event);
-      return spanId === null || spanId === input.spanId;
-    });
-  }
   const raw = await legacyReader.readRun({
     readonly: true,
     run: input.run,
     runtimeType: runtimeTypeFromRun(input.run, input.binding),
     spanId: input.spanId ?? null,
-    events,
+    cursor: input.cursor ?? null,
+    limit: input.limit,
+    readEvents: async (eventInput) => await readLegacyEventPage(db, {
+      orgId: input.orgId,
+      run: input.run,
+      ...eventInput,
+    }),
     signal: input.signal,
   });
   const result: LegacyTranscriptReadResult = Array.isArray(raw)
     ? { entries: raw }
     : raw as LegacyTranscriptReadResult;
+  const revision = nonEmptyString(result.revision) ?? defaultRevision(input.run, "legacy");
+  const itemOffset = result.itemOffset ?? 0;
   return {
     items: normalizeItems(result.entries, { runId: input.run.id, spanId: input.spanId ?? null, origin: "legacy" }),
     source: "legacy",
-    revision: nonEmptyString(result.revision) ?? defaultRevision(input.run, "legacy"),
-    providerRevision: nonEmptyString(result.revision) ?? defaultRevision(input.run, "legacy"),
+    revision,
+    providerRevision: revision,
     availability: result.availability ?? "available",
     completeness: result.completeness ?? (result.entries.length > 0 ? "complete" : "terminal_only"),
-    providerCursor: null,
-    providerNextCursor: null,
+    limitReached: result.limitReached ?? null,
+    providerCursor: input.cursor ?? null,
+    providerNextCursor: result.nextCursor ?? null,
+    providerOffset: itemOffset,
+    providerNextOffset: itemOffset + result.entries.length,
     spanId: input.spanId ?? null,
   };
 }
@@ -924,9 +1213,12 @@ export async function readRunItems(
   options: TranscriptReaderOptions,
   input: ReadRunTranscript,
   itemId?: string | null,
-): Promise<ResolvedSource> {
+): Promise<RunResolvedSource> {
   const resolved = await resolveRunScope(db, options, input);
   const cursor = decodeCursor(input.cursor);
+  const runItemIdRangeState = cursor?.position === 0
+    ? (cursor as { runItemIdRangeState?: RunItemIdRangeState }).runItemIdRangeState
+    : undefined;
   const windowRevision = stableHash({
     runId: resolved.run.id,
     spanId: input.spanId ?? null,
@@ -944,7 +1236,7 @@ export async function readRunItems(
   const binding = resolved.run.chatConversationId
     ? [...resolved.bindingById.values()].find((candidate) => candidate.conversationId === resolved.run.chatConversationId) ?? null
     : null;
-  const source = resolved.spans.length > 0
+  const source: RunResolvedSource = resolved.spans.length > 0
     ? await readNativeSources(db, options, {
       orgId: input.orgId,
       principal: input.principal,
@@ -952,10 +1244,13 @@ export async function readRunItems(
       spans: resolved.spans,
       bindings: resolved.bindingById,
       segments: resolved.segmentById,
+      spanScoped: Boolean(input.spanId),
       range: input.range,
+      runItemIdRangeState,
       visibilityCutoffRef: input.visibilityCutoffRef,
       activeSpanId: cursor?.activeSpanId ?? input.spanId ?? null,
       providerCursor: cursor?.providerPageCursor ?? cursor?.providerCursor ?? null,
+      providerSource: cursor?.source ?? null,
       providerOffset: cursor?.providerOffset ?? 0,
       allowLegacyFallback: !cursor || cursor.providerRevision === null,
       limit: input.limit,
@@ -969,13 +1264,17 @@ export async function readRunItems(
         run: resolved.run,
         binding,
         spanId: input.spanId ?? null,
+        cursor: cursor?.providerPageCursor ?? cursor?.providerCursor ?? null,
+        limit: input.limit,
         signal: input.signal,
       });
   if (resolved.spans.length > 0) {
     const currentIndex = resolved.spans.findIndex((span) => span.id === source.spanId);
     return {
       ...source,
-      nextSpanId: currentIndex >= 0 ? resolved.spans[currentIndex + 1]?.id ?? null : null,
+      nextSpanId: source.runItemIdRangeEnded
+        ? null
+        : currentIndex >= 0 ? resolved.spans[currentIndex + 1]?.id ?? null : null,
       windowRevision,
     };
   }
@@ -985,6 +1284,7 @@ export async function readRunItems(
     items: pageItemsForRange(source.items, {
       range: input.range,
       visibilityCutoffRef: input.visibilityCutoffRef ?? null,
+      sourceOffset: source.providerOffset ?? 0,
     }),
   };
 }

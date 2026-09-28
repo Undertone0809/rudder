@@ -1,8 +1,8 @@
 import type { Db } from "@rudderhq/db";
 import { agentConfigRevisions, agents } from "@rudderhq/db";
 import { and, desc, eq } from "drizzle-orm";
-import { createTranscriptReader } from "./transcript-reader.js";
 import { createTranscriptObjectReader } from "./transcript-object-store.js";
+import { createTranscriptReader } from "./transcript-reader.js";
 
 /**
  * Chat and annotation reads use the same historical profile resolution as Run
@@ -10,7 +10,10 @@ import { createTranscriptObjectReader } from "./transcript-object-store.js";
  * selected Chat Agent. Lazy loading avoids initializing execution services when
  * a caller only needs legacy history or constructs a Chat service.
  */
-export function createHistoricalTranscriptReader(db: Pick<Db, "select">) {
+export function createHistoricalTranscriptReader(
+  db: Pick<Db, "select">,
+  options: { includeObjects?: boolean } = {},
+) {
   return createTranscriptReader(db, {
     nativeReader: {
       async read(input) {
@@ -39,6 +42,6 @@ export function createHistoricalTranscriptReader(db: Pick<Db, "select">) {
         ).readRange(input);
       },
     },
-    objectReader: createTranscriptObjectReader(),
+    ...(options.includeObjects === false ? {} : { objectReader: createTranscriptObjectReader() }),
   });
 }

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   chatConversations,
   chatMessages,
@@ -8,6 +7,7 @@ import {
   runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   createTranscriptReader,

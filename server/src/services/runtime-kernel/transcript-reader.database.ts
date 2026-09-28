@@ -1,11 +1,7 @@
 import { badRequest, notFound } from "../../errors.js";
-import {
-  MAX_CONVERSATION_SOURCE_SCAN,
-  MAX_PAGE_LIMIT,
-} from "./transcript-reader.contracts.js";
 import type {
-  ReadDatabase,
   ReadConversationTranscript,
+  ReadDatabase,
   ReadRunTranscript,
   ReadTranscriptItem,
   TranscriptItem,
@@ -14,9 +10,13 @@ import type {
   TranscriptReaderOptions,
   TranscriptStreamEvent,
 } from "./transcript-reader.contracts.js";
+import {
+  MAX_CONVERSATION_SOURCE_SCAN,
+  MAX_PAGE_LIMIT,
+} from "./transcript-reader.contracts.js";
+import { readConversationItems } from "./transcript-reader.conversation.js";
 import { transcriptReaderError } from "./transcript-reader.normalize.js";
 import { itemMatchesRef, pageFromRunSource } from "./transcript-reader.pages.js";
-import { readConversationItems } from "./transcript-reader.conversation.js";
 import { readRunItems } from "./transcript-reader.sources.js";
 
 export function createDatabaseTranscriptReader(database: ReadDatabase, options: TranscriptReaderOptions = {}): TranscriptReader {

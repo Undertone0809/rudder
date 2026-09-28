@@ -8,6 +8,7 @@ import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { notFound } from "../errors.js";
+import { syncDirectory } from "../file-system-durability.js";
 import { resolveRudderInstanceRoot } from "../home-paths.js";
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +31,15 @@ export interface RunLogReadResult {
   endOffset: number;
   eof: boolean;
   nextOffset?: number;
+}
+
+export interface RunLogRemovalStage {
+  orgId: string;
+  agentId: string;
+  runId: string;
+  handle: RunLogHandle;
+  expectedSha256: string;
+  stageId: string;
 }
 
 export interface RunLogFinalizeSummary {
@@ -58,10 +68,26 @@ export interface RunLogStore {
   ): Promise<void>;
   finalize(handle: RunLogHandle): Promise<RunLogFinalizeSummary>;
   read(handle: RunLogHandle, opts?: RunLogReadOptions): Promise<RunLogReadResult>;
+  removeRun(input: {
+    orgId: string;
+    agentId: string;
+    runId: string;
+    handle: RunLogHandle;
+    expectedSha256: string;
+  }): Promise<void>;
+  stageRunRemoval?(input: Omit<RunLogRemovalStage, "stageId">): Promise<RunLogRemovalStage>;
+  restoreStagedRunRemoval?(input: RunLogRemovalStage): Promise<void>;
+  purgeStagedRunRemoval?(input: RunLogRemovalStage): Promise<void>;
 }
 
 function safeSegments(...segments: string[]) {
   return segments.map((segment) => segment.replace(/[^a-zA-Z0-9._-]/g, "_"));
+}
+
+function canonicalRunLogRef(input: { orgId: string; agentId: string; runId: string }) {
+  const [orgId, agentId] = safeSegments(input.orgId, input.agentId);
+  const runId = safeSegments(input.runId)[0]!;
+  return path.join(orgId, agentId, `${runId}.ndjson`);
 }
 
 function resolveWithin(basePath: string, relativePath: string) {
@@ -599,6 +625,208 @@ function createLocalFileRunLogStore(basePath: string): RunLogStore {
         }
       }
       return readFileRange(absPath, offset, limitBytes, opts?.signal);
+    },
+
+    async removeRun(input) {
+      if (input.handle.store !== "local_file"
+        || input.handle.logRef !== canonicalRunLogRef(input)
+        || !/^[a-f0-9]{64}$/u.test(input.expectedSha256)) {
+        throw new Error("Run log identity does not match the requested Run");
+      }
+      const absPath = resolveWithin(basePath, input.handle.logRef);
+      const indexPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson`);
+      const metadataPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson.meta.json`);
+      const stat = await fs.lstat(absPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (stat && (stat.isSymbolicLink() || !stat.isFile())) throw new Error("Run log is not a regular file");
+      if (stat && await sha256File(absPath) !== input.expectedSha256) {
+        throw new Error("Run log changed after transcript proof");
+      }
+      await fs.unlink(indexPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      await fs.unlink(metadataPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      if (stat) {
+        await fs.unlink(absPath);
+        await syncDirectory(path.dirname(absPath));
+      }
+    },
+
+    async stageRunRemoval(input) {
+      if (input.handle.store !== "local_file"
+        || input.handle.logRef !== canonicalRunLogRef(input)
+        || !/^[a-f0-9]{64}$/u.test(input.expectedSha256)) {
+        throw new Error("Run log identity does not match the requested Run");
+      }
+      const absPath = resolveWithin(basePath, input.handle.logRef);
+      const indexPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson`);
+      const metadataPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson.meta.json`);
+      const directory = path.dirname(absPath);
+      const stageId = randomUUID();
+      const stageDirectory = path.join(directory, `.${path.basename(absPath)}.retention-${stageId}`);
+      const logStat = await fs.lstat(absPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      const indexStat = await fs.lstat(indexPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      const metadataStat = await fs.lstat(metadataPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if ((logStat && (logStat.isSymbolicLink() || !logStat.isFile()))
+        || (indexStat && (indexStat.isSymbolicLink() || !indexStat.isFile()))
+        || (metadataStat && (metadataStat.isSymbolicLink() || !metadataStat.isFile()))) {
+        throw new Error("Run log is not a regular file");
+      }
+      if (logStat && await sha256File(absPath) !== input.expectedSha256) {
+        throw new Error("Run log changed after transcript proof");
+      }
+      if (!logStat && !indexStat && !metadataStat) return { ...input, stageId };
+      await fs.mkdir(stageDirectory, { mode: 0o700 });
+      let movedLog = false;
+      let movedIndex = false;
+      let movedMetadata = false;
+      try {
+        if (logStat) {
+          await fs.rename(absPath, path.join(stageDirectory, path.basename(absPath)));
+          movedLog = true;
+        }
+        if (indexStat) {
+          await fs.rename(indexPath, path.join(stageDirectory, path.basename(indexPath)));
+          movedIndex = true;
+        }
+        if (metadataStat) {
+          await fs.rename(metadataPath, path.join(stageDirectory, path.basename(metadataPath)));
+          movedMetadata = true;
+        }
+        await syncDirectory(directory);
+      } catch (error) {
+        if (movedMetadata) await fs.rename(path.join(stageDirectory, path.basename(metadataPath)), metadataPath).catch(() => undefined);
+        if (movedIndex) await fs.rename(path.join(stageDirectory, path.basename(indexPath)), indexPath).catch(() => undefined);
+        if (movedLog) await fs.rename(path.join(stageDirectory, path.basename(absPath)), absPath).catch(() => undefined);
+        await fs.rmdir(stageDirectory).catch(() => undefined);
+        throw error;
+      }
+      return { ...input, stageId };
+    },
+
+    async restoreStagedRunRemoval(input) {
+      if (input.handle.store !== "local_file"
+        || input.handle.logRef !== canonicalRunLogRef(input)
+        || !/^[a-f0-9]{64}$/u.test(input.expectedSha256)
+        || !/^[0-9a-f-]{36}$/iu.test(input.stageId)) {
+        throw new Error("Run log staging identity is invalid");
+      }
+      const absPath = resolveWithin(basePath, input.handle.logRef);
+      const indexPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson`);
+      const metadataPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson.meta.json`);
+      const directory = path.dirname(absPath);
+      const stageDirectory = path.join(directory, `.${path.basename(absPath)}.retention-${input.stageId}`);
+      const stageStat = await fs.lstat(stageDirectory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!stageStat) return;
+      if (stageStat.isSymbolicLink() || !stageStat.isDirectory()) throw new Error("Run log staging path is invalid");
+      const stagedLog = path.join(stageDirectory, path.basename(absPath));
+      const stagedIndex = path.join(stageDirectory, path.basename(indexPath));
+      const stagedMetadata = path.join(stageDirectory, path.basename(metadataPath));
+      const stagedLogStat = await fs.lstat(stagedLog).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      const stagedIndexStat = await fs.lstat(stagedIndex).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      const stagedMetadataStat = await fs.lstat(stagedMetadata).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (stagedLogStat && (stagedLogStat.isSymbolicLink() || !stagedLogStat.isFile())) throw new Error("Run log staging file is invalid");
+      if (stagedIndexStat && (stagedIndexStat.isSymbolicLink() || !stagedIndexStat.isFile())) throw new Error("Run log staging index is invalid");
+      if (stagedMetadataStat && (stagedMetadataStat.isSymbolicLink() || !stagedMetadataStat.isFile())) throw new Error("Run log staging metadata is invalid");
+      if (stagedLogStat && await sha256File(stagedLog) !== input.expectedSha256) {
+        throw new Error("Staged run log changed after transcript proof");
+      }
+      if (await fs.lstat(absPath).catch(() => null)
+        || await fs.lstat(indexPath).catch(() => null)
+        || await fs.lstat(metadataPath).catch(() => null)) {
+        throw new Error("Run log destination already exists");
+      }
+      let restoredLog = false;
+      let restoredIndex = false;
+      let restoredMetadata = false;
+      try {
+        if (stagedLogStat) {
+          await fs.rename(stagedLog, absPath);
+          restoredLog = true;
+        }
+        if (stagedIndexStat) {
+          await fs.rename(stagedIndex, indexPath);
+          restoredIndex = true;
+        }
+        if (stagedMetadataStat) {
+          await fs.rename(stagedMetadata, metadataPath);
+          restoredMetadata = true;
+        }
+        await fs.rmdir(stageDirectory);
+        await syncDirectory(directory);
+      } catch (error) {
+        await fs.mkdir(stageDirectory, { mode: 0o700 }).catch(() => undefined);
+        if (restoredMetadata) await fs.rename(metadataPath, stagedMetadata).catch(() => undefined);
+        if (restoredIndex) await fs.rename(indexPath, stagedIndex).catch(() => undefined);
+        if (restoredLog) await fs.rename(absPath, stagedLog).catch(() => undefined);
+        throw error;
+      }
+    },
+
+    async purgeStagedRunRemoval(input) {
+      if (input.handle.store !== "local_file"
+        || input.handle.logRef !== canonicalRunLogRef(input)
+        || !/^[0-9a-f-]{36}$/iu.test(input.stageId)) {
+        throw new Error("Run log staging identity is invalid");
+      }
+      const absPath = resolveWithin(basePath, input.handle.logRef);
+      const indexPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson`);
+      const metadataPath = resolveWithin(basePath, `${input.handle.logRef}.index.ndjson.meta.json`);
+      const directory = path.dirname(absPath);
+      const stageDirectory = path.join(directory, `.${path.basename(absPath)}.retention-${input.stageId}`);
+      const stageStat = await fs.lstat(stageDirectory).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!stageStat) return;
+      if (stageStat.isSymbolicLink() || !stageStat.isDirectory()) throw new Error("Run log staging path is invalid");
+      for (const filePath of [
+        path.join(stageDirectory, path.basename(absPath)),
+        path.join(stageDirectory, path.basename(indexPath)),
+        path.join(stageDirectory, path.basename(metadataPath)),
+      ]) {
+        const stat = await fs.lstat(filePath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (stat && (stat.isSymbolicLink() || !stat.isFile())) throw new Error("Run log staging file is invalid");
+      }
+      await fs.unlink(path.join(stageDirectory, path.basename(indexPath))).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      await fs.unlink(path.join(stageDirectory, path.basename(metadataPath))).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      await fs.unlink(path.join(stageDirectory, path.basename(absPath))).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+      await fs.rmdir(stageDirectory);
+      await syncDirectory(directory);
     },
   };
 }

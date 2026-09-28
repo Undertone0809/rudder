@@ -1,7 +1,3 @@
-import {
-  DEFAULT_PAGE_LIMIT,
-  MAX_PAGE_LIMIT,
-} from "./transcript-reader.contracts.js";
 import type {
   CursorPayload,
   CursorScope,
@@ -14,6 +10,10 @@ import type {
   TranscriptRange,
   TranscriptRangeBoundary,
   TranscriptSource,
+} from "./transcript-reader.contracts.js";
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT
 } from "./transcript-reader.contracts.js";
 import {
   compatibilityValueKey,
@@ -146,6 +146,87 @@ export function applyRange(
       }
   }
   return selected;
+}
+
+const itemIdBoundaryKeys = ["start", "end", "fromExclusive", "after", "throughInclusive", "before"] as const;
+
+function isItemIdBoundary(value: unknown): boolean {
+  return typeof value === "string"
+    || Boolean(value && typeof value === "object" && "itemId" in value && (value as TranscriptRangeBoundary).itemId);
+}
+
+export function spanRangeWithoutItemIds(range: TranscriptRange | null | undefined): TranscriptRange | null | undefined {
+  if (!range) return range;
+  const spanRange: Record<string, unknown> = { ...range };
+  delete spanRange.itemId;
+  for (const key of itemIdBoundaryKeys) {
+    if (isItemIdBoundary(range[key])) delete spanRange[key];
+  }
+  return Object.values(spanRange).some((value) => value !== undefined && value !== null)
+    ? spanRange as TranscriptRange
+    : null;
+}
+
+export function runRangeWithItemIds(range: TranscriptRange | null | undefined): TranscriptRange | null {
+  if (!range) return null;
+  const itemIdRange: Record<string, unknown> = {};
+  if (range.itemId) itemIdRange.itemId = range.itemId;
+  for (const key of itemIdBoundaryKeys) {
+    if (isItemIdBoundary(range[key])) itemIdRange[key] = range[key];
+  }
+  return Object.keys(itemIdRange).length > 0 ? itemIdRange as TranscriptRange : null;
+}
+
+export type RunItemIdRangeState = { resolvedBoundaryKeys: string[] };
+
+const lowerItemIdBoundaryKeys = ["start", "fromExclusive", "after"] as const;
+const upperItemIdBoundaryKeys = ["end", "throughInclusive", "before"] as const;
+
+function boundaryItemId(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "itemId" in value) {
+    const itemId = (value as TranscriptRangeBoundary).itemId;
+    return typeof itemId === "string" && itemId.length > 0 ? itemId : null;
+  }
+  return null;
+}
+
+export function selectRunItemsForItemIdRange(
+  items: TranscriptItem[],
+  range: TranscriptRange,
+  state: RunItemIdRangeState,
+  hasMore: boolean,
+): { items: TranscriptItem[]; state: RunItemIdRangeState; endReached: boolean } {
+  if (range.itemId) return { items: applyRange(items, range), state, endReached: false };
+
+  const resolvedBoundaryKeys = new Set(state.resolvedBoundaryKeys);
+  const pendingRange: Record<string, unknown> = { ...range };
+  let unresolvedLowerBoundary = false;
+  let endReached = false;
+  for (const key of itemIdBoundaryKeys) {
+    const itemId = boundaryItemId(range[key]);
+    if (!itemId) continue;
+    if (resolvedBoundaryKeys.has(key)) {
+      delete pendingRange[key];
+      continue;
+    }
+    const found = items.some((item) => itemMatchesRef(item, itemId));
+    if (found) {
+      resolvedBoundaryKeys.add(key);
+      if ((upperItemIdBoundaryKeys as readonly string[]).includes(key)) endReached = true;
+      continue;
+    }
+    if (hasMore) {
+      delete pendingRange[key];
+      if ((lowerItemIdBoundaryKeys as readonly string[]).includes(key)) unresolvedLowerBoundary = true;
+    }
+  }
+
+  return {
+    items: unresolvedLowerBoundary ? [] : applyRange(items, pendingRange as TranscriptRange),
+    state: { resolvedBoundaryKeys: [...resolvedBoundaryKeys] },
+    endReached,
+  };
 }
 
 export function encodeCursor(payload: CursorPayload): string {
@@ -307,6 +388,7 @@ export function runCursorPayload(input: {
   providerOffset: number;
   position: number;
   sourceTransition?: boolean;
+  runItemIdRangeState?: RunItemIdRangeState;
 }): CursorPayload {
   return {
     version: 1,
@@ -327,18 +409,23 @@ export function runCursorPayload(input: {
     providerNextCursor: input.providerNextCursor,
     providerOffset: input.providerOffset,
     ...(input.sourceTransition ? { sourceTransition: true } : {}),
+    ...(input.runItemIdRangeState ? { runItemIdRangeState: input.runItemIdRangeState } : {}),
     revision: stableHash({
       windowRevision: input.windowRevision,
       providerRevision: input.providerRevision,
       activeSpanId: input.activeSpanId,
       providerOffset: input.providerOffset,
+      ...(input.runItemIdRangeState ? { runItemIdRangeState: input.runItemIdRangeState } : {}),
     }),
     position: input.position,
   } as CursorPayload;
 }
 
 export function pageFromRunSource(
-  source: ResolvedSource,
+  source: ResolvedSource & {
+    runItemIdRangeState?: RunItemIdRangeState;
+    runItemIdRangeEnded?: boolean;
+  },
   input: {
     id: string;
     orgId: string;
@@ -397,6 +484,9 @@ export function pageFromRunSource(
       providerRevision: cursor.providerRevision ?? null,
       activeSpanId: cursor.activeSpanId ?? null,
       ...(cursor.providerOffset === undefined ? {} : { providerOffset: cursor.providerOffset }),
+      ...((cursor as CursorPayload & { runItemIdRangeState?: RunItemIdRangeState }).runItemIdRangeState
+        ? { runItemIdRangeState: (cursor as CursorPayload & { runItemIdRangeState?: RunItemIdRangeState }).runItemIdRangeState }
+        : {}),
     });
     if (cursor.revision !== expectedCursorRevision) {
       throw transcriptReaderError("cursor_revision_mismatch", "Transcript cursor revision is invalid");
@@ -410,9 +500,10 @@ export function pageFromRunSource(
   const limit = normalizeLimit(input.limit);
   const pageItems = source.items.slice(position, position + limit);
   const nextPosition = position + pageItems.length;
-  const rangeEnded = numericRangeEndReached(range, source.providerNextOffset);
+  const rangeEnded = numericRangeEndReached(range, source.providerNextOffset) || source.runItemIdRangeEnded === true;
+  const runItemIdRangeState = source.runItemIdRangeState;
   let nextCursor: string | null = null;
-  if (nextPosition < source.items.length) {
+  if (nextPosition < source.items.length && !rangeEnded) {
     nextCursor = encodeCursor(runCursorPayload({
       id: input.id,
       orgId: input.orgId,
@@ -428,6 +519,7 @@ export function pageFromRunSource(
       providerNextCursor: source.providerNextCursor,
       providerOffset: source.providerOffset ?? 0,
       position: nextPosition,
+      runItemIdRangeState,
     }));
   } else if (source.providerNextCursor && !rangeEnded) {
     nextCursor = encodeCursor(runCursorPayload({
@@ -445,6 +537,7 @@ export function pageFromRunSource(
       providerNextCursor: null,
       providerOffset: source.providerNextOffset ?? source.providerOffset ?? 0,
       position: 0,
+      runItemIdRangeState,
     }));
   } else if (source.nextSpanId && !rangeEnded) {
     nextCursor = encodeCursor(runCursorPayload({
@@ -463,6 +556,7 @@ export function pageFromRunSource(
       providerOffset: source.providerNextOffset ?? source.providerOffset ?? 0,
       position: 0,
       sourceTransition: true,
+      runItemIdRangeState,
     }));
   }
 
@@ -477,6 +571,7 @@ export function pageFromRunSource(
     revision: source.revision,
     availability: source.availability,
     completeness: source.completeness,
+    ...(source.limitReached ? { limitReached: source.limitReached } : {}),
   };
 }
 

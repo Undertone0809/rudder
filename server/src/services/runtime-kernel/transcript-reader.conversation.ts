@@ -1,16 +1,12 @@
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { chatConversations, chatMessages, heartbeatRuns } from "@rudderhq/db";
 import type { ChatStreamTranscriptEntry } from "@rudderhq/shared";
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { and, eq, sql } from "drizzle-orm";
 import { notFound } from "../../errors.js";
 import {
   loadChatTranscripts,
   type ChatTranscriptMessageSource,
 } from "../chat-transcript-persistence.js";
-import {
-  MAX_CONVERSATION_SOURCE_SCAN,
-  MAX_PAGE_LIMIT,
-} from "./transcript-reader.contracts.js";
 import type {
   ConversationReadPage,
   ConversationSourceAnchor,
@@ -21,19 +17,23 @@ import type {
   ReadConversationTranscript,
   ReadDatabase,
   ReadRunTranscript,
-  TranscriptReaderOptions,
   TranscriptAvailability,
   TranscriptCompleteness,
   TranscriptItem,
   TranscriptPrincipal,
   TranscriptRange,
+  TranscriptReaderOptions,
   TranscriptSource,
 } from "./transcript-reader.contracts.js";
 import {
+  MAX_CONVERSATION_SOURCE_SCAN,
+  MAX_PAGE_LIMIT,
+} from "./transcript-reader.contracts.js";
+import {
+  compatibilityValueKey,
   mergeAvailability,
   mergeCompleteness,
   mergeSource,
-  compatibilityValueKey,
   normalizeItems,
   selectedPrincipalScope,
   stableHash,

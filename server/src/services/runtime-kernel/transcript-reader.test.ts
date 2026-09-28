@@ -1,12 +1,3 @@
-import {
-  chatConversations,
-  chatMessages,
-  heartbeatRunEvents,
-  heartbeatRuns,
-  nativeSegments,
-  runRuntimeSpans,
-  runtimeBindings,
-} from "@rudderhq/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   createLegacyTranscriptReader,
@@ -19,71 +10,40 @@ import {
   type TranscriptReadScope,
   type TranscriptReaderFactoryOptions,
 } from "./transcript-reader.js";
+import {
+  databaseBinding,
+  databaseRun,
+  databaseSegment,
+  databaseSpan,
+  mockDatabase,
+} from "./transcript-reader.test-support.js";
 
-function mockDatabase(input: {
-  run?: Record<string, unknown>;
-  runs?: Record<string, unknown>[];
-  conversations?: Record<string, unknown>[];
-  messages?: Record<string, unknown>[];
-  spans?: Record<string, unknown>[];
-  bindings?: Record<string, unknown>[];
-  segments?: Record<string, unknown>[];
-  events?: Record<string, unknown>[];
-}) {
-  const rowsByTable = new Map<unknown, Record<string, unknown>[]>([
-    [chatConversations, input.conversations ?? []],
-    [chatMessages, input.messages ?? []],
-    [heartbeatRuns, input.runs ?? (input.run ? [input.run] : [])],
-    [runRuntimeSpans, input.spans ?? []],
-    [runtimeBindings, input.bindings ?? []],
-    [nativeSegments, input.segments ?? []],
-    [heartbeatRunEvents, input.events ?? []],
-  ]);
-  const limitCalls: number[] = [];
-  const select = vi.fn(() => {
-    let table: unknown;
-    let rowLimit: number | undefined;
-    const query: Record<string, unknown> & {
-      then?: (resolve: (value: Record<string, unknown>[]) => unknown, reject?: (reason: unknown) => unknown) => Promise<unknown>;
-    } = {};
-    query.from = vi.fn((value: unknown) => {
-      table = value;
-      return query;
-    });
-    query.innerJoin = vi.fn(() => query);
-    query.where = vi.fn(() => query);
-    query.orderBy = vi.fn(() => query);
-    query.groupBy = vi.fn(() => query);
-    query.limit = vi.fn((value: number) => {
-      limitCalls.push(value);
-      rowLimit = value;
-      return query;
-    });
-    query.then = (resolve, reject) => Promise.resolve(
-      (rowsByTable.get(table) ?? []).slice(0, rowLimit),
-    ).then(resolve, reject);
-    return query;
+function makeUtf8LogStore(
+  bytes: Buffer,
+  maxChunkBytes = Number.MAX_SAFE_INTEGER,
+  onRead?: () => void,
+) {
+  const original = Buffer.from(bytes);
+  const read = vi.fn(async (_handle: unknown, options: { offset?: number; limitBytes?: number } = {}) => {
+    onRead?.();
+    const offset = options.offset ?? 0;
+    let end = Math.min(original.length, offset + Math.min(options.limitBytes ?? original.length, maxChunkBytes));
+    let content: string | null = null;
+    for (let trim = 0; trim <= 3; trim += 1) {
+      try {
+        const candidateEnd = end - trim;
+        content = new TextDecoder("utf-8", { fatal: true }).decode(original.subarray(offset, candidateEnd));
+        end = candidateEnd;
+        break;
+      } catch {
+        continue;
+      }
+    }
+    if (content === null) throw new Error("fixture failed to produce a UTF-8 page");
+    const eof = end >= original.length;
+    return { content, endOffset: end, eof, ...(eof ? {} : { nextOffset: end }) };
   });
-  return { select, limitCalls };
-}
-
-function databaseRun(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: "run-1",
-    orgId: "org-1",
-    chatConversationId: null,
-    logStore: null,
-    logRef: null,
-    logCompressed: false,
-    logSha256: null,
-    logBytes: null,
-    startedAt: new Date("2026-09-22T00:00:00.000Z"),
-    createdAt: new Date("2026-09-22T00:00:00.000Z"),
-    updatedAt: new Date("2026-09-22T00:00:01.000Z"),
-    resultJson: null,
-    contextSnapshot: null,
-    ...overrides,
-  };
+  return { store: { read } as never, read, original };
 }
 
 function databaseConversation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -108,44 +68,6 @@ function databaseMessage(overrides: Record<string, unknown> = {}): Record<string
     createdAt: new Date("2026-09-22T00:00:00.000Z"),
     updatedAt: new Date("2026-09-22T00:00:01.000Z"),
     supersededAt: null,
-    ...overrides,
-  };
-}
-
-function databaseSpan(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id,
-    runId: "run-1",
-    bindingId: `binding-${id}`,
-    segmentId: `segment-${id}`,
-    ordinal: 0,
-    selectorJson: { kind: "native_execution" },
-    completeness: "complete",
-    visibilityCutoffRef: null,
-    supplementalObjectRef: null,
-    updatedAt: new Date("2026-09-22T00:00:01.000Z"),
-    ...overrides,
-  };
-}
-
-function databaseBinding(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: `binding-${id}`,
-    orgId: "org-1",
-    conversationId: null,
-    principalScopeRef: "user:user-1",
-    runtimeType: "process",
-    ...overrides,
-  };
-}
-
-function databaseSegment(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: `segment-${id}`,
-    orgId: "org-1",
-    bindingId: `binding-${id}`,
-    runtimeType: "process",
-    nativeSessionId: `session-${id}`,
     ...overrides,
   };
 }
@@ -197,6 +119,276 @@ function makeReader(options: {
 }
 
 describe("transcript reader", () => {
+  it("pages a 10,000-entry historical log without materializing the complete source", async () => {
+    const lines = Array.from({ length: 10_000 }, (_, index) => JSON.stringify({
+      ts: "2026-09-22T00:00:01.000Z",
+      stream: "stdout",
+      chunk: `entry-${index} 世界\n`,
+    }));
+    const bytes = Buffer.from(`${lines.join("\n")}\n`, "utf8");
+    const logStore = makeUtf8LogStore(bytes);
+    const db = mockDatabase({
+      run: databaseRun({
+        logStore: "local_file",
+        logRef: "org/agent/run.ndjson",
+        logBytes: bytes.length,
+        logSha256: "large-log-r1",
+      }),
+    });
+    const reader = createTranscriptReader(db as never, {
+      logStore: logStore.store,
+      maxLegacyReadBytes: 128 * 1024,
+      maxLegacyTotalBytes: 16 * 1024 * 1024,
+    });
+    const collected: string[] = [];
+    let cursor: string | null = null;
+    let pageCount = 0;
+    while (true) {
+      const page = await reader.readRun({
+        orgId: "org-1",
+        runId: "run-1",
+        principal: { type: "board", orgId: "org-1", authorized: true },
+        cursor,
+        limit: 100,
+      });
+      pageCount += 1;
+      collected.push(...page.items.map((entry) => entry.text ?? ""));
+      cursor = page.nextCursor;
+      if (!cursor) break;
+      expect(pageCount).toBeLessThanOrEqual(101);
+    }
+
+    expect(collected).toEqual(Array.from({ length: 10_000 }, (_, index) => `entry-${index} 世界`));
+    expect(logStore.read.mock.calls.every(([, readOptions]) => (readOptions?.limitBytes ?? Infinity) <= 16 * 1024)).toBe(true);
+    expect(pageCount).toBeLessThanOrEqual(101);
+    expect(bytes.equals(logStore.original)).toBe(true);
+  });
+
+  it("preserves Unicode through small byte and NDJSON chunk boundaries", async () => {
+    const bytes = Buffer.from([
+      JSON.stringify({ ts: "2026-09-22T00:00:01.000Z", stream: "stdout", chunk: "你好，🌍\n" }),
+      JSON.stringify({ ts: "2026-09-22T00:00:02.000Z", stream: "stdout", chunk: "再见，🧪\n" }),
+    ].join("\n") + "\n", "utf8");
+    const logStore = makeUtf8LogStore(bytes, 5);
+    const db = mockDatabase({ run: databaseRun({ logStore: "local_file", logRef: "unicode.ndjson", logBytes: bytes.length }) });
+    const reader = createTranscriptReader(db as never, { logStore: logStore.store });
+
+    const page = await reader.readRun({
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board", orgId: "org-1", authorized: true },
+      limit: 10,
+    });
+
+    expect(page.items.map((entry) => entry.text)).toEqual(["你好，🌍", "再见，🧪"]);
+    expect(page.completeness).toBe("complete");
+    expect(bytes.equals(logStore.original)).toBe(true);
+  });
+
+  it("resumes legacy log cursors across Reader instances and rejects a changed source revision", async () => {
+    const bytes = Buffer.from(Array.from({ length: 5 }, (_, index) => JSON.stringify({
+      ts: "2026-09-22T00:00:01.000Z", stream: "stdout", chunk: `resume-${index}\n`,
+    })).join("\n") + "\n", "utf8");
+    const run = databaseRun({
+      logStore: "local_file", logRef: "restart.ndjson", logBytes: bytes.length, logSha256: "restart-r1",
+    });
+    const db = mockDatabase({ run });
+    const logStore = makeUtf8LogStore(bytes);
+    const options = { logStore: logStore.store };
+    const firstReader = createTranscriptReader(db as never, options);
+    const first = await firstReader.readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true }, limit: 2,
+    });
+    expect(first.items.map((entry) => entry.text)).toEqual(["resume-0", "resume-1"]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const restartedReader = createTranscriptReader(db as never, options);
+    const second = await restartedReader.readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+      limit: 2, cursor: first.nextCursor,
+    });
+    expect(second.items.map((entry) => entry.text)).toEqual(["resume-2", "resume-3"]);
+
+    (run as Record<string, unknown>).logSha256 = "restart-r2";
+    await expect(restartedReader.readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+      limit: 2, cursor: second.nextCursor,
+    })).rejects.toThrow("revision");
+  });
+
+  it("cancels a legacy read after an in-flight bounded log page", async () => {
+    const bytes = Buffer.from(`${JSON.stringify({ ts: "2026-09-22T00:00:01.000Z", stream: "stdout", chunk: "cancel me\n" })}\n`);
+    const controller = new AbortController();
+    const logStore = makeUtf8LogStore(bytes, Number.MAX_SAFE_INTEGER, () => controller.abort());
+    const db = mockDatabase({ run: databaseRun({ logStore: "local_file", logRef: "cancel.ndjson", logBytes: bytes.length }) });
+    const reader = createTranscriptReader(db as never, { logStore: logStore.store });
+
+    await expect(reader.readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(logStore.read).toHaveBeenCalledOnce();
+  });
+
+  it("returns an explicit partial result when the total legacy byte budget is exhausted", async () => {
+    const bytes = Buffer.from(`${JSON.stringify({
+      ts: "2026-09-22T00:00:01.000Z", stream: "stdout", chunk: `${"large transcript row ".repeat(20)}\n`,
+    })}\n`, "utf8");
+    const logStore = makeUtf8LogStore(bytes);
+    const db = mockDatabase({ run: databaseRun({ logStore: "local_file", logRef: "budget.ndjson", logBytes: bytes.length }) });
+    const reader = createTranscriptReader(db as never, { logStore: logStore.store, maxLegacyTotalBytes: 100 });
+
+    const page = await reader.readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+    });
+
+    expect(page).toMatchObject({
+      completeness: "partial",
+      nextCursor: null,
+      limitReached: { reason: "total_bytes", maximum: 100 },
+    });
+  });
+
+  it("returns an explicit partial result when the total legacy item budget is exhausted", async () => {
+    const bytes = Buffer.from(Array.from({ length: 4 }, (_, index) => JSON.stringify({
+      ts: "2026-09-22T00:00:01.000Z", stream: "stdout", chunk: `item-${index}\n`,
+    })).join("\n") + "\n", "utf8");
+    const logStore = makeUtf8LogStore(bytes);
+    const db = mockDatabase({ run: databaseRun({ logStore: "local_file", logRef: "item-budget.ndjson", logBytes: bytes.length }) });
+    const reader = createTranscriptReader(db as never, { logStore: logStore.store, maxLegacyTotalItems: 3 });
+
+    const page = await reader.readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+    });
+
+    expect(page.items.map((entry) => entry.text)).toEqual(["item-0", "item-1", "item-2"]);
+    expect(page).toMatchObject({
+      completeness: "partial",
+      nextCursor: null,
+      limitReached: { reason: "total_items", maximum: 3 },
+    });
+  });
+
+  it("pages historical transcript events by keyset without loading every Run event", async () => {
+    const events = Array.from({ length: 10_000 }, (_, index) => ({
+      id: index + 1,
+      orgId: "org-1",
+      runId: "run-1",
+      seq: Math.floor(index / 2) + 1,
+      eventType: "transcript.entry",
+      stream: null,
+      message: null,
+      payload: { entry: { kind: "assistant", ts: "2026-09-22T00:00:01.000Z", text: `event-${index}` } },
+      createdAt: new Date("2026-09-22T00:00:01.000Z"),
+    }));
+    const db = mockDatabase({ run: databaseRun(), events, pageEvents: true });
+    const firstReader = createTranscriptReader(db as never);
+    const input = {
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board", orgId: "org-1", authorized: true },
+      limit: 100,
+    };
+    const first = await firstReader.readRun(input);
+    const restartedReader = createTranscriptReader(db as never);
+    const collected = [...first.items.map((entry) => entry.text ?? "")];
+    let cursor = first.nextCursor;
+    let pages = 1;
+    while (cursor) {
+      const page = await restartedReader.readRun({ ...input, cursor });
+      expect(page.revision).toBe(first.revision);
+      collected.push(...page.items.map((entry) => entry.text ?? ""));
+      cursor = page.nextCursor;
+      pages += 1;
+      expect(pages).toBeLessThanOrEqual(101);
+    }
+
+    expect(collected).toEqual(Array.from({ length: 10_000 }, (_, index) => `event-${index}`));
+    expect(db.maxEventRowsRead).toBeLessThanOrEqual(100);
+    expect(db.limitCalls.every((limit) => limit <= 101)).toBe(true);
+  });
+
+  it("does not exceed the total event-item budget", async () => {
+    const events = Array.from({ length: 2 }, (_, index) => ({
+      id: index + 1,
+      orgId: "org-1",
+      runId: "run-1",
+      seq: index + 1,
+      eventType: "transcript.entry",
+      stream: null,
+      level: null,
+      color: null,
+      message: null,
+      idempotencyKey: null,
+      payload: { entry: { kind: "assistant", ts: "2026-09-22T00:00:01.000Z", text: `budget-${index}` } },
+      createdAt: new Date("2026-09-22T00:00:01.000Z"),
+    }));
+    const db = mockDatabase({ run: databaseRun(), events, pageEvents: true });
+    const reader = createTranscriptReader(db as never, { maxLegacyTotalItems: 1 });
+
+    const page = await reader.readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+    });
+
+    expect(page.items.map((entry) => entry.text)).toEqual(["budget-0"]);
+    expect(page).toMatchObject({
+      completeness: "partial",
+      nextCursor: null,
+      limitReached: { reason: "total_items", maximum: 1 },
+    });
+
+    const exactDb = mockDatabase({ run: databaseRun(), events: events.slice(0, 1), pageEvents: true });
+    const exact = await createTranscriptReader(exactDb as never, { maxLegacyTotalItems: 1 }).readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+    });
+    expect(exact.items.map((entry) => entry.text)).toEqual(["budget-0"]);
+    expect(exact).toMatchObject({ completeness: "complete", nextCursor: null });
+    expect(exact.limitReached).toBeUndefined();
+  });
+
+  it("binds event page revisions to the high watermark and rejects changed sources", async () => {
+    const events = Array.from({ length: 3 }, (_, index) => ({
+      id: index + 1,
+      orgId: "org-1",
+      runId: "run-1",
+      seq: index + 1,
+      eventType: "transcript.entry",
+      stream: null,
+      message: null,
+      payload: { entry: { kind: "assistant", ts: "2026-09-22T00:00:01.000Z", text: `event-${index}` } },
+      createdAt: new Date("2026-09-22T00:00:01.000Z"),
+    }));
+    const db = mockDatabase({ run: databaseRun(), events, pageEvents: true });
+    const reader = createTranscriptReader(db as never);
+    const input = {
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board" as const, orgId: "org-1", authorized: true },
+      limit: 1,
+    };
+
+    const first = await reader.readRun(input);
+    const second = await reader.readRun({ ...input, cursor: first.nextCursor });
+    expect(second.revision).toBe(first.revision);
+    expect(second.nextCursor).toEqual(expect.any(String));
+
+    events.push({
+      id: 4,
+      orgId: "org-1",
+      runId: "run-1",
+      seq: 4,
+      eventType: "transcript.entry",
+      stream: null,
+      message: null,
+      payload: { entry: { kind: "assistant", ts: "2026-09-22T00:00:02.000Z", text: "event-3" } },
+      createdAt: new Date("2026-09-22T00:00:02.000Z"),
+    });
+
+    const changed = await reader.readRun(input);
+    expect(changed.revision).not.toBe(first.revision);
+    await expect(reader.readRun({ ...input, cursor: second.nextCursor })).rejects.toThrow("changed during pagination");
+  });
+
   it("keeps durable transcript events when a finalized legacy log is empty or unparsable", async () => {
     const reader = createLegacyTranscriptReader({
       logStore: {
@@ -817,7 +1009,7 @@ describe("transcript reader", () => {
     expect(page.items.map((entry) => entry.sourceEntryId)).toEqual(["41", "42"]);
   });
 
-  it("reads persisted legacy entries for a span-backed run with legacy retention", async () => {
+  it("tries a native span before falling back to persisted legacy entries", async () => {
     const db = mockDatabase({
       run: databaseRun({
         contextSnapshot: { runtimeBindingId: "binding-span-1" },
@@ -831,7 +1023,7 @@ describe("transcript reader", () => {
       segments: [databaseSegment("span-1")],
     });
     const nativeReader = vi.fn().mockResolvedValue({
-      entries: [], revision: "empty-native", availability: "available", completeness: "complete",
+      entries: [], revision: "empty-native", availability: "missing", completeness: "unknown",
     });
     const reader = createTranscriptReader(db as never, { nativeReader: { readRange: nativeReader } });
 
@@ -843,7 +1035,44 @@ describe("transcript reader", () => {
     expect(page.items).toEqual([expect.objectContaining({
       spanId: "span-1", sourceEntryId: "cli-1", origin: "legacy", text: "CLI reply",
     })]);
-    expect(nativeReader).not.toHaveBeenCalled();
+    expect(nativeReader).toHaveBeenCalledOnce();
+  });
+
+  it("continues from a partial native span into retained legacy pages", async () => {
+    const db = mockDatabase({
+      run: databaseRun({
+        resultJson: {
+          entries: [{ kind: "assistant", ts: "2026-09-22T00:00:02.000Z", text: "legacy tail", sourceEntryId: "legacy-tail" }],
+          retention: { transcriptSource: "legacy", rawResultPersisted: true },
+        },
+      }),
+      spans: [databaseSpan("span-1")],
+      bindings: [databaseBinding("span-1", { continuity: "native" })],
+      segments: [databaseSegment("span-1")],
+    });
+    const nativeReader = vi.fn().mockResolvedValue({
+      entries: [{ kind: "assistant", ts: "2026-09-22T00:00:01.000Z", text: "native prefix", sourceEntryId: "native-prefix" }],
+      revision: "partial-native",
+      availability: "available",
+      completeness: "partial",
+    });
+    const reader = createTranscriptReader(db as never, { nativeReader: { readRange: nativeReader } });
+    const input = {
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board", orgId: "org-1", authorized: true },
+      limit: 1,
+    };
+
+    const nativePage = await reader.readRun(input);
+    expect(nativePage).toMatchObject({ source: "native", completeness: "partial", nextCursor: expect.any(String) });
+    expect(nativePage.items.map((entry) => entry.sourceEntryId)).toEqual(["native-prefix"]);
+    const legacyPage = await reader.readRun({ ...input, cursor: nativePage.nextCursor });
+    expect(legacyPage).toMatchObject({ source: "legacy", completeness: "complete", nextCursor: null });
+    expect(legacyPage.items.map((entry) => [entry.sourceEntryId, entry.origin, entry.text])).toEqual([
+      ["legacy-tail", "legacy", "legacy tail"],
+    ]);
+    expect(nativeReader).toHaveBeenCalledOnce();
   });
 
   it("keeps offline-empty native status when legacy has no readable transcript", async () => {
@@ -983,6 +1212,182 @@ describe("transcript reader", () => {
     expect(page.source).toBe("native");
     expect(page.items.map((entry) => entry.id)).toEqual(["a-1", "b-1"]);
     expect(nativeReader).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies item ID boundaries across the ordered native Run spans", async () => {
+    const db = mockDatabase({
+      run: databaseRun(),
+      spans: [
+        databaseSpan("span-a", { ordinal: 0, bindingId: "binding-shared", segmentId: "segment-shared" }),
+        databaseSpan("span-b", { ordinal: 1, bindingId: "binding-shared", segmentId: "segment-shared" }),
+      ],
+      bindings: [databaseBinding("shared")],
+      segments: [databaseSegment("shared")],
+    });
+    const nativeReader = vi.fn(async (input: NativeTranscriptReadInput) => ({
+      items: input.span.id === "span-a"
+        ? [
+          item({ id: "a-before", sourceEntryId: "a-before", spanId: "span-a", ordinal: 0 }),
+          item({ id: "a-start", sourceEntryId: "a-start", spanId: "span-a", ordinal: 1 }),
+          item({ id: "a-after", sourceEntryId: "a-after", spanId: "span-a", ordinal: 2 }),
+        ]
+        : [
+          item({ id: "b-before", sourceEntryId: "b-before", spanId: "span-b", ordinal: 0 }),
+          item({ id: "b-end", sourceEntryId: "b-end", spanId: "span-b", ordinal: 1 }),
+          item({ id: "b-after", sourceEntryId: "b-after", spanId: "span-b", ordinal: 2 }),
+        ],
+      revision: `revision-${input.span.id}`,
+      availability: "available" as const,
+      completeness: "complete" as const,
+    }));
+    const reader = createTranscriptReader(db as never, { nativeReader: { read: nativeReader } });
+
+    const page = await reader.readRun({
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board", orgId: "org-1", authorized: true },
+      range: { start: "a-start", end: "b-end" },
+      limit: 10,
+    });
+
+    expect(page.items.map((entry) => entry.id)).toEqual(["a-start", "a-after", "b-before", "b-end"]);
+    expect(nativeReader).toHaveBeenCalledTimes(2);
+    expect(nativeReader).toHaveBeenNthCalledWith(1, expect.objectContaining({ range: null }));
+    expect(nativeReader).toHaveBeenNthCalledWith(2, expect.objectContaining({ range: null }));
+  });
+
+  it("carries a resolved item ID start across a Run span cursor", async () => {
+    const db = mockDatabase({
+      run: databaseRun(),
+      spans: [
+        databaseSpan("span-a", { ordinal: 0, bindingId: "binding-shared", segmentId: "segment-shared" }),
+        databaseSpan("span-b", { ordinal: 1, bindingId: "binding-shared", segmentId: "segment-shared" }),
+      ],
+      bindings: [databaseBinding("shared")],
+      segments: [databaseSegment("shared")],
+    });
+    const nativeReader = vi.fn(async (input: NativeTranscriptReadInput) => ({
+      items: input.span.id === "span-a"
+        ? [
+          item({ id: "a-before", sourceEntryId: "a-before", spanId: "span-a", ordinal: 0 }),
+          item({ id: "a-start", sourceEntryId: "a-start", spanId: "span-a", ordinal: 1 }),
+          item({ id: "a-after", sourceEntryId: "a-after", spanId: "span-a", ordinal: 2 }),
+        ]
+        : [
+          item({ id: "b-before", sourceEntryId: "b-before", spanId: "span-b", ordinal: 0 }),
+          item({ id: "b-end", sourceEntryId: "b-end", spanId: "span-b", ordinal: 1 }),
+          item({ id: "b-after", sourceEntryId: "b-after", spanId: "span-b", ordinal: 2 }),
+        ],
+      revision: `revision-${input.span.id}`,
+      availability: "available" as const,
+      completeness: "complete" as const,
+    }));
+    const reader = createTranscriptReader(db as never, { nativeReader: { read: nativeReader } });
+    const runInput = {
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board" as const, orgId: "org-1", authorized: true },
+      range: { start: "a-start", end: "b-end" },
+      limit: 2,
+    };
+
+    const first = await reader.readRun(runInput);
+    const second = await reader.readRun({ ...runInput, cursor: first.nextCursor });
+
+    expect(first.items.map((entry) => entry.id)).toEqual(["a-start", "a-after"]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(second.items.map((entry) => entry.id)).toEqual(["b-before", "b-end"]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it("applies item ID boundaries across native and legacy Run spans", async () => {
+    const db = mockDatabase({
+      run: databaseRun(),
+      spans: [
+        databaseSpan("span-a", { ordinal: 0, bindingId: "binding-shared", segmentId: "segment-shared" }),
+        databaseSpan("span-b", { ordinal: 1, bindingId: "binding-shared", segmentId: "segment-shared" }),
+      ],
+      bindings: [databaseBinding("shared")],
+      segments: [databaseSegment("shared")],
+    });
+    const nativeReader = vi.fn(async (input: NativeTranscriptReadInput) => input.span.id === "span-a"
+      ? {
+        items: [
+          item({ id: "native-before", sourceEntryId: "native-before", spanId: "span-a", ordinal: 0 }),
+          item({ id: "native-start", sourceEntryId: "native-start", spanId: "span-a", ordinal: 1 }),
+          item({ id: "native-after", sourceEntryId: "native-after", spanId: "span-a", ordinal: 2 }),
+        ],
+        revision: "native-a-r1",
+        availability: "available" as const,
+        completeness: "complete" as const,
+      }
+      : {
+        items: [],
+        revision: "native-b-r1",
+        availability: "offline" as const,
+        completeness: "unknown" as const,
+      });
+    const legacyReader = vi.fn().mockImplementation(async (input: { spanId?: string | null }) => ({
+      entries: input.spanId === "span-b" ? [
+        { kind: "assistant", ts: "2026-09-22T00:00:03.000Z", text: "before", sourceEntryId: "legacy-before" },
+        { kind: "assistant", ts: "2026-09-22T00:00:04.000Z", text: "end", sourceEntryId: "legacy-end" },
+        { kind: "assistant", ts: "2026-09-22T00:00:05.000Z", text: "after", sourceEntryId: "legacy-after" },
+      ] : [],
+      revision: "legacy-b-r1",
+      availability: "available" as const,
+      completeness: "complete" as const,
+    }));
+    const reader = createTranscriptReader(db as never, {
+      nativeReader: { read: nativeReader },
+      legacyReader: { readRun: legacyReader },
+    });
+
+    const page = await reader.readRun({
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board", orgId: "org-1", authorized: true },
+      range: { start: "native-start", end: "legacy-end" },
+      limit: 10,
+    });
+
+    expect(page.items.map((entry) => entry.id)).toEqual([
+      "native-start", "native-after", "legacy-before", "legacy-end",
+    ]);
+    expect(nativeReader).toHaveBeenCalledTimes(2);
+    expect(legacyReader).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when an item ID range boundary is unknown across Run spans", async () => {
+    const db = mockDatabase({
+      run: databaseRun(),
+      spans: [
+        databaseSpan("span-a", { ordinal: 0, bindingId: "binding-shared", segmentId: "segment-shared" }),
+        databaseSpan("span-b", { ordinal: 1, bindingId: "binding-shared", segmentId: "segment-shared" }),
+      ],
+      bindings: [databaseBinding("shared")],
+      segments: [databaseSegment("shared")],
+    });
+    const nativeReader = vi.fn(async (input: NativeTranscriptReadInput) => ({
+      items: input.span.id === "span-a"
+        ? [item({ id: "a-start", spanId: "span-a" })]
+        : [item({ id: "b-end", spanId: "span-b" })],
+      revision: `revision-${input.span.id}`,
+      availability: "available" as const,
+      completeness: "complete" as const,
+    }));
+    const reader = createTranscriptReader(db as never, { nativeReader: { read: nativeReader } });
+    const runInput = {
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board" as const, orgId: "org-1", authorized: true },
+      limit: 10,
+    };
+
+    const unknownStart = await reader.readRun({ ...runInput, range: { start: "missing-start", end: "b-end" } });
+    const unknownEnd = await reader.readRun({ ...runInput, range: { start: "a-start", end: "missing-end" } });
+
+    expect(unknownStart.items).toEqual([]);
+    expect(unknownEnd.items).toEqual([]);
   });
 
   it("falls back only the empty unavailable span in a mixed run", async () => {

@@ -4,12 +4,12 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { NativeTranscriptReadInput } from "./transcript-reader.js";
 import {
   createTranscriptObjectReader,
   createTranscriptObjectStore,
   type TranscriptObjectBeginInput,
 } from "./transcript-object-store.js";
+import type { NativeTranscriptReadInput } from "./transcript-reader.js";
 
 const roots: string[] = [];
 

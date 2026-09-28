@@ -119,6 +119,14 @@ export interface TranscriptObjectStore {
   resume(input: TranscriptObjectResumeInput): Promise<TranscriptObjectHandle>;
   append(handle: TranscriptObjectHandle, entries: TranscriptEntry | readonly TranscriptEntry[]): Promise<void>;
   finalize(handle: TranscriptObjectHandle, options?: TranscriptObjectFinalizeOptions): Promise<TranscriptObjectFinalizeReceipt>;
+  removeSealed(input: TranscriptObjectReadRangeInput): Promise<void>;
+  stageSealedRemoval?(input: TranscriptObjectReadRangeInput): Promise<{ objectRef: string; stageId: string }>;
+  restoreStagedRemoval?(input: TranscriptObjectReadRangeInput & { stageId: string }): Promise<void>;
+  purgeStagedRemoval?(input: TranscriptObjectBeginInput & {
+    objectRef: string;
+    stageId: string;
+    allowOwnerRecovery?: boolean;
+  }): Promise<void>;
   write(input: TranscriptObjectBeginInput & { entries: readonly TranscriptEntry[] }): Promise<string>;
   readRange(input: TranscriptObjectReadRangeInput): Promise<TranscriptObjectReadRangeResult>;
   sweepUnreferenced(input?: TranscriptObjectSweepInput): Promise<TranscriptObjectSweepResult>;
@@ -983,6 +991,222 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
       await this.append(handle, input.entries);
       const receipt = await this.finalize(handle);
       return receipt.objectRef;
+    },
+
+    async removeSealed(input) {
+      const ref = assertObjectRef(input.objectRef);
+      const binding = {
+        orgId: requiredString(input.orgId, "organization"),
+        runId: requiredString(input.runId, "run"),
+        spanId: requiredString(input.spanId, "span"),
+        ownerToken: requiredString(input.ownerToken, "owner"),
+      };
+      const paths = objectPaths(root, ref);
+      await withObjectLock(paths.payloadPath, async () => {
+        const metadataStat = await fs.lstat(paths.metadataPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        const payloadStat = await fs.lstat(paths.payloadPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (!metadataStat && !payloadStat) return;
+        if (!metadataStat) throw new Error("Transcript object metadata is missing; object identity cannot be verified");
+        if (metadataStat.isSymbolicLink() || !metadataStat.isFile()) throw forbidden("Transcript object access denied");
+        const metadata = await loadMetadata(paths.metadataPath, { ...binding, objectRef: ref }, {
+          allowOwnerRecovery: input.allowOwnerRecovery,
+        });
+        if (metadata.state !== "sealed") throw conflict("Transcript object is not sealed");
+        if (!payloadStat) {
+          await fs.unlink(paths.metadataPath);
+          await syncDirectory(paths.root);
+          return;
+        }
+        if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
+        const summary = await scanObjectFile(paths.payloadPath);
+        if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
+          throw new Error("Transcript object does not match its committed metadata");
+        }
+        await fs.unlink(paths.payloadPath);
+        await fs.unlink(paths.metadataPath);
+        await syncDirectory(paths.root);
+      });
+    },
+
+    async stageSealedRemoval(input) {
+      const ref = assertObjectRef(input.objectRef);
+      const binding = {
+        orgId: requiredString(input.orgId, "organization"),
+        runId: requiredString(input.runId, "run"),
+        spanId: requiredString(input.spanId, "span"),
+        ownerToken: requiredString(input.ownerToken, "owner"),
+      };
+      const paths = objectPaths(root, ref);
+      const stageId = randomUUID();
+      const stageDir = resolveWithin(paths.root, `.retention-${ref}-${stageId}`);
+      await withObjectLock(paths.payloadPath, async () => {
+        const metadataStat = await fs.lstat(paths.metadataPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        const payloadStat = await fs.lstat(paths.payloadPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (!metadataStat && !payloadStat) return;
+        if (!metadataStat || metadataStat.isSymbolicLink() || !metadataStat.isFile()) {
+          throw new Error("Transcript object metadata is missing; object identity cannot be verified");
+        }
+        const metadata = await loadMetadata(paths.metadataPath, { ...binding, objectRef: ref }, {
+          allowOwnerRecovery: input.allowOwnerRecovery,
+        });
+        if (metadata.state !== "sealed") throw conflict("Transcript object is not sealed");
+        if (payloadStat) {
+          if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
+          const summary = await scanObjectFile(paths.payloadPath);
+          if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
+            throw new Error("Transcript object does not match its committed metadata");
+          }
+        }
+        await fs.mkdir(stageDir, { mode: 0o700 });
+        let movedMetadata = false;
+        let movedPayload = false;
+        try {
+          await fs.rename(paths.metadataPath, path.join(stageDir, `${ref}.json`));
+          movedMetadata = true;
+          if (payloadStat) {
+            await fs.rename(paths.payloadPath, path.join(stageDir, `${ref}.ndjson`));
+            movedPayload = true;
+          }
+          await syncDirectory(paths.root);
+        } catch (error) {
+          if (movedPayload) await fs.rename(path.join(stageDir, `${ref}.ndjson`), paths.payloadPath).catch(() => undefined);
+          if (movedMetadata) await fs.rename(path.join(stageDir, `${ref}.json`), paths.metadataPath).catch(() => undefined);
+          await fs.rmdir(stageDir).catch(() => undefined);
+          throw error;
+        }
+      });
+      return { objectRef: ref, stageId };
+    },
+
+    async restoreStagedRemoval(input) {
+      const ref = assertObjectRef(input.objectRef);
+      if (!/^[0-9a-f-]{36}$/iu.test(input.stageId)) throw forbidden("Transcript object staging identity is invalid");
+      const binding = {
+        orgId: requiredString(input.orgId, "organization"),
+        runId: requiredString(input.runId, "run"),
+        spanId: requiredString(input.spanId, "span"),
+        ownerToken: requiredString(input.ownerToken, "owner"),
+      };
+      const paths = objectPaths(root, ref);
+      const stageDir = resolveWithin(paths.root, `.retention-${ref}-${input.stageId}`);
+      await withObjectLock(paths.payloadPath, async () => {
+        const stageStat = await fs.lstat(stageDir).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (!stageStat) return;
+        if (stageStat.isSymbolicLink() || !stageStat.isDirectory()) throw forbidden("Transcript object access denied");
+        const metadataPath = path.join(stageDir, `${ref}.json`);
+        const payloadPath = path.join(stageDir, `${ref}.ndjson`);
+        const metadataStat = await fs.lstat(metadataPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        const payloadStat = await fs.lstat(payloadPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (!metadataStat || metadataStat.isSymbolicLink() || !metadataStat.isFile()) {
+          throw new Error("Staged transcript metadata is missing");
+        }
+        await loadMetadata(metadataPath, { ...binding, objectRef: ref }, { allowOwnerRecovery: input.allowOwnerRecovery });
+        if (payloadStat) {
+          if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
+          const metadata = await loadMetadata(metadataPath, { ...binding, objectRef: ref }, { allowOwnerRecovery: input.allowOwnerRecovery });
+          const summary = await scanObjectFile(payloadPath);
+          if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
+            throw new Error("Staged transcript object does not match its committed metadata");
+          }
+        }
+        if (await fs.lstat(paths.metadataPath).catch(() => null) || await fs.lstat(paths.payloadPath).catch(() => null)) {
+          throw conflict("Transcript object destination already exists");
+        }
+        let restoredMetadata = false;
+        let restoredPayload = false;
+        try {
+          await fs.rename(metadataPath, paths.metadataPath);
+          restoredMetadata = true;
+          if (payloadStat) {
+            await fs.rename(payloadPath, paths.payloadPath);
+            restoredPayload = true;
+          }
+          await fs.rmdir(stageDir);
+          await syncDirectory(paths.root);
+        } catch (error) {
+          await fs.mkdir(stageDir, { mode: 0o700 }).catch(() => undefined);
+          if (restoredPayload) await fs.rename(paths.payloadPath, payloadPath).catch(() => undefined);
+          if (restoredMetadata) await fs.rename(paths.metadataPath, metadataPath).catch(() => undefined);
+          throw error;
+        }
+      });
+    },
+
+    async purgeStagedRemoval(input) {
+      const ref = assertObjectRef(input.objectRef);
+      if (!/^[0-9a-f-]{36}$/iu.test(input.stageId)) throw forbidden("Transcript object staging identity is invalid");
+      const binding = {
+        orgId: requiredString(input.orgId, "organization"),
+        runId: requiredString(input.runId, "run"),
+        spanId: requiredString(input.spanId, "span"),
+        ownerToken: requiredString(input.ownerToken, "owner"),
+      };
+      const paths = objectPaths(root, ref);
+      const stageDir = resolveWithin(paths.root, `.retention-${ref}-${input.stageId}`);
+      await withObjectLock(paths.payloadPath, async () => {
+        const stageStat = await fs.lstat(stageDir).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (!stageStat) return;
+        if (stageStat.isSymbolicLink() || !stageStat.isDirectory()) throw forbidden("Transcript object access denied");
+        const payloadPath = path.join(stageDir, `${ref}.ndjson`);
+        const metadataPath = path.join(stageDir, `${ref}.json`);
+        const [payloadStat, metadataStat] = await Promise.all([payloadPath, metadataPath].map(async (filePath) =>
+          await fs.lstat(filePath).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          })
+        ));
+        if (!payloadStat && !metadataStat) {
+          await fs.rmdir(stageDir);
+          await syncDirectory(paths.root);
+          return;
+        }
+        if (!metadataStat || metadataStat.isSymbolicLink() || !metadataStat.isFile()) {
+          throw new Error("Staged transcript metadata is missing or invalid");
+        }
+        const metadata = await loadMetadata(metadataPath, { ...binding, objectRef: ref }, {
+          allowOwnerRecovery: input.allowOwnerRecovery,
+        });
+        if (metadata.state !== "sealed") throw conflict("Staged transcript object is not sealed");
+        if (payloadStat) {
+          if (payloadStat.isSymbolicLink() || !payloadStat.isFile()) throw forbidden("Transcript object access denied");
+          const summary = await scanObjectFile(payloadPath);
+          if (summary.bytes !== metadata.bytes || summary.entryCount !== metadata.entryCount) {
+            throw new Error("Staged transcript object does not match its committed metadata");
+          }
+        }
+        await fs.unlink(payloadPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+        await fs.unlink(metadataPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+        await fs.rmdir(stageDir);
+        await syncDirectory(paths.root);
+      });
     },
 
     sweepUnreferenced,

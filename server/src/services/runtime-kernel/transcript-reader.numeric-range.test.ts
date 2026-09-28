@@ -9,8 +9,8 @@ import {
   createTranscriptReader,
   decodeTranscriptCursor,
   type NativeTranscriptReadInput,
-  type TranscriptReader,
   type TranscriptRange,
+  type TranscriptReader,
 } from "./transcript-reader.js";
 
 function mockDatabase(spanIds: readonly string[] = ["span-1"]) {

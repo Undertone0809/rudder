@@ -1,6 +1,6 @@
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { createHash } from "node:crypto";
 import { forbidden } from "../../errors.js";
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type {
   CompatibilityTranscriptReadResult,
   HeartbeatRunRecord,
@@ -14,9 +14,8 @@ import type {
   TranscriptCompleteness,
   TranscriptItem,
   TranscriptPrincipal,
-  TranscriptRange,
   TranscriptReaderErrorCode,
-  TranscriptSource,
+  TranscriptSource
 } from "./transcript-reader.contracts.js";
 
 export class TranscriptReaderError extends Error {
