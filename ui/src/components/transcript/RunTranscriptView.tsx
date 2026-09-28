@@ -78,6 +78,10 @@ function RunTranscriptViewContent({
 
     const desktopShell = readDesktopShell();
     if (!desktopShell) {
+      if (onOpenFile) {
+        onOpenFile(targetPath, targetPath.split(/[\\/]/u).at(-1) || targetPath);
+        return true;
+      }
       toastContext?.pushToast({
         title: "Open from Desktop",
         body: "Local transcript file links can only be opened from the Rudder Desktop app.",
@@ -94,7 +98,7 @@ function RunTranscriptViewContent({
       });
     });
     return true;
-  }, [toastContext]);
+  }, [onOpenFile, toastContext]);
   const handleOpenFile = useCallback((targetPath: string, label: string) => {
     if (onOpenFile) {
       onOpenFile(targetPath, label);

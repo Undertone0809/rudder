@@ -606,6 +606,33 @@ export function organizationWorkspaceBrowserService(
   }
 
   return {
+    async resolveLocalWorkspaceFilePath(orgId: string, localPath: string): Promise<string> {
+      const requestedPath = normalizeRequestedPath(localPath);
+      if (!requestedPath || requestedPath.includes("\0") || !path.isAbsolute(requestedPath)) {
+        throw unprocessable("A local workspace file path must be absolute");
+      }
+
+      const root = await resolveWorkspaceRoot(orgId);
+      const resolvedRoot = path.resolve(root.rootPath);
+      const resolvedTarget = path.resolve(requestedPath);
+      const relativePath = path.relative(resolvedRoot, resolvedTarget);
+      if (
+        !relativePath
+        || relativePath === ".."
+        || relativePath.startsWith(".." + path.sep)
+        || path.isAbsolute(relativePath)
+      ) {
+        throw notFound("File not found inside the organization Library");
+      }
+
+      const normalizedPath = toPortableRelativePath(relativePath);
+      const protectedRoot = normalizedPath.split("/")[0]?.toLowerCase();
+      if (protectedRoot === "agents" || protectedRoot === "skills") {
+        throw notFound("File not found inside the organization Library");
+      }
+      return normalizedPath;
+    },
+
     async listFiles(
       orgId: string,
       directoryPath = "",

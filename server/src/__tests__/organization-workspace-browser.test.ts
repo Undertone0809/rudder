@@ -164,6 +164,60 @@ describe("organization workspace browser", () => {
     expect(listing.entries.map((entry) => entry.name)).toEqual(["instructions"]);
   });
 
+  it("bounds absolute local-file lookup to the organization workspace and rejects protected or escaping paths", async () => {
+    const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-local-preview-"));
+    cleanupDirs.add(rudderHome);
+    process.env.RUDDER_HOME = rudderHome;
+    process.env.RUDDER_INSTANCE_ID = "test-instance";
+
+    const orgId = randomUUID();
+    await db.insert(organizations).values({
+      id: orgId,
+      name: "Local Preview Org",
+      urlKey: deriveOrganizationUrlKey("Local Preview Org"),
+      issuePrefix: "LPO",
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    const workspaceRoot = resolveOrganizationWorkspaceRoot(orgId);
+    const projectDirectory = path.join(workspaceRoot, "projects");
+    const evidencePath = path.join(projectDirectory, "evidence.md");
+    await fs.mkdir(projectDirectory, { recursive: true });
+    await fs.writeFile(evidencePath, "# Authorized workspace file\n", "utf8");
+
+    const relativePath = await workspaceBrowser.resolveLocalWorkspaceFilePath(orgId, evidencePath);
+    expect(relativePath).toBe("projects/evidence.md");
+    await expect(workspaceBrowser.readFile(orgId, relativePath)).resolves.toMatchObject({
+      filePath: "projects/evidence.md",
+      content: "# Authorized workspace file\n",
+    });
+
+    await expect(workspaceBrowser.resolveLocalWorkspaceFilePath(
+      orgId,
+      path.join(rudderHome, "outside", "private.md"),
+    )).rejects.toThrow("File not found inside the organization Library");
+    await expect(workspaceBrowser.resolveLocalWorkspaceFilePath(
+      orgId,
+      path.join(workspaceRoot, "skills", "unregistered", "SKILL.md"),
+    )).rejects.toThrow("File not found inside the organization Library");
+    await expect(workspaceBrowser.resolveLocalWorkspaceFilePath(
+      orgId,
+      path.join(workspaceRoot, "agents", "private", "instructions", "SOUL.md"),
+    )).rejects.toThrow("File not found inside the organization Library");
+
+    if (process.platform !== "win32") {
+      const outsideDirectory = path.join(rudderHome, "outside");
+      const outsideFile = path.join(outsideDirectory, "secret.md");
+      const symlinkPath = path.join(projectDirectory, "linked-secret.md");
+      await fs.mkdir(outsideDirectory, { recursive: true });
+      await fs.writeFile(outsideFile, "outside", "utf8");
+      await fs.symlink(outsideFile, symlinkPath);
+      const symlinkRelativePath = await workspaceBrowser.resolveLocalWorkspaceFilePath(orgId, symlinkPath);
+      await expect(workspaceBrowser.readFile(orgId, symlinkRelativePath))
+        .rejects.toThrow("Requested path must stay inside the organization Library root");
+    }
+  });
+
   it("uses required native directory listing without widening mutation authority", async () => {
     const rudderHome = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-org-workspace-home-"));
     cleanupDirs.add(rudderHome);

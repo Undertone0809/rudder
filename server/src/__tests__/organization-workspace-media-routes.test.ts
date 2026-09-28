@@ -11,6 +11,8 @@ import { errorHandler } from "../middleware/index.js";
 import { organizationRoutes } from "../routes/orgs.js";
 
 const mockWorkspaceBrowser = vi.hoisted(() => ({
+  readFile: vi.fn(),
+  resolveLocalWorkspaceFilePath: vi.fn(),
   resolveContentFile: vi.fn(),
   listMentionableFiles: vi.fn(),
 }));
@@ -110,6 +112,8 @@ describe("organization workspace media content route", () => {
   const mediaBytes = Buffer.from("0123456789abcdef", "utf8");
 
   beforeEach(async () => {
+    mockWorkspaceBrowser.readFile.mockReset();
+    mockWorkspaceBrowser.resolveLocalWorkspaceFilePath.mockReset();
     mockWorkspaceBrowser.resolveContentFile.mockReset();
     mockWorkspaceBrowser.listMentionableFiles.mockReset();
     const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-media-route-"));
@@ -162,6 +166,57 @@ describe("organization workspace media content route", () => {
     expect(response.headers["content-length"]).toBe(String(mediaBytes.byteLength));
     expect(response.headers["accept-ranges"]).toBe("bytes");
     expect(response.body).toEqual({});
+  });
+
+  it("resolves an absolute file only through the board's organization workspace scope", async () => {
+    const file = {
+      source: "org_root",
+      rootPath: "/workspace/org-1",
+      repoUrl: null,
+      filePath: "projects/evidence.md",
+      libraryEntryId: "entry-1",
+      mentionHref: null,
+      markdownLink: null,
+      rootExists: true,
+      content: "# Evidence",
+      contentType: "text/markdown",
+      previewKind: "text",
+      contentPath: null,
+      message: null,
+      truncated: false,
+    };
+    mockWorkspaceBrowser.resolveLocalWorkspaceFilePath.mockResolvedValue("projects/evidence.md");
+    mockWorkspaceBrowser.readFile.mockResolvedValue(file);
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+
+    const response = await request(app)
+      .get("/api/orgs/organization-1/workspace/file")
+      .query({ path: "/workspace/org-1/projects/evidence.md" });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(file);
+    expect(mockWorkspaceBrowser.resolveLocalWorkspaceFilePath)
+      .toHaveBeenCalledWith("organization-1", "/workspace/org-1/projects/evidence.md");
+    expect(mockWorkspaceBrowser.readFile).toHaveBeenCalledWith("organization-1", "projects/evidence.md");
+  });
+
+  it("does not let an agent use the board-only absolute workspace lookup", async () => {
+    const app = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: "organization-1",
+      source: "agent_key",
+      runId: "run-1",
+    });
+
+    const response = await request(app)
+      .get("/api/orgs/organization-1/workspace/file")
+      .query({ path: "/workspace/org-1/projects/evidence.md" });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Board access required");
+    expect(mockWorkspaceBrowser.resolveLocalWorkspaceFilePath).not.toHaveBeenCalled();
+    expect(mockWorkspaceBrowser.readFile).not.toHaveBeenCalled();
   });
 
   it("propagates an HTTP disconnect to mention-file listing", async () => {

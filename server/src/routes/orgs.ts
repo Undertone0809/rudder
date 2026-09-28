@@ -601,6 +601,13 @@ export function organizationRoutes(
       assertBoard(req);
     }
     const filePath = typeof req.query.path === "string" ? req.query.path : "";
+    if (path.isAbsolute(filePath)) {
+      assertBoard(req);
+      const workspacePath = await workspaceBrowser.resolveLocalWorkspaceFilePath(orgId, filePath);
+      const result = await workspaceBrowser.readFile(orgId, workspacePath);
+      res.json(result);
+      return;
+    }
     assertAgentLibraryProjectPath(req, filePath, "file");
     const result = await workspaceBrowser.readFile(orgId, filePath);
     res.json(result);

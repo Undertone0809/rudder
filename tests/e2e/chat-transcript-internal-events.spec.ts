@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { chatMessages, createDb } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
@@ -376,7 +377,15 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   expect(chatRes.ok()).toBe(true);
   const chat = await chatRes.json() as { id: string };
   const fileLabel = "rudder-transcript-evidence.md";
-  const filePath = `/tmp/${fileLabel}`;
+  const fileCreateRes = await page.request.post(`/api/orgs/${organization.id}/workspace/file`, {
+    data: {
+      filePath: `projects/${fileLabel}`,
+      content: "# Rudder transcript evidence\n\nEvidence available in the organization Library.\n",
+    },
+  });
+  expect(fileCreateRes.ok()).toBe(true);
+  const createdFile = await fileCreateRes.json() as { rootPath: string; filePath: string };
+  const filePath = path.join(createdFile.rootPath, createdFile.filePath);
   const longFileLabel =
     "/Users/operator/.rudder/instances/default/organizations/df008f574532/codex-home/agents/884d42a1-27ef-4aed-9952-46b2655ff696/models_cache.json";
   const longFileDisplayName = "models_cache.json";
@@ -411,7 +420,7 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
           ts: "2026-07-21T01:00:02.000Z",
           name: "read_file",
           toolUseId: "read-1",
-          input: { path: fileLabel, cwd: "/tmp" },
+          input: { path: filePath },
         },
         {
           kind: "tool_result",
@@ -527,7 +536,10 @@ test("shows Codex-style activity disclosure and opens transcript files from the 
   await page.screenshot({ path: "/tmp/rudder-transcript-skill-side-panel-source.png", fullPage: true });
 
   await fileButton.click();
-  await expect(page.getByTestId("chat-side-panel-local-file-view").or(page.getByRole("alert"))).toContainText("Rudder Desktop");
+  const localFilePreview = page.getByTestId("chat-side-panel-local-file-view");
+  await expect(localFilePreview).toBeVisible();
+  await expect(localFilePreview).toContainText("Rudder transcript evidence");
+  await expect(localFilePreview).toContainText("Evidence available in the organization Library.");
   await expect(page).toHaveURL(chatUrl);
   await page.screenshot({ path: "/tmp/rudder-transcript-file-side-panel-web.png", fullPage: true });
 });

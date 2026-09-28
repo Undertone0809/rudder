@@ -3,6 +3,7 @@
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { TranscriptLocalFilePreview } from "./TranscriptLocalFilePreview";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,19 +14,27 @@ const {
   openWorkspaceFileInIde,
   openWorkspaceFileLocation,
   previewLocalFile,
+  readAuthorizedLocalFilePreview,
   readDesktopShell,
   updateLocalFile,
+  organizationContext,
 } = vi.hoisted(() => ({
   listWorkspaceLaunchTargets: vi.fn(),
   openPath: vi.fn(),
   openWorkspaceFileInIde: vi.fn(),
   openWorkspaceFileLocation: vi.fn(),
   previewLocalFile: vi.fn(),
+  readAuthorizedLocalFilePreview: vi.fn(),
   readDesktopShell: vi.fn(),
   updateLocalFile: vi.fn(),
+  organizationContext: { selectedOrganizationId: "org-1" as string | null },
 }));
 
 vi.mock("../../lib/desktop-shell", () => ({ readDesktopShell }));
+vi.mock("../../api/localFiles", () => ({ readAuthorizedLocalFilePreview }));
+vi.mock("../../context/OrganizationContext", () => ({
+  useOptionalOrganization: () => organizationContext,
+}));
 vi.mock("../WorkspaceFilePreview", () => ({
   WorkspaceFilePreview: ({ file }: { file: { filePath: string; content: string | null } }) => (
     <pre data-testid="local-file-rendered-preview" data-file-path={file.filePath}>{file.content}</pre>
@@ -72,11 +81,61 @@ afterEach(async () => {
     for (const root of roots.splice(0)) root.unmount();
   });
   document.body.replaceChildren();
+  organizationContext.selectedOrganizationId = "org-1";
   vi.clearAllMocks();
   vi.useRealTimers();
 });
 
 describe("TranscriptLocalFilePreview", () => {
+  it("loads an organization-authorized workspace preview in a browser", async () => {
+    readDesktopShell.mockReturnValue(null);
+    readAuthorizedLocalFilePreview.mockResolvedValue({
+      source: "org_root",
+      rootPath: "/tmp/org-workspace",
+      repoUrl: null,
+      filePath: "projects/evidence.md",
+      libraryEntryId: null,
+      mentionHref: null,
+      markdownLink: null,
+      rootExists: true,
+      content: "# Browser evidence",
+      contentType: "text/markdown",
+      previewKind: "text",
+      contentPath: null,
+      message: null,
+      truncated: false,
+    } satisfies OrganizationWorkspaceFileDetail);
+
+    const container = await renderPreview();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(readAuthorizedLocalFilePreview).toHaveBeenCalledWith("org-1", "/tmp/evidence.md");
+    expect(previewLocalFile).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")?.textContent)
+      .toContain("Browser evidence");
+    expect(container.textContent).not.toContain("available in the Rudder Desktop app");
+  });
+
+  it("surfaces the workspace authorization failure in a browser", async () => {
+    readDesktopShell.mockReturnValue(null);
+    readAuthorizedLocalFilePreview.mockRejectedValue(
+      new Error("File not found inside the organization Library"),
+    );
+
+    const container = await renderPreview();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[role='alert']")?.textContent)
+      .toContain("File not found inside the organization Library");
+    expect(container.querySelector("[data-testid='local-file-rendered-preview']")).toBeNull();
+  });
+
   it("loads a safe Desktop preview and keeps the canonical path as evidence", async () => {
     readDesktopShell.mockReturnValue({ openPath, previewLocalFile, updateLocalFile });
     previewLocalFile.mockResolvedValue({
@@ -295,12 +354,14 @@ describe("TranscriptLocalFilePreview", () => {
     expect(container.textContent).toContain("Saved");
   });
 
-  it("shows an explicit Desktop fallback on the web", async () => {
+  it("requires an organization before browser file access", async () => {
     readDesktopShell.mockReturnValue(null);
+    organizationContext.selectedOrganizationId = null;
 
     const container = await renderPreview();
 
-    expect(container.querySelector("[role='alert']")?.textContent).toContain("Rudder Desktop");
+    expect(container.querySelector("[role='alert']")?.textContent).toContain("Select an organization");
+    expect(readAuthorizedLocalFilePreview).not.toHaveBeenCalled();
     expect(previewLocalFile).not.toHaveBeenCalled();
   });
 

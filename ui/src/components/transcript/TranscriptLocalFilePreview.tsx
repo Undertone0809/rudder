@@ -1,6 +1,8 @@
 import type { OrganizationWorkspaceFileDetail } from "@rudderhq/shared";
 import { ChevronRight, ExternalLink, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { readAuthorizedLocalFilePreview } from "../../api/localFiles";
+import { useOptionalOrganization } from "../../context/OrganizationContext";
 import {
   readDesktopShell,
   type DesktopLocalFilePreview,
@@ -29,6 +31,11 @@ import { WorkspaceFilePreview } from "../WorkspaceFilePreview";
 import { WorkspaceFileOpenMenu } from "../workspaces/WorkspaceLaunchControls";
 
 const LOCAL_FILE_DRAFT_SCOPE = "desktop-local-file";
+
+type TranscriptLocalFilePreviewState = {
+  file: OrganizationWorkspaceFileDetail;
+  desktopPreview: DesktopLocalFilePreview | null;
+};
 
 function previewDataUrl(preview: DesktopLocalFilePreview): string | null {
   if (!preview.base64) return null;
@@ -347,34 +354,45 @@ export function TranscriptLocalFilePreview({
   sourceConversationId?: string | null;
 }) {
   const desktopShell = readDesktopShell();
-  const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
+  const organizationId = useOptionalOrganization()?.selectedOrganizationId ?? null;
+  const [preview, setPreview] = useState<TranscriptLocalFilePreviewState | null>(null);
   const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [launchTargetsDiscovered, setLaunchTargetsDiscovered] = useState(false);
   const [openingTargetId, setOpeningTargetId] = useState<WorkspaceOpenTargetId | null>(null);
   const [error, setError] = useState<string | null>(() => (
-    desktopShell ? null : "Local file previews are available in the Rudder Desktop app."
+    desktopShell || organizationId ? null : "Select an organization to preview this file."
   ));
-  const [loading, setLoading] = useState(Boolean(desktopShell));
+  const [loading, setLoading] = useState(Boolean(desktopShell || organizationId));
   const previewRequestRef = useRef<{
-    targetPath: string;
-    promise: Promise<DesktopLocalFilePreview>;
+    targetKey: string;
+    promise: Promise<TranscriptLocalFilePreviewState>;
   } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (!desktopShell) {
+    const targetKey = (desktopShell ? "desktop" : organizationId ?? "no-org") + ":" + targetPath;
+    if (!desktopShell && !organizationId) {
       setPreview(null);
       setLoading(false);
-      setError("Local file previews are available in the Rudder Desktop app.");
+      setError("Select an organization to preview this file.");
       return undefined;
     }
 
     setLoading(true);
     setError(null);
-    if (previewRequestRef.current?.targetPath !== targetPath) {
+    if (previewRequestRef.current?.targetKey !== targetKey) {
+      const promise = desktopShell
+        ? desktopShell.previewLocalFile(targetPath).then((desktopPreview) => ({
+            file: workspacePreviewFile(desktopPreview),
+            desktopPreview,
+          }))
+        : readAuthorizedLocalFilePreview(organizationId!, targetPath).then((file) => ({
+            file,
+            desktopPreview: null,
+          }));
       previewRequestRef.current = {
-        targetPath,
-        promise: desktopShell.previewLocalFile(targetPath),
+        targetKey,
+        promise,
       };
     }
     void previewRequestRef.current.promise
@@ -394,15 +412,15 @@ export function TranscriptLocalFilePreview({
     return () => {
       cancelled = true;
     };
-  }, [desktopShell, label, targetPath]);
+  }, [desktopShell, label, organizationId, targetPath]);
 
   useEffect(() => {
     let cancelled = false;
     setLaunchTargets([]);
     setLaunchTargetsDiscovered(false);
     if (
-      !preview?.parentPath
-      || !preview.fileName
+      !preview?.desktopPreview?.parentPath
+      || !preview.desktopPreview.fileName
       || typeof desktopShell?.listWorkspaceLaunchTargets !== "function"
     ) {
       setLaunchTargets([]);
@@ -421,42 +439,55 @@ export function TranscriptLocalFilePreview({
     return () => {
       cancelled = true;
     };
-  }, [desktopShell, preview?.canonicalPath, preview?.fileName, preview?.parentPath]);
+  }, [
+    desktopShell,
+    preview?.desktopPreview?.canonicalPath,
+    preview?.desktopPreview?.fileName,
+    preview?.desktopPreview?.parentPath,
+  ]);
 
-  const file = useMemo(() => preview ? workspacePreviewFile(preview) : null, [preview]);
+  const file = preview?.file ?? null;
   const canOpenDefaultApp = typeof desktopShell?.openPath === "function";
   const openTargets = useMemo(
     () => {
       if (!launchTargetsDiscovered) return [];
       return workspaceUnsupportedFileLaunchTargets(launchTargets, {
         canOpenFile: Boolean(
-          preview?.parentPath
-          && preview.fileName
+          preview?.desktopPreview?.parentPath
+          && preview.desktopPreview.fileName
           && (canOpenDefaultApp || typeof desktopShell?.openWorkspaceFileInIde === "function"),
         ),
         canOpenLocation: Boolean(
-          preview?.parentPath
-          && preview.fileName
+          preview?.desktopPreview?.parentPath
+          && preview.desktopPreview.fileName
           && typeof desktopShell?.openWorkspaceFileLocation === "function",
         ),
       }).filter((target) => target.id !== "defaultApp" || canOpenDefaultApp);
     },
-    [canOpenDefaultApp, desktopShell, launchTargets, launchTargetsDiscovered, preview?.fileName, preview?.parentPath],
+    [
+      canOpenDefaultApp,
+      desktopShell,
+      launchTargets,
+      launchTargetsDiscovered,
+      preview?.desktopPreview?.fileName,
+      preview?.desktopPreview?.parentPath,
+    ],
   );
   const openPreview = async (target?: WorkspaceUnsupportedFileLaunchTarget) => {
-    if (!desktopShell || !preview) return;
+    const desktopPreview = preview?.desktopPreview;
+    if (!desktopShell || !desktopPreview) return;
     setOpeningTargetId(target?.id ?? null);
     try {
       if (target && isWorkspaceFileOpenTarget(target) && target.id !== "defaultApp") {
-        await desktopShell.openWorkspaceFileInIde(preview.parentPath, preview.fileName, target.id);
+        await desktopShell.openWorkspaceFileInIde(desktopPreview.parentPath, desktopPreview.fileName, target.id);
       } else if (target?.id === "defaultApp") {
         if (!canOpenDefaultApp) throw new Error("Opening this file with the default app is unavailable.");
-        await desktopShell.openPath(preview.canonicalPath);
+        await desktopShell.openPath(desktopPreview.canonicalPath);
       } else if (target) {
-        await desktopShell.openWorkspaceFileLocation?.(preview.parentPath, preview.fileName, target.id);
+        await desktopShell.openWorkspaceFileLocation?.(desktopPreview.parentPath, desktopPreview.fileName, target.id);
       } else {
         if (!canOpenDefaultApp) return;
-        await desktopShell.openPath(preview.canonicalPath);
+        await desktopShell.openPath(desktopPreview.canonicalPath);
       }
       setError(null);
     } catch (cause) {
@@ -492,8 +523,8 @@ export function TranscriptLocalFilePreview({
     >
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground" title={preview.canonicalPath}>
-            {preview.fileName || label}
+          <div className="truncate text-sm font-medium text-foreground" title={file.filePath}>
+            {preview.desktopPreview?.fileName || label}
           </div>
         </div>
         {openTargets.length > 0 ? (
@@ -516,21 +547,26 @@ export function TranscriptLocalFilePreview({
           ) : null
         )}
       </div>
-      {preview.truncated ? (
+      {preview.desktopPreview?.truncated ? (
         <div className="shrink-0 border-b border-border bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200" role="status">
           Showing a bounded preview. Open the file to inspect the complete content.
         </div>
       ) : null}
-      {!preview.truncated && preview.content !== null ? (
+      {preview.desktopPreview
+        && !preview.desktopPreview.truncated
+        && preview.desktopPreview.content !== null ? (
         <DesktopLocalTextFileEditor
-          preview={preview}
+          preview={preview.desktopPreview}
           sourceConversationId={sourceConversationId}
-          onPreviewChange={setPreview}
+          onPreviewChange={(desktopPreview) => setPreview({
+            file: workspacePreviewFile(desktopPreview),
+            desktopPreview,
+          })}
         />
       ) : (
         <WorkspaceFilePreview
           file={file}
-          organizationId="local-transcript-file"
+          organizationId={organizationId ?? "local-transcript-file"}
           testIdPrefix="transcript-local-file"
         />
       )}
