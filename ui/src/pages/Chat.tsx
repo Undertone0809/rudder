@@ -3996,6 +3996,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     }} />
                                   <AssistantDraftItem
                                     body={activeStream.body}
+                                    transcript={activeStream.transcript}
                                     createdAt={activeStream.createdAt}
                                     state={activeStream.state}
                                     replyingAgentId={activeStream.replyingAgentId}

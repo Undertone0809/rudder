@@ -162,6 +162,7 @@ export function SideChatPanelMessages({
           />
           <AssistantDraftItem
             body={stream.body}
+            transcript={stream.transcript}
             createdAt={stream.createdAt}
             state={stream.state}
             replyingAgentId={stream.replyingAgentId}

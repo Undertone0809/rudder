@@ -1,4 +1,7 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
+import {
+  filterRenderableTranscriptEntries,
+} from "@/components/transcript/RunTranscriptView.common";
 import type {
   TranscriptAgentDirectoryEntry,
   TranscriptAgentInspection,
@@ -6,7 +9,8 @@ import type {
   TranscriptSkillTarget,
 } from "@/components/transcript/RunTranscriptView";
 import { RunTranscriptView } from "@/components/transcript/RunTranscriptView";
-import { ChatStreamDraftState } from "@/context/ChatGenerationContext";
+import { normalizeTranscript } from "@/components/transcript/RunTranscriptView.normalize";
+import type { ChatStreamDraftState } from "@/context/ChatGenerationContext";
 import { formatChatProcessDuration, lastTranscriptAtMs } from "@/lib/chat-process-duration";
 import { mergeNativeSteerTranscriptEntries } from "@/lib/chat-stream-state";
 import { cn } from "@/lib/utils";
@@ -18,6 +22,7 @@ import type {
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { displayedChatMessageState } from "./Chat.parts";
+import { chatProcessTranscriptEntries } from "./Chat.timeline";
 
 export function StreamTranscriptItem({
   entries,
@@ -78,12 +83,20 @@ export function StreamTranscriptItem({
   localizeText?: (text: string) => string;
 }) {
   const timelineEntries = useMemo(
-    () => mergeNativeSteerTranscriptEntries(entries, steerMessages),
+    () => chatProcessTranscriptEntries(mergeNativeSteerTranscriptEntries(entries, steerMessages)),
     [entries, steerMessages],
   );
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const waitingForNetwork = state === "waiting_for_network";
   const hasSteerInterjection = steerMessages.length > 0;
+  const renderableProcessEntries = useMemo(
+    () => filterRenderableTranscriptEntries(timelineEntries, { presentation: "chat" }),
+    [timelineEntries],
+  );
+  const processBlocks = useMemo(
+    () => normalizeTranscript(renderableProcessEntries, streamingActive, { hideUserMessages: true }),
+    [renderableProcessEntries, streamingActive],
+  );
   const [internalProcessOpen, setInternalProcessOpen] = useState(
     () => streamingActive || defaultOpen || hasSteerInterjection,
   );
@@ -91,10 +104,10 @@ export function StreamTranscriptItem({
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    if (!streamingActive) return;
+    if (!streamingActive || processBlocks.length === 0) return;
     const id = window.setInterval(() => setTick((n) => n + 1), 500);
     return () => clearInterval(id);
-  }, [streamingActive]);
+  }, [processBlocks.length, streamingActive]);
 
   useEffect(() => {
     if (defaultOpen || hasSteerInterjection) setInternalProcessOpen(true);
@@ -107,7 +120,8 @@ export function StreamTranscriptItem({
     return Math.max(0, end - start);
   }, [streamStartedAt, streamEndedAt, streamingActive, timelineEntries, tick]);
 
-  if (timelineEntries.length === 0) return null;
+  const hasHiddenStderrHistory = timelineEntries.some((entry) => entry.kind === "stderr");
+  if (processBlocks.length === 0 && !hasHiddenStderrHistory) return null;
 
   const displayedState = displayedChatMessageState({ role: "assistant", status: state as ChatMessage["status"], generationTerminalReason });
   const statusHint =

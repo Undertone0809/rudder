@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { ApiError } from "@/api/client";
+import type { ChatRuntimeSensitiveInputRequest } from "@/api/chats";
 import { DesktopBrowserLinkBridge } from "@/components/DesktopBrowserLinkBridge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
@@ -133,6 +134,8 @@ const mockState = vi.hoisted(() => ({
   sendInFlightByChatId: {} as Record<string, true>,
   chatGenerationClosePending: new Set<string>(),
   setChatSendInFlight: vi.fn(),
+  runtimeSensitiveInputs: {} as Record<string, ChatRuntimeSensitiveInputRequest>,
+  setRuntimeSensitiveInputRequest: vi.fn(),
   createConversation: vi.fn(),
   draftPreflight: {
     sourceType: "agent",
@@ -610,6 +613,8 @@ vi.mock("@/context/ChatGenerationContext", () => ({
     abortChatStream: mockState.abortChatStream,
     sendInFlightByChatId: mockState.sendInFlightByChatId,
     setChatSendInFlight: mockState.setChatSendInFlight,
+    runtimeSensitiveInputs: mockState.runtimeSensitiveInputs,
+    setRuntimeSensitiveInputRequest: mockState.setRuntimeSensitiveInputRequest,
     setStreamAbortController: vi.fn(),
     setStreamDraftForChat: mockState.setStreamDraftForChat,
     streamDrafts: mockState.streamDrafts,
@@ -1733,6 +1738,8 @@ beforeEach(() => {
   mockState.destroySideChat.mockResolvedValue(undefined);
   mockState.keepSideChat.mockReset();
   mockState.sendInFlightByChatId = {};
+  mockState.runtimeSensitiveInputs = {};
+  mockState.setRuntimeSensitiveInputRequest.mockReset();
   mockState.chatGenerationClosePending = new Set();
   mockState.setChatSendInFlight.mockReset();
   mockState.createConversation.mockReset();

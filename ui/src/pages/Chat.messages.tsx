@@ -1,3 +1,4 @@
+import type { TranscriptEntry } from "@/agent-runtimes";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { AgentMenuLabel, AssigneeLabel } from "@/components/AssigneeLabel";
 import { ChatRichReferences } from "@/components/chat-renderables/ChatRichReferences";
@@ -104,6 +105,7 @@ import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
 import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName, visibleInterruptedChatMessageBody } from "./Chat.parts";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
+import { chatFinalAnswerFromTranscript } from "./Chat.timeline";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
 export { StreamTranscriptItem } from "./Chat.StreamTranscriptItem";
@@ -3097,6 +3099,7 @@ export function LazyStreamTranscriptItem({
 
 export function AssistantDraftItem({
   body,
+  transcript,
   createdAt,
   state,
   replyingAgentId,
@@ -3108,6 +3111,7 @@ export function AssistantDraftItem({
   localizeText = (text) => text,
 }: {
   body: string;
+  transcript?: TranscriptEntry[];
   createdAt: Date;
   state: ChatStreamDraftState;
   replyingAgentId: string | null;
@@ -3118,11 +3122,14 @@ export function AssistantDraftItem({
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   localizeText?: (text: string) => string;
 }) {
+  const displayedBody = body.trim()
+    ? body
+    : chatFinalAnswerFromTranscript(transcript ?? []) ?? body;
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const waitingForNetwork = state === "waiting_for_network";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);
 
-  if (!body.trim() && !streamingActive && !waitingForNetwork) {
+  if (!displayedBody.trim() && !streamingActive && !waitingForNetwork) {
     return null;
   }
 
@@ -3142,9 +3149,9 @@ export function AssistantDraftItem({
           </div>
         ) : null}
         <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-          {body.trim() ? (
+          {displayedBody.trim() ? (
             <ChatLongMessageBody
-              body={body}
+              body={displayedBody}
               skillReferences={skillReferences}
               onMarkdownLinkClick={onMarkdownLinkClick}
             />
@@ -3152,7 +3159,7 @@ export function AssistantDraftItem({
             <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
           )}
         </div>
-        {body.trim() ? (
+        {displayedBody.trim() ? (
           <div
             className={cn(
               "mt-2 flex h-7 items-center gap-1 text-muted-foreground",
@@ -3164,7 +3171,7 @@ export function AssistantDraftItem({
               label={relativeTime(createdAt)}
               className="text-[11px] tracking-normal"
             />
-            <CopyMessageButton onClick={() => void onCopyMessageText(body)} />
+            <CopyMessageButton onClick={() => void onCopyMessageText(displayedBody)} />
           </div>
         ) : null}
       </div>

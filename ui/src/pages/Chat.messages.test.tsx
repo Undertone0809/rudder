@@ -3,6 +3,7 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import { __clearWebsiteMetadataIconCacheForTests } from "@/components/MarkdownBody";
 import type { MentionOption } from "@/components/MarkdownEditor";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type Agent, type ChatConversation, type ChatMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,10 +14,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ChatMessageItem,
   ChatMessagesLoadingState,
+  AssistantDraftItem,
   LazyStreamTranscriptItem,
   OptimisticUserDraftItem,
   StreamTranscriptItem,
 } from "./Chat.messages";
+import { chatFinalAnswerFromTranscript } from "./Chat.timeline";
 
 const markdownMentionsMock = vi.hoisted(() => ({
   mentions: [] as MentionOption[],
@@ -431,6 +434,238 @@ describe("StreamTranscriptItem controlled disclosure", () => {
       presentation: "chat",
     }));
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).not.toHaveProperty("density");
+  });
+
+  it("keeps streamed final-answer deltas in the same assistant bubble through completion", () => {
+    const createdAt = new Date("2026-07-23T10:00:00.000Z");
+    const partialAnswer = "A partial answer.";
+    const continuationDelta = " More detail.";
+    const longerAnswer = `${partialAnswer}${continuationDelta}`;
+    const completeAnswer = "The complete final answer.";
+    const commentary: TranscriptEntry = {
+      kind: "assistant",
+      ts: createdAt.toISOString(),
+      text: "I am checking the request.",
+      delta: true,
+      phase: "commentary",
+      segmentId: "commentary-1",
+    };
+    const shortEntries: TranscriptEntry[] = [
+      { kind: "user", ts: createdAt.toISOString(), text: "Structured conversation input" },
+      { kind: "system", ts: createdAt.toISOString(), text: "reasoning completed" },
+      commentary,
+      {
+        kind: "assistant",
+        ts: createdAt.toISOString(),
+        text: partialAnswer,
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId: "native-final-1",
+      },
+    ];
+    const longEntries: TranscriptEntry[] = [
+      ...shortEntries,
+      {
+        kind: "assistant",
+        ts: createdAt.toISOString(),
+        text: continuationDelta,
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId: "native-final-1",
+      },
+    ];
+    const finalEntries: TranscriptEntry[] = [
+      ...shortEntries.slice(0, 3),
+      {
+        kind: "assistant",
+        ts: createdAt.toISOString(),
+        text: completeAnswer,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId: "native-final-1",
+      },
+    ];
+    const conversation: ChatConversation = {
+      id: "chat-1",
+      orgId: "org-1",
+      status: "active",
+      conversationKind: "chat",
+      messengerVisible: true,
+      sideChatState: null,
+      sideChatExpiresAt: null,
+      sideChatCompletedAt: null,
+      sideChatKeptAt: null,
+      sideChatClientMutationId: null,
+      mutability: "native_chat",
+      title: "Native final answer",
+      summary: null,
+      preferredAgentId: "agent-1",
+      routedAgentId: null,
+      primaryIssueId: null,
+      forkedFromConversationId: null,
+      forkedFromMessageId: null,
+      forkRootConversationId: null,
+      primaryIssue: null,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      createdByUserId: null,
+      lastMessageAt: null,
+      resolvedAt: null,
+      createdAt,
+      updatedAt: createdAt,
+      latestReplyPreview: null,
+      latestUserMessagePreview: null,
+      userMessageCount: 1,
+      contextLinks: [],
+      lastReadAt: null,
+      isPinned: false,
+      unreadCount: 0,
+      isUnread: false,
+      needsAttention: false,
+      chatRuntime: {
+        sourceType: "agent",
+        sourceLabel: "Chat Agent",
+        runtimeAgentId: "agent-1",
+        agentRuntimeType: "codex_local",
+        model: "gpt-5",
+        effort: null,
+        available: true,
+        error: null,
+      },
+    };
+    const renderTimeline = (entries: TranscriptEntry[], completed = false) => (
+      <ThemeProvider>
+        <TooltipProvider>
+          <div data-testid="native-answer-timeline">
+            <StreamTranscriptItem
+              entries={entries}
+              state={completed ? "completed" : "streaming"}
+              streamStartedAt={createdAt}
+            />
+            {completed
+              ? chatMessageItemElement(
+                message({ id: "assistant-final-1", status: "completed", body: completeAnswer }),
+                [agent()],
+                { preferredAgentId: "agent-1" },
+              )
+              : (
+                <AssistantDraftItem
+                  body=""
+                  transcript={entries}
+                  createdAt={createdAt}
+                  state="streaming"
+                  replyingAgentId="agent-1"
+                  conversation={conversation}
+                  agents={[agent()]}
+                  onCopyMessageText={vi.fn()}
+                  skillReferences={[]}
+                />
+              )}
+          </div>
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+    const { container, rerender } = renderWithRerender(renderTimeline(shortEntries));
+    const timeline = container.querySelector('[data-testid="native-answer-timeline"]');
+    const bubble = container.querySelector(".group.w-full.max-w-3xl.px-1.py-1");
+    expect(timeline).not.toBeNull();
+    expect(bubble?.textContent).toContain(partialAnswer);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(0, 3),
+      presentation: "chat",
+    }));
+
+    rerender(renderTimeline(longEntries));
+    expect(container.querySelector(".group.w-full.max-w-3xl.px-1.py-1")).toBe(bubble);
+    expect(container.textContent).toContain(longerAnswer);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(0, 3),
+      presentation: "chat",
+    }));
+
+    rerender(renderTimeline(finalEntries));
+    expect(container.querySelector(".group.w-full.max-w-3xl.px-1.py-1")).toBe(bubble);
+    expect(container.textContent).toContain(completeAnswer);
+    expect(container.textContent).not.toContain(longerAnswer);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(0, 3),
+      presentation: "chat",
+    }));
+    const activeBubbleRow = bubble?.parentElement;
+    const activePosition = Array.from(timeline!.children).indexOf(activeBubbleRow!);
+
+    rerender(renderTimeline(finalEntries, true));
+
+    const completedBubble = container.querySelector('[data-testid="chat-assistant-message"]');
+    expect(completedBubble?.textContent).toContain(completeAnswer);
+    expect((completedBubble?.textContent?.match(/The complete final answer\./g) ?? [])).toHaveLength(1);
+    expect(Array.from(timeline!.children).indexOf(completedBubble!)).toBe(activePosition);
+    expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      entries: shortEntries.slice(0, 3),
+      presentation: "chat",
+    }));
+  });
+
+  it("appends true delta chunks and replaces them with a same-source full snapshot", () => {
+    const ts = "2026-07-23T10:00:00.000Z";
+    const sourceEntryId = "native-final-1";
+    expect(chatFinalAnswerFromTranscript([
+      {
+        kind: "assistant",
+        ts,
+        text: "The answer ",
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: "is now ",
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: " longer.",
+        delta: true,
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: "The answer is now longer and complete.",
+        phase: "final_answer",
+        segmentId: "final-1",
+        sourceEntryId,
+      },
+    ])).toBe("The answer is now longer and complete.");
+    expect(chatFinalAnswerFromTranscript([
+      {
+        kind: "assistant",
+        ts,
+        text: "ab",
+        delta: true,
+        phase: "final_answer",
+        sourceEntryId,
+      },
+      {
+        kind: "assistant",
+        ts,
+        text: "b",
+        delta: true,
+        phase: "final_answer",
+        sourceEntryId,
+      },
+    ])).toBe("abb");
   });
 
   it("responds to an external open request after the transcript mounts", () => {
