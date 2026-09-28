@@ -255,8 +255,7 @@ EOF
 chmod +x "${E2E_CLAUDE_STUB}"
 cat > "${E2E_CODEX_ERROR_STUB}" <<'"'"'EOF'"'"'
 #!/usr/bin/env node
-process.stdin.resume();
-process.stdin.on("end", () => {
+// A broken installation fails before reading stdin, including version probes.
   console.error([
     "file:///stub/codex.js:100",
     "    throw new Error(",
@@ -267,7 +266,6 @@ process.stdin.on("end", () => {
     "Node.js v22.17.0",
   ].join("\\n"));
   process.exit(1);
-});
 EOF
 chmod +x "${E2E_CODEX_ERROR_STUB}"
 cat > "${E2E_CONFIG}" <<'"'"'EOF'"'"'
