@@ -74,8 +74,8 @@ import {
 } from "../services/messenger-saved-views.ts";
 import { messengerService } from "../services/messenger.ts";
 import * as productAnalyticsService from "../services/product-analytics.ts";
-import { sideChatService } from "../services/side-chats.ts";
 import { createTranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
+import { sideChatService } from "../services/side-chats.ts";
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
