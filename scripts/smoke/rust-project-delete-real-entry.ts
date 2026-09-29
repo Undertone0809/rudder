@@ -104,7 +104,8 @@ async function main() {
       RUDDER_DEPLOYMENT_MODE: "local_trusted",
       RUDDER_RUST_MEMBER_DIRECTORY_MODE: "off",
       RUDDER_RUST_ORGANIZATION_BRANDING_MODE: "off",
-      RUDDER_RUST_PROJECT_GOAL_SET_MODE: "required",
+      // Establish intentional Node fixtures before the create pilot owns new rows.
+      RUDDER_RUST_PROJECT_GOAL_SET_MODE: "off",
       RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS: "",
       RUDDER_OPEN_ON_LISTEN: "false",
     });
@@ -213,6 +214,7 @@ async function main() {
 
     for (const f of [mainProject, largeProject, noKey, rollback, conflict, outage, unlistedRust, rustIssueProject]) selected.add(f.id);
     await stop();
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "required";
     await start();
     const states = await sql.unsafe("SELECT project_id::text, owner FROM project_goal_mutation_state WHERE org_id = $1", [org.id]);
     for (const id of selected) assert.equal(states.find((row: Json) => row.project_id === id)?.owner, "rust");
@@ -365,8 +367,10 @@ async function main() {
     await assertDeleted(rollback, retried.body);
     const unlistedBefore = await snapshot(unlistedRust);
     assert.equal(unlistedBefore.fence.owner, "rust");
-    assert.equal((await remove(unlistedRust.id, "unlisted-rust-owned")).status, 503);
-    assert.deepEqual(await snapshot(unlistedRust), unlistedBefore, "unlisted Rust-owned deletion reached Node");
+    const unlistedDeleted = await remove(unlistedRust.id, "unlisted-rust-owned");
+    assert.equal(unlistedDeleted.status, 200, "persisted Rust ownership must route independently of the startup allowlist");
+    assertLegacyDeleteResponse(unlistedDeleted.body, unlistedRust.before, legacyDeleted.body);
+    await assertDeleted(unlistedRust, unlistedDeleted.body);
     const attemptsAfterRestart = await attempts();
     assert.deepEqual(await remove(mainProject.id, key, engineer.token), deleted, "receipt replay failed after row/fence deletion and restart");
     assert.deepEqual(await attempts(), attemptsAfterRestart, "restart replay executed another DELETE");

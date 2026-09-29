@@ -19,7 +19,8 @@ related_code:
   - server/src/routes/projects.ts
   - native/crates/d1-persistence/src/transaction.rs
 commit_refs:
-  - 0cd278728871b78c27ffa3b9d6f5dab78a6b0b4c
+  - 89859a26b002828a61faf7a542d8f07d3b522884
+  - 0b064066c1a19da9181a3208a5c61ff3723978c8
 updated_at: 2026-09-29
 ---
 
@@ -80,7 +81,10 @@ This successor reuses the freed member-default checkout on
 The unrelated untracked v18 packet remains untouched (SHA256
 `5bf0c51a3c21ad69fcd7f465ed9af10bc62f5ae0148ead0e38295dc274827e13`).
 Only two lanes are active: qualify/merge PR235 and prepare this successor.
-Rebase this successor onto actual merged Main before candidate publication.
+The successor was rebased onto actual merged Main `89859a26b` using the explicit
+old-base boundary `0cd278728`. Only duplicated 0175 test expectations conflicted;
+0175 and 0176 remain present, and all non-plan content matches checkpoint
+`72b6e620e`. The resulting local checkpoint is `0b064066c`; it is not acceptance.
 Do not modify PR235's runtime or use its acceptance as this slice's evidence.
 
 Hilbert rejected the earlier prerequisite-heavy schedule, recommending reuse
