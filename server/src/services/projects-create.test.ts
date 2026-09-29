@@ -142,4 +142,18 @@ describe("Project create service authority", () => {
     expect(bridge.projectCreate).not.toHaveBeenCalled();
     expect(db.transaction).toHaveBeenCalledOnce();
   });
+
+  it("rejects a stale scalar writer before business writes even with the retired bypass argument", async () => {
+    const { db, service } = fixture();
+    const tx = { update: vi.fn() };
+    db.select.mockReturnValue({ from: () => ({ where: async () => [{ id: projectId, orgId, name: "Release" }] }) });
+    db.transaction.mockImplementation(async (callback) => callback(tx));
+    const denied = new Error("Rust owns Project authority");
+    mocks.projectLock.mockRejectedValueOnce(denied);
+    const legacyUpdate = service.update as (...args: unknown[]) => Promise<unknown>;
+    await expect(legacyUpdate(projectId, { description: "stale writer" }, { allowScalarUpdateWhenProjectGoalOwned: true })).rejects.toBe(denied);
+    expect(mocks.projectLock).toHaveBeenCalledWith(tx, orgId, projectId);
+    expect(tx.update).not.toHaveBeenCalled();
+    expect(mocks.organizationLock).not.toHaveBeenCalled();
+  });
 });

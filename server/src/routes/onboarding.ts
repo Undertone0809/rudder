@@ -8,14 +8,15 @@ import {
 } from "@rudderhq/db";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { agentService, issueService, logActivity, organizationService, projectService } from "../services/index.js";
 import {
   lockMessengerCustomGroupPlacement,
   lockMessengerOwnerPlacement,
 } from "../services/messenger-saved-views.js";
-import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import type { ProjectCreateContext } from "../services/projects.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 
 const ONBOARDING_PROJECT_NAME = "Getting Started";
 const ONBOARDING_MESSENGER_GROUP_ICON = "folder::teal";
@@ -803,9 +804,48 @@ export function onboardingRoutes(db: Db, rustFoundationBridge?: RustFoundationBr
     }
 
     if (!createdProject && project.description !== ONBOARDING_PROJECT_DESCRIPTION) {
-      project = await projects.update(project.id, {
-        description: ONBOARDING_PROJECT_DESCRIPTION,
-      }, { allowScalarUpdateWhenProjectGoalOwned: true }) ?? project;
+      const patch = { description: ONBOARDING_PROJECT_DESCRIPTION };
+      const owner = await projects.getMutationOwner(orgId, project.id);
+      if (owner === "rust") {
+        if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+          res.status(503).json({
+            error: "Rust Project-Goal authority is not enabled",
+            code: "rust_foundation_project_goal_set_disabled",
+          });
+          return;
+        }
+        req.headers["x-rudder-idempotency-key"] = req.header("x-rudder-idempotency-key")?.trim() || randomUUID();
+        const requestPath = `/api/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(project.id)}/goal-set`;
+        let response;
+        try {
+          response = await rustFoundationBridge.projectGoalSet(
+            req, orgId, project.id,
+            Buffer.from(JSON.stringify({ projectPatch: patch, runId: req.actor.runId ?? null }), "utf8"),
+            requestPath,
+          );
+        } catch {
+          res.status(503).json({
+            error: "Rust Project-Goal authority is unavailable",
+            code: "rust_foundation_project_goal_set_request_failed",
+          });
+          return;
+        }
+        if (response.status < 200 || response.status >= 300) {
+          res.status(response.status).set("content-type", response.contentType).send(response.body);
+          return;
+        }
+        // Rust owns the Project update, receipt and audit; read its committed row.
+        const updated = await projects.getById(project.id);
+        if (!updated) {
+          res.status(404).json({ error: "Project not found" });
+          return;
+        }
+        project = updated;
+      } else {
+        // Recheck Node ownership under the service transaction fence: ownership
+        // may transfer after the dispatch read above.
+        project = await projects.update(project.id, patch) ?? project;
+      }
     }
 
     const issueByTitle = new Map<string, ExistingIssue | CreatedIssue>(

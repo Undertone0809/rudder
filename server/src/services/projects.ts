@@ -36,8 +36,8 @@ import {
   listProjectResourceAttachmentsByProjectIds,
   replaceProjectResourceAttachments,
 } from "./resource-catalog.js";
-import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
 import type { RustFoundationActor, RustFoundationBridge } from "./rust-foundation-bridge.js";
+import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
 
 export type ProjectCreateContext =
   | { lane: "node"; caller: "public" | "onboarding" | "import" }
@@ -679,7 +679,6 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
         resourceAttachments?: ProjectResourceAttachmentInput[];
         newResources?: CreateProjectInlineResourceInput[];
       },
-      options?: { allowScalarUpdateWhenProjectGoalOwned?: boolean },
     ): Promise<ProjectWithGoals | null> => {
       const {
         goalIds: inputGoalIds,
@@ -727,16 +726,8 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
           byProjectId.get(id) ?? [],
         )
         : [];
-      const writesProjectGoalComponent = ids !== undefined
-        || resourceAttachments !== undefined
-        || newResources !== undefined;
-
       const row = await db.transaction(async (tx) => {
-        if (writesProjectGoalComponent || !options?.allowScalarUpdateWhenProjectGoalOwned) {
-          await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
-        } else {
-          await lockNodeMutationAuthority(tx, existingProject.orgId);
-        }
+        await lockNodeProjectGoalMutationAuthority(tx, existingProject.orgId, id);
         const updatedRow = await tx
           .update(projects)
           .set(updates)

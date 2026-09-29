@@ -127,6 +127,7 @@ export function organizationRoutes(
   const agents = agentService(db);
   const portability = organizationPortabilityService(db, storage, {
     organizationBrandingMode: rustFoundationBridge?.organizationBrandingMode,
+    rustFoundationBridge,
   });
   const organizationSkills = organizationSkillService(db);
   const intelligenceProfiles = organizationIntelligenceProfileService(db);
@@ -1034,7 +1035,7 @@ export function organizationRoutes(
       assertCompanyAccess(req, req.body.target.orgId);
     }
     const actor = getActorInfo(req);
-    const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null);
+    const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null, undefined, req);
     await handoffRequiredOrganizationBranding(db, rustFoundationBridge, result.organization.id);
     await logActivity(db, {
       orgId: result.organization.id,
@@ -1153,7 +1154,7 @@ export function organizationRoutes(
     const result = await portability.importBundle(req.body, req.actor.type === "board" ? req.actor.userId : null, {
       mode: "agent_safe",
       sourceOrganizationId: orgId,
-    });
+    }, req);
     await handoffRequiredOrganizationBranding(db, rustFoundationBridge, result.organization.id);
     await logActivity(db, {
       orgId: result.organization.id,
