@@ -35,7 +35,10 @@ describe("Side Chat close intent schema", () => {
     ]);
     expect(migrationSql).toContain('ON DELETE RESTRICT');
     expect(migrationSql).toContain('"attachments_json" jsonb');
-    expect(journal.entries.some((entry) => entry.idx === 177
-      && entry.tag === "0177_side_chat_close_intents")).toBe(true);
+    const entries = journal.entries.filter((entry) => entry.tag === "0177_side_chat_close_intents");
+    const providerCleanup = journal.entries.find((entry) => entry.tag === "0176_side_chat_provider_cleanup_intents");
+    expect(entries).toHaveLength(1);
+    expect(providerCleanup).toBeDefined();
+    expect(entries[0]!.idx).toBeGreaterThan(providerCleanup!.idx);
   });
 });

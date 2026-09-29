@@ -50,7 +50,10 @@ describe("Side Chat Provider cleanup outbox schema", () => {
     ]);
     expect(migrationSql).toContain('"fork_run_id" uuid');
     expect(migrationSql).toContain('"side_chat_provider_cleanup_resource_uq"');
-    expect(journal.entries.some((entry) => entry.idx === 176
-      && entry.tag === "0176_side_chat_provider_cleanup_intents")).toBe(true);
+    const entries = journal.entries.filter((entry) => entry.tag === "0176_side_chat_provider_cleanup_intents");
+    const retention = journal.entries.find((entry) => entry.tag === "0175_span_supplement_retention");
+    expect(entries).toHaveLength(1);
+    expect(retention).toBeDefined();
+    expect(entries[0]!.idx).toBeGreaterThan(retention!.idx);
   });
 });
