@@ -143,6 +143,17 @@ describe("InstanceAboutSettings", () => {
       .toBe("正在准备轻量更新...");
   });
 
+  it("provides explicit duplicate-safe update preparation feedback in both supported locales", () => {
+    expect(en["about.updates.preparing.toastBody"])
+      .toContain("This check won't start another download.");
+    expect(en["about.updates.inProgress.toastBody"])
+      .toContain("No second download will be started.");
+    expect(zhCN["about.updates.preparing.toastBody"])
+      .toContain("此检查不会重复下载");
+    expect(zhCN["about.updates.inProgress.toastBody"])
+      .toContain("不会重复下载");
+  });
+
   it("renders runtime preparation as the active update step", () => {
     updateProgressState.current = {
       updateId: "update-layered",

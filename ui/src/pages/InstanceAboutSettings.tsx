@@ -147,6 +147,24 @@ function buildUpdateFeedback(
       tone: "success",
     };
   }
+  if (result.status === "preparing") {
+    return {
+      title: t("about.updates.preparing.toastTitle"),
+      body: t("about.updates.preparing.toastBody", {
+        latestVersion: formatVersion(result.latestVersion, t("common.unknown")),
+      }),
+      tone: "info",
+    };
+  }
+  if (result.status === "in-progress") {
+    return {
+      title: t("about.updates.inProgress.toastTitle"),
+      body: t("about.updates.inProgress.toastBody", {
+        latestVersion: formatVersion(result.latestVersion, t("common.unknown")),
+      }),
+      tone: "info",
+    };
+  }
   return {
     title: t("about.updates.unavailable.toastTitle"),
     body: t("about.updates.unavailable.toastBody"),
@@ -395,6 +413,23 @@ export function InstanceAboutSettings() {
         });
         return;
       }
+      if (result.status === "in-progress") {
+        setUpdateResult((current) => current ? {
+          ...current,
+          status: "in-progress",
+          channel: result.channel,
+          latestVersion: result.version,
+          checkedAt: new Date().toISOString(),
+        } : current);
+        pushToast({
+          title: t("about.updates.inProgress.toastTitle"),
+          body: t("about.updates.inProgress.toastBody", {
+            latestVersion: formatVersion(result.version, t("common.unknown")),
+          }),
+          tone: "info",
+        });
+        return;
+      }
 
       const message = result.message || t("about.updates.installFailed");
       setActionError(message);
@@ -524,9 +559,19 @@ export function InstanceAboutSettings() {
                         currentVersion: formatVersion(updateResult.currentVersion, t("common.unknown")),
                         channel: formatUpdateChannel(t, updateResult.channel),
                       })
-                      : t("about.updates.unavailable.inline", {
-                        channel: formatUpdateChannel(t, updateResult.channel),
-                      })}
+                      : updateResult.status === "preparing"
+                        ? t("about.updates.preparing.inline", {
+                          latestVersion: formatVersion(updateResult.latestVersion, t("common.unknown")),
+                          channel: formatUpdateChannel(t, updateResult.channel),
+                        })
+                        : updateResult.status === "in-progress"
+                          ? t("about.updates.inProgress.inline", {
+                            latestVersion: formatVersion(updateResult.latestVersion, t("common.unknown")),
+                            channel: formatUpdateChannel(t, updateResult.channel),
+                          })
+                          : t("about.updates.unavailable.inline", {
+                            channel: formatUpdateChannel(t, updateResult.channel),
+                          })}
                 </div>
               </div>
             ) : undefined}

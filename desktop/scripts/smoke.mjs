@@ -1423,6 +1423,43 @@ async function createCeo(baseUrl, companyId) {
   return await response.json();
 }
 
+async function createStartupUpdateRunFixture(baseUrl, ports, issuePrefix) {
+  const company = await createCompany(baseUrl, issuePrefix);
+  const agent = await createCeo(baseUrl, company.id);
+  const runId = randomUUID();
+  const runtimeUrls = createRuntimeUrls(ports);
+  const postgres = await loadPostgres();
+  const sql = postgres(runtimeUrls.databaseUrl, { max: 1, onnotice: () => {} });
+  try {
+    await sql`
+      insert into heartbeat_runs (id, org_id, agent_id, invocation_source, status, started_at)
+      values (${runId}::uuid, ${company.id}::uuid, ${agent.id}::uuid, 'desktop_smoke', 'running', now())
+    `;
+  } finally {
+    await sql.end();
+  }
+  return { company, agent, runId, runtimeUrls };
+}
+
+async function settleStartupUpdateRunFixture(fixture) {
+  const postgres = await loadPostgres();
+  const sql = postgres(fixture.runtimeUrls.databaseUrl, { max: 1, onnotice: () => {} });
+  try {
+    const rows = await sql`
+      update heartbeat_runs
+      set status = 'cancelled', finished_at = now(), updated_at = now()
+      where id = ${fixture.runId}::uuid
+        and org_id = ${fixture.company.id}::uuid
+        and agent_id = ${fixture.agent.id}::uuid
+        and status = 'running'
+      returning id
+    `;
+    assert.equal(rows.length, 1, `expected to close only smoke fixture run ${fixture.runId}`);
+  } finally {
+    await sql.end();
+  }
+}
+
 async function updateExperimentalPlugins(baseUrl, enabled) {
   const response = await fetch(`${baseUrl}/api/instance/settings/general`, {
     method: "PATCH",
@@ -2766,8 +2803,16 @@ async function launchDesktopWindow(userDataDir, mode, ports, extraEnv = {}, exec
   const appProcess = typeof electronApp.process === "function" ? electronApp.process() : null;
   let startupStdout = "";
   let startupStderr = "";
-  appProcess?.stdout?.on("data", (chunk) => { startupStdout += String(chunk); });
-  appProcess?.stderr?.on("data", (chunk) => { startupStderr += String(chunk); });
+  appProcess?.stdout?.on("data", (chunk) => {
+    const text = String(chunk);
+    startupStdout += text;
+    if (process.env.RUDDER_DESKTOP_DEBUG_STARTUP === "1") process.stderr.write(text);
+  });
+  appProcess?.stderr?.on("data", (chunk) => {
+    const text = String(chunk);
+    startupStderr += text;
+    if (process.env.RUDDER_DESKTOP_DEBUG_STARTUP === "1") process.stderr.write(text);
+  });
   let page;
   try {
     page = await electronApp.firstWindow();
@@ -3940,6 +3985,684 @@ async function runPackagedPublicAutoUpdateScenario(mode) {
     await preparingRuntimeUiEvidencePromise;
     await closeDesktop(run.electronApp).catch(() => {});
   }
+}
+
+async function createPackagedStartupLaterReleaseFixture(scenarioRoot, sourceAppPath) {
+  const candidateVersion = "99.0.0";
+  const candidateAppPath = path.join(scenarioRoot, "release-fixture", "Rudder.app");
+  const fullAssetName = `Rudder-${candidateVersion}-macos-arm64-portable.zip`;
+  const shellAssetName = `Rudder-${candidateVersion}-macos-arm64-shell.zip`;
+  const fullAssetPath = path.join(scenarioRoot, "release-fixture", fullAssetName);
+  const shellAssetPath = path.join(scenarioRoot, "release-fixture", shellAssetName);
+  const helperPath = path.join(
+    sourceAppPath,
+    "Contents",
+    "Resources",
+    "native",
+    resolveNativeTarget(process.platform, process.arch),
+    "rudder-update-helper",
+  );
+
+  await clonePackagedAppForUpdateSmoke(sourceAppPath, candidateAppPath);
+  const appPackagePath = path.join(candidateAppPath, "Contents", "Resources", "app", "package.json");
+  const appPackage = JSON.parse(await readFile(appPackagePath, "utf8"));
+  assert.equal(appPackage.version, expectedReleaseVersion);
+  appPackage.version = candidateVersion;
+  await writeFile(appPackagePath, `${JSON.stringify(appPackage, null, 2)}\n`, "utf8");
+
+  const serverPackagePath = path.join(candidateAppPath, "Contents", "Resources", "server-package", "package.json");
+  const serverPackage = JSON.parse(await readFile(serverPackagePath, "utf8"));
+  serverPackage.version = candidateVersion;
+  await writeFile(serverPackagePath, `${JSON.stringify(serverPackage, null, 2)}\n`, "utf8");
+
+  const infoPlistPath = path.join(candidateAppPath, "Contents", "Info.plist");
+  const infoPlist = (await readFile(infoPlistPath, "utf8"))
+    .replaceAll(`<string>${expectedReleaseVersion}</string>`, `<string>${candidateVersion}</string>`);
+  await writeFile(infoPlistPath, infoPlist, "utf8");
+  assert.equal(infoPlist.includes(`<string>${candidateVersion}</string>`), true);
+
+  const fullArchiveResult = await runCapturedProcess(
+    "ditto",
+    macPortableZipArgs(candidateAppPath, fullAssetPath, { compressionLevel: 1 }),
+    { timeoutMs: 120_000 },
+  );
+  assert.equal(fullArchiveResult.code, 0, `startup Later full fallback archive failed: ${fullArchiveResult.stderr}`);
+  await rm(path.join(candidateAppPath, "Contents", "Resources", "server-package"), { recursive: true, force: true });
+  await rm(path.join(candidateAppPath, "Contents", "Resources", "postgres-18.4"), { recursive: true, force: true });
+  const shellArchiveResult = await runCapturedProcess(
+    "ditto",
+    macPortableZipArgs(candidateAppPath, shellAssetPath, { compressionLevel: 1 }),
+    { timeoutMs: 120_000 },
+  );
+  assert.equal(shellArchiveResult.code, 0, `startup Later shell archive failed: ${shellArchiveResult.stderr}`);
+
+  const fullAssetChecksum = createHash("sha256").update(await readFile(fullAssetPath)).digest("hex");
+  const shellAssetChecksum = createHash("sha256").update(await readFile(shellAssetPath)).digest("hex");
+  const releaseDigest = (assetName, assetChecksum, assetKind) => createHash("sha256").update(JSON.stringify({
+    releaseTag: `v${candidateVersion}`,
+    assetName,
+    assetChecksum,
+    assetKind,
+    platform: "macos",
+    arch: "arm64",
+  })).digest("hex");
+  const policyKeys = generateKeyPairSync("ed25519");
+  const publicKeyDer = policyKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  const policy = {
+    schema: 1,
+    sequence: 1,
+    keyId: "rudder-startup-later-smoke",
+    issuedAt: new Date(Date.now() - 60_000).toISOString(),
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    channel: "stable",
+    platform: "darwin",
+    arch: "arm64",
+    releases: [
+      {
+        version: candidateVersion,
+        assetName: shellAssetName,
+        assetSha256: shellAssetChecksum,
+        releaseDigest: releaseDigest(shellAssetName, shellAssetChecksum, "shell"),
+      },
+      {
+        version: candidateVersion,
+        assetName: fullAssetName,
+        assetSha256: fullAssetChecksum,
+        releaseDigest: releaseDigest(fullAssetName, fullAssetChecksum, "full"),
+      },
+    ],
+  };
+  const policyEnvelope = {
+    payload: policy,
+    signature: sign(null, Buffer.from(canonicalizeSmokePolicy(policy)), policyKeys.privateKey).toString("base64url"),
+  };
+
+  return {
+    candidateVersion,
+    fullAssetName,
+    fullAssetPath,
+    fullAssetChecksum,
+    shellAssetName,
+    shellAssetPath,
+    shellAssetChecksum,
+    publicKeyDer,
+    policyEnvelope,
+    helperDigest: createHash("sha256").update(await readFile(helperPath)).digest("hex"),
+  };
+}
+
+async function runPackagedStartupUpdateNoticeScenario(mode) {
+  assert.equal(mode, "packaged", "startup update notice acceptance requires a packaged Desktop app");
+  assert.equal(process.platform, "darwin", "startup update notice acceptance is macOS-only");
+  assert.equal(process.arch, "arm64", "startup update notice acceptance currently targets macOS arm64");
+
+  const scenarioRoot = path.join(tmpRoot, "startup-update-notice");
+  const smokeExecutablePath = await createPackagedIdentitySmokeExecutable(scenarioRoot);
+  const noUpdateRoot = path.join(scenarioRoot, "no-update");
+  const noUpdateLifecyclePath = path.join(noUpdateRoot, "lifecycle.jsonl");
+  const updateRoot = path.join(scenarioRoot, "update-available");
+  const lifecyclePath = path.join(updateRoot, "lifecycle.jsonl");
+  const screenshotOutputDir = process.env.RUDDER_DESKTOP_STARTUP_UPDATE_SCREENSHOT_DIR?.trim()
+    ? (path.isAbsolute(process.env.RUDDER_DESKTOP_STARTUP_UPDATE_SCREENSHOT_DIR.trim())
+      ? path.resolve(process.env.RUDDER_DESKTOP_STARTUP_UPDATE_SCREENSHOT_DIR.trim())
+      : path.resolve(tmpRoot, process.env.RUDDER_DESKTOP_STARTUP_UPDATE_SCREENSHOT_DIR.trim()))
+    : null;
+  if (screenshotOutputDir) {
+    const relativeToRepo = path.relative(repoRoot, screenshotOutputDir);
+    if (relativeToRepo === "" || (!relativeToRepo.startsWith(`..${path.sep}`) && relativeToRepo !== ".." && !path.isAbsolute(relativeToRepo))) {
+      throw new Error("Startup update screenshots must be written outside the repository.");
+    }
+  }
+  const requestLog = [];
+  let releaseBaseUrl = null;
+  let latestVersion = expectedReleaseVersion;
+  let failedApiFallbacks = 0;
+  let failNextReleaseLookups = 0;
+  let holdNextReleaseLookup = false;
+  let heldReleaseLookupResponse = null;
+  let startupLaterReleaseFixture = null;
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  const createRelease = (version) => ({
+    tag_name: `v${version}`,
+    html_url: `${releaseBaseUrl}/releases/tag/v${version}`,
+    draft: false,
+    prerelease: false,
+    assets: [
+      {
+        name: "SHASUMS256.txt",
+        browser_download_url: `${releaseBaseUrl}/repos/Undertone0809/rudder/releases/download/v${version}/SHASUMS256.txt`,
+      },
+      {
+        name: `Rudder-${version}-macos-${arch}-portable.zip`,
+        browser_download_url: `${releaseBaseUrl}/repos/Undertone0809/rudder/releases/download/v${version}/Rudder-${version}-macos-${arch}-portable.zip`,
+      },
+    ],
+  });
+  const releaseServer = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", releaseBaseUrl ?? "http://127.0.0.1");
+    requestLog.push(`${requestUrl.pathname}${requestUrl.search}`);
+    response.setHeader("Cache-Control", "no-store");
+    if (requestUrl.pathname === "/repos/Undertone0809/rudder/releases") {
+      if (holdNextReleaseLookup) {
+        holdNextReleaseLookup = false;
+        heldReleaseLookupResponse = response;
+        return;
+      }
+      if (failNextReleaseLookups > 0) {
+        failNextReleaseLookups -= 1;
+        failedApiFallbacks += 1;
+        response.statusCode = 503;
+        response.end("temporarily unavailable");
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify([createRelease(latestVersion)]));
+      return;
+    }
+    if (requestUrl.pathname === "/repos/Undertone0809/rudder/releases/tags/v99.0.0" && startupLaterReleaseFixture) {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(createRelease("99.0.0")));
+      return;
+    }
+    if (requestUrl.pathname === "/policy.json" && startupLaterReleaseFixture) {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(startupLaterReleaseFixture.policyEnvelope));
+      return;
+    }
+    const downloadPrefix = "/repos/Undertone0809/rudder/releases/download/v99.0.0/";
+    if (requestUrl.pathname.startsWith(downloadPrefix) && startupLaterReleaseFixture) {
+      const name = decodeURIComponent(requestUrl.pathname.slice(downloadPrefix.length));
+      if (name === "SHASUMS256.txt") {
+        response.setHeader("Content-Type", "text/plain");
+        response.end(
+          `${startupLaterReleaseFixture.shellAssetChecksum}  ${startupLaterReleaseFixture.shellAssetName}\n`
+          + `${startupLaterReleaseFixture.fullAssetChecksum}  ${startupLaterReleaseFixture.fullAssetName}\n`,
+        );
+        return;
+      }
+      if (name === startupLaterReleaseFixture.shellAssetName || name === startupLaterReleaseFixture.fullAssetName) {
+        response.setHeader("Content-Type", "application/zip");
+        createReadStream(name === startupLaterReleaseFixture.shellAssetName
+          ? startupLaterReleaseFixture.shellAssetPath
+          : startupLaterReleaseFixture.fullAssetPath)
+          .once("error", (error) => response.destroy(error)).pipe(response);
+        return;
+      }
+    }
+    if (requestUrl.pathname === "/releases" && failedApiFallbacks > 0) {
+      failedApiFallbacks -= 1;
+      response.statusCode = 503;
+      response.end("temporarily unavailable");
+      return;
+    }
+    response.statusCode = 404;
+    response.end("not found");
+  });
+  await new Promise((resolve, reject) => {
+    releaseServer.once("error", reject);
+    releaseServer.listen(0, "127.0.0.1", resolve);
+  });
+  releaseBaseUrl = `http://127.0.0.1:${releaseServer.address().port}`;
+
+  const extraEnv = {
+    ...resolveMacPackagedSmokeHomeEnv(),
+    RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_PUBLIC: "1",
+    RUDDER_DESKTOP_SMOKE_SKIP_STARTUP_UPDATE_NOTICE: "0",
+    RUDDER_DESKTOP_SMOKE_AUTH_BYPASS: "1",
+    RUDDER_NATIVE_MIGRATION_PREFLIGHT_DISABLED: "1",
+    RUDDER_DESKTOP_SMOKE_AUTO_UPDATE_INSTALL_PATH: path.join(scenarioRoot, "installed", "Rudder.app"),
+    RUDDER_DESKTOP_SMOKE_RELEASE_API_BASE_URL: releaseBaseUrl,
+    RUDDER_DESKTOP_SMOKE_RELEASES_PAGE_URL: `${releaseBaseUrl}/releases`,
+    RUDDER_DESKTOP_UPDATE_POLICY_URL: `${releaseBaseUrl}/policy-unavailable`,
+    RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH: lifecyclePath,
+  };
+  let noUpdateRun = null;
+  let updateRun = null;
+  let laterRun = null;
+  let scenarioError = null;
+  const activeRunFixtures = new Map();
+  try {
+    const noUpdatePorts = await allocateSmokePorts();
+    noUpdateRun = await launchDesktop(noUpdateRoot, mode, noUpdatePorts, {
+      ...extraEnv,
+      RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH: noUpdateLifecyclePath,
+    }, smokeExecutablePath);
+    await waitForSmokeCondition("startup update lookup to finish without a newer release", async () => {
+      if (!(await pathExists(noUpdateLifecyclePath))) return null;
+      const events = (await readFile(noUpdateLifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.find((event) => event.event === "startup-update-check-completed" && event.status === "up-to-date") ?? null;
+    }, { timeoutMs: 90_000 });
+    const noUpdateEvents = (await pathExists(noUpdateLifecyclePath)
+      ? (await readFile(noUpdateLifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+      : []);
+    assert.equal(
+      noUpdateEvents.some((event) => event.event === "startup-update-notice-opened"),
+      false,
+      "an up-to-date startup must not show the native update notice",
+    );
+    const noUpdateHealth = await fetch(`${noUpdateRun.baseUrl}/api/health`);
+    assert.equal(noUpdateHealth.status, 200, `the app must remain usable when there is no update: ${await noUpdateHealth.text()}`);
+
+    latestVersion = "99.0.0";
+    const settingsCompany = await createCompany(noUpdateRun.baseUrl, "MNU");
+    const settingsIssuePrefix = settingsCompany.urlKey ?? settingsCompany.issuePrefix;
+    const noUpdatePage = noUpdateRun.page;
+    await noUpdatePage.evaluate((companyId) => {
+      window.localStorage.setItem("rudder.selectedOrganizationId", companyId);
+    }, settingsCompany.id);
+    await noUpdatePage.goto(new URL(`/${settingsIssuePrefix}/dashboard`, noUpdatePage.url()).href);
+    await noUpdatePage.waitForURL(new RegExp(`/${settingsIssuePrefix}/dashboard$`), { timeout: 30_000 });
+    await noUpdatePage.waitForLoadState("networkidle");
+    await noUpdatePage.getByRole("button", { name: "System settings" }).click();
+    await noUpdatePage.waitForURL(/\/organization\/settings$/u, { timeout: 15_000 });
+    const settingsModal = noUpdatePage.getByTestId("settings-modal-shell");
+    await settingsModal.waitFor({ state: "visible", timeout: 15_000 });
+    await settingsModal.getByTestId("workspace-sidebar").locator('a[href$="/instance/settings/about"]').click();
+    await noUpdatePage.waitForURL(/\/instance\/settings\/about$/u, { timeout: 15_000 });
+    const updateStatePath = path.join(noUpdateRoot, "electron-user-data", "desktop-auto-update.json");
+    const writePreparationState = async (preparation) => writeFile(updateStatePath, `${JSON.stringify({
+      version: 1,
+      generation: 0,
+      lastCheckAt: null,
+      nextCheckAt: null,
+      candidate: null,
+      preparation,
+      recoveryRequired: false,
+      acceptedPolicySequence: -1,
+    }, null, 2)}\n`, "utf8");
+    const updateRequestsBeforePreparingCheck = requestLog.length;
+    holdNextReleaseLookup = true;
+    const settingsCheckButton = settingsModal.getByRole("button", { name: "Check for updates" });
+    await settingsCheckButton.click();
+    await waitForSmokeCondition("Settings update lookup is held before its response", async () => (
+      heldReleaseLookupResponse ? true : null
+    ));
+    assert.equal(await settingsCheckButton.isDisabled(), true, "Settings must disable repeated checks while the lookup is pending");
+    assert.equal(
+      await settingsCheckButton.locator("svg").evaluate((icon) => icon.classList.contains("animate-spin")),
+      true,
+      "Settings must show the pending spinner while the lookup is held",
+    );
+    await writePreparationState({
+      updateId: "smoke-active-preparation",
+      channel: "stable",
+      version: "99.0.0",
+      ownerPid: process.pid,
+      startedAt: new Date().toISOString(),
+    });
+    heldReleaseLookupResponse.setHeader("Content-Type", "application/json");
+    heldReleaseLookupResponse.end(JSON.stringify([createRelease(latestVersion)]));
+    heldReleaseLookupResponse = null;
+    await settingsModal.getByText("Preparing Stable update v99.0.0 in the background.", { exact: true })
+      .waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(await settingsCheckButton.isDisabled(), false, "Settings must leave pending state when the lookup completes");
+    assert.equal(
+      await settingsCheckButton.locator("svg").evaluate((icon) => icon.classList.contains("animate-spin")),
+      false,
+      "Settings must stop the pending spinner when the lookup completes",
+    );
+    assert.equal(await settingsModal.getByRole("button", { name: "Update", exact: true }).count(), 0);
+    if (screenshotOutputDir) {
+      await mkdir(screenshotOutputDir, { recursive: true });
+      await settingsModal.screenshot({
+        path: path.join(screenshotOutputDir, "settings-update-preparing.png"),
+        animations: "disabled",
+      });
+    }
+    assert.equal(
+      requestLog.length,
+      updateRequestsBeforePreparingCheck + 1,
+      "the held Settings check may finish, but must not start a second release lookup after preparation begins",
+    );
+    const requestsBeforeDuplicateCheck = requestLog.length;
+    await settingsModal.getByRole("button", { name: "Check for updates" }).click();
+    await settingsModal.getByText("Preparing Stable update v99.0.0 in the background.", { exact: true })
+      .waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(
+      requestLog.length,
+      requestsBeforeDuplicateCheck,
+      "Settings must not start another release lookup while automatic preparation is active",
+    );
+    await writeFile(updateStatePath, `${JSON.stringify({
+      version: 1,
+      generation: 0,
+      lastCheckAt: null,
+      nextCheckAt: null,
+      candidate: null,
+      preparation: null,
+      recoveryRequired: false,
+      acceptedPolicySequence: -1,
+    }, null, 2)}\n`, "utf8");
+    await settingsModal.getByRole("button", { name: "Check for updates" }).click();
+    await settingsModal.getByText("Stable release available: v99.0.0.", { exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+    await settingsModal.getByRole("button", { name: "Update", exact: true }).waitFor({ state: "visible", timeout: 15_000 });
+    if (screenshotOutputDir) {
+      await settingsModal.screenshot({
+        path: path.join(screenshotOutputDir, "settings-update-available.png"),
+        animations: "disabled",
+      });
+    }
+    const manualCheckEvents = (await readFile(noUpdateLifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(
+      manualCheckEvents.some((event) => event.event === "startup-update-notice-opened"),
+      false,
+      "Settings manual check must keep its own update result surface",
+    );
+    assert.equal(
+      requestLog.filter((requestPath) => requestPath.startsWith("/repos/Undertone0809/rudder/releases?")).length >= 2,
+      true,
+      "the Settings action must perform a second public update lookup",
+    );
+    await closeDesktop(noUpdateRun.electronApp);
+    noUpdateRun = null;
+    console.log("[desktop-smoke] startup stayed silent while current; Settings manual check displayed the available release");
+
+    const updatePorts = await allocateSmokePorts();
+    updateRun = await launchDesktopWindow(updateRoot, mode, updatePorts, extraEnv, smokeExecutablePath);
+    const availableUpdateCheck = await waitForSmokeCondition("startup update lookup to find the newer release", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.find((event) => (
+        event.event === "startup-update-check-completed"
+        && event.status === "update-available"
+        && event.latestVersion === "99.0.0"
+      )) ?? null;
+    }, { timeoutMs: 90_000 });
+    assert.equal(availableUpdateCheck.latestVersion, "99.0.0");
+    assert.equal(availableUpdateCheck.attempt, 1);
+    const startupNotice = await waitForSmokeCondition("native startup update notice", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.find((event) => event.event === "startup-update-notice-opened") ?? null;
+    }, { timeoutMs: 90_000 });
+    assert.equal(startupNotice.latestVersion, "99.0.0");
+    assert.deepEqual(startupNotice.buttons, ["Update", "Later"]);
+    console.log("[desktop-smoke] native startup Update/Later notice is open; preparing an isolated running Agent run before Update");
+
+    const updateBaseUrl = `http://127.0.0.1:${updatePorts.appPort}`;
+    const updateFixture = await createStartupUpdateRunFixture(updateBaseUrl, updatePorts, "UPD");
+    activeRunFixtures.set(updateFixture.runId, updateFixture);
+    const fixtureRunsResponse = await fetch(`${updateBaseUrl}/api/orgs/${updateFixture.company.id}/live-runs`);
+    assert.equal(fixtureRunsResponse.status, 200);
+    const fixtureRuns = await fixtureRunsResponse.json();
+    assert.equal(
+      fixtureRuns.some((run) => run.id === updateFixture.runId && run.status === "running"),
+      true,
+      "the isolated active-run fixture must be visible before choosing Update",
+    );
+    const shellSessionFixtureRuns = await updateRun.electronApp.evaluate(async ({ session }, input) => {
+      const organizationResponse = await session.defaultSession.fetch(`${input.baseUrl}/api/orgs`, {
+        headers: { Accept: "application/json" },
+        credentials: "include",
+      });
+      const organizations = organizationResponse.ok ? await organizationResponse.json() : [];
+      const organizationVisible = Array.isArray(organizations)
+        && organizations.some((organization) => organization.id === input.organizationId);
+      if (!organizationVisible) {
+        return { organizationStatus: organizationResponse.status, organizationVisible, runStatus: null };
+      }
+      const runsResponse = await session.defaultSession.fetch(
+        `${input.baseUrl}/api/orgs/${encodeURIComponent(input.organizationId)}/live-runs`,
+        { headers: { Accept: "application/json" }, credentials: "include" },
+      );
+      const runs = runsResponse.ok ? await runsResponse.json() : [];
+      const fixtureRun = Array.isArray(runs) ? runs.find((run) => run.id === input.runId) : null;
+      return {
+        organizationStatus: organizationResponse.status,
+        organizationVisible,
+        runsStatus: runsResponse.status,
+        runStatus: fixtureRun?.status ?? null,
+      };
+    }, {
+      baseUrl: updateBaseUrl,
+      organizationId: updateFixture.company.id,
+      runId: updateFixture.runId,
+    });
+    assert.equal(shellSessionFixtureRuns.organizationStatus, 200);
+    assert.equal(shellSessionFixtureRuns.organizationVisible, true);
+    assert.equal(shellSessionFixtureRuns.runsStatus, 200);
+    assert.equal(
+      shellSessionFixtureRuns.runStatus,
+      "running",
+      "the Electron session-backed API path used by update protection must see the isolated run",
+    );
+    console.log(`[desktop-smoke] isolated active-run fixture ready (${updateFixture.runId}); choose Update in the native startup notice`);
+
+    const electronProcess = typeof updateRun.electronApp.process === "function"
+      ? updateRun.electronApp.process()
+      : null;
+    const updateRunProtection = await waitForSmokeCondition("startup Update to enter running-work protection", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.find((event) => (
+        event.event === "update-run-protection-opened"
+        && event.totalRuns === 1
+        && event.blockers?.some((blocker) => blocker.runId === updateFixture.runId)
+      )) ?? null;
+    }, { timeoutMs: 120_000 });
+    assert.deepEqual(updateRunProtection.buttons, [
+      "Download and Update When Idle",
+      "Stop Runs and Update Now",
+      "Cancel",
+    ]);
+    console.log("[desktop-smoke] Update reached active-run protection; choose Cancel in the visible Desktop prompt");
+    await waitForSmokeCondition("active-run protection was cancelled", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.find((event) => (
+        event.event === "update-run-protection-dismissed"
+        && event.response === "cancel"
+        && event.surface === "native"
+      )) ?? events.find((event) => (
+        event.event === "update-run-protection-dismissed"
+        && event.response === "cancel"
+        && event.surface === "renderer"
+      )) ?? null;
+    }, { timeoutMs: 90_000 });
+    console.log("[desktop-smoke] Cancel left the active run intact");
+
+    await waitForSmokeCondition("startup notice was answered with Update", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.some((event) => event.event === "startup-update-notice-dismissed" && event.response === "update")
+        ? true
+        : null;
+    }, { timeoutMs: 10_000 });
+    await waitForSmokeCondition("cancelled update fallback notice", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.find((event) => event.event === "update-install-fallback-opened") ?? null;
+    }, { timeoutMs: 10_000 });
+    console.log("[desktop-smoke] Update protection was cancelled; dismiss the native Update paused notice to continue");
+    await waitForSmokeCondition("cancelled update fallback notice dismissal", async () => {
+      if (!(await pathExists(lifecyclePath))) return null;
+      const events = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.some((event) => event.event === "update-install-fallback-dismissed") ? true : null;
+    }, { timeoutMs: 90_000 });
+    const liveRunsResponse = await fetch(`${updateBaseUrl}/api/orgs/${updateFixture.company.id}/live-runs`);
+    assert.equal(liveRunsResponse.status, 200);
+    const liveRuns = await liveRunsResponse.json();
+    assert.equal(liveRuns.some((run) => run.id === updateFixture.runId && run.status === "running"), true);
+    assert.equal(requestLog.some((requestPath) => requestPath.endsWith("/releases/download/v99.0.0/SHASUMS256.txt")), false);
+    assert.equal(requestLog.some((requestPath) => requestPath.endsWith("/Rudder-99.0.0-macos-arm64-portable.zip")), false);
+    const updateHealth = await fetch(`${updateBaseUrl}/api/health`);
+    assert.equal(updateHealth.status, 200, `canceling the running-work protection prompt must keep Rudder usable: ${await updateHealth.text()}`);
+    assert.equal(electronProcess && electronProcess.exitCode === null && electronProcess.signalCode === null, true);
+
+    const responseEvents = (await readFile(lifecyclePath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(
+      responseEvents.some((event) => event.event === "startup-update-notice-dismissed" && event.response === "update"),
+      true,
+    );
+    assert.equal(requestLog.some((requestPath) => requestPath.startsWith("/repos/Undertone0809/rudder/releases?")), true);
+    await settleStartupUpdateRunFixture(updateFixture);
+    activeRunFixtures.delete(updateFixture.runId);
+    const settledUpdateRuns = await fetch(`${updateBaseUrl}/api/orgs/${updateFixture.company.id}/live-runs`).then((response) => response.json());
+    assert.equal(settledUpdateRuns.some((run) => run.id === updateFixture.runId), false);
+    await closeDesktop(updateRun.electronApp);
+    updateRun = null;
+
+    const laterRoot = path.join(scenarioRoot, "later-choice");
+    const packagedExecutablePath = await resolvePackagedExecutablePath();
+    const sourceAppPath = path.resolve(packagedExecutablePath, "..", "..", "..");
+    startupLaterReleaseFixture = await createPackagedStartupLaterReleaseFixture(scenarioRoot, sourceAppPath);
+    const laterPorts = await allocateSmokePorts();
+    failNextReleaseLookups = 1;
+    laterRun = await launchDesktopWindow(laterRoot, mode, laterPorts, {
+      ...extraEnv,
+      RUDDER_DESKTOP_SMOKE_POLICY_PUBLIC_KEY: startupLaterReleaseFixture.publicKeyDer,
+      RUDDER_DESKTOP_UPDATE_POLICY_URL: `${releaseBaseUrl}/policy.json`,
+      RUDDER_DESKTOP_SMOKE_RELEASE_DOWNLOAD_BASE_URL: releaseBaseUrl,
+      RUDDER_DESKTOP_SMOKE_LIFECYCLE_PATH: path.join(laterRoot, "lifecycle.jsonl"),
+    }, smokeExecutablePath);
+    const laterEventPath = path.join(laterRoot, "lifecycle.jsonl");
+    await waitForSmokeCondition("second native startup update notice", async () => {
+      if (!(await pathExists(laterEventPath))) return null;
+      const events = (await readFile(laterEventPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      return events.find((event) => event.event === "startup-update-notice-opened") ?? null;
+    }, { timeoutMs: 90_000 });
+    const laterCheckEvents = (await readFile(laterEventPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+      .filter((event) => event.event === "startup-update-check-completed");
+    assert.deepEqual(laterCheckEvents.map(({ attempt, status }) => ({ attempt, status })), [
+      { attempt: 1, status: "unavailable" },
+      { attempt: 2, status: "update-available" },
+    ]);
+    const laterPage = await waitForBoardWindow(laterRun.electronApp, laterRun.page);
+    const laterBaseUrl = new URL(laterPage.url()).origin;
+    const laterFixture = await createStartupUpdateRunFixture(laterBaseUrl, laterPorts, "LAT");
+    activeRunFixtures.set(laterFixture.runId, laterFixture);
+    const laterUpdateProtectionDialog = laterPage.getByRole("dialog").filter({
+      hasText: "There is 1 running agent run in this Rudder instance.",
+    });
+    console.log(`[desktop-smoke] second notice is open with isolated run ${laterFixture.runId}; choose Later`);
+    const laterChoice = await waitForSmokeCondition("startup notice response or unexpected Update protection", async () => {
+      if (await pathExists(laterEventPath)) {
+        const events = (await readFile(laterEventPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        if (events.some((event) => event.event === "startup-update-notice-dismissed" && event.response === "later")) {
+          return "later";
+        }
+      }
+      return await laterUpdateProtectionDialog.isVisible().catch(() => false) ? "update" : null;
+    }, { timeoutMs: 90_000 });
+    if (laterChoice === "update") {
+      await laterUpdateProtectionDialog.getByRole("button", { name: "Cancel" }).click();
+      await waitForSmokeCondition("unexpected Update fallback notice", async () => {
+        if (!(await pathExists(laterEventPath))) return null;
+        const events = (await readFile(laterEventPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        return events.find((event) => event.event === "update-install-fallback-opened") ?? null;
+      }, { timeoutMs: 10_000 });
+      console.log("[desktop-smoke] wrong native choice was guarded; dismiss the Update paused notice to abort safely");
+      await waitForSmokeCondition("unexpected Update fallback notice dismissal", async () => {
+        if (!(await pathExists(laterEventPath))) return null;
+        const events = (await readFile(laterEventPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+        return events.some((event) => event.event === "update-install-fallback-dismissed") ? true : null;
+      }, { timeoutMs: 90_000 });
+      assert.fail("Later scenario received Update instead of Later");
+    }
+    assert.equal(laterChoice, "later");
+    const laterHealth = await fetch(`${laterBaseUrl}/api/health`);
+    assert.equal(laterHealth.status, 200, `Later must keep the Local Workspace usable: ${await laterHealth.text()}`);
+    const laterProcess = typeof laterRun.electronApp.process === "function" ? laterRun.electronApp.process() : null;
+    assert.equal(laterProcess && laterProcess.exitCode === null && laterProcess.signalCode === null, true);
+    const laterEvents = (await readFile(laterEventPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(laterEvents.some((event) => event.event === "startup-update-notice-dismissed" && event.response === "later"), true);
+    assert.equal(laterEvents.some((event) => event.event === "update-install-fallback-opened"), false);
+    const laterOrganizationName = laterPage.getByRole("textbox").first();
+    await laterOrganizationName.waitFor({ state: "visible", timeout: 10_000 });
+    await laterOrganizationName.fill("Smoke remains interactive after Later");
+    assert.equal(await laterOrganizationName.inputValue(), "Smoke remains interactive after Later");
+
+    const laterPaths = resolveInstancePaths(laterRoot);
+    const laterUpdateStatePath = path.join(laterPaths.electronUserDataDir, "desktop-auto-update.json");
+    const stagedLaterState = await waitForSmokeCondition("authorized Later choice to stage the signed update", async () => {
+      if (!(await pathExists(laterUpdateStatePath))) return null;
+      const state = JSON.parse(await readFile(laterUpdateStatePath, "utf8"));
+      return state.candidate?.status === "staged" && state.candidate.version === "99.0.0" && state.preparation === null
+        ? state
+        : null;
+    }, { timeoutMs: 120_000 });
+    const stagedCandidate = stagedLaterState.candidate;
+    assert.equal(stagedCandidate.assetKind === "shell" || stagedCandidate.assetKind === "full", true);
+    assert.equal(stagedCandidate.assetChecksum, stagedCandidate.assetKind === "shell"
+      ? startupLaterReleaseFixture.shellAssetChecksum
+      : startupLaterReleaseFixture.fullAssetChecksum);
+    assert.equal(await pathExists(stagedCandidate.stagedArtifactPath), true, "Later must retain the verified staged artifact");
+    assert.notEqual(
+      path.resolve(stagedCandidate.stagedArtifactPath),
+      path.resolve(stagedCandidate.assetKind === "shell"
+        ? startupLaterReleaseFixture.shellAssetPath
+        : startupLaterReleaseFixture.fullAssetPath),
+      "Later must stage the downloaded artifact in Rudder's update cache, not use the fixture ZIP in place",
+    );
+    assert.equal(requestLog.some((requestPath) => requestPath === "/policy.json"), true, "Later must refresh the signed update policy");
+    assert.equal(requestLog.some((requestPath) => requestPath.endsWith("/SHASUMS256.txt")), true, "Later must verify the release checksum manifest");
+    assert.equal(requestLog.some((requestPath) => requestPath.endsWith(`/${stagedCandidate.assetName}`)), true, "Later must download an authorized update asset");
+
+    const helperModule = await import(pathToFileURL(path.join(desktopDir, "dist", "desktop-update-helper.js")).href);
+    const laterInstallPath = path.join(scenarioRoot, "installed", "Rudder.app");
+    const laterExecutablePath = smokeExecutablePath;
+    const laterResourcesPath = path.resolve(path.dirname(smokeExecutablePath), "..", "Resources");
+    const transactionPaths = helperModule.resolveDesktopUpdateTransactionPaths({
+      userDataPath: laterPaths.electronUserDataDir,
+      transactionId: stagedCandidate.updateId,
+      resourcesPath: laterResourcesPath,
+      execPath: packagedExecutablePath,
+      installPath: laterInstallPath,
+    });
+    assert.equal(await pathExists(transactionPaths.journalPath), false, "Later must not create an apply journal");
+    assert.equal(await pathExists(`${transactionPaths.journalPath}.request.json`), false, "Later must not hand off an apply request to the helper");
+    assert.equal(await pathExists(laterInstallPath), false, "Later must not replace or create an installed app bundle");
+    assert.equal(await laterRun.electronApp.evaluate(({ app }) => app.getVersion()), expectedReleaseVersion);
+    assert.equal(await pathExists(laterExecutablePath), true, "the running packaged executable must remain present after staging");
+    const finalLaterEvents = (await readFile(laterEventPath, "utf8")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(finalLaterEvents.some((event) => event.event === "natural-quit-requested"), false);
+    assert.equal(finalLaterEvents.some((event) => event.event === "auto-update-before-quit"), false);
+    const laterLiveRuns = await fetch(`${laterBaseUrl}/api/orgs/${laterFixture.company.id}/live-runs`).then((response) => response.json());
+    assert.equal(laterLiveRuns.some((run) => run.id === laterFixture.runId && run.status === "running"), true);
+    if (screenshotOutputDir) {
+      await laterPage.screenshot({
+        path: path.join(screenshotOutputDir, "workspace-after-later.png"),
+        animations: "disabled",
+      });
+    }
+    assert.equal(requestLog.some((requestPath) => requestPath.endsWith("/releases/download/v99.0.0/SHASUMS256.txt")), false);
+    assert.equal(requestLog.some((requestPath) => requestPath.endsWith("/Rudder-99.0.0-macos-arm64-portable.zip")), false);
+    await settleStartupUpdateRunFixture(laterFixture);
+    activeRunFixtures.delete(laterFixture.runId);
+    const settledLaterRuns = await fetch(`${laterBaseUrl}/api/orgs/${laterFixture.company.id}/live-runs`).then((response) => response.json());
+    assert.equal(settledLaterRuns.some((run) => run.id === laterFixture.runId), false);
+    await closeDesktop(laterRun.electronApp);
+    laterRun = null;
+    console.log("[desktop-smoke] Later kept the packaged app and Local Workspace usable");
+
+    console.log("[desktop-smoke] packaged startup update notice, Update protection, and Later continuity passed");
+  } catch (error) {
+    scenarioError = error;
+  } finally {
+    const cleanupErrors = [];
+    if (heldReleaseLookupResponse) {
+      heldReleaseLookupResponse.statusCode = 503;
+      heldReleaseLookupResponse.end("startup update smoke ended before releasing the held lookup");
+      heldReleaseLookupResponse = null;
+    }
+    for (const fixture of activeRunFixtures.values()) {
+      try {
+        await settleStartupUpdateRunFixture(fixture);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (noUpdateRun) await closeDesktop(noUpdateRun.electronApp).catch(() => {});
+    if (updateRun) await closeDesktop(updateRun.electronApp).catch(() => {});
+    if (laterRun) await closeDesktop(laterRun.electronApp).catch(() => {});
+    await new Promise((resolve) => releaseServer.close(() => resolve()));
+    if (cleanupErrors.length > 0) {
+      scenarioError = scenarioError
+        ? new AggregateError([scenarioError, ...cleanupErrors], "Startup update scenario and fixture cleanup failed")
+        : new AggregateError(cleanupErrors, "Failed to close isolated startup update run fixtures");
+    }
+  }
+  if (scenarioError) throw scenarioError;
 }
 
 async function launchDesktop(userDataDir, mode, ports, extraEnv = {}, executableOverride = null) {
@@ -8125,6 +8848,7 @@ function resolveScenarioList(mode, scenario) {
   if (scenario === "account-gate"
     || scenario === "auto-update"
     || scenario === "auto-update-public"
+    || scenario === "startup-update-notice"
     || scenario === "startup-recovery"
     || scenario === "postgres-runtime-handoff"
     || scenario === "clean"
@@ -8152,6 +8876,8 @@ try {
       await runAutoUpdateScenario(smokeMode);
     } else if (scenario === "auto-update-public") {
       await runPackagedPublicAutoUpdateScenario(smokeMode);
+    } else if (scenario === "startup-update-notice") {
+      await runPackagedStartupUpdateNoticeScenario(smokeMode);
     } else if (scenario === "startup-recovery") {
       await runStartupRecoveryScenario(smokeMode);
     } else if (scenario === "postgres-runtime-handoff") {

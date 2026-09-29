@@ -68,6 +68,7 @@ Smoke scenarios:
 
 - `pnpm --filter @rudderhq/desktop smoke` runs the development Desktop scenarios, authenticated update-session fetch smoke, and App Builder smoke.
 - `node desktop/scripts/smoke.mjs --mode=packaged` runs startup-recovery, renderer-recovery, clean packaged, and upgrade smoke paths. The upgrade path downgrades the temporary `prod_local` schema before relaunching.
+- `node desktop/scripts/smoke.mjs --mode=packaged --scenario=startup-update-notice` is an interactive macOS arm64 gate for startup Update/Later notices. It uses a copied test app and isolated profiles; the current-version profile also exercises Settings > About > Check for updates, and the Later profile verifies one unavailable lookup followed by a successful retry. Choose Update, Cancel the running-work protection prompt, dismiss the paused notice, then choose Later in the second profile. This scenario is not included in the default smoke because its startup dialogs are native.
 
 Packaged upgrade verification is a release gate, not only a local smoke check.
 The gate runs the historical schema compatibility matrix and recovery-point
@@ -571,7 +572,16 @@ local Desktop update channel defaults to stable, so update checks compare
 against the latest stable release unless the operator enables canary updates in
 Settings > General. With canary enabled, startup, menu, and About-page checks
 compare against the latest canary release. Beta prereleases are ignored; if a
-newer matching release exists, the app prompts the user to update.
+newer matching release exists, the app prompts the user to update. If the
+startup lookup is unavailable, Desktop waits briefly and retries once; it stays
+quiet if the retry is also unavailable.
+Choosing Later dismisses the startup prompt without applying the update. On the
+packaged macOS `prod_local/default` path, Desktop refreshes the signed update
+policy and may prepare the exact authorized candidate in the background; it
+still waits for a natural Quit and the instance-wide active-run guard before
+replacement. Settings > About keeps its manual check: the button stays pending
+while a shared startup lookup is unresolved, then shows the terminal result or
+the active preparation state.
 When the operator chooses Update, Desktop starts the bundled CLI
 `start --no-cli` replacement flow for the discovered version. That flow prepares
 the matching server runtime cache, downloads the preferred shell asset when

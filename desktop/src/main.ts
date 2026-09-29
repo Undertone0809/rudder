@@ -841,7 +841,7 @@ const desktopUpdateFlow = createDesktopUpdateFlow({
   },
 });
 const {
-  checkForUpdates, getDesktopUpdateChannel, setDesktopUpdateChannel, resolveRudderAppVersion,
+  checkForUpdates, checkForUpdatesForSettings, getDesktopUpdateChannel, setDesktopUpdateChannel, resolveRudderAppVersion,
   maybeShowStartupUpdateNotice, showManualUpdateCheckDialog, installUpdate, applyUpdate,
   createFeedbackMailtoUrl, getDesktopUpdateProgress,
   scheduleAutomaticUpdateCheck,
@@ -2748,7 +2748,7 @@ function registerIpc(): void {
     await restartFromResidentControls();
   });
   registerWindowsWindowIpcHandlers(assertCurrentMainFrame);
-  ipcMain.handle("desktop:check-for-updates", async () => checkForUpdates());
+  ipcMain.handle("desktop:check-for-updates", async () => checkForUpdatesForSettings());
   ipcMain.handle("desktop:install-update", async (_event, version: string) => installUpdate(version));
   ipcMain.handle("desktop:apply-update", async (_event, updateId: string, options?: { force?: boolean }) =>
     applyUpdate(updateId, { force: options?.force === true }));

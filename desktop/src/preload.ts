@@ -57,7 +57,7 @@ type BootState = {
 };
 
 type DesktopUpdateCheckResult = {
-  status: "update-available" | "up-to-date" | "unavailable";
+  status: "update-available" | "up-to-date" | "unavailable" | "preparing" | "in-progress";
   channel: "stable" | "canary";
   currentVersion: string;
   latestVersion?: string;
@@ -79,6 +79,7 @@ type DesktopUpdateBlocker = {
 type DesktopUpdateInstallResult =
   | { status: "started"; version: string; updateId?: string }
   | { status: "waiting"; version: string; updateId?: string; totalRuns: number; message: string }
+  | { status: "in-progress"; version: string; channel: DesktopUpdateChannel; message: string }
   | { status: "unavailable"; message: string }
   | { status: "blocked"; totalRuns: number; message: string }
   | { status: "failed"; message: string };
