@@ -115,7 +115,43 @@ exercise genuine I/O 500. An absent data leaf is supported, and an existing
 file root correctly returns invalid-input 422, so neither is an I/O-500 fixture.
 The corrected actual-PostgreSQL black-box case passes, including SQL rollback,
 no Project files and no invented instance parent. Stage implementation review
-accepted; its stale file-root/500 description is being refreshed explicitly.
+accepted and explicitly refreshed its initial file-root/500 description. The
+independent installed verifier returned FAIL on packet v27.2: the normal CLI
+tarball omitted its lazy worktree command module. The bounded repair explicitly
+emits worktree and db-backup entry modules; focused build coverage exercises
+their actual output, with a loader only for workspace TypeScript dependencies.
+Installed acceptance must use normal published dependencies without that loader.
+CI `36508241444` passes all four real-entry smokes; matrix `36508241419` passes
+all other applicable jobs but fails the combined Intel log-store test timeout.
+Its test-only split preserves assertions and adds proof of the intended fallback
+error. No final acceptance yet; backend observations require equivalence binding
+and affected CLI workflows require fresh installation and verification.
+
+## Bounded successor after this pilot merges
+
+Default ordinary public/onboarding Project creation to required Rust, retaining
+existing Node-owned rows and explicit import/atomic-merge lanes. Reuse the current
+mode rather than adding a second create mode. The concrete changes are config
+and bridge defaults, startup admission, keyless public PATCH/resource parity,
+and installed-default workflow coverage. Do not start another publication
+candidate before this pilot converges.
+
+An inherited Project allowlist must not silently transfer existing rows when the
+default changes. Require explicitly configured required mode for selected legacy
+adoption; reject the ambiguous dormant-allowlist configuration. No schema change,
+bulk backfill, or whole-creator retirement is implied. New Rust-created rows
+already receive their owner/epoch atomically. Off/shadow retain Node creation;
+existing Rust ownership remains fail closed and is never downgraded.
+
+Preserve ordinary HTTP compatibility by generating one internal key per keyless
+PATCH/resource invocation, while retaining explicit-key replay/conflict. Extend
+the existing installed member-directory harness with mode/path/signer overrides
+omitted, predecessor Node ownership preserved, HTTP/CLI/MCP/onboarding creation,
+Library readiness, restart/replay, later mutation/delete and native outage.
+Reuse scoped attempt counters for pre-write stale-writer rejection and the
+public import/interactive merge fixtures. This can advance only the bounded
+Project default path; organization deletion/root preparation and other writers
+remain separate authorities.
 
 Hilbert rejected the earlier prerequisite-heavy schedule, recommending reuse
 of existing fences and a service-path pilot. Hilbert accepted the revised proposal

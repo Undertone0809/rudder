@@ -8,7 +8,7 @@ source:
   publication: PR236_DRAFT_CI_in_progress_not_acceptance
   receipt_packet: doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json
   main_base_sha: 89859a26b002828a61faf7a542d8f07d3b522884
-  acceptance: Project_Create_checkpoint_author_private_checks_only_public_smoke_and_independent_gates_pending
+  acceptance: Project_Create_installed_verifier_FAIL_missing_CLI_lazy_module_repair_and_refreshed_acceptance_pending
   row_refresh_scope: provenance_only_no_whole_authority_advancement_before_acceptance
   project_create: {implemented: true, private_verified: true, author_real_entry_verified: true, independent_verified: false, default_path_verified: false, whole_component_retired: false}
   author_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json

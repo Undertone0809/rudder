@@ -1,0 +1,30 @@
+{
+  "schema": "rudder.project-create-stage-review/v1",
+  "date": "2026-09-29",
+  "reviewer_agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+  "verdict": "accept",
+  "level": "stage_implementation_only",
+  "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+  "source_tree": "a6baf82b97b6ed829247ef439343380b1eb2156a",
+  "source_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+  "reviewed": [
+    "Trusted caller lane and internally resolved root selection; no Rust error fallback.",
+    "Authorization before receipt replay; SQL changes in one transaction; receipt replay outside Project provisioning.",
+    "Persisted-owner routing and explicit preserved Node import/merge lanes.",
+    "Rust first-use data-root durability and Windows existing README-directory handling.",
+    "MCP typed shortref mapped to persisted UUID/owner.",
+    "Final native fixture: absent data leaf first use succeeds; absent instance parent produces IO500, rolls back and creates no Project Library or instance parent."
+  ],
+  "blocking_findings": [],
+  "existing_id_boundary": "Node service explicit duplicate IDs can prepare Library files before INSERT fails, but reachable public/onboarding/import creators do not supply explicit IDs. No pilot blocker; revisit if a caller exposes them.",
+  "corrected_review_history": "Initial stage receipt incorrectly called a file-root conflict500; actual PostgreSQL evidence returned422 InvalidInput. Reviewer refreshed acceptance after final fixture uses absent instance parent for IO500; original runtime error mapping was preserved.",
+  "evidence_integrity": "Reviewer inspected code and final delta; author smoke and PostgreSQL PASS were not independently rerun by reviewer.",
+  "remaining_gates": [
+    "Exact installed build/runtime/data binding",
+    "Independent public installed workflow verifier PASS",
+    "Windows and full exact-head CI",
+    "Applicable current-candidate packaged checks",
+    "Final reviewer acceptance"
+  ],
+  "whole_migration_complete": false
+}

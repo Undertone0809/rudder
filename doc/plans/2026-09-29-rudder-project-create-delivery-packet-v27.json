@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "delivery_id": "rust-project-create-v27",
-  "status": "in_progress",
+  "status": "invalidated",
   "owner": {
     "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
     "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
@@ -25,20 +25,29 @@
     "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
     "dirty_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
     "source_tree": "a6baf82b97b6ed829247ef439343380b1eb2156a",
-    "frozen": true,
+    "frozen": false,
     "build": {
-      "id": "pending-frozen-installed-build",
+      "id": "server-f54f7190-ci-host-514d101c",
       "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
       "origin_source_sha": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
-      "equivalence": "692 to a683 changes only native black-box fixture and author MCP assertion; entire runtime source is identical."
+      "equivalence": "692 to a683 changes only native black-box fixture and author MCP assertion; entire runtime source is identical.",
+      "server_tarball_sha256": "f54f7190c4623f328ca673c5b7ede01f540450ebc280efab5bde09ea20bd81f0",
+      "foundation_sha256": "514d101c7aa30c23b535a6553cdad6b83a5dd0119e531b023fdead34c3754875",
+      "migration_preflight_sha256": "1110ba6a1e988f80bb6fefd362776264f266bd19d4126363db56e0b5a6c3eb97",
+      "preparation_receipt": "/private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/preparation-receipt.json",
+      "migration_identity": "/private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/migration-preflight-identity.json",
+      "installed_root": "/private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install"
     },
     "runtime": {
-      "id": "pending-independent-runtime",
-      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500"
+      "id": "create-v27.2-ci36506924872-macos-arm64",
+      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "state": "verifier_stopped_owned_processes_PG_lane_released_after_FAIL"
     },
     "organization_data": {
       "organization_id": null,
-      "data_id": "pending-independent-data-lease"
+      "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "fixture_parent": "/private/tmp/rudder-create-verifier.DSx0ST",
+      "binding_rule": "Before first product mutation, verifier records actual created child root, runtime PIDs/ports and organization IDs in its lease; all are isolated disposable fixture data."
     },
     "workload_fixture": "Project Create HTTP/CLI/MCP/onboarding, preserved import/worktree merge, shared Library files, intent crash recovery, audit/receipt rollback, owner routing and outbox replay.",
     "acceptance_packet": {
@@ -62,41 +71,52 @@
       ],
       "state_inventory": []
     },
-    "freeze_scope": "Source frozen; artifact/runtime/data identity binding pending, not execution acceptance."
+    "freeze_scope": "Source, complete installed package, native artifacts, external preflight and logical runtime/data lease bound before verifier execution. Actual allocated IDs recorded by verifier at creation.",
+    "budget_lease": {
+      "id": "create-v27.2-ci36506924872-macos-arm64",
+      "fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+      "expires_at": "2026-10-01T00:00:00Z",
+      "scope": "Isolated local installed acceptance only; sole local PG slot."
+    }
   },
   "receipts": {
     "reviewer": {
-      "verdict": "pending",
+      "verdict": "accept",
       "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
       "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
-      "build_id": "pending-frozen-installed-build",
-      "runtime_id": "pending-independent-runtime",
-      "data_id": "pending-independent-data-lease",
-      "packet_version": "27.2"
+      "build_id": "server-f54f7190-ci-host-514d101c",
+      "runtime_id": "create-v27.2-ci36506924872-macos-arm64",
+      "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet_version": "27.2",
+      "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+      "level": "stage_implementation_and_proposed_acceptance",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review.json"
     },
     "verifier": {
-      "verdict": "pending",
+      "verdict": "FAIL",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.json",
+      "reason": "Normal installed CLI tarball omits dist/commands/worktree.js; worktree init and merge-history fail. Repair and remaining criteria require refreshed acceptance.",
       "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
       "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
-      "build_id": "pending-frozen-installed-build",
-      "runtime_id": "pending-independent-runtime",
-      "data_id": "pending-independent-data-lease",
+      "build_id": "server-f54f7190-ci-host-514d101c",
+      "runtime_id": "create-v27.2-ci36506924872-macos-arm64",
+      "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
       "packet_version": "27.2"
     },
     "final_review": {
       "verdict": "pending",
       "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
       "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
-      "build_id": "pending-frozen-installed-build",
-      "runtime_id": "pending-independent-runtime",
-      "data_id": "pending-independent-data-lease",
+      "build_id": "server-f54f7190-ci-host-514d101c",
+      "runtime_id": "create-v27.2-ci36506924872-macos-arm64",
+      "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
       "packet_version": "27.2"
     }
   },
   "drift": {
-    "active": false,
-    "events": [],
-    "invalidated_receipts": []
+    "active": true,
+    "events": ["Installed verifier FAIL exposed missing lazy CLI modules. Local esbuild entries and build-regression test repair packaging; log-store test-only stabilization also pending checkpoint. Backend runtime source unchanged; passed backend observations may be reused only with explicit equivalence and verifier rebind. CLI install/merge evidence must be refreshed."],
+    "invalidated_receipts": ["Current whole-candidate stage binding requires refresh for CLI packaging delta; final review remains pending."]
   },
   "integration": {
     "authorized": true,
@@ -141,9 +161,10 @@
   "publication": {
     "pr": "https://github.com/Undertone0809/rudder/pull/236",
     "draft": true,
-    "published_head": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
-    "matrix_run": 36506924872,
-    "real_entry_run": 36506924875
+    "published_head": "b9f966da8b35c76b0554cdeba31ceba562a8badd",
+    "matrix_run": 36508241419,
+    "real_entry_run": 36508241444,
+    "real_entry_verdict": "PASS"
   },
   "author_evidence": {
     "scope": "Not independent acceptance",
@@ -168,7 +189,7 @@
     "receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json",
     "delete_regression": "/tmp/rudder-goal-delete-queued.nzFPBz/results.md"
   },
-  "next_executable": "Publish a683 plus records for final CI; finish stage delta refresh, bind prepared installed artifacts/data, then authorize independent verifier on frozen source.",
+  "next_executable": "Checkpoint reviewed CLI packaging and focused test repairs, push draft CI, freeze refreshed source and fresh CLI package, then resume Hubble installed acceptance and Poincare packaged verification with serialized PG leases.",
   "terminal_claims": {
     "implementation_complete": false,
     "release_ready": false,
@@ -177,7 +198,69 @@
   "stage_review": {
     "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
     "verdict": "accept",
-    "scope": "Implementation stage on692 plus MCP/native fixture deltas; final fixture classification refresh pending.",
-    "correction": "Initial stage paragraph incorrectly described file-root as500. Actual PG returned422 InvalidInput; retain product mapping. Final fixture uses absent instance parent to exercise IO500 and asserts SQL rollback/no Project files/no invented instance parent; exact actual-PG testPASS."
-  }
+    "scope": "Refreshed accept on exacta683; remaining fixture classification discrepancy resolved.",
+    "correction": "Initial stage paragraph incorrectly described file-root as500. Actual PG returned422 InvalidInput; retain product mapping. Final fixture uses absent instance parent to exercise IO500 and asserts SQL rollback/no Project files/no invented instance parent; exact actual-PG testPASS.",
+    "receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review.json"
+  },
+  "ci_history": [
+    {
+      "source": "606c729df58c138b39b6a6df505105944361ced7",
+      "matrix": 36505621311,
+      "disposition": "Superseded/cancelled after observed native failures; not PASS.",
+      "failures": [
+        "macOS/Linux startup capability assertion omitted project_create.",
+        "Windows existing README directory returned error5; native parity test failed."
+      ],
+      "real_entry": 36505621372,
+      "real_entry_verdict": "FAIL",
+      "reason": "Fresh profile missing instance/data; public create500 inside goal smoke.",
+      "repair": "aef native first-use directory creation, Windows directory parity and capability assertion."
+    },
+    {
+      "source": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+      "matrix": 36506924872,
+      "disposition": "Superseded after native fixture failure; six foundation artifacts succeeded and retain runtime-equivalent build evidence only.",
+      "failures": [
+        "Old native fixture expected500 for absent data leaf; repaired runtime correctly returned201."
+      ],
+      "real_entry": 36506924875,
+      "real_entry_verdict": "FAIL",
+      "passed": [
+        "Branding",
+        "Project-Goal"
+      ],
+      "reason": "MCP successful result uses prj_ shortref; obsolete smoke asserted UUID.",
+      "repair": "a683 test-only fixes; exact native real-PG and full author smokePASS."
+    },
+    {
+      "source": "b9f966da8b35c76b0554cdeba31ceba562a8badd",
+      "matrix": 36508241419,
+      "matrix_status": "FAIL_Intel_log_store_offsets_5s_timeout_all_other_applicable_jobs_PASS",
+      "real_entry": 36508241444,
+      "real_entry_verdict": "PASS",
+      "passed": [
+        "Branding",
+        "Project-Goal",
+        "Project Create HTTP/CLI/MCP",
+        "Project DELETE"
+      ],
+      "confirmed_matrix_jobs": [
+        {
+          "id": 109214778942,
+          "name": "Desktop packaged smoke macOS arm64",
+          "verdict": "PASS"
+        },
+        {
+          "id": 109214779024,
+          "name": "Verify windows-latest",
+          "verdict": "PASS"
+        },
+        {
+          "id": 109214779100,
+          "name": "Native foundations x86_64-pc-windows-msvc",
+          "verdict": "PASS"
+        }
+      ]
+    }
+  ]
 }
