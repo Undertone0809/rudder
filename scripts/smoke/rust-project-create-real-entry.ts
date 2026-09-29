@@ -373,12 +373,18 @@ async function main() {
     const mcpToolResult = mcpCall.result as Json;
     assert.equal(mcpToolResult.isError, false, JSON.stringify(mcpToolResult));
     const mcpProject = mcpToolResult.structuredContent as Json;
-    assertCliCompatibleProjectId(mcpProject.id);
-    assert.equal(mcpProject.orgId, organization.id);
+    const [mcpPersistedProject] = await sql.unsafe(
+      "SELECT id::text AS id, org_id::text AS org_id, name FROM projects WHERE org_id = $1 AND name = $2",
+      [organization.id, mcpName],
+    );
+    assert.ok(mcpPersistedProject, "MCP Project-create did not persist a Project in the requested organization");
+    assertCliCompatibleProjectId(mcpPersistedProject.id);
+    assert.equal(mcpPersistedProject.org_id, organization.id);
+    assert.equal(mcpProject.id, "prj_" + mcpPersistedProject.id.slice(0, 8), "MCP Project reference did not map to its persisted UUID");
     assert.equal(mcpProject.name, mcpName);
     const mcpOwner = await sql.unsafe(
       "SELECT owner FROM project_goal_mutation_state WHERE org_id = $1 AND project_id = $2",
-      [organization.id, mcpProject.id],
+      [organization.id, mcpPersistedProject.id],
     );
     assert.deepEqual(Array.from(mcpOwner), [{ owner: "rust" }], "MCP-created Project did not persist Rust ownership");
 

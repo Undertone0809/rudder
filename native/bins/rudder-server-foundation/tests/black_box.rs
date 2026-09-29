@@ -1023,7 +1023,10 @@ async fn project_create_is_signed_library_ready_idempotent_and_reauthorizes_repl
     let organization_root = filesystem.path().join("organization-workspace");
     let state_root = filesystem.path().join("instance-data");
     fs::create_dir_all(&organization_root).expect("create organization workspace root");
-    fs::create_dir_all(&state_root).expect("create Project create state root");
+    assert!(
+        !state_root.exists(),
+        "first create must provision instance data"
+    );
 
     let postgres = PostgresHarness::start();
     let pool = PgPoolOptions::new()
@@ -1283,7 +1286,10 @@ async fn project_create_is_signed_library_ready_idempotent_and_reauthorizes_repl
             .exists()
     );
 
-    let missing_state_root = filesystem.path().join("missing-instance-data");
+    // An absent data leaf is supported, but Rust must not invent its instance
+    // parent. This is a real I/O failure, unlike a file root (invalid input422).
+    let missing_instance_root = filesystem.path().join("missing-instance");
+    let missing_state_root = missing_instance_root.join("data");
     let provisioning_failure_body = project_create_body(
         serde_json::json!({ "name": "Provisioning Failure", "goalIds": [] }),
         serde_json::Value::Null,
@@ -1315,6 +1321,7 @@ async fn project_create_is_signed_library_ready_idempotent_and_reauthorizes_repl
     .await
     .expect("verify provisioning failure rolled back Project insert");
     assert_eq!(failed_rows, 0);
+    assert!(!missing_instance_root.exists());
     assert!(
         !organization_root
             .join("projects/provisioning-failure")
