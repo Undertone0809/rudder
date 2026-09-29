@@ -1880,7 +1880,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
         serde_json::json!([
             "organization_branding",
             "project_goal_set_replacement",
-            "project_delete"
+            "project_delete",
+            "project_create"
         ])
     );
     assert_eq!(

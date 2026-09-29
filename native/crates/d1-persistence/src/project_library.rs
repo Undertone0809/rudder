@@ -80,8 +80,9 @@ struct ProjectCreateIntent {
 
 /// Persist or validate precommit intent BEFORE any Project artifact writes.
 ///
-/// `state_root` must be an existing, trusted, stable per-instance data directory,
-/// provisioned durably by the caller, not a name-derived workspace directory.
+/// `state_root` is a trusted, stable per-instance data directory, not a
+/// name-derived workspace directory. Its instance parent must already exist;
+/// Rust durably creates the data directory on first use.
 /// Org/command digests select the record; the fingerprint and resolved values
 /// belong in its contents so drift cannot silently select another record.
 /// An identical retry reuses the record. Mismatched, partial, or malformed FINAL
@@ -111,7 +112,27 @@ pub fn ensure_project_create_intent(
     {
         return Err(ProjectLibraryError::InvalidPath);
     }
-    require_directory(state_root)?;
+    match fs::symlink_metadata(state_root) {
+        Ok(_) => require_directory(state_root)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let parent = state_root
+                .parent()
+                .ok_or(ProjectLibraryError::InvalidPath)?;
+            let name = state_root
+                .file_name()
+                .ok_or(ProjectLibraryError::InvalidPath)?;
+            // Validate containment before creating anything. Do not recursively
+            // invent an instance root, or place recovery state in a workspace.
+            if fs::canonicalize(parent)?
+                .join(name)
+                .starts_with(fs::canonicalize(&command.organization_root)?)
+            {
+                return Err(ProjectLibraryError::InvalidPath);
+            }
+            ensure_intent_directory(state_root)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
     let intent = ProjectCreateIntent {
         org_id: command.org_id.clone(),
         command_id: command.command_id.clone(),
@@ -344,6 +365,13 @@ pub fn ensure_project_library(
     {
         Ok(mut file) => file.write_all(readme(&command.project_name).as_bytes())?,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        // Windows CREATE_NEW reports ACCESS_DENIED for an existing directory.
+        // Preserve that entry just like Node's wx/EEXIST behavior; a missing
+        // target or any other access failure must still propagate.
+        Err(error)
+            if cfg!(windows)
+                && error.raw_os_error() == Some(5)
+                && fs::symlink_metadata(&readme_path).is_ok_and(|entry| entry.is_dir()) => {}
         Err(error) => return Err(error.into()),
     }
     Ok(ProjectLibraryLayout {
@@ -486,6 +514,43 @@ mod tests {
                 "{:x}.json",
                 Sha256::digest(command.command_id.as_bytes())
             ))
+    }
+
+    #[test]
+    fn first_create_provisions_instance_data_and_retries_without_replacing_state() {
+        let workspace = Fixture::new();
+        let instance = Fixture::new();
+        let state = instance.0.join("data");
+        let command = workspace.command();
+        assert!(!state.exists());
+        ensure_project_create_intent(&state, &command).unwrap();
+        fs::write(state.join("unrelated-user-state"), b"keep").unwrap();
+        ensure_project_create_intent(&state, &command).unwrap();
+        assert_eq!(
+            fs::read(state.join("unrelated-user-state")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(fs::read_dir(&workspace.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn first_create_rejects_state_file_missing_instance_and_workspace_state() {
+        let workspace = Fixture::new();
+        let instance = Fixture::new();
+        let command = workspace.command();
+        let file = instance.0.join("data");
+        fs::write(&file, b"user-file").unwrap();
+        assert!(ensure_project_create_intent(&file, &command).is_err());
+        assert_eq!(fs::read(&file).unwrap(), b"user-file");
+        let missing = instance.0.join("missing-instance");
+        assert!(ensure_project_create_intent(&missing.join("data"), &command).is_err());
+        assert!(!missing.exists());
+        let inside_workspace = workspace.0.join("data");
+        assert!(matches!(
+            ensure_project_create_intent(&inside_workspace, &command),
+            Err(ProjectLibraryError::InvalidPath)
+        ));
+        assert!(!inside_workspace.exists());
     }
 
     #[test]
