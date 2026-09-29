@@ -10,6 +10,8 @@ on:
       - "cli/**"
       - "scripts/smoke/rust-branding-real-entry.ts"
       - "scripts/smoke/rust-project-goal-real-entry.ts"
+      - "scripts/smoke/rust-project-delete-real-entry.ts"
+      - "scripts/smoke/rust-project-delete-real-entry.test.ts"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -80,6 +82,16 @@ jobs:
           set -o pipefail
           node cli/node_modules/tsx/dist/cli.mjs \
             scripts/smoke/rust-project-goal-real-entry.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+
+      - name: Smoke Rust-owned project deletion and recovery
+        run: |
+          set -o pipefail
+          node cli/node_modules/tsx/dist/cli.mjs --test \
+            scripts/smoke/rust-project-delete-real-entry.test.ts \
+            2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
+          node cli/node_modules/tsx/dist/cli.mjs \
+            scripts/smoke/rust-project-delete-real-entry.ts \
             2>&1 | tee -a "$RUNNER_TEMP/rust-d1-real-entry.log"
 
       - name: Upload failure log

@@ -1,0 +1,326 @@
+{
+  "schema_version": "1.0",
+  "scope": "Author packaged verification for Project DELETE; independent installed acceptance is separate.",
+  "source_sha": "82a28fa7f8a998cb5c444137a8f094affa6f2258",
+  "actual_build_source": "9e459a5a3204285885c50b08e49915d8a2f38215",
+  "equivalence": "9e product content identical through82a; only release compatibility declaration/tests and records changed.",
+  "packaged_verdict": "PASS_with_corrected_marker_gated_upgrade_fixture",
+  "aggregate_desktop_verify": "FAIL_not_reclassified",
+  "original_author_receipt": {
+    "scope": "PR235 author-side local Desktop packaged checks; not independent acceptance",
+    "recordedAt": "2026-09-28T23:27:26.328Z",
+    "verdict": "FAIL",
+    "source": {
+      "actualBuild": "9e459a5a3204285885c50b08e49915d8a2f38215",
+      "tree": "542af926c99d087988b6e2c1749a7f5d804dd9ef",
+      "snapshot": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+      "equivalence": "9e-to-f416 diff inspected: delivery docs and compatibility-matrix tooling only. Later 82a test-only and 0cd docs-only equivalence is parent/independent-receipt reported; no newer-source rebuild claimed."
+    },
+    "environment": {
+      "TMPDIR": "/tmp/rudder-project-delete-fixtures.yGTtYT",
+      "CARGO_TARGET_DIR": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/native/target",
+      "nativeCache": "APFS copy-on-write clone of d1-mainline/native/target; subsequent builds wrote only snapshot cache; no shared native target symlink",
+      "dependencyStore": "/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss/.pnpm-store",
+      "isolation": "Disposable harness-owned profiles, loopback ports; no product data, repository source edits, broad Vitest setup, or host-wide cleanup"
+    },
+    "aggregate": {
+      "command": "pnpm desktop:verify",
+      "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+      "exitCode": 1,
+      "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/desktop-verify.log",
+      "failure": "Electron binary missing after this author fixture installed dependencies with --ignore-scripts. CLI/server/UI/native build stages completed before smoke failure. Original failure retained; no full aggregate PASS."
+    },
+    "prerequisiteRepairs": [
+      {
+        "command": "node node_modules/electron/install.js",
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop",
+        "exitCode": 0,
+        "reason": "Install declared Electron binary in isolated dependency tree"
+      },
+      {
+        "command": "node scripts/hydrate-symlinks.js",
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/node_modules/.pnpm/@embedded-postgres+darwin-arm64@18.1.0-beta.16/node_modules/@embedded-postgres/darwin-arm64",
+        "exitCode": 0,
+        "reason": "Restore declared PostgreSQL library symlinks omitted by author --ignore-scripts install; initdb --version had failed with missing libicudata.77.dylib and passed after hydration. First hydration invocation from repo root was a no-op and is retained in logs."
+      }
+    ],
+    "stages": [
+      {
+        "name": "dev-smoke-resumed",
+        "command": "pnpm",
+        "args": [
+          "--filter",
+          "@rudderhq/desktop",
+          "smoke"
+        ],
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+        "startedAt": "2026-09-28T23:08:59.331Z",
+        "finishedAt": "2026-09-28T23:09:14.807Z",
+        "exitCode": 1,
+        "signal": null,
+        "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/dev-smoke-resumed.log",
+        "sha256": "74fa98deed1ec313195fae3f98ce983c0553e184a45ab43c04a3f969a531a7af"
+      },
+      {
+        "name": "desktop-dist",
+        "command": "pnpm",
+        "args": [
+          "desktop:dist"
+        ],
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+        "startedAt": "2026-09-28T23:09:14.808Z",
+        "finishedAt": "2026-09-28T23:16:08.034Z",
+        "exitCode": 0,
+        "signal": null,
+        "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/desktop-dist.log",
+        "sha256": "b1bb9ea05c1e9f339a689ca7642d41196bc6c8211f90060587d9b8b7c9e13eaf"
+      },
+      {
+        "name": "computer-use-package",
+        "command": "node",
+        "args": [
+          "desktop/scripts/verify-computer-use-package.mjs"
+        ],
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+        "startedAt": "2026-09-28T23:16:08.035Z",
+        "finishedAt": "2026-09-28T23:16:10.544Z",
+        "exitCode": 0,
+        "signal": null,
+        "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/computer-use-package.log",
+        "sha256": "bb5b578129f9a450a7c7522348461c28c81e4281570d51cc375204a0dfe597b5"
+      },
+      {
+        "name": "packaged-smoke",
+        "command": "node",
+        "args": [
+          "desktop/scripts/smoke.mjs",
+          "--mode=packaged"
+        ],
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+        "startedAt": "2026-09-28T23:16:10.545Z",
+        "finishedAt": "2026-09-28T23:21:19.336Z",
+        "exitCode": 0,
+        "signal": null,
+        "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/packaged-smoke.log",
+        "sha256": "152b40c42065122fee72d53f4d3f687a1f466dab3710859df55846d87b7b387d"
+      },
+      {
+        "name": "packaged-upgrade",
+        "command": "node",
+        "args": [
+          "desktop/scripts/smoke.mjs",
+          "--mode=packaged",
+          "--scenario=upgrade"
+        ],
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+        "startedAt": "2026-09-28T23:21:19.338Z",
+        "finishedAt": "2026-09-28T23:22:51.044Z",
+        "exitCode": 1,
+        "signal": null,
+        "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/packaged-upgrade.log",
+        "sha256": "a6673c746b14ef118db43c50e246a7edbb3f70a62911c9810ad11996ee68098e"
+      },
+      {
+        "name": "packaged-app-builder",
+        "command": "node",
+        "args": [
+          "desktop/scripts/app-builder-smoke.mjs",
+          "--packaged"
+        ],
+        "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+        "startedAt": "2026-09-28T23:22:51.045Z",
+        "finishedAt": "2026-09-28T23:23:19.590Z",
+        "exitCode": 0,
+        "signal": null,
+        "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/packaged-app-builder.log",
+        "sha256": "8d820a05950c6cf41c8c1112f6f9d7c8bda35c2a6715e73053aa24e8505e2498"
+      }
+    ],
+    "repairedDev": {
+      "command": "pnpm --filter @rudderhq/desktop smoke",
+      "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+      "exitCode": 1,
+      "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/dev-smoke-dependencies-repaired.log",
+      "passedBeforeFailure": [
+        "startup-recovery",
+        "App Builder board/CRUD/restart workflow",
+        "Agent Browser MCP parity/isolation/live-disable"
+      ],
+      "failure": "Timed out waiting for Agent Terminal constrained layout",
+      "remainingChainedSteps": "local-apps and chained update-session-fetch/dev App Builder standalone commands not reached; no success inferred"
+    },
+    "packagedUpgrade": {
+      "exitCode": 1,
+      "failure": "electronApplication.firstWindow timeout 30000ms; subsequent graceful quit timeout 60000ms",
+      "phase": "Before migration assertions",
+      "disposition": "Unresolved author Desktop failure, not labeled baseline; no blind rerun"
+    },
+    "passed": [
+      "desktop:dist including server-package verifier",
+      "Computer Use package validator",
+      "packaged account-gate and auto-update-public",
+      "packaged App Builder"
+    ],
+    "artifacts": [
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop/release/Rudder-0.7.24-macos-arm64-portable.zip",
+        "bytes": 325819790,
+        "sha256": "e1e3965da731efa235fbc93c4c275e816d4ceb82b54cf2cf374528b6461f1010"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop/release/Rudder-0.7.24-macos-arm64-shell.zip",
+        "bytes": 148744336,
+        "sha256": "7590315d8db61ec5fc996fa024589293290a6f347b51444f4f6a401ce7124b36"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/migration-preflight",
+        "bytes": 4802160,
+        "sha256": "25306c18e37ba59e46e348ffd8529ba88ff8747c1d9206a2cdcf3b43f32ead79"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-native",
+        "bytes": 1506656,
+        "sha256": "e74b0eff347251d7b953ff2754ae2d6ad8467d4ece8b488a3ed0e150e40c20a6"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-process-host",
+        "bytes": 1148352,
+        "sha256": "2b1929e73b0998f6256520078224876c9a233fb6592f50aa21114364b7e9e3d5"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-server-foundation",
+        "bytes": 8857216,
+        "sha256": "0cebc85e88cf585efa36151ce07d4105083a9865e9cbd3e7923a94f4d2d9dc7f"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source/desktop/release/mac-arm64/Rudder.app/Contents/Resources/native/aarch64-apple-darwin/rudder-update-helper",
+        "bytes": 938208,
+        "sha256": "b3bfed7bdc31295164258e9abd4c96d9651f0092b0097ba4ef7d52e78ce1917e"
+      }
+    ],
+    "independentEvidence": {
+      "path": "/tmp/rudder-delete-verifier.Cu4yeE/independent-full-receipt-v26.json",
+      "sha256": "268129bd66ef2d3b7a410addee0f5df737d3e21532167aa752394ab0e60fa535",
+      "verdict": "PASS per Hubble receipt",
+      "scope": "Normal six-target complete-package installed public Project DELETE and installed upgrade. Separate artifact and observer; does not erase author Desktop failures."
+    },
+    "cleanup": {
+      "finalObservation": {
+        "at": "2026-09-28T23:26:18.885Z",
+        "match": "exact task-root argv or cwd match; scoped TCP listeners",
+        "owned": []
+      },
+      "observationLog": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/resource-observations.jsonl",
+      "pgLaneReleased": true,
+      "nativeLaneReleased": true,
+      "artifactsAndFailedFixturesRetained": true,
+      "scopeLimit": "Recorded argv/cwd-owned process observations and sampled listeners; not a complete lifetime PID/port ledger. No unrelated processes stopped."
+    },
+    "failedFixtureRoots": [
+      "/tmp/rudder-project-delete-fixtures.yGTtYT/rudder-desktop-smoke-bq0Rlx",
+      "/tmp/rudder-project-delete-fixtures.yGTtYT/rudder-desktop-smoke-Skue60",
+      "/tmp/rudder-project-delete-fixtures.yGTtYT/rudder-desktop-smoke-2OlkCW"
+    ],
+    "logs": [
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/computer-use-package.log",
+        "sha256": "bb5b578129f9a450a7c7522348461c28c81e4281570d51cc375204a0dfe597b5"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/dependency-install.log",
+        "sha256": "bf4f4229df7e95db7024dc9a8ba5e4856e1b6353e9466847967ce071f2d45380"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/dependency-rebuild.log",
+        "sha256": "1a71c006cd1a7ede9ac664f26ff988cd0a2ebe49e4063b524ad4c817e10bf1ab"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/desktop-dist.log",
+        "sha256": "b1bb9ea05c1e9f339a689ca7642d41196bc6c8211f90060587d9b8b7c9e13eaf"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/desktop-verify.log",
+        "sha256": "da7e86d79758fc2d6b35be6b06d9987c86ad3ffe10d2f8918d1c8f63bda627c6"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/dev-smoke-dependencies-repaired.log",
+        "sha256": "9f7b9ba68f5f767ef453617f0e7e3d49655eb676e1a3b3af6d5b7e50b4017d30"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/dev-smoke-resumed.log",
+        "sha256": "74fa98deed1ec313195fae3f98ce983c0553e184a45ab43c04a3f969a531a7af"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/electron-install.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/packaged-app-builder.log",
+        "sha256": "8d820a05950c6cf41c8c1112f6f9d7c8bda35c2a6715e73053aa24e8505e2498"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/packaged-smoke.log",
+        "sha256": "152b40c42065122fee72d53f4d3f687a1f466dab3710859df55846d87b7b387d"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/packaged-upgrade.log",
+        "sha256": "a6673c746b14ef118db43c50e246a7edbb3f70a62911c9810ad11996ee68098e"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/postgres-hydrate-correct-cwd.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/postgres-hydrate.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/postgres-initdb-version-repaired.log",
+        "sha256": "7cc645dbf0d02a042c4d8d6e1857048c5fe16fcc0cd2798d27479b71a1510e88"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/postgres-initdb-version.log",
+        "sha256": "a8dcb18a6b1df191af074b124df003c2ced9b6ac8ee66447715c41d196681c07"
+      },
+      {
+        "path": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/resource-observations.jsonl",
+        "sha256": "73b1fce61fceebd196895644da4255c5390b0913450bcd61679acc49fb4a9503"
+      }
+    ],
+    "limits": [
+      "No release/production claim",
+      "No author packaged-upgrade PASS",
+      "desktop:dist finishedAt records runner observation after scheduling pause, not exact physical build completion"
+    ]
+  },
+  "upgrade_correction": {
+    "command": "TMPDIR=/tmp/rudder-project-delete-fixtures.yGTtYT RUDDER_DESKTOP_SMOKE_AUTH_BYPASS=1 RUDDER_DESKTOP_DEBUG_STARTUP=1 node desktop/scripts/smoke.mjs --mode=packaged --scenario=upgrade",
+    "cwd": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/source",
+    "verdict": "PASS",
+    "exit_code": 0,
+    "log": "/tmp/rudder-project-delete-author-9e459a5a.CzGeTZ/logs/packaged-upgrade-marker-fixture.log",
+    "log_sha256": "6b72b032f07191cf889ce72a3d5fb8888c4cd8ef6ee72f434e4ff2b6cfc962c6",
+    "fixture": "/tmp/rudder-project-delete-fixtures.yGTtYT/rudder-desktop-smoke-Iphcsw",
+    "api_port": 50571,
+    "assertions": "board ready, degradeIssueSchema, same-data restart, organization, bundled skills, CEO, Issue, upgrade-repair log, graceful shutdown",
+    "diagnosis": "Original explicit upgrade omitted marker-gated smoke identity mode used by public auto-update. identity-safe-storage-policy documents blocking macOS Keychain before first window; supported fixture flag avoids native vault probe and account gate for this storage-only scenario. No claim of direct stack-sampled NSAlert proof.",
+    "artifact_unchanged": {
+      "portable_sha256": "e1e3965da731efa235fbc93c4c275e816d4ceb82b54cf2cf374528b6461f1010",
+      "source_assertion_timeout_changes": false
+    },
+    "auth_scope": "Requires existing test marker, Rudder-smoke app name and explicit flag. Default packaged account-gate passed separately. Production auth policy unchanged.",
+    "cleanup": "Smoke completed its shutdown; scoped argv check found no fixture-owned process beyond inspection command. Not a lifetime process ledger."
+  },
+  "dev_limit": {
+    "verdict": "FAIL",
+    "reason": "Agent Terminal constrained layout timeout",
+    "source_comparison": "git diff origin/main HEAD -- desktop ui is empty",
+    "runtime_baseline_reproduction": "not_performed",
+    "claim": "No full desktop:verify PASS; bounded disposition requires final reviewer."
+  },
+  "terminal_claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  }
+}

@@ -9,7 +9,9 @@ use actix_web::{
 use base64::Engine;
 pub use rudder_auth_core::{ActorEnvelope, ActorIdentity, VerifiedActor};
 use rudder_auth_core::{NonceReplayGuard, RequestContext, SigningKey};
-use rudder_d1_persistence::{MutationStore, ProjectPatchCommand, StoreError};
+use rudder_d1_persistence::{
+    MutationStore, ProjectDeleteCommand, ProjectPatchCommand, ResultState, StoreError,
+};
 use rudder_organization_mutation_core::{Actor as OrganizationActor, OrganizationBrandingPatch};
 use rudder_project_goal_link_core::{
     GoalSetTargetVerifier, ProjectGoalSetReplacementCommand, ValidatedGoalSetContext,
@@ -54,9 +56,13 @@ pub const ACTOR_ENVELOPE_AUDIENCE: &str = "rudder-server-foundation";
 pub const MEMBER_DIRECTORY_ACTION: &str = "organization.members.directory.read";
 pub const ORGANIZATION_BRANDING_ACTION: &str = "organization.branding.update";
 pub const PROJECT_GOAL_SET_ACTION: &str = "project.goal_set.replace";
+pub const PROJECT_DELETE_ACTION: &str = "project.delete";
 
-const PRIVATE_MUTATION_AUTHORITIES: &[&str] =
-    &["organization_branding", "project_goal_set_replacement"];
+const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
+    "organization_branding",
+    "project_goal_set_replacement",
+    "project_delete",
+];
 
 const DEFAULT_REQUEST_BYTES: usize = 1024 * 1024;
 const DEFAULT_RESPONSE_BYTES: usize = 256 * 1024;
@@ -269,6 +275,20 @@ struct ProjectGoalSetRequest {
     run_id: Option<String>,
     #[serde(default)]
     project_patch: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ProjectDeleteRequest {
+    #[serde(deserialize_with = "deserialize_required_run_id")]
+    run_id: Option<String>,
+}
+
+fn deserialize_required_run_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1630,6 +1650,91 @@ impl AppState {
         }
     }
 
+    async fn project_delete(
+        &self,
+        request: &HttpRequest,
+        org_id: &str,
+        project_id: &str,
+        body: &[u8],
+    ) -> HttpResponse {
+        let Some(idempotency_key) = request
+            .headers()
+            .get(IDEMPOTENCY_KEY_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return self.json_error(StatusCode::BAD_REQUEST, "idempotency_key_required");
+        };
+        let actor = match self.verify_actor_envelope(
+            request,
+            org_id,
+            PROJECT_DELETE_ACTION,
+            Some(idempotency_key),
+            body,
+        ) {
+            Ok(actor) => actor,
+            Err(ActorEnvelopeVerificationError::Unconfigured) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "actor_envelope_unconfigured",
+                );
+            }
+            Err(ActorEnvelopeVerificationError::Invalid) => {
+                return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+            }
+        };
+        let input = match serde_json::from_slice::<ProjectDeleteRequest>(body) {
+            Ok(input) => input,
+            Err(_) => {
+                return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_delete_invalid");
+            }
+        };
+        let Some(store) = self.d1_mutations.as_ref() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        };
+
+        // A durable delete receipt supplies the original fence/version even
+        // after the Project and its fence row have been removed or recreated.
+        let context = match store
+            .project_delete_context_for_idempotency(org_id, project_id, idempotency_key)
+            .await
+        {
+            Ok(context) => context,
+            Err(error) => return self.mutation_error(error),
+        };
+        let actor_kind = match actor.actor().kind.as_str() {
+            "user" => "board",
+            "agent" => "agent",
+            _ => return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid"),
+        };
+        let command = ProjectDeleteCommand {
+            organization_id: org_id.to_owned(),
+            project_id: project_id.to_owned(),
+            actor_kind: actor_kind.to_owned(),
+            actor_id: actor.actor().id.clone(),
+            run_id: input.run_id,
+            idempotency_key: idempotency_key.to_owned(),
+            expected_version: context.expected_version,
+            fence_epoch: context.fence_epoch,
+        };
+
+        match store.project_delete(command).await {
+            Ok(committed) => match committed.receipt.result {
+                ResultState::ProjectDeleted {
+                    project_id: receipt_project_id,
+                    response,
+                } if receipt_project_id == project_id => {
+                    // Return the complete legacy Project snapshot: the generic
+                    // read-response cap must not reject an already committed delete.
+                    HttpResponse::Ok().json(response)
+                }
+                _ => self.mutation_error(StoreError::InvalidReceipt),
+            },
+            Err(error) => self.mutation_error(error),
+        }
+    }
+
     async fn workspace_backups(&self, org_id: &str) -> HttpResponse {
         let DatabaseState::Configured(pool) = &self.database else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
@@ -2061,6 +2166,18 @@ async fn project_goal_set(
         .await
 }
 
+async fn project_delete(
+    state: web::Data<AppState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    route: web::Path<(String, String)>,
+) -> HttpResponse {
+    let (org_id, project_id) = route.into_inner();
+    state
+        .project_delete(&request, &org_id, &project_id, body.as_ref())
+        .await
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -2148,6 +2265,10 @@ impl ServerRuntime {
                 .route(
                     "/api/orgs/{org_id}/projects/{project_id}/goal-set",
                     web::patch().to(project_goal_set),
+                )
+                .route(
+                    "/api/orgs/{org_id}/projects/{project_id}",
+                    web::delete().to(project_delete),
                 )
         })
         .workers(config.workers)
@@ -2435,6 +2556,32 @@ mod tests {
         let state = AppState::new(ServerConfig::default()).unwrap();
         assert_eq!(state.health().status(), StatusCode::OK);
         assert_eq!(state.capabilities().status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn project_delete_body_requires_a_nullable_run_id_and_rejects_extra_fields() {
+        let with_run = serde_json::from_slice::<ProjectDeleteRequest>(
+            br#"{"runId":"60000000-0000-0000-0000-000000000001"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            with_run.run_id.as_deref(),
+            Some("60000000-0000-0000-0000-000000000001")
+        );
+
+        let without_run =
+            serde_json::from_slice::<ProjectDeleteRequest>(br#"{"runId":null}"#).unwrap();
+        assert_eq!(without_run.run_id, None);
+
+        let missing = serde_json::from_slice::<ProjectDeleteRequest>(br#"{}"#).unwrap_err();
+        assert!(missing.to_string().contains("missing field `runId`"));
+        assert!(serde_json::from_slice::<ProjectDeleteRequest>(br#"{"runId":4}"#).is_err());
+        assert!(
+            serde_json::from_slice::<ProjectDeleteRequest>(
+                br#"{"runId":null,"actorId":"untrusted"}"#
+            )
+            .is_err()
+        );
     }
 
     #[actix_web::test]

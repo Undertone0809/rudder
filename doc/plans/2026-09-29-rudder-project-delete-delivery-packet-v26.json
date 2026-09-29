@@ -1,0 +1,205 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rust-project-delete-v26",
+  "status": "acceptance_pending",
+  "owner": {
+    "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
+    "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。",
+    "corrections": [
+      "Publish bounded draft candidates early for CI; merge only qualified increments."
+    ],
+    "non_goals": [
+      "No default writer flip, production migration, release, public listener retirement or new CLI/MCP delete capability."
+    ],
+    "authorization": "implementation | local_integration | publication"
+  },
+  "candidate": {
+    "branch": "codex/d1-default-writer-20260929",
+    "source_ref": "4353c6a4c7391d6f298a06b146026e12a08493df",
+    "source_sha": "4353c6a4c7391d6f298a06b146026e12a08493df",
+    "dirty_fingerprint": "7c82df050488fbb3db636a8b36156eb306e4fa01ab1fc4cdce1f243c51a0987c",
+    "changed_paths": [
+      ".github/workflows/rust-d1-real-entry.yml",
+      "doc/plans/2026-09-29-rust-project-delete-ownership.md",
+      "native/bins/rudder-server-foundation/tests/black_box.rs",
+      "native/crates/d1-persistence/src/lib.rs",
+      "native/crates/d1-persistence/src/project_deletions.rs",
+      "native/crates/d1-persistence/src/transaction.rs",
+      "native/crates/d1-persistence/tests/postgres.rs",
+      "native/crates/migration-core/tests/validation.rs",
+      "native/crates/server-foundation/src/lib.rs",
+      "packages/db/src/client.test.ts",
+      "packages/db/src/migrations/0175_project_delete_receipt_kind.sql",
+      "packages/db/src/migrations/meta/0175_snapshot.json",
+      "packages/db/src/migrations/meta/_journal.json",
+      "packages/db/src/migrations/organization-mutations.test.ts",
+      "packages/db/src/schema/organization_mutations.ts",
+      "scripts/release-compatibility-matrix.mjs",
+      "scripts/release-compatibility-matrix.test.mjs",
+      "scripts/smoke/rust-project-delete-real-entry.test.ts",
+      "scripts/smoke/rust-project-delete-real-entry.ts",
+      "server/src/__tests__/project-routes.test.ts",
+      "server/src/routes/projects.ts",
+      "server/src/services/project-goal-mutation-fence.test.ts",
+      "server/src/services/project-goal-mutation-fence.ts",
+      "server/src/services/projects.ts",
+      "server/src/services/rust-foundation-bridge.test.ts",
+      "server/src/services/rust-foundation-bridge.ts"
+    ],
+    "build": {
+      "id": "server-25f18460-ci-host-1bce70bb",
+      "source_sha": "4353c6a4c7391d6f298a06b146026e12a08493df",
+      "origin_source_sha": "f416c9c748ccef17a6e5be59df4647d760b8d14d",
+      "server_tarball_sha256": "25f18460cde80df151abe43e6a71461d3409cb10951da92d96df2f750484f58c",
+      "foundation_sha256": "1bce70bb252832458ed7f01fc787d7d132d89fefa8b02ab950e1cbef5c408660",
+      "migration_sha256": "c2954cea31a512fc0649de84c0221cb3b5aa93698d31c4e5cb4b6f6cc58b7583",
+      "equivalence": "9e to f416 release metadata/test plus docs; f416 to82a migration validation test only;82a to published head docs only. No runtime rebuild implied."
+    },
+    "runtime": {
+      "id": "independent-full-package-driver-90688-stopped",
+      "source_sha": "4353c6a4c7391d6f298a06b146026e12a08493df",
+      "origin_source_sha": "f416c9c748ccef17a6e5be59df4647d760b8d14d",
+      "equivalence": "9e to f416 release metadata/test plus docs; f416 to82a migration validation test only;82a to published head docs only. No runtime rebuild implied."
+    },
+    "organization_data": {
+      "organization_id": "3a7de813-60b0-4285-b2a7-39f72d9b991a",
+      "data_id": "/private/tmp/rudder-delete-verifier.Cu4yeE/rudder-rust-project-delete-OG5c47"
+    },
+    "workload_fixture": "Disposable linked/resource-bearing Project, scoped agents, Issue FK blocker, large response, audit failure, delayed outbox, recreated UUID, Rust outage.",
+    "budget_lease": {
+      "id": "local-project-delete-v26",
+      "fingerprint": "7c82df050488fbb3db636a8b36156eb306e4fa01ab1fc4cdce1f243c51a0987c",
+      "expires_at": "2026-10-01T00:00:00Z"
+    },
+    "acceptance_packet": {
+      "version": "26.4",
+      "fingerprint": "7c82df050488fbb3db636a8b36156eb306e4fa01ab1fc4cdce1f243c51a0987c",
+      "criteria": [
+        "Unchanged public DELETE and legacy response incl >256KiB and >1MiB; keyed replay exact and unkeyed repeat404.",
+        "Current actor/org authorization including replay; foreign/terminated denied.",
+        "Atomic delete/link cascades/audit/receipt/outbox; FK, audit and receipt storage failure roll back.",
+        "Stale Node remover cannot issue DELETE on Rust-owned Project; Rust outage never falls back.",
+        "Restart with valid deleted-ID receipt succeeds; unknown allowlist ID fails closed.",
+        "Pending outbox survives restart, then actual public WebSocket delivery and published state; recreated UUID untouched.",
+        "No current CLI/MCP delete command exists; do not invent product surface.",
+        "Installed upgrade and applicable packaged verification, independent verifier PASS, final reviewer accept and exact-head CI before merge."
+      ],
+      "state_inventory": []
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "candidate_fingerprint": "7c82df050488fbb3db636a8b36156eb306e4fa01ab1fc4cdce1f243c51a0987c",
+      "source_sha": "4353c6a4c7391d6f298a06b146026e12a08493df",
+      "build_id": "server-25f18460-ci-host-1bce70bb",
+      "runtime_id": "independent-full-package-driver-90688-stopped",
+      "data_id": "/private/tmp/rudder-delete-verifier.Cu4yeE/rudder-rust-project-delete-OG5c47",
+      "packet_version": "26.4",
+      "verdict": "accept",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "scope": "accepted product implementation and test/metadata deltas; exact82a plus16 evidence hashes, tarball and6 installed native hashes independently checked; final verdict awaits separate packaged evidence"
+    },
+    "verifier": {
+      "candidate_fingerprint": "7c82df050488fbb3db636a8b36156eb306e4fa01ab1fc4cdce1f243c51a0987c",
+      "source_sha": "4353c6a4c7391d6f298a06b146026e12a08493df",
+      "build_id": "server-25f18460-ci-host-1bce70bb",
+      "runtime_id": "independent-full-package-driver-90688-stopped",
+      "data_id": "/private/tmp/rudder-delete-verifier.Cu4yeE/rudder-rust-project-delete-OG5c47",
+      "packet_version": "26.4",
+      "verdict": "PASS",
+      "receipt_path": "doc/plans/artifacts/2026-09-29-rudder-project-delete-independent-verifier-v26.json",
+      "scope": "Independent complete-package installed Project DELETE public workflow and installed upgrade; bounded v26 acceptance only",
+      "agent_id": "01a0e90e-d2df-7092-a9a6-4ac0e3d80c1f"
+    },
+    "final_review": {
+      "candidate_fingerprint": "7c82df050488fbb3db636a8b36156eb306e4fa01ab1fc4cdce1f243c51a0987c",
+      "source_sha": "4353c6a4c7391d6f298a06b146026e12a08493df",
+      "build_id": "server-25f18460-ci-host-1bce70bb",
+      "runtime_id": "independent-full-package-driver-90688-stopped",
+      "data_id": "/private/tmp/rudder-delete-verifier.Cu4yeE/rudder-rust-project-delete-OG5c47",
+      "packet_version": "26.4",
+      "verdict": "accept",
+      "agent_id": "01a0e8dd-9320-79b2-8765-b1bbd8204e4c",
+      "scope": "Final bounded4353 runtime acceptance: independent complete-package PASS and corrected packaged upgrade apply through content equivalence. Dev Terminal layout failure is a disclosed bounded non-blocker; aggregate Desktop verify remains FAIL. Fresh exact-head CI and integration preflight still gate merge."
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [
+      "Rebased only successor commit onto 442203954; prior squash-merged member work excluded. No successor code conflict.",
+      "9bc9 first CI planner failed on unchanged compatibility declaration; f416 synchronizes computed migration fingerprint, 176 journal /178SQL; historical declarations untouched.",
+      "f416 native CI failure was stale exact manifest counts;82a test-only correction reviewed and14 validation tests PASS. All six f416 foundation artifact builds and D1 public-entry CI PASS.",
+      "26.4 rebinds build/runtime/data to independent normal six-target complete-package PASS, including actual CI host execution and upgrade; earlier author fixture remains separately attributed."
+    ],
+    "invalidated_receipts": [
+      "Earlier small-fixture author result superseded for large response and outbox delivery."
+    ]
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "main_first",
+    "target_ref": "refs/heads/main",
+    "base_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+    "branch_refs": [
+      "codex/d1-default-writer-20260929"
+    ],
+    "isolation_trigger": "concurrent_write_risk",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss",
+    "patch_tree_sha": "74e50c7b88f59dfeb3e1a1783e68864f070867f8",
+    "expected_old_sha": "4422039540f8926f5021466061f1bbd1b890dd01",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none",
+    "pr": "https://github.com/Undertone0809/rudder/pull/235",
+    "published_head": "0cd278728871b78c27ffa3b9d6f5dab78a6b0b4c"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [],
+    "index_fingerprint_before": "task_owned_22_paths",
+    "index_fingerprint_after": "clean_after_checkpoint",
+    "worktree_fingerprint_before": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+    "worktree_fingerprint_after": "0ba45a2d783dd7a481265b900e18e213bcd97159bdb23bd5c8fc2cf71f244bf8",
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "Original 7b2a checkout untouched; sibling untracked v18 packet preserved; all successor edits checkpointed before explicit --onto rebase."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  },
+  "author_evidence": {
+    "log": "/tmp/rudder-project-delete-recovery.GM92Ny",
+    "log_sha256": "86a661125cd8d484e4d14a64e31a2ae9c4876130aa35a84a3b73d15303f565f5",
+    "verdict": "PASS_author_only",
+    "large_response_bytes": 1180164,
+    "outbox_id": "047c1c1c-5a66-4e66-9f24-643f06234300",
+    "outbox_state": "published",
+    "outbox_attempts": 1,
+    "migration_compatibility": "PASS_preflight_8_historical_fixtures_and19_tests",
+    "native_manifest_validation": "PASS_14_tests_separate_tmp_target_no_database",
+    "db_upgrade_validation": "PASS_two_actual_PG_legacy0102_cases_isolated_globalSetup_disabled",
+    "packaged_evidence": "doc/plans/artifacts/2026-09-29-rudder-project-delete-local-packaged-verification.json",
+    "prior_head_ci": "36496470013: Ubuntu stale migration arrays corrected; Windows watchdog cleanup failure unresolved; Desktop packaged macOS PASS",
+    "4353_equivalence": "Only two exact DB upgrade expectations added since82a, plus delivery docs; runtime content unchanged, independent PASS retained by content equivalence."
+  },
+  "claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  }
+}

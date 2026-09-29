@@ -4,7 +4,7 @@ use rudder_archive_core::create_archive;
 use rudder_server_foundation_core::{
     ACTOR_ENVELOPE_AUDIENCE, ACTOR_ENVELOPE_HEADER, ACTOR_ENVELOPE_REQUEST_ID_HEADER,
     ActorEnvelope, ActorIdentity, IDEMPOTENCY_KEY_HEADER, MEMBER_DIRECTORY_ACTION,
-    ORGANIZATION_BRANDING_ACTION, PROJECT_GOAL_SET_ACTION,
+    ORGANIZATION_BRANDING_ACTION, PROJECT_DELETE_ACTION, PROJECT_GOAL_SET_ACTION,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -685,6 +685,332 @@ async fn project_goal_set_replacement_is_public_atomic_and_recoverable() {
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+async fn project_delete_is_signed_idempotent_receipt_first_and_reauthorizes_replay() {
+    const ORG: &str = "00000000-0000-0000-0000-000000000001";
+    const OTHER_ORG: &str = "00000000-0000-0000-0000-000000000002";
+    const PROJECT: &str = "10000000-0000-0000-0000-000000000001";
+    const OTHER_PROJECT: &str = "10000000-0000-0000-0000-000000000002";
+    const AGENT_PROJECT: &str = "10000000-0000-0000-0000-000000000003";
+    const AGENT: &str = "30000000-0000-0000-0000-000000000001";
+    const SECRET: &str = "project-delete-test-secret";
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&postgres.url)
+        .await
+        .expect("connect project-delete fixture PostgreSQL");
+    sqlx::raw_sql(BRANDING_MUTATION_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install project-delete fixture");
+    sqlx::raw_sql(
+        "ALTER TABLE projects
+           ADD COLUMN name text NOT NULL DEFAULT 'Fixture Project',
+           ADD COLUMN description text,
+           ADD COLUMN status text NOT NULL DEFAULT 'backlog',
+           ADD COLUMN lead_agent_id uuid,
+           ADD COLUMN target_date date,
+           ADD COLUMN color text,
+           ADD COLUMN icon text,
+           ADD COLUMN pause_reason text,
+           ADD COLUMN paused_at timestamptz,
+           ADD COLUMN execution_workspace_policy jsonb NOT NULL DEFAULT '{}'::jsonb,
+           ADD COLUMN archived_at timestamptz,
+           ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
+         ALTER TABLE project_goal_mutation_state
+           ADD CONSTRAINT project_delete_state_project_fk
+           FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
+         ALTER TABLE project_goals
+           ADD CONSTRAINT project_delete_project_goals_project_fk
+           FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+           ADD CONSTRAINT project_delete_project_goals_goal_fk
+           FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE;
+         UPDATE projects
+           SET name='Original Project', status='active', icon='original-icon'
+           WHERE id='10000000-0000-0000-0000-000000000001';
+         INSERT INTO projects (id, org_id, name, status, icon)
+           VALUES ('10000000-0000-0000-0000-000000000003',
+                   '00000000-0000-0000-0000-000000000001',
+                   'Agent Project', 'active', 'agent-icon');
+         INSERT INTO project_goal_mutation_state
+           (project_id, org_id, owner, fence_epoch)
+           VALUES ('10000000-0000-0000-0000-000000000003',
+                   '00000000-0000-0000-0000-000000000001', 'rust', 7);
+         INSERT INTO agents (id, org_id, role, status)
+           VALUES ('30000000-0000-0000-0000-000000000001',
+                   '00000000-0000-0000-0000-000000000001', 'builder', 'idle');
+         CREATE TABLE heartbeat_runs (
+           id uuid PRIMARY KEY,
+           org_id uuid NOT NULL,
+           agent_id uuid NOT NULL
+         );
+         INSERT INTO heartbeat_runs (id, org_id, agent_id)
+           VALUES ('70000000-0000-0000-0000-000000000001',
+                   '00000000-0000-0000-0000-000000000001',
+                   '30000000-0000-0000-0000-000000000001');",
+    )
+    .execute(&pool)
+    .await
+    .expect("prepare project-delete fixture schema and rows");
+
+    let large_description = "x".repeat(1152 * 1024);
+    let medium_description = "y".repeat(320 * 1024);
+    for (project_id, description) in [
+        (PROJECT, &large_description),
+        (AGENT_PROJECT, &medium_description),
+    ] {
+        sqlx::query("UPDATE projects SET description=$1 WHERE id=$2::uuid")
+            .bind(description)
+            .bind(project_id)
+            .execute(&pool)
+            .await
+            .expect("seed description exceeding generic response or receipt limits");
+    }
+
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
+    ]);
+    let route = format!("/api/orgs/{ORG}/projects/{PROJECT}");
+    let body = br#"{"runId":null}"#;
+
+    let missing_key = signed_project_delete_request(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-delete-missing-key",
+            "project-delete-missing-key",
+            body,
+        )
+        .without_idempotency_key(),
+    );
+    assert!(missing_key.starts_with("HTTP/1.1 400"), "{missing_key}");
+    assert!(
+        missing_key.contains("idempotency_key_required"),
+        "{missing_key}"
+    );
+
+    let wrong_action = signed_project_delete_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-delete-wrong-action",
+            "project-delete-wrong-action",
+            body,
+        ),
+        "user",
+        "board-user",
+        "project.remove",
+    );
+    assert!(wrong_action.starts_with("HTTP/1.1 401"), "{wrong_action}");
+    assert!(
+        wrong_action.contains("actor_envelope_invalid"),
+        "{wrong_action}"
+    );
+
+    let invalid_body = signed_project_delete_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-delete-invalid-body",
+        "project-delete-invalid-body",
+        br#"{"runId":null,"actorId":"board-user"}"#,
+    ));
+    assert!(invalid_body.starts_with("HTTP/1.1 422"), "{invalid_body}");
+    assert!(
+        invalid_body.contains("project_delete_invalid"),
+        "{invalid_body}"
+    );
+
+    let cross_org = signed_project_delete_request(SignedRequestOptions::new(
+        bound_addr,
+        &format!("/api/orgs/{OTHER_ORG}/projects/{OTHER_PROJECT}"),
+        ORG,
+        SECRET,
+        "project-delete-cross-org",
+        "project-delete-cross-org",
+        body,
+    ));
+    assert!(cross_org.starts_with("HTTP/1.1 401"), "{cross_org}");
+
+    let first = signed_project_delete_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-delete-first",
+        "project-delete-first",
+        body,
+    ));
+    assert!(first.starts_with("HTTP/1.1 200"), "{first}");
+    let original_project = response_json(&first);
+    assert_eq!(original_project["id"], PROJECT);
+    assert_eq!(original_project["orgId"], ORG);
+    assert_eq!(original_project["name"], "Original Project");
+    assert_eq!(
+        original_project["description"].as_str(),
+        Some(large_description.as_str())
+    );
+    assert!(original_project.get("result").is_none());
+    let exists_after_delete: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1::uuid AND org_id=$2::uuid)",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .fetch_one(&pool)
+    .await
+    .expect("read deleted project state");
+    assert!(!exists_after_delete);
+
+    let conflict = signed_project_delete_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-delete-conflict",
+        "project-delete-first",
+        br#"{"runId":"70000000-0000-0000-0000-000000000001"}"#,
+    ));
+    assert!(conflict.starts_with("HTTP/1.1 409"), "{conflict}");
+    assert!(
+        conflict.contains("mutation_idempotency_conflict"),
+        "{conflict}"
+    );
+
+    sqlx::query(
+        "INSERT INTO projects
+           (id, org_id, name, status, icon, execution_workspace_policy)
+         VALUES ($1::uuid, $2::uuid, 'Replacement Project', 'active',
+                 'replacement-icon', '{}'::jsonb)",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .execute(&pool)
+    .await
+    .expect("recreate project with original id");
+    sqlx::query(
+        "INSERT INTO project_goal_mutation_state
+           (project_id, org_id, owner, mutation_version, fence_epoch)
+         VALUES ($1::uuid, $2::uuid, 'rust', 41, 99)",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .execute(&pool)
+    .await
+    .expect("recreate project mutation fence with a new version");
+    let replay = signed_project_delete_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-delete-replay-after-recreate",
+        "project-delete-first",
+        body,
+    ));
+    assert!(replay.starts_with("HTTP/1.1 200"), "{replay}");
+    assert_eq!(response_json(&replay), original_project);
+    let recreated_name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+        .bind(PROJECT)
+        .fetch_one(&pool)
+        .await
+        .expect("verify replay leaves recreated project untouched");
+    assert_eq!(recreated_name, "Replacement Project");
+
+    let agent_route = format!("/api/orgs/{ORG}/projects/{AGENT_PROJECT}");
+    let agent_body = br#"{"runId":"70000000-0000-0000-0000-000000000001"}"#;
+    let agent_delete = signed_project_delete_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &agent_route,
+            ORG,
+            SECRET,
+            "project-delete-agent-first",
+            "project-delete-agent-first",
+            agent_body,
+        ),
+        "agent",
+        AGENT,
+        PROJECT_DELETE_ACTION,
+    );
+    assert!(agent_delete.starts_with("HTTP/1.1 200"), "{agent_delete}");
+    let agent_snapshot = response_json(&agent_delete);
+    assert_eq!(
+        agent_snapshot["description"].as_str(),
+        Some(medium_description.as_str())
+    );
+    let agent_replay = signed_project_delete_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &agent_route,
+            ORG,
+            SECRET,
+            "project-delete-agent-replay-large-response",
+            "project-delete-agent-first",
+            agent_body,
+        ),
+        "agent",
+        AGENT,
+        PROJECT_DELETE_ACTION,
+    );
+    assert!(agent_replay.starts_with("HTTP/1.1 200"), "{agent_replay}");
+    assert_eq!(response_json(&agent_replay), agent_snapshot);
+    sqlx::query("UPDATE agents SET status='terminated' WHERE id=$1::uuid")
+        .bind(AGENT)
+        .execute(&pool)
+        .await
+        .expect("revoke current agent authority");
+    let revoked_replay = signed_project_delete_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &agent_route,
+            ORG,
+            SECRET,
+            "project-delete-agent-replay-revoked",
+            "project-delete-agent-first",
+            agent_body,
+        ),
+        "agent",
+        AGENT,
+        PROJECT_DELETE_ACTION,
+    );
+    assert!(
+        revoked_replay.starts_with("HTTP/1.1 403"),
+        "{revoked_replay}"
+    );
+    assert!(
+        revoked_replay.contains("mutation_unauthorized"),
+        "{revoked_replay}"
+    );
+
+    for project_id in [PROJECT, AGENT_PROJECT] {
+        let counts: (i64, i64) = sqlx::query_as(
+            "SELECT
+               (SELECT count(*) FROM activity_log
+                WHERE org_id=$1::uuid AND entity_id=$2 AND action='project.deleted'),
+               (SELECT count(*) FROM organization_mutation_outbox o
+                JOIN activity_log a ON a.id=o.activity_id AND a.org_id=o.org_id
+                WHERE a.org_id=$1::uuid AND a.entity_id=$2 AND a.action='project.deleted')",
+        )
+        .bind(ORG)
+        .bind(project_id)
+        .fetch_one(&pool)
+        .await
+        .expect("read audit and outbox counts after large-response replays");
+        assert_eq!(counts, (1, 1), "duplicate delete effects for {project_id}");
+    }
+
+    pool.close().await;
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
 async fn project_patch_accepts_user_wire_board_actor_for_resource_attachment() {
     const ORG: &str = "00000000-0000-0000-0000-000000000001";
     const PROJECT: &str = "10000000-0000-0000-0000-000000000001";
@@ -893,6 +1219,52 @@ fn signed_patch_request_with_action_and_signed_key(
     signed_idempotency_key: Option<&str>,
     action: &str,
 ) -> String {
+    signed_mutation_request_with_actor_and_action_and_signed_key(
+        options,
+        "PATCH",
+        "user",
+        "board-user",
+        action,
+        signed_idempotency_key,
+    )
+}
+
+fn signed_project_delete_request(options: SignedRequestOptions<'_>) -> String {
+    signed_project_delete_request_with_actor_and_action(
+        options,
+        "user",
+        "board-user",
+        PROJECT_DELETE_ACTION,
+    )
+}
+
+fn signed_project_delete_request_with_actor_and_action(
+    options: SignedRequestOptions<'_>,
+    actor_kind: &str,
+    actor_id: &str,
+    action: &str,
+) -> String {
+    let signed_idempotency_key = options
+        .include_idempotency_key
+        .then_some(options.idempotency_key);
+    signed_mutation_request_with_actor_and_action_and_signed_key(
+        options,
+        "DELETE",
+        actor_kind,
+        actor_id,
+        action,
+        signed_idempotency_key,
+    )
+}
+
+fn signed_mutation_request_with_actor_and_action_and_signed_key(
+    options: SignedRequestOptions<'_>,
+    method: &str,
+    actor_kind: &str,
+    actor_id: &str,
+    action: &str,
+    signed_idempotency_key: Option<&str>,
+) -> String {
     let SignedRequestOptions {
         addr,
         route,
@@ -909,12 +1281,12 @@ fn signed_patch_request_with_action_and_signed_key(
         .expect("system clock after Unix epoch")
         .as_secs();
     let unsigned = ActorEnvelope::new(
-        ActorIdentity::new("user", "board-user").expect("test actor"),
+        ActorIdentity::new(actor_kind, actor_id).expect("test actor"),
         claimed_org_id,
         "session-branding",
         1,
         ACTOR_ENVELOPE_AUDIENCE,
-        "PATCH",
+        method,
         route,
         action,
         body,
@@ -946,7 +1318,7 @@ fn signed_patch_request_with_action_and_signed_key(
         .iter()
         .map(|(name, value)| (*name, value.as_str()))
         .collect::<Vec<_>>();
-    http_request_with_body(addr, "PATCH", route, &header_refs, body).expect("mutation request")
+    http_request_with_body(addr, method, route, &header_refs, body).expect("mutation request")
 }
 
 fn signed_member_directory_get(
@@ -1055,7 +1427,11 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
     );
     assert_eq!(
         startup["privateMutationAuthorities"],
-        serde_json::json!(["organization_branding", "project_goal_set_replacement"])
+        serde_json::json!([
+            "organization_branding",
+            "project_goal_set_replacement",
+            "project_delete"
+        ])
     );
     assert_eq!(
         startup["readOnlyAuthorities"],

@@ -67,7 +67,10 @@ async function receipt(
   org: string,
   audit: string,
   key = "synthetic-command",
-  commandKind: "organization_branding" | "project_goal_link" = "organization_branding",
+  commandKind:
+    | "organization_branding"
+    | "project_goal_link"
+    | "project_delete" = "organization_branding",
   fenceEpoch = 0,
 ) {
   return sql.unsafe(
@@ -471,6 +474,17 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     expect(
       await db`SELECT * FROM organization_mutation_receipts WHERE org_id = ${own}`,
     ).toHaveLength(1);
+  });
+
+  it("accepts project deletion in the immutable organization receipt kind constraint", async () => {
+    const org = await organization();
+    const audit = await activity(org);
+    await receipt(db, org, audit, "project-delete", "project_delete", 1);
+
+    expect(
+      await db`SELECT command_kind FROM organization_mutation_receipts
+        WHERE org_id = ${org} AND idempotency_key = 'project-delete'`,
+    ).toEqual([{ command_kind: "project_delete" }]);
   });
 
   it("preserves the old activity-first organization deletion transaction", async () => {

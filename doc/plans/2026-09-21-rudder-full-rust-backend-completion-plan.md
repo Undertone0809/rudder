@@ -46,7 +46,23 @@ updated_at: 2026-09-29
 The bounded D1 private-bridge increment was accepted and merged through PR #225
 at `e2e603f07c7d4b7410fea7792b9a4d0667d3777e`. Delivery records followed in
 PR #232; the independent test-runner increment followed in PR #231. The last
-observed Main is now `e14771c4a0ed642bafd478c18dd1278855be89c5`.
+observed Main is now `4422039540f8926f5021466061f1bbd1b890dd01` (PR #234 records).
+
+The current bounded Project DELETE candidate is `4353c6a4c7391d6f298a06b146026e12a08493df`,
+with runtime content identical to `9e459a5a3204285885c50b08e49915d8a2f38215`,
+rebased onto that Main with packet v26.4. Renewed stage review accepted the
+large-response/receipt rollback repair. Author public API smoke passed complete
+1,180,164-byte response/replay and pending-outbox restart followed by actual
+WebSocket delivery and persisted publication, preserving a recreated UUID.
+Independent normal six-target prepack, fresh install, actual CI host-binary
+workflow and installed upgrade passed. All six foundation artifacts
+and D1 real-entry CI passed on runtime-equivalent f416. Compatibility declaration
+and exact manifest test assertions were corrected without changing runtime code;
+Final review accepted source4353 with the preserved dev Terminal layout failure
+as a bounded non-blocker; aggregate Desktop verification remains FAIL.
+Two stale DB upgrade expectations were corrected and both actual-PG cases passed.
+Fresh exact-head CI, including the prior Windows watchdog cleanup failure, remains required. This does
+not flip default writers or retire Project creation/organization deletion.
 
 PR #233 merged generic installed member-directory reads defaulting to required
 Rust at `e14771c4a0ed642bafd478c18dd1278855be89c5`. Its accepted candidate was
