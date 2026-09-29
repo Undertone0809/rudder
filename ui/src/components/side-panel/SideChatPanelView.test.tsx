@@ -1315,8 +1315,12 @@ describe("SideChatPanelView streaming reconciliation", () => {
         attemptEpoch: 1,
       }));
     });
-    await vi.waitFor(() => expect(latestGenerations?.streamDrafts[streamScopeKey]?.generationId)
-      .toBe(generationId));
+    await vi.waitFor(async () => {
+      // The probe can observe a render before the panel's registration effect
+      // commits. Close through the handler for the committed stream state.
+      await act(async () => { await Promise.resolve(); });
+      expect(latestGenerations?.streamDrafts[streamScopeKey]?.generationId).toBe(generationId);
+    });
 
     const closeHandler = closeHandlers.get(streamScopeKey);
     expect(closeHandler).toBeDefined();

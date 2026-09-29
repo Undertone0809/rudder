@@ -762,6 +762,12 @@ describe("Automations", () => {
     expect(titleInput?.value).toBe("每日回顾");
     expect(runbookInput?.value).toContain("回顾我今天完成的工作");
     expect(runbookInput?.value).toContain("推荐明天优先级最高的行动");
+    // Radix restores trigger focus asynchronously when the template picker
+    // closes. Finish that interaction before opening a different popover.
+    await vi.waitFor(() => {
+      expect(document.body.querySelector('[data-testid="automation-template-picker"]')).toBeNull();
+      expect(document.activeElement).toBe(useTemplateButton);
+    });
     expect(document.body.textContent).toContain("Schedule 0 18 * * *");
     expect(document.body.textContent).toContain("发送到聊天");
 
