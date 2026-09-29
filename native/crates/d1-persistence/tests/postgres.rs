@@ -1,8 +1,9 @@
 mod support;
 
 use rudder_d1_persistence::{
-    MutationStore, Outcome, ProjectDeleteCommand, ProjectPatchCommand, Receipt, ResultState,
-    StoreError,
+    MutationStore, Outcome, ProjectCreateCommand, ProjectCreateProvisionRequest,
+    ProjectCreateProvisioned, ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
+    Receipt, ResultState, StoreError,
 };
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
@@ -19,6 +20,576 @@ use support::{
 };
 
 struct SeedTargets;
+
+#[derive(Default)]
+struct CreateProvisioner {
+    requests: std::sync::Mutex<Vec<ProjectCreateProvisionRequest>>,
+    fail: bool,
+    bind_first_intent: bool,
+}
+
+impl ProjectCreateProvisioner for CreateProvisioner {
+    fn provision<'a>(
+        &'a self,
+        request: &'a ProjectCreateProvisionRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<ProjectCreateProvisioned, StoreError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let mut requests = self.requests.lock().unwrap();
+            let changed_intent = self.bind_first_intent
+                && requests.first().is_some_and(|original| original != request);
+            requests.push(request.clone());
+            if changed_intent {
+                return Err(StoreError::ProvisioningConflict);
+            }
+            if self.fail {
+                return Err(StoreError::Provisioning("synthetic failure".to_owned()));
+            }
+            Ok(ProjectCreateProvisioned {
+                organization_workspace_root: "/synthetic/library".to_owned(),
+            })
+        })
+    }
+}
+
+fn project_create_command(key: &str) -> ProjectCreateCommand {
+    ProjectCreateCommand {
+        organization_id: ORG.to_owned(),
+        actor_kind: "agent".to_owned(),
+        actor_id: CEO.to_owned(),
+        run_id: None,
+        idempotency_key: key.to_owned(),
+        data: json!({"name":"Synthetic project", "goalIds":[GOAL_TWO, GOAL], "goalId":FOREIGN_GOAL,
+            "newResources":[{"name":"Create source", "kind":"file", "locator":"https://example.test/create"}]}),
+        activity_details: json!({"source":"synthetic", "name":"unresolved"}),
+    }
+}
+
+fn created_response(receipt: &Receipt) -> &serde_json::Value {
+    let ResultState::ProjectCreated { response, .. } = &receipt.result else {
+        panic!("create receipt")
+    };
+    response
+}
+
+// This mock tests the SQL boundary when the host rejects a changed intent.
+// Durable filesystem binding, corruption handling, and directory reuse belong
+// to project_library's tests, not this in-memory provisioner.
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_changed_intent_rolls_back_and_committed_replay_skips_hook() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner {
+        bind_first_intent: true,
+        ..Default::default()
+    };
+    let command = project_create_command("create-intent-drift");
+    database.sql("CREATE FUNCTION fail_create_intent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic audit failure'; END; $$;
+        CREATE TRIGGER fail_create_intent_audit_trigger BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_create_intent_audit();").await;
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::Database(_))
+    ));
+    let original = provisioner.requests.lock().unwrap()[0].clone();
+    database.sql("DROP TRIGGER fail_create_intent_audit_trigger ON activity_log; DROP FUNCTION fail_create_intent_audit();").await;
+    let node_project = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let mut node_tx = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT org_id FROM organization_mutation_state WHERE org_id=$1::uuid FOR UPDATE")
+        .bind(ORG)
+        .fetch_one(&mut *node_tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO projects (id,org_id,name) VALUES ($1::uuid,$2::uuid,$3)")
+        .bind(node_project)
+        .bind(ORG)
+        .bind(&original.project_name)
+        .execute(&mut *node_tx)
+        .await
+        .unwrap();
+    node_tx.commit().await.unwrap();
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::ProvisioningConflict)
+    ));
+    let changed = provisioner.requests.lock().unwrap()[1].clone();
+    assert_eq!(changed.project_id, original.project_id);
+    assert_eq!(changed.request_fingerprint, original.request_fingerprint);
+    assert_ne!(changed.project_name, original.project_name);
+    assert_ne!(changed.project_url_key, original.project_url_key);
+    let counts: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM projects WHERE id=$1::uuid),
+         (SELECT count(*) FROM project_goal_mutation_state WHERE project_id=$1::uuid),
+         (SELECT count(*) FROM project_goals WHERE project_id=$1::uuid),
+         (SELECT count(*) FROM organization_resources),
+         (SELECT count(*) FROM organization_mutation_receipts),
+         (SELECT count(*) FROM organization_mutation_outbox), (SELECT count(*) FROM activity_log)",
+    )
+    .bind(&original.project_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(counts, (0, 0, 0, 0, 0, 0, 0));
+    let node_name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+        .bind(node_project)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(node_name, original.project_name);
+    assert_eq!(
+        store.project_scope(node_project).await.unwrap().owner,
+        "node"
+    );
+    // Once the collision disappears, the identical intent can complete.
+    sqlx::query("DELETE FROM projects WHERE id=$1::uuid")
+        .bind(node_project)
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    let committed = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert_eq!(
+        created_response(&committed.receipt)["name"],
+        original.project_name
+    );
+    assert_eq!(provisioner.requests.lock().unwrap()[2], original);
+    let unavailable_hook = CreateProvisioner {
+        fail: true,
+        ..Default::default()
+    };
+    let replay = MutationStore::new(database.pool.clone())
+        .project_create(command, &unavailable_hook)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, committed.receipt);
+    assert!(unavailable_hook.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_goal_precedence_and_scalar_defaults_match_service() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let uppercase_goal = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    sqlx::query(
+        "INSERT INTO goals (id,org_id,title) VALUES ($1::uuid,$2::uuid,'Case insensitive')",
+    )
+    .bind(uppercase_goal)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    for (index, (fields, expected)) in [
+        (json!({}), None),
+        (json!({"goalId":null}), None),
+        (json!({"goalId":GOAL}), Some(GOAL)),
+        (json!({"goalId":FOREIGN_GOAL,"goalIds":[]}), None),
+        (
+            json!({"goalId":FOREIGN_GOAL,"goalIds":[GOAL_TWO]}),
+            Some(GOAL_TWO),
+        ),
+        (
+            json!({"goalId":uppercase_goal.to_uppercase()}),
+            Some(uppercase_goal),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut command = project_create_command(&format!("scalar-parity-{index}"));
+        command.data = fields;
+        command.data["name"] = json!("Parity");
+        command.data["icon"] = serde_json::Value::Null;
+        let result = store.project_create(command, &provisioner).await.unwrap();
+        let response = created_response(&result.receipt);
+        let name = if index == 0 {
+            "Parity".to_owned()
+        } else {
+            format!("Parity {}", index + 1)
+        };
+        assert_eq!(response["name"], name);
+        assert_eq!(response["urlKey"], name.to_lowercase().replace(' ', "-"));
+        assert_eq!(response["goalId"], json!(expected));
+        assert_eq!(
+            response["goalIds"],
+            json!(expected.into_iter().collect::<Vec<_>>())
+        );
+        assert_eq!(
+            response["goals"].as_array().unwrap().len(),
+            usize::from(expected.is_some())
+        );
+        assert_eq!(response["status"], "backlog");
+        assert_eq!(response["icon"], "folder");
+        for key in [
+            "description",
+            "leadAgentId",
+            "targetDate",
+            "pauseReason",
+            "pausedAt",
+            "archivedAt",
+            "executionWorkspacePolicy",
+            "primaryWorkspace",
+        ] {
+            assert!(response[key].is_null(), "{key}");
+        }
+        assert_eq!(response["workspaces"], json!([]));
+        assert_eq!(response["resources"], json!([]));
+        assert_eq!(
+            response["codebase"],
+            json!({"configured":true,"scope":"organization","workspaceId":null,"repoUrl":null,"repoRef":null,"defaultRef":null,"repoName":null,"localFolder":"/synthetic/library","managedFolder":"/synthetic/library","effectiveLocalFolder":"/synthetic/library","origin":"local_folder"})
+        );
+        assert_eq!(response["id"].as_str().unwrap().as_bytes()[14], b'5');
+        if index == 0 {
+            assert_eq!(
+                response["color"],
+                "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)"
+            );
+        }
+        if index == 1 {
+            assert_eq!(
+                response["color"],
+                "linear-gradient(135deg, #7c3aed 0%, #d946ef 100%)"
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_resources_policy_and_codebase_preserve_enriched_service_response() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let library: String = sqlx::query_scalar("INSERT INTO organization_resources (org_id,name,kind,source_type,locator,metadata) VALUES ($1::uuid,'Original resource','file','library','projects/parity/source.md','{\"preserved\":true}') RETURNING id::text")
+        .bind(ORG).fetch_one(&database.pool).await.unwrap();
+    let foreign: String = sqlx::query_scalar("INSERT INTO organization_resources (org_id,name,kind,locator) VALUES ($1::uuid,'Foreign','url','https://example.test/foreign') RETURNING id::text")
+        .bind(OTHER).fetch_one(&database.pool).await.unwrap();
+    let policy = json!({
+        "enabled":true,"defaultMode":"operator_branch","allowIssueOverride":false,
+        "defaultProjectWorkspaceId":null,
+        "workspaceStrategy":{"type":"git_worktree","baseRef":"main","branchTemplate":"work/{issue}","worktreeParentDir":null,"provisionCommand":"setup","teardownCommand":null},
+        "workspaceRuntime":{"nested":[1,null,{"anything":true}]},"branchPolicy":{},
+        "pullRequestPolicy":{"labels":["review"]},"runtimePolicy":{"timeout":42},"cleanupPolicy":null,
+    });
+    let mut command = project_create_command("enriched-parity");
+    command.data = json!({
+        "name":"  文档 Parity  ","description":"  retained description  ","status":"planned",
+        "leadAgentId":CEO,"targetDate":"2026-10-03","color":"#ABCDEF","icon":"folder",
+        "archivedAt":"2026-09-29T01:02:03.456Z","executionWorkspacePolicy":policy,
+        "resourceAttachments":[{"resourceId":library.to_uppercase(),"role":"working_set","note":"  original attachment  ","sortOrder":9,"isPrimary":true}],
+        "newResources":[
+            {"name":"Ignored replacement","kind":"file","sourceType":"library","locator":" projects/parity/source.md ","role":"background","sortOrder":0,"metadata":{"replacement":true}},
+            {"name":"  External  ","kind":"connector_object","locator":"  connector:object  ","description":"   ","metadata":{"deep":[false,null,{"x":"y"}]},"note":"  ","sortOrder":2},
+            {"name":"Directory","kind":"directory","sourceType":"library","locator":"projects/parity","description":" trimmed ","role":"deliverable","sortOrder":3},
+        ],
+    });
+    let created = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    let response = created_response(&created.receipt);
+    assert_eq!(response["name"], "  文档 Parity  ");
+    assert_eq!(response["urlKey"], "parity");
+    for key in [
+        "description",
+        "status",
+        "leadAgentId",
+        "targetDate",
+        "color",
+        "icon",
+        "archivedAt",
+    ] {
+        assert_eq!(response[key], command.data[key], "{key}");
+    }
+    let mut normalized = policy.clone();
+    normalized
+        .as_object_mut()
+        .unwrap()
+        .remove("defaultProjectWorkspaceId");
+    normalized.as_object_mut().unwrap().remove("cleanupPolicy");
+    normalized["workspaceStrategy"]
+        .as_object_mut()
+        .unwrap()
+        .remove("worktreeParentDir");
+    normalized["workspaceStrategy"]
+        .as_object_mut()
+        .unwrap()
+        .remove("teardownCommand");
+    assert_eq!(response["executionWorkspacePolicy"], normalized);
+    let resources = response["resources"].as_array().unwrap();
+    assert_eq!(resources.len(), 3);
+    assert_eq!(resources[0]["resource"]["name"], "External");
+    assert_eq!(resources[0]["resource"]["sourceType"], "external");
+    assert_eq!(resources[0]["resource"]["locator"], "connector:object");
+    assert_eq!(
+        resources[0]["resource"]["metadata"],
+        json!({"deep":[false,null,{"x":"y"}]})
+    );
+    assert!(resources[0]["resource"]["description"].is_null());
+    assert!(resources[0]["note"].is_null());
+    assert_eq!(resources[0]["role"], "reference");
+    assert_eq!(resources[1]["resource"]["description"], "trimmed");
+    assert_eq!(resources[2]["resourceId"], library);
+    assert_eq!(resources[2]["resource"]["name"], "Original resource");
+    assert_eq!(
+        resources[2]["resource"]["metadata"],
+        json!({"preserved":true})
+    );
+    assert_eq!(resources[2]["note"], "original attachment");
+    assert_eq!(resources[2]["role"], "working_set");
+    assert_eq!(resources[2]["isPrimary"], true);
+    for attachment in resources {
+        assert_eq!(attachment["projectId"], response["id"]);
+        assert_eq!(attachment["orgId"], ORG);
+        assert_eq!(attachment["resource"]["orgId"], ORG);
+        for key in ["createdAt", "updatedAt"] {
+            assert!(attachment[key].as_str().unwrap().ends_with('Z'));
+            assert!(attachment["resource"][key].as_str().unwrap().ends_with('Z'));
+        }
+    }
+    assert_eq!(
+        store
+            .project_create(command.clone(), &provisioner)
+            .await
+            .unwrap()
+            .receipt,
+        created.receipt
+    );
+    command.idempotency_key = "foreign-resource-parity".to_owned();
+    command.data["resourceAttachments"] = json!([{"resourceId":foreign}]);
+    assert!(matches!(
+        store.project_create(command, &provisioner).await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    let resource_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_resources WHERE org_id=$1::uuid")
+            .bind(ORG)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(resource_count, 3);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_atomic_response_replay_authorization_and_deleted_incarnation() {
+    let database = Database::start().await;
+    database.sql("UPDATE organization_mutation_state SET owner='node', fence_epoch=fence_epoch+1, fence_token=gen_random_uuid(); UPDATE agents SET role='engineer';").await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let mut command = project_create_command("create-replay");
+    command.data["description"] = json!("x".repeat(1024 * 1024 + 1));
+    let first = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert!(!first.replayed);
+    let response = created_response(&first.receipt);
+    let id = response["id"].as_str().unwrap();
+    assert_eq!(response["name"], "Synthetic project 2");
+    assert_eq!(response["goalId"], GOAL_TWO);
+    assert_eq!(response["goalIds"], json!([GOAL_TWO, GOAL]));
+    assert_eq!(
+        response["description"].as_str().unwrap().len(),
+        1024 * 1024 + 1
+    );
+    assert_eq!(response["resources"].as_array().unwrap().len(), 1);
+    assert_eq!(response["codebase"]["localFolder"], "/synthetic/library");
+    assert_eq!(response["icon"], "folder");
+    let scope = store.project_scope(id).await.unwrap();
+    assert_eq!(
+        (scope.owner.as_str(), scope.version, scope.fence_epoch),
+        ("rust", 1, 1)
+    );
+    let restarted = MutationStore::new(database.pool.clone());
+    let replay = restarted
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(first.receipt, replay.receipt);
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    let details: String =
+        sqlx::query_scalar("SELECT details::text FROM activity_log WHERE id=$1::uuid")
+            .bind(&first.receipt.activity_id)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&details).unwrap(),
+        json!({"source":"synthetic", "name":"Synthetic project 2"})
+    );
+    let mut conflict = command.clone();
+    conflict.data["name"] = json!("Different");
+    assert!(matches!(
+        store.project_create(conflict, &provisioner).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    let mut actor_conflict = command.clone();
+    actor_conflict.actor_kind = "board".to_owned();
+    actor_conflict.actor_id = "different-board".to_owned();
+    assert!(matches!(
+        store.project_create(actor_conflict, &provisioner).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    database.sql("UPDATE agents SET status='terminated'").await;
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::Unauthorized)
+    ));
+    database.sql("UPDATE agents SET status='idle'").await;
+    let mut foreign = command.clone();
+    foreign.organization_id = OTHER.to_owned();
+    assert!(matches!(
+        store.project_create(foreign, &provisioner).await,
+        Err(StoreError::Unauthorized)
+    ));
+    let mut bad_run = command.clone();
+    bad_run.run_id = Some(GOAL.to_owned());
+    assert!(matches!(
+        store.project_create(bad_run, &provisioner).await,
+        Err(StoreError::InvalidInput)
+    ));
+    sqlx::query("DELETE FROM projects WHERE id=$1::uuid")
+        .bind(id)
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted
+            .project_create(command.clone(), &provisioner)
+            .await
+            .unwrap()
+            .receipt,
+        first.receipt
+    );
+    sqlx::query(
+        "INSERT INTO projects (id,org_id,name) VALUES ($1::uuid,$2::uuid,'New incarnation')",
+    )
+    .bind(id)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        restarted
+            .project_create(command, &provisioner)
+            .await
+            .unwrap()
+            .receipt,
+        first.receipt
+    );
+    let name: String = sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+        .bind(id)
+        .fetch_one(&database.pool)
+        .await
+        .unwrap();
+    assert_eq!(name, "New incarnation");
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    assert_eq!(store.project_scope(id).await.unwrap().owner, "node");
+    assert_eq!(database.counts().await, (0, 1, 1));
+    let outbox: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_rolls_back_hook_audit_and_receipt_failures_with_stable_retry_identity() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = project_create_command("create-rollback");
+    let failed_hook = CreateProvisioner {
+        fail: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        store.project_create(command.clone(), &failed_hook).await,
+        Err(StoreError::Provisioning(_))
+    ));
+    let id = failed_hook.requests.lock().unwrap()[0].project_id.clone();
+    let provisioner = CreateProvisioner::default();
+    for table in ["activity_log", "organization_mutation_receipts"] {
+        database.sql(&format!("CREATE FUNCTION fail_create_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic failure'; END; $$;
+            CREATE TRIGGER fail_create_write_trigger BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION fail_create_write();")).await;
+        assert!(matches!(
+            store.project_create(command.clone(), &provisioner).await,
+            Err(StoreError::Database(_))
+        ));
+        assert_eq!(database.counts().await, (0, 0, 0));
+        let counts: (i64,i64,i64,i64,i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM projects WHERE id=$1::uuid),
+             (SELECT count(*) FROM project_goal_mutation_state WHERE project_id=$1::uuid),
+             (SELECT count(*) FROM project_goals WHERE project_id=$1::uuid),
+             (SELECT count(*) FROM organization_resources), (SELECT count(*) FROM organization_mutation_outbox)")
+            .bind(&id).fetch_one(&database.pool).await.unwrap();
+        assert_eq!(counts, (0, 0, 0, 0, 0));
+        database.sql(&format!("DROP TRIGGER fail_create_write_trigger ON {table}; DROP FUNCTION fail_create_write();")).await;
+    }
+    let result = store.project_create(command, &provisioner).await.unwrap();
+    assert_eq!(created_response(&result.receipt)["id"], id);
+    let original = failed_hook.requests.lock().unwrap()[0].clone();
+    assert!(
+        provisioner
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request == &original)
+    );
+    assert_eq!(database.counts().await, (1, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_create_serializes_duplicate_keys_and_mutable_defaults_without_adopting_existing_rows()
+ {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let provisioner = CreateProvisioner::default();
+    let mut command = project_create_command("create-concurrent");
+    command.data = json!({"name":"Plan", "goalIds":[]});
+    let (a, b) = tokio::join!(
+        store.project_create(command.clone(), &provisioner),
+        store.project_create(command.clone(), &provisioner)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_ne!(a.replayed, b.replayed);
+    assert_eq!(a.receipt, b.receipt);
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
+    command.idempotency_key = "create-second".to_owned();
+    let second = store
+        .project_create(command.clone(), &provisioner)
+        .await
+        .unwrap();
+    assert_eq!(created_response(&second.receipt)["name"], "Plan 2");
+    assert_ne!(
+        created_response(&a.receipt)["color"],
+        created_response(&second.receipt)["color"]
+    );
+    command.idempotency_key = "create-existing-id".to_owned();
+    command.data["id"] = json!(PROJECT);
+    assert!(matches!(
+        store.project_create(command.clone(), &provisioner).await,
+        Err(StoreError::Database(_))
+    ));
+    assert_eq!(store.project_scope(PROJECT).await.unwrap().fence_epoch, 7);
+    command.data = json!({"name":"Foreign ref", "goalIds":[FOREIGN_GOAL]});
+    assert!(matches!(
+        store.project_create(command, &provisioner).await,
+        Err(StoreError::InvalidInput)
+    ));
+    assert_eq!(provisioner.requests.lock().unwrap().len(), 2);
+}
 
 impl TargetVerifier for SeedTargets {
     fn target_exists_in_organization(

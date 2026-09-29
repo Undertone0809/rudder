@@ -14,6 +14,8 @@ import {
   lockMessengerOwnerPlacement,
 } from "../services/messenger-saved-views.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
+import type { ProjectCreateContext } from "../services/projects.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const ONBOARDING_PROJECT_NAME = "Getting Started";
 const ONBOARDING_MESSENGER_GROUP_ICON = "folder::teal";
@@ -708,9 +710,9 @@ async function seedGettingStartedMessengerState(
   });
 }
 
-export function onboardingRoutes(db: Db) {
+export function onboardingRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
-  const projects = projectService(db);
+  const projects = projectService(db, rustFoundationBridge);
   const issues = issueService(db);
   const agents = agentService(db);
   const organizations = organizationService(db);
@@ -736,14 +738,17 @@ export function onboardingRoutes(db: Db) {
     let createdProject = false;
 
     if (!project) {
+      const context: ProjectCreateContext = rustFoundationBridge?.projectGoalSetMode === "required"
+        ? { lane: "rust", caller: "onboarding", actor: req.actor, idempotencyKey: req.header("x-rudder-idempotency-key") }
+        : { lane: "node", caller: "onboarding" };
       project = await projects.create(orgId, {
         name: ONBOARDING_PROJECT_NAME,
         status: "planned",
         description: ONBOARDING_PROJECT_DESCRIPTION,
-      });
+      }, context);
       createdProject = true;
 
-      await logActivity(db, {
+      if (context.lane === "node") await logActivity(db, {
         orgId,
         actorType: actor.actorType,
         actorId: actor.actorId,

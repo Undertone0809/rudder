@@ -156,6 +156,7 @@ function bodyError(response: { body: Record<string, unknown> | string }) {
 async function main() {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const requireFromDb = createRequire(path.join(repoRoot, "packages/db/package.json"));
+  const { drizzle } = requireFromDb("drizzle-orm/postgres-js");
   const postgresModule = requireFromDb("postgres") as {
     default?: (...args: any[]) => any;
   } | ((...args: any[]) => any);
@@ -186,7 +187,9 @@ async function main() {
     RUDDER_DEPLOYMENT_MODE: "local_trusted",
     RUDDER_RUST_MEMBER_DIRECTORY_MODE: "off",
     RUDDER_RUST_ORGANIZATION_BRANDING_MODE: "off",
-    RUDDER_RUST_PROJECT_GOAL_SET_MODE: "required",
+    // Create deliberate Node baselines before selected startup handoff. Required
+    // mode now routes public Project creation through the Rust service pilot.
+    RUDDER_RUST_PROJECT_GOAL_SET_MODE: "off",
     RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS: "",
     RUDDER_OPEN_ON_LISTEN: "false",
   });
@@ -298,6 +301,7 @@ async function main() {
     await current.dispose();
     current = null;
     const missingAllowlistProjectId = randomUUID();
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "required";
     process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [
       projectId,
       toolingProjectId,
@@ -349,18 +353,112 @@ async function main() {
     assert.equal(unlistedGoalSet.status, 503);
     assert.equal(
       (unlistedGoalSet.body as { code?: string }).code,
-      "rust_foundation_project_goal_set_not_allowlisted",
+      "rust_foundation_project_goal_set_not_owned",
     );
+
+    // The same unselected Node row remains writable by ordinary clients.
+    const nodeGoalSet = await readResponse(await fetch(`${current.apiUrl}/api/projects/${unlistedProjectId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ goalIds: [goalA] }),
+    }));
+    assert.equal(nodeGoalSet.status, 200, bodyError(nodeGoalSet));
+    assert.deepEqual((nodeGoalSet.body as { goalIds?: string[] }).goalIds, [goalA]);
+
+    // A required-mode public create owns its new UUID without adding it to the
+    // startup adoption list. Later PATCH dispatch follows the persisted owner.
+    const dynamicProjectResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Rust-created unlisted Project-Goal entry" }),
+    }));
+    assert.equal(dynamicProjectResponse.status, 201, bodyError(dynamicProjectResponse));
+    const dynamicProjectId = String((dynamicProjectResponse.body as { id?: string }).id);
+    assert.match(dynamicProjectId, /^[0-9a-f-]{36}$/u);
+    assert.ok(!process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS!.split(",").includes(dynamicProjectId));
+    const dynamicGoalKey = `dynamic-goals-${dynamicProjectId}`;
+    const patchDynamicProject = async (key: string, goalIds: string[]) => readResponse(await fetch(
+      `${current!.apiUrl}/api/projects/${dynamicProjectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "x-rudder-idempotency-key": key },
+        body: JSON.stringify({ goalIds }),
+      },
+    ));
+    const dynamicGoalSet = await patchDynamicProject(dynamicGoalKey, [goalA]);
+    assert.equal(dynamicGoalSet.status, 200, bodyError(dynamicGoalSet));
+    assert.deepEqual((dynamicGoalSet.body as { goalIds?: string[] }).goalIds, [goalA]);
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    const dynamicSnapshot = async () => {
+      const [state, links, counts] = await Promise.all([
+        sql!.unsafe("SELECT s.owner, s.mutation_version::text AS version, s.fence_epoch::text AS epoch, p.goal_id::text AS goal_id "
+          + "FROM project_goal_mutation_state s JOIN projects p ON p.id = s.project_id WHERE s.project_id = $1", [dynamicProjectId]),
+        sql!.unsafe("SELECT goal_id::text AS goal_id FROM project_goals WHERE project_id = $1 ORDER BY goal_id", [dynamicProjectId]),
+        sql!.unsafe("SELECT "
+          + "(SELECT count(*)::text FROM organization_mutation_receipts WHERE org_id = $1 AND result->'result'->>'project_id' = $2::text) AS receipts, "
+          + "(SELECT count(*)::text FROM activity_log WHERE org_id = $1 AND entity_id = $2::text) AS activities, "
+          + "(SELECT count(*)::text FROM organization_mutation_outbox o JOIN activity_log a ON a.id = o.activity_id "
+          + "WHERE a.org_id = $1 AND a.entity_id = $2::text) AS outbox", [organizationId, dynamicProjectId]),
+      ]);
+      return { state: state[0], links: Array.from(links), counts: counts[0] };
+    };
+    const dynamicBeforeRestart = await dynamicSnapshot();
+    assert.equal(dynamicBeforeRestart.state.owner, "rust");
+    assert.deepEqual(dynamicBeforeRestart.links, [{ goal_id: goalA }]);
+
+    // A nontransactional counter catches even a business UPDATE subsequently
+    // rolled back: the old Node service must reject before its first write.
+    await sql.unsafe("CREATE SEQUENCE smoke_project_goal_update_attempts");
+    await sql.unsafe("CREATE FUNCTION smoke_count_project_goal_update() RETURNS trigger LANGUAGE plpgsql AS $$ "
+      + "BEGIN PERFORM nextval('smoke_project_goal_update_attempts'); RETURN NEW; END $$");
+    await sql.unsafe("CREATE TRIGGER smoke_count_project_goal_update BEFORE UPDATE ON projects "
+      + "FOR EACH ROW EXECUTE FUNCTION smoke_count_project_goal_update()");
+    const updateAttempts = async () => (await sql!.unsafe("SELECT last_value::text, is_called FROM smoke_project_goal_update_attempts"))[0];
+    const attemptsBeforeStale = await updateAttempts();
+    const { projectService } = await import("../../server/src/services/projects.js");
+    await assert.rejects(projectService(drizzle(sql) as never).update(dynamicProjectId, { goalIds: [] }), /owned by Rust/i);
+    assert.deepEqual(await updateAttempts(), attemptsBeforeStale, "stale Node service reached a Project business write");
+    assert.deepEqual(await dynamicSnapshot(), dynamicBeforeRestart);
+    await sql.unsafe("DROP TRIGGER smoke_count_project_goal_update ON projects");
+    await sql.unsafe("DROP FUNCTION smoke_count_project_goal_update()");
+    await sql.unsafe("DROP SEQUENCE smoke_project_goal_update_attempts");
+    await sql.end({ timeout: 2 });
+    sql = null;
+
+    // Turning the bridge off must not turn a Rust-owned UUID into a Node write.
+    await current.stop();
+    await current.dispose();
+    current = null;
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "off";
+    current = await start();
+    const dynamicDisabled = await patchDynamicProject(`disabled-${dynamicProjectId}`, []);
+    assert.equal(dynamicDisabled.status, 503);
+    assert.equal((dynamicDisabled.body as { code?: string }).code, "rust_foundation_project_goal_set_disabled");
 
     // A required startup with the same allowlist must be a no-op for rows that
     // already belong to Rust. This is the recovery path after a clean restart.
     await current.stop();
     await current.dispose();
     current = null;
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "required";
     process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [projectId, toolingProjectId, mixedProjectId].join(",");
     current = await start();
     const sameConfigRestartHealth = await readResponse(await fetch(`${current.apiUrl}/api/health`));
     assert.equal(sameConfigRestartHealth.status, 200);
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    assert.deepEqual(await dynamicSnapshot(), dynamicBeforeRestart, "disabled Rust bridge fell back to Node");
+    const dynamicReplay = await patchDynamicProject(dynamicGoalKey, [goalA]);
+    assert.equal(dynamicReplay.status, 200, bodyError(dynamicReplay));
+    assert.deepEqual(dynamicReplay.body, dynamicGoalSet.body);
+    assert.deepEqual(await dynamicSnapshot(), dynamicBeforeRestart, "restart replay wrote a second mutation");
+    const dynamicAfterRestart = await patchDynamicProject(`after-restart-${dynamicProjectId}`, [goalB]);
+    assert.equal(dynamicAfterRestart.status, 200, bodyError(dynamicAfterRestart));
+    assert.deepEqual((dynamicAfterRestart.body as { goalIds?: string[] }).goalIds, [goalB]);
+    const dynamicFinalSnapshot = await dynamicSnapshot();
+    assert.equal(dynamicFinalSnapshot.state.owner, "rust");
+    assert.equal(BigInt(dynamicFinalSnapshot.state.version), BigInt(dynamicBeforeRestart.state.version) + 1n);
+    assert.deepEqual(dynamicFinalSnapshot.links, [{ goal_id: goalB }]);
+    await sql.end({ timeout: 2 });
+    sql = null;
 
     const agentResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/agents`, {
       method: "POST",
@@ -1503,6 +1601,15 @@ async function main() {
       sameConfigRestartHealthStatus: sameConfigRestartHealth.status,
       unlistedProjectId,
       unlistedProjectStatus: unlistedGoalSet.status,
+      unlistedProjectRejection: (unlistedGoalSet.body as { code?: string }).code,
+      nodeGoalSetStatus: nodeGoalSet.status,
+      dynamicProjectId,
+      dynamicGoalSetStatus: dynamicGoalSet.status,
+      dynamicDisabledStatus: dynamicDisabled.status,
+      dynamicReplayStatus: dynamicReplay.status,
+      dynamicAfterRestartStatus: dynamicAfterRestart.status,
+      dynamicFinalSnapshot,
+      staleNodeWriterRejectedBeforeWrite: true,
       toolingCounts: toolingCounts[0],
       firstStatus: first.status,
       replayStatus: replay.status,

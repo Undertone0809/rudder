@@ -4,7 +4,8 @@ use rudder_archive_core::create_archive;
 use rudder_server_foundation_core::{
     ACTOR_ENVELOPE_AUDIENCE, ACTOR_ENVELOPE_HEADER, ACTOR_ENVELOPE_REQUEST_ID_HEADER,
     ActorEnvelope, ActorIdentity, IDEMPOTENCY_KEY_HEADER, MEMBER_DIRECTORY_ACTION,
-    ORGANIZATION_BRANDING_ACTION, PROJECT_DELETE_ACTION, PROJECT_GOAL_SET_ACTION,
+    ORGANIZATION_BRANDING_ACTION, PROJECT_CREATE_ACTION, PROJECT_DELETE_ACTION,
+    PROJECT_GOAL_SET_ACTION,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1011,6 +1012,411 @@ async fn project_delete_is_signed_idempotent_receipt_first_and_reauthorizes_repl
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+async fn project_create_is_signed_library_ready_idempotent_and_reauthorizes_replay() {
+    const ORG: &str = "00000000-0000-0000-0000-000000000001";
+    const OTHER_ORG: &str = "00000000-0000-0000-0000-000000000002";
+    const AGENT: &str = "30000000-0000-0000-0000-000000000001";
+    const RUN: &str = "70000000-0000-0000-0000-000000000001";
+    const SECRET: &str = "project-create-test-secret";
+
+    let filesystem = TempDir::new().expect("create project Library fixture");
+    let organization_root = filesystem.path().join("organization-workspace");
+    let state_root = filesystem.path().join("instance-data");
+    fs::create_dir_all(&organization_root).expect("create organization workspace root");
+    fs::create_dir_all(&state_root).expect("create Project create state root");
+
+    let postgres = PostgresHarness::start();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&postgres.url)
+        .await
+        .expect("connect project-create fixture PostgreSQL");
+    sqlx::raw_sql(BRANDING_MUTATION_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install project-create base fixture");
+    sqlx::raw_sql(PROJECT_CREATE_FIXTURE_SQL)
+        .execute(&pool)
+        .await
+        .expect("install project-create schema and actor fixture");
+
+    let (child, stdout, bound_addr) = spawn_server(&[
+        ("RUDDER_NATIVE_DATABASE_URL", postgres.url.as_str()),
+        ("RUDDER_NATIVE_DATABASE_REQUIRED", "true"),
+        ("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET),
+        ("RUDDER_NATIVE_MAX_RESPONSE_BYTES", "128"),
+    ]);
+    let route = format!("/api/orgs/{ORG}/projects");
+    let description = "x".repeat(1024);
+    let data = serde_json::json!({
+        "name": "Pilot Project",
+        "description": description.clone(),
+        "goalIds": [],
+        "newResources": [{
+            "name": "Design reference",
+            "kind": "url",
+            "sourceType": "external",
+            "locator": "https://example.invalid/design",
+            "role": "reference"
+        }]
+    });
+    let body = project_create_body(
+        data.clone(),
+        serde_json::Value::Null,
+        &organization_root,
+        &state_root,
+    );
+
+    let missing_key = signed_project_create_request(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-create-missing-key",
+            "project-create-missing-key",
+            &body,
+        )
+        .without_idempotency_key(),
+    );
+    assert!(missing_key.starts_with("HTTP/1.1 400"), "{missing_key}");
+    assert!(
+        missing_key.contains("idempotency_key_required"),
+        "{missing_key}"
+    );
+
+    let wrong_action = signed_project_create_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-create-wrong-action",
+            "project-create-wrong-action",
+            &body,
+        ),
+        "user",
+        "board-user",
+        PROJECT_DELETE_ACTION,
+    );
+    assert!(wrong_action.starts_with("HTTP/1.1 401"), "{wrong_action}");
+
+    let cross_org = signed_project_create_request(SignedRequestOptions::new(
+        bound_addr,
+        &format!("/api/orgs/{OTHER_ORG}/projects"),
+        ORG,
+        SECRET,
+        "project-create-cross-org",
+        "project-create-cross-org",
+        &body,
+    ));
+    assert!(cross_org.starts_with("HTTP/1.1 401"), "{cross_org}");
+
+    let client_root = project_create_body(
+        serde_json::json!({
+            "name": "Untrusted Root",
+            "organizationWorkspaceRoot": organization_root.to_string_lossy().into_owned(),
+        }),
+        serde_json::Value::Null,
+        &organization_root,
+        &state_root,
+    );
+    let nested_root = signed_project_create_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-create-nested-root",
+        "project-create-nested-root",
+        &client_root,
+    ));
+    assert!(nested_root.starts_with("HTTP/1.1 422"), "{nested_root}");
+    assert!(
+        nested_root.contains("project_create_invalid"),
+        "{nested_root}"
+    );
+
+    let first = signed_project_create_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-create-first",
+        "project-create-first",
+        &body,
+    ));
+    assert!(first.starts_with("HTTP/1.1 201"), "{first}");
+    let snapshot = response_json(&first);
+    let project_id = snapshot["id"].as_str().expect("created project id");
+    assert_eq!(snapshot["orgId"], ORG);
+    assert_eq!(snapshot["name"], "Pilot Project");
+    assert_eq!(snapshot["description"], description);
+    assert_eq!(snapshot["urlKey"], "pilot-project");
+    assert_eq!(snapshot["shortRef"], format!("prj_{}", &project_id[..8]));
+    assert_eq!(snapshot["goalIds"], serde_json::json!([]));
+    assert_eq!(snapshot["goals"], serde_json::json!([]));
+    assert_eq!(snapshot["resources"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        snapshot["resources"][0]["resource"]["name"],
+        "Design reference"
+    );
+    assert_eq!(snapshot["workspaces"], serde_json::json!([]));
+    assert!(snapshot["primaryWorkspace"].is_null());
+    assert_eq!(
+        snapshot["codebase"]["localFolder"],
+        organization_root.to_string_lossy().as_ref()
+    );
+    assert!(snapshot.get("result").is_none());
+    let (_, response_body) = first.split_once("\r\n\r\n").expect("create response body");
+    assert!(
+        response_body.len() > 128,
+        "response cap must not replace the committed Project response"
+    );
+
+    let project_library = organization_root.join("projects/pilot-project");
+    assert!(project_library.join("README.md").is_file());
+    fs::remove_dir_all(&project_library).expect("remove only the temporary fixture Library");
+    let replay = signed_project_create_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-create-replay",
+        "project-create-first",
+        &body,
+    ));
+    assert!(replay.starts_with("HTTP/1.1 201"), "{replay}");
+    assert_eq!(response_json(&replay), snapshot);
+    assert!(
+        !project_library.exists(),
+        "receipt replay must not write Library files"
+    );
+
+    let changed_body = project_create_body(
+        serde_json::json!({
+            "name": "Pilot Project",
+            "description": "different request",
+            "goalIds": []
+        }),
+        serde_json::Value::Null,
+        &organization_root,
+        &state_root,
+    );
+    let idempotency_conflict = signed_project_create_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-create-idempotency-conflict",
+        "project-create-first",
+        &changed_body,
+    ));
+    assert!(
+        idempotency_conflict.starts_with("HTTP/1.1 409"),
+        "{idempotency_conflict}"
+    );
+    assert!(
+        idempotency_conflict.contains("mutation_idempotency_conflict"),
+        "{idempotency_conflict}"
+    );
+    assert!(
+        !project_library.exists(),
+        "a conflict must not reprovision the Library"
+    );
+
+    let intent_conflict_key = "project-create-intent-conflict";
+    let org_hash = format!("{:x}", Sha256::digest(ORG.as_bytes()));
+    let key_hash = format!("{:x}", Sha256::digest(intent_conflict_key.as_bytes()));
+    let intent_path = state_root
+        .join("project-create-intents")
+        .join(org_hash)
+        .join(format!("{key_hash}.json"));
+    fs::create_dir_all(intent_path.parent().unwrap()).expect("create prior intent directory");
+    fs::write(
+        &intent_path,
+        serde_json::to_vec(&serde_json::json!({
+            "org_id": ORG,
+            "command_id": intent_conflict_key,
+            "request_fingerprint": "prior-fingerprint",
+            "project_id": "prior-project-id",
+            "project_name": "Prior Name",
+            "project_url_key": "prior-name",
+            "organization_root": organization_root.to_string_lossy().into_owned(),
+        }))
+        .unwrap(),
+    )
+    .expect("write prior command intent");
+    let intent_conflict_body = project_create_body(
+        serde_json::json!({ "name": "Intent Drift Project", "goalIds": [] }),
+        serde_json::Value::Null,
+        &organization_root,
+        &state_root,
+    );
+    let intent_conflict = signed_project_create_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-create-intent-conflict-request",
+        intent_conflict_key,
+        &intent_conflict_body,
+    ));
+    assert!(
+        intent_conflict.starts_with("HTTP/1.1 409"),
+        "{intent_conflict}"
+    );
+    assert!(
+        intent_conflict.contains("project_create_intent_conflict"),
+        "{intent_conflict}"
+    );
+    let intent_conflict_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM projects WHERE org_id=$1::uuid AND name='Intent Drift Project'",
+    )
+    .bind(ORG)
+    .fetch_one(&pool)
+    .await
+    .expect("verify intent conflict rolled back Project insert");
+    assert_eq!(intent_conflict_rows, 0);
+    assert!(
+        !organization_root
+            .join("projects/intent-drift-project")
+            .exists()
+    );
+
+    let missing_state_root = filesystem.path().join("missing-instance-data");
+    let provisioning_failure_body = project_create_body(
+        serde_json::json!({ "name": "Provisioning Failure", "goalIds": [] }),
+        serde_json::Value::Null,
+        &organization_root,
+        &missing_state_root,
+    );
+    let provisioning_failure = signed_project_create_request(SignedRequestOptions::new(
+        bound_addr,
+        &route,
+        ORG,
+        SECRET,
+        "project-create-provisioning-failure",
+        "project-create-provisioning-failure",
+        &provisioning_failure_body,
+    ));
+    assert!(
+        provisioning_failure.starts_with("HTTP/1.1 500"),
+        "{provisioning_failure}"
+    );
+    assert!(
+        provisioning_failure.contains("project_library_provisioning_failed"),
+        "{provisioning_failure}"
+    );
+    let failed_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM projects WHERE org_id=$1::uuid AND name='Provisioning Failure'",
+    )
+    .bind(ORG)
+    .fetch_one(&pool)
+    .await
+    .expect("verify provisioning failure rolled back Project insert");
+    assert_eq!(failed_rows, 0);
+    assert!(
+        !organization_root
+            .join("projects/provisioning-failure")
+            .exists()
+    );
+
+    let invalid_run_body = project_create_body(
+        serde_json::json!({ "name": "Invalid Run Project", "goalIds": [] }),
+        serde_json::json!("70000000-0000-0000-0000-000000000099"),
+        &organization_root,
+        &state_root,
+    );
+    let invalid_run = signed_project_create_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-create-invalid-run",
+            "project-create-invalid-run",
+            &invalid_run_body,
+        ),
+        "agent",
+        AGENT,
+        PROJECT_CREATE_ACTION,
+    );
+    assert!(invalid_run.starts_with("HTTP/1.1 422"), "{invalid_run}");
+    assert!(
+        !organization_root
+            .join("projects/invalid-run-project")
+            .exists()
+    );
+
+    let agent_body = project_create_body(
+        serde_json::json!({ "name": "Agent Project", "goalIds": [] }),
+        serde_json::json!(RUN),
+        &organization_root,
+        &state_root,
+    );
+    let agent_create = signed_project_create_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-create-agent-first",
+            "project-create-agent-first",
+            &agent_body,
+        ),
+        "agent",
+        AGENT,
+        PROJECT_CREATE_ACTION,
+    );
+    assert!(agent_create.starts_with("HTTP/1.1 201"), "{agent_create}");
+    sqlx::query("UPDATE agents SET status='terminated' WHERE id=$1::uuid")
+        .bind(AGENT)
+        .execute(&pool)
+        .await
+        .expect("revoke current agent authority");
+    let revoked_replay = signed_project_create_request_with_actor_and_action(
+        SignedRequestOptions::new(
+            bound_addr,
+            &route,
+            ORG,
+            SECRET,
+            "project-create-agent-replay-revoked",
+            "project-create-agent-first",
+            &agent_body,
+        ),
+        "agent",
+        AGENT,
+        PROJECT_CREATE_ACTION,
+    );
+    assert!(
+        revoked_replay.starts_with("HTTP/1.1 403"),
+        "{revoked_replay}"
+    );
+    assert!(
+        revoked_replay.contains("mutation_unauthorized"),
+        "{revoked_replay}"
+    );
+
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log
+         WHERE org_id=$1::uuid AND entity_id=$2 AND action='project.created'",
+    )
+    .bind(ORG)
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .expect("read Project create audit count");
+    assert_eq!(
+        audit_count, 1,
+        "receipt replay must not duplicate create audit"
+    );
+
+    pool.close().await;
+    stop_server(child, stdout);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
 async fn project_patch_accepts_user_wire_board_actor_for_resource_attachment() {
     const ORG: &str = "00000000-0000-0000-0000-000000000001";
     const PROJECT: &str = "10000000-0000-0000-0000-000000000001";
@@ -1236,6 +1642,50 @@ fn signed_project_delete_request(options: SignedRequestOptions<'_>) -> String {
         "board-user",
         PROJECT_DELETE_ACTION,
     )
+}
+
+fn signed_project_create_request(options: SignedRequestOptions<'_>) -> String {
+    signed_project_create_request_with_actor_and_action(
+        options,
+        "user",
+        "board-user",
+        PROJECT_CREATE_ACTION,
+    )
+}
+
+fn signed_project_create_request_with_actor_and_action(
+    options: SignedRequestOptions<'_>,
+    actor_kind: &str,
+    actor_id: &str,
+    action: &str,
+) -> String {
+    let signed_idempotency_key = options
+        .include_idempotency_key
+        .then_some(options.idempotency_key);
+    signed_mutation_request_with_actor_and_action_and_signed_key(
+        options,
+        "POST",
+        actor_kind,
+        actor_id,
+        action,
+        signed_idempotency_key,
+    )
+}
+
+fn project_create_body(
+    data: Value,
+    run_id: Value,
+    organization_workspace_root: &Path,
+    project_create_state_root: &Path,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "runId": run_id,
+        "data": data,
+        "activityDetails": {"source": "black-box"},
+        "organizationWorkspaceRoot": organization_workspace_root.to_string_lossy().into_owned(),
+        "projectCreateStateRoot": project_create_state_root.to_string_lossy().into_owned(),
+    }))
+    .expect("serialize signed Project create body")
 }
 
 fn signed_project_delete_request_with_actor_and_action(
@@ -3013,6 +3463,72 @@ INSERT INTO goals (id, org_id, name) VALUES
 INSERT INTO project_goals (project_id, goal_id, org_id) VALUES
   ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),
   ('10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002');
+"#;
+
+const PROJECT_CREATE_FIXTURE_SQL: &str = r#"
+ALTER TABLE projects
+  ADD COLUMN name text NOT NULL DEFAULT 'Fixture Project',
+  ADD COLUMN description text,
+  ADD COLUMN status text NOT NULL DEFAULT 'backlog',
+  ADD COLUMN lead_agent_id uuid,
+  ADD COLUMN target_date date,
+  ADD COLUMN color text,
+  ADD COLUMN icon text,
+  ADD COLUMN pause_reason text,
+  ADD COLUMN paused_at timestamptz,
+  ADD COLUMN execution_workspace_policy jsonb,
+  ADD COLUMN archived_at timestamptz,
+  ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE goals ADD COLUMN title text;
+UPDATE goals SET title=name;
+ALTER TABLE goals ALTER COLUMN title SET NOT NULL;
+CREATE TABLE organization_resources (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  name text NOT NULL,
+  kind text NOT NULL,
+  source_type text NOT NULL,
+  locator text NOT NULL,
+  description text,
+  metadata jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE project_resource_attachments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  project_id uuid NOT NULL,
+  resource_id uuid NOT NULL,
+  role text NOT NULL,
+  note text,
+  sort_order integer NOT NULL,
+  is_primary boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE FUNCTION project_create_fixture_state() RETURNS trigger AS $$
+BEGIN
+  INSERT INTO project_goal_mutation_state
+    (project_id, org_id, owner, mutation_version, fence_epoch)
+  VALUES (NEW.id, NEW.org_id, 'node', 0, 0);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER project_create_fixture_state_trigger
+  BEFORE INSERT ON projects
+  FOR EACH ROW EXECUTE FUNCTION project_create_fixture_state();
+CREATE TABLE heartbeat_runs (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  agent_id uuid NOT NULL
+);
+INSERT INTO agents (id, org_id, role, status)
+  VALUES ('30000000-0000-0000-0000-000000000001',
+          '00000000-0000-0000-0000-000000000001', 'builder', 'idle');
+INSERT INTO heartbeat_runs (id, org_id, agent_id)
+  VALUES ('70000000-0000-0000-0000-000000000001',
+          '00000000-0000-0000-0000-000000000001',
+          '30000000-0000-0000-0000-000000000001');
 "#;
 
 const MEMBER_DIRECTORY_FIXTURE_SQL: &str = r#"

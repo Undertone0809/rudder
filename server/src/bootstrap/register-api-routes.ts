@@ -95,7 +95,7 @@ export function registerApiRoutes(
   api.use(appBuilderRoutes(db, {
     onAppChanged: (orgId) => pluginProjectionService.syncLocalApps(orgId),
   }));
-  api.use(onboardingRoutes(db));
+  api.use(onboardingRoutes(db, rustFoundationBridge));
   api.use(productAnalyticsRoutes(db));
   api.use(issueRoutes(db, opts.storageService));
   api.use(messengerRoutes(db));

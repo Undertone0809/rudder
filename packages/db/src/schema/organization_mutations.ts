@@ -68,6 +68,7 @@ export const organizationMutationReceipts = pgTable(
         | "project_goal_link"
         | "project_goal_set_replacement"
         | "project_delete"
+        | "project_create"
       >()
       .notNull(),
     commandFingerprint: text("command_fingerprint").notNull(),
@@ -102,7 +103,7 @@ export const organizationMutationReceipts = pgTable(
     ),
     kindCheck: check(
       "organization_mutation_receipts_kind_ck",
-      sql`${table.commandKind} in ('organization_branding', 'project_goal_link', 'project_goal_set_replacement', 'project_delete')`,
+      sql`${table.commandKind} in ('organization_branding', 'project_goal_link', 'project_goal_set_replacement', 'project_delete', 'project_create')`,
     ),
     outcomeCheck: check(
       "organization_mutation_receipts_outcome_ck",

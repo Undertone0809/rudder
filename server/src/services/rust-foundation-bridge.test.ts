@@ -68,7 +68,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.method === "DELETE") {
+    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -79,6 +79,7 @@ if (mode === "invalid") {
           body: Buffer.concat(chunks).toString("utf8"),
         }));
         res.setHeader("content-type", "application/json");
+        if (req.method === "POST") res.statusCode = 201;
         res.end(JSON.stringify({ status: "accepted" }));
       });
       return;
@@ -556,6 +557,20 @@ describe("rust foundation bridge lifecycle", () => {
         idempotencyKey: "goal-set-client-key",
       }, signer);
 
+      const createData = { name: "Project", goalIds: [] };
+      const createRoots = { organizationWorkspaceRoot: "/fixture/org", projectCreateStateRoot: "/fixture/instance/data" };
+      const createResponse = await bridge.projectCreate(goalSetActor, "org-1", createData, "create-key", {}, createRoots);
+      expect(createResponse.status).toBe(201);
+      expectEnvelopeSignedWith(await fixture.readRequest(), {
+        actor: goalSetActor,
+        organizationId: "org-1",
+        method: "POST",
+        path: "/api/orgs/org-1/projects",
+        action: "project.create",
+        body: Buffer.from(JSON.stringify({ runId: null, data: createData, activityDetails: {}, ...createRoots })),
+        idempotencyKey: "create-key",
+      }, signer);
+
       process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY = "changed-before-bridge-restart";
       await bridge.close();
       await bridge.start();
@@ -733,6 +748,41 @@ describe("rust foundation bridge lifecycle", () => {
       mode: "off",
       projectGoalSetMode: "invalid" as never,
     })).toThrow("RUDDER_RUST_PROJECT_GOAL_SET_MODE");
+  });
+
+  it("binds Project creation actor/run, payload, trusted roots and key to the captured signer", async () => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "required" });
+    const actor = { type: "agent", source: "agent_key", agentId: "agent-1", orgId: "org-1", runId: "run-1" } as const;
+    const data = { name: "Release", goalIds: [], organizationWorkspaceRoot: "/untrusted" };
+    const roots = { organizationWorkspaceRoot: "/trusted/org", projectCreateStateRoot: "/trusted/instance/data" };
+    const activityDetails = { source: "fixture" };
+    const response = await bridge.projectCreate(actor, "org-1", data, " create-key ", activityDetails, roots);
+    expect(response.status).toBe(201);
+    const captured = await fixture.readRequest();
+    const body = Buffer.from(JSON.stringify({ runId: "run-1", data, activityDetails, ...roots }));
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("/api/orgs/org-1/projects");
+    expect(captured.body).toBe(body.toString());
+    expect(captured.headers["x-rudder-idempotency-key"]).toBe("create-key");
+    expectEnvelopeSignedWith(captured, {
+      actor, organizationId: "org-1", method: "POST", path: captured.url,
+      action: "project.create", body, idempotencyKey: "create-key",
+    }, "bridge-test-secret");
+  });
+
+  it.each(["off", "shadow"] as const)("rejects Project creation in %s mode before startup", async (projectGoalSetMode) => {
+    const bridge = createRustFoundationBridge({ databaseUrl: "", mode: "off", projectGoalSetMode });
+    await expect(bridge.projectCreate({ type: "board", source: "local_implicit" }, "org-1", { name: "Release" }, "key", {},
+      { organizationWorkspaceRoot: "/trusted/org", projectCreateStateRoot: "/trusted/data" }))
+      .rejects.toMatchObject({ code: "request_failed" });
+  });
+
+  it("propagates Project creation startup failure", async () => {
+    const bridge = createRustFoundationBridge({ databaseUrl: "", mode: "off", projectGoalSetMode: "required" });
+    await expect(bridge.projectCreate({ type: "board", source: "local_implicit" }, "org-1", { name: "Release" }, "key", {},
+      { organizationWorkspaceRoot: "/trusted/org", projectCreateStateRoot: "/trusted/data" }))
+      .rejects.toMatchObject({ code: "database_unconfigured" });
   });
 
   it("binds Project DELETE to the signed private bridge contract", async () => {

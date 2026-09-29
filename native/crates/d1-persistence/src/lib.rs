@@ -1,14 +1,16 @@
 //! Private SQLx persistence for fenced D1 mutation contracts.
 //!
-//! This crate is deliberately inert: it has no routes, listeners, ownership
-//! acquisition, or Node integration. A caller must supply a command that has
-//! already crossed the corresponding trusted core boundary. The adapter only
-//! persists that command when PostgreSQL says Rust owns the organization fence.
+//! This crate has no routes, listeners, or Node integration. A caller must
+//! supply a command that crossed the trusted core boundary. Existing entities
+//! require their durable Rust ownership fence; creation assigns ownership only
+//! to the newly inserted Project under the shared organization mutex.
 
 mod branding;
 mod goal_sets;
 mod links;
+mod project_creations;
 mod project_deletions;
+pub mod project_library;
 mod project_patches;
 mod transaction;
 
@@ -23,10 +25,16 @@ use serde_json::Value;
 use sqlx::{PgPool, Row};
 use thiserror::Error;
 
+pub use project_creations::{
+    ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
+    ProjectCreateProvisioner,
+};
+
 const COMMAND_KIND_BRANDING: &str = "organization_branding";
 const COMMAND_KIND_PROJECT_GOAL_LINK: &str = "project_goal_link";
 const COMMAND_KIND_PROJECT_GOAL_SET: &str = "project_goal_set_replacement";
 const COMMAND_KIND_PROJECT_DELETE: &str = "project_delete";
+const COMMAND_KIND_PROJECT_CREATE: &str = "project_create";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +89,10 @@ pub enum ResultState {
         state_integrity: String,
     },
     ProjectDeleted {
+        project_id: String,
+        response: Value,
+    },
+    ProjectCreated {
         project_id: String,
         response: Value,
     },
@@ -156,6 +168,10 @@ pub enum StoreError {
     InvalidInput,
     #[error("invalid project resource input")]
     InvalidResource,
+    #[error("project Library provisioning failed: {0}")]
+    Provisioning(String),
+    #[error("project Library create intent conflicts with its original binding")]
+    ProvisioningConflict,
     #[error("legacy primary-goal projection is inconsistent")]
     InvalidProjection,
     #[error("organization mutation version is stale")]
@@ -184,6 +200,22 @@ pub struct MutationStore {
 impl MutationStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Create a Rust-owned Project and its complete response atomically. The
+    /// required hook establishes synchronous Library readiness before commit;
+    /// durable receipt replay never invokes it again.
+    pub async fn project_create(
+        &self,
+        command: ProjectCreateCommand,
+        provisioner: &dyn ProjectCreateProvisioner,
+    ) -> Result<CommittedMutation, StoreError> {
+        let input = project_creations::Input::parse(&command.data)?;
+        let metadata = transaction::Metadata::project_create(&command)?;
+        let mut tx = transaction::begin(&self.pool).await?;
+        let result =
+            project_creations::apply(&mut tx, command, input, &metadata, provisioner).await;
+        transaction::finish(tx, result).await
     }
 
     /// Read the current organization fence before constructing an opaque
@@ -501,4 +533,8 @@ pub(crate) const fn project_goal_set_kind() -> &'static str {
 
 pub(crate) const fn project_delete_kind() -> &'static str {
     COMMAND_KIND_PROJECT_DELETE
+}
+
+pub(crate) const fn project_create_kind() -> &'static str {
+    COMMAND_KIND_PROJECT_CREATE
 }

@@ -470,7 +470,10 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
             reason: planProject.reason,
           });
         } else {
-          const created = await projects.create(targetOrganization.id, projectPatch);
+          const created = await projects.create(targetOrganization.id, projectPatch, {
+            lane: "node",
+            caller: "import",
+          });
           projectId = created.id;
           importedSlugToProjectId.set(planProject.slug, created.id);
           existingProjectSlugToId.set(created.urlKey, created.id);

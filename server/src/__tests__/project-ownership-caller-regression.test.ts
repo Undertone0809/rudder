@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { onboardingRoutes } from "../routes/onboarding.js";
 import { createOrganizationPortabilityImportHandlers } from "../services/knowledge-portability/organization-portability.import.js";
+import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
+import { HttpError } from "../errors.js";
 
 const onboardingMocks = vi.hoisted(() => ({
   agents: { list: vi.fn() },
@@ -77,7 +79,7 @@ function createOnboardingDb() {
   };
 }
 
-async function createOnboardingServer(db: Record<string, unknown>) {
+async function createOnboardingServer(db: Record<string, unknown>, bridge?: RustFoundationBridge) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -88,7 +90,7 @@ async function createOnboardingServer(db: Record<string, unknown>) {
     };
     next();
   });
-  app.use("/api", onboardingRoutes(db as never));
+  app.use("/api", onboardingRoutes(db as never, bridge));
   app.use(errorHandler);
   const server = app.listen(0, "127.0.0.1");
   activeServers.add(server);
@@ -201,6 +203,54 @@ describe("Project ownership-aware callers", () => {
       server.close((error) => error ? reject(error) : resolve());
     })));
     activeServers.clear();
+  });
+
+  it("selects the explicit Node import lane before creation", async () => {
+    const { handlers, projects } = createPortabilityHandlers("rust", createImportPlan({ projectAction: "create" }));
+    projects.create.mockResolvedValue({ id: "project-1", orgId: "org-1", name: "Project", urlKey: "project" });
+    const result = await handlers.importBundle({
+      source: { type: "inline", rootPath: "bundle", files: {} },
+      include: { organization: false, agents: false, projects: true, issues: false, skills: false },
+      target: { mode: "existing_organization", orgId: "org-1" },
+      collisionStrategy: "replace",
+    } as never, "user-1");
+    expect(result.projects).toEqual([expect.objectContaining({ id: "project-1", action: "created" })]);
+    expect(projects.create).toHaveBeenCalledWith("org-1", expect.objectContaining({ name: "Project" }), {
+      lane: "node", caller: "import",
+    });
+  });
+
+  it.each(["node", "rust"] as const)("creates onboarding through the trusted %s lane and continues seeding", async (lane) => {
+    onboardingMocks.projects.list.mockResolvedValue([]);
+    onboardingMocks.projects.create.mockResolvedValue({ id: "project-1", orgId: "org-1", name: "Getting Started" });
+    onboardingMocks.agents.list.mockResolvedValue([]);
+    onboardingMocks.issues.create.mockImplementation(async (_orgId, input) => ({ ...input, id: "issue-1", identifier: "T-1" }));
+    onboardingMocks.issues.followIssue.mockResolvedValue(undefined);
+    const bridge = { projectGoalSetMode: lane === "rust" ? "required" : "off" } as RustFoundationBridge;
+    const server = await createOnboardingServer(createOnboardingDb(), bridge);
+    const response = await request(server).post("/api/orgs/org-1/onboarding/getting-started")
+      .set("x-rudder-idempotency-key", "onboarding-key").send({ includeTutorial: false });
+    expect(response.status).toBe(201);
+    expect(onboardingMocks.projects.create).toHaveBeenCalledWith("org-1", expect.objectContaining({ name: "Getting Started" }),
+      lane === "rust"
+        ? { lane, caller: "onboarding", actor: { type: "board", source: "local_implicit", userId: "user-1" }, idempotencyKey: "onboarding-key" }
+        : { lane, caller: "onboarding" });
+    expect(onboardingMocks.issues.create).toHaveBeenCalledOnce();
+    const createAudits = onboardingMocks.logActivity.mock.calls.filter(([, entry]) => entry.action === "project.created");
+    expect(createAudits).toHaveLength(lane === "node" ? 1 : 0);
+  });
+
+  it("stops onboarding after a Rust creation failure without fallback or follow-up writes", async () => {
+    onboardingMocks.projects.list.mockResolvedValue([]);
+    onboardingMocks.projects.create.mockRejectedValue(new HttpError(503, "Rust unavailable"));
+    const db = createOnboardingDb();
+    const server = await createOnboardingServer(db, { projectGoalSetMode: "required" } as RustFoundationBridge);
+    const response = await request(server).post("/api/orgs/org-1/onboarding/getting-started").send({ includeTutorial: false });
+    expect(response.status).toBe(503);
+    expect(onboardingMocks.projects.create).toHaveBeenCalledOnce();
+    expect(onboardingMocks.issues.create).not.toHaveBeenCalled();
+    expect(onboardingMocks.logActivity).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
   });
 
   it("keeps Rust-owned scalar Project updates available to portability import", async () => {
