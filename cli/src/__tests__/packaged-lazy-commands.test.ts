@@ -1,6 +1,6 @@
 import { build, type BuildOptions } from "esbuild";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -46,6 +46,42 @@ it("emits lazy commands that reach validation from the built CLI without startin
       expect(result.status).toBe(1);
       expect(result.stdout + result.stderr).toContain(error);
       expect(result.stdout + result.stderr).not.toContain("Cannot find module");
+    }
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+it("preserves thin-install help and the full-runtime diagnostic without database dependencies", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "rudder-cli-thin-package-"));
+  try {
+    const { default: config } = await import(pathToFileURL(path.join(cliRoot, "esbuild.config.mjs")).href) as {
+      default: BuildOptions;
+    };
+    await build({ ...config, absWorkingDir: cliRoot, outdir: path.join(fixture, "dist") });
+    const packageJson = await readFile(path.join(cliRoot, "package.json"), "utf8");
+    await writeFile(path.join(fixture, "package.json"), packageJson);
+    const pkg = JSON.parse(packageJson) as { dependencies: Record<string, string> };
+    // Expose only declared production dependencies. In particular there is no
+    // @rudderhq/db and no TypeScript loader in this child process.
+    for (const name of Object.keys(pkg.dependencies)) {
+      const destination = path.join(fixture, "node_modules", name);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await symlink(path.join(cliRoot, "node_modules", name), destination,
+        process.platform === "win32" ? "junction" : "dir");
+    }
+    for (const args of [["--help"], ["db:backup"], ["worktree", "init", "--name", "thin-probe"]]) {
+      const result = spawnSync(process.execPath, [path.join(fixture, "dist/index.js"), ...args], {
+        cwd: fixture,
+        env: { ...process.env, NODE_OPTIONS: "", RUDDER_HOME: path.join(fixture, "home"), RUDDER_CONFIG: path.join(fixture, "absent.json"), NO_COLOR: "1" },
+        encoding: "utf8", timeout: 20_000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(args[0] === "--help" ? 0 : 1);
+      if (args[0] !== "--help") {
+        expect(result.stdout + result.stderr).toContain("Run it from a Rudder source checkout or a full runtime install.");
+        expect(result.stdout + result.stderr).not.toContain("Cannot find package");
+      }
     }
   } finally {
     await rm(fixture, { recursive: true, force: true });
