@@ -84,10 +84,15 @@ product change or a passing workflow claim. The rerun reached the public API
 after all 179 migrations but Project Create returned HTTP 500. Early draft
 PR #236 (`606c729df`) reproduced that failure in CI run `36505621372` inside
 the Project-Goal smoke. Rust now provisions the missing instance data directory
-in source `aef29616e`; 25 native project cases pass, with public replay pending.
+in source `aef29616e`; 25 native project cases and the complete macOS author
+HTTP/CLI/MCP/restart/auth/outage smoke pass. Source `a683918a8` freezes the
+test corrections for MCP short references and real provisioning I/O failure;
+the exact native create PostgreSQL case and Delete real-entry regression pass.
 The same source fixes Windows existing-README-directory error parity and a stale
 startup capability expectation. Packet v27 retains the failures and pending
-independent gates. Platform/build CI continues
+independent gates. Stage implementation review accepts; the final small fixture
+classification refresh, installed verifier and final review remain pending.
+Platform/build CI continues
 in parallel, without treating those results as public workflow acceptance.
 
 PR #233 merged generic installed member-directory reads defaulting to required

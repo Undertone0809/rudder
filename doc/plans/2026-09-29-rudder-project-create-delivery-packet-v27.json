@@ -21,18 +21,20 @@
   },
   "candidate": {
     "branch": "codex/project-create-pilot-20260929",
-    "source_ref": "aef29616e24a515436167dfd992e56e9309d02fe",
-    "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
-    "dirty_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
-    "source_tree": "bc67d190b3726247f96e73038324faefa8f650c0",
-    "frozen": false,
+    "source_ref": "a683918a834bc19d0d468b4b141cba5cd9679500",
+    "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+    "dirty_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+    "source_tree": "a6baf82b97b6ed829247ef439343380b1eb2156a",
+    "frozen": true,
     "build": {
       "id": "pending-frozen-installed-build",
-      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe"
+      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "origin_source_sha": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+      "equivalence": "692 to a683 changes only native black-box fixture and author MCP assertion; entire runtime source is identical."
     },
     "runtime": {
       "id": "pending-independent-runtime",
-      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe"
+      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500"
     },
     "organization_data": {
       "organization_id": null,
@@ -40,8 +42,8 @@
     },
     "workload_fixture": "Project Create HTTP/CLI/MCP/onboarding, preserved import/worktree merge, shared Library files, intent crash recovery, audit/receipt rollback, owner routing and outbox replay.",
     "acceptance_packet": {
-      "version": "27.1",
-      "fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
+      "version": "27.2",
+      "fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
       "criteria": [
         "public-entry-parity: HTTP201 legacy shape/defaults; CLI/MCP create with empty/multiple goals; goalIds precedence over goalId; board onboarding creates once, preserves caller metadata and current actor/run.",
         "resources: Existing scoped resource attachments and supported newResources atomically created; foreign references rejected with no durable effects.",
@@ -50,44 +52,45 @@
         "intent-identity: Same key/request reuses UUID/resolved path after precommit failure. Changed request/root/resolved identity409 without second project path or changed durable command state.",
         "atomic-db: Project, Rust owner/epoch, goals/resources/attachments, audit, receipt and outbox commit together. Independently force audit and receipt storage failures; verify whole snapshots, org version and retry. Allowed residual FS artifacts retained, no rollback-cleanup claim.",
         "crash-recovery: Owned precommit crash/provision failure then restart/retry; postcommit acknowledgement loss then receipt replay; avoid fabricated deterministic failpoints.",
-        "receipt-no-fs: Same-key replay exact response and single audit/outbox; changed intent409; current actor/org/run reauthorization. After Project deletion, replay creates no Project/FS and preserves new same-name/UUID incarnation and user files.",
+        "receipt-no-fs: Same-key replay exact response and single audit/outbox; changed intent409; current actor/org/run reauthorization. After Project deletion, replay creates no Project or Project-specific filesystem artifacts; Node organization-layout preparation remains outside this claim and preserves new same-name/UUID incarnation and user files.",
         "outbox: Actual public WS activity.logged and persisted published record; pending across restart then delivery once by dedupe identity, no delayed mutation of recreated content.",
-        "dynamic-ownership: Generated Rust-owned ID immediately PATCH/goals/DELETE routes by stored owner, without predeclared allowlist; repeat after restart; stale Node writes rejected and outage no fallback.",
+        "dynamic-ownership: Generated Rust-owned ID immediately PATCH/goals/DELETE routes by stored owner, without predeclared allowlist; repeat after restart; stale Node writes rejected and outage no fallback. Default-off creates remain explicitly Node-owned; existing Rust ownership fails closed when required authority is disabled.",
         "preserved-node-lanes: Real import remains explicit Node lane, preserving source-org CEO/run delegation semantics and no new per-Project import audits. Real worktree merge commits complete Node-owned transaction; failures atomic; later Node route still works.",
-        "scope-failures: Foreign org, terminated/current caller, stale run and invalid references rejected; no receipt disclosure, DB write or unauthorized projectFS.",
+        "scope-failures: Foreign org, terminated/current caller, stale run and invalid references rejected; no receipt disclosure, DB write or unauthorized projectFS. Public data cannot choose trusted roots or caller lane; root/lane spoofing cannot redirect files or select Node fallback.",
         "size-and-latency: Representative large supported payload and name/path edge cases; preserve response/replay; record lock-held provisioning timing without inventing performance budget.",
         "installed-upgrade-cleanup: Normal six-target package/fresh install; upgrade isolated predecessor data; preserve unrelated state. Record actual roots/PIDs/ports/IDs, restore own hidden assets and stop only owned processes."
       ],
       "state_inventory": []
-    }
+    },
+    "freeze_scope": "Source frozen; artifact/runtime/data identity binding pending, not execution acceptance."
   },
   "receipts": {
     "reviewer": {
       "verdict": "pending",
-      "candidate_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
-      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
+      "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
       "build_id": "pending-frozen-installed-build",
       "runtime_id": "pending-independent-runtime",
       "data_id": "pending-independent-data-lease",
-      "packet_version": "27.1"
+      "packet_version": "27.2"
     },
     "verifier": {
       "verdict": "pending",
-      "candidate_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
-      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
+      "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
       "build_id": "pending-frozen-installed-build",
       "runtime_id": "pending-independent-runtime",
       "data_id": "pending-independent-data-lease",
-      "packet_version": "27.1"
+      "packet_version": "27.2"
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
-      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
+      "candidate_fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+      "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
       "build_id": "pending-frozen-installed-build",
       "runtime_id": "pending-independent-runtime",
       "data_id": "pending-independent-data-lease",
-      "packet_version": "27.1"
+      "packet_version": "27.2"
     }
   },
   "drift": {
@@ -107,7 +110,7 @@
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
-    "patch_tree_sha": "bc67d190b3726247f96e73038324faefa8f650c0",
+    "patch_tree_sha": "a6baf82b97b6ed829247ef439343380b1eb2156a",
     "expected_old_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
     "cas": {
       "attempted": false,
@@ -138,9 +141,9 @@
   "publication": {
     "pr": "https://github.com/Undertone0809/rudder/pull/236",
     "draft": true,
-    "published_head": "606c729df58c138b39b6a6df505105944361ced7",
-    "matrix_run": 36505621311,
-    "real_entry_run": 36505621372
+    "published_head": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+    "matrix_run": 36506924872,
+    "real_entry_run": 36506924875
   },
   "author_evidence": {
     "scope": "Not independent acceptance",
@@ -151,19 +154,30 @@
       "19 release compatibility cases",
       "Private HTTP create and scoped PostgreSQL checks",
       "Smoke parser tests and workflow actionlint",
-      "Fresh-instance root recovery fix:25 native project unit cases PASS; corrected capabilities exact black-box case PASS."
+      "Fresh-instance root recovery fix:25 native project unit cases PASS; corrected capabilities exact black-box case PASS.",
+      "Full macOS public create smokePASS: HTTP/actual CLI/MCP/restart/owner routing/auth/outage; durable author receipt recorded.",
+      "Delete real-entry regressionPASS incl large response, FK parity, outbox restart and no fallback.",
+      "Corrected exact native create blackboxPASS against real PostgreSQL; first absent data leaf succeeds, absent instance parent IO500 rolls back."
     ],
     "failures": [
       "Initial public smoke could not load embedded PostgreSQL ICU dependency symlinks; official isolated dependency hydration repaired startup.",
       "Public basic create reached actual API after all179 migrations but returned500. CI36505621372 reproduced create500 inside goal smoke; root cause investigation pending.",
       "606c CI Windows existing README-directory parity test failed with OS error5. aef narrows existing-directory preservation to Windows error5; Windows rerun pending."
     ],
-    "repairs": "aef provisions absent instance/data durably in Rust and preserves existing Windows README directories; public rerun pending. Prior606c six-platform binaries cannot qualify changed runtime."
+    "repairs": "aef runtime repairs qualified by author macOS public smoke. a683 test-only correction retains MCP shortref contract and tests real provisioning IO failure. Windows rerun and independent installed acceptance remain pending.",
+    "receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json",
+    "delete_regression": "/tmp/rudder-goal-delete-queued.nzFPBz/results.md"
   },
-  "next_executable": "Push aef source plus records to draft PR236; finish public smoke/stage findings; freeze only after corrections and installed build/data binding.",
+  "next_executable": "Publish a683 plus records for final CI; finish stage delta refresh, bind prepared installed artifacts/data, then authorize independent verifier on frozen source.",
   "terminal_claims": {
     "implementation_complete": false,
     "release_ready": false,
     "production_verified": false
+  },
+  "stage_review": {
+    "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+    "verdict": "accept",
+    "scope": "Implementation stage on692 plus MCP/native fixture deltas; final fixture classification refresh pending.",
+    "correction": "Initial stage paragraph incorrectly described file-root as500. Actual PG returned422 InvalidInput; retain product mapping. Final fixture uses absent instance parent to exercise IO500 and asserts SQL rollback/no Project files/no invented instance parent; exact actual-PG testPASS."
   }
 }

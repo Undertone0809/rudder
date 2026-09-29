@@ -5,19 +5,24 @@ status: in_progress
 current_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   branch: codex/project-create-pilot-20260929
-  source_sha: aef29616e24a515436167dfd992e56e9309d02fe
-  source_tree: bc67d190b3726247f96e73038324faefa8f650c0
-  source_fingerprint: 7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113
+  source_sha: a683918a834bc19d0d468b4b141cba5cd9679500
+  source_tree: a6baf82b97b6ed829247ef439343380b1eb2156a
+  source_fingerprint: adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa
   origin_main: 89859a26b002828a61faf7a542d8f07d3b522884
-  state: Project_Create_local_checkpoint_not_frozen_or_independently_accepted
+  state: Project_Create_source_frozen_author_smoke_PASS_installed_identity_binding_and_independent_gates_pending
   runtime_equivalence: rebase_preserved_all_non_plan_content_from72b6e620e
   plan: doc/plans/2026-09-29-rust-project-create-service-pilot.md
   packet: doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json
   publication: PR236_DRAFT_published_early_for_CI_not_acceptance
   pr: https://github.com/Undertone0809/rudder/pull/236
-  published_head: 606c729df58c138b39b6a6df505105944361ced7
-  ci: {matrix: 36505621311, matrix_status: in_progress, D1: 36505621372, D1_status: FAIL_public_create500_in_goal_smoke}
-  active_failure: public_Create500_missing_instance_data_repaired_in_Rust_aef25_unit_PASS_public_replay_pending
+  published_head: 692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f
+  ci: {matrix: 36506924872, matrix_status: in_progress, D1: 36506924875, D1_status: Branding_and_Goal_PASS_Create_FAIL_stale_MCP_UUID_assertion_corrected_locally}
+  prior_ci: {matrix: 36505621311, matrix_status: superseded_cancelled_with_recorded_failures, D1: 36505621372, D1_status: FAIL_public_create500_in_goal_smoke}
+  author_public_smoke: PASS_HTTP_CLI_MCP_Library_restart_owner_routing_scope_denial_outage_no_fallback_macOS_only
+  author_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json
+  active_failure: native_blackbox_obsolete_failure_fixture_replaced_with_missing_instance_parent_IO500_actual_PG_PASS
+  stage_review: Halley_accept_implementation_small_fixture_classification_refresh_pending
+  regression: Delete_real_entry_PASS_goal_CI_PASS_create_actual_PG_PASS
   native_CI_findings: stale_private_capabilities_expectation_fixed_local_exact_test_PASS_Windows_existing_README_directory_ACCESS_DENIED_fixed_pending_Windows_CI
   next_executable: resolve_public_smoke_and_stage_findings_then_freeze_for_independent_installed_verifier
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
@@ -74,7 +79,7 @@ next_candidate_preparation:
   remaining_Node_authority: public_HTTP_auth_organization_root_preparation_import_worktree_merge_and_other_writers
   author_checks: Node73_server_typecheck_native23_unit_migration14_releaseMatrix19_privateHTTP1_and_scoped_realPG_PASS_not_integrated_acceptance
   recovery_review: Halley_initial_reject_partial_final_intent_poisoning_repaired_atomic_no_replace_bounded_static_accept
-  integrated_checks: native_private_HTTP_PASS_real_public500_missing_data_fixed_native25_PASS_public_rerun_pending_not_accepted
+  integrated_checks: native25_PASS_author_public_HTTP_CLI_MCP_PASS_independent_installed_verifier_pending
   verifier_preparation: /tmp/rudder-create-verifier.DSx0ST/prospective-packet.json
   verifier_state: prepared_only_no_execution_no_PASS
   preserved_untracked: doc/plans/2026-09-23-rudder-installed-member-directory-delivery-packet-v18.json

@@ -99,13 +99,23 @@ not. Rust now durably creates that single directory below the existing trusted
 instance parent using the same platform-specific intent-directory publication
 logic. It rejects an existing file, absent instance parent, or workspace-contained
 state path without replacing user data. Twenty-five project unit cases pass;
-the rebuilt binary is awaiting public workflow replay. CI also caught one stale
+the rebuilt binary passed full macOS public HTTP/CLI/MCP/restart/auth/outage
+smoke and Delete regression. CI also caught one stale
 startup capability expectation; adding `project_create` restored its exact local
 black-box check. Windows CI additionally exposed CREATE_NEW returning access
 denied for an existing README directory. Source `aef29616e` preserves that entry
 only for Windows error 5 plus a confirmed existing directory; unrelated access
 errors still propagate. Windows rerun is required. All failures remain in the
 candidate evidence history.
+
+Source `a683918a8` freezes two test corrections without changing runtime source:
+MCP returns an intentional typed short reference, checked against its persisted
+UUID/owner; the native failure fixture now uses an absent instance parent to
+exercise genuine I/O 500. An absent data leaf is supported, and an existing
+file root correctly returns invalid-input 422, so neither is an I/O-500 fixture.
+The corrected actual-PostgreSQL black-box case passes, including SQL rollback,
+no Project files and no invented instance parent. Stage implementation review
+accepted; its stale file-root/500 description is being refreshed explicitly.
 
 Hilbert rejected the earlier prerequisite-heavy schedule, recommending reuse
 of existing fences and a service-path pilot. Hilbert accepted the revised proposal
