@@ -6,6 +6,26 @@ import type { Config } from "../config.js";
 const startupSource = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
 
 describe("Rust member directory supported startup wiring", () => {
+  it("passes the required member read default without enabling D1 writers", () => {
+    const config = {
+      companyDeletionEnabled: true,
+      rustFoundationMode: "required",
+      rustOrganizationBrandingMode: "off",
+      rustProjectGoalSetMode: "off",
+    } as Config;
+
+    expect(createRudderAppStartupOptions(config, "postgres://active-db", true)).toEqual({
+      authReady: true,
+      companyDeletionEnabled: true,
+      databaseUrl: "postgres://active-db",
+      rustFoundationMode: "required",
+      rustOrganizationBrandingMode: "off",
+      rustProjectGoalSetMode: "off",
+      rustFoundationBinaryPath: undefined,
+      rustFoundationActorEnvelopeKey: undefined,
+    });
+  });
+
   it("passes active database and explicit bridge config through startup exactly once", () => {
     const config = {
       companyDeletionEnabled: true,

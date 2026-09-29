@@ -1,7 +1,8 @@
 mod support;
 
 use rudder_d1_persistence::{
-    MutationStore, Outcome, ProjectPatchCommand, Receipt, ResultState, StoreError,
+    MutationStore, Outcome, ProjectDeleteCommand, ProjectPatchCommand, Receipt, ResultState,
+    StoreError,
 };
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
@@ -178,6 +179,19 @@ fn project_patch_command(patch: serde_json::Value, version: u64, key: &str) -> P
         expected_version: version,
         fence_epoch: 7,
         patch,
+    }
+}
+
+fn project_delete_command(version: u64, fence_epoch: u64, key: &str) -> ProjectDeleteCommand {
+    ProjectDeleteCommand {
+        organization_id: ORG.to_owned(),
+        project_id: PROJECT.to_owned(),
+        actor_kind: "board".to_owned(),
+        actor_id: "board-user".to_owned(),
+        run_id: None,
+        idempotency_key: key.to_owned(),
+        expected_version: version,
+        fence_epoch,
     }
 }
 
@@ -878,6 +892,311 @@ async fn project_goal_set_replacement_rolls_back_business_projection_receipt_and
         .unwrap();
     assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
     assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_delete_large_response_survives_fence_cascade_restart_and_uuid_reuse() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let description = "large Project description\n".repeat(64 * 1024);
+    assert!(description.len() > 1024 * 1024);
+    sqlx::query("UPDATE projects SET description=$2 WHERE id=$1::uuid")
+        .bind(PROJECT)
+        .bind(&description)
+        .execute(&database.pool)
+        .await
+        .unwrap();
+    let command = project_delete_command(0, 7, "project-delete-replay");
+    let deleted = store.project_delete(command.clone()).await.unwrap();
+
+    assert!(!deleted.replayed);
+    assert_eq!(deleted.receipt.version, 1);
+    assert_eq!(deleted.receipt.fence_epoch, 7);
+    match &deleted.receipt.result {
+        ResultState::ProjectDeleted {
+            project_id,
+            response,
+        } => {
+            assert_eq!(project_id, PROJECT);
+            assert_eq!(response["id"], PROJECT);
+            assert_eq!(response["icon"], "folder");
+            assert_eq!(response["urlKey"], "synthetic-project");
+            assert_eq!(response["description"], description);
+        }
+        result => panic!("unexpected project delete result: {result:?}"),
+    }
+
+    let project_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1::uuid AND org_id=$2::uuid)",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let project_fence_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM project_goal_mutation_state WHERE project_id=$1::uuid)",
+    )
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert!(!project_exists);
+    assert!(!project_fence_exists);
+
+    let receipt_result: String = sqlx::query_scalar(
+        "SELECT result::text FROM organization_mutation_receipts
+         WHERE org_id=$1::uuid AND idempotency_key=$2 AND command_kind='project_delete'",
+    )
+    .bind(ORG)
+    .bind("project-delete-replay")
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert!(receipt_result.len() > 1024 * 1024);
+    let receipt_result: serde_json::Value = serde_json::from_str(&receipt_result).unwrap();
+    assert_eq!(receipt_result["result"]["kind"], "project_deleted");
+    assert_eq!(receipt_result["result"]["project_id"], PROJECT);
+
+    let outbox = sqlx::query(
+        "SELECT event_type, state, payload::text AS payload
+         FROM organization_mutation_outbox WHERE activity_id=$1::uuid",
+    )
+    .bind(&deleted.receipt.activity_id)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        outbox.try_get::<String, _>("event_type").unwrap(),
+        "activity.logged"
+    );
+    assert_eq!(outbox.try_get::<String, _>("state").unwrap(), "pending");
+    let payload: String = outbox.try_get("payload").unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(payload["action"], "project.deleted");
+    assert_eq!(payload["entityId"], PROJECT);
+
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activity_log WHERE org_id=$1::uuid AND action='project.deleted'",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
+
+    sqlx::query(
+        "INSERT INTO projects (id, org_id, name) VALUES ($1::uuid, $2::uuid, 'Replacement')",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    database
+        .sql(
+            "UPDATE project_goal_mutation_state
+             SET owner='rust', fence_epoch=8, fence_token=gen_random_uuid()
+             WHERE project_id='20000000-0000-4000-8000-000000000001'",
+        )
+        .await;
+
+    // A new store instance has no process-local deletion state to rely on.
+    let restarted_store = MutationStore::new(database.pool.clone());
+    let context = restarted_store
+        .project_delete_context_for_idempotency(ORG, PROJECT, "project-delete-replay")
+        .await
+        .unwrap();
+    assert_eq!(context.expected_version, 0);
+    assert_eq!(context.fence_epoch, 7);
+    let replay = restarted_store.project_delete(command).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, deleted.receipt);
+
+    let replacement_name: String =
+        sqlx::query_scalar("SELECT name FROM projects WHERE id=$1::uuid")
+            .bind(PROJECT)
+            .fetch_one(&database.pool)
+            .await
+            .unwrap();
+    let replacement_fence_epoch: i64 = sqlx::query_scalar(
+        "SELECT fence_epoch FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+    )
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(replacement_name, "Replacement");
+    assert_eq!(replacement_fence_epoch, 8);
+    assert_eq!(database.counts().await, (0, 1, 1));
+
+    let mut conflicting_command = project_delete_command(0, 7, "project-delete-replay");
+    conflicting_command.actor_id = "different-board-user".to_owned();
+    assert!(matches!(
+        restarted_store.project_delete(conflicting_command).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    assert_eq!(database.counts().await, (0, 1, 1));
+
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_delete_receipt_write_failure_rolls_back_project_cascade_fence_and_audit() {
+    let database = Database::start().await;
+    seed_project_goal_projection(&database, GOAL).await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = project_delete_command(0, 7, "project-delete-receipt-recovery");
+    database
+        .sql(
+            "CREATE FUNCTION fail_project_delete_receipt() RETURNS trigger
+             LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test receipt storage failure'; END; $$;
+             CREATE TRIGGER fail_project_delete_receipt_trigger
+             BEFORE INSERT ON organization_mutation_receipts
+             FOR EACH ROW EXECUTE FUNCTION fail_project_delete_receipt();",
+        )
+        .await;
+
+    assert!(matches!(
+        store.project_delete(command.clone()).await,
+        Err(StoreError::Database(_))
+    ));
+    assert_eq!(database.counts().await, (0, 0, 0));
+    assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
+    assert_eq!(project_goals(&database).await, vec![GOAL.to_owned()]);
+    let scope = store.project_scope(PROJECT).await.unwrap();
+    assert_eq!(scope.version, 0);
+    assert_eq!(scope.fence_epoch, 7);
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 0);
+
+    database
+        .sql(
+            "DROP TRIGGER fail_project_delete_receipt_trigger ON organization_mutation_receipts;
+             DROP FUNCTION fail_project_delete_receipt();",
+        )
+        .await;
+    let recovered = store.project_delete(command).await.unwrap();
+    assert!(!recovered.replayed);
+    assert!(project_goals(&database).await.is_empty());
+    assert_eq!(database.counts().await, (0, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_delete_audit_failure_rolls_back_delete_receipt_and_outbox_for_same_key_recovery() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    let command = project_delete_command(0, 7, "project-delete-audit-recovery");
+    database
+        .sql(
+            "CREATE FUNCTION fail_project_delete_activity() RETURNS trigger
+             LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test project delete audit failure'; END; $$;
+             CREATE TRIGGER fail_project_delete_activity_trigger
+             BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_project_delete_activity();",
+        )
+        .await;
+
+    assert!(matches!(
+        store.project_delete(command.clone()).await,
+        Err(StoreError::Database(_))
+    ));
+    assert_eq!(database.counts().await, (0, 0, 0));
+    let project_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1::uuid AND org_id=$2::uuid)",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    let project_fence_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM project_goal_mutation_state WHERE project_id=$1::uuid)",
+    )
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert!(project_exists);
+    assert!(project_fence_exists);
+
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(outbox_count, 0);
+    database
+        .sql(
+            "DROP TRIGGER fail_project_delete_activity_trigger ON activity_log;
+             DROP FUNCTION fail_project_delete_activity();",
+        )
+        .await;
+
+    let recovered = store.project_delete(command).await.unwrap();
+    assert!(!recovered.replayed);
+    assert_eq!(recovered.receipt.version, 1);
+    assert_eq!(database.counts().await, (0, 1, 1));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn project_delete_rejects_node_owner_and_stale_epoch_without_partial_mutation() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    database
+        .sql(
+            "UPDATE project_goal_mutation_state
+             SET owner='node', fence_epoch=8,
+                 fence_token='60000000-0000-4000-8000-000000000001'
+             WHERE project_id='20000000-0000-4000-8000-000000000001'",
+        )
+        .await;
+    assert!(matches!(
+        store
+            .project_delete(project_delete_command(0, 8, "project-delete-node-owner"))
+            .await,
+        Err(StoreError::NotOwned)
+    ));
+
+    database
+        .sql(
+            "UPDATE project_goal_mutation_state
+             SET owner='rust', fence_epoch=9,
+                 fence_token='70000000-0000-4000-8000-000000000001'
+             WHERE project_id='20000000-0000-4000-8000-000000000001'",
+        )
+        .await;
+    assert!(matches!(
+        store
+            .project_delete(project_delete_command(0, 8, "project-delete-stale-epoch"))
+            .await,
+        Err(StoreError::StaleFence)
+    ));
+
+    let project_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1::uuid AND org_id=$2::uuid)",
+    )
+    .bind(PROJECT)
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert!(project_exists);
+    assert_eq!(database.counts().await, (0, 0, 0));
 }
 
 #[tokio::test(flavor = "multi_thread")]

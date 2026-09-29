@@ -5,7 +5,6 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { projectRoutes } from "../routes/projects.js";
-import { lockProjectGoalMutationAuthorityForDelete } from "../services/project-goal-mutation-fence.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 
 const mockProjectService = vi.hoisted(() => ({
@@ -122,6 +121,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
     mockProjectService.getById.mockReset();
     mockProjectService.getMutationOwner.mockReset().mockResolvedValue("node");
     mockProjectService.update.mockReset();
+    mockProjectService.remove.mockReset();
     mockLogActivity.mockReset();
     mockProjectService.resolveByReference.mockResolvedValue({ project: null, ambiguous: false });
     mockResourceCatalogService.createProjectResourceAttachment.mockReset();
@@ -606,47 +606,323 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("serializes deletion of a Rust-owned Project-Goal row before cascading its authority", async () => {
+  it("keeps ordinary Node-owned Project deletion behavior", async () => {
     const existing = createProject();
     mockProjectService.getById.mockResolvedValue(existing);
-    mockProjectService.remove.mockReset();
-    const execute = vi.fn()
-      .mockResolvedValueOnce([{
-        owner: "node",
-        mutation_version: "0",
-        fence_epoch: "0",
-        fence_token: "11111111-1111-4111-8111-111111111111",
-      }])
-      .mockResolvedValueOnce([{
-        project_id: existing.id,
-        org_id: existing.orgId,
-        mutation_version: "4",
-        fence_epoch: "1",
-        fence_token: "22222222-2222-4222-8222-222222222222",
-        owner: "rust",
-      }]);
-    const deleteBusinessRow = vi.fn();
-    mockProjectService.remove.mockImplementation(async (id: string) => {
-      await lockProjectGoalMutationAuthorityForDelete({ execute }, existing.orgId, id);
-      deleteBusinessRow();
-      return existing;
-    });
+    mockProjectService.getMutationOwner.mockResolvedValue("node");
+    mockProjectService.remove.mockResolvedValue(existing);
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn(),
+    } as unknown as RustFoundationBridge;
     const app = await createApp({
       type: "board",
       userId: "user-1",
       source: "local_implicit",
-    });
+    }, bridge);
 
-    const res = await request(app).delete("/api/projects/project-1");
+    const res = await request(app).delete(`/api/projects/${existing.id}`);
 
     expect(res.status).toBe(200);
-    expect(mockProjectService.remove).toHaveBeenCalledWith("project-1");
-    expect(execute).toHaveBeenCalledTimes(2);
-    expect(deleteBusinessRow).toHaveBeenCalledOnce();
+    expect(res.body).toEqual({
+      ...existing,
+      createdAt: existing.createdAt.toISOString(),
+      updatedAt: existing.updatedAt.toISOString(),
+    });
+    expect(mockProjectService.remove).toHaveBeenCalledWith(existing.id);
+    expect(bridge.projectDelete).not.toHaveBeenCalled();
     expect(mockLogActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ action: "project.deleted", entityId: existing.id }),
     );
+  });
+
+  it("does not use Node when a caller explicitly requires Rust for a Node-owned Project", async () => {
+    const existing = createProject(RUST_OWNED_PROJECT_ID);
+    mockProjectService.getById.mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("node");
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn(),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
+
+    const res = await request(app)
+      .delete(`/api/projects/${existing.id}`)
+      .set("x-rudder-required-authority", "rust");
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_foundation_project_delete_not_owned");
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(bridge.projectDelete).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("keeps a foreign-key-restricted Node deletion failed without logging success", async () => {
+    const existing = createProject();
+    mockProjectService.getById.mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("node");
+    mockProjectService.remove.mockRejectedValue(Object.assign(
+      new Error("project is still referenced"),
+      { code: "23503" },
+    ));
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+
+    const res = await request(app).delete(`/api/projects/${existing.id}`);
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: "Internal server error" });
+    expect(mockProjectService.remove).toHaveBeenCalledWith(existing.id);
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("routes an allowlisted Rust-owned Project delete through Rust without Node fallback", async () => {
+    const existing = createProject(RUST_OWNED_PROJECT_ID);
+    const rustResponse = { id: existing.id, orgId: existing.orgId, name: "Deleted by Rust" };
+    mockProjectService.getById.mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const execute = vi.fn().mockResolvedValue([]);
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn().mockResolvedValue({
+        status: 200,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify(rustResponse)),
+      }),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+      runId: "run-1",
+    }, bridge, { execute });
+
+    const res = await request(app)
+      .delete(`/api/projects/${existing.id}`)
+      .set("x-rudder-idempotency-key", "project-delete-client-key");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(rustResponse);
+    expect(bridge.projectDelete).toHaveBeenCalledWith(
+      expect.objectContaining({ originalUrl: `/api/projects/${existing.id}` }),
+      existing.orgId,
+      existing.id,
+      expect.any(Buffer),
+      "project-delete-client-key",
+      `/api/orgs/${existing.orgId}/projects/${existing.id}`,
+    );
+    const body = JSON.parse((bridge.projectDelete as ReturnType<typeof vi.fn>).mock.calls[0][3].toString("utf8"));
+    expect(body).toEqual({ runId: "run-1" });
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("resolves an explicit deletion receipt before a recreated live Project", async () => {
+    const existingReceipt = createProject(RUST_OWNED_PROJECT_ID);
+    const replayResponse = { id: existingReceipt.id, orgId: existingReceipt.orgId, name: "Original deletion" };
+    const execute = vi.fn().mockResolvedValue([{ org_id: existingReceipt.orgId }]);
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn().mockResolvedValue({
+        status: 200,
+        contentType: "application/json",
+        body: Buffer.from(JSON.stringify(replayResponse)),
+      }),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: existingReceipt.orgId,
+      source: "agent_key",
+      runId: "run-1",
+    }, bridge, { execute });
+
+    const res = await request(app)
+      .delete(`/api/projects/${existingReceipt.id}`)
+      .set("x-rudder-idempotency-key", "project-delete-replay-key");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(replayResponse);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(mockProjectService.getById).not.toHaveBeenCalled();
+    expect(mockProjectService.getMutationOwner).not.toHaveBeenCalled();
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(bridge.projectDelete).toHaveBeenCalledWith(
+      expect.anything(),
+      existingReceipt.orgId,
+      existingReceipt.id,
+      expect.any(Buffer),
+      "project-delete-replay-key",
+      `/api/orgs/${existingReceipt.orgId}/projects/${existingReceipt.id}`,
+    );
+  });
+
+  it("reauthorizes receipt scope before forwarding or disclosing a cross-organization replay", async () => {
+    const execute = vi.fn().mockResolvedValue([{ org_id: "organization-1" }]);
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn(),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({
+      type: "agent",
+      agentId: "agent-2",
+      orgId: "organization-2",
+      source: "agent_key",
+    }, bridge, { execute });
+
+    const res = await request(app)
+      .delete(`/api/projects/${RUST_OWNED_PROJECT_ID}`)
+      .set("x-rudder-idempotency-key", "project-delete-foreign-key");
+
+    expect(res.status).toBe(403);
+    expect(mockProjectService.getById).not.toHaveBeenCalled();
+    expect(bridge.projectDelete).not.toHaveBeenCalled();
+    expect(res.body).not.toHaveProperty("project");
+  });
+
+  it("preserves cross-organization denial before checking ownership", async () => {
+    const existing = { ...createProject(RUST_OWNED_PROJECT_ID), orgId: "organization-1" };
+    mockProjectService.getById.mockResolvedValue(existing);
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn(),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({
+      type: "agent",
+      agentId: "agent-2",
+      orgId: "organization-2",
+      source: "agent_key",
+    }, bridge);
+
+    const res = await request(app).delete(`/api/projects/${existing.id}`);
+
+    expect(res.status).toBe(403);
+    expect(mockProjectService.getMutationOwner).not.toHaveBeenCalled();
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(bridge.projectDelete).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unkeyed repeated delete at legacy 404 behavior", async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+    mockProjectService.getById.mockResolvedValue(null);
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn(),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, bridge, { execute });
+
+    const res = await request(app).delete(`/api/projects/${RUST_OWNED_PROJECT_ID}`);
+
+    expect(res.status).toBe(404);
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(bridge.projectDelete).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("keeps keyed missing-project retries at 404 when no matching receipt exists", async () => {
+    const execute = vi.fn().mockResolvedValue([]);
+    mockProjectService.getById.mockResolvedValue(null);
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn(),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({
+      type: "board",
+      userId: "user-1",
+      source: "local_implicit",
+    }, bridge, { execute });
+
+    const res = await request(app)
+      .delete(`/api/projects/${RUST_OWNED_PROJECT_ID}`)
+      .set("x-rudder-idempotency-key", "project-delete-missing-key");
+
+    expect(res.status).toBe(404);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(bridge.projectDelete).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to Node when Rust deletion mode is off", async () => {
+    const existing = createProject(RUST_OWNED_PROJECT_ID);
+    mockProjectService.getById.mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" });
+
+    const res = await request(app).delete(`/api/projects/${existing.id}`);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_foundation_project_delete_disabled");
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
+  });
+
+  it("does not send an unallowlisted Rust-owned Project delete to either writer", async () => {
+    const existing = createProject();
+    mockProjectService.getById.mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn(),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
+
+    const res = await request(app).delete(`/api/projects/${existing.id}`);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_foundation_project_delete_not_allowlisted");
+    expect(bridge.projectDelete).not.toHaveBeenCalled();
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+  });
+
+  it("uses an internal idempotency key for existing Rust-owned delete callers", async () => {
+    const existing = createProject(RUST_OWNED_PROJECT_ID);
+    mockProjectService.getById.mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn().mockResolvedValue({
+        status: 200,
+        contentType: "application/json",
+        body: Buffer.from("{}"),
+      }),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({
+      type: "agent",
+      agentId: "agent-1",
+      orgId: existing.orgId,
+      source: "agent_key",
+      runId: "run-1",
+    }, bridge);
+
+    const res = await request(app).delete(`/api/projects/${existing.id}`);
+
+    expect(res.status).toBe(200);
+    const call = (bridge.projectDelete as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[4]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(JSON.parse(call[3].toString("utf8"))).toEqual({ runId: "run-1" });
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+  });
+
+  it("returns Rust outage as unavailable without falling back to Node", async () => {
+    const existing = createProject(RUST_OWNED_PROJECT_ID);
+    mockProjectService.getById.mockResolvedValue(existing);
+    mockProjectService.getMutationOwner.mockResolvedValue("rust");
+    const bridge = {
+      projectGoalSetMode: "required",
+      projectDelete: vi.fn().mockRejectedValue(new Error("bridge unavailable")),
+    } as unknown as RustFoundationBridge;
+    const app = await createApp({ type: "board", userId: "user-1", source: "local_implicit" }, bridge);
+
+    const res = await request(app).delete(`/api/projects/${existing.id}`);
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("rust_foundation_project_delete_request_failed");
+    expect(bridge.projectDelete).toHaveBeenCalledOnce();
+    expect(mockProjectService.remove).not.toHaveBeenCalled();
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("attaches a project resource through the dedicated resource route", async () => {

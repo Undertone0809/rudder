@@ -36,12 +36,73 @@ commit_refs:
   - fc73374bb15933ef5bad7f3056336c87e455cee0
   - 17c9613e3df39e2c67c07d455206312b7ac33a75
   - b4793a868847a1f12bf1b9fb70bfc88ed00a5c9d
-updated_at: 2026-09-28
+updated_at: 2026-09-29
 ---
 
 # Purpose and terminal outcome
 
-## Active checkpoint (2026-09-28)
+## Active checkpoint (2026-09-29)
+
+The bounded D1 private-bridge increment was accepted and merged through PR #225
+at `e2e603f07c7d4b7410fea7792b9a4d0667d3777e`. Delivery records followed in
+PR #232; the independent test-runner increment followed in PR #231. The last
+observed Main is now `4422039540f8926f5021466061f1bbd1b890dd01` (PR #234 records).
+
+The current bounded Project DELETE candidate is `4353c6a4c7391d6f298a06b146026e12a08493df`,
+with runtime content identical to `9e459a5a3204285885c50b08e49915d8a2f38215`,
+rebased onto that Main with packet v26.4. Renewed stage review accepted the
+large-response/receipt rollback repair. Author public API smoke passed complete
+1,180,164-byte response/replay and pending-outbox restart followed by actual
+WebSocket delivery and persisted publication, preserving a recreated UUID.
+Independent normal six-target prepack, fresh install, actual CI host-binary
+workflow and installed upgrade passed. All six foundation artifacts
+and D1 real-entry CI passed on runtime-equivalent f416. Compatibility declaration
+and exact manifest test assertions were corrected without changing runtime code;
+Final review accepted source4353 with the preserved dev Terminal layout failure
+as a bounded non-blocker; aggregate Desktop verification remains FAIL.
+Two stale DB upgrade expectations were corrected and both actual-PG cases passed.
+Fresh exact-head CI, including the prior Windows watchdog cleanup failure, remains required. This does
+not flip default writers or retire Project creation/organization deletion.
+
+PR #233 merged generic installed member-directory reads defaulting to required
+Rust at `e14771c4a0ed642bafd478c18dd1278855be89c5`. Its accepted candidate was
+`8cbfc87a0d8e4d5f4c130d321dc779a08a5226c0`; both have identical tree
+`7b02b6a6412130a5461042216ad15093806465ac`.
+The v25.2 packet records integrated stage acceptance and independent installed
+acceptance PASS, including default API/CLI/MCP, recovery, explicit off, signed
+request tampering and byte bounds. Final reviewer accepted and exact-head CI
+passed before the protected-PR merge. One Intel macOS log-test timeout passed on
+a single failed-job retry; the original failure is retained in the packet.
+The actual accepted package originated at `939ea94e1`; its runtime source `1c387d7c1`
+is content-equivalent to the test-only current head. No rebuild is claimed.
+The Windows ARM64 artifact build exposed Git Bash linker selection; the source
+checkpoint binds MSVC's ARM64 linker explicitly; all six artifacts subsequently
+built successfully. One obsolete postinstall test assertion was repaired at the
+accepted source; all qualification jobs ultimately passed.
+
+Draft publication for early CI feedback is authorized by the user's subsequent
+correction. Acceptance and protected-main merge remain gated. The primary
+convergence lane owns one frozen PR; independent review, packaged checks, and
+the next D1 writer inventory run in parallel without overlapping product edits.
+The existing D1 worktree now implements the bounded Project DELETE ownership
+slice on `codex/d1-default-writer-20260929`, preserving its previous branch.
+Store/migration, Actix adapter, Node integration, and adversarial review have
+disjoint ownership. Reconcile it with merged Main after worker checkpoints;
+do not rebase active dirty worker edits. Serialize disposable
+embedded-PostgreSQL workflow runs belonging to this migration, using isolated
+profiles and ports without waiting for unrelated host workflows to stop.
+
+Use the companion status, authority ledger, and current delivery packet for
+moving identities and receipts. Historical sections below are not current
+candidate or PR status. No whole-authority row is promoted solely by partial
+capability evidence. Node public HTTP/auth/session and broader runtime ownership
+remain; `implementation_complete`, `release_ready`, and `production_verified`
+are all false. Next: close Rust-owned Project deletion's old-Node-writer bypass,
+then migrate atomic creation with goals and the broader organization deletion
+boundary before activating default D1 writers. A private bridge is still not
+public Actix authority or Node retirement.
+
+## Historical checkpoint (2026-09-28)
 
 The active D1 integration candidate is in the isolated worktree
 `/Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss`. It starts from
@@ -664,10 +725,18 @@ meaning and are recorded as remaining Node read paths, not retired authority.
 
 Before acceptance, reconcile query normalization, duplicate/array parameters,
 limits, cursors, fullIds and error bodies against the existing public contract.
-Generate a fresh bridge key per process spawn unless an explicit static-key
-configuration was selected; invalidate ephemeral keys on child exit. Installed
+For the current generic startup slice, capture one signer per bridge instance
+unless an explicit static-key configuration was selected. Child restarts use
+that captured signer; a new bridge instance generates a new ephemeral key.
+This replaces the earlier per-child-spawn key proposal and prevents live
+environment changes from desynchronizing child verification and signed calls. Installed
 acceptance must prove the default read, organization isolation, missing-binary
 failure, child restart and process/listener identity on the frozen candidate.
+The child nonce cache is process-local: restart does not invalidate an otherwise
+valid envelope during its at-most-60-second lifetime. This bounded read slice
+does not claim replay protection across child lifetimes. Any later guarantee
+of that kind needs a child-generation binding, key rotation, or durable replay
+state, in addition to mutation idempotency receipts.
 
 ## Phase 2: native data and read surfaces
 
@@ -834,9 +903,12 @@ the exact source/build/runtime/data identity.
    source or fix code. `QUESTION` blocks the handoff.
 6. Resolve findings, invalidate stale receipts after relevant drift, rerun the
    affected checks, and obtain final reviewer `accept` on the same candidate.
-7. Commit and push only the scoped accepted increment to a `codex/` branch and
-   open/update its PR. Do not merge to protected `main` from this task without
-   a separate authorized integration step and current CI identity.
+7. Commit scoped checkpoints to a `codex/` branch. Under the user's early-CI
+   correction, push an explicitly unaccepted draft candidate for CI before final
+   acceptance, without promoting its authority or delivery state. The user has
+   authorized incremental protected-PR merges; merge only after current reviewer
+   acceptance, independent verifier PASS, final review, required checks, and
+   exact candidate/Main identity checks. Never bypass branch protection.
 8. Connect the accepted slice to the narrowest authorized real target that
    exercises the same entrypoint. Capture target credentials/authority class,
    process/listener identity, data identity, rollback result, and old-authority

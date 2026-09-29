@@ -60,6 +60,7 @@ const baseOpts = {
   storageService: {},
   deploymentMode: "local_trusted",
   deploymentExposure: "private",
+  rustFoundationMode: "off",
   allowedHostnames: [],
   bindHost: "127.0.0.1",
   authReady: false,

@@ -219,7 +219,7 @@ function createLegacyChatRuntimeControlsMigrationsFolder() {
   return { historicalHash, migrationsFolder };
 }
 
-function createCurrentMigrationsFolderThrough(maxIdx: number) {
+function createCurrentMigrationsFolderThrough(maxIdx: number, excludedTags: readonly string[] = []) {
   const migrationsFolder = fs.mkdtempSync(path.join(os.tmpdir(), `rudder-migrations-through-${maxIdx}-`));
   tempPaths.push(migrationsFolder);
   fs.mkdirSync(path.join(migrationsFolder, "meta"));
@@ -228,7 +228,9 @@ function createCurrentMigrationsFolderThrough(maxIdx: number) {
   const currentJournal = JSON.parse(
     fs.readFileSync(new URL("meta/_journal.json", currentMigrationsUrl), "utf8"),
   ) as { version: string; dialect: string; entries: MigrationJournalEntry[] };
-  const entries = currentJournal.entries.filter((entry) => entry.idx <= maxIdx);
+  const entries = currentJournal.entries
+    .filter((entry) => entry.idx <= maxIdx && !excludedTags.includes(entry.tag))
+    .map((entry, idx) => ({ ...entry, idx }));
   for (const entry of entries) {
     fs.copyFileSync(
       new URL(`${entry.tag}.sql`, currentMigrationsUrl),
@@ -269,6 +271,62 @@ afterEach(async () => {
 }, migrationTestTimeout(30_000));
 
 describe("applyPendingMigrations", () => {
+  it.each(["main-prefix", "pr-checkpoint", "empty"])(
+    "upgrades the merged migration history from %s without rewriting existing history",
+    async (source) => {
+      const connectionString = await createTempDatabase();
+      const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+      try {
+        if (source !== "empty") {
+          // Exact journal shapes of main 89859a26b and PR eb7e6b270. SQL
+          // filenames, bytes, and timestamps are preserved in the merge.
+          const migrationsFolder = source === "main-prefix"
+            ? createCurrentMigrationsFolderThrough(175)
+            : createCurrentMigrationsFolderThrough(182, ["0175_project_delete_receipt_kind"]);
+          await migratePg(drizzlePg(sql), { migrationsFolder });
+          await sql`INSERT INTO organizations (name, url_key, issue_prefix)
+            VALUES ('Preserved merge fixture', 'preserved-merge-fixture', 'MRG')`;
+        }
+        const before = source === "empty" ? [] : await sql`
+          SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id
+        `;
+        if (source !== "empty") {
+          const pending = await inspectMigrations(connectionString);
+          expect(pending.status).toBe("needsMigrations");
+          if (pending.status !== "needsMigrations") throw new Error("Expected pending merge migrations");
+          expect(pending.pendingMigrations).toContain(source === "main-prefix"
+            ? "0175_span_supplement_retention.sql" : "0175_project_delete_receipt_kind.sql");
+        }
+        await applyPendingMigrations(connectionString);
+        expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+        expect(await validatePostMigrationInvariants(connectionString)).toMatchObject({
+          valid: true, issues: [], expectedMigrationCount: 185,
+          manifestFingerprint: "1061b688ac7cae7a688723b39ea4113cc91edd1f26ca494f8ed6daac8cbbc72e",
+        });
+        const after = await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
+        expect(after.slice(0, before.length)).toEqual(before);
+        for (const file of ["0175_project_delete_receipt_kind.sql", "0175_span_supplement_retention.sql", "0181_side_chat_first_input_generation.sql"]) {
+          const hash = await migrationHash(file);
+          expect(after.filter(row => row.hash === hash)).toHaveLength(1);
+        }
+        expect(await sql`SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'side_chat_first_inputs' AND column_name = 'generation_id'`).toHaveLength(1);
+        const [constraint] = await sql`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+          WHERE conname = 'organization_mutation_receipts_kind_ck'`;
+        expect(constraint?.definition).toContain("project_delete");
+        if (source !== "empty") {
+          expect(await sql`SELECT name FROM organizations WHERE url_key = 'preserved-merge-fixture'`)
+            .toEqual([{ name: "Preserved merge fixture" }]);
+        }
+        await applyPendingMigrations(connectionString);
+        expect(await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`).toEqual(after);
+      } finally {
+        await sql.end();
+      }
+    },
+    migrationTestTimeout(120_000),
+  );
+
   it(
     "serializes migration attempts with a database advisory lock",
     async () => {
@@ -966,6 +1024,7 @@ describe("applyPendingMigrations", () => {
           "0172_organization_mutation_fence_token.sql",
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
+          "0175_project_delete_receipt_kind.sql",
           "0175_span_supplement_retention.sql",
           "0176_side_chat_provider_cleanup_intents.sql",
           "0177_side_chat_close_intents.sql",
@@ -1168,6 +1227,7 @@ describe("applyPendingMigrations", () => {
           "0172_organization_mutation_fence_token.sql",
           "0173_organization_branding_mutation_authority.sql",
           "0174_project_goal_mutation_authority.sql",
+          "0175_project_delete_receipt_kind.sql",
           "0175_span_supplement_retention.sql",
           "0176_side_chat_provider_cleanup_intents.sql",
           "0177_side_chat_close_intents.sql",

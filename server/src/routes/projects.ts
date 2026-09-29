@@ -8,6 +8,7 @@ import {
 } from "@rudderhq/shared";
 import { sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
+import { randomUUID } from "node:crypto";
 import { badRequest, conflict } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { logActivity, projectService, resourceCatalogService } from "../services/index.js";
@@ -44,6 +45,26 @@ function queryRows<T>(result: unknown): T[] {
   return ((result as { rows?: T[] }).rows ?? []) as T[];
 }
 
+async function readProjectDeleteReceiptOrganizationScope(
+  db: Db,
+  projectId: string,
+  idempotencyKey: string,
+): Promise<string | null> {
+  const result = await db.execute(sql<{ org_id: string }>`
+    SELECT org_id::text AS org_id
+    FROM organization_mutation_receipts
+    WHERE command_kind = 'project_delete'
+      AND idempotency_key = ${idempotencyKey}
+      AND result->'result'->>'project_id' = ${projectId}
+    LIMIT 2
+  `);
+  const organizationIds = [...new Set(queryRows<{ org_id: string }>(result).map((row) => row.org_id))];
+  if (organizationIds.length > 1) {
+    throw conflict("Project deletion receipt scope is ambiguous");
+  }
+  return organizationIds[0] ?? null;
+}
+
 export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridge) {
   const router = Router();
   const svc = projectService(db);
@@ -68,6 +89,41 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     `);
     const row = queryRows<{ resource_attachment_response: unknown }>(result)[0];
     return parseProjectResourceAttachmentReceiptResponse(row?.resource_attachment_response);
+  }
+
+  async function forwardRustProjectDelete(
+    req: Request,
+    res: Response,
+    orgId: string,
+    projectId: string,
+    idempotencyKey: string,
+  ): Promise<void> {
+    if (rustFoundationBridge?.projectGoalSetMode !== "required") {
+      res.status(503).json({
+        error: "Rust Project deletion is not enabled",
+        code: "rust_foundation_project_delete_disabled",
+      });
+      return;
+    }
+    const requestPath = `/api/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectId)}`;
+    let response: RustFoundationResponse;
+    try {
+      response = await rustFoundationBridge.projectDelete(
+        req,
+        orgId,
+        projectId,
+        Buffer.from(JSON.stringify({ runId: req.actor.runId ?? null }), "utf8"),
+        idempotencyKey,
+        requestPath,
+      );
+    } catch (error) {
+      res.status(503).json({
+        error: "Rust Project deletion is unavailable",
+        code: `rust_foundation_project_delete_${error instanceof Error ? "request_failed" : "unavailable"}`,
+      });
+      return;
+    }
+    res.status(response.status).set("content-type", response.contentType).send(response.body);
   }
 
   type ProjectPatchForward =
@@ -531,12 +587,62 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
 
   router.delete("/projects/:id", async (req, res) => {
     const id = req.params.id as string;
+    const explicitIdempotencyKey = req.header("x-rudder-idempotency-key")?.trim();
+    if (explicitIdempotencyKey) {
+      const receiptOrgId = await readProjectDeleteReceiptOrganizationScope(
+        db,
+        id,
+        explicitIdempotencyKey,
+      );
+      if (receiptOrgId) {
+        assertCompanyAccess(req, receiptOrgId);
+        await forwardRustProjectDelete(req, res, receiptOrgId, id, explicitIdempotencyKey);
+        return;
+      }
+    }
+
     const existing = await svc.getById(id);
     if (!existing) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
     assertCompanyAccess(req, existing.orgId);
+
+    const mutationOwner = await svc.getMutationOwner(existing.orgId, id);
+    const rustRequiredHeader = req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
+    const allowlisted = rustProjectGoalProjectIds.has(id);
+    if (rustRequiredHeader && !allowlisted) {
+      res.status(503).json({
+        error: "Rust Project deletion is not allowlisted for this Project",
+        code: "rust_foundation_project_delete_not_allowlisted",
+      });
+      return;
+    }
+    if (rustRequiredHeader && mutationOwner !== "rust") {
+      res.status(503).json({
+        error: "Rust does not own this Project deletion authority",
+        code: "rust_foundation_project_delete_not_owned",
+      });
+      return;
+    }
+    if (mutationOwner === "rust") {
+      if (!allowlisted) {
+        res.status(503).json({
+          error: "Rust Project deletion is not allowlisted for this Project",
+          code: "rust_foundation_project_delete_not_allowlisted",
+        });
+        return;
+      }
+      await forwardRustProjectDelete(
+        req,
+        res,
+        existing.orgId,
+        id,
+        explicitIdempotencyKey ?? randomUUID(),
+      );
+      return;
+    }
+
     const project = await svc.remove(id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });

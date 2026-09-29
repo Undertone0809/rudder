@@ -48,6 +48,7 @@ desktop/dist/
 desktop/release/
 desktop/.packaged/
 /native/target/
+/server/resources/native/
 server/ui-dist/index.html
 
 # Editor / tool temp files

@@ -1,0 +1,250 @@
+{
+  "schema_version": "1.0",
+  "verdict": "PASS",
+  "scope": "Independent complete-package installed Project DELETE public workflow and installed upgrade; bounded v26 acceptance only",
+  "recordedAt": "2026-09-28T23:15:32.661Z",
+  "candidate": {
+    "source_sha": "82a28fa7f8a998cb5c444137a8f094affa6f2258",
+    "tree": "5821ed3037d6471459b5fc8c175d447bc53ae9b1",
+    "fingerprint": "2fc16cc9d1f78a6b53b186665a0bc27a88c2f50745eb80d2ce1f9a36c25783ae",
+    "publishedHead": "0cd278728871b78c27ffa3b9d6f5dab78a6b0b4c",
+    "metadataOnlyDelta": [
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-plan.md",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml",
+      "doc/plans/2026-09-29-rudder-project-delete-delivery-packet-v26.json"
+    ]
+  },
+  "provenance": {
+    "ciArtifactSource": "f416c9c748ccef17a6e5be59df4647d760b8d14d",
+    "ciRun": 36495413484,
+    "runtimeEquivalentOrigin": "9e459a5a3204285885c50b08e49915d8a2f38215",
+    "equivalence": "9e to f416 release metadata/test plus docs; f416 to82a migration validation test only;82a to published head docs only. No runtime rebuild implied.",
+    "serverTarball": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-tarballs/rudderhq-server-0.7.24.tgz",
+    "serverTarballSha256": "25f18460cde80df151abe43e6a71461d3409cb10951da92d96df2f750484f58c",
+    "installRoot": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-install",
+    "hostBinarySha256": "1bce70bb252832458ed7f01fc787d7d132d89fefa8b02ab950e1cbef5c408660",
+    "migrationPreflightSha256": "c2954cea31a512fc0649de84c0221cb3b5aa93698d31c4e5cb4b6f6cc58b7583",
+    "serverFilesMatched": 1899,
+    "targets": [
+      {
+        "target": "aarch64-apple-darwin",
+        "artifactId": 11003745473,
+        "binarySha256": "1bce70bb252832458ed7f01fc787d7d132d89fefa8b02ab950e1cbef5c408660",
+        "buildMode": "native-build",
+        "execution": "PASS"
+      },
+      {
+        "target": "x86_64-unknown-linux-gnu",
+        "artifactId": 11003595442,
+        "binarySha256": "ce6c83faed757f38393c4c89e34562d595737647b0575d5133e3b27d38f604fa",
+        "buildMode": "native-build",
+        "execution": "not attempted"
+      },
+      {
+        "target": "x86_64-apple-darwin",
+        "artifactId": 11003431747,
+        "binarySha256": "4664ad637484e94627e61fdc4a533044ab791a54e36e7a721e1b94565e7e370d",
+        "buildMode": "native-build",
+        "execution": "not attempted"
+      },
+      {
+        "target": "aarch64-pc-windows-msvc",
+        "artifactId": 11003211718,
+        "binarySha256": "a8c353b78f49803bd99e9afa09aead0ccd39580f68ec9693b47dbb31778149dd",
+        "buildMode": "cross-compile",
+        "execution": "not attempted"
+      },
+      {
+        "target": "aarch64-unknown-linux-gnu",
+        "artifactId": 11002204659,
+        "binarySha256": "2afb78b08fe567713b4e6c0604d9005129e873b3d42b288a389d06a89dd83644",
+        "buildMode": "cross-compile",
+        "execution": "not attempted"
+      },
+      {
+        "target": "x86_64-pc-windows-msvc",
+        "artifactId": 11002154839,
+        "binarySha256": "26b8f5db730a0645147f08455d9638f5287a9879ce12e564721a365cb9595cd1",
+        "buildMode": "native-build",
+        "execution": "not attempted"
+      }
+    ]
+  },
+  "criteria": {
+    "normalSixTargetPrepackAndFreshLifecycleInstall": "PASS",
+    "legacyResponseAnd1180164ByteReplay": "PASS",
+    "currentActorAndOrganizationScopeIncludingReplay": "PASS",
+    "fkAuditAndReceiptStorageRollback": "PASS",
+    "staleNodeWriterNoDeleteAttempt": "PASS",
+    "outage503WithoutFallback": "PASS",
+    "nodeOwnedDeletionDuringOutage": "PASS",
+    "deletedAllowlistRestartAndUnknownIdRejection": "PASS",
+    "pendingOutboxRestartActualWsDelivery": "PASS",
+    "recreatedUuidPreserved": "PASS",
+    "installedCliMcpDeleteAbsent": "PASS",
+    "installedUpgrade": "PASS"
+  },
+  "fixture": {
+    "root": "/private/tmp/rudder-delete-verifier.Cu4yeE/rudder-rust-project-delete-OG5c47",
+    "organizationId": "3a7de813-60b0-4285-b2a7-39f72d9b991a",
+    "projectId": "cb1ddad6-1287-41fe-b1cf-b18578c43724",
+    "driverPid": 90688,
+    "apiPort": 57939,
+    "databasePort": 57940,
+    "largeResponseBytes": 1180164,
+    "receiptStorageRollback": {
+      "status": 500,
+      "storageReached": true,
+      "completeSnapshotUnchanged": true
+    },
+    "outbox": {
+      "id": "ebf4043f-db3e-4843-bc20-a2bab16cb142",
+      "state": "published",
+      "attempts": 1,
+      "actualPublicWsDelivery": true
+    }
+  },
+  "upgrade": {
+    "root": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-upgrade-profile.ua5Ss5",
+    "organizationId": "ceffaac4-24a7-4ba0-9ec0-c35baa4d0562",
+    "projectId": "3c72d10d-348e-4b9c-a339-19378579a02c",
+    "oldInstall": "/private/tmp/rudder-member-verifier.SR0PUD/install",
+    "newInstall": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-install",
+    "migrationsBefore": 177,
+    "migrationsAfter": 178,
+    "projectSentinelPreserved": true,
+    "projectDeleteReceiptConstraintAdded": true
+  },
+  "cleanup": {
+    "pids": [
+      {
+        "pid": 90688,
+        "exited": true
+      },
+      {
+        "pid": 90973,
+        "exited": true
+      },
+      {
+        "pid": 91013,
+        "exited": true
+      },
+      {
+        "pid": 91079,
+        "exited": true
+      },
+      {
+        "pid": 92579,
+        "exited": true
+      },
+      {
+        "pid": 92678,
+        "exited": true
+      },
+      {
+        "pid": 92669,
+        "exited": true
+      },
+      {
+        "pid": 92780,
+        "exited": true
+      }
+    ],
+    "ports": [
+      {
+        "port": 57939,
+        "closed": true
+      },
+      {
+        "port": 57940,
+        "closed": true
+      },
+      {
+        "port": 58277,
+        "closed": true
+      },
+      {
+        "port": 58278,
+        "closed": true
+      }
+    ],
+    "hiddenAssetRestored": true,
+    "allBinaryHashesUnchanged": true,
+    "pgLaneReleased": true,
+    "unrelatedProcessesPreserved": true,
+    "fixtureDataRetained": true
+  },
+  "limitations": [
+    "Only macOS ARM64 runtime executed; foreign targets verified by package architecture and provenance, not runtime execution.",
+    "Applicable Desktop packaged verification remains separately owned by Parfit; no claim of Desktop acceptance in this receipt.",
+    "Final reviewer and exact-head CI remain separate parent integration gates.",
+    "No production, stable release, full migration, default-writer flip or whole-component retirement claim."
+  ],
+  "evidence": [
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-install-identity.json",
+      "sha256": "514be244ceee7cbb9769dff2cbca44a55c67cbea34f4e19bd310bab55a86e8a0"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/six-target-artifact-manifest.json",
+      "sha256": "2e6f510ae85d33f0237caf48052d9b6390bde46530ba941750c2c8f82c9f2b7a"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-package-manifest.json",
+      "sha256": "ef36e1d25c24bdedf3c0162f5eb6df9ecb623557d14de6e58b870c4fcdc368ce"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-server-pack.log",
+      "sha256": "05ac07011388c796ba2f2c288af563e619af8ccefaeb1f1b244d6c8031dbae99"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-npm-install.log",
+      "sha256": "3e3791e1b7cf66efa56a5c2b1fb1f97c61fe5faee9382e53e5e710bf5c726a92"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-installed-project-delete.ts",
+      "sha256": "88c35d42af863c85d85b6112ac3c0954177c95a9a956175d4809a68a55ecc1b9"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-installed-workflow.log",
+      "sha256": "4fa271397d0cf73451aadc1212233330dece1a4c2a4b0fd05c2ca2b7f0030977"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-workflow-result.json",
+      "sha256": "0527fd03b66e2a48dca771fa0928a0e4b6ab4a54b2303db55659cd7ecc6b9065"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-workflow-observations.jsonl",
+      "sha256": "b96b29e7bb49904f18f9e2ed25a40be6aed212c914f523d64e5d2676e4c3b7a9"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-upgrade-worker.mjs",
+      "sha256": "f867d23ae347bad9e33fe55aaab60e34b553a7bcfb95a74b8d360f190f2ff9d5"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-upgrade-before.json",
+      "sha256": "57e71960fb1e12f0663927f50d922be26d91a3877a92c37e515423d2091d327e"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-upgrade-after.json",
+      "sha256": "6bdb8dd167bf9922b266d9771801b6cf9ffdeabcf82b9a194522c97c42b5d2af"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-upgrade-before.log",
+      "sha256": "ddf51c8b90829a3595c6c7d4a6a2c219f3709bfdce51f0eb77c6288c0c4e905d"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-upgrade-after.log",
+      "sha256": "da23f18c33d4627de011b8d7c2103f08743c9c23e915e5ee53a6d68ea6e00ffa"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-cli-project-help.log",
+      "sha256": "c152a206bf5540629d364fb80fa2afb40ef3d8731ccf815580afe0f7eddcd5a5"
+    },
+    {
+      "path": "/private/tmp/rudder-delete-verifier.Cu4yeE/full-mcp-tools-list.jsonl",
+      "sha256": "89077f3d67bbdf89c864ef3124c0e13adb5b0a23e2e1d099666be08836da7816"
+    }
+  ]
+}

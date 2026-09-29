@@ -25,6 +25,22 @@ Current implementation status:
 - Node.js 20+
 - pnpm 9+
 
+## Server Foundation Development Build
+
+The server's Rust foundation executable is built incrementally and staged into
+`server/resources/native/<target>/` before the server package's `dev` and
+`build` scripts run. Cargo uses its normal freshness checks; set
+`CARGO_TARGET_DIR` to reuse a shared build cache when needed:
+
+```sh
+CARGO_TARGET_DIR=/path/to/native/target pnpm --filter @rudderhq/server dev
+CARGO_TARGET_DIR=/path/to/native/target pnpm --filter @rudderhq/server build
+```
+
+Installed npm packages use the bundled foundation executable and do not need
+Rust or Cargo at install time. The six-target npm artifact layout and packaging
+checks are documented in [PUBLISHING.md](PUBLISHING.md#server-foundation-payload).
+
 ## Code Reasoning Comments
 
 For business-critical paths, add concise reasoning comments so decisions are auditable without reopening history.
