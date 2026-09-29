@@ -5,32 +5,36 @@ status: in_progress
 current_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   branch: codex/project-create-pilot-20260929
-  source_sha: 7a4d1120fbcc216256889d30c17c0fe5728e9138
-  source_tree: 440a6f1e27e732bd8c9fa96742fc2001385562ec
-  source_fingerprint: a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60
+  source_sha: a6cae08a4ac5c4df043cd2b8915c9b27a89f88da
+  source_tree: a8bc2bd76f19df8ae195a9c10b16416566a76dff
+  source_fingerprint: 8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f
   origin_main: 89859a26b002828a61faf7a542d8f07d3b522884
-  state: Project_Create_v27_4_verifier_FAIL_clone_missing_authority_schema_backup_repair_unfrozen
-  runtime_equivalence: backend_runtime_unchanged_since_a683_CLI_lazy_modules_require_fresh_package_and_verification
+  state: Project_Create_a6ca_backup_guard_repair9PASS_published_stage_and_new_DB_artifact_pending
+  runtime_equivalence: a6ca_adds_backup_schema_preservation_DB_package_must_refresh_native_and_server_source_unchanged_since7a4
   plan: doc/plans/2026-09-29-rust-project-create-service-pilot.md
   packet: doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json
   publication: PR236_DRAFT_published_early_for_CI_not_acceptance
   pr: https://github.com/Undertone0809/rudder/pull/236
-  published_head: 7a4d1120fbcc216256889d30c17c0fe5728e9138
-  ci: {matrix: 36512462912, matrix_status: in_progress, D1: 36512462914, D1_status: in_progress}
+  published_head: a6cae08a4ac5c4df043cd2b8915c9b27a89f88da
+  ci: {matrix: 36514647753, matrix_status: in_progress, D1: 36514647764, D1_status: PASS}
+  superseded_7a4_ci: {matrix: 36512462912, matrix_status: no_failures_observed_Ubuntu_and_Desktop_pending, D1: 36512462914, D1_status: PASS}
   superseded_dee9_ci: {matrix: 36511577073, matrix_status: cancelled_after_arm64_crates_io_DNS_failure, D1: 36511577072, D1_status: PASS}
   previous_complete_ci: {matrix: 36508241419, matrix_status: FAIL_Intel_log_store_timeout_all_other_jobs_PASS, D1: 36508241444, D1_status: PASS_Branding_Goal_Create_Delete}
   prior_ci: {matrix: 36505621311, matrix_status: superseded_cancelled_with_recorded_failures, D1: 36505621372, D1_status: FAIL_public_create500_in_goal_smoke}
   author_public_smoke: PASS_HTTP_CLI_MCP_Library_restart_owner_routing_scope_denial_outage_no_fallback_macOS_only
   author_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json
   active_failure: cloned_merge_target_has_no_Project_owner_row_public_PATCH409_backup_export_omits_functions_triggers_CHECKs
-  stage_review: Halley_7a4_accept_thin_diagnostic_and_packaging_delta_no_final_acceptance
+  repair: a6ca_export_preserves_routines_CHECKs_and_trigger_modes_after_data_real_PG179_migration_restore_guards_PASS
+  repair_receipt: doc/plans/artifacts/2026-09-29-rudder-backup-authority-author-regression.json
+  stage_review: Halley_7a4_accept_historical_a6ca_backup_delta_and_v27_5_packet_pending
   stage_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.4.json
-  verifier_execution: Hubble_v27_4_FAIL_merge_rollback_and_import_pass_later_Node_route409_schema_diagnosis_under_exclusive_PG
+  verifier_execution: Hubble_v27_5_DBartifact_prepared_847files_match_PG_not_granted_prior_v27_4_FAIL_preserved
   verifier_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.4.json
   verifier_install_root: /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install
-  verifier_preparation: /private/tmp/rudder-create-verifier.DSx0ST/cli-7a4.JNjYpI/preparation-receipt-v27.4.json
+  verifier_preparation: /private/tmp/rudder-create-verifier.DSx0ST/db-a6ca.Ka5J0P/preparation-receipt-v27.5.json
+  verifier_db_tarball_sha256: 1c03f71167d209da1c621e9389b5877e9039b0055c08071281a4debd45175571
   verifier_cli_tarball_sha256: 09238fd930eaecc0d1726678e874df190b11894a5b5f5d3975e35c8836259815
-  verifier_data_lease: create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST
+  verifier_data_lease: create-v27.5-fresh-seed-under-rudder-create-verifier.DSx0ST_not_granted
   cache_reclaim: unused_author_Cargo_target_BGDKEg_cleaned_no_open_users_binaries_preserved_under_/tmp/rudder-create-author-binaries.1EgZRE
   regression: Delete_real_entry_PASS_goal_CI_PASS_create_actual_PG_PASS
   native_CI_findings: Windows_directory_and_capability_repairs_PASS_log_store_test_split_focused5_PASS_exact_head_CI_pending
@@ -796,11 +800,16 @@ historical_v16_receipts:
   verifier: {agent_id: 01a0c903-973c-77a0-8116-8867ff5f43e5, verdict: PASS, data_id: rust-project-goal-real-entry-16304, packet: v16}
   final_review: {agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3, verdict: accept, level: final_handoff_verdict}
 interrupt_resume:
-  last_durable_source_commit: 7a4d1120fbcc216256889d30c17c0fe5728e9138
-  latest_published_record_commit: 7a4d1120fbcc216256889d30c17c0fe5728e9138
+  last_durable_source_commit: a6cae08a4ac5c4df043cd2b8915c9b27a89f88da
+  latest_published_record_commit: a6cae08a4ac5c4df043cd2b8915c9b27a89f88da
   prior_accepted_candidate: PR233_member_default_and_PR234_delivery_records_merged
-  remaining_work: Project_DELETE_merged_Project_Create_verifier_FAIL_missing_CLI_modules_repair_then_remaining_installed_local_Desktop_CI_final_review
-  next_command: checkpoint_reviewed_CLI_packaging_and_log_store_test_repairs_push_draft_CI_refresh_freeze_and_verifier
+  remaining_work: PR235_merged_PR236_a6ca_backup_guard_repair9PASS_pushed_stage_DBartifact_installed_acceptance_Desktop_CI_final_review_pending
+  next_command: collect_Halley_a6ca_stage_and_Hubble_DBartifact_identity_freeze_v27_5_then_grant_Hubble_PG_new_seed_merge_PATCH_and_remaining_criteria
+  successor_patch: /tmp/rudder-project-default-patch.HUXwee/successor-a6ca.patch_not_applied_or_tested
+  successor_patch_sha256: d414be809f0dc7a3316f2a7bdea18b173bb2ba37617176c9ac251524d147962f
+  successor_manifest: /tmp/rudder-project-default-patch.HUXwee/manifest-a6ca.json
+  local_PG_lane: free_after_Carson_real_restore_regression_no_runtime_grant_until_v27_5_freeze
+  desktop_preparation: Poincare_rebind_existing_create_desktop_a683_scratch_to_a6ca_build_only_reserve4GiB_no_runtime_grant
 
 historical_candidate_2026_09_28:
   authority: historical_only_top_level_current_candidate_is_authoritative

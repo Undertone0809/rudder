@@ -2,9 +2,9 @@ schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-29
 source:
-  candidate_sha: 7a4d1120fbcc216256889d30c17c0fe5728e9138
-  candidate_tree: 440a6f1e27e732bd8c9fa96742fc2001385562ec
-  source_fingerprint: a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60
+  candidate_sha: a6cae08a4ac5c4df043cd2b8915c9b27a89f88da
+  candidate_tree: a8bc2bd76f19df8ae195a9c10b16416566a76dff
+  source_fingerprint: 8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f
   publication: PR236_DRAFT_CI_in_progress_not_acceptance
   receipt_packet: doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json
   main_base_sha: 89859a26b002828a61faf7a542d8f07d3b522884
