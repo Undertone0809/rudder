@@ -80,12 +80,32 @@ This successor reuses the freed member-default checkout on
 `codex/project-create-pilot-20260929`, based on the exact PR235 candidate above.
 The unrelated untracked v18 packet remains untouched (SHA256
 `5bf0c51a3c21ad69fcd7f465ed9af10bc62f5ae0148ead0e38295dc274827e13`).
-Only two lanes are active: qualify/merge PR235 and prepare this successor.
+PR235 is merged; this successor is the sole active publication candidate.
 The successor was rebased onto actual merged Main `89859a26b` using the explicit
 old-base boundary `0cd278728`. Only duplicated 0175 test expectations conflicted;
 0175 and 0176 remain present, and all non-plan content matches checkpoint
 `72b6e620e`. The resulting local checkpoint is `0b064066c`; it is not acceptance.
 Do not modify PR235's runtime or use its acceptance as this slice's evidence.
+
+Draft PR #236 now publishes source `606c729df` for early CI (matrix
+`36505621311`, real-entry `36505621372`). Full stage review and author public
+smoke run concurrently; neither draft publication nor green CI replaces frozen
+installed verification and final review. PostgreSQL workflows remain serialized
+in one local lane, while static review, fixture preparation and CI run in parallel.
+
+The first real public create exposed a missing-instance-data assumption: the
+private fixture precreated `instance/data`, but a fresh installed profile does
+not. Rust now durably creates that single directory below the existing trusted
+instance parent using the same platform-specific intent-directory publication
+logic. It rejects an existing file, absent instance parent, or workspace-contained
+state path without replacing user data. Twenty-five project unit cases pass;
+the rebuilt binary is awaiting public workflow replay. CI also caught one stale
+startup capability expectation; adding `project_create` restored its exact local
+black-box check. Windows CI additionally exposed CREATE_NEW returning access
+denied for an existing README directory. Source `aef29616e` preserves that entry
+only for Windows error 5 plus a confirmed existing directory; unrelated access
+errors still propagate. Windows rerun is required. All failures remain in the
+candidate evidence history.
 
 Hilbert rejected the earlier prerequisite-heavy schedule, recommending reuse
 of existing fences and a service-path pilot. Hilbert accepted the revised proposal

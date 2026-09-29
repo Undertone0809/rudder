@@ -1,0 +1,169 @@
+{
+  "schema_version": "1.0",
+  "delivery_id": "rust-project-create-v27",
+  "status": "in_progress",
+  "owner": {
+    "root_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3",
+    "agent_id": "01a0c344-c53e-7432-917a-6be5be9dbbe3"
+  },
+  "intent": {
+    "raw_request": "完成 Rudder 第一方后端及 Agent tooling 的全 Rust 迁移。",
+    "corrections": [
+      "Publish bounded draft candidates early for CI; merge only qualified increments."
+    ],
+    "non_goals": [
+      "Node remains public listener/auth and organization-root preparation authority.",
+      "No whole-creator retirement, whole migration, production, foreign-platform execution or Windows runtime durability claim from macOS checks.",
+      "Windows atomic-publication runtime evidence separately required for a Windows claim.",
+      "No default Vitest globalSetup, source modification, builds or PG execution during preparation."
+    ],
+    "authorization": "implementation | local_integration | publication"
+  },
+  "candidate": {
+    "branch": "codex/project-create-pilot-20260929",
+    "source_ref": "aef29616e24a515436167dfd992e56e9309d02fe",
+    "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
+    "dirty_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
+    "source_tree": "bc67d190b3726247f96e73038324faefa8f650c0",
+    "frozen": false,
+    "build": {
+      "id": "pending-frozen-installed-build",
+      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe"
+    },
+    "runtime": {
+      "id": "pending-independent-runtime",
+      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe"
+    },
+    "organization_data": {
+      "organization_id": null,
+      "data_id": "pending-independent-data-lease"
+    },
+    "workload_fixture": "Project Create HTTP/CLI/MCP/onboarding, preserved import/worktree merge, shared Library files, intent crash recovery, audit/receipt rollback, owner routing and outbox replay.",
+    "acceptance_packet": {
+      "version": "27.1",
+      "fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
+      "criteria": [
+        "public-entry-parity: HTTP201 legacy shape/defaults; CLI/MCP create with empty/multiple goals; goalIds precedence over goalId; board onboarding creates once, preserves caller metadata and current actor/run.",
+        "resources: Existing scoped resource attachments and supported newResources atomically created; foreign references rejected with no durable effects.",
+        "sync-library: At success, expected Library root and README already usable. Existing directory symlinks, README symlinks/directories, nonempty user content and same-name shared directories preserved by inode/link/hash manifests.",
+        "intent-publication: Intent separate from shared Library; complete staged+synced publication without replacement. Incomplete staging retry succeeds; existing final intent not overwritten; malformed final fails closed and retained.",
+        "intent-identity: Same key/request reuses UUID/resolved path after precommit failure. Changed request/root/resolved identity409 without second project path or changed durable command state.",
+        "atomic-db: Project, Rust owner/epoch, goals/resources/attachments, audit, receipt and outbox commit together. Independently force audit and receipt storage failures; verify whole snapshots, org version and retry. Allowed residual FS artifacts retained, no rollback-cleanup claim.",
+        "crash-recovery: Owned precommit crash/provision failure then restart/retry; postcommit acknowledgement loss then receipt replay; avoid fabricated deterministic failpoints.",
+        "receipt-no-fs: Same-key replay exact response and single audit/outbox; changed intent409; current actor/org/run reauthorization. After Project deletion, replay creates no Project/FS and preserves new same-name/UUID incarnation and user files.",
+        "outbox: Actual public WS activity.logged and persisted published record; pending across restart then delivery once by dedupe identity, no delayed mutation of recreated content.",
+        "dynamic-ownership: Generated Rust-owned ID immediately PATCH/goals/DELETE routes by stored owner, without predeclared allowlist; repeat after restart; stale Node writes rejected and outage no fallback.",
+        "preserved-node-lanes: Real import remains explicit Node lane, preserving source-org CEO/run delegation semantics and no new per-Project import audits. Real worktree merge commits complete Node-owned transaction; failures atomic; later Node route still works.",
+        "scope-failures: Foreign org, terminated/current caller, stale run and invalid references rejected; no receipt disclosure, DB write or unauthorized projectFS.",
+        "size-and-latency: Representative large supported payload and name/path edge cases; preserve response/replay; record lock-held provisioning timing without inventing performance budget.",
+        "installed-upgrade-cleanup: Normal six-target package/fresh install; upgrade isolated predecessor data; preserve unrelated state. Record actual roots/PIDs/ports/IDs, restore own hidden assets and stop only owned processes."
+      ],
+      "state_inventory": []
+    }
+  },
+  "receipts": {
+    "reviewer": {
+      "verdict": "pending",
+      "candidate_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
+      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
+      "build_id": "pending-frozen-installed-build",
+      "runtime_id": "pending-independent-runtime",
+      "data_id": "pending-independent-data-lease",
+      "packet_version": "27.1"
+    },
+    "verifier": {
+      "verdict": "pending",
+      "candidate_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
+      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
+      "build_id": "pending-frozen-installed-build",
+      "runtime_id": "pending-independent-runtime",
+      "data_id": "pending-independent-data-lease",
+      "packet_version": "27.1"
+    },
+    "final_review": {
+      "verdict": "pending",
+      "candidate_fingerprint": "7eeaff4f6ee57c1b695598be65acde95ea61a9217885de50982f5242e63d3113",
+      "source_sha": "aef29616e24a515436167dfd992e56e9309d02fe",
+      "build_id": "pending-frozen-installed-build",
+      "runtime_id": "pending-independent-runtime",
+      "data_id": "pending-independent-data-lease",
+      "packet_version": "27.1"
+    }
+  },
+  "drift": {
+    "active": false,
+    "events": [],
+    "invalidated_receipts": []
+  },
+  "integration": {
+    "authorized": true,
+    "mode": "isolated_risk",
+    "target_ref": "refs/heads/main",
+    "base_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
+    "remote_ref": "refs/remotes/origin/main",
+    "observed_remote_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
+    "branch_refs": [
+      "refs/heads/codex/project-create-pilot-20260929"
+    ],
+    "isolation_trigger": "independent_runtime",
+    "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
+    "patch_tree_sha": "bc67d190b3726247f96e73038324faefa8f650c0",
+    "expected_old_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
+    "cas": {
+      "attempted": false,
+      "succeeded": false,
+      "observed_old_sha": null,
+      "delivered_sha": null
+    },
+    "index_update_mode": "none"
+  },
+  "preservation": {
+    "checked": true,
+    "unrelated_dirty_paths": [
+      "doc/plans/2026-09-23-rudder-installed-member-directory-delivery-packet-v18.json"
+    ],
+    "unrelated_paths_preserved": true,
+    "index_preserved": true,
+    "evidence": [
+      "Unrelated v18 remains untracked and excluded from both candidate commits; SHA256 5bf0c51a3c21ad69fcd7f465ed9af10bc62f5ae0148ead0e38295dc274827e13."
+    ]
+  },
+  "terminal": {
+    "delivered_ref": null,
+    "delivered_sha": null,
+    "delivered_tree_sha": null,
+    "timestamp": null,
+    "proof": []
+  },
+  "publication": {
+    "pr": "https://github.com/Undertone0809/rudder/pull/236",
+    "draft": true,
+    "published_head": "606c729df58c138b39b6a6df505105944361ced7",
+    "matrix_run": 36505621311,
+    "real_entry_run": 36505621372
+  },
+  "author_evidence": {
+    "scope": "Not independent acceptance",
+    "passed": [
+      "73 focused Node cases and server typecheck",
+      "23 native project unit cases",
+      "14 native migration validation cases",
+      "19 release compatibility cases",
+      "Private HTTP create and scoped PostgreSQL checks",
+      "Smoke parser tests and workflow actionlint",
+      "Fresh-instance root recovery fix:25 native project unit cases PASS; corrected capabilities exact black-box case PASS."
+    ],
+    "failures": [
+      "Initial public smoke could not load embedded PostgreSQL ICU dependency symlinks; official isolated dependency hydration repaired startup.",
+      "Public basic create reached actual API after all179 migrations but returned500. CI36505621372 reproduced create500 inside goal smoke; root cause investigation pending.",
+      "606c CI Windows existing README-directory parity test failed with OS error5. aef narrows existing-directory preservation to Windows error5; Windows rerun pending."
+    ],
+    "repairs": "aef provisions absent instance/data durably in Rust and preserves existing Windows README directories; public rerun pending. Prior606c six-platform binaries cannot qualify changed runtime."
+  },
+  "next_executable": "Push aef source plus records to draft PR236; finish public smoke/stage findings; freeze only after corrections and installed build/data binding.",
+  "terminal_claims": {
+    "implementation_complete": false,
+    "release_ready": false,
+    "production_verified": false
+  }
+}
