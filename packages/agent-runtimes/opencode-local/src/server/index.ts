@@ -152,7 +152,7 @@ export const sessionCodec: AgentRuntimeSessionCodec = {
   },
 };
 
-export { execute } from "./execute.js";
+export { execute, resolveOpenCodeProfileDataHome } from "./execute.js";
 export {
   discoverOpenCodeModels,
   discoverOpenCodeModelsCached,

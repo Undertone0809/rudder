@@ -55,7 +55,7 @@ import {
   shouldIncludeRuntimeHeartbeatInstructions,
   wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -93,8 +93,7 @@ const OPENCODE_INHERITED_ENV_BLOCKLIST = new Set([
   "OPENCODE_CONFIG_CONTENT",
   "OPENCODE_CONFIG_DIR",
 ]);
-const SHARED_OPENCODE_HOME_ENTRIES = [
-  ".local/share/opencode",
+const SHARED_OPENCODE_CACHE_ENTRIES = [
   ".cache/opencode",
 ] as const;
 const OPENCODE_CONFIG_FILE_CANDIDATES = ["opencode.json", "opencode.jsonc"] as const;
@@ -186,6 +185,50 @@ function providerProfileIdentity(config: Record<string, unknown>) {
     ...(workspaceBindingId ? { workspaceBindingId } : {}),
     capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
   };
+}
+
+export function resolveOpenCodeProfileDataHome(config: Record<string, unknown>, orgId: string): string {
+  const identity = providerProfileIdentity(config);
+  // Runtime binding IDs and capability revisions can change between Chat
+  // turns. The provider database belongs to the durable host/profile pair.
+  const profileKey = createHash("sha256")
+    .update(JSON.stringify(["opencode-profile-v1", identity.hostId, identity.profileId]))
+    .digest("hex")
+    .slice(0, 32);
+  return path.join(resolveManagedOpenCodeHomeDir(config, orgId), "provider-data", profileKey);
+}
+
+function persistedOpenCodeExportEnv(env: Record<string, string>): Record<string, string> {
+  const keys = [
+    "HOME",
+    "USERPROFILE",
+    "RUDDER_OPERATOR_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "OPENCODE_DISABLE_CLAUDE_CODE",
+    "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
+    "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS",
+  ];
+  return Object.fromEntries(keys.flatMap((key) => env[key] ? [[key, env[key]]] : []));
+}
+
+function resumeProfileIsCurrent(input: {
+  params: Record<string, unknown>;
+  exportEnv: Record<string, string>;
+  identity: ReturnType<typeof providerProfileIdentity>;
+  orgId: string;
+  profileDataId: string;
+}): boolean {
+  const persistedEnv = parseObject(input.params.exportEnv);
+  const persistedDataHome = asString(persistedEnv.XDG_DATA_HOME, "").trim();
+  return path.isAbsolute(persistedDataHome)
+    && path.resolve(persistedDataHome) === path.resolve(input.exportEnv.XDG_DATA_HOME)
+    && asString(input.params.openCodeProfileDataId, "").trim() === input.profileDataId
+    && asString(input.params.hostId, "").trim() === input.identity.hostId
+    && asString(input.params.profileId, "").trim() === input.identity.profileId
+    && asString(input.params.profileOrgId, "").trim() === input.orgId
+    && (!input.identity.id || asString(input.params.profileBindingId, "").trim() === input.identity.id);
 }
 
 function boundedNativeDiagnostic(value: unknown): string {
@@ -455,7 +498,7 @@ async function prepareManagedOpenCodeHome(
   await pruneLegacyLocalCliCredentialHomeEntries({ targetHome, onLog });
   await fs.mkdir(resolveManagedOpenCodeSkillsDir(targetHome), { recursive: true });
 
-  for (const relativeEntry of SHARED_OPENCODE_HOME_ENTRIES) {
+  for (const relativeEntry of SHARED_OPENCODE_CACHE_ENTRIES) {
     const source = path.join(sourceHome, relativeEntry);
     if (!(await pathExists(source))) continue;
     await ensureSymlink(path.join(targetHome, relativeEntry), source);
@@ -642,13 +685,20 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const sourceEnv = { ...process.env };
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
   if (authToken) env.RUDDER_API_KEY = authToken;
+  const executionEnvironment = { ...sourceEnv, ...env };
   const managedHome = await prepareManagedOpenCodeHome(
-    { ...sourceEnv, ...env },
+    executionEnvironment,
     operatorHome,
     onLog,
     agent.orgId,
     {},
   );
+  const profileIdentity = { ...providerProfileIdentity(config), orgId: agent.orgId };
+  const profileDataHome = resolveOpenCodeProfileDataHome(
+    { ...config, env: executionEnvironment },
+    agent.orgId,
+  );
+  const profileDataId = path.basename(profileDataHome);
   const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
   await fs.mkdir(runtimeTmpDir, { recursive: true });
   try {
@@ -667,7 +717,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "true";
   env.RUDDER_OPERATOR_HOME = operatorHome;
   env.XDG_CONFIG_HOME = path.join(managedHome, ".config");
-  env.XDG_DATA_HOME = path.join(managedHome, ".local", "share");
+  env.XDG_DATA_HOME = profileDataHome;
   env.XDG_CACHE_HOME = path.join(managedHome, ".cache");
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
@@ -792,8 +842,36 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     runtimeSessionId.length > 0 &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(cwd));
   const sessionId = canResumeSession || failClosedOnMissingResume ? runtimeSessionId : null;
-  const profileIdentity = providerProfileIdentity(config);
   const nativeSessionId = context.chatMode === true && sessionId !== null ? sessionId : null;
+  if (sessionId && !resumeProfileIsCurrent({
+    params: runtimeSessionParams,
+    exportEnv: persistedOpenCodeExportEnv(runtimeEnv),
+    identity: profileIdentity,
+    orgId: agent.orgId,
+    profileDataId,
+  })) {
+    const errorMessage =
+      `OpenCode session "${sessionId}" belongs to a legacy or unverified data profile and cannot be resumed in the isolated profile. `
+      + "Its historical transcript remains readable from the Run transport snapshot; start a new session explicitly.";
+    await onLog("stderr", `[rudder] ${errorMessage}\n`);
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      errorCode: "opencode_incompatible_legacy_session",
+      errorMessage,
+      sessionId,
+      sessionParams: runtimeSessionParams,
+      sessionDisplayId: sessionId,
+      provider: parseModelProvider(model || null),
+      biller: resolveOpenCodeBiller(runtimeEnv, parseModelProvider(model || null)),
+      model: model || null,
+      billingType: "unknown",
+      resultJson: { nativeSession: context.chatMode === true, resumeRejected: true },
+      summary: errorMessage,
+    };
+  }
   if (runtimeSessionId && !canResumeSession) {
     await onLog(
       "stdout",
@@ -946,8 +1024,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ...(!nativeSessionId ? {
         hostId: profileIdentity.hostId,
         profileId: profileIdentity.profileId,
+        openCodeProfileDataId: profileDataId,
         ...(profileIdentity.id ? { profileBindingId: profileIdentity.id } : {}),
-        ...(profileIdentity.orgId ? { profileOrgId: profileIdentity.orgId } : {}),
+        profileOrgId: agent.orgId,
         ...(profileIdentity.workspaceBindingId ? { workspaceBindingId: profileIdentity.workspaceBindingId } : {}),
         ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
       } : {}),
@@ -1014,6 +1093,10 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       });
       return {
         ...nativeResult,
+        sessionParams: {
+          ...(nativeResult.sessionParams ?? nativeSessionParams),
+          openCodeProfileDataId: profileDataId,
+        },
         biller: resolveOpenCodeBiller(runtimeEnv, nativeResult.provider ?? parseModelProvider(model)),
         resultJson: {
           ...sanitizeNativeResultJson(nativeResult.resultJson),
@@ -1053,7 +1136,9 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           ? "opencode_native_timed_out"
           : providerFailure ? "opencode_native_provider_error" : `opencode_native_${status}`,
         sessionId: failedSessionId,
-        sessionParams: sessionContext?.sessionParams ?? (nativeSessionId ? nativeSessionParams : null),
+        sessionParams: sessionContext
+          ? { ...sessionContext.sessionParams, openCodeProfileDataId: profileDataId }
+          : nativeSessionId ? nativeSessionParams : null,
         sessionDisplayId: failedSessionId,
         provider: parseModelProvider(model),
         biller: resolveOpenCodeBiller(runtimeEnv, parseModelProvider(model)),
@@ -1255,6 +1340,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? ({
           sessionId: resolvedSessionId,
           cwd,
+          hostId: profileIdentity.hostId,
+          profileId: profileIdentity.profileId,
+          profileOrgId: agent.orgId,
+          openCodeProfileDataId: profileDataId,
+          ...(profileIdentity.id ? { profileBindingId: profileIdentity.id } : {}),
+          exportEnv: persistedOpenCodeExportEnv(runtimeEnv),
           ...(workspaceId ? { workspaceId } : {}),
           ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
           ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),

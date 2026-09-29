@@ -1,4 +1,9 @@
 import {
+  buildHermesProductRpcSessionParams,
+  executeHermesProductRpcChat,
+  type HermesProductRpcProfile,
+} from "@rudderhq/agent-runtime-hermes-gateway/server";
+import {
   agents,
   applyPendingMigrations,
   chatConversations,
@@ -1011,6 +1016,205 @@ describe("heartbeat-backed unified agent run adapter", () => {
 
     await expect(adapter.admit(nextAdmission))
       .resolves.toMatchObject({ created: true });
+  });
+
+  it("keeps same-session admission fenced from Product RPC running=false through its after-tail read", async () => {
+    const nativeSessionId = "hermes-product-rpc-writer-fence-session";
+    const seeded = await seedNativeChatIdentity(db, {
+      agentRuntimeType: "hermes_gateway",
+      bindingRuntimeType: "hermes_gateway",
+      segmentRuntimeType: "hermes_gateway",
+    });
+    await db.update(nativeSegments).set({ nativeSessionId, rootSessionId: nativeSessionId })
+      .where(eq(nativeSegments.id, seeded.segmentId));
+
+    const aliasConversationId = randomUUID();
+    await db.insert(chatConversations).values({
+      id: aliasConversationId,
+      orgId: seeded.orgId,
+      title: "Hermes Shared Session Alias",
+      issueCreationMode: "manual_approval",
+      planMode: false,
+    });
+    const aliasBinding = await ensureRuntimeBinding(db, {
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      runtimeType: "hermes_gateway",
+      principalScopeRef: "test:principal",
+      profileId: "default",
+      target: { type: "chat_conversation", id: aliasConversationId },
+      continuity: "native",
+    });
+    const aliasSession = await currentNativeSession(db, aliasBinding);
+    await db.update(nativeSegments).set({ nativeSessionId, rootSessionId: nativeSessionId })
+      .where(eq(nativeSegments.id, aliasSession.segment.id));
+
+    const adapter = createHeartbeatUnifiedAgentRunAdapter(db);
+    const execution = createUnifiedAgentRunExecutionService(adapter);
+    const resume = { kind: "resume" as const, reuseScope: "explicit" as const, sessionId: nativeSessionId };
+    const first = await adapter.admit({
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      scene: "chat",
+      target: { type: "chat_conversation", id: seeded.conversationId },
+      idempotencyKey: "hermes-product-rpc-writer-fence-first",
+      runtimeType: "hermes_gateway",
+      sessionIntent: resume,
+      runtimeBindingId: seeded.bindingId,
+      runtimeSegmentId: seeded.segmentId,
+    });
+    const nextAdmission = {
+      orgId: seeded.orgId,
+      agentId: seeded.agentId,
+      scene: "chat" as const,
+      target: { type: "chat_conversation" as const, id: aliasConversationId },
+      idempotencyKey: "hermes-product-rpc-writer-fence-next",
+      runtimeType: "hermes_gateway",
+      sessionIntent: resume,
+      runtimeBindingId: aliasBinding.id,
+      runtimeSegmentId: aliasSession.segment.id,
+    };
+    const [activeSpan] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, first.entry.span.id));
+    expect(activeSpan).toMatchObject({ state: "open", writerLeaseReleasedAt: null });
+    expect(activeSpan?.writerResourceRef).toEqual(expect.any(String));
+
+    const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-hermes-writer-fence-"));
+    const sourcePath = path.join(profileRoot, "source");
+    const hermesHome = path.join(profileRoot, "home");
+    fs.mkdirSync(path.join(sourcePath, "tui_gateway"), { recursive: true });
+    fs.mkdirSync(hermesHome, { recursive: true });
+    fs.writeFileSync(path.join(sourcePath, "tui_gateway", "entry.py"), "# test-only fixture\n");
+    const profile: HermesProductRpcProfile = {
+      binding: { hostId: "local", profileId: "default" },
+      command: process.execPath,
+      args: [],
+      cwd: profileRoot,
+      hermesPythonCommand: process.execPath,
+      hermesSourcePath: sourcePath,
+      hermesHome,
+      providerVersion: "0.21.0",
+    };
+    const order: string[] = [];
+    type AdmissionAttempt = { ok: true; runId: string } | { ok: false; error: unknown };
+    const secondAdmission = async (phase: string) => {
+      try {
+        const admitted = await adapter.admit(nextAdmission);
+        order.push(`second-admission-created:${phase}`);
+        return { ok: true as const, runId: admitted.entry.runId };
+      } catch (error) {
+        order.push(`second-admission-blocked:${phase}`);
+        return { ok: false as const, error };
+      }
+    };
+    let terminalAdmission: AdmissionAttempt | null = null;
+    let afterTailAdmission: AdmissionAttempt | null = null;
+    let historyReads = 0;
+
+    try {
+      const result = await executeHermesProductRpcChat({
+        profile,
+        sessionId: nativeSessionId,
+        sessionParams: buildHermesProductRpcSessionParams({ sessionId: nativeSessionId, profile }),
+        prompt: "Test the post-turn tail boundary.",
+        timeoutMs: 2_000,
+        onLog: async () => {},
+        acquireHistoryFence: async () => ({
+          tailRowId: 40,
+          sessionExists: true,
+          isHeld: () => true,
+          release: async () => {},
+        }),
+        readHistoryTail: async () => {
+          if (historyReads++ === 0) {
+            order.push("before-tail");
+            return { availability: "available", tailRowId: 40, relation: "none", successorSessionId: null };
+          }
+          order.push("after-tail-start");
+          afterTailAdmission = await secondAdmission("after-tail-read");
+          return { availability: "available", tailRowId: 44, relation: "none", successorSessionId: null };
+        },
+        waitForSessionLease: async () => true,
+        createClient: async ({ onNotification, onSpawn }) => {
+          const emit = (type: string, payload: Record<string, unknown> = {}) => onNotification("event", {
+            type,
+            session_id: "hermes-live-session",
+            payload,
+          });
+          await onSpawn?.({ pid: process.pid, startedAt: new Date().toISOString() });
+          queueMicrotask(() => onNotification("event", { type: "gateway.ready", payload: {} }));
+          return {
+            close: async () => {},
+            request: async (method: string) => {
+              if (method === "ping") return { pong: true };
+              if (method === "gateway.capabilities") return { per_session_exclusive_submit: true };
+              if (method === "session.resume") return {
+                session_id: "hermes-live-session",
+                session_key: nativeSessionId,
+                running: false,
+                auto_continue: false,
+              };
+              if (method === "prompt.submit") {
+                order.push("prompt-submit");
+                emit("message.start");
+                emit("message.complete", { status: "complete", text: "finished" });
+                order.push("terminal:message.complete");
+                emit("session.info", { running: false });
+                order.push("terminal:running-false");
+                terminalAdmission = await secondAdmission("after-running-false");
+                return { status: "streaming" };
+              }
+              return {};
+            },
+          };
+        },
+      });
+      order.push("product-rpc-returned");
+
+      const terminalAttempt = terminalAdmission as AdmissionAttempt | null;
+      const afterTailAttempt = afterTailAdmission as AdmissionAttempt | null;
+      expect(terminalAttempt).not.toBeNull();
+      expect(afterTailAttempt).not.toBeNull();
+      if (!terminalAttempt || !afterTailAttempt) throw new Error("expected both interleaved admission attempts");
+      expect(terminalAttempt.ok).toBe(false);
+      expect(afterTailAttempt.ok).toBe(false);
+      if (!terminalAttempt.ok) {
+        expect((terminalAttempt.error as { cause?: unknown }).cause).toMatchObject({
+          code: "23505",
+          constraint_name: "run_runtime_spans_active_native_writer_uq",
+        });
+      }
+      if (!afterTailAttempt.ok) {
+        expect((afterTailAttempt.error as { cause?: unknown }).cause).toMatchObject({
+          code: "23505",
+          constraint_name: "run_runtime_spans_active_native_writer_uq",
+        });
+      }
+      expect(result).toMatchObject({
+        exitCode: 0,
+        nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+        resultJson: { transcriptBoundary: { status: "exact", startExclusive: 40, endInclusive: 44 } },
+      });
+      expect(order).toEqual([
+        "before-tail",
+        "prompt-submit",
+        "terminal:message.complete",
+        "terminal:running-false",
+        "second-admission-blocked:after-running-false",
+        "after-tail-start",
+        "second-admission-blocked:after-tail-read",
+        "product-rpc-returned",
+      ]);
+
+      await expect(execution.recordExecutionResult(first.entry.runId, first.entry.ownerFence, {
+        spanId: first.entry.span.id,
+        attemptId: first.entry.attempt.ref.id,
+        result,
+      })).resolves.toMatchObject({ ok: true, value: { state: "sealed" } });
+      const releasedAdmission = await adapter.admit(nextAdmission);
+      expect(releasedAdmission.created).toBe(true);
+    } finally {
+      fs.rmSync(profileRoot, { recursive: true, force: true });
+    }
   });
 
   it("scopes a dead current process to its latest Attempt span", async () => {

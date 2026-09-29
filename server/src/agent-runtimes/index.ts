@@ -216,6 +216,56 @@ function normalizedOpenCodeSessionEnvironment(
     : null;
 }
 
+function isLegacyOpenCodeDataHome(value: string | undefined): boolean {
+  if (!value || !path.isAbsolute(value)) return false;
+  const dataHome = path.resolve(value);
+  return path.basename(dataHome) === "share"
+    && path.basename(path.dirname(dataHome)) === ".local"
+    && path.basename(path.dirname(path.dirname(dataHome))) === "opencode-home";
+}
+
+function hasTrustedOpenCodeRunSnapshot(
+  context: RuntimeProviderCapabilityResolverContext | undefined,
+  expected: Record<string, string>,
+): boolean {
+  const input = context?.readerInput;
+  const run = input?.run;
+  const binding = input?.binding;
+  const segment = input?.segment;
+  const span = input?.span;
+  if (!run || !binding || !segment || !span
+    || context?.session?.sessionId !== segment.nativeSessionId
+    || run.orgId !== input.orgId
+    || binding.orgId !== run.orgId
+    || segment.orgId !== run.orgId
+    || segment.bindingId !== binding.id
+    || span.orgId !== run.orgId
+    || span.runId !== run.id
+    || span.bindingId !== binding.id
+    || span.segmentId !== segment.id) return false;
+
+  const runContext = asRecord(run.contextSnapshot);
+  const profile = asRecord(runContext.runtimeProviderProfile);
+  const snapshots = [
+    profile.exportEnv,
+    asRecord(run.sessionParamsBeforeJson).exportEnv,
+    asRecord(run.sessionParamsAfterJson).exportEnv,
+  ];
+  return snapshots.some((snapshot) => {
+    const exportEnv = stringRecord(snapshot);
+    if (!exportEnv) return false;
+    const snapshotContext: RuntimeProviderCapabilityResolverContext = {
+      ...context,
+      session: {
+        sessionId: context?.session?.sessionId ?? "opencode-run-snapshot",
+        sessionDisplayId: context?.session?.sessionDisplayId ?? "opencode-run-snapshot",
+        sessionParams: { exportEnv },
+      },
+    };
+    return normalizedOpenCodeSessionEnvironment(snapshotContext, expected) !== null;
+  });
+}
+
 function withOpenCodeHostEnvironment(
   adapter: RuntimeProviderCapabilityAdapter,
   expected: Record<string, string>,
@@ -257,7 +307,10 @@ function withOpenCodeHostEnvironment(
           ...adapter.transcript,
           readRange: async (input) => {
             const session = readerSession(input.session);
-            if (!normalizedOpenCodeSessionEnvironment(contextForSession(session), expected)) {
+            const readContext = contextForSession(session);
+            if (!normalizedOpenCodeSessionEnvironment(readContext, expected)
+              || (isLegacyOpenCodeDataHome(expected.XDG_DATA_HOME)
+                && !hasTrustedOpenCodeRunSnapshot(readContext, expected))) {
               return {
                 items: [],
                 nextCursor: null,
@@ -277,6 +330,12 @@ function withOpenCodeHostEnvironment(
         fork: {
           ...adapter.fork,
           fork: async (input) => {
+            if (isLegacyOpenCodeDataHome(expected.XDG_DATA_HOME)) {
+              throw new OpenCodeNativeCapabilityError(
+                "unsupported",
+                "Legacy shared OpenCode data is transcript-read-only; start a new isolated session before forking.",
+              );
+            }
             if (!normalizedOpenCodeSessionEnvironment(contextForSession(input.session), expected)) {
               throw new Error("OpenCode persisted export environment does not match the host profile.");
             }
@@ -290,6 +349,12 @@ function withOpenCodeHostEnvironment(
         sideChatForkCleanup: {
           ...adapter.sideChatForkCleanup,
           deleteForkedSession: async (input) => {
+            if (isLegacyOpenCodeDataHome(expected.XDG_DATA_HOME)) {
+              throw new OpenCodeNativeCapabilityError(
+                "unsupported",
+                "Legacy shared OpenCode data is transcript-read-only; cleanup is disabled for this profile.",
+              );
+            }
             if (!normalizedOpenCodeSessionEnvironment(contextForSession(input.session), expected)) {
               throw new OpenCodeNativeCapabilityError(
                 "unsupported",

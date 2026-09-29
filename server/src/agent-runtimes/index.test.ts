@@ -234,8 +234,27 @@ describe("OpenCode historical profile resolver", () => {
     const context = contextWithEnv({ ...hostEnv, OPENCODE_CONFIG: currentConfig });
     const olderEnv = { ...hostEnv, OPENCODE_CONFIG: olderConfig };
     context.readerInput = {
-      run: { id: runId },
-      segment: { providerStateJson: { exportEnv: olderEnv } },
+      orgId: "org-1",
+      run: {
+        id: runId,
+        orgId: "org-1",
+        contextSnapshot: { runtimeProviderProfile: { runtimeType: "opencode_local", exportEnv: hostEnv } },
+      },
+      binding: { id: "binding-1", orgId: "org-1" },
+      segment: {
+        id: "segment-1",
+        orgId: "org-1",
+        bindingId: "binding-1",
+        nativeSessionId: "opencode-session",
+        providerStateJson: { exportEnv: olderEnv },
+      },
+      span: {
+        id: "span-1",
+        orgId: "org-1",
+        runId,
+        bindingId: "binding-1",
+        segmentId: "segment-1",
+      },
     } as unknown as RuntimeProviderCapabilityResolverContext["readerInput"];
     const resolved = createResolver()("opencode_local", binding, context) as RuntimeProviderCapabilityResolution | null;
     expect(resolved).not.toBeNull();

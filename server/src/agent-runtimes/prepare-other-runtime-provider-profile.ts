@@ -1,3 +1,4 @@
+import { resolveOpenCodeProfileDataHome } from "@rudderhq/agent-runtime-opencode-local/server";
 import { resolveOrganizationStorageKey } from "@rudderhq/agent-runtime-utils";
 import {
   ensureAbsoluteDirectory,
@@ -389,13 +390,14 @@ export async function prepareOtherRuntimeProviderProfile(
   if (input.runtimeType === "opencode_local") {
     const command = firstString(config.serverCommand, config.exportCommand, config.command) ?? "opencode";
     const home = resolveManagedHome(probeEnv, input.orgId, "opencode-home");
+    const profileDataHome = resolveOpenCodeProfileDataHome({ ...config, env: probeEnv }, input.orgId);
     const exportEnv: Record<string, string> = {
       ...safeRecord(config.exportEnv ?? config.opencodeExportEnv, SAFE_OPENCODE_EXPORT_ENV_KEYS),
       HOME: operatorHome,
       USERPROFILE: userProfile,
       RUDDER_OPERATOR_HOME: operatorHome,
       XDG_CONFIG_HOME: path.join(home, ".config"),
-      XDG_DATA_HOME: path.join(home, ".local", "share"),
+      XDG_DATA_HOME: profileDataHome,
       XDG_CACHE_HOME: path.join(home, ".cache"),
     };
     delete exportEnv.OPENCODE_CONFIG;

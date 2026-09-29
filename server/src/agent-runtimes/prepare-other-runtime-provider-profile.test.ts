@@ -1,3 +1,4 @@
+import { resolveOpenCodeProfileDataHome } from "@rudderhq/agent-runtime-opencode-local/server";
 import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -220,6 +221,9 @@ describe("other runtime provider profile preparation", () => {
         XDG_CONFIG_HOME: path.join(root, "instances", "profile-test", "organizations", "org-profile", "opencode-home", ".config"),
       },
     });
+    expect((prepared[2].exportEnv as Record<string, string>).XDG_DATA_HOME).toBe(
+      resolveOpenCodeProfileDataHome({ ...prepared[2], env: prepared[2].env as Record<string, unknown> }, "org-profile"),
+    );
     expect(prepared[3]).toMatchObject({
       command: "pi",
       sessionDir: path.join(root, "instances", "profile-test", "organizations", "org-profile", "pi-home", ".pi", "paperclips"),
@@ -259,6 +263,24 @@ describe("other runtime provider profile preparation", () => {
       hermesPythonCommand: pythonPath,
       hermesSourcePath: sourcePath,
     });
+  });
+
+  it("keys OpenCode data by organization and stable host/profile identity, not mutable config", () => {
+    const env = { RUDDER_HOME: root, RUDDER_INSTANCE_ID: "profile-test" };
+    const base = { env, providerHostId: "host-a", providerProfileId: "profile-a", capabilityRevision: "revision-1" };
+    const first = resolveOpenCodeProfileDataHome({ ...base, apiKey: "secret-a" }, "org-profile");
+    const rotated = resolveOpenCodeProfileDataHome({
+      ...base,
+      apiKey: "secret-b",
+      capabilityRevision: "revision-2",
+      provider: { options: { apiKey: "another-secret" } },
+    }, "org-profile");
+
+    expect(rotated).toBe(first);
+    expect(resolveOpenCodeProfileDataHome(base, "another-org")).not.toBe(first);
+    expect(resolveOpenCodeProfileDataHome({ ...base, providerProfileId: "profile-b" }, "org-profile")).not.toBe(first);
+    expect(resolveOpenCodeProfileDataHome({ ...base, providerHostId: "host-b" }, "org-profile")).not.toBe(first);
+    expect(first).toContain(path.join("organizations", "org-profile", "opencode-home", "provider-data"));
   });
 
   it("matches execute cwd precedence and does not mutate caller config", async () => {
