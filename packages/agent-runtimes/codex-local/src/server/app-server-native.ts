@@ -51,6 +51,7 @@ export interface CodexNativeTranscriptReadResult {
   source?: "native" | "native_plus_objects" | "legacy";
   availability?: "available" | "offline" | "missing" | "expired" | "incompatible";
   completeness?: "complete" | "partial" | "terminal_only" | "unknown";
+  limitReached?: { reason: "page_bytes" | "item_bytes" | "total_items"; maximum: number } | null;
 }
 
 export interface CodexNativeForkRequest {
@@ -79,11 +80,17 @@ export interface CodexAppServerProfileTransport {
   /** This environment is owned by the resolver; it is never merged from the caller. */
   env: Readonly<Record<string, string>>;
   providerVersion?: string | null;
+  /** Ephemeral read-only protocol proof; never persisted as a binding revision. */
+  transcriptVerificationFingerprint?: string;
   /** Explicit protocol evidence. Missing flags remain unknown. */
   methods?: {
     threadResume?: boolean;
     threadRead?: boolean;
     threadFork?: boolean;
+    threadTurnsList?: boolean;
+    threadItemsList?: boolean;
+    /** Separate attestation: thread/read support alone does not prove full history. */
+    threadReadFullSnapshot?: boolean;
   };
 }
 
@@ -356,6 +363,8 @@ async function withProfileClient<T>(
   profile: CodexAppServerProfileTransport,
   signal: AbortSignal | undefined,
   operation: (client: CodexAppServerClient) => Promise<T>,
+  maxFrameBytes?: number,
+  discovery = false,
 ): Promise<T> {
   const child = spawn(
     profile.command,
@@ -368,14 +377,30 @@ async function withProfileClient<T>(
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
+  const outputBudget = new AbortController();
+  const transport = createCodexAppServerStdioTransport(child);
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  const onStderr = (chunk: Buffer) => {
+    stderrBytes += chunk.length;
+    if (discovery && stderrBytes > 64 * 1024) outputBudget.abort();
+  };
+  child.stderr?.on("data", onStderr);
   const client = new CodexAppServerClient({
-    transport: createCodexAppServerStdioTransport(child),
+    transport: discovery ? { ...transport, onStdout(listener) {
+      return transport.onStdout(chunk => {
+        stdoutBytes += Buffer.byteLength(chunk);
+        if (stdoutBytes > 16 * 1024 * 1024) outputBudget.abort();
+        else listener(chunk);
+      });
+    } } : transport,
     clientInfo: { name: "rudder-native", title: "Rudder", version: "0.0.0" },
     capabilities: { experimentalApi: true },
     requestTimeoutMs: APP_SERVER_REQUEST_TIMEOUT_MS,
+    maxFrameBytes,
     serverRequestHandlers: createCodexAppServerServerRequestHandlers(false),
     onError: () => undefined,
-    abortSignal: signal,
+    abortSignal: AbortSignal.any([outputBudget.signal, ...(signal ? [signal] : [])]),
   });
   try {
     await client.initialize();
@@ -383,6 +408,7 @@ async function withProfileClient<T>(
   } finally {
     client.dispose("Codex native App Server operation complete");
     await terminateProcessTree(child);
+    child.stderr?.off("data", onStderr);
   }
 }
 
@@ -749,18 +775,204 @@ function unavailableResult(error: CodexNativeCapabilityError): CodexNativeTransc
   };
 }
 
+type CodexReadCursor = {
+  version: 1;
+  scope: string;
+  revision: string;
+  phase: "turns" | "items";
+  turnCursor: string | null;
+  itemCursor: string | null;
+  entryOffset: number;
+  ordinal: number;
+  turnRevision: string | null;
+};
+
+function readBudget(value: unknown, fallback: number, maximum: number): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? Math.min(value, maximum) : fallback;
+}
+
+function encodeReadCursor(cursor: CodexReadCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeReadCursor(value: string | null | undefined, scope: string): CodexReadCursor | null {
+  if (!value) return null;
+  try {
+    if (value.length > 65_536) throw new Error("size");
+    const c = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as CodexReadCursor;
+    if (c.version !== 1 || c.scope !== scope || typeof c.revision !== "string" || c.revision.length > 128
+      || !["turns", "items"].includes(c.phase)
+      || !(c.turnRevision === null || (typeof c.turnRevision === "string" && /^[a-f0-9]{64}$/u.test(c.turnRevision)))
+      || ![c.turnCursor, c.itemCursor].every(v => v === null || (typeof v === "string" && v.length <= 16_384))
+      || ![c.entryOffset, c.ordinal].every(v => Number.isSafeInteger(v) && v >= 0 && v <= 100_000_000)) throw new Error("shape");
+    return c;
+  } catch {
+    throw capabilityError("unsupported", "Invalid or differently scoped Codex transcript cursor.");
+  }
+}
+
+function providerPage(response: unknown, previousCursor: string | null): { data: JsonRecord[]; next: string | null } {
+  const page = asRecord(response);
+  if (!Array.isArray(page?.data) || page.data.length > 1
+    || !page.data.every(item => asRecord(item))
+    || !(page.nextCursor === null || (typeof page.nextCursor === "string" && page.nextCursor.length > 0 && page.nextCursor.length <= 16_384))
+    || (page.nextCursor !== null && page.nextCursor === previousCursor)) {
+    throw capabilityError("unsupported", "Codex returned an invalid or non-progressing native page.");
+  }
+  return { data: page.data as JsonRecord[], next: page.nextCursor as string | null };
+}
+
+/** Page native history without resume/replay. One provider item can project to
+ * both a tool call and a result; the cursor retains its intra-item position. */
+async function readPagedTurn(input: {
+  client: CodexAppServerClient;
+  threadId: string;
+  turnId: string;
+  scope: string;
+  cursor: CodexReadCursor | null;
+  maxBytes: number;
+  maxItemBytes: number;
+  limit: number;
+  onPaginationVerified?: () => void;
+}): Promise<CodexNativeTranscriptReadResult> {
+  const metadata = parseThreadResponse(await input.client.request("thread/read", {
+    threadId: input.threadId, includeTurns: false,
+  }), input.threadId, false);
+  if (typeof metadata.thread.updatedAt !== "number" || !Number.isFinite(metadata.thread.updatedAt)) {
+    throw capabilityError("unsupported", "Codex thread metadata has no source revision timestamp.");
+  }
+  // Metadata remains page-independent. A provider update invalidates the old
+  // cursor instead of combining pages from different source observations.
+  const revision = `codex:${createHash("sha256").update(JSON.stringify({
+    scope: input.scope, id: metadata.thread.id, root: metadata.rootSessionId,
+    updatedAt: metadata.thread.updatedAt,
+  })).digest("hex")}`;
+  if (input.cursor && input.cursor.revision !== revision) throw capabilityError("unsupported", "Codex transcript source revision changed.");
+  const state: CodexReadCursor = input.cursor ? { ...input.cursor } : {
+    version: 1, scope: input.scope, revision, phase: "turns", turnCursor: null, itemCursor: null, entryOffset: 0, ordinal: 0, turnRevision: null,
+  };
+  let turn: JsonRecord | null = null;
+  const items: NativeTranscriptRecord[] = [];
+  // Reader measures the serialized array, including its envelope and commas.
+  let bytes = 2;
+  const result = (next: boolean, complete: boolean, limitReached?: CodexNativeTranscriptReadResult["limitReached"]): CodexNativeTranscriptReadResult => ({
+    items, nextCursor: next ? encodeReadCursor(state) : null, revision, source: "native", availability: "available",
+    completeness: complete && !next && !limitReached ? "complete" : "partial",
+    ...(limitReached ? { limitReached } : {}),
+  });
+  const seen = new Set<string>();
+  // Bounded metadata discovery; continue in a later reader page if necessary.
+  for (let requests = 0; requests < 64; requests += 1) {
+    const page = providerPage(await input.client.request("thread/turns/list", {
+      threadId: input.threadId, limit: 1, itemsView: "notLoaded", sortDirection: "asc", cursor: state.turnCursor,
+    }), state.turnCursor);
+    const candidate = page.data[0];
+    if (candidate?.id === input.turnId) {
+      if (typeof candidate.status !== "string" || !Array.isArray(candidate.items) || candidate.items.length !== 0
+        || !(candidate.itemsView === "notLoaded" || asRecord(candidate.itemsView)?.type === "notLoaded")) {
+        throw capabilityError("unsupported", "Codex turn metadata was not a bounded notLoaded view.");
+      }
+      turn = candidate;
+      const turnRevision = createHash("sha256").update(JSON.stringify(candidate)).digest("hex");
+      if (state.turnRevision !== null && state.turnRevision !== turnRevision) {
+        throw capabilityError("unsupported", "Codex selected turn changed during pagination.");
+      }
+      state.turnRevision = turnRevision;
+      state.phase = "items";
+      break;
+    }
+    if (state.phase === "items") throw capabilityError("unsupported", "Codex turn cursor no longer identifies the selected turn.");
+    if (page.next === null) return { ...result(false, false), availability: "missing" };
+    if (seen.has(page.next)) throw capabilityError("unsupported", "Codex turn pagination cycle.");
+    seen.add(page.next);
+    state.turnCursor = page.next;
+  }
+  if (!turn) return result(true, false);
+  seen.clear();
+  for (let requests = 0; requests < 64; requests += 1) {
+    let response: unknown;
+    try {
+      response = await input.client.request("thread/items/list", {
+        threadId: input.threadId, turnId: input.turnId, limit: 1, sortDirection: "asc", cursor: state.itemCursor,
+      });
+    } catch (error) {
+      if (!(error instanceof CodexAppServerProtocolError) || !error.message.includes("frame exceeded")) throw error;
+      return result(items.length > 0, false, { reason: input.maxItemBytes <= input.maxBytes ? "item_bytes" : "page_bytes", maximum: Math.min(input.maxBytes, input.maxItemBytes) });
+    }
+    const page = providerPage(response, state.itemCursor);
+    const wrapper = page.data[0];
+    const item = asRecord(wrapper?.item);
+    if (wrapper && (wrapper.turnId !== input.turnId || !item || !nonEmptyString(item.id))) {
+      throw capabilityError("unsupported", "Codex item page escaped its requested turn or omitted item identity.");
+    }
+    input.onPaginationVerified?.();
+    if (item && Buffer.byteLength(JSON.stringify(item), "utf8") > input.maxItemBytes) {
+      return result(items.length > 0, false, { reason: "item_bytes", maximum: input.maxItemBytes });
+    }
+    const projected = item ? recordsForTurns(input.threadId, metadata.thread, [{ ...turn, items: [item] }]) : [];
+    if (state.entryOffset > projected.length) throw capabilityError("unsupported", "Codex projection cursor is outside its item.");
+    for (let index = state.entryOffset; index < projected.length; index += 1) {
+      const entry = { ...projected[index]!, ordinal: state.ordinal };
+      const size = Buffer.byteLength(JSON.stringify(entry), "utf8");
+      if (size > input.maxItemBytes) return result(items.length > 0, false, { reason: "item_bytes", maximum: input.maxItemBytes });
+      const arrayEntryBytes = size + (items.length > 0 ? 1 : 0);
+      if (items.length >= input.limit || bytes + arrayEntryBytes > input.maxBytes) {
+        if (!items.length) return result(false, false, { reason: "page_bytes", maximum: input.maxBytes });
+        return result(true, false);
+      }
+      items.push(entry);
+      bytes += arrayEntryBytes;
+      state.ordinal += 1;
+      state.entryOffset = index + 1;
+    }
+    state.entryOffset = 0;
+    if (page.next === null) return result(false, ["completed", "failed", "interrupted"].includes(String(turn.status)));
+    if (seen.has(page.next)) throw capabilityError("unsupported", "Codex item pagination cycle.");
+    seen.add(page.next);
+    state.itemCursor = page.next;
+    if (items.length >= input.limit) return result(true, false);
+  }
+  return result(true, false);
+}
+
 export async function readCodexNativeTranscript(
   input: CodexNativeTranscriptReadRequest,
   profile: CodexAppServerProfileTransport,
 ): Promise<CodexNativeTranscriptReadResult> {
+  return readCodexNativeTranscriptWithEvidence(input, profile);
+}
+
+/** Discover only through the actual bounded read protocol. No generated schema,
+ * session mutation, or guessed capability flags are needed. A limited/missing
+ * page is still useful, but does not attest all three pagination methods. */
+export async function probeCodexNativeTranscriptPagination(
+  input: CodexNativeTranscriptReadRequest,
+  profile: CodexAppServerProfileTransport,
+): Promise<{ page: CodexNativeTranscriptReadResult; verified: boolean }> {
+  let verified = false;
+  const page = await readCodexNativeTranscriptWithEvidence(input, profile, () => { verified = true; });
+  return { page, verified: verified && page.availability === "available" };
+}
+
+async function readCodexNativeTranscriptWithEvidence(
+  input: CodexNativeTranscriptReadRequest,
+  profile: CodexAppServerProfileTransport,
+  onPaginationVerified?: () => void,
+): Promise<CodexNativeTranscriptReadResult> {
+  // Cached protocol proof does not exempt a new historical reader process from
+  // the discovery budgets. Keep cold and warm reads on the same execution path.
+  const boundedHistoricalRead = Boolean(onPaginationVerified || profile.transcriptVerificationFingerprint);
+  if (boundedHistoricalRead) {
+    input = { ...input, signal: AbortSignal.any([
+      ...(input.signal ? [input.signal] : []), AbortSignal.timeout(10_000),
+    ]) };
+  }
   requireProfile(profile, input.binding);
-  requireSupportedMethod(profile, "thread/read");
+  if (!onPaginationVerified) requireSupportedMethod(profile, "thread/read");
   const threadId = sessionThreadId(input.session, profile);
   if (input.runtimeType !== "codex_local") {
     throw capabilityError("unsupported", `Codex native transport cannot serve runtime ${input.runtimeType}.`);
-  }
-  if (input.cursor) {
-    throw capabilityError("unknown", "Codex App Server thread/read is a complete snapshot transport; provider cursors are unsupported.");
   }
   const requireTurn = input.readerInput !== null && input.readerInput !== undefined;
   const selector = selectorRecord(input.selector);
@@ -771,7 +983,25 @@ export async function readCodexNativeTranscript(
     };
   }
   const selectedId = selectedTurnId(input.selector, threadId, requireTurn);
+  const budget = asRecord(input.readerInput);
+  const maxBytes = readBudget(budget?.maxBytes, 2 * 1024 * 1024, 8 * 1024 * 1024);
+  const maxItemBytes = readBudget(budget?.maxItemBytes, 1024 * 1024, 8 * 1024 * 1024);
+  const frameLimit = Math.min(maxBytes, maxItemBytes);
+  const scope = createHash("sha256").update(JSON.stringify({ binding: profile.binding, threadId, selector: input.selector,
+    command: profile.command, args: profile.args, cwd: profile.cwd, home: profile.env.CODEX_HOME,
+    version: profile.providerVersion, verification: profile.transcriptVerificationFingerprint })).digest("hex");
+  const cursor = decodeReadCursor(input.cursor, scope);
   try {
+    if (requireTurn && selectedId && (onPaginationVerified || (profile.methods?.threadTurnsList === true && profile.methods.threadItemsList === true))) {
+      return await withProfileClient(profile, input.signal, client => readPagedTurn({
+        client, threadId, turnId: selectedId, scope, cursor, maxBytes, maxItemBytes,
+        limit: readBudget(budget?.limit, 50, 200),
+        onPaginationVerified,
+      }), frameLimit, boundedHistoricalRead);
+    }
+    if (onPaginationVerified || profile.methods?.threadReadFullSnapshot !== true || cursor) {
+      throw capabilityError("unsupported", "Codex native history needs verified pagination or explicit full-snapshot capability evidence.");
+    }
     return await withProfileClient(profile, input.signal, async (client) => {
       const parsed = await readThread(client, threadId, true);
       let selectedTurns = parsed.turns;
@@ -784,6 +1014,14 @@ export async function readCodexNativeTranscript(
       }
       const records = recordsForTurns(threadId, parsed.thread, selectedTurns);
       const items = requireTurn ? records : applyNativeRange(records, requestedRange(input));
+      if (items.some(item => Buffer.byteLength(JSON.stringify(item), "utf8") > maxItemBytes)) {
+        return { items: [], nextCursor: null, source: "native", revision: stableRevision(parsed.thread, selectedTurns),
+          availability: "available", completeness: "partial", limitReached: { reason: "item_bytes", maximum: maxItemBytes } };
+      }
+      if (Buffer.byteLength(JSON.stringify(items), "utf8") > maxBytes) {
+        return { items: [], nextCursor: null, source: "native", revision: stableRevision(parsed.thread, selectedTurns),
+          availability: "available", completeness: "partial", limitReached: { reason: "page_bytes", maximum: maxBytes } };
+      }
       const complete = selectedTurns.every((turn) => turn.status !== "inProgress") && selectedTurns.length > 0;
       return {
         items,
@@ -793,8 +1031,13 @@ export async function readCodexNativeTranscript(
         availability: "available" as const,
         completeness: (complete ? "complete" : "partial") as "complete" | "partial",
       };
-    });
+    }, frameLimit);
   } catch (error) {
+    if (error instanceof CodexAppServerProtocolError && error.message.includes("frame exceeded")) {
+      return { items: [], nextCursor: null, source: "native", revision: cursor?.revision ?? `codex:limit:${scope}`,
+        availability: "available", completeness: "partial",
+        limitReached: { reason: maxItemBytes <= maxBytes ? "item_bytes" : "page_bytes", maximum: frameLimit } };
+    }
     const normalized = normalizeTransportError(error, "thread/read");
     if (normalized) return unavailableResult(normalized);
     throw error;

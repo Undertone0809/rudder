@@ -37,6 +37,7 @@ import {
   runtimeConfigFromProviderProfileSnapshot,
   sanitizeRuntimeProviderProfileSnapshot,
 } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
+import { createHistoricalCodexTranscriptReaderHook } from "../agent-runtimes/verify-codex-transcript-profile.js";
 import { badRequest, notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
@@ -60,7 +61,6 @@ import {
 import { getRunLogStore } from "./run-log-store.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import {
-  createRuntimeNativeTranscriptReaderHook,
   type RuntimeProviderCapabilityResolver,
 } from "./runtime-kernel/provider-capabilities.js";
 import { createTranscriptObjectReader } from "./runtime-kernel/transcript-object-store.js";
@@ -505,6 +505,17 @@ export function createHistoricalRunRuntimeProviderCapabilityResolver(
       : context;
     return resolveProfile(runtimeType, binding, enrichedContext);
   };
+}
+
+export function createHistoricalRunNativeTranscriptReader(
+  run: HistoricalRunProfileRun,
+  revisions: readonly HistoricalRunConfigRevision[],
+) {
+  const profile = resolveHistoricalRunRuntimeProfile(run, revisions);
+  return createHistoricalCodexTranscriptReaderHook({
+    runtimeType: profile.agentRuntimeType, runtimeConfig: profile.runtimeConfig,
+    cwd: profile.cwd, resolutionMode: "historical",
+  }, createHistoricalRunRuntimeProviderCapabilityResolver(run, revisions));
 }
 
 function resolveBundleForRun(
@@ -1033,12 +1044,7 @@ async function createHistoricalRunTranscriptReader(
     }),
   });
   return createTranscriptReader(db, {
-    nativeReader: createRuntimeNativeTranscriptReaderHook(
-      createHistoricalRunRuntimeProviderCapabilityResolver(
-        run,
-        revisionsByAgentId.get(run.agentId) ?? [],
-      ),
-    ),
+    nativeReader: createHistoricalRunNativeTranscriptReader(run, revisionsByAgentId.get(run.agentId) ?? []),
     objectReader: createTranscriptObjectReader(),
     logStore,
     legacyReader: {

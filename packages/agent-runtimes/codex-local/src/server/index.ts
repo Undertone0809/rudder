@@ -3,6 +3,7 @@ import type { AgentRuntimeSessionCodec } from "@rudderhq/agent-runtime-utils";
 export * from "./app-server-client.js";
 export {
   forkCodexNativeThread,
+  probeCodexNativeTranscriptPagination,
   readCodexNativeTranscript,
   resumeCodexNativeThread
 } from "./app-server-native.js";

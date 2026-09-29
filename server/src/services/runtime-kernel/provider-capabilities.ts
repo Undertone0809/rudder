@@ -19,6 +19,7 @@ import type {
   TranscriptAvailability,
   TranscriptCompleteness,
   TranscriptRange,
+  TranscriptReadLimit,
   TranscriptSource,
 } from "./transcript-reader.js";
 
@@ -343,7 +344,7 @@ export function providerCapabilityReason(
   return { status: "supported", reason: evidence.reason };
 }
 
-function bindingRefFromReaderInput(input: NativeTranscriptReadInput): RuntimeProviderBindingRef | null {
+export function bindingRefFromReaderInput(input: NativeTranscriptReadInput): RuntimeProviderBindingRef | null {
   const binding = input.binding;
   if (!binding || !binding.hostId.trim() || !binding.profileId.trim()) return null;
   return {
@@ -371,7 +372,7 @@ function selectorSessionId(selector: NativeSpanSelector): string | null {
   }
 }
 
-function sessionFromReaderInput(input: NativeTranscriptReadInput): RuntimeProviderSessionRef | null {
+export function sessionFromReaderInput(input: NativeTranscriptReadInput): RuntimeProviderSessionRef | null {
   const sessionId = input.segment?.nativeSessionId?.trim() || selectorSessionId(input.selector);
   if (!sessionId) return null;
   const state = input.segment?.providerStateJson;

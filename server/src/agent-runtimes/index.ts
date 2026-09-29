@@ -462,36 +462,44 @@ function withoutUnresolvedNativeTransport(
   };
 }
 
+/** Same host-owned transport construction for admission and historical reads. */
+export function resolveCodexTranscriptProfile(
+  config: RuntimeProviderProfileConfig,
+  binding: RuntimeProviderBindingRef,
+): CodexAppServerProfileTransport {
+  const runtimeConfig = config.runtimeConfig;
+  const env = readStringMap(runtimeConfig.env);
+  const codexHome = firstString(runtimeConfig.codexHome, env.CODEX_HOME);
+  const methodsRecord = asRecord(runtimeConfig.nativeCapabilityMethods);
+  const methods = Object.keys(methodsRecord).length > 0
+    ? {
+      threadResume: methodsRecord.threadResume === true,
+      threadRead: methodsRecord.threadRead === true,
+      threadFork: methodsRecord.threadFork === true,
+      ...(typeof methodsRecord.threadTurnsList === "boolean" ? { threadTurnsList: methodsRecord.threadTurnsList } : {}),
+      ...(typeof methodsRecord.threadItemsList === "boolean" ? { threadItemsList: methodsRecord.threadItemsList } : {}),
+      ...(typeof methodsRecord.threadReadFullSnapshot === "boolean" ? { threadReadFullSnapshot: methodsRecord.threadReadFullSnapshot } : {}),
+    }
+    : undefined;
+  return {
+    binding: providerBinding(binding),
+    command: firstString(runtimeConfig.command) ?? "codex",
+    args: readStringArray(runtimeConfig.extraArgs ?? runtimeConfig.args) ?? undefined,
+    cwd: profileCwd(config),
+    // Match execute's host environment while the managed home remains the history authority.
+    env: buildCodexProfileEnvironment({ configured: env, codexHome: codexHome ? path.resolve(codexHome) : null }),
+    providerVersion: providerVersion(config),
+    methods,
+  };
+}
+
 function profileResolvers(config: RuntimeProviderProfileConfig): Record<string, RuntimeProviderAdapterResolver> {
   const runtimeConfig = config.runtimeConfig;
   const env = readStringMap(runtimeConfig.env);
   const historical = config.resolutionMode === "historical";
-
   const codex: RuntimeProviderAdapterResolver = (_runtimeType, binding) => {
     if (!binding) return null;
-    const codexHome = firstString(
-      runtimeConfig.codexHome,
-      env.CODEX_HOME,
-    );
-    const methodsRecord = asRecord(runtimeConfig.nativeCapabilityMethods);
-    const methods = Object.keys(methodsRecord).length > 0
-      ? {
-        threadResume: methodsRecord.threadResume === true,
-        threadRead: methodsRecord.threadRead === true,
-        threadFork: methodsRecord.threadFork === true,
-      }
-      : undefined;
-    const profile: CodexAppServerProfileTransport = {
-      binding: providerBinding(binding),
-      command: firstString(runtimeConfig.command) ?? "codex",
-      args: readStringArray(runtimeConfig.extraArgs ?? runtimeConfig.args) ?? undefined,
-      cwd: profileCwd(config),
-      // Match execute's host environment (PATH/HOME/auth helpers) while the
-      // explicitly resolved managed home remains the history authority.
-      env: buildCodexProfileEnvironment({ configured: env, codexHome: codexHome ? path.resolve(codexHome) : null }),
-      providerVersion: providerVersion(config),
-      methods,
-    };
+    const profile = resolveCodexTranscriptProfile(config, binding);
     return createCodexLocalProviderCapabilityResolver(() => profile)(_runtimeType, binding);
   };
 
