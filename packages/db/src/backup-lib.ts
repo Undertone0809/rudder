@@ -300,6 +300,7 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
     emitStatement("BEGIN;");
     emitStatement("SET LOCAL session_replication_role = replica;");
     emitStatement("SET LOCAL client_min_messages = warning;");
+    emitStatement("SET LOCAL check_function_bodies = false;");
     emit("");
 
     const allTables = await sql<TableDefinition[]>`
@@ -455,6 +456,23 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
       emitStatementBoundary();
       emit("");
     }
+
+    // Migration journals alone cannot recreate these routines on a restored
+    // database: already-applied migrations will not run again. Preserve the
+    // definitions used by ownership/provisioning guards, without copying
+    // extension-owned routines whose implementation belongs to the extension.
+    const functions = await sql<{ definition: string }[]>`
+      SELECT pg_get_functiondef(p.oid) AS definition
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p')
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_depend d
+          WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'
+        )
+      ORDER BY p.proname, p.oid
+    `;
+    for (const routine of functions) emitStatement(routine.definition);
 
     const ownedSequences = sequences.filter((seq) => seq.owner_table && seq.owner_column);
     if (ownedSequences.length > 0) {
@@ -636,6 +654,57 @@ export async function runDatabaseBackup(opts: RunDatabaseBackupOptions): Promise
         }
       }
       emit("");
+    }
+
+    // Add CHECK constraints after data so a source NOT VALID constraint keeps
+    // its existing rows and validation state, while still guarding new writes.
+    const checks = await sql<{
+      schema_name: string;
+      tablename: string;
+      constraint_name: string;
+      definition: string;
+    }[]>`
+      SELECT n.nspname AS schema_name, t.relname AS tablename,
+             c.conname AS constraint_name, pg_get_constraintdef(c.oid, true) AS definition
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE c.contype = 'c' AND n.nspname = 'public'
+      ORDER BY n.nspname, t.relname, c.conname
+    `;
+    for (const check of checks) {
+      if (!includedTableNames.has(tableKey(check.schema_name, check.tablename))) continue;
+      emitStatement(`ALTER TABLE ${quoteQualifiedName(check.schema_name, check.tablename)} ADD CONSTRAINT ${quoteIdentifier(check.constraint_name)} ${check.definition};`);
+    }
+
+    // Install user triggers only after loading the snapshot. In particular,
+    // ENABLE ALWAYS triggers must not provision new authority or audit rows
+    // while the corresponding persisted rows are being restored.
+    const triggers = await sql<{
+      schema_name: string;
+      tablename: string;
+      trigger_name: string;
+      enabled: string;
+      definition: string;
+    }[]>`
+      SELECT n.nspname AS schema_name, t.relname AS tablename,
+             g.tgname AS trigger_name, g.tgenabled AS enabled,
+             pg_get_triggerdef(g.oid, true) AS definition
+      FROM pg_trigger g
+      JOIN pg_class t ON t.oid = g.tgrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE NOT g.tgisinternal AND n.nspname = 'public'
+      ORDER BY n.nspname, t.relname, g.tgname
+    `;
+    const triggerModes: Record<string, string> = {
+      O: "ENABLE", D: "DISABLE", R: "ENABLE REPLICA", A: "ENABLE ALWAYS",
+    };
+    for (const trigger of triggers) {
+      if (!includedTableNames.has(tableKey(trigger.schema_name, trigger.tablename))) continue;
+      const mode = triggerModes[trigger.enabled];
+      if (!mode) throw new Error(`Unsupported trigger enablement: ${trigger.enabled}`);
+      emitStatement(`${trigger.definition};`);
+      emitStatement(`ALTER TABLE ${quoteQualifiedName(trigger.schema_name, trigger.tablename)} ${mode} TRIGGER ${quoteIdentifier(trigger.trigger_name)};`);
     }
 
     emitStatement("COMMIT;");

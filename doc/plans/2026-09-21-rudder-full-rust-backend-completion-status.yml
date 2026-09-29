@@ -5,34 +5,36 @@ status: in_progress
 current_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   branch: codex/project-create-pilot-20260929
-  source_sha: dee9c16f7fed7fff0d7732010d6b5d131baf862c
-  source_tree: 4b0bf86c1d37e31548b34632f0eb5ea2ca3c6cee
-  source_fingerprint: 0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd
+  source_sha: 7a4d1120fbcc216256889d30c17c0fe5728e9138
+  source_tree: 440a6f1e27e732bd8c9fa96742fc2001385562ec
+  source_fingerprint: a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60
   origin_main: 89859a26b002828a61faf7a542d8f07d3b522884
-  state: Project_Create_v27_3_stage_reject_thin_CLI_diagnostic_local_fix2PASS_refreeze_pending
+  state: Project_Create_v27_4_verifier_FAIL_clone_missing_authority_schema_backup_repair_unfrozen
   runtime_equivalence: backend_runtime_unchanged_since_a683_CLI_lazy_modules_require_fresh_package_and_verification
   plan: doc/plans/2026-09-29-rust-project-create-service-pilot.md
   packet: doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json
   publication: PR236_DRAFT_published_early_for_CI_not_acceptance
   pr: https://github.com/Undertone0809/rudder/pull/236
-  published_head: dee9c16f7fed7fff0d7732010d6b5d131baf862c
-  ci: {matrix: 36511577073, matrix_status: in_progress, D1: 36511577072, D1_status: PASS}
+  published_head: 7a4d1120fbcc216256889d30c17c0fe5728e9138
+  ci: {matrix: 36512462912, matrix_status: in_progress, D1: 36512462914, D1_status: in_progress}
+  superseded_dee9_ci: {matrix: 36511577073, matrix_status: cancelled_after_arm64_crates_io_DNS_failure, D1: 36511577072, D1_status: PASS}
   previous_complete_ci: {matrix: 36508241419, matrix_status: FAIL_Intel_log_store_timeout_all_other_jobs_PASS, D1: 36508241444, D1_status: PASS_Branding_Goal_Create_Delete}
   prior_ci: {matrix: 36505621311, matrix_status: superseded_cancelled_with_recorded_failures, D1: 36505621372, D1_status: FAIL_public_create500_in_goal_smoke}
   author_public_smoke: PASS_HTTP_CLI_MCP_Library_restart_owner_routing_scope_denial_outage_no_fallback_macOS_only
   author_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json
-  active_failure: prior_installed_FAIL_preserved_repaired_CLI_plain_Node_load_PASS_remaining_acceptance_and_CI_pending
-  stage_review: Halley_dee9_reject_thin_CLI_missing_db_diagnostic_regression_local_narrow_fix_pending_recheck
-  stage_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review.json
-  verifier_execution: Hubble_FAIL_owned_processes_stopped_PG_released_partial_backend_observations_retained_no_aggregate_PASS
-  verifier_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.json
+  active_failure: cloned_merge_target_has_no_Project_owner_row_public_PATCH409_backup_export_omits_functions_triggers_CHECKs
+  stage_review: Halley_7a4_accept_thin_diagnostic_and_packaging_delta_no_final_acceptance
+  stage_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.4.json
+  verifier_execution: Hubble_v27_4_FAIL_merge_rollback_and_import_pass_later_Node_route409_schema_diagnosis_under_exclusive_PG
+  verifier_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.4.json
   verifier_install_root: /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install
-  verifier_preparation: /private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/preparation-receipt-v27.3.json
-  verifier_cli_tarball_sha256: 9e73c0b2f76d98abe4fc27aa26ef0a692ac93a40003075ea893407bc52a6db35
-  verifier_data_lease: create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST_not_granted_yet
+  verifier_preparation: /private/tmp/rudder-create-verifier.DSx0ST/cli-7a4.JNjYpI/preparation-receipt-v27.4.json
+  verifier_cli_tarball_sha256: 09238fd930eaecc0d1726678e874df190b11894a5b5f5d3975e35c8836259815
+  verifier_data_lease: create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST
+  cache_reclaim: unused_author_Cargo_target_BGDKEg_cleaned_no_open_users_binaries_preserved_under_/tmp/rudder-create-author-binaries.1EgZRE
   regression: Delete_real_entry_PASS_goal_CI_PASS_create_actual_PG_PASS
   native_CI_findings: Windows_directory_and_capability_repairs_PASS_log_store_test_split_focused5_PASS_exact_head_CI_pending
-  next_executable: collect_dee9_stage_rebind_freeze_v27_3_grant_Hubble_serial_PG_then_Desktop_and_final_review
+  next_executable: qualify_backup_schema_preservation_with_real_restore_guard_regression_then_checkpoint_repack_DB_CLI_refresh_freeze_and_installed_merge
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 delivered_project_delete_candidate:
   worktree: /Users/zeeland/.codex/worktrees/rudder-d1-mainline/rudder-oss
@@ -794,8 +796,8 @@ historical_v16_receipts:
   verifier: {agent_id: 01a0c903-973c-77a0-8116-8867ff5f43e5, verdict: PASS, data_id: rust-project-goal-real-entry-16304, packet: v16}
   final_review: {agent_id: 01a0c913-8d45-72e3-ad30-d3ebe87839f3, verdict: accept, level: final_handoff_verdict}
 interrupt_resume:
-  last_durable_source_commit: dee9c16f7fed7fff0d7732010d6b5d131baf862c
-  latest_published_record_commit: dee9c16f7fed7fff0d7732010d6b5d131baf862c
+  last_durable_source_commit: 7a4d1120fbcc216256889d30c17c0fe5728e9138
+  latest_published_record_commit: 7a4d1120fbcc216256889d30c17c0fe5728e9138
   prior_accepted_candidate: PR233_member_default_and_PR234_delivery_records_merged
   remaining_work: Project_DELETE_merged_Project_Create_verifier_FAIL_missing_CLI_modules_repair_then_remaining_installed_local_Desktop_CI_final_review
   next_command: checkpoint_reviewed_CLI_packaging_and_log_store_test_repairs_push_draft_CI_refresh_freeze_and_verifier

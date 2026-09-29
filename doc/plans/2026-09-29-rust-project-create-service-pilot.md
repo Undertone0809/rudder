@@ -127,6 +127,24 @@ Its test-only split preserves assertions and adds proof of the intended fallback
 error. No final acceptance yet; backend observations require equivalence binding
 and affected CLI workflows require fresh installation and verification.
 
+### Installed seed/merge authority finding
+
+Independent v27.4 acceptance on `7a4d1120f` passed the repaired CLI loading,
+interactive merge rollback and import, then failed public PATCH on the imported
+Project with 409 because its target owner row was absent. Read-only inspection
+found 15 triggers and 11 trigger functions in the source and zero in the cloned
+target. The seed copied all 179 migration journal rows, so startup did not rerun
+0174. Both database sessions used the normal replication role after restore.
+
+Repair backup schema preservation, not the merge writer with a second owner-row
+insertion. Preserve routine definitions, CHECK validation state and trigger
+enablement; install triggers after restored data so ALWAYS triggers cannot
+duplicate provisioning/audit side effects. A real PostgreSQL regression must
+prove new Project provisioning and ownership/receipt guard rejection after
+restore. Rebuild the affected DB package and repeat the normal installed seed,
+merge and subsequent API mutation before accepting this slice. Existing user
+databases and historical backup files are not modified by this repair.
+
 ## Bounded successor after this pilot merges
 
 Default ordinary public/onboarding Project creation to required Rust, retaining

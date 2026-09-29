@@ -21,39 +21,40 @@
   },
   "candidate": {
     "branch": "codex/project-create-pilot-20260929",
-    "source_ref": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
-    "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
-    "dirty_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
-    "source_tree": "4b0bf86c1d37e31548b34632f0eb5ea2ca3c6cee",
+    "source_ref": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+    "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+    "dirty_fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+    "source_tree": "440a6f1e27e732bd8c9fa96742fc2001385562ec",
     "frozen": false,
     "build": {
-      "id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
-      "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+      "id": "server-f54f7190-cli-09238fd9-host-514d101c",
+      "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
       "origin_source_sha": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
-      "equivalence": "Normal fresh lifecycle install with CLI rebuilt from dee9; CLI index byte-identical and 1903 server files plus six foundation hashes unchanged. Backend observations can be rebound; new lazy commands require affected workflow verification.",
+      "equivalence": "CLI index changed only for thin-install missing-db diagnostic; lazy modules unchanged. All1903 server files and six foundation hashes unchanged. Rebind unaffected backend observations explicitly; verify affected CLI paths and remaining criteria.",
       "server_tarball_sha256": "f54f7190c4623f328ca673c5b7ede01f540450ebc280efab5bde09ea20bd81f0",
       "foundation_sha256": "514d101c7aa30c23b535a6553cdad6b83a5dd0119e531b023fdead34c3754875",
       "migration_preflight_sha256": "1110ba6a1e988f80bb6fefd362776264f266bd19d4126363db56e0b5a6c3eb97",
-      "preparation_receipt": "/private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/preparation-receipt-v27.3.json",
+      "preparation_receipt": "/private/tmp/rudder-create-verifier.DSx0ST/cli-7a4.JNjYpI/preparation-receipt-v27.4.json",
       "migration_identity": "/private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/migration-preflight-identity.json",
       "installed_root": "/private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install",
-      "cli_tarball_sha256": "9e73c0b2f76d98abe4fc27aa26ef0a692ac93a40003075ea893407bc52a6db35"
+      "cli_tarball_sha256": "09238fd930eaecc0d1726678e874df190b11894a5b5f5d3975e35c8836259815",
+      "cli_index_sha256": "668d1a00b05c592edb0a4997533d4116a7eaeb75dc3f417d1a519dde7935aa12"
     },
     "runtime": {
-      "id": "create-v27.3-dee9-cli9e73-macos-arm64",
-      "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
-      "state": "preparation_only_no_PG_lease"
+      "id": "create-v27.4-7a4-cli0923-macos-arm64",
+      "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+      "state": "exclusive_PG_lease_granted_not_yet_started"
     },
     "organization_data": {
       "organization_id": null,
-      "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+      "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
       "fixture_parent": "/private/tmp/rudder-create-verifier.DSx0ST",
       "binding_rule": "Before first product mutation, verifier records actual created child root, runtime PIDs/ports and organization IDs in its lease; all are isolated disposable fixture data."
     },
     "workload_fixture": "Project Create HTTP/CLI/MCP/onboarding, preserved import/worktree merge, shared Library files, intent crash recovery, audit/receipt rollback, owner routing and outbox replay.",
     "acceptance_packet": {
-      "version": "27.3",
-      "fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+      "version": "27.4",
+      "fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
       "criteria": [
         "public-entry-parity: HTTP201 legacy shape/defaults; CLI/MCP create with empty/multiple goals; goalIds precedence over goalId; board onboarding creates once, preserves caller metadata and current actor/run.",
         "resources: Existing scoped resource attachments and supported newResources atomically created; foreign references rejected with no durable effects.",
@@ -72,48 +73,53 @@
       ],
       "state_inventory": []
     },
-    "freeze_scope": "Exact source and fresh installed artifact tuple prepared for stage review; existing backend observations retained only by explicit equivalence. No PG runtime lease yet.",
+    "freeze_scope": "Stage reviewed exact source; normal lifecycle-refreshed CLI and unchanged backend artifacts bound before execution. Verifier records actual fixture IDs and owned processes before mutation.",
     "budget_lease": {
-      "id": "create-v27.3-dee9-cli9e73-macos-arm64",
-      "fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+      "id": "create-v27.4-7a4-cli0923-macos-arm64",
+      "fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
       "expires_at": "2026-10-01T00:00:00Z",
       "scope": "Isolated local installed acceptance only; sole local PG slot."
     }
   },
   "receipts": {
     "reviewer": {
-      "verdict": "reject",
-      "reason": "Emitted lazy modules caused thin CLI installs without @rudderhq/db to expose raw missing-package errors instead of the existing full-runtime diagnostic. Narrow program.ts guard and emitted thin-install regression now pass locally; refreshed source/artifact/stage required.",
-      "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
-      "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
-      "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
-      "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
-      "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
-      "packet_version": "27.3"
+      "verdict": "accept",
+      "candidate_fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+      "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+      "build_id": "server-f54f7190-cli-09238fd9-host-514d101c",
+      "runtime_id": "create-v27.4-7a4-cli0923-macos-arm64",
+      "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+      "packet_version": "27.4",
+      "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.4.json",
+      "level": "stage"
     },
     "verifier": {
-      "verdict": "pending",
-      "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
-      "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
-      "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
-      "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
-      "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
-      "packet_version": "27.3"
+      "verdict": "FAIL",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.4.json",
+      "reason": "Installed worktree seed/merge target has no Project provisioning trigger/owner row; subsequent public PATCH409. Backup schema preservation repair and renewed installed proof required.",
+      "candidate_fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+      "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+      "build_id": "server-f54f7190-cli-09238fd9-host-514d101c",
+      "runtime_id": "create-v27.4-7a4-cli0923-macos-arm64",
+      "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+      "packet_version": "27.4"
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
-      "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
-      "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
-      "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
-      "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
-      "packet_version": "27.3"
+      "candidate_fingerprint": "a5a1c99c3c5ea5a725a6b180956537788bc265b3a4c6478424e76f0dbc0d7c60",
+      "source_sha": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+      "build_id": "server-f54f7190-cli-09238fd9-host-514d101c",
+      "runtime_id": "create-v27.4-7a4-cli0923-macos-arm64",
+      "data_id": "create-v27.4-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+      "packet_version": "27.4"
     }
   },
   "drift": {
     "active": true,
     "events": [
-      "Installed verifier FAIL exposed missing lazy CLI modules. Local esbuild entries and build-regression test repair packaging; log-store test-only stabilization also pending checkpoint. Backend runtime source unchanged; passed backend observations may be reused only with explicit equivalence and verifier rebind. CLI install/merge evidence must be refreshed."
+      "Installed verifier FAIL exposed missing lazy CLI modules. Local esbuild entries and build-regression test repair packaging; log-store test-only stabilization also pending checkpoint. Backend runtime source unchanged; passed backend observations may be reused only with explicit equivalence and verifier rebind. CLI install/merge evidence must be refreshed.",
+      "7a4 thin-diagnostic repair accepted at stage; CLI artifact refreshed via normal lifecycle. v27.2 FAIL and v27.3 reject retained in receipt_history."
     ],
     "invalidated_receipts": [
       "Current whole-candidate stage binding requires refresh for CLI packaging delta; final review remains pending."
@@ -131,7 +137,7 @@
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
-    "patch_tree_sha": "4b0bf86c1d37e31548b34632f0eb5ea2ca3c6cee",
+    "patch_tree_sha": "440a6f1e27e732bd8c9fa96742fc2001385562ec",
     "expected_old_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
     "cas": {
       "attempted": false,
@@ -162,9 +168,9 @@
   "publication": {
     "pr": "https://github.com/Undertone0809/rudder/pull/236",
     "draft": true,
-    "published_head": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
-    "matrix_run": 36511577073,
-    "real_entry_run": 36511577072,
+    "published_head": "7a4d1120fbcc216256889d30c17c0fe5728e9138",
+    "matrix_run": 36512462912,
+    "real_entry_run": 36512462914,
     "real_entry_verdict": "in_progress"
   },
   "author_evidence": {
@@ -191,7 +197,7 @@
     "receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json",
     "delete_regression": "/tmp/rudder-goal-delete-queued.nzFPBz/results.md"
   },
-  "next_executable": "Checkpoint reviewed CLI packaging and focused test repairs, push draft CI, freeze refreshed source and fresh CLI package, then resume Hubble installed acceptance and Poincare packaged verification with serialized PG leases.",
+  "next_executable": "Hubble resumes installed acceptance under exclusive local PG lease; Poincare local package preparation only. Final reviewer after verifierPASS and applicable current-package evidence.",
   "terminal_claims": {
     "implementation_complete": false,
     "release_ready": false,
@@ -263,6 +269,14 @@
           "verdict": "PASS"
         }
       ]
+    },
+    {
+      "source": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+      "matrix": 36511577073,
+      "matrix_status": "cancelled_superseded",
+      "failure": "arm64 Clippy could not resolve index.crates.io; serde registry config fetch failed before compilation",
+      "real_entry": 36511577072,
+      "real_entry_verdict": "PASS"
     }
   ],
   "receipt_history": [
@@ -304,6 +318,41 @@
         }
       },
       "disposition": "FAIL retained; CLI packaging repair requires new installed artifact and affected workflow proof."
+    },
+    {
+      "packet_version": "27.3",
+      "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+      "receipts": {
+        "reviewer": {
+          "verdict": "reject",
+          "reason": "Emitted lazy modules caused thin CLI installs without @rudderhq/db to expose raw missing-package errors instead of the existing full-runtime diagnostic. Narrow program.ts guard and emitted thin-install regression now pass locally; refreshed source/artifact/stage required.",
+          "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+          "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+          "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
+          "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
+          "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.3"
+        },
+        "verifier": {
+          "verdict": "pending",
+          "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+          "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+          "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
+          "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
+          "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.3"
+        },
+        "final_review": {
+          "verdict": "pending",
+          "candidate_fingerprint": "0a0e7ee521f14e8365f6951f74d4da5fe51551f974a5bd4d914e7f3c6f9547dd",
+          "source_sha": "dee9c16f7fed7fff0d7732010d6b5d131baf862c",
+          "build_id": "server-f54f7190-cli-9e73c0b2-host-514d101c",
+          "runtime_id": "create-v27.3-dee9-cli9e73-macos-arm64",
+          "data_id": "create-v27.3-isolated-fixtures-under-rudder-create-verifier.DSx0ST",
+          "packet_version": "27.3"
+        }
+      },
+      "disposition": "Stage reject thin CLI diagnostic; no PG acceptance executed."
     }
   ]
 }
