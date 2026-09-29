@@ -104,7 +104,7 @@ export type ClaudeNativeTranscriptReadResult = {
   revision: string;
   availability: "available" | "offline" | "missing" | "expired" | "incompatible";
   completeness: "complete" | "partial" | "terminal_only" | "unknown";
-  limitReached?: { reason: "page_bytes" | "item_bytes"; maximum: number } | null;
+  limitReached?: { reason: "page_bytes" | "item_bytes" | "total_bytes" | "total_items"; maximum: number } | null;
 };
 
 export type ClaudeNativeForkRequest = {
@@ -174,6 +174,18 @@ const TRANSCRIPT_ITEM_BYTES = 1024 * 1024;
 const TRANSCRIPT_MAX_RECORD_BYTES = 8 * 1024 * 1024;
 const TRANSCRIPT_READ_CHUNK_BYTES = 64 * 1024;
 const TRANSCRIPT_MAX_BLOCKS_PER_RECORD = 10_000;
+// An ancestry scan is separate from the returned page budget. Bound its source
+// work, retained metadata, and projection positions; none is a JS heap promise.
+const TRANSCRIPT_MAX_SCAN_BYTES = 64 * 1024 * 1024;
+const TRANSCRIPT_MAX_INDEX_BYTES = 8 * 1024 * 1024;
+const TRANSCRIPT_MAX_INDEX_RECORDS = 20_000;
+const TRANSCRIPT_MAX_INDEX_ITEMS = 100_000;
+
+class ClaudeTranscriptLimitError extends Error {
+  constructor(readonly limit: NonNullable<ClaudeNativeTranscriptReadResult["limitReached"]>) {
+    super(`Claude transcript index exceeded ${limit.reason}: ${limit.maximum}.`);
+  }
+}
 const CLAUDE_SESSION_EVENT_TYPES = new Set(["user", "assistant", "attachment", "system", "progress"]);
 const CLAUDE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CLAUDE_AGENT_SDK_PACKAGE = "@anthropic-ai/claude-agent-sdk";
@@ -579,16 +591,6 @@ function resolveIndexedRange(
     });
     return found;
   };
-  const firstOrdinal = (minimum: number, inclusive: boolean): number | null => {
-    let found: number | null = null;
-    forEachIndexedItem(records, start, end, ({ index, ordinal }) => {
-      if (inclusive ? ordinal >= minimum : ordinal > minimum) {
-        found = index;
-        return false;
-      }
-    });
-    return found;
-  };
 
   if (range.itemId) {
     const positions: number[] = [];
@@ -603,18 +605,23 @@ function resolveIndexedRange(
   if (startBoundary.id) {
     const index = findId(startBoundary.id);
     if (index !== null) start = index + (range.fromExclusive !== undefined ? 1 : 0);
-  } else if (startBoundary.ordinal !== null) {
-    start = firstOrdinal(startBoundary.ordinal + (range.fromExclusive !== undefined ? 1 : 0), true) ?? end;
   }
 
   const endBoundary = boundaryValue(range.end ?? range.throughInclusive);
-  if (endBoundary.id) {
-    const index = findId(endBoundary.id);
-    if (index !== null) end = index + 1;
-  } else if (endBoundary.ordinal !== null) {
-    end = firstOrdinal(endBoundary.ordinal, false) ?? end;
-  }
-  return { start, end: Math.max(start, end) };
+  const positions: number[] = [];
+  // Block ordinals use line * 1000, whereas non-block records use line.
+  // Numeric ranges must filter every item, not assume monotonic ordinals.
+  forEachIndexedItem(records, start, end, ({ index, record, blockIndex, ordinal }) => {
+    if (!startBoundary.id && startBoundary.ordinal !== null
+      && ordinal < startBoundary.ordinal + (range.fromExclusive !== undefined ? 1 : 0)) return;
+    if (!endBoundary.id && endBoundary.ordinal !== null && ordinal > endBoundary.ordinal) return;
+    positions.push(index);
+    if (endBoundary.id) {
+      const item = indexedItemId(record, blockIndex);
+      if (item.id === endBoundary.id || item.sourceEntryId === endBoundary.id) return false;
+    }
+  });
+  return { start: 0, end: positions.length, positions };
 }
 
 function decodeCursor(cursor: string | null | undefined, revision: string, scope: string): number | null {
@@ -671,6 +678,7 @@ function sameClaudeFileVersion(
 async function scanClaudeSessionFile(
   profile: ClaudeLocalProfileTransport,
   filePath: string,
+  maxItemBytes: number,
   signal?: AbortSignal,
 ): Promise<{ revision: string; records: ClaudeIndexedRecord[]; malformed: boolean; sourceVersion: ClaudeFileVersion | null }> {
   const before = profile.readStream ? null : await fs.stat(filePath);
@@ -684,14 +692,21 @@ async function scanClaudeSessionFile(
   let byteStart = 0;
   let line = 0;
   let malformed = false;
+  let scannedBytes = 0;
+  let indexBytes = 0;
+  let indexedItems = 0;
+  const recordLimit = Math.min(maxItemBytes, TRANSCRIPT_MAX_RECORD_BYTES);
 
   const indexLine = (value: string, start: number, physicalBytes: number) => {
     const content = value.endsWith("\r") ? value.slice(0, -1) : value;
     const byteLength = Buffer.byteLength(content, "utf8");
-    if (byteLength > TRANSCRIPT_MAX_RECORD_BYTES) {
-      throw new Error("Claude session contains a record larger than the native transcript bound.");
+    if (byteLength > recordLimit) {
+      throw new ClaudeTranscriptLimitError({ reason: "item_bytes", maximum: recordLimit });
     }
     if (content.trim()) {
+      if (records.length >= TRANSCRIPT_MAX_INDEX_RECORDS) {
+        throw new ClaudeTranscriptLimitError({ reason: "total_items", maximum: TRANSCRIPT_MAX_INDEX_RECORDS });
+      }
       try {
         const parsed = recordValue(JSON.parse(content));
         if (!parsed) {
@@ -699,9 +714,13 @@ async function scanClaudeSessionFile(
         } else {
           const blockCount = contentBlocks(parsed).length;
           if (blockCount > TRANSCRIPT_MAX_BLOCKS_PER_RECORD) {
-            throw new Error("Claude session record exceeds the native projection item bound.");
+            throw new ClaudeTranscriptLimitError({ reason: "total_items", maximum: TRANSCRIPT_MAX_BLOCKS_PER_RECORD });
           }
-          records.push({
+          indexedItems += Math.max(1, blockCount);
+          if (indexedItems > TRANSCRIPT_MAX_INDEX_ITEMS) {
+            throw new ClaudeTranscriptLimitError({ reason: "total_items", maximum: TRANSCRIPT_MAX_INDEX_ITEMS });
+          }
+          const indexed = {
             line,
             uuid: stringValue(parsed.uuid),
             parentUuid: stringValue(parsed.parentUuid ?? parsed.parent_uuid),
@@ -711,10 +730,15 @@ async function scanClaudeSessionFile(
             normalizedByteLength: Buffer.byteLength(JSON.stringify(parsed), "utf8"),
             lineHash: createHash("sha256").update(Buffer.from(content, "utf8")).digest("hex"),
             blockCount,
-          });
+          };
+          indexBytes += Buffer.byteLength(JSON.stringify(indexed), "utf8");
+          if (indexBytes > TRANSCRIPT_MAX_INDEX_BYTES) {
+            throw new ClaudeTranscriptLimitError({ reason: "total_bytes", maximum: TRANSCRIPT_MAX_INDEX_BYTES });
+          }
+          records.push(indexed);
         }
       } catch (error) {
-        if (error instanceof Error && error.message.includes("native projection item bound")) throw error;
+        if (error instanceof ClaudeTranscriptLimitError) throw error;
         malformed = true;
       }
     }
@@ -724,6 +748,10 @@ async function scanClaudeSessionFile(
 
   for await (const chunk of claudeReadStream(profile, filePath)) {
     abortClaudeRead(signal);
+    scannedBytes += chunk.byteLength;
+    if (scannedBytes > TRANSCRIPT_MAX_SCAN_BYTES) {
+      throw new ClaudeTranscriptLimitError({ reason: "total_bytes", maximum: TRANSCRIPT_MAX_SCAN_BYTES });
+    }
     revision.update(chunk);
     pending += decoder.write(chunk);
     let newline = pending.indexOf("\n");
@@ -735,8 +763,9 @@ async function scanClaudeSessionFile(
       pending = pending.slice(newline + 1);
       newline = pending.indexOf("\n");
     }
-    if (Buffer.byteLength(pending, "utf8") > TRANSCRIPT_MAX_RECORD_BYTES) {
-      throw new Error("Claude session contains a record larger than the native transcript bound.");
+    // A trailing CR may still be the CRLF delimiter, not part of the record.
+    if (Buffer.byteLength(pending.endsWith("\r") ? pending.slice(0, -1) : pending, "utf8") > recordLimit) {
+      throw new ClaudeTranscriptLimitError({ reason: "item_bytes", maximum: recordLimit });
     }
   }
   pending += decoder.end();
@@ -821,6 +850,11 @@ async function readProfileSession(
   request: ClaudeNativeTranscriptReadRequest,
 ): Promise<ClaudeNativeTranscriptReadResult> {
   const loaded = await loadProfileSessionIndex(profile, request);
+  if (loaded.status === "limited") {
+    // A truncated index cannot prove ancestry or mint a stable source cursor.
+    return { items: [], nextCursor: null, source: "native", revision: loaded.revision,
+      availability: "available", completeness: "partial", limitReached: loaded.limit };
+  }
   if (loaded.status !== "available") {
     return {
       items: [],
@@ -902,7 +936,7 @@ async function readProfileSession(
   }
   const nextOffset = offset + page.length;
   const nextCursor = nextOffset < selectedCount
-    && (!limitReached || (limitReached.reason === "page_bytes" && page.length > 0))
+    && (!limitReached || page.length > 0)
     ? encodeCursor(loaded.revision, scope, nextOffset)
     : null;
   return {
@@ -911,13 +945,14 @@ async function readProfileSession(
     source: "native",
     revision: loaded.revision,
     availability: "available",
-    completeness: loaded.malformed ? "partial" : "complete",
+    completeness: loaded.malformed || limitReached || nextCursor ? "partial" : "complete",
     limitReached,
   };
 }
 
 type ClaudeProfileSessionIndex =
   | { status: "available"; revision: string; records: ClaudeIndexedRecord[]; malformed: boolean; filePath: string; sourceVersion: ClaudeFileVersion | null }
+  | { status: "limited"; revision: string; limit: NonNullable<ClaudeNativeTranscriptReadResult["limitReached"]> }
   | { status: "missing" | "incompatible"; revision: string };
 
 type ClaudeProfileSessionLoad =
@@ -973,9 +1008,12 @@ async function loadProfileSessionIndex(
   const resolved = resolveProfileSessionPath(profile, request);
   if (!("filePath" in resolved)) return resolved;
   try {
-    const scanned = await scanClaudeSessionFile(profile, resolved.filePath, request.signal);
+    const scanned = await scanClaudeSessionFile(profile, resolved.filePath, readLimits(request).maxItemBytes, request.signal);
     return { status: "available", ...scanned, filePath: resolved.filePath };
   } catch (error) {
+    if (error instanceof ClaudeTranscriptLimitError) {
+      return { status: "limited", revision: `index-limit:${stableHash(error.limit)}`, limit: error.limit };
+    }
     const message = error instanceof Error ? error.message : String(error);
     const revision = `unavailable:${stableHash(message)}`;
     return {

@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { sessionCodec } from "./index.js";
 import {
@@ -99,7 +102,121 @@ function request(overrides: Partial<ClaudeNativeTranscriptReadRequest> = {}): Cl
   };
 }
 
+async function withSessionFile(
+  content: string,
+  check: (transport: ClaudeLocalProfileTransport, input: ClaudeNativeTranscriptReadRequest) => Promise<void>,
+) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-read-boundary-"));
+  const transport = { binding, cwd: path.join(root, "project"), configDir: path.join(root, "config"), providerVersion: "2.1.216" };
+  const filePath = resolveClaudeSessionFilePath(transport.configDir, transport.cwd, sessionId);
+  try {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, content);
+    const input = request();
+    await check(transport, {
+      ...input,
+      session: { ...input.session, sessionParams: {
+        ...input.session.sessionParams, cwd: transport.cwd, claudeConfigDir: transport.configDir, sessionFilePath: filePath,
+      } },
+    });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
 describe("Claude profile-bound native capabilities", () => {
+  it.each([2_000, 200_000].flatMap(size => ["\n", ""].map(terminator => ({ size, terminator }))))(
+    "rejects an oversized physical record before JSON.parse ($size bytes, terminator $terminator)", async ({ size, terminator }) => {
+    const record = JSON.stringify({ type: "assistant", uuid: "oversized-body", message: { content: "x".repeat(size) } });
+    await withSessionFile(record + terminator, async (transport, input) => {
+      const parse = vi.spyOn(JSON, "parse");
+      try {
+        const result = await createClaudeLocalProviderCapabilities(transport).transcript.readRange({
+          ...input, selector: { kind: "claude_chain", throughInclusiveUuid: "oversized-body" },
+          readerInput: { limit: 1, maxBytes: 4096, maxItemBytes: 1024 },
+        });
+        expect(result).toMatchObject({ items: [], nextCursor: null, completeness: "partial",
+          limitReached: { reason: "item_bytes", maximum: 1024 } });
+        expect(parse.mock.calls.some(([value]) => String(value).includes("oversized-body"))).toBe(false);
+      } finally {
+        parse.mockRestore();
+      }
+    });
+  });
+
+  it("retains a resumable position when a projected item exceeds budget after progress", async () => {
+    const records = [
+      { type: "system", uuid: "small", text: "ok" },
+      { type: "assistant", uuid: "large", parentUuid: "small", message: { content: [{ type: "text", text: "x".repeat(500) }] } },
+    ];
+    await withSessionFile(records.map(record => JSON.stringify(record)).join("\n"), async (transport, input) => {
+      const adapter = createClaudeLocalProviderCapabilities(transport);
+      const selected = { ...input, selector: { kind: "claude_chain", throughInclusiveUuid: "large" } };
+      const first = await adapter.transcript.readRange({ ...selected, readerInput: { maxBytes: 4096, maxItemBytes: 1024 } });
+      expect(first.items.map(item => item.sourceEntryId)).toEqual(["small"]);
+      expect(first).toMatchObject({ completeness: "partial", nextCursor: expect.any(String),
+        limitReached: { reason: "item_bytes", maximum: 1024 } });
+      const next = await adapter.transcript.readRange({ ...selected, cursor: first.nextCursor,
+        readerInput: { maxBytes: 4096, maxItemBytes: 4096 } });
+      expect(next.items.map(item => item.sourceEntryId)).toEqual(["large:block:0"]);
+      expect(next).toMatchObject({ completeness: "complete", nextCursor: null, revision: first.revision });
+    });
+  });
+
+  it("filters non-monotonic ordinals individually across cursor pages and mixed boundaries", async () => {
+    const records = [
+      { type: "assistant", uuid: "a", message: { content: [{ type: "text", text: "a" }] } },
+      { type: "assistant", uuid: "b", parentUuid: "a", message: { content: [{ type: "text", text: "b" }] } },
+      { type: "system", uuid: "c", parentUuid: "b", text: "c" },
+    ];
+    await withSessionFile(records.map(record => JSON.stringify(record)).join("\n"), async (transport, input) => {
+      const adapter = createClaudeLocalProviderCapabilities(transport);
+      const selected = { ...input, selector: { kind: "claude_chain", throughInclusiveUuid: "c" }, readerInput: { limit: 1 } };
+      const first = await adapter.transcript.readRange({ ...selected, range: { end: 10 } });
+      expect(first.items.map(item => item.ordinal)).toEqual([0]);
+      expect(first.completeness).toBe("partial");
+      const next = await adapter.transcript.readRange({ ...selected, range: { end: 10 }, cursor: first.nextCursor });
+      expect(next.items.map(item => item.ordinal)).toEqual([2]);
+      expect(next).toMatchObject({ nextCursor: null, completeness: "complete" });
+      for (const range of [{ start: 500 }, { fromExclusive: 2 }, { start: 500, end: "claude:c" }]) {
+        const page = await adapter.transcript.readRange({ ...selected, range });
+        expect(page.items.map(item => item.ordinal)).toEqual([1000]);
+        expect(page.nextCursor).toBeNull();
+      }
+    });
+  });
+
+  it.each(["records", "metadata", "projections"])("reports an explicit bounded %s index limit without claiming exact ancestry", async (kind) => {
+    const count = kind === "records" ? 20_001 : kind === "metadata" ? 9_000 : 11;
+    const records = Array.from({ length: count }, (_, index) => ({
+      type: "assistant", uuid: `${index}-${kind === "metadata" ? "x".repeat(1024) : "a"}`,
+      ...(kind === "projections" ? { message: { content: Array.from({ length: 10_000 }, () => ({ type: "text", text: "" })) } } : {}),
+    }));
+    const result = await createClaudeLocalProviderCapabilities(profile(records.map(record => JSON.stringify(record)).join("\n")))
+      .transcript.readRange(request({ readerInput: { maxBytes: 1024 * 1024, maxItemBytes: 1024 * 1024 } }));
+    expect(result).toMatchObject({ items: [], nextCursor: null, completeness: "partial", limitReached: {
+      reason: kind === "metadata" ? "total_bytes" : "total_items",
+      maximum: kind === "metadata" ? 8 * 1024 * 1024 : kind === "records" ? 20_000 : 100_000,
+    } });
+  });
+
+  it("caps total ancestry scan bytes even for files with no indexable records", async () => {
+    const transport = profile();
+    const chunk = Buffer.alloc(64 * 1024, " ");
+    for (let index = 1023; index < chunk.length; index += 1024) chunk[index] = 10;
+    let chunks = 0;
+    let closed = false;
+    transport.readStream = async function* () {
+      try { for (; chunks < 2048;) { chunks += 1; yield chunk; } }
+      finally { closed = true; }
+    };
+    const result = await createClaudeLocalProviderCapabilities(transport).transcript.readRange(request());
+    expect(result).toMatchObject({ items: [], nextCursor: null, completeness: "partial",
+      limitReached: { reason: "total_bytes", maximum: 64 * 1024 * 1024 } });
+    expect(chunks).toBe(1025);
+    expect(closed).toBe(true);
+  });
+
   it.each([
     { kind: "claude_chain", throughInclusiveUuid: null },
     { kind: "claude_chain", throughInclusiveUuid: "assistant-2", boundaryStatus: "missing" },
