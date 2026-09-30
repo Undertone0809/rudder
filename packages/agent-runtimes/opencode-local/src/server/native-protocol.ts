@@ -301,9 +301,12 @@ function managedOpenCodeHome(env: Record<string, string>): string | null {
   if (!configHome || !dataHome || !cacheHome
     || ![configHome, dataHome, cacheHome].every(path.isAbsolute)) return null;
   const managedHome = path.dirname(configHome);
+  const profileKey = path.basename(dataHome);
+  const isolatedProfileData = /^[0-9a-f]{32}$/u.test(profileKey)
+    && dataHome === path.join(managedHome, "provider-data", profileKey);
   if (managedHome === path.parse(managedHome).root
     || configHome !== path.join(managedHome, ".config")
-    || dataHome !== path.join(managedHome, ".local", "share")
+    || (dataHome !== path.join(managedHome, ".local", "share") && !isolatedProfileData)
     || cacheHome !== path.join(managedHome, ".cache")) return null;
   return managedHome;
 }

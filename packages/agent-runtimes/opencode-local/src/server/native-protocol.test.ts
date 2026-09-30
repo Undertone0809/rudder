@@ -46,12 +46,14 @@ async function makeFixtureDirectory(prefix: string): Promise<string> {
   return directory;
 }
 
-function managedFixtureEnv(directory: string, runId: string) {
+function managedFixtureEnv(directory: string, runId: string, layout: "legacy" | "profile" = "legacy") {
   const managedHome = path.join(directory, "managed-home");
   return {
     HOME: directory,
     XDG_CONFIG_HOME: path.join(managedHome, ".config"),
-    XDG_DATA_HOME: path.join(managedHome, ".local", "share"),
+    XDG_DATA_HOME: layout === "profile"
+      ? path.join(managedHome, "provider-data", "a".repeat(32))
+      : path.join(managedHome, ".local", "share"),
     XDG_CACHE_HOME: path.join(managedHome, ".cache"),
     OPENCODE_CONFIG: path.join(managedHome, "runtime-tmp", runId, "opencode.json"),
   };
@@ -1023,8 +1025,8 @@ describe("OpenCode native protocol contract", () => {
       env: { HOME: directory }, providerHostId: "local", providerProfileId: "profile-a",
       providerBindingId: "binding-a", providerOrgId: "organization-1",
     };
-    const run = (runId: string, sessionParams: Record<string, unknown> | null, overrides: Record<string, unknown> = {}) => executeOpenCodeAdapter({
-      runId, agent,
+    const run = (runId: string, sessionParams: Record<string, unknown> | null, overrides: Record<string, unknown> = {}, organizationId = agent.orgId) => executeOpenCodeAdapter({
+      runId, agent: { ...agent, orgId: organizationId },
       runtime: { sessionId: sessionParams ? "oc-session-1" : null, sessionParams, sessionDisplayId: null, taskKey: null },
       config: { ...config, ...overrides },
       context: { chatMode: true, chatPrompt: `message for ${runId}` },
@@ -1049,10 +1051,12 @@ describe("OpenCode native protocol contract", () => {
       { ...resumed, exportEnv: { ...stableEnv, OPENCODE_CONFIG: path.join(directory, "foreign-config.json") } },
     ];
     for (const [index, params] of failures.entries()) {
-      expect(await run(`run-drift-${index}`, params)).toMatchObject({ exitCode: 1, errorCode: "opencode_native_unsupported" });
+      expect(await run(`run-drift-${index}`, params), `export environment drift case ${index}`)
+        .toMatchObject({ exitCode: 1, errorCode: "opencode_native_unsupported" });
     }
-    expect(await run("run-other-org", resumed, { providerOrgId: "other-organization" }))
-      .toMatchObject({ exitCode: 1, errorCode: "opencode_native_unsupported" });
+    expect(await run("run-other-org", resumed, {}, "other-organization"))
+      .toMatchObject({ exitCode: 1, errorCode: "opencode_incompatible_legacy_session",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" } });
     const second = await run("run-r2", resumed);
     expect(second.exitCode).toBe(0);
     const secondEnv = (second.sessionParams as { exportEnv: Record<string, string> }).exportEnv;
@@ -1981,11 +1985,11 @@ describe("OpenCode native protocol contract", () => {
     expect(requests.filter((request) => request.method === "GET" && request.url?.includes("/session/oc-session-1"))).toHaveLength(1);
   });
 
-  it("rotates only the verified managed Run config when resuming a bound session", async () => {
+  it.each(["legacy", "profile"] as const)("rotates only the verified managed Run config when resuming a bound session (%s data layout)", async (layout) => {
     const directory = await makeFixtureDirectory("rudder-opencode-rotate-config-");
     const command = await makeOpenCodeFixture(directory);
-    const firstEnv = managedFixtureEnv(directory, "run-r1");
-    const secondEnv = managedFixtureEnv(directory, "run-r2");
+    const firstEnv = managedFixtureEnv(directory, "run-r1", layout);
+    const secondEnv = managedFixtureEnv(directory, "run-r2", layout);
     const binding = {
       id: "binding-a",
       orgId: "org-a",
@@ -2037,6 +2041,18 @@ describe("OpenCode native protocol contract", () => {
     ];
     for (const overrides of invalidInputs) {
       await expect(resume(overrides)).rejects.toMatchObject({ status: "unsupported" });
+    }
+    const managedHome = path.dirname(secondEnv.XDG_CONFIG_HOME);
+    for (const dataHome of [
+      path.join(managedHome, "provider-data", "a".repeat(31)),
+      path.join(managedHome, "provider-data", "A".repeat(32)),
+      path.join(managedHome, "provider-data", "g".repeat(32)),
+      path.join(directory, "foreign-home", "provider-data", "a".repeat(32)),
+    ]) {
+      await expect(resume({
+        env: { ...secondEnv, XDG_DATA_HOME: dataHome },
+        session: { ...persisted, exportEnv: { ...firstEnv, XDG_DATA_HOME: dataHome } },
+      })).rejects.toMatchObject({ status: "unsupported" });
     }
     expect(await messageRequestCount(directory)).toBe(1);
 
