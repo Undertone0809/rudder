@@ -15,6 +15,7 @@ import {
 } from "./native-protocol.js";
 import {
   readHermesProductHistory,
+  readHermesProductHistoryExecutionSpan,
   type HermesProductHistoryProfile,
 } from "./product-history.js";
 
@@ -259,6 +260,40 @@ class SessionDB:
             raise AssertionError("history reader must open SessionDB read-only")
         self.state = json.loads(Path(db_path).read_text(encoding="utf-8"))
 
+    def _read_ctx(self):
+        import sqlite3
+        from contextlib import contextmanager
+        @contextmanager
+        def context():
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            sessions = list(self.state.get("sessions", {}).values())
+            messages = [row for rows in self.state.get("messages", {}).values() for row in rows]
+            for table, rows, required in [
+                ("sessions", sessions, ["id","source","parent_session_id","profile_name","cwd","started_at","ended_at","end_reason","message_count","tool_call_count"]),
+                ("messages", messages, ["id","session_id","role","content"])]:
+                columns = list(dict.fromkeys(required + [key for row in rows for key in row]))
+                conn.execute("CREATE TABLE " + table + " (" + ",".join('"' + col + '"' for col in columns) + ")")
+                for row in rows:
+                    values = [json.dumps(row.get(col), ensure_ascii=False) if isinstance(row.get(col), (dict,list)) else row.get(col) for col in columns]
+                    conn.execute("INSERT INTO " + table + " VALUES (" + ",".join("?" for _ in columns) + ")", values)
+            conn.commit()
+            try:
+                yield conn
+            finally:
+                conn.close()
+        return context()
+
+    def _row_to_message_dict(self, row, **kwargs):
+        result = dict(row)
+        for key in ["content", "tool_calls", "display_metadata"]:
+            if isinstance(result.get(key), str):
+                try:
+                    result[key] = json.loads(result[key])
+                except ValueError:
+                    pass
+        return result
+
     def get_session(self, session_id):
         return self.state.get("sessions", {}).get(session_id)
 
@@ -439,6 +474,17 @@ function sessionFrom(result: Awaited<ReturnType<typeof executeHermesNativeChat>>
   return { sessionId: result.sessionId, sessionParams: result.sessionParams, sessionDisplayId: result.sessionDisplayId };
 }
 
+function historyProfileFrom(profile: HermesAcpProfile): HermesProductHistoryProfile {
+  return {
+    pythonCommand: profile.hermesPythonCommand!,
+    sourcePath: profile.hermesSourcePath!,
+    hermesHome: profile.hermesHome!,
+    providerVersion: profile.providerVersion,
+    hostId: profile.binding.hostId,
+    profileId: profile.binding.profileId,
+  };
+}
+
 describe("Hermes ACP native protocol", () => {
   it("preserves JSON-RPC Unicode split across pipe chunks", async () => {
     const code = String.raw`
@@ -553,16 +599,32 @@ describe("Hermes ACP native protocol", () => {
       expect(transcript).toMatchObject({
         availability: "available",
         completeness: "unknown",
-        revision: expect.stringContaining("execution-ownership-unproven:"),
+        revision: "execution-boundary-unknown",
         items: [],
       });
-      const repeat = await readHermesAcpNativeTranscript({
+      // Audit the persisted window separately: a row-ID range is readable,
+      // but it is not Run ownership proof and must never bypass the ACP gate.
+      const auditInput = {
+        runtimeType: "hermes_gateway" as const,
+        profile: historyProfileFrom(fixture.profile),
+        sessionId: "hermes-history",
+        range: { startExclusive: 2, endInclusive: 6 },
+        limit: 100,
+      };
+      const audit = await readHermesProductHistory(auditInput);
+      expect(audit).toMatchObject({ availability: "available", completeness: "complete" });
+      expect(audit.items.map((item) => item.rowId)).toEqual([3, 4, 5, 6]);
+      expect(audit.items.map((item) => item.raw.content)).toContain("interleaved foreign assistant");
+      expect(audit.items.map((item) => item.raw.content)).toContain("interleaved foreign tool");
+      const repeat = await readHermesProductHistory(auditInput);
+      expect(repeat.revision).toBe(audit.revision);
+      const unprovenRepeat = await readHermesAcpNativeTranscript({
         runtimeType: "hermes_gateway",
         profile: fixture.profile,
         session: sessionFrom(result),
         selector: { kind: "hermes_execution", sourceRangeRef },
       });
-      expect(repeat.revision).toBe(transcript.revision);
+      expect(unprovenRepeat).toEqual(transcript);
 
       const hermesHome = fixture.profile.hermesHome;
       if (!hermesHome) throw new Error("Hermes history fixture is missing its temporary home");
@@ -573,13 +635,8 @@ describe("Hermes ACP native protocol", () => {
       promptRow.api_content = "changed provider payload";
       await fs.writeFile(databasePath, JSON.stringify(database), "utf8");
 
-      const changed = await readHermesAcpNativeTranscript({
-        runtimeType: "hermes_gateway",
-        profile: fixture.profile,
-        session: sessionFrom(result),
-        selector: { kind: "hermes_execution", sourceRangeRef },
-      });
-      expect(changed.revision).not.toBe(transcript.revision);
+      const changed = await readHermesProductHistory(auditInput);
+      expect(changed.revision).not.toBe(audit.revision);
 
       database.messages["hermes-history"].push({
         id: 7,
@@ -591,12 +648,7 @@ describe("Hermes ACP native protocol", () => {
         compacted: 0,
       });
       await fs.writeFile(databasePath, JSON.stringify(database), "utf8");
-      const withUnrelatedTail = await readHermesAcpNativeTranscript({
-        runtimeType: "hermes_gateway",
-        profile: fixture.profile,
-        session: sessionFrom(result),
-        selector: { kind: "hermes_execution", sourceRangeRef },
-      });
+      const withUnrelatedTail = await readHermesProductHistory(auditInput);
       expect(withUnrelatedTail.revision).toBe(changed.revision);
 
       const withCursor = await readHermesAcpNativeTranscript({
@@ -635,19 +687,29 @@ describe("Hermes ACP native protocol", () => {
       }));
       await fs.writeFile(databasePath, JSON.stringify(database), "utf8");
 
-      const result = await readHermesAcpNativeTranscript({
+      const sourceRangeRef = JSON.stringify({
+        version: 1,
+        status: "exact",
+        sessionId: "hermes-history",
+        startExclusive: 2,
+        endInclusive: 203,
+      });
+      const result = await readHermesProductHistoryExecutionSpan({
         runtimeType: "hermes_gateway",
-        profile: fixture.profile,
-        session: { sessionId: "hermes-history", sessionParams: {}, sessionDisplayId: "hermes-history" },
-        selector: {
-          kind: "hermes_execution",
-          sourceRangeRef: JSON.stringify({
-            version: 1,
-            status: "exact",
-            sessionId: "hermes-history",
-            startExclusive: 2,
-            endInclusive: 203,
-          }),
+        profile: historyProfileFrom(fixture.profile),
+        sessionId: "hermes-history",
+        range: { startExclusive: 2, endInclusive: 203 },
+        proof: {
+          version: 1,
+          orgId: "org-hermes-test",
+          runId: "run-hermes-test",
+          spanId: "span-hermes-test",
+          bindingId: "binding-hermes-test",
+          segmentId: "segment-hermes-test",
+          sessionId: "hermes-history",
+          providerExecutionRef: "203",
+          sourceRangeRef,
+          freshSessionVerified: false,
         },
       });
 
@@ -888,10 +950,19 @@ describe("Hermes ACP native protocol", () => {
       expect(transcript).toMatchObject({
         availability: "available",
         completeness: "unknown",
-        revision: expect.stringContaining("execution-ownership-unproven:"),
+        revision: "execution-boundary-unknown",
         items: [],
         source: "native",
       });
+      const audit = await readHermesProductHistory({
+        runtimeType: "hermes_gateway",
+        profile: historyProfileFrom(fixture.profile),
+        sessionId: "hermes-history",
+        range: { startExclusive: 1, endInclusive: 2 },
+        limit: 100,
+      });
+      expect(audit).toMatchObject({ availability: "available", completeness: "complete" });
+      expect(audit.items.map((item) => item.rowId)).toEqual([2]);
     } finally {
       await fs.rm(fixture.root, { recursive: true, force: true });
     }
