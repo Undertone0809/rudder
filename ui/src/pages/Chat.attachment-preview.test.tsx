@@ -6700,7 +6700,7 @@ describe("Chat streaming controls", () => {
     expect(mockState.pushToast).not.toHaveBeenCalled();
   });
 
-  it("keeps accepted Steer feedback at its Work Transcript timestamp when the response completes", () => {
+  it("keeps accepted Steer feedback at its Work Transcript timestamp when the response completes", async () => {
     const originalUserMessage = message({
       id: "user-message-before-steer",
       body: "Please draft a plan.",
@@ -6718,6 +6718,12 @@ describe("Chat streaming controls", () => {
       ts: "2026-05-12T09:04:02.500Z",
       text: "Reasoning after Steer",
     };
+    const transcriptFinalAnswer = {
+      kind: "assistant" as const,
+      phase: "final_answer" as const,
+      ts: "2026-05-12T09:04:03.000Z",
+      text: "In-progress answer before Steer",
+    };
     const activeAssistantMessage = {
       ...message({
         id: "assistant-message-before-steer",
@@ -6726,7 +6732,7 @@ describe("Chat streaming controls", () => {
         body: "In-progress answer before Steer",
         replyingAgentId: "agent-1",
         chatTurnId: "turn-active",
-        transcript: [transcriptBeforeSteer, transcriptAfterSteer],
+        transcript: [transcriptBeforeSteer, transcriptAfterSteer, transcriptFinalAnswer],
         createdAt: new Date("2026-05-12T09:04:01.000Z"),
         updatedAt: new Date("2026-05-12T09:04:01.000Z"),
       }),
@@ -6767,7 +6773,7 @@ describe("Chat streaming controls", () => {
         renderedBodyHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         state: "streaming",
         createdAt: activeAssistantMessage.createdAt,
-        transcript: [transcriptBeforeSteer, transcriptAfterSteer],
+        transcript: [transcriptBeforeSteer, transcriptAfterSteer, transcriptFinalAnswer],
         replyingAgentId: "agent-1",
       },
     };
@@ -6775,7 +6781,10 @@ describe("Chat streaming controls", () => {
     const { container, rerender } = renderChat();
     const content = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']");
     expect(content).not.toBeNull();
-    const assertSteerIsEmbeddedAtItsTranscriptTime = () => {
+    const assertSteerIsEmbeddedAtItsTranscriptTime = async () => {
+      await vi.waitFor(() => {
+        expect(content!.textContent).toContain(activeAssistantMessage.body);
+      });
       const text = content!.textContent!;
       const embeddedSteer = container.querySelector<HTMLElement>("[data-testid='chat-transcript-steer-message']");
       expect(embeddedSteer).not.toBeNull();
@@ -6788,7 +6797,7 @@ describe("Chat streaming controls", () => {
       expect(text.indexOf(steerUserMessage.body)).toBeLessThan(text.indexOf(transcriptAfterSteer.text));
       expect(text.indexOf(transcriptAfterSteer.text)).toBeLessThan(text.indexOf(activeAssistantMessage.body));
     };
-    assertSteerIsEmbeddedAtItsTranscriptTime();
+    await assertSteerIsEmbeddedAtItsTranscriptTime();
 
     mockState.messagesByChatId = {
       "chat-1": [
@@ -6801,7 +6810,7 @@ describe("Chat streaming controls", () => {
     mockState.streamDrafts = {};
     rerender();
 
-    assertSteerIsEmbeddedAtItsTranscriptTime();
+    await assertSteerIsEmbeddedAtItsTranscriptTime();
   });
 
   it("keeps a Steer before the first runtime event visible when the completed transcript is empty", () => {
@@ -6853,7 +6862,7 @@ describe("Chat streaming controls", () => {
       .filter((bubble) => bubble.textContent?.includes(steerUserMessage.body))).toHaveLength(1);
   });
 
-  it("keeps accepted Steer feedback visible while an edited message response is active", () => {
+  it("keeps accepted Steer feedback visible while an edited message response is active", async () => {
     const editedUserMessage = message({
       id: "edited-user-message",
       body: "Edited plan request",
@@ -6906,6 +6915,12 @@ describe("Chat streaming controls", () => {
         transcript: [
           { kind: "thinking", ts: "2026-05-12T09:05:01.500Z", text: "Edited reasoning before Steer" },
           { kind: "thinking", ts: "2026-05-12T09:05:02.500Z", text: "Edited reasoning after Steer" },
+          {
+            kind: "assistant",
+            phase: "final_answer",
+            ts: "2026-05-12T09:05:03.000Z",
+            text: "Edited response still in progress",
+          },
         ],
         replyingAgentId: "agent-1",
       },
@@ -6914,6 +6929,9 @@ describe("Chat streaming controls", () => {
     const { container } = renderChat();
     const content = container.querySelector<HTMLElement>("[data-testid='chat-messages-content']");
 
+    await vi.waitFor(() => {
+      expect(content!.textContent).toContain("Edited response still in progress");
+    });
     const text = content!.textContent!;
     expect(container.querySelector("[data-testid='chat-transcript-steer-message']")?.textContent)
       .toContain(steerUserMessage.body);
