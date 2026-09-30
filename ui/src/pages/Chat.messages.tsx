@@ -2693,7 +2693,7 @@ export function ChatMessageItem({
               />
             </div>
           ) : null}
-          {!isFailedAssistantMessage ? (
+          {!isFailedAssistantMessage || recoverableFailure?.partialBodyUserVisible ? (
             isEmptyStreamingAssistant ? (
               <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
                 {draftState === "waiting_for_network" ? null : (

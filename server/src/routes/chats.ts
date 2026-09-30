@@ -1192,6 +1192,7 @@ export function chatRoutes(
       runId: runId ?? null,
     };
     if (!retryable) failure.retryable = false;
+    if (error.partialBodyUserVisible) failure.partialBodyUserVisible = true;
     if (error.failurePhase) failure.phase = error.failurePhase;
     if (error.action) failure.action = error.action;
     if (error.providerFailure) failure.providerFailure = error.providerFailure;

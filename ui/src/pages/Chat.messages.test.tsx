@@ -1586,6 +1586,23 @@ describe("failed chat transcript rendering", () => {
     expect(container.textContent).toContain("Retry");
   });
 
+  it("keeps an explicitly preserved partial response visible beside a non-retryable failure", () => {
+    const container = renderWithOrganizationPath(message({
+      body: "PARTIAL_RESPONSE",
+      runId: "run-lost-ack",
+      replyingAgentId: "agent-lost-ack",
+      structuredPayload: { recoverableFailure: {
+        code: "chat_submission_acceptance_unknown", retryable: false,
+        action: "inspect_run", partialBodyUserVisible: true,
+      } },
+    }));
+    expect(container.textContent).toContain("PARTIAL_RESPONSE");
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.textContent).toContain("Open run");
+    expect(container.textContent).not.toContain("Retry");
+    expect(container.querySelector('button[aria-label="Fork from here"]')).toBeNull();
+  });
+
   it("shows Open run for a non-retryable failure and hides it without agent identity", () => {
     const nonRetryable = renderWithOrganizationPath(message({
       runId: "run-boot",

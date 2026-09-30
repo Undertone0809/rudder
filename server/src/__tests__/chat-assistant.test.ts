@@ -4874,6 +4874,32 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
+  it.each([true, false])("preserves only response deltas before a lost acknowledgement (response: %s)", async (hasResponse) => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => {
+      await ctx.onLog("stdout", `${JSON.stringify({ type: "item.completed",
+        item: { type: "agent_message", phase: "commentary", text: "PRIVATE_COMMENTARY" } })}\n`);
+      await ctx.onLog("stdout", `${JSON.stringify({ type: "item.completed",
+        item: { type: "reasoning", text: "PRIVATE_REASONING" } })}\n`);
+      if (hasResponse) {
+        await ctx.onLog("stdout", `${JSON.stringify({ type: "item.completed",
+          item: { type: "agent_message", delta: true, text: "PARTIAL_RESPONSE" } })}\n`);
+      }
+      return { summary: "", resultJson: null, timedOut: false, exitCode: 1,
+        errorMessage: "acknowledgement lost", submissionPhase: "indeterminate" };
+    });
+    const partialBody = hasResponse ? "PARTIAL_RESPONSE" : "";
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(), messages: makeMessages(), contextLinks: [],
+    })).rejects.toMatchObject({
+      errorCode: "chat_submission_acceptance_unknown", partialBody,
+      partialBodyUserVisible: hasResponse, retryable: false, action: "inspect_run",
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith("chat-run-1", expect.objectContaining({
+      status: "failed", resultJson: expect.objectContaining({ partialBody, nativeCompletion: "unknown" }),
+    }));
+  });
+
   it("classifies chat timeouts as recoverable failed chat results", async () => {
     const svc = chatAssistantService({} as any);
 

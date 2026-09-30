@@ -1425,7 +1425,8 @@ export function recoverableFailureFromMessage(
   const action = typeof candidate.action === "string" && candidate.action.trim()
     ? candidate.action.trim()
     : null;
-  return { code, message: detailMessage, runId, retryable, phase, action };
+  return { code, message: detailMessage, runId, retryable, phase, action,
+    partialBodyUserVisible: candidate.partialBodyUserVisible === true };
 }
 
 export function findRetrySourceUserMessage(

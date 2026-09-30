@@ -71,6 +71,7 @@ test("blocks retry after a Codex App Server submission loses its acknowledgement
   expect(failedAssistant).toMatchObject({
     kind: "message",
     status: "failed",
+    body: PARTIAL_OUTPUT,
     structuredPayload: {
       recoverableFailure: {
         code: "chat_submission_acceptance_unknown",
@@ -121,6 +122,7 @@ test("blocks retry after a Codex App Server submission loses its acknowledgement
   await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: ORIGINAL_INPUT })).toHaveCount(1);
   await expect(refreshedFailure).toBeVisible({ timeout: 15_000 });
   await expect(refreshedFailure.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  await expect(page.getByText(PARTIAL_OUTPUT, { exact: true })).toBeVisible();
 
   const directRetryResponse = await page.request.post(`/api/chats/${chatId}/messages/stream`, {
     data: {
@@ -133,6 +135,22 @@ test("blocks retry after a Codex App Server submission loses its acknowledgement
   });
   expect(directRetryResponse.status()).toBe(409);
   expect(await directRetryResponse.json()).toMatchObject({
+    details: {
+      code: "chat_retry_acceptance_unresolved",
+      runId,
+    },
+  });
+  const nonStreamingRetryResponse = await page.request.post(`/api/chats/${chatId}/messages`, {
+    data: {
+      body: ORIGINAL_INPUT,
+      editUserMessageId: originalUserMessage!.id,
+      clientMutationId: `lost-ack-non-stream-retry-${randomUUID()}`,
+      modelOverride: null,
+      effortOverride: null,
+    },
+  });
+  expect(nonStreamingRetryResponse.status()).toBe(409);
+  expect(await nonStreamingRetryResponse.json()).toMatchObject({
     details: {
       code: "chat_retry_acceptance_unresolved",
       runId,

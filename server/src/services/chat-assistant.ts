@@ -1231,6 +1231,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ? "chat_adapter_failed"
             : "chat_runtime_boot_failed";
         const acceptanceUnknown = forkAcceptanceUnknown || submissionAcceptanceUnknown;
+        // Lost acknowledgement can precede item completion, so no final-answer
+        // record exists yet. Preserve the response projection already shown to
+        // the user; commentary and reasoning never enter this stream.
+        const failedPartialBody = finalPartialBody || (acceptanceUnknown ? partialBody : "");
         const retryable = !authProviderFailure && !acceptanceUnknown && errorCode !== "chat_runtime_boot_failed";
         const failurePhase = acceptanceUnknown || errorCode === "chat_adapter_failed" ? "model_generation" : "runtime_boot";
         const action = acceptanceUnknown ? "inspect_run" : errorCode === "chat_adapter_failed" ? "retry" : "repair_runtime";
@@ -1250,7 +1254,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             failurePhase,
             action,
             exitCode: result.exitCode ?? null,
-            partialBody: finalPartialBody,
+            partialBody: failedPartialBody,
             ...(acceptanceUnknown ? { submissionPhase: "indeterminate", nativeCompletion: "unknown" } : {}),
             ...(authProviderFailure ? { providerFailure: authProviderFailure } : {}),
             ...(nativeFailure ? { nativeFailure } : {}),
@@ -1258,11 +1262,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         });
         throw new ChatAssistantStreamError(
           adapterErrorMessage,
-          finalPartialBody,
+          failedPartialBody,
           [],
           {
             errorCode,
-            partialBodyUserVisible: Boolean(finalPartialBody),
+            partialBodyUserVisible: Boolean(failedPartialBody),
             retryable,
             failurePhase,
             action,
