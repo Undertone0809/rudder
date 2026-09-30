@@ -34,6 +34,8 @@ import type { RudderAppOptions } from "./types.js";
 export interface HttpAppHandle {
   app: express.Express;
   close(): Promise<void>;
+  readonly publicIngressBaseUrl?: string | null;
+  waitForPublicIngressReady?(): Promise<void>;
 }
 
 export function resolveViteHmrPort(serverPort: number): number {
@@ -47,6 +49,10 @@ export async function createHttpApp(
   db: Db,
   opts: RudderAppOptions,
 ): Promise<HttpAppHandle> {
+  if (opts.rustPublicIngress && (opts.rustPublicIngress.authorizationKey !== opts.rustPublicIngressAuthKey
+    || !opts.rustFoundationActorEnvelopeKey)) {
+    throw new Error("Rust public ingress requires matching private authorization and explicit actor signing keys");
+  }
   // Build the adapter before acquiring app resources so invalid or reused
   // keys fail startup without leaving a child process behind.
   const ingressAuthorization = opts.rustPublicIngressAuthKey
@@ -69,6 +75,7 @@ export async function createHttpApp(
     projectGoalSetMode: opts.rustProjectGoalSetMode,
     binaryPath: opts.rustFoundationBinaryPath,
     actorEnvelopeKey: opts.rustFoundationActorEnvelopeKey,
+    publicIngress: opts.rustPublicIngress,
   });
   let closeVite: (() => Promise<void>) | null = null;
   let closeInFlight: Promise<void> | null = null;
@@ -274,7 +281,12 @@ export async function createHttpApp(
         }
       });
     }
-    return { app, close };
+    return {
+      app, close,
+      get publicIngressBaseUrl() { return rustFoundationBridge.publicIngressBaseUrl ?? null; },
+      waitForPublicIngressReady: () => rustFoundationBridge.waitForPublicIngressReady?.()
+        ?? Promise.reject(new Error("Rust public ingress readiness is unavailable")),
+    };
   } catch (error) {
     return rollbackStartup(error);
   }
