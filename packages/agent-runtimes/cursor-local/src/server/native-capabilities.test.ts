@@ -1,4 +1,10 @@
-import type { AgentRuntimeControlHandle, ChatAskUserRequest } from "@rudderhq/agent-runtime-utils";
+import type {
+  AgentRuntimeControlHandle,
+  ChatAskUserRequest,
+  ResolvedManagedExternalMcpBinding,
+  RudderMcpCliCommand,
+  RudderMcpPreflightResult,
+} from "@rudderhq/agent-runtime-utils";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
@@ -6,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseCursorStdoutLine } from "../ui/parse-stdout.js";
 import { sessionCodec } from "./index.js";
 import {
+  buildCursorAcpMcpConfiguration,
   createCursorLocalProviderCapabilities,
   createCursorLocalProviderCapabilityResolver,
   executeCursorNativeChat,
@@ -1787,15 +1794,100 @@ describe("Cursor ACP native capabilities", () => {
     ]);
   });
 
-  it("passes configured HTTP/SSE MCP servers to session/new and session/load without persisting credentials", async () => {
-    const mcpServers = [
+  it("injects verified Rudder stdio and managed HTTP MCP servers into new and loaded sessions", async () => {
+    const configuredServers = [
+      { name: "local", command: "local-mcp", args: ["serve"], env: { LOCAL_KEY: "local-secret" } },
       { name: "docs", type: "http", url: "https://docs.example.test/mcp", headers: { Authorization: "Bearer mcp-secret" } },
       { name: "events", type: "sse", url: "https://events.example.test/sse" },
     ];
-    expect(normalizeCursorAcpMcpServers(mcpServers)).toEqual(mcpServers);
+    const normalizedConfiguredServers = normalizeCursorAcpMcpServers(configuredServers);
+    expect(normalizedConfiguredServers).toEqual([
+      { name: "local", command: "local-mcp", args: ["serve"], env: [{ name: "LOCAL_KEY", value: "local-secret" }] },
+      { name: "docs", type: "http", url: "https://docs.example.test/mcp", headers: [{ name: "Authorization", value: "Bearer mcp-secret" }] },
+      { name: "events", type: "sse", url: "https://events.example.test/sse", headers: [] },
+    ]);
     expect(() => normalizeCursorAcpMcpServers([
       { name: "local", type: "stdio", url: "https://local.example.test/mcp", command: "node", args: ["server.js"] },
-    ])).toThrow("only advertises HTTP/SSE");
+    ])).toThrow("cannot also declare an HTTP/SSE transport");
+    expect(() => normalizeCursorAcpMcpServers([
+      { name: "broken", command: "local-mcp", env: [{ name: "RUDDER_API_KEY" }] },
+    ])).toThrow("entry 1 is invalid");
+
+    const runToken = "cursor-run-token-secret";
+    const rudderMcpCommand: RudderMcpCliCommand = {
+      command: "/opt/rudder/bin/rudder",
+      args: ["mcp-server"],
+      env: { RUDDER_MCP_RUDDER_BIN: "/opt/rudder/bin/rudder" },
+      provenance: "desktop_bundle",
+    };
+    const rudderMcpPreflight: RudderMcpPreflightResult = {
+      available: true,
+      provenance: "desktop_bundle",
+      version: "1.0.0",
+      contractVersion: "1",
+      coreContractHash: "core-contract-hash",
+      diagnosticCode: null,
+      diagnostic: null,
+      tools: [{ name: "agent.me", inputSchema: { type: "object" } }],
+    };
+    const managedBinding: ResolvedManagedExternalMcpBinding = {
+      bindingId: "cf7ca0a0-719a-4eb3-9a19-e31758cfa56d",
+      serverName: "managed-docs",
+      accessMode: "read_only",
+      toolPolicy: { mode: "allowlist", allowedToolNames: ["external.managed-docs.search"] },
+      required: false,
+      startupTimeoutMs: 3000,
+      toolTimeoutMs: 10000,
+      proxyUrl: "http://127.0.0.1:3100/api/mcp/runtime/bindings/cf7ca0a0-719a-4eb3-9a19-e31758cfa56d",
+      bearerTokenEnvVar: "RUDDER_API_KEY",
+    };
+    const managedMcp = buildCursorAcpMcpConfiguration({
+      configuredServers: configuredServers,
+      rudderMcpCommand,
+      rudderMcpPreflight,
+      managedExternalBindings: [managedBinding],
+      runAuthToken: runToken,
+      runtimeEnv: {
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: runToken,
+        RUDDER_ORG_ID: "org-cursor",
+        RUDDER_AGENT_ID: "agent-cursor",
+        RUDDER_RUN_ID: "run-cursor",
+      },
+    });
+    const mcpServers = managedMcp.servers;
+    expect(mcpServers).toContainEqual(expect.objectContaining({
+      name: "rudder-tools",
+      command: rudderMcpCommand.command,
+      args: ["mcp-server"],
+      env: expect.arrayContaining([
+        { name: "RUDDER_API_KEY", value: runToken },
+        { name: "RUDDER_ORG_ID", value: "org-cursor" },
+      ]),
+    }));
+    expect(mcpServers).toContainEqual({
+      name: "managed-docs",
+      type: "http",
+      url: managedBinding.proxyUrl,
+      headers: [{ name: "Authorization", value: `Bearer ${runToken}` }],
+    });
+    expect(managedMcp.loadedMcpServers).toEqual([
+      { serverName: "rudder-tools", source: "built_in" },
+      { serverName: "managed-docs", source: "managed_external" },
+    ]);
+    expect(managedMcp.rudderMcp).toMatchObject({ available: true, serverName: "rudder-tools" });
+
+    const ambientOnly = buildCursorAcpMcpConfiguration({
+      configuredServers: [],
+      rudderMcpCommand,
+      rudderMcpPreflight,
+      managedExternalBindings: [managedBinding],
+      runtimeEnv: { RUDDER_API_KEY: "ambient-token-must-not-enable-tools" },
+    });
+    expect(ambientOnly.servers).toEqual([]);
+    expect(ambientOnly.loadedMcpServers).toEqual([]);
+    expect(ambientOnly.rudderMcp).toMatchObject({ available: false });
+    expect(ambientOnly.rudderMcp.fallbackReason).toContain("Signed Run authentication");
 
     const makeFixture = () => createSpawnFixture((request, output) => {
       const result = request.method === "initialize" ? initializeResult()
@@ -1825,6 +1917,8 @@ describe("Cursor ACP native capabilities", () => {
     expect(created.exitCode).toBe(0);
     expect(createdFixture.requests.find((request) => request.method === "session/new")?.params).toMatchObject({ mcpServers });
     expect(JSON.stringify(created.sessionParams)).not.toContain("mcp-secret");
+    expect(JSON.stringify(created.sessionParams)).not.toContain("local-secret");
+    expect(JSON.stringify(created.sessionParams)).not.toContain(runToken);
     expect(JSON.stringify(created.sessionParams)).not.toContain("mcpServers");
 
     const loadedFixture = makeFixture();
@@ -1859,7 +1953,10 @@ describe("Cursor ACP native capabilities", () => {
     const result = await executeCursorNativeChat({
       profile: {
         ...profile(fixture.spawn),
-        mcpServers: [{ name: "docs", url: "https://docs.example.test/mcp", headers: { Authorization: `Bearer ${secret}` } }],
+        mcpServers: [
+          { name: "docs", type: "http", url: "https://docs.example.test/mcp", headers: [{ name: "Authorization", value: `Bearer ${secret}` }] },
+          { name: "rudder-tools", command: "rudder", args: ["mcp-server"], env: [{ name: "RUDDER_API_KEY", value: secret }] },
+        ],
       },
       binding,
       prompt: "Use docs.",

@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeLoadedMcpServerMeta,
   AgentRuntimeApprovalDecision,
   AgentRuntimeApprovalRequest,
   AgentRuntimeControlHandle,
@@ -11,6 +12,14 @@ import type {
   AgentRuntimeExecutionResult,
   ChatAskUserRequest,
   ChatAskUserResponse,
+  ResolvedManagedExternalMcpBinding,
+  RudderMcpCliCommand,
+  RudderMcpPreflightResult,
+} from "@rudderhq/agent-runtime-utils";
+import {
+  pickRudderMcpManagedEnv,
+  RUDDER_MCP_SERVER_NAME,
+  rudderMcpRuntimeMetadata,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -64,6 +73,12 @@ export type CursorWorkspaceIdentity = {
 };
 
 export type CursorAcpMcpServer = Record<string, unknown>;
+
+export type CursorAcpMcpConfiguration = {
+  servers: CursorAcpMcpServer[];
+  loadedMcpServers: AgentRuntimeLoadedMcpServerMeta[];
+  rudderMcp: ReturnType<typeof rudderMcpRuntimeMetadata>;
+};
 
 export type CursorTranscriptRange = {
   start?: string | number | { itemId?: string | null; ordinal?: number | null } | null;
@@ -226,7 +241,7 @@ export function normalizeCursorAcpMcpServers(value: unknown): CursorAcpMcpServer
     throw new CursorNativeCapabilityError(
       "unsupported",
       "unsupported",
-      "Cursor ACP MCP configuration must be an array of HTTP or SSE servers.",
+      "Cursor ACP MCP configuration must be an array of stdio, HTTP, or SSE servers.",
     );
   }
   const names = new Set<string>();
@@ -235,11 +250,41 @@ export function normalizeCursorAcpMcpServers(value: unknown): CursorAcpMcpServer
     const name = stringValue(server?.name);
     const url = stringValue(server?.url);
     const transport = stringValue(server?.transport ?? server?.type)?.toLowerCase();
-    if (!server || !name || !url || names.has(name)) {
+    const command = stringValue(server?.command);
+    if (!server || !name || names.has(name)) {
       throw new CursorNativeCapabilityError(
         "unsupported",
         "unsupported",
-        `Cursor ACP MCP server ${index + 1} must have a unique name and HTTP/SSE URL.`,
+        `Cursor ACP MCP server ${index + 1} must have a unique name and a supported transport.`,
+      );
+    }
+    if (command) {
+      if ((transport && transport !== "stdio") || url) {
+        throw new CursorNativeCapabilityError(
+          "unsupported",
+          "unsupported",
+          `Cursor ACP stdio MCP server ${name} cannot also declare an HTTP/SSE transport.`,
+        );
+      }
+      const args = server.args ?? [];
+      if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string")) {
+        throw new CursorNativeCapabilityError("unsupported", "unsupported", `Cursor ACP stdio MCP server ${name} has invalid args.`);
+      }
+      const env = normalizeCursorAcpNamedValues(server.env, `stdio MCP server ${name} env`, "env");
+      names.add(name);
+      return {
+        ...(recordValue(server._meta) ? { _meta: server._meta } : {}),
+        name,
+        command,
+        args,
+        env,
+      };
+    }
+    if (!url) {
+      throw new CursorNativeCapabilityError(
+        "unsupported",
+        "unsupported",
+        `Cursor ACP MCP server ${name} must have a command or HTTP/SSE URL.`,
       );
     }
     let parsedUrl: URL;
@@ -252,12 +297,117 @@ export function normalizeCursorAcpMcpServers(value: unknown): CursorAcpMcpServer
       throw new CursorNativeCapabilityError(
         "unsupported",
         "unsupported",
-        `Cursor ACP only advertises HTTP/SSE MCP transport; server ${name} is not supported.`,
+        `Cursor ACP MCP server ${name} has an unsupported HTTP/SSE transport.`,
       );
     }
+    const headers = normalizeCursorAcpNamedValues(server.headers, `HTTP/SSE MCP server ${name} headers`, "headers");
     names.add(name);
-    return server;
+    return {
+      ...(recordValue(server._meta) ? { _meta: server._meta } : {}),
+      name,
+      type: transport ?? "http",
+      url,
+      headers,
+    };
   });
+}
+
+function normalizeCursorAcpNamedValues(
+  value: unknown,
+  label: string,
+  kind: "env" | "headers",
+): Array<{ name: string; value: string }> {
+  if (value === undefined || value === null) return [];
+  const entries = Array.isArray(value)
+    ? value.map((candidate) => {
+        const record = recordValue(candidate);
+        return [record?.name, record?.value] as const;
+      })
+    : recordValue(value)
+      ? Object.entries(value as Record<string, unknown>)
+      : null;
+  if (!entries) {
+    throw new CursorNativeCapabilityError("unsupported", "unsupported", `Cursor ACP ${label} must be a name/value list.`);
+  }
+  const names = new Set<string>();
+  return entries.map(([rawName, rawValue], index) => {
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    if (
+      !name
+      || name !== rawName
+      || typeof rawValue !== "string"
+      || names.has(kind === "headers" ? name.toLowerCase() : name)
+    ) {
+      throw new CursorNativeCapabilityError(
+        "unsupported",
+        "unsupported",
+        `Cursor ACP ${label} entry ${index + 1} is invalid or duplicated.`,
+      );
+    }
+    names.add(kind === "headers" ? name.toLowerCase() : name);
+    return { name, value: rawValue };
+  });
+}
+
+export function buildCursorAcpMcpConfiguration(input: {
+  configuredServers: unknown;
+  rudderMcpCommand?: RudderMcpCliCommand | null;
+  rudderMcpPreflight: RudderMcpPreflightResult;
+  managedExternalBindings: readonly ResolvedManagedExternalMcpBinding[];
+  runtimeEnv: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  runAuthToken?: string | null;
+}): CursorAcpMcpConfiguration {
+  const configured = normalizeCursorAcpMcpServers(input.configuredServers);
+  const injected: CursorAcpMcpServer[] = [];
+  const loadedMcpServers: AgentRuntimeLoadedMcpServerMeta[] = [];
+  const mcpEnv = { ...input.runtimeEnv };
+  delete mcpEnv.RUDDER_API_KEY;
+  const runToken = input.runAuthToken?.trim() || null;
+  if (runToken) mcpEnv.RUDDER_API_KEY = runToken;
+  const managedEnv = pickRudderMcpManagedEnv(mcpEnv);
+
+  if (input.rudderMcpPreflight.available && runToken) {
+    if (!input.rudderMcpCommand) {
+      throw new CursorNativeCapabilityError(
+        "unknown",
+        "transport-error",
+        "Cursor Rudder MCP preflight succeeded without a resolved stdio command.",
+      );
+    }
+    const commandEnv = { ...(input.rudderMcpCommand.env ?? {}) };
+    delete commandEnv.RUDDER_API_KEY;
+    injected.push({
+      name: RUDDER_MCP_SERVER_NAME,
+      command: input.rudderMcpCommand.command,
+      args: [...input.rudderMcpCommand.args],
+      env: Object.entries({ ...commandEnv, ...managedEnv })
+        .map(([name, value]) => ({ name, value })),
+    });
+    loadedMcpServers.push({ serverName: RUDDER_MCP_SERVER_NAME, source: "built_in" });
+  }
+
+  for (const binding of input.managedExternalBindings) {
+    if (!runToken) continue;
+    injected.push({
+      name: binding.serverName,
+      type: "http",
+      url: binding.proxyUrl,
+      headers: [{ name: "Authorization", value: `Bearer ${runToken}` }],
+    });
+    loadedMcpServers.push({ serverName: binding.serverName, source: "managed_external" });
+  }
+
+  return {
+    servers: normalizeCursorAcpMcpServers([...configured, ...injected]),
+    loadedMcpServers,
+    rudderMcp: rudderMcpRuntimeMetadata({
+      available: input.rudderMcpPreflight.available && Boolean(runToken),
+      preflight: input.rudderMcpPreflight,
+      fallbackReason: !runToken
+        ? "Signed Run authentication is unavailable; Rudder MCP was not injected."
+        : undefined,
+    }),
+  };
 }
 
 function stableHash(value: unknown): string {
@@ -285,7 +435,13 @@ function profileSecrets(profile: CursorLocalProfileTransport): string[] {
   }
   for (const server of profile.mcpServers ?? []) {
     for (const field of ["env", "headers"]) {
-      for (const [key, value] of Object.entries(recordValue(server[field]) ?? {})) {
+      const entries = Array.isArray(server[field])
+        ? (server[field] as unknown[]).flatMap((entry) => {
+            const record = recordValue(entry);
+            return typeof record?.name === "string" ? [[record.name, record.value] as const] : [];
+          })
+        : Object.entries(recordValue(server[field]) ?? {});
+      for (const [key, value] of entries) {
         if (CURSOR_SENSITIVE_FIELD.test(key)) add(value);
       }
     }

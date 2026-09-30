@@ -1,9 +1,17 @@
 import {
   classifyAgentRuntimeNetworkFailure,
   inferOpenAiCompatibleBiller,
+  pickRudderMcpManagedEnv,
+  preflightManagedExternalMcpBindings,
+  rudderMcpRuntimeMetadata,
+  type AgentRuntimeLoadedMcpServerMeta,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
+  type RudderMcpCliCommand,
+  type RudderMcpPreflightResult,
 } from "@rudderhq/agent-runtime-utils";
+import { preflightRudderMcpServer } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asNumber,
@@ -43,7 +51,7 @@ import { fileURLToPath } from "node:url";
 import { applyCursorModelEffort, DEFAULT_CURSOR_LOCAL_MODEL } from "../index.js";
 import { normalizeCursorStreamLine } from "../shared/stream.js";
 import { hasCursorTrustBypassArg } from "../shared/trust.js";
-import { executeCursorNativeChat, normalizeCursorAcpMcpServers } from "./native-capabilities.js";
+import { buildCursorAcpMcpConfiguration, executeCursorNativeChat } from "./native-capabilities.js";
 import { isCursorUnknownSessionError, parseCursorJsonl } from "./parse.js";
 import { resolveManagedCursorHomeDir } from "./skills.js";
 
@@ -68,6 +76,98 @@ function firstNonEmptyLine(text: string): string {
 const CURSOR_QUOTA_EXHAUSTED_RE =
   /(?:usage\s+limit|get\s+cursor\s+pro|quota|rate[-\s]?limit|too many requests|\b429\b|billing)/i;
 const CURSOR_LEGACY_CHAT_TRANSPORT = "cursor-agent-cli-context-handoff";
+
+export async function prepareCursorAcpMcpConfiguration(
+  input: {
+    config: Record<string, unknown>;
+    runtimeEnv: Record<string, string>;
+    authToken?: string | null;
+    onLog: AgentRuntimeExecutionContext["onLog"];
+  },
+  dependencies: {
+    resolveRudderMcpCliCommand: typeof resolveRudderMcpCliCommand;
+    preflightRudderMcpServer: typeof preflightRudderMcpServer;
+    preflightManagedExternalMcpBindings: typeof preflightManagedExternalMcpBindings;
+  } = {
+    resolveRudderMcpCliCommand,
+    preflightRudderMcpServer,
+    preflightManagedExternalMcpBindings,
+  },
+): Promise<{
+  mcpServers: ReturnType<typeof buildCursorAcpMcpConfiguration>["servers"];
+  loadedMcpServers: AgentRuntimeLoadedMcpServerMeta[];
+  rudderMcp: ReturnType<typeof rudderMcpRuntimeMetadata>;
+}> {
+  const runAuthToken = input.authToken?.trim() || null;
+  const mcpRuntimeEnv = { ...input.runtimeEnv };
+  delete mcpRuntimeEnv.RUDDER_API_KEY;
+  if (runAuthToken) mcpRuntimeEnv.RUDDER_API_KEY = runAuthToken;
+
+  let rudderMcpCommand: RudderMcpCliCommand | null = null;
+  let rudderMcpPreflight: RudderMcpPreflightResult = {
+    available: false,
+    provenance: "repo",
+    version: null,
+    contractVersion: null,
+    coreContractHash: null,
+    diagnosticCode: "core_bundle_handshake_failed",
+    diagnostic: runAuthToken
+      ? "Rudder MCP capability preparation failed."
+      : "Signed Run authentication is unavailable.",
+    tools: [],
+  };
+  if (runAuthToken) {
+    try {
+      rudderMcpCommand = await dependencies.resolveRudderMcpCliCommand(__moduleDir);
+      rudderMcpPreflight = await dependencies.preflightRudderMcpServer({
+        command: rudderMcpCommand,
+        runtimeEnv: mcpRuntimeEnv,
+        managedEnv: pickRudderMcpManagedEnv(mcpRuntimeEnv),
+        browserEnabled: false,
+      });
+    } catch {
+      rudderMcpPreflight = {
+        available: false,
+        provenance: "repo",
+        version: null,
+        contractVersion: null,
+        coreContractHash: null,
+        diagnosticCode: "core_bundle_handshake_failed",
+        diagnostic: "Rudder MCP capability preparation failed.",
+        tools: [],
+      };
+    }
+  }
+  const managedExternalBindings = runAuthToken
+    ? await dependencies.preflightManagedExternalMcpBindings(input.config, mcpRuntimeEnv, {
+        onFailure: async () => {
+          await input.onLog(
+            "stderr",
+            "[rudder] One or more managed MCP bindings failed their gateway preflight and were not injected into Cursor.\n",
+          );
+        },
+      })
+    : [];
+  const mcp = buildCursorAcpMcpConfiguration({
+    configuredServers: input.config.cursorAcpMcpServers ?? input.config.acpMcpServers ?? input.config.mcpServers,
+    rudderMcpCommand,
+    rudderMcpPreflight,
+    managedExternalBindings,
+    runtimeEnv: mcpRuntimeEnv,
+    runAuthToken,
+  });
+  if (!mcp.rudderMcp.available) {
+    await input.onLog(
+      "stderr",
+      `[rudder] Rudder MCP is unavailable; Cursor native chat will not receive Rudder core tools: ${mcp.rudderMcp.fallbackReason ?? "capability preflight failed"}\n`,
+    );
+  }
+  return {
+    mcpServers: mcp.servers,
+    loadedMcpServers: mcp.loadedMcpServers,
+    rudderMcp: mcp.rudderMcp,
+  };
+}
 
 function isCursorAcpCommandMissing(errorMessage: string | null | undefined, command: string): boolean {
   return errorMessage === `Cursor ACP process transport failed: spawn ${command} ENOENT`;
@@ -886,14 +986,18 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         "agent",
       ).trim() || "agent";
       const configuredAuthMethodId = nonEmpty(asString(config.cursorAcpAuthMethodId ?? config.authMethodId, ""));
+      const nativeMcpConfiguration = await prepareCursorAcpMcpConfiguration({
+        config,
+        runtimeEnv,
+        authToken,
+        onLog,
+      });
       const nativeProfile = {
         binding: profileIdentity,
         command: nativeCommand,
         cwd,
         providerVersion: asString(config.cursorProviderVersion ?? config.providerVersion, "").trim(),
-        mcpServers: normalizeCursorAcpMcpServers(
-          config.cursorAcpMcpServers ?? config.acpMcpServers ?? config.mcpServers,
-        ),
+        mcpServers: nativeMcpConfiguration.mcpServers,
         env: runtimeEnv,
         ...(configuredAuthMethodId ? { authMethodId: configuredAuthMethodId } : {}),
         protocolVersion: 1,
@@ -916,6 +1020,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
           loadedSkills,
           realizedSkills: loadedSkills,
           promptInjectedSkills: loadedSkills,
+          loadedMcpServers: nativeMcpConfiguration.loadedMcpServers,
+          rudderMcp: nativeMcpConfiguration.rudderMcp,
           context,
         });
       }

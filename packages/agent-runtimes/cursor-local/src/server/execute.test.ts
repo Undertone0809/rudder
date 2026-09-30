@@ -1,10 +1,15 @@
-import type { AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import type {
+  AgentRuntimeExecutionContext,
+  ResolvedManagedExternalMcpBinding,
+  RudderMcpCliCommand,
+  RudderMcpPreflightResult,
+} from "@rudderhq/agent-runtime-utils";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execute } from "./execute.js";
+import { execute, prepareCursorAcpMcpConfiguration } from "./execute.js";
 import { sessionCodec } from "./index.js";
 
 const LEGACY_TRANSPORT = "cursor-agent-cli-context-handoff";
@@ -154,6 +159,106 @@ async function readJsonl<T>(filePath: string): Promise<T[]> {
 }
 
 describe("Cursor chat legacy fallback", () => {
+  it("prepares native MCP from successful preflights and signed Run auth only", async () => {
+    const runToken = "signed-cursor-run-token";
+    const ambientToken = "ambient-token-must-not-be-used";
+    const command: RudderMcpCliCommand = {
+      command: "/opt/rudder/bin/rudder",
+      args: ["mcp-server"],
+      env: { RUDDER_API_KEY: ambientToken, RUDDER_MCP_RUDDER_BIN: "/opt/rudder/bin/rudder" },
+      provenance: "desktop_bundle",
+    };
+    const preflight: RudderMcpPreflightResult = {
+      available: true,
+      provenance: "desktop_bundle",
+      version: "1.0.0",
+      contractVersion: "1",
+      coreContractHash: "core-contract-hash",
+      diagnosticCode: null,
+      diagnostic: null,
+      tools: [{ name: "agent.me", inputSchema: { type: "object" } }],
+    };
+    const managedBinding: ResolvedManagedExternalMcpBinding = {
+      bindingId: "cf7ca0a0-719a-4eb3-9a19-e31758cfa56d",
+      serverName: "managed-docs",
+      accessMode: "read_only",
+      toolPolicy: { mode: "allowlist", allowedToolNames: ["external.managed-docs.search"] },
+      required: false,
+      startupTimeoutMs: 3000,
+      toolTimeoutMs: 10000,
+      proxyUrl: "http://127.0.0.1:3100/api/mcp/runtime/bindings/cf7ca0a0-719a-4eb3-9a19-e31758cfa56d",
+      bearerTokenEnvVar: "RUDDER_API_KEY",
+    };
+    const config = {
+      managedExternalMcpBindings: [{ bindingId: managedBinding.bindingId }],
+      mcpServers: [{ name: "local", command: "local-mcp", args: ["serve"] }],
+    };
+    const originalConfig = structuredClone(config);
+    let corePreflightToken: string | undefined;
+    let gatewayPreflightToken: string | undefined;
+    const prepared = await prepareCursorAcpMcpConfiguration({
+      config,
+      runtimeEnv: {
+        RUDDER_API_URL: "http://127.0.0.1:3100",
+        RUDDER_API_KEY: ambientToken,
+        RUDDER_ORG_ID: "org-cursor",
+        RUDDER_AGENT_ID: "agent-cursor",
+        RUDDER_RUN_ID: "run-cursor",
+      },
+      authToken: runToken,
+      onLog: async () => {},
+    }, {
+      resolveRudderMcpCliCommand: async () => command,
+      preflightRudderMcpServer: async (input) => {
+        corePreflightToken = input.managedEnv?.RUDDER_API_KEY;
+        expect(input.runtimeEnv.RUDDER_API_KEY).toBe(runToken);
+        return preflight;
+      },
+      preflightManagedExternalMcpBindings: async (_config, env) => {
+        gatewayPreflightToken = env.RUDDER_API_KEY;
+        return [managedBinding];
+      },
+    });
+
+    expect(corePreflightToken).toBe(runToken);
+    expect(gatewayPreflightToken).toBe(runToken);
+    expect(prepared.mcpServers).toContainEqual(expect.objectContaining({
+      name: "rudder-tools",
+      command: command.command,
+      env: expect.arrayContaining([{ name: "RUDDER_API_KEY", value: runToken }]),
+    }));
+    expect(prepared.mcpServers).toContainEqual(expect.objectContaining({
+      name: "managed-docs",
+      type: "http",
+      headers: [{ name: "Authorization", value: `Bearer ${runToken}` }],
+    }));
+    expect(prepared.mcpServers).toContainEqual({ name: "local", command: "local-mcp", args: ["serve"], env: [] });
+    expect(prepared.loadedMcpServers).toEqual([
+      { serverName: "rudder-tools", source: "built_in" },
+      { serverName: "managed-docs", source: "managed_external" },
+    ]);
+    expect(config).toEqual(originalConfig);
+
+    const noAuth = await prepareCursorAcpMcpConfiguration({
+      config,
+      runtimeEnv: { RUDDER_API_KEY: ambientToken },
+      onLog: async () => {},
+    }, {
+      resolveRudderMcpCliCommand: async () => {
+        throw new Error("ambient auth must not trigger Rudder MCP startup");
+      },
+      preflightRudderMcpServer: async () => {
+        throw new Error("ambient auth must not trigger a typed-tool preflight");
+      },
+      preflightManagedExternalMcpBindings: async () => {
+        throw new Error("ambient auth must not trigger the managed gateway");
+      },
+    });
+    expect(noAuth.mcpServers).toEqual([{ name: "local", command: "local-mcp", args: ["serve"], env: [] }]);
+    expect(noAuth.loadedMcpServers).toEqual([]);
+    expect(noAuth.rudderMcp).toMatchObject({ available: false });
+  });
+
   it("falls back only for a fresh explicit ACP unsupported result and resumes that legacy session", async () => {
     const fixture = await createFixture("unsupported");
     const logs: string[] = [];
