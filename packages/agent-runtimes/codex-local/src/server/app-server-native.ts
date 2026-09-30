@@ -582,11 +582,11 @@ function textForItem(item: JsonRecord, canonicalType: string): string | null {
   return null;
 }
 
-function stableRevision(thread: JsonRecord, turns: readonly JsonRecord[]): string {
+function stableRevision(thread: JsonRecord, turns: readonly JsonRecord[], fixedTurn = false): string {
   const value = JSON.stringify({
     id: thread.id,
     sessionId: thread.sessionId,
-    updatedAt: thread.updatedAt,
+    updatedAt: fixedTurn ? undefined : thread.updatedAt,
     turns: turns.map((turn) => ({
       id: turn.id,
       status: turn.status,
@@ -823,6 +823,70 @@ function providerPage(response: unknown, previousCursor: string | null): { data:
   return { data: page.data as JsonRecord[], next: page.nextCursor as string | null };
 }
 
+const FIXED_TURN_PROOF_MAX_PAGES = 5000;
+const FIXED_TURN_PROOF_MAX_BYTES = 8 * 1024 * 1024;
+const FIXED_TURN_PROOF_MAX_FRAME_BYTES = 2 * 1024 * 1024;
+type FixedTurnContentProof = {
+  revision: string;
+  rootSessionId: string;
+  turnRevision: string;
+  itemPages: Map<string, string>;
+};
+const contentDigest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const itemPageKey = (cursor: string | null) => contentDigest(cursor);
+
+/** Hash one exact turn without retaining its raw history. Output page/frame
+ * budgets remain separate: a small UI page still needs a complete source proof.
+ * Verification has hard frame/total/page caps and never claims an incomplete
+ * digest is the revision of a sealed range. */
+async function readFixedTurnContentProof(client: CodexAppServerClient, threadId: string, turnId: string, scope: string): Promise<FixedTurnContentProof> {
+  const metadata = parseThreadResponse(await client.request("thread/read", { threadId, includeTurns: false }), threadId, false);
+  let bytes = 0;
+  const account = (page: unknown) => {
+    bytes += Buffer.byteLength(JSON.stringify(page), "utf8");
+    if (bytes > FIXED_TURN_PROOF_MAX_BYTES) throw capabilityError("unsupported", "Codex fixed-turn content proof exceeds its byte budget.");
+  };
+  account(metadata.thread);
+  let cursor: string | null = null;
+  let turn: JsonRecord | null = null;
+  const seen = new Set<string>();
+  for (let count = 0; count < FIXED_TURN_PROOF_MAX_PAGES; count += 1) {
+    const page = providerPage(await client.request("thread/turns/list", { threadId, limit: 1,
+      itemsView: "notLoaded", sortDirection: "asc", cursor }), cursor);
+    account(page);
+    if (page.data[0]?.id === turnId) { turn = page.data[0]; break; }
+    if (page.next === null) throw capabilityError("unknown", "Codex fixed-turn content proof has no requested turn.");
+    if (seen.has(page.next)) throw capabilityError("unsupported", "Codex turn pagination cycle.");
+    seen.add(page.next); cursor = page.next;
+  }
+  if (!turn) throw capabilityError("unsupported", "Codex fixed-turn metadata proof exceeds its page budget.");
+  if (typeof turn.status !== "string" || !Array.isArray(turn.items) || turn.items.length !== 0
+    || !(turn.itemsView === "notLoaded" || asRecord(turn.itemsView)?.type === "notLoaded")) {
+    throw capabilityError("unsupported", "Codex turn metadata was not a bounded notLoaded view.");
+  }
+  const hash = createHash("sha256").update(JSON.stringify({ scope, id: metadata.thread.id,
+    root: metadata.rootSessionId, turn })).update("\0");
+  const itemPages = new Map<string, string>();
+  cursor = null; seen.clear();
+  for (let count = 0; count < FIXED_TURN_PROOF_MAX_PAGES; count += 1) {
+    const page = providerPage(await client.request("thread/items/list", { threadId, turnId, limit: 1,
+      sortDirection: "asc", cursor }), cursor);
+    account(page);
+    const wrapper = page.data[0];
+    const item = asRecord(wrapper?.item);
+    if (wrapper && (wrapper.turnId !== turnId || !item || !nonEmptyString(item.id))) {
+      throw capabilityError("unsupported", "Codex item page escaped its requested turn or omitted item identity.");
+    }
+    itemPages.set(itemPageKey(cursor), contentDigest(page));
+    if (item) hash.update(JSON.stringify(item)).update("\0");
+    if (page.next === null) return { revision: `codex:${hash.digest("hex")}`,
+      rootSessionId: metadata.rootSessionId, turnRevision: contentDigest(turn), itemPages };
+    if (seen.has(page.next)) throw capabilityError("unsupported", "Codex item pagination cycle.");
+    seen.add(page.next); cursor = page.next;
+  }
+  throw capabilityError("unsupported", "Codex fixed-turn item proof exceeds its page budget.");
+}
+
 /** Page native history without resume/replay. One provider item can project to
  * both a tool call and a result; the cursor retains its intra-item position. */
 async function readPagedTurn(input: {
@@ -835,19 +899,13 @@ async function readPagedTurn(input: {
   maxItemBytes: number;
   limit: number;
   onPaginationVerified?: () => void;
+  proof: FixedTurnContentProof;
 }): Promise<CodexNativeTranscriptReadResult> {
   const metadata = parseThreadResponse(await input.client.request("thread/read", {
     threadId: input.threadId, includeTurns: false,
   }), input.threadId, false);
-  if (typeof metadata.thread.updatedAt !== "number" || !Number.isFinite(metadata.thread.updatedAt)) {
-    throw capabilityError("unsupported", "Codex thread metadata has no source revision timestamp.");
-  }
-  // Metadata remains page-independent. A provider update invalidates the old
-  // cursor instead of combining pages from different source observations.
-  const revision = `codex:${createHash("sha256").update(JSON.stringify({
-    scope: input.scope, id: metadata.thread.id, root: metadata.rootSessionId,
-    updatedAt: metadata.thread.updatedAt,
-  })).digest("hex")}`;
+  if (metadata.rootSessionId !== input.proof.rootSessionId) throw capabilityError("unsupported", "Codex root session changed during fixed-turn verification.");
+  const revision = input.proof.revision;
   if (input.cursor && input.cursor.revision !== revision) throw capabilityError("unsupported", "Codex transcript source revision changed.");
   const state: CodexReadCursor = input.cursor ? { ...input.cursor } : {
     version: 1, scope: input.scope, revision, phase: "turns", turnCursor: null, itemCursor: null, entryOffset: 0, ordinal: 0, turnRevision: null,
@@ -875,6 +933,7 @@ async function readPagedTurn(input: {
       }
       turn = candidate;
       const turnRevision = createHash("sha256").update(JSON.stringify(candidate)).digest("hex");
+      if (turnRevision !== input.proof.turnRevision) throw capabilityError("unsupported", "Codex selected turn changed after content verification.");
       if (state.turnRevision !== null && state.turnRevision !== turnRevision) {
         throw capabilityError("unsupported", "Codex selected turn changed during pagination.");
       }
@@ -901,6 +960,9 @@ async function readPagedTurn(input: {
       return result(items.length > 0, false, { reason: input.maxItemBytes <= input.maxBytes ? "item_bytes" : "page_bytes", maximum: Math.min(input.maxBytes, input.maxItemBytes) });
     }
     const page = providerPage(response, state.itemCursor);
+    if (input.proof.itemPages.get(itemPageKey(state.itemCursor)) !== contentDigest(page)) {
+      throw capabilityError("unsupported", "Codex selected item content changed after fixed-turn verification.");
+    }
     const wrapper = page.data[0];
     const item = asRecord(wrapper?.item);
     if (wrapper && (wrapper.turnId !== input.turnId || !item || !nonEmptyString(item.id))) {
@@ -910,7 +972,8 @@ async function readPagedTurn(input: {
     if (item && Buffer.byteLength(JSON.stringify(item), "utf8") > input.maxItemBytes) {
       return result(items.length > 0, false, { reason: "item_bytes", maximum: input.maxItemBytes });
     }
-    const projected = item ? recordsForTurns(input.threadId, metadata.thread, [{ ...turn, items: [item] }]) : [];
+    // A session's latest-update clock is not the timestamp of an old turn.
+    const projected = item ? recordsForTurns(input.threadId, { ...metadata.thread, updatedAt: undefined }, [{ ...turn, items: [item] }]) : [];
     if (state.entryOffset > projected.length) throw capabilityError("unsupported", "Codex projection cursor is outside its item.");
     for (let index = state.entryOffset; index < projected.length; index += 1) {
       const entry = { ...projected[index]!, ordinal: state.ordinal };
@@ -993,10 +1056,12 @@ async function readCodexNativeTranscriptWithEvidence(
   const cursor = decodeReadCursor(input.cursor, scope);
   try {
     if (requireTurn && selectedId && (onPaginationVerified || (profile.methods?.threadTurnsList === true && profile.methods.threadItemsList === true))) {
+      const proof = await withProfileClient(profile, input.signal,
+        client => readFixedTurnContentProof(client, threadId, selectedId, scope), FIXED_TURN_PROOF_MAX_FRAME_BYTES, true);
       return await withProfileClient(profile, input.signal, client => readPagedTurn({
         client, threadId, turnId: selectedId, scope, cursor, maxBytes, maxItemBytes,
         limit: readBudget(budget?.limit, 50, 200),
-        onPaginationVerified,
+        onPaginationVerified, proof,
       }), frameLimit, boundedHistoricalRead);
     }
     if (onPaginationVerified || profile.methods?.threadReadFullSnapshot !== true || cursor) {
@@ -1012,14 +1077,16 @@ async function readCodexNativeTranscriptWithEvidence(
         }
         selectedTurns = [selected];
       }
-      const records = recordsForTurns(threadId, parsed.thread, selectedTurns);
+      const projectionThread = selectedId ? { ...parsed.thread, updatedAt: undefined } : parsed.thread;
+      const records = recordsForTurns(threadId, projectionThread, selectedTurns);
+      const revision = stableRevision(parsed.thread, selectedTurns, Boolean(selectedId));
       const items = requireTurn ? records : applyNativeRange(records, requestedRange(input));
       if (items.some(item => Buffer.byteLength(JSON.stringify(item), "utf8") > maxItemBytes)) {
-        return { items: [], nextCursor: null, source: "native", revision: stableRevision(parsed.thread, selectedTurns),
+        return { items: [], nextCursor: null, source: "native", revision,
           availability: "available", completeness: "partial", limitReached: { reason: "item_bytes", maximum: maxItemBytes } };
       }
       if (Buffer.byteLength(JSON.stringify(items), "utf8") > maxBytes) {
-        return { items: [], nextCursor: null, source: "native", revision: stableRevision(parsed.thread, selectedTurns),
+        return { items: [], nextCursor: null, source: "native", revision,
           availability: "available", completeness: "partial", limitReached: { reason: "page_bytes", maximum: maxBytes } };
       }
       const complete = selectedTurns.every((turn) => turn.status !== "inProgress") && selectedTurns.length > 0;
@@ -1027,7 +1094,7 @@ async function readCodexNativeTranscriptWithEvidence(
         items,
         nextCursor: null,
         source: "native" as const,
-        revision: stableRevision(parsed.thread, selectedTurns),
+        revision,
         availability: "available" as const,
         completeness: (complete ? "complete" : "partial") as "complete" | "partial",
       };
