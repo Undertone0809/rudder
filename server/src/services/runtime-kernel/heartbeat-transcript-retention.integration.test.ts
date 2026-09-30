@@ -138,12 +138,16 @@ const fakeNativeProvider = vi.hoisted(() => {
         .map((candidate) => candidate.entry);
       const fixture = fixtures.get(selector.runId);
       if (fixture?.readProofFault === "throw") throw new Error("simulated native transcript read failure");
+      const offset = input.cursor ? Number(String(input.cursor).replace("fake-offset:", "")) : 0;
+      const page = entries.slice(offset, offset + (input.limit ?? 200));
+      const nextCursor = offset + page.length < entries.length ? `fake-offset:${offset + page.length}` : null;
       return {
-        items: entries,
+        items: page,
+        nextCursor,
         revision: `fake-native:${selector.turnId}`,
         source: "native",
         availability: "available",
-        completeness: fixture?.readProofFault === "partial" ? "partial" : "complete",
+        completeness: fixture?.readProofFault === "partial" || nextCursor ? "partial" : "complete",
       };
     },
   };
@@ -1196,6 +1200,57 @@ describe("heartbeat native transcript retention integration", () => {
       status: "reference_only",
       itemCount: 1,
     });
+  }, 60_000);
+
+  it("proves a complete native range when its revision probe is honestly paginated", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    const { agentId, orgId } = await seedAgent();
+    const native = await queueRun(agentId);
+    const sessionId = `w12-probe-session-${randomUUID()}`;
+    const turnId = `turn-${native.run.id}`;
+    fakeNativeProvider.register(native.run.id, {
+      sessionId, turnId, rawTranscript: "first native response", decoy: "another Run",
+    });
+    const gate = fakeTerminalEffect.arm();
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await gate.entered;
+      fakeNativeProvider.sessions.get(sessionId)!.push({ runId: native.run.id, turnId,
+        entry: { kind: "assistant", ts: "2026-09-24T00:00:02.000Z", text: "second native response" } });
+    } finally {
+      gate.release();
+      await waitForTerminalEffectsComplete(native.run.id);
+    }
+    await waitForNativeRetentionComplete(native.run.id);
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+    expect((run.contextSnapshot as Record<string, any>).nativeTranscriptRetention)
+      .toMatchObject({ status: "reference_only", itemCount: 2 });
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+    expect(span.supplementalObjectRef).toBeNull();
+    const reader = createTranscriptReader(db, {
+      nativeReader: { readRange: async (input) => fakeNativeProvider.readRange(input) },
+    });
+    const probe = await reader.readRun({ orgId, runId: native.run.id, spanId: span.id,
+      principal: { type: "board", orgId, authorized: true }, limit: 1 });
+    expect(probe).toMatchObject({ source: "native", availability: "available",
+      completeness: "partial", nextCursor: expect.any(String) });
+    expect(probe.limitReached).toBeFalsy();
+    expect(await proveSealedNativeRunTranscript({ db, reader, orgId, runId: native.run.id }))
+      .toMatchObject({ ok: true, proof: { itemCount: 2 } });
+    for (const fault of ["cutoff", "revision", "empty", "unknown"] as const) {
+      const faultReader = { readRun: async (request: Parameters<typeof reader.readRun>[0]) => {
+        const page = await reader.readRun(request);
+        if (request.limit !== 1) return page;
+        return { ...page,
+          ...(fault === "cutoff" ? { limitReached: { reason: "page_bytes" as const, maximum: 1 } } : {}),
+          ...(fault === "revision" ? { revision: "changed-revision" } : {}),
+          ...(fault === "empty" ? { items: [] } : {}),
+          ...(fault === "unknown" ? { completeness: "unknown" as const } : {}),
+        };
+      } };
+      expect(await proveSealedNativeRunTranscript({ db, reader: faultReader as typeof reader, orgId, runId: native.run.id }))
+        .toMatchObject({ ok: false, reason: "native_range_read_incomplete" });
+    }
   }, 60_000);
 
   it("preserves the business result and marks retention incomplete when terminal native proof is partial or fails", async () => {

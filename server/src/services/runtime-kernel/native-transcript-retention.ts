@@ -219,7 +219,13 @@ async function readExactSpan(
   });
   if (confirmation.source !== "native"
     || confirmation.availability !== "available"
-    || confirmation.completeness !== "complete"
+    // This one-item probe confirms the revision of the fully read range above.
+    // A pagination cursor makes the probe partial without making that range
+    // incomplete. Missing data or a byte/item budget cutoff still denies proof.
+    || (confirmation.completeness !== "complete"
+      && !(confirmation.completeness === "partial" && nonEmpty(confirmation.nextCursor)))
+    || confirmation.limitReached
+    || confirmation.items.length !== 1
     || confirmation.revision !== revision
     || confirmation.items.some((item) => item.runId !== input.runId || item.spanId !== input.spanId)) return null;
   return { sourceRevision: revision, itemCount };
