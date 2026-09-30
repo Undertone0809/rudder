@@ -586,6 +586,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       runId: string,
     ) {
       const skills: Array<{ key: string; label: string }> = [];
+      let nativeHistoryIncomplete = false;
       let cursor: string | null = null;
       for (let pageCount = 0; pageCount < 100_000; pageCount += 1) {
         const page = await reader.readRun({
@@ -595,13 +596,24 @@ export function createHeartbeatMiscHandlers(context: any) {
           cursor,
           limit: 200,
         });
+        if (page.source !== "legacy"
+          && (page.availability !== "available"
+            || (!page.nextCursor && page.completeness !== "complete"))) {
+          nativeHistoryIncomplete = true;
+        }
         const transcript: TranscriptEntry[] = [];
         for (const item of page.items) {
           const entry = transcriptEntryFromReaderItem(item);
           if (entry) transcript.push(entry);
         }
         skills.push(...inferUsedSkillsFromTranscript(transcript));
-        if (!page.nextCursor) return dedupeSkillUses(skills);
+        if (!page.nextCursor) {
+          const usedSkills = dedupeSkillUses(skills);
+          if (usedSkills.length === 0 && nativeHistoryIncomplete) {
+            throw new Error(`Native transcript history for Run ${runId} is unavailable or incomplete`);
+          }
+          return usedSkills;
+        }
         if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
         cursor = page.nextCursor;
       }
@@ -649,8 +661,7 @@ export function createHeartbeatMiscHandlers(context: any) {
     });
 
     for (const row of runRows) {
-      const usedSkills = await inferUsedSkillsFromStoredRunTranscript(transcriptReader, scope.orgId, row.id)
-        .catch(() => []);
+      const usedSkills = await inferUsedSkillsFromStoredRunTranscript(transcriptReader, scope.orgId, row.id);
       if (usedSkills.length === 0) continue;
       addRunSkillEvidence(row.id, dateKeyForTimestamp(row.createdAt), {
         evidence: "used",

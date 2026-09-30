@@ -17,6 +17,7 @@ if (args.includes("generate-json-schema")) {
   fs.writeFileSync(path.join(directory, "ClientRequest.json"), JSON.stringify({
     oneOf: [
       "thread/start", "thread/resume", "thread/read", "thread/fork",
+      "thread/turns/list", "thread/items/list",
       "turn/start", "turn/steer", "turn/interrupt",
     ].map((method) => ({
       properties: { method: { const: method } },
@@ -69,8 +70,34 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       const thread = create();
       save(thread);
       send({ id: request.id, result: { thread } });
-    } else if (request.method === "thread/resume" || request.method === "thread/read") {
+    } else if (request.method === "thread/resume") {
       send({ id: request.id, result: { thread: load(params.threadId) } });
+    } else if (request.method === "thread/read") {
+      const thread = load(params.threadId);
+      send({ id: request.id, result: { thread: params.includeTurns === false ? { ...thread, turns: [] } : thread } });
+    } else if (request.method === "thread/turns/list") {
+      const thread = load(params.threadId);
+      const offset = Number(params.cursor ?? 0);
+      const turn = thread.turns[offset];
+      send({
+        id: request.id,
+        result: {
+          data: turn ? [{ ...turn, items: [], itemsView: { type: "notLoaded" } }] : [],
+          nextCursor: offset + 1 < thread.turns.length ? String(offset + 1) : null,
+        },
+      });
+    } else if (request.method === "thread/items/list") {
+      const thread = load(params.threadId);
+      const turn = thread.turns.find((candidate) => candidate.id === params.turnId);
+      const offset = Number(params.cursor ?? 0);
+      const item = turn?.items[offset];
+      send({
+        id: request.id,
+        result: {
+          data: item ? [{ turnId: turn.id, item }] : [],
+          nextCursor: turn && offset + 1 < turn.items.length ? String(offset + 1) : null,
+        },
+      });
     } else if (request.method === "thread/fork") {
       const parent = load(params.threadId);
       const index = parent.turns.findIndex((turn) => turn.id === params.lastTurnId);
@@ -93,6 +120,18 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         .filter((item) => item?.type === "text" && typeof item.text === "string")
         .map((item) => item.text)
         .join("\n");
+      const skillTelemetry = [...prompt.matchAll(/\bNative skill telemetry:\s*([a-z0-9][a-z0-9-]*)\b/gi)].at(-1)?.[1];
+      if (skillTelemetry) {
+        turn.items.push({
+          type: "commandExecution",
+          id: randomUUID(),
+          command: `cat .agents/skills/${skillTelemetry}/SKILL.md`,
+          cwd: process.cwd(),
+          status: "completed",
+          exitCode: 0,
+          aggregatedOutput: `Read ${skillTelemetry} skill instructions`,
+        });
+      }
       if (prompt.includes("Keep Steer message position stable")) {
         activeTurn = { thread, turn };
         setTimeout(() => send({

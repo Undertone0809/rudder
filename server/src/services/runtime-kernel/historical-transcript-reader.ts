@@ -34,14 +34,8 @@ export function createHistoricalTranscriptReader(
           eq(agentConfigRevisions.orgId, input.orgId),
           eq(agentConfigRevisions.agentId, input.run.agentId),
         )).orderBy(desc(agentConfigRevisions.createdAt));
-        const [{ createHistoricalRunRuntimeProviderCapabilityResolver }, { createRuntimeNativeTranscriptReaderHook }] =
-          await Promise.all([
-            import("../run-intelligence.js"),
-            import("./provider-capabilities.js"),
-          ]);
-        return createRuntimeNativeTranscriptReaderHook(
-          createHistoricalRunRuntimeProviderCapabilityResolver({ ...input.run, ...agent }, revisions),
-        ).readRange(input);
+        const { createHistoricalRunNativeTranscriptReader } = await import("../run-intelligence.js");
+        return createHistoricalRunNativeTranscriptReader({ ...input.run, ...agent }, revisions).readRange(input);
       },
     },
     ...(options.includeObjects === false ? {} : { objectReader: createTranscriptObjectReader() }),

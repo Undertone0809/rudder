@@ -106,16 +106,22 @@ describe("heartbeat skill analytics transcript reader", () => {
       ? input.cursor === null
         ? {
           source: "legacy",
+          availability: "available",
+          completeness: "partial",
           items: [transcriptItem(input.runId, "first-skill")],
           nextCursor: "page-2",
         }
         : {
           source: "legacy",
+          availability: "available",
+          completeness: "complete",
           items: [transcriptItem(input.runId, "second-skill")],
           nextCursor: null,
         }
       : {
         source: "native",
+        availability: "available",
+        completeness: input.cursor === null ? "partial" : "complete",
         items: [{ ...transcriptItem(input.runId, "native-skill"), origin: "native", entry: undefined }],
         nextCursor: input.cursor === null ? "native-page-2" : null,
       });
@@ -151,5 +157,57 @@ describe("heartbeat skill analytics transcript reader", () => {
       maxReadBytes: 450_000,
     });
     expect(analytics.skills.find((skill: { key: string }) => skill.key === "native-skill")?.count).toBe(1);
+  });
+
+  it("does not report zero usage when native transcript history is unavailable", async () => {
+    const orgId = "org-1";
+    const date = new Date("2026-04-21T10:00:00.000Z");
+    const db = database(new Map<unknown, Record<string, unknown>[]>([
+      [heartbeatRunEvents, []],
+      [heartbeatRuns, [{
+        id: "native-unavailable-run",
+        agentRuntimeType: "codex_local",
+        createdAt: date,
+        logStore: null,
+        logRef: null,
+        logBytes: 0,
+      }]],
+    ]));
+    mocks.readRun.mockResolvedValueOnce({
+      source: "native",
+      availability: "incompatible",
+      completeness: "unknown",
+      items: [],
+      nextCursor: null,
+    });
+
+    const handlers = createHeartbeatMiscHandlers({ db, runLogStore: {} });
+    await expect(handlers.buildSkillAnalytics({ orgId }, {
+      startDate: "2026-04-21",
+      endDate: "2026-04-21",
+    })).rejects.toThrow("Native transcript history for Run native-unavailable-run is unavailable or incomplete");
+  });
+
+  it("propagates native transcript read errors instead of treating them as no skill usage", async () => {
+    const orgId = "org-1";
+    const date = new Date("2026-04-21T10:00:00.000Z");
+    const db = database(new Map<unknown, Record<string, unknown>[]>([
+      [heartbeatRunEvents, []],
+      [heartbeatRuns, [{
+        id: "native-error-run",
+        agentRuntimeType: "codex_local",
+        createdAt: date,
+        logStore: null,
+        logRef: null,
+        logBytes: 0,
+      }]],
+    ]));
+    mocks.readRun.mockRejectedValueOnce(new Error("Codex transcript verifier failed"));
+
+    const handlers = createHeartbeatMiscHandlers({ db, runLogStore: {} });
+    await expect(handlers.buildSkillAnalytics({ orgId }, {
+      startDate: "2026-04-21",
+      endDate: "2026-04-21",
+    })).rejects.toThrow("Codex transcript verifier failed");
   });
 });

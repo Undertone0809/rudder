@@ -3,12 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createHistoricalTranscriptReader } from "./historical-transcript-reader.js";
 import type { NativeTranscriptReadInput, TranscriptReaderOptions } from "./transcript-reader.js";
 
-const mocks = vi.hoisted(() => ({ resolveProfile: vi.fn(), read: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createNativeReader: vi.fn(), read: vi.fn() }));
 vi.mock("../run-intelligence.js", () => ({
-  createHistoricalRunRuntimeProviderCapabilityResolver: mocks.resolveProfile,
-}));
-vi.mock("./provider-capabilities.js", () => ({
-  createRuntimeNativeTranscriptReaderHook: () => ({ readRange: mocks.read }),
+  createHistoricalRunNativeTranscriptReader: mocks.createNativeReader,
 }));
 vi.mock("./transcript-reader.js", () => ({
   createTranscriptReader: (_db: unknown, options: TranscriptReaderOptions) => options,
@@ -34,6 +31,7 @@ function database(agentRows: unknown[], revisions: unknown[]) {
 
 describe("historical transcript consumer wiring", () => {
   it("resolves the Run's historical profile and forwards the exact read window to the native reader", async () => {
+    mocks.createNativeReader.mockReturnValue({ readRange: mocks.read });
     const agent = { agentRuntimeType: "codex_local", agentRuntimeConfig: { cwd: "/tmp/current" }, runtimeConfig: {} };
     const revisions = [{ id: "revision-before-run", afterConfig: { cwd: "/tmp/historical" } }];
     const input = {
@@ -46,18 +44,18 @@ describe("historical transcript consumer wiring", () => {
     const result = { items: [{ id: "native-only-entry" }], revision: "native-r1", availability: "available" };
     mocks.read.mockResolvedValueOnce(result);
     await expect(reader.nativeReader!.read!(input)).resolves.toBe(result);
-    expect(mocks.resolveProfile).toHaveBeenLastCalledWith({ ...input.run, ...agent }, revisions);
+    expect(mocks.createNativeReader).toHaveBeenLastCalledWith({ ...input.run, ...agent }, revisions);
     expect(mocks.read).toHaveBeenLastCalledWith(input);
   });
 
   it("reports a deleted Agent's native history as missing without using another Agent's profile", async () => {
     mocks.read.mockClear();
-    mocks.resolveProfile.mockClear();
+    mocks.createNativeReader.mockClear();
     const reader = createHistoricalTranscriptReader(database([], []) as never) as unknown as TranscriptReaderOptions;
     await expect(reader.nativeReader!.read!({
       orgId: "org-1", run: { agentId: "deleted-agent" },
     } as NativeTranscriptReadInput)).resolves.toMatchObject({ availability: "missing", items: [] });
-    expect(mocks.resolveProfile).not.toHaveBeenCalled();
+    expect(mocks.createNativeReader).not.toHaveBeenCalled();
     expect(mocks.read).not.toHaveBeenCalled();
   });
 });
