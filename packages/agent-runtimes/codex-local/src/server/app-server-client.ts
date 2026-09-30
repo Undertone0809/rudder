@@ -32,6 +32,12 @@ export interface CodexAppServerNotificationContext {
   signal: AbortSignal;
 }
 
+export interface CodexAppServerRequestOptions {
+  timeoutMs?: number;
+  /** Called after request serialization and immediately before transport.write. */
+  onDispatch?: () => void;
+}
+
 export interface CodexAppServerServerRequest {
   id: CodexAppServerRequestId;
   method: string;
@@ -357,11 +363,22 @@ export class CodexAppServerClient {
     return this.initializePromise;
   }
 
-  request<TResult = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<TResult> {
+  request<TResult = unknown>(
+    method: string,
+    params?: unknown,
+    requestOptions?: number | CodexAppServerRequestOptions,
+  ): Promise<TResult> {
     if (this.closing || this.stateValue !== "ready") {
       return Promise.reject(new CodexAppServerClosedError(`Cannot request ${method} in state ${this.stateValue}`));
     }
-    return this.sendRequest(method, params, asPositiveInteger(timeoutMs, this.requestTimeoutMs)) as Promise<TResult>;
+    const timeoutMs = typeof requestOptions === "number" ? requestOptions : requestOptions?.timeoutMs;
+    const onDispatch = typeof requestOptions === "object" ? requestOptions?.onDispatch : undefined;
+    return this.sendRequest(
+      method,
+      params,
+      asPositiveInteger(timeoutMs, this.requestTimeoutMs),
+      onDispatch,
+    ) as Promise<TResult>;
   }
 
   notify(method: string, params?: unknown): void {
@@ -375,7 +392,12 @@ export class CodexAppServerClient {
     this.shutdown(new CodexAppServerClosedError(reason), "closed", true, true);
   }
 
-  private sendRequest(method: string, params: unknown, timeoutMs: number): Promise<unknown> {
+  private sendRequest(
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+    onDispatch?: () => void,
+  ): Promise<unknown> {
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -385,20 +407,25 @@ export class CodexAppServerClient {
       }, timeoutMs);
       this.pendingClientRequests.set(id, { method, resolve, reject, timer });
       try {
-        this.writeMessage(params === undefined ? { id, method } : { id, method, params });
+        this.writeMessage(
+          params === undefined ? { id, method } : { id, method, params },
+          onDispatch,
+        );
       } catch (error) {
         clearTimeout(timer);
         this.pendingClientRequests.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
+        return;
       }
     });
   }
 
-  private writeMessage(message: unknown): void {
+  private writeMessage(message: unknown, onDispatch?: () => void): void {
     if (this.closing || !this.transportOpen) {
       throw new CodexAppServerClosedError("Codex app-server transport is closed");
     }
     const serialized = `${JSON.stringify(message)}\n`;
+    onDispatch?.();
     try {
       this.transport.write(serialized);
     } catch (writeError) {

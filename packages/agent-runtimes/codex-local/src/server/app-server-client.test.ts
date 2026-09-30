@@ -16,6 +16,7 @@ class FakeTransport implements CodexAppServerTransport {
   readonly writes: string[] = [];
   terminated = false;
   writeError: Error | null = null;
+  writeErrorAfterRecord: Error | null = null;
 
   private readonly stdoutListeners = new Set<
     (chunk: Buffer | Uint8Array | string) => void
@@ -25,6 +26,7 @@ class FakeTransport implements CodexAppServerTransport {
   write(serializedMessage: string): void {
     if (this.writeError) throw this.writeError;
     this.writes.push(serializedMessage);
+    if (this.writeErrorAfterRecord) throw this.writeErrorAfterRecord;
   }
 
   onStdout(listener: (chunk: Buffer | Uint8Array | string) => void): () => void {
@@ -165,6 +167,68 @@ describe("CodexAppServerClient", () => {
       },
       { method: "initialized", params: {} },
     ]);
+  });
+
+  it("calls onDispatch immediately before writing, but not for preflight or serialization failures", async () => {
+    const transport = new FakeTransport();
+    const client = createClient(transport);
+    await initializeClient(client, transport);
+
+    const order: string[] = [];
+    const write = transport.write.bind(transport);
+    vi.spyOn(transport, "write").mockImplementation((message) => {
+      order.push("write");
+      write(message);
+    });
+    let phase = "pre_submission";
+    const onDispatch = vi.fn(() => {
+      phase = "indeterminate";
+      order.push("dispatch");
+    });
+    const pending = client.request("turn/start", { threadId: "t-1" }, { onDispatch });
+    expect(onDispatch).toHaveBeenCalledOnce();
+    expect(order).toEqual(["dispatch", "write"]);
+    expect(phase).toBe("indeterminate");
+    transport.emitMessage({ id: 2, result: { turn: { id: "turn-1" } } });
+    await expect(pending).resolves.toEqual({ turn: { id: "turn-1" } });
+
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const notSerialized = vi.fn();
+    await expect(client.request("turn/start", circular, { onDispatch: notSerialized }))
+      .rejects.toBeInstanceOf(TypeError);
+    expect(notSerialized).not.toHaveBeenCalled();
+    expect(client.state).toBe("ready");
+
+    phase = "pre_submission";
+    client.dispose("closed before request");
+    const notDispatched = vi.fn(() => {
+      phase = "indeterminate";
+    });
+    await expect(client.request("turn/start", { threadId: "t-1" }, { onDispatch: notDispatched }))
+      .rejects.toBeInstanceOf(CodexAppServerClosedError);
+    expect(notDispatched).not.toHaveBeenCalled();
+    expect(phase).toBe("pre_submission");
+  });
+
+  it("keeps a request indeterminate when transport records it and then throws", async () => {
+    const transport = new FakeTransport();
+    const client = createClient(transport);
+    await initializeClient(client, transport);
+    const writeError = new Error("transport failed after recording request");
+    transport.writeErrorAfterRecord = writeError;
+
+    let phase = "pre_submission";
+    const pending = client.request("turn/start", { threadId: "t-1" }, {
+      onDispatch: () => {
+        phase = "indeterminate";
+      },
+    });
+
+    await expect(pending).rejects.toBe(writeError);
+    expect(transport.messages().at(-1)).toMatchObject({ method: "turn/start" });
+    expect(phase).toBe("indeterminate");
+    expect(client.state).toBe("failed");
   });
 
   it("decodes split UTF-8 and drains multiple JSONL frames from one chunk", async () => {

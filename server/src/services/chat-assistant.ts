@@ -61,7 +61,10 @@ import { createChatAssistantTranscriptProcessor } from "./chat-assistant.transcr
 import { admitClaudeDeferredFork, recordClaudeDeferredForkOutcome, reserveClaudeDeferredFork } from "./claude-deferred-fork-admission.js";
 import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js";
 import { resolveHeartbeatTranscriptRetention } from "./runtime-kernel/heartbeat-transcript-retention.js";
-import { executeAdapterWithModelFallbacks } from "./runtime-kernel/model-fallback.js";
+import {
+  executeAdapterWithModelFallbacks,
+  resolveExecutionSubmissionPhase,
+} from "./runtime-kernel/model-fallback.js";
 import { executeNativeForkIntent, markNativeForkIntentUnknown } from "./runtime-kernel/native-fork-intent.js";
 import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
@@ -1086,7 +1089,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             : (result.exitCode ?? 0) !== 0 || result.errorMessage
               ? "failed"
               : "succeeded",
-          submissionPhase: result.submissionPhase ?? "accepted",
+          submissionPhase: resolveExecutionSubmissionPhase(result),
           providerThreadId,
           providerTurnId,
           sessionDisplayId: result.sessionDisplayId ?? result.sessionId ?? null,

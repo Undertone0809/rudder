@@ -4626,9 +4626,14 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
-  it.each(["pre_submission", "indeterminate"] as const)(
-    "preserves a native %s submission failure without claiming acceptance",
-    async (submissionPhase) => {
+  it.each([
+    ["pre-submission", { submissionPhase: "pre_submission" }, "pre_submission"],
+    ["indeterminate", { submissionPhase: "indeterminate" }, "indeterminate"],
+    ["failure without phase", {}, "indeterminate"],
+    ["explicitly accepted failure", { submissionPhase: "accepted" }, "accepted"],
+  ] as const)(
+    "classifies a native %s submission failure conservatively",
+    async (_kind, phaseFields, expectedPhase) => {
       const svc = chatAssistantService({} as any);
       mockAdapter.execute.mockResolvedValueOnce({
         summary: "",
@@ -4636,8 +4641,9 @@ describe("chatAssistantService operator profile prompt injection", () => {
         timedOut: false,
         exitCode: 1,
         errorMessage: "Native transport failed",
-        submissionPhase,
+        ...phaseFields,
         providerThreadId: "native-session-1",
+        ...(_kind === "failure without phase" ? { providerTurnId: "stale-turn-id" } : {}),
       });
 
       await expect(svc.streamChatAssistantReply({
@@ -4649,7 +4655,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         expect.anything(),
         expect.objectContaining({
           status: "failed",
-          submissionPhase,
+          submissionPhase: expectedPhase,
           providerThreadId: "native-session-1",
         }),
       );

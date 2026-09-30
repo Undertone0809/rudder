@@ -210,6 +210,10 @@ rl.on("line", (line) => {
       send({ id: message.id, result: { turn: {} } });
       return;
     }
+    if (process.env.RUDDER_TEST_TURN_START_BLANK_ID === "1") {
+      send({ id: message.id, result: { turn: { id: " \t " } } });
+      return;
+    }
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
     if (process.env.RUDDER_TEST_STALL_TURN === "1") return;
@@ -558,6 +562,34 @@ describe("executeCodexAppServerChat", () => {
         ...process.env,
         PATH: process.env.PATH ?? "",
         RUDDER_TEST_TURN_START_NO_ID: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: "Codex App Server did not return a turn id",
+      submissionPhase: "indeterminate",
+      providerTurnId: null,
+    });
+  });
+
+  it("does not accept a whitespace-only turn id", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_TURN_START_BLANK_ID: "1",
       } as Record<string, string>,
       prompt: "Inspect the timeline",
       model: "gpt-test",

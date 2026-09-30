@@ -1,8 +1,8 @@
 import type {
   AgentRuntimeControlHandleLease,
   AgentRuntimeExecutionContext,
-  AgentRuntimeNetworkSubmissionPhase,
   AgentRuntimeNativeWriterQuiescence,
+  AgentRuntimeNetworkSubmissionPhase,
   UsageSummary,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -887,7 +887,6 @@ export async function executeCodexAppServerChat(
       { type: "text", text: turnPrompt, text_elements: [] },
       ...options.imagePaths.map((imagePath) => ({ type: "localImage", path: imagePath })),
     ];
-    submissionPhase = "indeterminate";
     const turnResponse = asRecord(await client.request("turn/start", {
       threadId,
       input,
@@ -900,8 +899,12 @@ export async function executeCodexAppServerChat(
           : null,
       model: options.model || null,
       effort: options.modelReasoningEffort || null,
+    }, {
+      onDispatch: () => {
+        submissionPhase = "indeterminate";
+      },
     })) ?? {};
-    turnId = asString(asRecord(turnResponse.turn)?.id) || null;
+    turnId = asString(asRecord(turnResponse.turn)?.id).trim() || null;
     if (!turnId) throw new Error("Codex App Server did not return a turn id");
     submissionPhase = "accepted";
     const activeThreadId = threadId;
