@@ -16,6 +16,9 @@ import {
   chatQueuedMessages,
   heartbeatRuns,
   organizations,
+  runRuntimeSpans,
+  runtimeBindings,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import { parseShortRef, sanitizeChatStructuredPayload, shortRefFor, type ChatControlDisposition, type ChatInlineVisualMapping, type ChatMessage, type ChatProviderControlDisposition, type ChatQueuedMessagePayload, type ChatQueuedMessageStatus, type ChatQueueRequestActor, type ChatStreamTranscriptEntry, type RudderInlineVisualMapping } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
@@ -59,6 +62,7 @@ import {
 import { createChatConversationListingService } from "./chats.conversation-listing.js";
 import { createChatConversation, createChatWithInitialMessage, type CreateChatInput, type CreateChatWithInitialMessageInput } from "./chats.create.js";
 import { nextForkTitle } from "./chats.fork-helpers.js";
+import { createChatForkTranscriptReader, type RunTranscriptRead } from "./chats.fork-transcript-reader.js";
 import {
   CHAT_TRANSCRIPT_KEY,
   chatTranscriptFromPayload,
@@ -100,12 +104,12 @@ import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-tr
 import {
   expireRuntimeRetentionClaimsInTransaction,
   lockRuntimeRetentionScope,
+  noteReleasedNativeSourceAliasesInTransaction,
+  recordRetainedNativeSourceCleanupInTransaction,
   type RuntimeRetentionDb,
 } from "./runtime-kernel/runtime-retention.js";
 import type {
-  TranscriptAvailability,
-  TranscriptItem,
-  TranscriptSource,
+  TranscriptItem
 } from "./runtime-kernel/transcript-reader.js";
 import { ensureSideChatFirstInputGeneration as ensureSideChatFirstInputGenerationInTransaction } from "./side-chat-first-input-generation.js";
 
@@ -139,9 +143,6 @@ type ChatApprovalProvenance = {
 
 const CHAT_TITLE_MAX_LENGTH = 200;
 const CHAT_TRANSCRIPT_READER_PAGE_LIMIT = 200;
-const CHAT_TRANSCRIPT_READER_MAX_PAGES = 25;
-const CHAT_TRANSCRIPT_READER_MAX_ITEMS = 5_000;
-const CHAT_TRANSCRIPT_READER_MAX_BYTES = 2 * 1024 * 1024;
 
 class InvalidQueueDeliveryActionLinkError extends Error {}
 
@@ -233,7 +234,7 @@ export type { ChatServerQueueClaim } from "./chats.types.js";
 
 export function chatService(db: Db, storage?: StorageService) {
   const generationProtocol = chatGenerationProtocolService(db);
-  const transcriptReader = createHistoricalTranscriptReader(db);
+  const { readRunTranscriptThroughReader, loadForkTranscripts, readCopiedNativeTranscript } = createChatForkTranscriptReader(db, readConversationMessageTranscripts);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
   const issuesSvc = issueService(db, storage);
   const approvalsSvc = approvalService(db);
@@ -3258,103 +3259,17 @@ export function chatService(db: Db, storage?: StorageService) {
     return row ? hydrateQueuedMessage(row) : null;
   }
 
-  type RunTranscriptRead = {
-    entries: ChatStreamTranscriptEntry[];
-    source: TranscriptSource;
-    availability: TranscriptAvailability;
-  };
-
-  async function readRunTranscriptThroughReader(
-    run: Pick<MessageRow, "orgId" | "runId">,
-  ): Promise<RunTranscriptRead> {
-    if (!run.runId) {
-      return { entries: [], source: "legacy", availability: "missing" };
-    }
-    const entries: ChatStreamTranscriptEntry[] = [];
-    let cursor: string | null = null;
-    let bytes = 2;
-    let source: TranscriptSource = "legacy";
-    let availability: TranscriptAvailability = "missing";
-    for (let pageCount = 0; pageCount < CHAT_TRANSCRIPT_READER_MAX_PAGES; pageCount += 1) {
-      const page = await transcriptReader.readRun({
-        orgId: run.orgId,
-        runId: run.runId,
-        principal: { type: "board", orgId: run.orgId, authorized: true },
-        cursor,
-        limit: CHAT_TRANSCRIPT_READER_PAGE_LIMIT,
-      });
-      source = page.source;
-      availability = page.availability;
-      for (const item of page.items) {
-        const entry = chatTranscriptEntryFromReaderItem(item);
-        if (!entry) continue;
-        const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
-        if (
-          entries.length >= CHAT_TRANSCRIPT_READER_MAX_ITEMS
-          || (entries.length > 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES)
-        ) {
-          return { entries, source, availability };
-        }
-        if (entries.length === 0 && bytes + entryBytes > CHAT_TRANSCRIPT_READER_MAX_BYTES) {
-          return { entries, source, availability };
-        }
-        entries.push(entry);
-        bytes += entryBytes + (entries.length > 1 ? 1 : 0);
-      }
-      if (!page.nextCursor) return { entries, source, availability };
-      if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
-      cursor = page.nextCursor;
-    }
-    return { entries, source, availability };
-  }
-
-  async function loadForkTranscripts(
-    database: Pick<Db, "select">,
-    messages: readonly MessageRow[],
-  ) {
-    const byMessageId = new Map<string, readonly ChatStreamTranscriptEntry[]>();
-    const runReads = new Map<string, RunTranscriptRead>();
-    const runIds = [...new Set(messages.map((message) => message.runId).filter((runId): runId is string => Boolean(runId)))];
-    await Promise.all(runIds.map(async (runId) => {
-      runReads.set(runId, await readRunTranscriptThroughReader({
-        orgId: messages.find((message) => message.runId === runId)?.orgId ?? "",
-        runId,
-      }));
-    }));
-
-    const legacyFallbackMessages: MessageRow[] = [];
-    for (const message of messages) {
-      if (!message.runId) {
-        legacyFallbackMessages.push(message);
-        continue;
-      }
-      const runRead = runReads.get(message.runId);
-      if (!runRead || runRead.source === "legacy" && runRead.entries.length === 0) {
-        if (runRead?.source !== "native" && runRead?.source !== "native_plus_objects") {
-          legacyFallbackMessages.push(message);
-        } else {
-          // A native Run owns its transcript even when the provider currently
-          // has no readable items; suppress the copy helper's payload fallback.
-          byMessageId.set(message.id, []);
-        }
-        continue;
-      }
-      byMessageId.set(message.id, runRead.entries);
-    }
-
-    const legacyTranscripts = await readConversationMessageTranscripts(database, legacyFallbackMessages);
-    for (const message of legacyFallbackMessages) {
-      const transcript = legacyTranscripts.get(message.id);
-      if (transcript) byMessageId.set(message.id, transcript);
-    }
-    return byMessageId;
-  }
 
   async function hydrateMessages(rows: MessageHydrationRow[], options: { includeTranscript?: boolean } = {}) {
     // Preserve the service-layer default used by Messenger and existing internal callers.
     // HTTP/UI list routes opt into the lightweight projection explicitly.
     const includeTranscript = options.includeTranscript !== false;
-    const legacyTranscriptRows = rows.filter((row) => !row.runId);
+    const copiedNativeReads = new Map<string, RunTranscriptRead>();
+    await Promise.all(rows.filter((row) => !row.runId && row.role === "assistant").map(async (row) => {
+      const read = await readCopiedNativeTranscript(row, { includeTranscript });
+      if (read) copiedNativeReads.set(row.id, read);
+    }));
+    const legacyTranscriptRows = rows.filter((row) => !row.runId && !copiedNativeReads.has(row.id));
     const assistantMessageIds = rows
       .filter((row) => row.role === "assistant")
       .map((row) => row.id);
@@ -3411,10 +3326,10 @@ export function chatService(db: Db, storage?: StorageService) {
       }));
     }));
     const runTranscriptReadForRow = (row: MessageHydrationRow) =>
-      row.runId ? runTranscriptByRunId.get(row.runId) ?? null : null;
+      row.runId ? runTranscriptByRunId.get(row.runId) ?? null : copiedNativeReads.get(row.id) ?? null;
     const allowsLegacyTranscriptFallback = (row: MessageHydrationRow) => {
       const runRead = runTranscriptReadForRow(row);
-      return !row.runId || (runRead?.source === "legacy" && runRead.entries.length === 0);
+      return (!row.runId && !copiedNativeReads.has(row.id)) || (runRead?.source === "legacy" && runRead.entries.length === 0);
     };
     const legacyFallbackRows = rows.filter((row) => row.runId && allowsLegacyTranscriptFallback(row));
     const generationIds = [...new Set(generationMessageRows.map((row) => row.generationId))];
@@ -3720,6 +3635,8 @@ export function chatService(db: Db, storage?: StorageService) {
       if (!initialSource) throw notFound("Chat conversation not found");
 
       const initialRootConversationId = initialSource.forkRootConversationId ?? initialSource.id;
+      // Match Keep/GC/delete ordering before taking conversation/FK locks.
+      await lockRuntimeRetentionScope(tx as RuntimeRetentionDb, input.orgId);
       await tx.execute(sql`
         SELECT ${chatConversations.id}
         FROM ${chatConversations}
@@ -3864,7 +3781,7 @@ export function chatService(db: Db, storage?: StorageService) {
         sourceConversation: source,
         targetConversationId: child.id,
         orgId: input.orgId,
-        transcriptBySourceMessageId: await loadForkTranscripts(tx, forkMessages),
+        ...await loadForkTranscripts(tx, forkMessages),
       });
 
       const [systemEvent] = await tx
@@ -3988,7 +3905,7 @@ export function chatService(db: Db, storage?: StorageService) {
   async function remove(id: string) {
     return db.transaction(async (tx) => {
       const conversation = await tx
-        .select({ orgId: chatConversations.orgId })
+        .select({ orgId: chatConversations.orgId, createdByUserId: chatConversations.createdByUserId })
         .from(chatConversations)
         .where(eq(chatConversations.id, id))
         .then((rows) => rows[0] ?? null);
@@ -3996,6 +3913,43 @@ export function chatService(db: Db, storage?: StorageService) {
       // A cascading delete must drain admitted message editors before taking
       // conversation/FK locks. Ordinary writes and Side Chat close stay shared.
       await lockNodeMutationAuthority(tx, conversation.orgId);
+      await lockRuntimeRetentionScope(tx as RuntimeRetentionDb, conversation.orgId);
+      // Aliases have NO ACTION FKs. Release target references before deleting
+      // the target; source references retain a non-admittable closed anchor.
+      await tx.update(runtimeSourceAliases).set({
+        releasedAt: new Date(), lifecycleVersion: sql`${runtimeSourceAliases.lifecycleVersion} + 1`,
+        cleanupEpoch: sql`${runtimeSourceAliases.cleanupEpoch} + 1`, updatedAt: new Date(),
+      }).where(and(eq(runtimeSourceAliases.orgId, conversation.orgId), eq(runtimeSourceAliases.conversationId, id)));
+      const releasedAliases = await tx.delete(runtimeSourceAliases).where(and(
+        eq(runtimeSourceAliases.orgId, conversation.orgId), eq(runtimeSourceAliases.conversationId, id),
+      )).returning();
+      await noteReleasedNativeSourceAliasesInTransaction(tx as RuntimeRetentionDb, {
+        orgId: conversation.orgId, aliases: releasedAliases,
+      });
+      const sourceBindings = await tx.select().from(runtimeBindings).where(and(
+        eq(runtimeBindings.orgId, conversation.orgId), eq(runtimeBindings.conversationId, id),
+      )).for("update");
+      for (const binding of sourceBindings) {
+        const [reference] = await tx.select({ id: runtimeSourceAliases.id }).from(runtimeSourceAliases).where(and(
+          eq(runtimeSourceAliases.orgId, conversation.orgId), eq(runtimeSourceAliases.bindingId, binding.id),
+        )).limit(1);
+        if (reference) {
+          const [writer] = await tx.select({ id: runRuntimeSpans.id }).from(runRuntimeSpans)
+            .innerJoin(heartbeatRuns, eq(heartbeatRuns.id, runRuntimeSpans.runId)).where(and(
+              eq(runRuntimeSpans.orgId, conversation.orgId), eq(runRuntimeSpans.bindingId, binding.id),
+              eq(heartbeatRuns.orgId, conversation.orgId),
+              or(isNull(runRuntimeSpans.writerLeaseReleasedAt), inArray(heartbeatRuns.status, ["queued", "running"])),
+            )).limit(1);
+          if (writer) throw conflict("Native Fork source still has an active Run or writer; stop it before deleting the source");
+          await recordRetainedNativeSourceCleanupInTransaction(tx as RuntimeRetentionDb, {
+            orgId: conversation.orgId, conversationId: id, ownerUserId: conversation.createdByUserId ?? "system", binding,
+          });
+          await tx.update(runtimeBindings).set({
+          status: "closed", targetType: "manual", targetId: `retained-native-source:${id}:${binding.id}`,
+          conversationId: null, updatedAt: new Date(),
+          }).where(and(eq(runtimeBindings.orgId, conversation.orgId), eq(runtimeBindings.id, binding.id)));
+        }
+      }
       const attachmentRows = await tx
         .select({ assetId: chatAttachments.assetId })
         .from(chatAttachments)
@@ -4232,7 +4186,7 @@ export function chatService(db: Db, storage?: StorageService) {
         .where(and(eq(chatMessages.conversationId, conversationId), eq(chatMessages.id, messageId)))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
-      const runRead = row.runId ? await readRunTranscriptThroughReader(row) : null;
+      const runRead = row.runId ? await readRunTranscriptThroughReader(row) : await readCopiedNativeTranscript(row);
       if (runRead && (runRead.entries.length > 0 || runRead.source !== "legacy")) {
         return {
           messageId: row.id,

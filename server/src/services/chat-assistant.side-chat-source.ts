@@ -5,10 +5,12 @@ import {
   nativeSegments,
   runRuntimeSpans,
   runtimeBindings,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import type { ChatConversation } from "@rudderhq/shared";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { asRecord, type ChatNativeContextHandoff, type StreamChatAssistantReplyInput } from "./chat-assistant.helpers.js";
+import { NATIVE_CHAT_FORK_ALIAS_KIND, assertNativeChatForkSourceContent, loadNativeChatForkSource } from "./chats.native-fork-aliases.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
 import type { SideChatForkSource, SideChatRuntimeAdmission } from "./side-chat-runtime-admission.js";
@@ -18,8 +20,7 @@ export function deriveSideChatContextHandoff(
   admission: SideChatRuntimeAdmission | null,
   existingContinuity: string | null | undefined,
 ): ChatNativeContextHandoff | null {
-  if (input.conversation.conversationKind !== "side_chat"
-    || (admission?.continuity !== "context_handoff" && existingContinuity !== "context_handoff")) return null;
+  if (admission?.continuity !== "context_handoff" && existingContinuity !== "context_handoff") return null;
   const currentUserMessageId = input.userMessageId
     ?? [...input.messages].reverse().find((message) => message.role === "user")?.id ?? null;
   const items = input.messages
@@ -129,8 +130,54 @@ export function sideChatForkSourceIdentityMatches(input: {
 
 export async function loadSideChatForkSource(
   db: Db,
-  conversation: Pick<ChatConversation, "orgId" | "forkedFromConversationId" | "forkedFromMessageId">,
+  conversation: Pick<ChatConversation, "orgId" | "forkedFromConversationId" | "forkedFromMessageId"> & { id?: string },
 ): Promise<LoadedSideChatForkSource> {
+  // The target owns this immutable source reference even after either source
+  // conversation FK has been cleared. Nested forks retain the original span.
+  const aliases = conversation.id ? await db.select().from(runtimeSourceAliases).where(and(
+    eq(runtimeSourceAliases.orgId, conversation.orgId),
+    eq(runtimeSourceAliases.conversationId, conversation.id),
+    eq(runtimeSourceAliases.sourceKind, NATIVE_CHAT_FORK_ALIAS_KIND),
+    isNull(runtimeSourceAliases.releasedAt),
+    sql`${runtimeSourceAliases.sourceRangeJson}->>'forkBoundary' = 'true'`,
+  )).limit(2) : [];
+  if (aliases.length > 1) throw new Error("Native Fork boundary has ambiguous source aliases");
+  const alias = aliases[0];
+  if (alias && conversation.id) {
+    const copiedMessageId = alias.sourceRangeJson.targetCopiedMessageId;
+    if (typeof copiedMessageId !== "string") throw new Error("Native Fork alias has no copied message identity");
+    const source = await loadNativeChatForkSource(db, {
+      id: copiedMessageId, orgId: conversation.orgId, conversationId: conversation.id,
+    });
+    if (!source) throw new Error("Native Fork source is unavailable");
+    await assertNativeChatForkSourceContent(db, conversation.orgId, source);
+    const [run] = await db.select().from(heartbeatRuns).where(and(
+      eq(heartbeatRuns.orgId, conversation.orgId), eq(heartbeatRuns.id, source.runId),
+    )).limit(1);
+    const [binding] = await db.select().from(runtimeBindings).where(and(
+      eq(runtimeBindings.orgId, conversation.orgId), eq(runtimeBindings.id, source.bindingId),
+    )).limit(1);
+    const [segment] = await db.select().from(nativeSegments).where(and(
+      eq(nativeSegments.orgId, conversation.orgId), eq(nativeSegments.id, source.segmentId),
+    )).limit(1);
+    const [span] = await db.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.orgId, conversation.orgId), eq(runRuntimeSpans.id, source.spanId),
+    )).limit(1);
+    const profile = asRecord(asRecord(run?.contextSnapshot)?.runtimeProviderProfile);
+    if (!segment?.nativeSessionId || !binding || profile?.runtimeType !== binding.runtimeType) {
+      throw new Error("Native Fork source profile or session is unavailable");
+    }
+    return {
+      sourceConversationId: source.sourceConversationId, sourceMessageId: source.sourceMessageId,
+      sourceRunId: source.runId, sourceSpanId: source.spanId,
+      sourceBoundaryRef: span?.nativeExecutionRef ?? (source.selectorJson.throughInclusiveUuid as string | undefined)
+        ?? (source.selectorJson.throughInclusive as string | undefined) ?? segment.leafId ?? segment.sourceBoundaryRef,
+      selectorJson: source.selectorJson as NativeSpanSelector, sourceBinding: binding,
+      sourceProviderProfile: profile,
+      session: { sessionId: segment.nativeSessionId, sessionParams: segment.providerStateJson ?? { sessionId: segment.nativeSessionId },
+        sessionDisplayId: segment.nativeSessionId },
+    };
+  }
   const sourceConversationId = conversation.forkedFromConversationId?.trim() || null;
   const sourceMessageId = conversation.forkedFromMessageId?.trim() || null;
   const sourceMessage = sourceConversationId && sourceMessageId

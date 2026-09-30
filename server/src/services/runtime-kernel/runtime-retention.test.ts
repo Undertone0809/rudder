@@ -229,6 +229,18 @@ describe("runtime retention service", () => {
     expect(rows.find((row) => row.purpose === sibling.purpose)?.status).toBe("active");
   });
 
+  it("does not reuse an alias identity for a changed range or content hash", async () => {
+    const orgId = await createOrg();
+    const alias = { sourceKind: "exact_span", sourceRef: "span:one:message:one", principalScopeRef: `org:${orgId}`,
+      sourceRangeJson: { span: "one", selector: { turnId: "turn-one", threadId: "thread-one" } }, contentSha256: "original" };
+    const first = await service.ensureSourceAlias({ orgId, alias });
+    const repeated = await service.ensureSourceAlias({ orgId, alias: { ...alias,
+      sourceRangeJson: { selector: { threadId: "thread-one", turnId: "turn-one" }, span: "one" } } });
+    expect(repeated.id).toBe(first.id);
+    await expect(service.ensureSourceAlias({ orgId, alias: { ...alias, contentSha256: "changed" } })).rejects.toThrow("different owner or resource");
+    await expect(service.ensureSourceAlias({ orgId, alias: { ...alias, sourceRangeJson: { span: "two" } } })).rejects.toThrow("different owner or resource");
+  });
+
   it("checks parent and child resource claims before declaring a resource collectable", async () => {
     const orgId = await createOrg();
     const now = new Date();

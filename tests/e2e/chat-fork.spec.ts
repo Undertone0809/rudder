@@ -1,17 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   agents,
   chatConversations,
   chatMessages,
+  chatMessageTranscriptEntries,
   createDb,
+  heartbeatRuns,
   messengerCustomGroupEntries,
   messengerCustomGroups,
+  runRuntimeSpans,
+  runtimeSourceAliases,
 } from "../../packages/db/src/index.ts";
 import { MESSENGER_FORK_GROUP_DEFAULT_ICON } from "../../packages/shared/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
+import { E2E_CODEX_STUB, E2E_DATABASE_URL, E2E_ROOT } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
@@ -20,7 +25,7 @@ async function createOrganization(page: Page, name: string) {
     data: { name },
   });
   expect(orgRes.ok()).toBe(true);
-  return orgRes.json() as Promise<{ id: string; issuePrefix: string }>;
+  return orgRes.json() as Promise<{ id: string; issuePrefix: string; urlKey: string }>;
 }
 
 async function configureFastTitleProfile(page: Page, orgId: string, title: string) {
@@ -144,12 +149,12 @@ async function seedForkableChatSource(page: Page, input: {
   return { sourceConversationId, sourceMessageIds };
 }
 
-async function openOrganizationChat(page: Page, organization: { id: string; issuePrefix: string }, conversationId: string) {
+async function openOrganizationChat(page: Page, organization: { id: string; issuePrefix: string; urlKey: string }, conversationId: string) {
   await page.goto("/");
   await page.evaluate((orgId) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
-  await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
+  await page.goto(`/${organization.urlKey}/messenger/chat/${conversationId}`);
 }
 
 async function forkFromAssistantMessage(page: Page, conversationId: string, messageId: string) {
@@ -191,7 +196,7 @@ async function expectChatTitle(page: Page, chatId: string, title: string) {
   await expect(page.getByTestId(threadTestId(`chat:${chatId}`))).toContainText(title, { timeout: 15_000 });
 }
 
-test("forks a chat from a selected message and groups the fork family in Messenger", async ({ page }) => {
+test("forks a chat from a selected message and groups the fork family in Messenger", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("rudder.theme", "dark");
   });
@@ -200,7 +205,7 @@ test("forks a chat from a selected message and groups the fork family in Messeng
     data: { name: `Chat-Fork-${Date.now()}` },
   });
   expect(orgRes.ok()).toBe(true);
-  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
   const sourceConversationId = randomUUID();
   const sourceMessageIds = [randomUUID(), randomUUID(), randomUUID()];
@@ -272,7 +277,7 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   await page.evaluate((orgId) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
-  await page.goto(`/${organization.issuePrefix}/messenger/chat/${sourceConversationId}`);
+  await page.goto(`/${organization.urlKey}/messenger/chat/${sourceConversationId}`);
 
   const sourceUser = page.locator(`[data-testid="chat-user-message"][data-message-id="${sourceMessageIds[0]}"]`);
   await expect(sourceUser).toContainText("Original premise", { timeout: 15_000 });
@@ -342,12 +347,12 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   await sourceMessageLink.click();
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${sourceConversationId}`));
   await expect(sourceAssistant).toContainText("Middle branch point");
-  await expect(sourceAssistant).toHaveClass(/chat-message-jump-highlight/);
+  await expect(sourceAssistant.locator('[data-message-highlight-target="true"]')).toHaveClass(/chat-message-jump-highlight/);
   await expectMessageInScrollViewport(page, sourceMessageIds[1]!);
   await expectMessageJumpHighlightStylesTargetBlock(page, sourceMessageIds[1]!);
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${sourceConversationId}$`));
+  await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/messenger/chat/${sourceConversationId}$`));
 
-  await page.goto(`/${organization.issuePrefix}/messenger`);
+  await page.goto(`/${organization.urlKey}/messenger`);
   await expect(page.getByTestId(threadTestId(`chat:${sourceConversationId}`))).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId(threadTestId(`chat:${forkedConversation.id}`))).toBeVisible({ timeout: 15_000 });
 
@@ -377,6 +382,66 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   expect(await transcriptAfterSourceDelete.json()).toMatchObject({
     transcript: [{ text: "Fork must retain this transcript" }],
   });
+  await page.goto(`/${organization.urlKey}/messenger/chat/${forkedConversation.id}`);
+  await expect(page.getByTestId("chat-messages-content")).toContainText("Middle branch point");
+  await page.screenshot({ path: testInfo.outputPath("fork-history-after-source-delete.png"), fullPage: true });
+});
+
+test("ordinary Main native fork keeps exact alias history and its child session after source deletion", async ({ page }, testInfo) => {
+  const organization = await createOrganization(page, `Main native fork ${randomUUID()}`);
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    command: path.join(E2E_ROOT, "fixtures/codex-native-session.mjs"),
+  });
+  await page.goto("/");
+  await page.evaluate((id) => localStorage.setItem("rudder.selectedOrganizationId", id), organization.id);
+  await page.goto(`/${organization.urlKey}/messenger/chat?agentId=${agent.id}`);
+  const send = async (prompt: string, reply: string) => {
+    const composer = page.locator(".rudder-mdxeditor-content").first();
+    await composer.fill(prompt);
+    const stream = page.waitForResponse((response) => response.request().method() === "POST"
+      && response.url().endsWith("/messages/stream"));
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await (await stream).finished();
+    await expect(page.getByTestId("chat-assistant-message").last()).toContainText(reply, { timeout: 30_000 });
+  };
+  await send("Native parent input", "Native reply 1");
+  const parentId = new URL(page.url()).pathname.split("/").at(-1)!;
+  const [parentRun] = await e2eDb.select().from(heartbeatRuns).where(eq(heartbeatRuns.chatConversationId, parentId));
+  const sourceMessageId = await page.getByTestId("chat-assistant-message").last().getAttribute("data-message-id");
+  expect(sourceMessageId).toBeTruthy();
+  const child = await forkFromAssistantMessage(page, parentId, sourceMessageId!);
+  const [alias] = await e2eDb.select().from(runtimeSourceAliases).where(eq(runtimeSourceAliases.conversationId, child.id));
+  expect(alias).toMatchObject({ runId: parentRun.id, readOnly: true, sourceKind: "chat_fork_native_span" });
+  const copiedMessageId = String(alias.sourceRangeJson.targetCopiedMessageId);
+  const [copiedMessage] = await e2eDb.select().from(chatMessages).where(eq(chatMessages.id, copiedMessageId));
+  expect(copiedMessage.runId).toBeNull();
+  expect(await e2eDb.select().from(chatMessageTranscriptEntries).where(eq(chatMessageTranscriptEntries.messageId, copiedMessageId))).toEqual([]);
+  const historyBefore = await page.request.get(`/api/chats/${child.id}/messages/${copiedMessageId}/transcript`);
+  expect(historyBefore.ok()).toBe(true);
+  const history = await historyBefore.json();
+  expect(history.transcript.length).toBeGreaterThan(0);
+  // Exercise the retained-source admission edge, not only an already admitted child.
+  const deletion = await page.request.delete(`/api/chats/${parentId}`);
+  expect(deletion.ok()).toBe(true);
+  await page.reload();
+  await send("Native child first input", "Native reply 2");
+  const [childRun] = await e2eDb.select().from(heartbeatRuns).where(eq(heartbeatRuns.chatConversationId, child.id));
+  expect(childRun.status).toBe("succeeded");
+  expect(childRun.sessionIdAfter).toBeTruthy();
+  expect(childRun.sessionIdAfter).not.toBe(parentRun.sessionIdAfter);
+  const [childSpan] = await e2eDb.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, childRun.id));
+  expect(childSpan).toMatchObject({ state: "sealed", completeness: "complete" });
+  expect(childSpan.selectorJson).toMatchObject({ kind: "codex_turn", threadId: childRun.sessionIdAfter });
+  await page.reload();
+  const historyAfter = await page.request.get(`/api/chats/${child.id}/messages/${copiedMessageId}/transcript`);
+  expect(historyAfter.ok()).toBe(true);
+  expect((await historyAfter.json()).transcript).toEqual(history.transcript);
+  await send("Native child continues after parent deletion", "Native reply 3");
+  const childRuns = await e2eDb.select().from(heartbeatRuns).where(eq(heartbeatRuns.chatConversationId, child.id));
+  expect(childRuns).toHaveLength(2);
+  expect(childRuns.every((run) => run.status === "succeeded" && run.sessionIdAfter === childRun.sessionIdAfter)).toBe(true);
+  expect(await e2eDb.select().from(chatMessageTranscriptEntries).where(eq(chatMessageTranscriptEntries.orgId, organization.id))).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath("native-main-fork-after-source-delete.png"), fullPage: true });
 });
 
 test("forks from an earlier assistant message while a later reply is streaming", async ({ page }) => {
@@ -388,7 +453,7 @@ test("forks from an earlier assistant message while a later reply is streaming",
     data: { name: `Chat-Fork-Streaming-${Date.now()}` },
   });
   expect(orgRes.ok()).toBe(true);
-  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
   const chatAgent = await createE2EChatAgent(page.request, organization.id, {
     name: "Autumn",
     command: E2E_CODEX_STUB,
@@ -438,7 +503,7 @@ test("forks from an earlier assistant message while a later reply is streaming",
   await page.evaluate((orgId) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
   }, organization.id);
-  await page.goto(`/${organization.issuePrefix}/messenger/chat/${sourceConversationId}`);
+  await page.goto(`/${organization.urlKey}/messenger/chat/${sourceConversationId}`);
 
   const sourceAssistant = page.locator(`[data-testid="chat-assistant-message"][data-message-id="${sourceMessageIds[1]}"]`);
   await expect(sourceAssistant).toContainText("Earlier completed branch point", { timeout: 15_000 });

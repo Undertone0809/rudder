@@ -17,6 +17,8 @@ import {
   organizations,
   runRuntimeSpans,
   runtimeBindings,
+  runtimeSourceAliases,
+  sideChatProviderCleanupIntents,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey, type ChatStreamTranscriptEntry } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
@@ -25,10 +27,24 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { chatAgentRunService } from "./chat-agent-runs.js";
+import { loadSideChatForkSource } from "./chat-assistant.side-chat-source.js";
 import { chatService } from "./chats.js";
 import { currentNativeSession, ensureRuntimeBinding } from "./runtime-kernel/native-session.js";
+
+const nativeReads = vi.hoisted(() => new Map<string, unknown>());
+const nativeReadCalls = vi.hoisted(() => vi.fn());
+vi.mock("./runtime-kernel/historical-transcript-reader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./runtime-kernel/historical-transcript-reader.js")>();
+  return { ...actual, createHistoricalTranscriptReader: (...args: Parameters<typeof actual.createHistoricalTranscriptReader>) => {
+    const reader = actual.createHistoricalTranscriptReader(...args);
+    return { ...reader, readRun: (input: Parameters<typeof reader.readRun>[0]) => {
+      nativeReadCalls(input);
+      return nativeReads.has(input.runId) ? Promise.resolve(nativeReads.get(input.runId)) : reader.readRun(input);
+    } };
+  } };
+});
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -110,6 +126,9 @@ describe("chatService transcript persistence", () => {
   }, 60_000);
 
   afterEach(async () => {
+    nativeReads.clear();
+    await db.delete(runtimeSourceAliases);
+    await db.delete(sideChatProviderCleanupIntents);
     await db.delete(chatMessageTranscriptEntries);
     await db.delete(chatMessages);
     await db.delete(heartbeatRunEvents);
@@ -125,6 +144,82 @@ describe("chatService transcript persistence", () => {
     await db.delete(agents);
     await db.delete(organizationSkills);
     await db.delete(organizations);
+  });
+
+  it("keeps exact native Fork history in aliases across source and middle deletion without copying raw transcripts", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    const runId = randomUUID();
+    await db.insert(organizations).values({ id: orgId, name: "Native fork", urlKey: `fork-${orgId}`, issuePrefix: "FRK" });
+    await db.insert(agents).values({ id: agentId, orgId, name: "Fork agent", role: "engineer", status: "active", agentRuntimeType: "codex_local", agentRuntimeConfig: {} });
+    await db.insert(chatConversations).values({ id: conversationId, orgId, title: "Source", preferredAgentId: agentId });
+    const binding = await ensureRuntimeBinding(db, { orgId, conversationId, principalScopeRef: `org:${orgId}`, agentId, runtimeType: "codex_local" });
+    const session = await currentNativeSession(db, binding);
+    await db.update(nativeSegments).set({ nativeSessionId: "thread-fork" }).where(eq(nativeSegments.id, session.segment.id));
+    await db.insert(heartbeatRuns).values({ id: runId, orgId, agentId, chatConversationId: conversationId, status: "succeeded", sessionIdAfter: "thread-fork", contextSnapshot: { runtimeProviderProfile: { runtimeType: "codex_local" } } });
+    await db.insert(runRuntimeSpans).values({ orgId, runId, bindingId: binding.id, segmentId: session.segment.id, attemptRef: "native-fork-test", ownerToken: randomUUID(),
+      state: "sealed", completeness: "complete", nativeExecutionRef: "turn-fork", openedAt: new Date(Date.now() - 1000), closedAt: new Date(), writerLeaseReleasedAt: new Date(),
+      selectorJson: { kind: "codex_turn", threadId: "thread-fork", turnId: "turn-fork" } });
+    nativeReads.set(runId, { source: "native", availability: "available", items: [
+      { id: "reason-1", kind: "thinking", text: "Private process".repeat(32768), ts: "2026-10-01T00:00:00Z" },
+    ], nextCursor: null });
+    const message = await chats.addMessage(conversationId, { orgId, role: "assistant", kind: "message", body: "Answer", runId });
+    const forkInput = { orgId, sourceConversationId: conversationId, sourceMessageId: message.id, userId: "operator", createdByUserId: "operator" };
+    await expect(chats.forkConversation({ ...forkInput, orgId: randomUUID() })).rejects.toThrow("not found");
+    await db.update(runRuntimeSpans).set({ completeness: "partial" }).where(eq(runRuntimeSpans.runId, runId));
+    await expect(chats.forkConversation(forkInput)).rejects.toThrow("sealed complete exact");
+    await db.update(runRuntimeSpans).set({ completeness: "complete" }).where(eq(runRuntimeSpans.runId, runId));
+    const readablePage = nativeReads.get(runId);
+    nativeReads.set(runId, { source: "native", availability: "missing", items: [], nextCursor: null });
+    await expect(chats.forkConversation(forkInput)).rejects.toThrow("unavailable");
+    nativeReads.set(runId, readablePage);
+    const fork = await chats.forkConversation(forkInput);
+    if (!fork) throw new Error("Fork was not created");
+    const copied = (await chats.listMessages(fork.id)).find((row) => row.role === "assistant")!;
+    expect(copied.runId).toBeNull();
+    expect(copied.transcript?.length).toBeGreaterThan(0);
+    const siblingForks = await Promise.all(Array.from({ length: 12 }, () => chats.forkConversation(forkInput)));
+    nativeReadCalls.mockClear();
+    const lightweight = await chats.listMessages(fork.id, { includeTranscript: false });
+    expect(lightweight.find((row) => row.id === copied.id)?.transcript).toBeUndefined();
+    for (const sibling of siblingForks) {
+      expect(sibling).not.toBeNull();
+      const messages = await chats.listMessages(sibling!.id, { includeTranscript: false });
+      expect(messages.find((row) => row.role === "assistant")?.transcript).toBeUndefined();
+      await chats.remove(sibling!.id);
+    }
+    expect(nativeReadCalls).not.toHaveBeenCalled();
+    expect(await db.select().from(chatMessageTranscriptEntries).where(eq(chatMessageTranscriptEntries.messageId, copied.id))).toEqual([]);
+    const [alias] = await db.select().from(runtimeSourceAliases).where(eq(runtimeSourceAliases.conversationId, fork.id));
+    await db.update(runtimeSourceAliases).set({ principalScopeRef: "org:spoof" }).where(eq(runtimeSourceAliases.id, alias.id));
+    await expect(chats.getMessageTranscript(fork.id, copied.id)).rejects.toThrow("principal");
+    await db.update(runtimeSourceAliases).set({ principalScopeRef: `org:${orgId}`, createdAt: new Date(Date.now() - 2000), expiresAt: new Date(Date.now() - 1000) }).where(eq(runtimeSourceAliases.id, alias.id));
+    await expect(chats.getMessageTranscript(fork.id, copied.id)).rejects.toThrow("expired");
+    await db.update(runtimeSourceAliases).set({ expiresAt: null }).where(eq(runtimeSourceAliases.id, alias.id));
+    await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, runId));
+    await expect(chats.remove(conversationId)).rejects.toThrow("active Run or writer");
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.id, conversationId))).toHaveLength(1);
+    expect(await db.select().from(runtimeSourceAliases).where(eq(runtimeSourceAliases.id, alias.id))).toHaveLength(1);
+    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, runId));
+    const second = await chats.forkConversation({ orgId, sourceConversationId: fork.id, sourceMessageId: copied.id, userId: "operator", createdByUserId: "operator" });
+    if (!second) throw new Error("Nested Fork was not created");
+    await chats.remove(conversationId);
+    await chats.remove(fork.id);
+    const retained = await db.select().from(runtimeBindings).where(eq(runtimeBindings.id, binding.id));
+    expect(retained[0]).toMatchObject({ status: "closed", targetType: "manual", conversationId: null });
+    expect((await db.select().from(sideChatProviderCleanupIntents).where(eq(sideChatProviderCleanupIntents.bindingId, binding.id)))[0])
+      .toMatchObject({ state: "review_required", stateReason: "retained_native_source_requires_root_session_cleanup_authority" });
+    const loaded = await loadSideChatForkSource(db, (await chats.getById(second.id))!);
+    expect(loaded).toMatchObject({ sourceRunId: runId, sourceBinding: { id: binding.id }, session: { sessionId: "thread-fork" } });
+    const finalMessage = (await chats.listMessages(second.id)).find((row) => row.role === "assistant")!;
+    expect((await chats.getMessageTranscript(second.id, finalMessage.id))?.transcript).toEqual(copied.transcript);
+    nativeReads.set(runId, { source: "native", availability: "available", items: [{ id: "reason-1", kind: "thinking", text: "Mutated process", ts: "2026-10-01T00:00:00Z" }], nextCursor: null });
+    await expect(chats.getMessageTranscript(second.id, finalMessage.id)).rejects.toThrow("sealed source range");
+    await chats.remove(second.id);
+    expect(await db.select().from(runtimeSourceAliases).where(eq(runtimeSourceAliases.orgId, orgId))).toEqual([]);
+    expect((await db.select().from(sideChatProviderCleanupIntents).where(eq(sideChatProviderCleanupIntents.bindingId, binding.id)))[0])
+      .toMatchObject({ state: "review_required", stateReason: "retained_native_source_last_alias_released_cleanup_review_required", leaseEpoch: 1 });
   });
 
   afterAll(async () => {

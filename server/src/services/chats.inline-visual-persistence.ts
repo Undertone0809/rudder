@@ -16,8 +16,10 @@ import { randomUUID } from "node:crypto";
 import { unprocessable } from "../errors.js";
 import { createChatAnnotationCopySourceResolver } from "./chat-annotation-copy-lineage.js";
 import { chatTranscriptFromPayload, stripChatMetadataFromPayload } from "./chats.helpers.js";
+import { NATIVE_CHAT_FORK_ALIAS_KIND, type NativeChatForkSource } from "./chats.native-fork-aliases.js";
 import type { MessageHydrationRow } from "./chats.types.js";
 import { sanitizePostgresJsonValue } from "./postgres-json.js";
+import { ensureRuntimeSourceAliasInTransaction, type RuntimeRetentionDb } from "./runtime-kernel/runtime-retention.js";
 
 type ChatTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ChatMessageRow = typeof chatMessages.$inferSelect;
@@ -58,6 +60,7 @@ export async function copyForkChatMessages(input: {
   targetConversationId: string;
   orgId: string;
   transcriptBySourceMessageId: ReadonlyMap<string, readonly ChatStreamTranscriptEntry[]>;
+  nativeSourceByMessageId?: ReadonlyMap<string, NativeChatForkSource>;
 }) {
   const copiedMessageIdBySourceId = new Map(
     input.messages.map((message) => [message.id, randomUUID()]),
@@ -264,7 +267,24 @@ export async function copyForkChatMessages(input: {
   if (copiedMessages.length > 0) {
     await input.tx.insert(chatMessages).values(copiedMessages);
   }
+  const boundaryMessageId = input.messages.filter((message) => message.role === "assistant" && message.kind === "message").at(-1)?.id;
+  for (const [sourceMessageId, source] of input.nativeSourceByMessageId ?? []) {
+    const targetCopiedMessageId = copiedMessageIdBySourceId.get(sourceMessageId);
+    if (!targetCopiedMessageId || !source.contentSha256) throw unprocessable("Native Fork copied message lacks its exact source content proof");
+    await ensureRuntimeSourceAliasInTransaction(input.tx as unknown as RuntimeRetentionDb, {
+      orgId: input.orgId,
+      alias: {
+        conversationId: input.targetConversationId, runId: source.runId, bindingId: source.bindingId, segmentId: source.segmentId,
+        sourceKind: NATIVE_CHAT_FORK_ALIAS_KIND, sourceRef: `native-span:${source.spanId}:message:${targetCopiedMessageId}`,
+        principalScopeRef: `org:${input.orgId}`, contentSha256: source.contentSha256,
+        sourceRangeJson: { targetCopiedMessageId, sourceRunId: source.runId, sourceSpanId: source.spanId,
+          sourceConversationId: source.sourceConversationId, sourceMessageId: source.sourceMessageId,
+          selectorJson: source.selectorJson, selectorSha256: source.selectorSha256, forkBoundary: sourceMessageId === boundaryMessageId },
+      },
+    });
+  }
   const copiedTranscriptEntries = input.messages.flatMap((message) => {
+    if (input.nativeSourceByMessageId?.has(message.id)) return [];
     const transcript = input.transcriptBySourceMessageId.get(message.id)
       ?? chatTranscriptFromPayload(message.structuredPayload);
     const copiedMessageId = copiedMessageIdBySourceId.get(message.id);

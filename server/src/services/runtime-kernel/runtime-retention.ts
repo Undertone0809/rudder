@@ -2,10 +2,12 @@ import type { Db } from "@rudderhq/db";
 import {
   chatConversations,
   heartbeatRuns,
+  nativeSegments,
   runRuntimeSpans,
   runtimeBindings,
   runtimeRetentionClaims,
   runtimeSourceAliases,
+  sideChatProviderCleanupIntents,
 } from "@rudderhq/db";
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { retryFailedNativeTranscriptCleanup } from "./native-transcript-retention-recovery.js";
@@ -130,12 +132,19 @@ function assertClaimOwnership(existing: ClaimRow, spec: RuntimeRetentionClaimSpe
 }
 
 function assertSourceAliasOwnership(existing: SourceAliasRow, spec: RuntimeRetentionSourceAliasSpec) {
+  const canonical = (value: unknown): string => Array.isArray(value)
+    ? `[${value.map(canonical).join(",")}]`
+    : value && typeof value === "object"
+      ? `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`
+      : JSON.stringify(value) ?? "null";
   if (
     existing.principalScopeRef !== spec.principalScopeRef
     || existing.conversationId !== (spec.conversationId ?? null)
     || existing.runId !== (spec.runId ?? null)
     || existing.bindingId !== (spec.bindingId ?? null)
     || existing.segmentId !== (spec.segmentId ?? null)
+    || existing.contentSha256 !== (spec.contentSha256 ?? null)
+    || canonical(existing.sourceRangeJson) !== canonical(spec.sourceRangeJson ?? {})
   ) {
     throw new RuntimeRetentionConflictError(
       `Retention source alias ${existing.id} is already bound to a different owner or resource`,
@@ -147,6 +156,59 @@ export async function lockRuntimeRetentionScope(db: RuntimeRetentionDb, orgId: s
   await db.execute(sql`
     select pg_advisory_xact_lock(hashtextextended(${retentionLockKey(orgId)}, 0))
   `);
+}
+
+/** Preserve a durable cleanup decision without pretending a root is an owned
+ * Side Chat fork. The shared retention lock fences Keep/alias/GC mutations. */
+export async function recordRetainedNativeSourceCleanupInTransaction(
+  db: RuntimeRetentionDb,
+  input: { orgId: string; conversationId: string; ownerUserId: string; binding: typeof runtimeBindings.$inferSelect },
+) {
+  await lockRuntimeRetentionScope(db, input.orgId);
+  const segments = await db.select().from(nativeSegments).where(and(
+    eq(nativeSegments.orgId, input.orgId), eq(nativeSegments.bindingId, input.binding.id),
+  ));
+  for (const segment of segments) {
+    if (!segment.nativeSessionId) continue;
+    const [run] = await db.select().from(heartbeatRuns).innerJoin(runRuntimeSpans, and(
+      eq(runRuntimeSpans.runId, heartbeatRuns.id), eq(runRuntimeSpans.orgId, input.orgId),
+    )).where(and(eq(heartbeatRuns.orgId, input.orgId), eq(runRuntimeSpans.segmentId, segment.id))).limit(1);
+    await db.insert(sideChatProviderCleanupIntents).values({
+      orgId: input.orgId, conversationId: input.conversationId, ownerUserId: input.ownerUserId,
+      principalScopeRef: input.binding.principalScopeRef, bindingId: input.binding.id, bindingEpoch: input.binding.bindingEpoch,
+      segmentId: segment.id, agentId: input.binding.agentId, runtimeType: input.binding.runtimeType,
+      hostId: input.binding.hostId, profileId: input.binding.profileId, workspaceBindingId: input.binding.workspaceBindingId,
+      capabilityRevision: input.binding.capabilityRevision, parentBindingId: input.binding.parentBindingId,
+      sourceBoundaryRef: input.binding.sourceBoundaryRef, nativeSessionId: segment.nativeSessionId,
+      sessionParamsJson: segment.providerStateJson ?? { sessionId: segment.nativeSessionId },
+      profileSnapshotJson: (run?.heartbeat_runs.contextSnapshot?.runtimeProviderProfile as Record<string, unknown>) ?? {},
+      protectionRefsJson: { version: 1, bindingIds: [input.binding.id], segmentIds: [segment.id], conversationIds: [],
+        runIds: run ? [run.heartbeat_runs.id] : [], providerSessionIds: [segment.nativeSessionId], retentionResourceRefs: [], sourceAliasRefs: [] },
+      state: "review_required", stateReason: "retained_native_source_requires_root_session_cleanup_authority",
+    }).onConflictDoNothing();
+  }
+}
+
+export async function noteReleasedNativeSourceAliasesInTransaction(
+  db: RuntimeRetentionDb,
+  input: { orgId: string; aliases: readonly SourceAliasRow[] },
+) {
+  await lockRuntimeRetentionScope(db, input.orgId);
+  for (const bindingId of distinct(input.aliases.map((alias) => alias.bindingId).filter((id): id is string => Boolean(id)))) {
+    const [reference] = await db.select({ id: runtimeSourceAliases.id }).from(runtimeSourceAliases).where(and(
+      eq(runtimeSourceAliases.orgId, input.orgId), eq(runtimeSourceAliases.bindingId, bindingId),
+    )).limit(1);
+    if (reference) continue;
+    // Invalidate any stale cleanup lease; root-session deletion still needs
+    // explicit ownership/capability proof rather than a Side Fork API guess.
+    await db.update(sideChatProviderCleanupIntents).set({
+      state: "review_required", stateReason: "retained_native_source_last_alias_released_cleanup_review_required",
+      leaseOwner: null, leaseExpiresAt: null, leaseEpoch: sql`${sideChatProviderCleanupIntents.leaseEpoch} + 1`,
+      updatedAt: new Date(),
+    }).where(and(eq(sideChatProviderCleanupIntents.orgId, input.orgId),
+      eq(sideChatProviderCleanupIntents.bindingId, bindingId), eq(sideChatProviderCleanupIntents.state, "review_required"),
+      eq(sideChatProviderCleanupIntents.stateReason, "retained_native_source_requires_root_session_cleanup_authority")));
+  }
 }
 
 async function activeClaimsForSpec(

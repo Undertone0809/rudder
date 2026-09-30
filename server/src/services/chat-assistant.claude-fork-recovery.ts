@@ -176,10 +176,12 @@ export async function assertClaudeSideChatInputSafe(input: {
   bindingId: string;
   providerState: Record<string, unknown> | null;
   firstSend: boolean;
+  forkConversation?: boolean;
   resumeRunId?: string | null;
   userMessageId?: string | null;
 }): Promise<void> {
-  if (input.runtimeType !== "claude_local" || input.conversationKind !== "side_chat" || input.resumeRunId) return;
+  if (input.runtimeType !== "claude_local" || input.resumeRunId
+    || (input.conversationKind !== "side_chat" && !input.forkConversation && !input.firstSend && !input.providerState?.__rudderNativeForkIntent)) return;
   assertClaudeDeferredForkReplaySafety({
     providerState: input.providerState, firstSend: input.firstSend, recoveringRun: false,
   });

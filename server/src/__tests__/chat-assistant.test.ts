@@ -11,6 +11,18 @@ import { NATIVE_CHAT_RUNTIME_TYPES } from "../services/runtime-kernel/runtime-dr
 const mockPrepareRuntimeProviderProfile = vi.hoisted(() =>
   vi.fn(async ({ config }: { config: Record<string, unknown> }) => config),
 );
+const mockForkSource = vi.hoisted(() => vi.fn());
+const mockForkIntentExecution = vi.hoisted(() => vi.fn());
+vi.mock("../services/chat-assistant.side-chat-source.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/chat-assistant.side-chat-source.js")>();
+  return { ...actual, loadSideChatForkSource: (...args: Parameters<typeof actual.loadSideChatForkSource>) =>
+    mockForkSource.getMockImplementation() ? mockForkSource(...args) : actual.loadSideChatForkSource(...args) };
+});
+vi.mock("../services/runtime-kernel/native-fork-intent.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/runtime-kernel/native-fork-intent.js")>();
+  return { ...actual, executeNativeForkIntent: (...args: Parameters<typeof actual.executeNativeForkIntent>) =>
+    mockForkIntentExecution.getMockImplementation() ? mockForkIntentExecution(...args) : actual.executeNativeForkIntent(...args) };
+});
 
 vi.mock("../agent-runtimes/prepare-runtime-provider-profile.js", () => ({
   prepareRuntimeProviderProfile: mockPrepareRuntimeProviderProfile,
@@ -580,6 +592,8 @@ function makeAutomationRunInputMessage(overrides: Partial<ChatMessage> = {}): Ch
 describe("chatAssistantService operator profile prompt injection", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockForkSource.mockReset();
+    mockForkIntentExecution.mockReset();
     mockGetRuntimeDriver.mockImplementation(((runtimeType: string, options: any) =>
       (NATIVE_CHAT_RUNTIME_TYPES as readonly string[]).includes(runtimeType)
         ? createChatTestRuntimeDriver({ ...options, runtimeType })
@@ -1203,6 +1217,51 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
       expect.anything(), expect.anything(), expect.objectContaining({ source: "legacy", persistRaw: true }),
     );
+  });
+
+  it("admits an ordinary Main fork through the native driver using the historical selector and child session", async () => {
+    const selector = { kind: "codex_turn", threadId: "parent-thread", turnId: "selected-turn" };
+    const sourceBinding = { ...mockRuntimeBinding, id: "parent-binding", conversationId: "parent-chat", workspaceBindingId: process.cwd() };
+    mockForkSource.mockResolvedValue({ sourceConversationId: "parent-chat", sourceMessageId: "parent-answer",
+      sourceRunId: "parent-run", sourceSpanId: "parent-span", sourceBoundaryRef: "selected-turn", selectorJson: selector,
+      sourceBinding, sourceProviderProfile: { runtimeType: "codex_local" },
+      session: { sessionId: "parent-thread", sessionParams: { threadId: "parent-thread" }, sessionDisplayId: "parent-thread" } });
+    const fork = vi.fn(async () => ({ status: "supported", value: {
+      session: { sessionId: "child-thread", sessionDisplayId: "child-thread", sessionParams: { threadId: "child-thread" } },
+      boundary: "child-boundary", sourceBoundary: "selected-turn", continuity: "native",
+    } }));
+    mockGetRuntimeDriver.mockImplementation(((_runtimeType: string, options: any) => {
+      const driver = createChatTestRuntimeDriver(options);
+      return { ...driver, capabilities: { ...driver.capabilities, fork: { status: "supported", reason: "profile-bound fixture" } }, fork };
+    }) as any);
+    // Test the Main caller/driver wiring here; native-fork-intent's PG suite
+    // owns the actual durable reservation and unknown-acceptance state machine.
+    mockForkIntentExecution.mockImplementation(async (request) => {
+      const operation = await request.driver.fork({ session: request.sourceSession, selector,
+        boundary: request.boundary, binding: request.providerBinding });
+      return { status: "accepted", child: operation.value };
+    });
+    await chatAssistantService({} as any).generateChatAssistantReply({
+      conversation: makeConversation({ conversationKind: "main", forkedFromConversationId: "parent-chat", forkedFromMessageId: "parent-answer" }),
+      messages: makeMessages(), contextLinks: [], operatorProfile: null,
+    });
+    expect(fork).toHaveBeenCalledTimes(1);
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({ selector, binding: sourceBinding, boundary: "selected-turn" }));
+    expect(mockChatAgentRuns.createRun).toHaveBeenCalledWith(expect.objectContaining({ scene: "chat", sourceRunId: "parent-run",
+      sourceSpanId: "parent-span", sourceSelectorJson: selector, nativeSessionId: "child-thread",
+      sessionIntent: expect.objectContaining({ kind: "fork", sessionId: "child-thread" }) }));
+    expect(mockAdapter.execute.mock.calls.at(-1)?.[0].runtime?.sessionId).toBe("child-thread");
+  });
+
+  it("resumes an admitted Main fork without reading or forking its deleted parent again", async () => {
+    const childBinding = { ...mockRuntimeBinding, parentBindingId: "retained-parent-binding" };
+    chatTestSelection.limit.mockResolvedValueOnce([childBinding] as any).mockResolvedValueOnce([{ id: "child-span" }] as any);
+    mockForkSource.mockRejectedValue(new Error("parent native data is unavailable"));
+    await chatAssistantService({} as any).generateChatAssistantReply({ conversation: makeConversation({ conversationKind: "main",
+      forkedFromConversationId: null, forkedFromMessageId: null }), messages: makeMessages(), contextLinks: [], operatorProfile: null });
+    expect(mockForkSource).not.toHaveBeenCalled();
+    expect(mockForkIntentExecution).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).toHaveBeenCalledTimes(1);
   });
 
   it("keeps Side Chat lineage and recovery descriptors without duplicating session intent", () => {
@@ -4605,7 +4664,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
     ]);
     const existingBinding = {
       ...mockRuntimeBinding,
-      principalScopeRef: "",
+      principalScopeRef: mockRuntimeBinding.principalScopeRef,
       workspaceBindingId: process.cwd(),
       instructionsRevision: "prepared-profile-revision",
       bindingEpoch: 4,

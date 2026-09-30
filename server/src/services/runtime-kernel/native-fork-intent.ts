@@ -7,6 +7,7 @@ import {
 } from "@rudderhq/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { hasRetainedNativeForkSource } from "./native-fork-retained-source.js";
 import type { NativeSegmentRecord, RuntimeBindingRecord } from "./native-session.js";
 import type {
   NativeSpanSelector,
@@ -15,6 +16,7 @@ import type {
   RuntimeProviderSessionRef,
 } from "./provider-capabilities.js";
 import type { RuntimeDriver } from "./runtime-driver.js";
+import { lockRuntimeRetentionScope } from "./runtime-retention.js";
 
 const NATIVE_FORK_INTENT_KEY = "__rudderNativeForkIntent";
 const NATIVE_FORK_INTENT_VERSION = 1 as const;
@@ -626,7 +628,7 @@ function assertIntentRunFence(
   return supplied;
 }
 
-async function assertSource(tx: Db, source: NativeForkIntentSource, targetRuntimeType: string) {
+async function assertSource(tx: Db, source: NativeForkIntentSource, targetRuntimeType: string, targetConversationId: string | null) {
   const sourceRun = await tx
     .select({ id: heartbeatRuns.id, orgId: heartbeatRuns.orgId, status: heartbeatRuns.status, chatConversationId: heartbeatRuns.chatConversationId })
     .from(heartbeatRuns)
@@ -635,9 +637,6 @@ async function assertSource(tx: Db, source: NativeForkIntentSource, targetRuntim
     .then((rows) => rows[0] ?? null);
   if (!sourceRun || sourceRun.status !== "succeeded") {
     throw new NativeForkIntentError("source_invalid", "Source run is missing or is not a completed run in the target organization");
-  }
-  if (source.sourceConversationId && sourceRun.chatConversationId !== source.sourceConversationId) {
-    throw new NativeForkIntentError("source_invalid", "Source conversation does not own the source run");
   }
   const sourceSpan = await tx
     .select()
@@ -651,6 +650,11 @@ async function assertSource(tx: Db, source: NativeForkIntentSource, targetRuntim
     .then((rows) => rows[0] ?? null);
   if (!sourceSpan || sourceSpan.state !== "sealed" || sourceSpan.completeness !== "complete") {
     throw new NativeForkIntentError("source_invalid", "Source native span is not a complete sealed boundary");
+  }
+  if (source.sourceConversationId && sourceRun.chatConversationId !== source.sourceConversationId
+    && (sourceRun.chatConversationId !== null
+      || !await hasRetainedNativeForkSource(tx, source, targetConversationId, sourceSpan))) {
+    throw new NativeForkIntentError("source_invalid", "Source conversation does not own the source run or an exact retained alias");
   }
   const persistedSelector = record(sourceSpan.selectorJson);
   if (!persistedSelector || stableJson(persistedSelector) !== stableJson(source.selectorJson)) {
@@ -736,6 +740,8 @@ export async function reserveNativeForkIntent(
   }
   return db.transaction(async (tx) => {
     const database = tx as unknown as Db;
+    // Keep the same lock order as Fork/delete/Keep/GC before binding/Run locks.
+    await lockRuntimeRetentionScope(database, source.orgId);
     await lockIntentTarget(database, input.targetBinding.id, input.targetSegment.id, runFence);
     const { binding, segment, target } = await loadTarget(database, normalizedInput);
     if (runFence) {
@@ -745,7 +751,7 @@ export async function reserveNativeForkIntent(
         segmentId: segment.id,
       });
     }
-    await assertSource(tx as unknown as Db, source, target.runtimeType);
+    await assertSource(tx as unknown as Db, source, target.runtimeType, binding.conversationId);
     let existing = intentFromProviderState(segment.providerStateJson);
     if (existing) {
       assertSameIntent(existing, { ...normalizedInput, source, idempotencyKey }, target);

@@ -213,7 +213,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         .limit(1)
         .then((rows) => rows[0] ?? null)
       : null;
-    const existingBindingRun = input.conversation.conversationKind === "side_chat" && existingRuntimeBinding
+    const existingBindingRun = existingRuntimeBinding
       ? await db.select({ id: runRuntimeSpans.id }).from(runRuntimeSpans).where(and(
         eq(runRuntimeSpans.orgId, input.conversation.orgId), eq(runRuntimeSpans.bindingId, existingRuntimeBinding.id),
       )).limit(1).then((rows) => rows[0] ?? null) : null;
@@ -221,10 +221,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       db, binding: existingRuntimeBinding, runtimeType: runtimeAgentType,
       orgId: input.conversation.orgId, conversationId: input.conversation.id,
     }));
-    const sideChatFirstSend = input.conversation.conversationKind === "side_chat" && (!existingBindingRun || restartPristineFork);
-    const principalScopeRef = input.principalScopeRef
-      ?? asString(input.runContext?.principalScopeRef)
-      ?? `org:${input.conversation.orgId}`;
+    // An independently admitted child resumes its own head. Read the parent
+    // only for first admission or deferred Claude recovery, never every turn.
+    const loadedForkSource = !existingBindingRun || restartPristineFork
+      || (input.resumeRunId && runtimeAgentType === "claude_local")
+      ? await loadSideChatForkSource(db, input.conversation) : null;
+    const isForkConversation = input.conversation.conversationKind === "side_chat"
+      || Boolean(input.conversation.forkedFromConversationId || existingRuntimeBinding?.parentBindingId || loadedForkSource?.sourceRunId);
+    const sideChatFirstSend = isForkConversation && (!existingBindingRun || restartPristineFork);
+    const principalScopeRef = input.principalScopeRef?.trim()
+      || asString(input.runContext?.principalScopeRef).trim()
+      || `org:${input.conversation.orgId}`;
     const hostId = asString(config.providerHostId ?? config.hostId ?? config.runtimeHostId).trim() || "local";
     const profileId = asString(config.providerProfileId ?? config.profileId ?? config.profile ?? config.authProfile).trim() || "default";
     const workspaceBindingId = asString(config.providerWorkspaceBindingId ?? config.workspaceBindingId
@@ -237,8 +244,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       skills: runtimeSource.runtimeSkills.map((skill) => skill.key),
     });
     const providerBinding = { orgId: input.conversation.orgId, hostId, profileId, workspaceBindingId, capabilityRevision };
-    const loadedForkSource = sideChatFirstSend || (input.resumeRunId && runtimeAgentType === "claude_local" && input.conversation.conversationKind === "side_chat")
-      ? await loadSideChatForkSource(db, input.conversation) : null;
     const sourceBinding = loadedForkSource?.sourceBinding;
     const sourceBindingMatchesTarget = Boolean(loadedForkSource && sideChatForkBindingMatchesTarget(
       sourceBinding, runtimeAgentType, { ...providerBinding, principalScopeRef },
@@ -383,7 +388,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       db, runtimeType: runtimeAgentType, conversationKind: input.conversation.conversationKind,
       orgId: input.conversation.orgId, conversationId: input.conversation.id,
       bindingId: runtimeBinding.id, providerState: nativeSession.segment.providerStateJson,
-      firstSend: sideChatFirstSend, resumeRunId: input.resumeRunId, userMessageId: input.userMessageId,
+      firstSend: sideChatFirstSend, forkConversation: isForkConversation, resumeRunId: input.resumeRunId, userMessageId: input.userMessageId,
     });
     const admittedSession = sideChatRuntimeAdmission?.continuity === "native"
       ? sideChatRuntimeAdmission.session
@@ -678,7 +683,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           action: "repair_runtime",
         });
       }
-      if (input.resumeRunId && runtimeAgentType === "claude_local" && input.conversation.conversationKind === "side_chat") {
+      if (input.resumeRunId && runtimeAgentType === "claude_local" && isForkConversation) {
         claudeDeferredFork = await recoverClaudeDeferredForkRun({
           db, orgId: input.conversation.orgId, conversationId: input.conversation.id,
           run: chatRun, bindingId: runtimeBinding.id, segmentId: nativeSession.segment.id,

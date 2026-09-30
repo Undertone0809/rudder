@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertAcceptedClaudeForkIsNewInput, settleAcceptedClaudeForkRecovery } from "./chat-assistant.claude-fork-recovery.js";
+import { assertAcceptedClaudeForkIsNewInput, assertClaudeSideChatInputSafe, settleAcceptedClaudeForkRecovery } from "./chat-assistant.claude-fork-recovery.js";
 
 const run = {
   id: "run-1", orgId: "org-1", agentId: "agent-1",
@@ -34,6 +34,13 @@ function dbWithOriginalMessage(userMessageId?: string) {
 }
 
 describe("accepted Claude fork recovery", () => {
+  it("blocks same-input replay on ordinary Main native forks, while permitting their next input", async () => {
+    const { db } = dbWithOriginalMessage("message-1");
+    const input = { db, runtimeType: "claude_local", conversationKind: "main", forkConversation: true,
+      orgId: "org-1", conversationId: "conversation-1", bindingId: "binding-1", providerState: acceptedState, firstSend: false };
+    await expect(assertClaudeSideChatInputSafe({ ...input, userMessageId: "message-1" })).rejects.toThrow("same-message replay");
+    await expect(assertClaudeSideChatInputSafe({ ...input, userMessageId: "message-2" })).resolves.toBeUndefined();
+  });
   it("blocks an accepted original message but lets the next distinct message resume", async () => {
     const { db } = dbWithOriginalMessage("message-1");
     const base = { db, orgId: "org-1", conversationId: "conversation-1", bindingId: "binding-1", providerState: acceptedState };

@@ -3,6 +3,7 @@ import {
   agents,
   applyPendingMigrations,
   chatConversations,
+  chatMessages,
   createDb,
   ensurePostgresDatabase,
   heartbeatRunAttempts,
@@ -11,6 +12,7 @@ import {
   organizations,
   runRuntimeSpans,
   runtimeBindings,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -21,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { chatAgentRunService } from "../chat-agent-runs.js";
+import { nativeForkContentHash } from "../chats.native-fork-aliases.js";
 import {
   executeNativeForkIntent,
   markNativeForkIntentRejected,
@@ -222,6 +225,7 @@ describe("durable native fork intent", () => {
         throw new Error(`Test writer release did not acknowledge exact span ${span.id}`);
       }
     }
+    await db.delete(runtimeSourceAliases).where(inArray(runtimeSourceAliases.orgId, orgIds));
     await db.delete(runRuntimeSpans).where(inArray(runRuntimeSpans.orgId, orgIds));
     await db.delete(nativeSegments).where(inArray(nativeSegments.orgId, orgIds));
     await db.delete(runtimeBindings).where(inArray(runtimeBindings.orgId, orgIds));
@@ -518,6 +522,48 @@ describe("durable native fork intent", () => {
     });
     return { outcome, fork: provider.fork };
   }
+
+  async function retainDeletedSource(value: ForkFixture) {
+    const messageId = randomUUID();
+    await db.insert(chatMessages).values({ id: messageId, orgId: value.orgId,
+      conversationId: value.targetConversationId, role: "assistant", body: "Copied source reply" });
+    const [alias] = await db.insert(runtimeSourceAliases).values({ orgId: value.orgId,
+      conversationId: value.targetConversationId, runId: value.sourceRunId,
+      bindingId: value.sourceBindingId, segmentId: value.sourceSegmentId,
+      sourceKind: "chat_fork_native_span", sourceRef: `native-span:${value.input.source.sourceSpanId}:message:${messageId}`,
+      principalScopeRef: `org:${value.orgId}`, contentSha256: nativeForkContentHash([]),
+      sourceRangeJson: { targetCopiedMessageId: messageId, sourceMessageId: randomUUID(),
+        sourceConversationId: value.sourceConversationId, sourceRunId: value.sourceRunId,
+        sourceSpanId: value.input.source.sourceSpanId, selectorJson: value.sourceSelector,
+        selectorSha256: nativeForkContentHash(value.sourceSelector), forkBoundary: true },
+    }).returning();
+    await db.update(runtimeBindings).set({ status: "closed", targetType: "manual", conversationId: null,
+      targetId: `retained-native-source:${value.sourceConversationId}:${value.sourceBindingId}`,
+    }).where(eq(runtimeBindings.id, value.sourceBindingId));
+    await db.delete(chatConversations).where(eq(chatConversations.id, value.sourceConversationId));
+    return alias;
+  }
+
+  it("admits the exact target-owned retained alias after deleting the source before first send", async () => {
+    const value = await fixture();
+    await retainDeletedSource(value);
+    expect(await reserveNativeForkIntent(db, value.input)).toMatchObject({ status: "reserved", shouldFork: true });
+  });
+
+  it.each(["missing", "principal", "selector", "released", "target"] as const)(
+    "rejects a deleted source with %s alias proof without reserving an intent", async (fault) => {
+      const value = await fixture();
+      const alias = await retainDeletedSource(value);
+      if (fault === "missing") await db.delete(runtimeSourceAliases).where(eq(runtimeSourceAliases.id, alias.id));
+      else await db.update(runtimeSourceAliases).set(fault === "principal" ? { principalScopeRef: "org:spoof" }
+        : fault === "selector" ? { sourceRangeJson: { ...alias.sourceRangeJson, selectorSha256: "wrong" } }
+          : fault === "released" ? { releasedAt: new Date() }
+            : { conversationId: null }).where(eq(runtimeSourceAliases.id, alias.id));
+      await expect(reserveNativeForkIntent(db, value.input)).rejects.toMatchObject({ code: "source_invalid" });
+      const [segment] = await db.select().from(nativeSegments).where(eq(nativeSegments.id, value.input.targetSegment.id));
+      expect(readNativeForkIntent(segment.providerStateJson)).toBeNull();
+    },
+  );
 
   it("reserves once, persists the child before admission, and reuses it without a second provider fork", async () => {
     const fixtureValue = await fixture();

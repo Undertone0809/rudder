@@ -12,6 +12,7 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { and, eq } from "drizzle-orm";
+import { loadSideChatForkSource } from "./chat-assistant.side-chat-source.js";
 import {
   markNativeForkIntentRejected,
   markNativeForkIntentUnknown,
@@ -309,7 +310,7 @@ export async function classifyClaudeDeferredForkRecovery(input: {
   requireRecoveryIdentity(run, "Recovered Claude Side Chat Run was not found in this organization");
   requireRecoveryIdentity(
     run.chatConversationId === input.conversationId
-      && run.scene === "side_chat"
+      && (run.scene === "side_chat" || run.scene === "chat")
       && run.targetType === "chat_conversation"
       && run.targetId === input.conversationId
       && run.status === "running"
@@ -413,7 +414,7 @@ export async function classifyClaudeDeferredForkRecovery(input: {
   const sourceSelector = recordValue(sideChatAdmission?.sourceSelectorJson);
   const snapshotSelector = recordValue(context?.sourceSelectorJson);
   requireRecoveryIdentity(
-    context?.scene === "side_chat"
+    (context?.scene === "side_chat" || context?.scene === "chat")
       && context.targetType === "chat_conversation"
       && context.targetId === input.conversationId
       && context.conversationId === input.conversationId
@@ -449,10 +450,15 @@ export async function classifyClaudeDeferredForkRecovery(input: {
     ))
     .limit(1)
     .then((rows) => rows[0] ?? null);
+  const retainedSource = sourceRun?.chatConversationId === null
+    ? await loadSideChatForkSource(input.db, { id: input.conversationId, orgId: input.orgId,
+      forkedFromConversationId: null, forkedFromMessageId: null }) : null;
   requireRecoveryIdentity(
     sourceRun
       && sourceRun.status === "succeeded"
-      && sourceRun.chatConversationId === sourceConversationId,
+      && (sourceRun.chatConversationId === sourceConversationId
+        || (retainedSource?.sourceRunId === sourceRun.id && retainedSource.sourceConversationId === sourceConversationId
+          && retainedSource.sourceSpanId === sourceSpanId)),
     "Deferred fork source Run no longer matches the persisted source conversation",
   );
 
@@ -533,7 +539,8 @@ export async function classifyClaudeDeferredForkRecovery(input: {
     ?? stringValue(sourceSegment.sourceBoundaryRef);
   requireRecoveryIdentity(
     sourceBinding
-      && sourceBinding.conversationId === sourceConversationId
+      && (sourceBinding.conversationId === sourceConversationId
+        || retainedSource?.sourceBinding?.id === sourceBinding.id)
       && sourceBinding.agentId === sourceRun.agentId
       && sourceBinding.runtimeType === "claude_local"
       && sourceProviderProfile?.runtimeType === "claude_local"
