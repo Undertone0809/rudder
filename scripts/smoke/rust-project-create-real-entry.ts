@@ -972,6 +972,24 @@ async function main() {
       "changed workspace payload modified rows, Rust state/receipts, or import activities before conflict",
     );
 
+    const immediateImportReplay = await applyProjectImport();
+    assert.equal(immediateImportReplay.status, 200, JSON.stringify(immediateImportReplay.body));
+    assert.deepEqual(await readProjectImportState(), afterImportRetry,
+      "same-key successful import replay changed Project, workspace, receipts, audit or outbox");
+    const concurrentImportReplays = await Promise.all([applyProjectImport(), applyProjectImport()]);
+    for (const response of concurrentImportReplays) {
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+    }
+    assert.deepEqual(await readProjectImportState(), afterImportRetry,
+      "concurrent same-key successful import replay changed Project, workspace, receipts, audit or outbox");
+    await stop();
+    await start();
+    const restartedImportReplay = await applyProjectImport();
+    assert.equal(restartedImportReplay.status, 200, JSON.stringify(restartedImportReplay.body));
+    const afterRestartedImportReplay = await readProjectImportState();
+    assert.deepEqual(afterRestartedImportReplay, afterImportRetry,
+      "same-key successful import replay after restart changed Project, workspace, receipts, audit or outbox");
+
     const agent = await create("/orgs/" + organization.id + "/agents", {
       name: "Project-create CLI smoke agent",
       role: "engineer",
@@ -1213,6 +1231,10 @@ async function main() {
       importedWorkspaceId: afterImportRetry.workspaces[0]?.id,
       importLostHydrationResponseStatus: lostHydrationResponse.status,
       importRetryStatus: retriedProjectImport.status,
+      importImmediateReplayStatus: immediateImportReplay.status,
+      importConcurrentReplayStatuses: concurrentImportReplays.map((response) => response.status),
+      importRestartReplayStatus: restartedImportReplay.status,
+      importRestartAggregateActivities: afterRestartedImportReplay.counts.organization_imported_activities,
       importAggregateActivities: afterImportRetry.counts.organization_imported_activities,
       importProjectUpdatedActivities: afterImportRetry.counts.project_updated_activities,
       importProjectUpdatedOutbox: afterImportRetry.counts.project_updated_outbox,
