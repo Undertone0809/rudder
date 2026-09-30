@@ -10,8 +10,10 @@ import {
   ensureCommandResolvable,
   ensurePathInEnv,
   parseObject,
+  resolveLocalOperatorHome,
   runChildProcess,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { OPENCODE_PROTECTED_ENV_KEYS, prepareOpenCodeRuntimeProfile } from "./execute.js";
 import { discoverOpenCodeModels, validateOpenCodeModelConfig } from "./models.js";
 import { parseOpenCodeJsonl } from "./parse.js";
 
@@ -79,6 +81,7 @@ export async function testEnvironment(
   const envConfig = parseObject(config.env);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(envConfig)) {
+    if (OPENCODE_PROTECTED_ENV_KEYS.has(key)) continue;
     if (typeof value === "string") env[key] = value;
   }
 
@@ -92,7 +95,33 @@ export async function testEnvironment(
     });
   }
 
-  const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
+  let runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
+  // Prepare before model discovery too: even discovery may open a database.
+  // Config/env cannot redirect this probe to the shared operator data home.
+  if (!checks.some((check) => check.code === "opencode_cwd_invalid")) {
+    try {
+      const runtimeProfile = await prepareOpenCodeRuntimeProfile({
+        config,
+        env: runtimeEnv,
+        operatorHome: resolveLocalOperatorHome(process.env),
+        orgId: ctx.orgId,
+        onLog: async () => {},
+      });
+      runtimeEnv = normalizeEnv(ensurePathInEnv(runtimeProfile.env));
+      checks.push({
+        code: "opencode_isolated_profile",
+        level: "info",
+        message: `OpenCode readiness uses isolated provider data: ${runtimeProfile.profileDataHome}`,
+      });
+    } catch {
+      checks.push({
+        code: "opencode_profile_preparation_failed",
+        level: "error",
+        message: "Could not prepare the isolated OpenCode readiness profile; no CLI probe was started.",
+      });
+      return { agentRuntimeType: ctx.agentRuntimeType, status: summarizeStatus(checks), checks, testedAt: new Date().toISOString() };
+    }
+  }
 
   const cwdInvalid = checks.some((check) => check.code === "opencode_cwd_invalid");
   if (cwdInvalid) {

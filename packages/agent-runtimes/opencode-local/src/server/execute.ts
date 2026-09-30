@@ -71,7 +71,7 @@ import { isOpenCodeUnknownSessionError, parseOpenCodeJsonl, parseOpenCodeJsonlLi
 import { resolveManagedOpenCodeHomeDir } from "./skills.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const OPENCODE_PROTECTED_ENV_KEYS = new Set([
+export const OPENCODE_PROTECTED_ENV_KEYS = new Set([
   "AGENT_HOME",
   "HOME",
   "OPENCODE_CONFIG",
@@ -512,6 +512,33 @@ async function prepareManagedOpenCodeHome(
   return targetHome;
 }
 
+/** Shared execution/readiness profile policy; never use the operator's database. */
+export async function prepareOpenCodeRuntimeProfile(input: {
+  config: Record<string, unknown>;
+  env: NodeJS.ProcessEnv;
+  operatorHome: string;
+  orgId: string;
+  onLog: AgentRuntimeExecutionContext["onLog"];
+}) {
+  const managedHome = await prepareManagedOpenCodeHome(input.env, input.operatorHome, input.onLog, input.orgId);
+  const profileDataHome = resolveOpenCodeProfileDataHome({ ...input.config, env: input.env }, input.orgId);
+  const overrides = {
+    HOME: input.operatorHome,
+    USERPROFILE: input.operatorHome,
+    RUDDER_OPERATOR_HOME: input.operatorHome,
+    OPENCODE_CONFIG: path.join(managedHome, ".config", "opencode", MANAGED_OPENCODE_CONFIG_FILE),
+    OPENCODE_DISABLE_CLAUDE_CODE: "true",
+    OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: "true",
+    OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: "true",
+    XDG_CONFIG_HOME: path.join(managedHome, ".config"),
+    XDG_DATA_HOME: profileDataHome,
+    XDG_CACHE_HOME: path.join(managedHome, ".cache"),
+  };
+  const env: NodeJS.ProcessEnv = { ...input.env, ...overrides };
+  for (const key of OPENCODE_INHERITED_ENV_BLOCKLIST) delete env[key];
+  return { managedHome, profileDataHome, overrides, env };
+}
+
 async function ensureOpenCodeSkillsInjected(
   onLog: AgentRuntimeExecutionContext["onLog"],
   skillsHome: string,
@@ -686,18 +713,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   const operatorHome = resolveLocalOperatorHome(sourceEnv);
   if (authToken) env.RUDDER_API_KEY = authToken;
   const executionEnvironment = { ...sourceEnv, ...env };
-  const managedHome = await prepareManagedOpenCodeHome(
-    executionEnvironment,
+  const runtimeProfile = await prepareOpenCodeRuntimeProfile({
+    config,
+    env: executionEnvironment,
     operatorHome,
     onLog,
-    agent.orgId,
-    {},
-  );
+    orgId: agent.orgId,
+  });
+  const { managedHome, profileDataHome } = runtimeProfile;
   const profileIdentity = { ...providerProfileIdentity(config), orgId: agent.orgId };
-  const profileDataHome = resolveOpenCodeProfileDataHome(
-    { ...config, env: executionEnvironment },
-    agent.orgId,
-  );
   const profileDataId = path.basename(profileDataHome);
   const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
   await fs.mkdir(runtimeTmpDir, { recursive: true });
@@ -709,16 +733,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     sourceEnv,
     onLog,
   });
-  env.HOME = operatorHome;
-  env.USERPROFILE = operatorHome;
+  Object.assign(env, runtimeProfile.overrides);
   env.OPENCODE_CONFIG = runConfigPath;
-  env.OPENCODE_DISABLE_CLAUDE_CODE = "true";
-  env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT = "true";
-  env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "true";
-  env.RUDDER_OPERATOR_HOME = operatorHome;
-  env.XDG_CONFIG_HOME = path.join(managedHome, ".config");
-  env.XDG_DATA_HOME = profileDataHome;
-  env.XDG_CACHE_HOME = path.join(managedHome, ".cache");
   applyGitIdentityPreparationEnv(env, preparedGitIdentity);
   applyGitCredentialHelperPolicyEnv(env);
   const openCodeSkillEntries = await readRudderRuntimeSkillEntries(config, __moduleDir);
