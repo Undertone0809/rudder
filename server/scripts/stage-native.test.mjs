@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { chmod, unlink } from "node:fs/promises";
+import { chmod, open, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -122,6 +122,37 @@ test("package verification requires all six target-correct executable payloads",
     await unlink(linuxPath);
     await assert.rejects(checkPackagedFoundationArtifacts({ resourcesDir }), /rudder-server-foundation/u);
   } finally {
+    rmSync(artifactDir, { recursive: true, force: true });
+    rmSync(resourcesDir, { recursive: true, force: true });
+  }
+});
+
+test("replaces a staged executable without changing bytes seen by an existing reader", async () => {
+  const target = "aarch64-apple-darwin";
+  const artifactDir = makeArtifactRoot([target]);
+  const resourcesDir = mkdtempSync(path.join(os.tmpdir(), "rudder-foundation-replacement-"));
+  const sourcePath = path.join(artifactDir, target, foundationBinaryName(target));
+  const destinationPath = path.join(resourcesDir, "native", target, foundationBinaryName(target));
+  let previousReader;
+  try {
+    await stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] });
+    const previousBytes = readFileSync(destinationPath);
+    previousReader = await open(destinationPath, "r");
+    const previousStat = await previousReader.stat();
+    const replacementBytes = Buffer.concat([fakeBinary(target), Buffer.from("replacement")]);
+    writeFileSync(sourcePath, replacementBytes);
+
+    await stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] });
+    assert.deepEqual(readFileSync(destinationPath), replacementBytes);
+    assert.deepEqual(await previousReader.readFile(), previousBytes);
+    if (process.platform !== "win32") assert.notEqual(statSync(destinationPath).ino, previousStat.ino);
+    assert.deepEqual(readdirSync(path.dirname(destinationPath)), [foundationBinaryName(target)]);
+
+    writeFileSync(sourcePath, Buffer.from("invalid replacement"));
+    await assert.rejects(stageFoundationArtifacts({ artifactDir, resourcesDir, targets: [target] }), /Unrecognized/u);
+    assert.deepEqual(readFileSync(destinationPath), replacementBytes);
+  } finally {
+    await previousReader?.close();
     rmSync(artifactDir, { recursive: true, force: true });
     rmSync(resourcesDir, { recursive: true, force: true });
   }
