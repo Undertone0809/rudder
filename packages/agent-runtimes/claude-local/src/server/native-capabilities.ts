@@ -869,12 +869,22 @@ async function readProfileSession(
   if (selected.error) {
     return { items: [], nextCursor: null, source: "native", revision: loaded.revision, availability: "incompatible", completeness: "unknown" };
   }
+  const fixedThrough = selectorValue(request.selector, ["throughInclusiveUuid", "through", "executionRef"]) ?? request.through;
+  // A sealed Run's cursor is scoped to its selected ancestry. Later turns or
+  // unrelated branches must not invalidate it; changes to any selected raw
+  // record, including tool output, still change the revision.
+  const revision = fixedThrough
+    ? stableHash({
+        sessionId: request.session.sessionId,
+        records: selected.records.map(({ uuid, parentUuid, lineHash }) => ({ uuid, parentUuid, lineHash })),
+      })
+    : loaded.revision;
   const selection = resolveIndexedRange(selected.records, request.range);
   const selectedCount = selection.positions?.length ?? selection.end - selection.start;
   const scope = cursorScope(request);
-  const offset = decodeCursor(request.cursor, loaded.revision, scope);
+  const offset = decodeCursor(request.cursor, revision, scope);
   if (offset === null || offset > selectedCount) {
-    return { items: [], nextCursor: null, source: "native", revision: loaded.revision, availability: "incompatible", completeness: "unknown" };
+    return { items: [], nextCursor: null, source: "native", revision, availability: "incompatible", completeness: "unknown" };
   }
   const limits = readLimits(request);
   const targetEnd = Math.min(selectedCount, offset + limits.limit);
@@ -923,27 +933,27 @@ async function readProfileSession(
       pageBytes = nextBytes;
     }
   } catch {
-    return { items: [], nextCursor: null, source: "native", revision: loaded.revision, availability: "incompatible", completeness: "unknown" };
+    return { items: [], nextCursor: null, source: "native", revision, availability: "incompatible", completeness: "unknown" };
   }
   if (loaded.sourceVersion) {
     try {
       if (!sameClaudeFileVersion(loaded.sourceVersion, await fs.stat(loaded.filePath))) {
-        return { items: [], nextCursor: null, source: "native", revision: loaded.revision, availability: "incompatible", completeness: "unknown" };
+        return { items: [], nextCursor: null, source: "native", revision, availability: "incompatible", completeness: "unknown" };
       }
     } catch {
-      return { items: [], nextCursor: null, source: "native", revision: loaded.revision, availability: "incompatible", completeness: "unknown" };
+      return { items: [], nextCursor: null, source: "native", revision, availability: "incompatible", completeness: "unknown" };
     }
   }
   const nextOffset = offset + page.length;
   const nextCursor = nextOffset < selectedCount
     && (!limitReached || page.length > 0)
-    ? encodeCursor(loaded.revision, scope, nextOffset)
+    ? encodeCursor(revision, scope, nextOffset)
     : null;
   return {
     items: page,
     nextCursor,
     source: "native",
-    revision: loaded.revision,
+    revision,
     availability: "available",
     completeness: loaded.malformed || limitReached || nextCursor ? "partial" : "complete",
     limitReached,

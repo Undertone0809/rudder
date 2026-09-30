@@ -125,6 +125,42 @@ async function withSessionFile(
 }
 
 describe("Claude profile-bound native capabilities", () => {
+  it("keeps a fixed Run cursor valid after later turns but invalidates selected tool output changes", async () => {
+    await withSessionFile(sessionJsonl, async (transport, input) => {
+      const adapter = createClaudeLocalProviderCapabilities(transport);
+      const selected = {
+        ...input,
+        selector: { kind: "claude_chain", startExclusiveUuid: "assistant-1", throughInclusiveUuid: "assistant-2" },
+      };
+      const first = await adapter.transcript.readRange({ ...selected, readerInput: { limit: 1 } });
+      expect(first).toMatchObject({ availability: "available", nextCursor: expect.any(String) });
+      const original = await adapter.transcript.readRange(selected);
+      const wholeSession = await adapter.transcript.readRange(input);
+      const filePath = String(input.session.sessionParams.sessionFilePath);
+      const later = [
+        { type: "user", uuid: "later-user", parentUuid: "assistant-2", message: { role: "user", content: "another input" } },
+        { type: "assistant", uuid: "later-assistant", parentUuid: "later-user", message: { role: "assistant", content: "later answer" } },
+      ].map((record) => JSON.stringify(record)).join("\n");
+      await fs.appendFile(filePath, `\n${later}\n`);
+
+      const continuation = await adapter.transcript.readRange({ ...selected, cursor: first.nextCursor });
+      expect(continuation).toMatchObject({ availability: "available", completeness: "complete", revision: first.revision });
+      expect(continuation.items.map((item) => item.sourceEntryId)).toEqual(["assistant-2:block:0"]);
+      const afterAppend = await adapter.transcript.readRange(selected);
+      expect(afterAppend.items).toEqual(original.items);
+      expect(afterAppend.revision).toBe(original.revision);
+      expect((await adapter.transcript.readRange(input)).revision).not.toBe(wholeSession.revision);
+
+      // Same-length edits must be detected by selected content, not file size.
+      await fs.writeFile(filePath, `${sessionJsonl.replace('"done"', '"gone"')}\n${later}\n`);
+      const changed = await adapter.transcript.readRange(selected);
+      expect(changed.revision).not.toBe(original.revision);
+      expect(JSON.stringify(changed.items)).toContain("gone");
+      await expect(adapter.transcript.readRange({ ...selected, cursor: first.nextCursor }))
+        .resolves.toMatchObject({ availability: "incompatible", items: [] });
+    });
+  });
+
   it.each([2_000, 200_000].flatMap(size => ["\n", ""].map(terminator => ({ size, terminator }))))(
     "rejects an oversized physical record before JSON.parse ($size bytes, terminator $terminator)", async ({ size, terminator }) => {
     const record = JSON.stringify({ type: "assistant", uuid: "oversized-body", message: { content: "x".repeat(size) } });
@@ -303,14 +339,16 @@ describe("Claude profile-bound native capabilities", () => {
     expect(rangedReads.length).toBeGreaterThan(0);
     expect(Math.max(...rangedReads)).toBeLessThan(sourceBytes);
 
-    const stale = await createClaudeLocalProviderCapabilities(profile(`${content}\n${JSON.stringify({
+    const continued = await createClaudeLocalProviderCapabilities(profile(`${content}\n${JSON.stringify({
       type: "assistant", uuid: "later", parentUuid: "large-129", message: { content: "later" },
     })}`)).transcript.readRange(request({
       selector,
       cursor: firstCursor,
       readerInput: { limit: 100, maxBytes: pageBudget, maxItemBytes: 64 * 1024 },
     }));
-    expect(stale).toMatchObject({ items: [], nextCursor: null, availability: "incompatible" });
+    expect(continued).toMatchObject({ nextCursor: expect.any(String), availability: "available" });
+    expect(continued.items.length).toBeGreaterThan(0);
+    expect(continued.items.every((item) => allIds.includes(item.sourceEntryId))).toBe(true);
   });
 
   it("continues after a prior result marker by its verified assistant parent", async () => {
