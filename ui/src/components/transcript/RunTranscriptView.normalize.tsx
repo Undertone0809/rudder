@@ -1,5 +1,4 @@
 import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
-import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { isNativeSteerTranscriptEntry } from "../../lib/chat-stream-state";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";

@@ -228,7 +228,7 @@ import {
 } from "./Chat.file-drop";
 import { ChatPendingFirstTurn, firstChatTurnRecoveryToast } from "./Chat.first-turn";
 import { useChatInitialBottomScroll } from "./Chat.initial-scroll";
-import { AskUserPanel, AssistantDraftItem, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
+import { AskUserPanel, ChatMessageItem, ChatMessagesLoadingState, LazyStreamTranscriptItem, OptimisticUserDraftItem, StreamTranscriptItem, chatIssueApprovalPayloadWithProposalOverride, type ChatTurnBranchControls } from "./Chat.messages";
 import {
   ChatAgentMenuContent,
   ChatAgentSelectorButton,

@@ -4,13 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "../../agent-runtimes";
 import { ThemeProvider } from "../../context/ThemeContext";
-import { chatProcessTranscriptEntries } from "../../pages/Chat.timeline";
 import {
   isNativeSteerTranscriptEntry,
   mergeNativeSteerTranscriptEntries,
   type NativeSteerTranscriptEntry,
 } from "../../lib/chat-stream-state";
 import { StreamTranscriptItem } from "../../pages/Chat.StreamTranscriptItem";
+import { chatProcessTranscriptEntries } from "../../pages/Chat.timeline";
 import { RunTranscriptView, normalizeTranscript } from "./RunTranscriptView";
 
 const ts = "2026-09-30T00:00:00.000Z";
