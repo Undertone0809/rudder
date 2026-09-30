@@ -739,9 +739,12 @@ export function onboardingRoutes(db: Db, rustFoundationBridge?: RustFoundationBr
     let createdProject = false;
 
     if (!project) {
-      const context: ProjectCreateContext = rustFoundationBridge?.projectGoalSetMode === "required"
-        ? { lane: "rust", caller: "onboarding", actor: req.actor, idempotencyKey: req.header("x-rudder-idempotency-key") }
-        : { lane: "node", caller: "onboarding" };
+      const context: ProjectCreateContext = {
+        lane: "rust",
+        caller: "onboarding",
+        actor: req.actor,
+        idempotencyKey: req.header("x-rudder-idempotency-key"),
+      };
       project = await projects.create(orgId, {
         name: ONBOARDING_PROJECT_NAME,
         status: "planned",
@@ -749,17 +752,6 @@ export function onboardingRoutes(db: Db, rustFoundationBridge?: RustFoundationBr
       }, context);
       createdProject = true;
 
-      if (context.lane === "node") await logActivity(db, {
-        orgId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        action: "project.created",
-        entityType: "project",
-        entityId: project.id,
-        details: { name: project.name },
-      });
     }
 
     const existingIssues = await issues.list(orgId, { projectId: project.id });

@@ -224,24 +224,22 @@ describe("Project ownership-aware callers", () => {
     });
   });
 
-  it.each(["node", "rust"] as const)("creates onboarding through the trusted %s lane and continues seeding", async (lane) => {
+  it("creates onboarding through the Rust lane by default and continues seeding", async () => {
     onboardingMocks.projects.list.mockResolvedValue([]);
     onboardingMocks.projects.create.mockResolvedValue({ id: "project-1", orgId: "org-1", name: "Getting Started" });
     onboardingMocks.agents.list.mockResolvedValue([]);
     onboardingMocks.issues.create.mockImplementation(async (_orgId, input) => ({ ...input, id: "issue-1", identifier: "T-1" }));
     onboardingMocks.issues.followIssue.mockResolvedValue(undefined);
-    const bridge = { projectGoalSetMode: lane === "rust" ? "required" : "off" } as RustFoundationBridge;
+    const bridge = { projectGoalSetMode: "required" } as RustFoundationBridge;
     const server = await createOnboardingServer(createOnboardingDb(), bridge);
     const response = await request(server).post("/api/orgs/org-1/onboarding/getting-started")
       .set("x-rudder-idempotency-key", "onboarding-key").send({ includeTutorial: false });
     expect(response.status).toBe(201);
     expect(onboardingMocks.projects.create).toHaveBeenCalledWith("org-1", expect.objectContaining({ name: "Getting Started" }),
-      lane === "rust"
-        ? { lane, caller: "onboarding", actor: { type: "board", source: "local_implicit", userId: "user-1" }, idempotencyKey: "onboarding-key" }
-        : { lane, caller: "onboarding" });
+      { lane: "rust", caller: "onboarding", actor: { type: "board", source: "local_implicit", userId: "user-1" }, idempotencyKey: "onboarding-key" });
     expect(onboardingMocks.issues.create).toHaveBeenCalledOnce();
     const createAudits = onboardingMocks.logActivity.mock.calls.filter(([, entry]) => entry.action === "project.created");
-    expect(createAudits).toHaveLength(lane === "node" ? 1 : 0);
+    expect(createAudits).toHaveLength(0);
   });
 
   it("stops onboarding after a Rust creation failure without fallback or follow-up writes", async () => {

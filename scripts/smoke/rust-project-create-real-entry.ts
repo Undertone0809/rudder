@@ -7,6 +7,7 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildYamlFile } from "../../server/src/services/knowledge-portability/organization-portability.package.js";
 
 // Run only after the parent releases the serialized local PostgreSQL slot:
 // node cli/node_modules/tsx/dist/cli.mjs scripts/smoke/rust-project-create-real-entry.ts
@@ -89,7 +90,7 @@ export function buildExistingOrganizationProjectImport(input: {
     source: {
       type: "inline",
       files: {
-        "ORGANIZATION.md": "---\nname: Rust Project-create import source\n---\n",
+      "ORGANIZATION.md": "---\nname: Rust Project-create import source\n---\n",
         [`projects/${projectSlug}/PROJECT.md`]: [
           "---",
           "kind: project",
@@ -100,7 +101,7 @@ export function buildExistingOrganizationProjectImport(input: {
           "Imported through the public organization portability API.",
           "",
         ].join("\n"),
-        ".rudder.yaml": JSON.stringify(extension),
+      ".rudder.yaml": buildYamlFile(extension, { preserveEmptyStrings: true }),
       },
     },
     include: { organization: false, agents: false, projects: true, issues: false, skills: false },
@@ -113,6 +114,7 @@ function foundationResponseProxySource(
   nativeBinaryPath: string,
   lostResponseMarkerPath: string,
   nativePidMarkerPath: string,
+  requestTracePath: string,
 ): string {
   return [
     `#!${process.execPath}`,
@@ -148,6 +150,11 @@ function foundationResponseProxySource(
     "        upstreamResponse.on(\"data\", (chunk) => responseChunks.push(Buffer.from(chunk)));",
     "        upstreamResponse.once(\"error\", () => response.destroy());",
     "        upstreamResponse.once(\"end\", () => {",
+    "          if ((request.url || \"\").endsWith(\"/goal-set\")) {",
+    "            let payload = {};",
+    "            try { payload = JSON.parse(body.toString(\"utf8\")); } catch {}",
+    `            fs.appendFileSync(${JSON.stringify(requestTracePath)}, JSON.stringify({ method: request.method, path: request.url, status: upstreamResponse.statusCode, mutationOrigin: payload.mutationOrigin || null, hasWorkspaceId: typeof payload.projectPatch?.executionWorkspacePolicy?.defaultProjectWorkspaceId === "string" }) + "\\n");`,
+    "          }",
     "          if (!droppedHydrationResponse && upstreamResponse.statusCode >= 200 && upstreamResponse.statusCode < 300",
     "            && isOrganizationImportHydrationResponse(request.url || \"/\", body.toString(\"utf8\"))) {",
     "            droppedHydrationResponse = true;",
@@ -281,6 +288,7 @@ async function main() {
   const nativeBinaryPath = path.join(home, "rudder-server-foundation.real");
   const lostHydrationResponseMarker = path.join(home, "organization-import-hydration-response-dropped");
   const nativePidMarker = path.join(home, "rudder-server-foundation.pid");
+  const projectGoalRequestTrace = path.join(home, "project-goal-request-trace.jsonl");
   const apiPort = await availablePort();
   const databasePort = await availablePort();
   let current: ServerHandle | null = null;
@@ -295,7 +303,7 @@ async function main() {
     await chmod(nativeBinaryPath, 0o755);
     await writeFile(
       binaryPath,
-      foundationResponseProxySource(nativeBinaryPath, lostHydrationResponseMarker, nativePidMarker),
+      foundationResponseProxySource(nativeBinaryPath, lostHydrationResponseMarker, nativePidMarker, projectGoalRequestTrace),
       "utf8",
     );
     await chmod(binaryPath, 0o755);
@@ -318,7 +326,6 @@ async function main() {
       RUDDER_DEPLOYMENT_MODE: "local_trusted",
       RUDDER_RUST_MEMBER_DIRECTORY_MODE: "off",
       RUDDER_RUST_ORGANIZATION_BRANDING_MODE: "off",
-      RUDDER_RUST_PROJECT_GOAL_SET_MODE: "required",
       RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS: "",
       RUDDER_OPEN_ON_LISTEN: "false",
     });
@@ -478,6 +485,18 @@ async function main() {
       description: "Description imported through the public portability API",
       workspaceRepoUrl: "https://example.com/rudder-import-recovery.git",
     });
+    const importPreview = await request("/orgs/import/preview", "POST", projectImportInput);
+    assert.equal(importPreview.status, 200, JSON.stringify(importPreview.body));
+    const previewProject = ((importPreview.body.manifest as Json | undefined)?.projects as Json[] | undefined)?.find(
+      (project) => project.slug === importedProject.urlKey,
+    );
+    assert.ok(previewProject, JSON.stringify(importPreview.body));
+    assert.equal((previewProject.workspaces as Json[] | undefined)?.length, 1, JSON.stringify(previewProject));
+    assert.equal(
+      (previewProject.executionWorkspacePolicy as Json | null)?.defaultProjectWorkspaceKey,
+      "primary",
+      JSON.stringify(previewProject),
+    );
     const projectImportMutationKeys = [
       projectImportMutationKey(projectImportKey, organization.id, importedProject.id, "replace"),
       projectImportMutationKey(projectImportKey, organization.id, importedProject.id, "hydrate"),
@@ -491,7 +510,7 @@ async function main() {
     const readProjectImportState = async () => {
       const [projectRows, workspaceRows, receiptRows, counts] = await Promise.all([
         sql!.unsafe(
-          "SELECT p.id::text AS id, p.org_id::text AS org_id, p.name, p.description, p.url_key, "
+          "SELECT p.id::text AS id, p.org_id::text AS org_id, p.name, p.description, "
             + "p.execution_workspace_policy::text AS execution_workspace_policy, p.updated_at::text AS updated_at, "
             + "state.owner, state.mutation_version::text AS mutation_version, state.fence_epoch::text AS fence_epoch "
             + "FROM projects p LEFT JOIN project_goal_mutation_state state ON state.project_id = p.id "
@@ -531,7 +550,12 @@ async function main() {
     };
 
     const lostHydrationResponse = await applyProjectImport();
-    assert.equal(lostHydrationResponse.status, 503, JSON.stringify(lostHydrationResponse.body));
+    const projectGoalTrace = await readFile(projectGoalRequestTrace, "utf8").catch(() => "");
+    assert.equal(
+      lostHydrationResponse.status,
+      503,
+      `${JSON.stringify(lostHydrationResponse.body)}\nRust Project-Goal proxy trace:\n${projectGoalTrace}`,
+    );
     assert.equal(
       await readFile(lostHydrationResponseMarker, "utf8"),
       "organization_import_hydration_response_dropped\n",

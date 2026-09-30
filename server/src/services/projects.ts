@@ -19,8 +19,8 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { HttpError, conflict, forbidden, unauthorized, unprocessable } from "../errors.js";
 import {
   ensureOrganizationWorkspaceLayout,
@@ -41,7 +41,7 @@ import type { RustFoundationActor, RustFoundationBridge } from "./rust-foundatio
 import { listWorkspaceRuntimeServicesForProjectWorkspaces } from "./workspace-runtime.js";
 
 export type ProjectCreateContext =
-  | { lane: "node"; caller: "public" | "onboarding" | "import" }
+  | { lane: "node"; caller: "import" }
   | {
     lane: "rust";
     caller: "public" | "onboarding";
@@ -608,11 +608,12 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
         resourceAttachments?: ProjectResourceAttachmentInput[];
         newResources?: CreateProjectInlineResourceInput[];
       },
-      context?: ProjectCreateContext,
+      context: ProjectCreateContext,
     ): Promise<ProjectWithGoals> => {
       // Lane selection is trusted caller context, never a field of data. Once
       // dispatched to Rust, any failure ends this invocation without Node writes.
-      if (context?.lane === "rust") {
+      if (!context) throw forbidden("Project creation requires an explicit trusted authority lane");
+      if (context.lane === "rust") {
         if (context.caller !== "public" && context.caller !== "onboarding") {
           throw forbidden("Caller is not eligible for Rust Project creation");
         }
@@ -667,6 +668,9 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
         // The receipt contains the complete response. Live hydration would
         // provision Library paths again, including on replay after deletion.
         return body as unknown as ProjectWithGoals;
+      }
+      if (context.lane !== "node" || context.caller !== "import") {
+        throw forbidden("Node Project creation is reserved for organization import");
       }
       const {
         goalIds: inputGoalIds,

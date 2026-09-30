@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { parseYamlFile } from "../../server/src/services/knowledge-portability/organization-portability.package.js";
 import {
   assertCliCompatibleProjectId,
   buildExistingOrganizationProjectImport,
@@ -45,7 +46,7 @@ describe("Project creation real-entry smoke assertions (no database)", () => {
     const result = input as Record<string, any>;
     const source = result.source as Record<string, any>;
     const files = source.files as Record<string, string>;
-    const extension = JSON.parse(files[".rudder.yaml"]!) as Record<string, any>;
+    const extension = parseYamlFile(files[".rudder.yaml"]!);
 
     assert.deepEqual(result.target, {
       mode: "existing_organization",

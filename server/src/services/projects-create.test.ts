@@ -95,6 +95,23 @@ describe("Project create service authority", () => {
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
+  it("rejects missing context before starting a database transaction", async () => {
+    const { db, service } = fixture();
+    const missingContext = undefined as unknown as ProjectCreateContext;
+    await expect(service.create(orgId, { name: "Release" }, missingContext)).rejects.toThrow();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["public", "onboarding"] as const)(
+    "rejects a runtime-cast Node %s caller before starting a database transaction",
+    async (caller) => {
+      const { db, service } = fixture();
+      const runtimeNodeContext = { lane: "node", caller } as unknown as ProjectCreateContext;
+      await expect(service.create(orgId, { name: "Release" }, runtimeNodeContext)).rejects.toThrow();
+      expect(db.transaction).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects cross-org and non-board onboarding contexts before dispatch", async () => {
     const { db, bridge, service } = fixture();
     const agent = { type: "agent", source: "agent_key", agentId: projectId, orgId: "other-org" } as const;
@@ -154,6 +171,23 @@ describe("Project create service authority", () => {
     await expect(legacyUpdate(projectId, { description: "stale writer" }, { allowScalarUpdateWhenProjectGoalOwned: true })).rejects.toBe(denied);
     expect(mocks.projectLock).toHaveBeenCalledWith(tx, orgId, projectId);
     expect(tx.update).not.toHaveBeenCalled();
+    expect(mocks.organizationLock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale Node Project delete before deleting a Rust-owned row", async () => {
+    const { db, service } = fixture();
+    const tx = {
+      select: vi.fn(() => ({ from: () => ({ where: async () => [{ orgId }] }) })),
+      delete: vi.fn(),
+    };
+    db.transaction.mockImplementation(async (callback) => callback(tx));
+    const denied = new Error("Rust owns Project authority");
+    mocks.projectLock.mockRejectedValueOnce(denied);
+
+    await expect(service.remove(projectId)).rejects.toBe(denied);
+
+    expect(mocks.projectLock).toHaveBeenCalledWith(tx, orgId, projectId);
+    expect(tx.delete).not.toHaveBeenCalled();
     expect(mocks.organizationLock).not.toHaveBeenCalled();
   });
 });

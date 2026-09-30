@@ -194,7 +194,7 @@ afterEach(async () => {
 });
 
 describe("rust foundation bridge lifecycle", () => {
-  it("defaults only member directory reads to required and preserves explicit off", () => {
+  it("defaults member reads and Project-Goal writes to required and preserves explicit off", () => {
     const names = [
       "RUDDER_RUST_MEMBER_DIRECTORY_MODE",
       "RUDDER_RUST_ORGANIZATION_BRANDING_MODE",
@@ -208,12 +208,13 @@ describe("rust foundation bridge lifecycle", () => {
       activeBridges.add(defaultBridge);
       expect(defaultBridge.mode).toBe("required");
       expect(defaultBridge.organizationBrandingMode).toBe("off");
-      expect(defaultBridge.projectGoalSetMode).toBe("off");
+      expect(defaultBridge.projectGoalSetMode).toBe("required");
       expect(defaultBridge.requiresStartup).toBe(true);
 
       const disabledBridge = createRustFoundationBridge({
         databaseUrl: "postgres://bridge-test",
         mode: "off",
+        projectGoalSetMode: "off",
       });
       activeBridges.add(disabledBridge);
       expect(disabledBridge.mode).toBe("off");

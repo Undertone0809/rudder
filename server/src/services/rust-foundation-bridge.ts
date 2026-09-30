@@ -362,6 +362,7 @@ export function createRustFoundationBridge(options: RustFoundationBridgeOptions)
   const projectGoalSetMode = configuredMode(
     options.projectGoalSetMode ?? process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE,
     "RUDDER_RUST_PROJECT_GOAL_SET_MODE",
+    "required",
   );
   const actorEnvelopeKey = options.actorEnvelopeKey?.trim()
     || process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim()

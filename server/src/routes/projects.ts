@@ -261,29 +261,13 @@ export function projectRoutes(db: Db, rustFoundationBridge?: RustFoundationBridg
     const { workspace: _ignoredWorkspace, ...projectData } = req.body as Parameters<typeof svc.create>[1] & {
       workspace?: unknown;
     };
-    const rustLane = rustFoundationBridge?.projectGoalSetMode === "required"
-      || req.header("x-rudder-required-authority")?.trim().toLowerCase() === "rust";
-    const context: ProjectCreateContext = rustLane
-      ? { lane: "rust", caller: "public", actor: req.actor, idempotencyKey: req.header("x-rudder-idempotency-key") }
-      : { lane: "node", caller: "public" };
+    const context: ProjectCreateContext = {
+      lane: "rust",
+      caller: "public",
+      actor: req.actor,
+      idempotencyKey: req.header("x-rudder-idempotency-key"),
+    };
     const project = await svc.create(orgId, projectData, context);
-
-    if (context.lane === "node") {
-      const actor = getActorInfo(req);
-      await logActivity(db, {
-        orgId,
-        actorType: actor.actorType,
-        actorId: actor.actorId,
-        agentId: actor.agentId,
-        runId: actor.runId,
-        action: "project.created",
-        entityType: "project",
-        entityId: project.id,
-        details: {
-          name: project.name,
-        },
-      });
-    }
     res.status(201).json(project);
   });
 

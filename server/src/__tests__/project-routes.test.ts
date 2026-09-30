@@ -3,10 +3,10 @@ import { once } from "node:events";
 import type { Server } from "node:http";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpError } from "../errors.js";
 import { errorHandler } from "../middleware/index.js";
 import { projectRoutes } from "../routes/projects.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
-import { HttpError } from "../errors.js";
 
 const mockProjectService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -156,12 +156,11 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("honors explicit required Rust authority and propagates failure without a Node audit", async () => {
+  it("routes the default Project create to Rust and propagates failure without a Node audit", async () => {
     mockProjectService.create.mockRejectedValue(new HttpError(503, "Rust Project creation is not enabled"));
     const actor = { type: "board", userId: "user-1", source: "local_implicit" };
-    const app = await createApp(actor);
-    const response = await request(app).post("/api/orgs/organization-1/projects")
-      .set("x-rudder-required-authority", "rust").send({ name: "Rudder" });
+    const app = await createApp(actor, { projectGoalSetMode: "off" } as RustFoundationBridge);
+    const response = await request(app).post("/api/orgs/organization-1/projects").send({ name: "Rudder" });
     expect(response.status).toBe(503);
     expect(mockProjectService.create).toHaveBeenCalledOnce();
     expect(mockProjectService.create.mock.calls[0]?.[2]).toEqual({ lane: "rust", caller: "public", actor, idempotencyKey: undefined });
@@ -177,7 +176,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
-  it("ignores workspace payload from legacy callers", async () => {
+  it("ignores legacy workspace payload and uses the default Rust create lane", async () => {
     mockProjectService.create.mockResolvedValue(createProject());
     const app = await createApp({
       type: "board",
@@ -200,18 +199,10 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
       name: "Rudder",
       status: "planned",
-    }, { lane: "node", caller: "public" });
+    }, expect.objectContaining({ lane: "rust", caller: "public" }));
     expect(res.body.workspaces).toEqual([]);
     expect(res.body.primaryWorkspace).toBeNull();
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        orgId: "organization-1",
-        action: "project.created",
-        entityType: "project",
-        entityId: "project-1",
-      }),
-    );
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("allows authenticated agents to create projects in their organization", async () => {
@@ -235,18 +226,8 @@ describe("POST /api/orgs/:orgId/projects", () => {
     expect(mockProjectService.create).toHaveBeenCalledWith("organization-1", {
       name: "Rudder",
       status: "planned",
-    }, { lane: "node", caller: "public" });
-    expect(mockLogActivity).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        orgId: "organization-1",
-        actorType: "agent",
-        actorId: "agent-1",
-        agentId: "agent-1",
-        runId: "run-1",
-        action: "project.created",
-      }),
-    );
+    }, expect.objectContaining({ lane: "rust", caller: "public", actor: expect.objectContaining({ agentId: "agent-1" }) }));
+    expect(mockLogActivity).not.toHaveBeenCalled();
   });
 
   it("selects the Rust service lane for create-with-goals without a duplicate Node audit", async () => {
@@ -307,7 +288,7 @@ describe("POST /api/orgs/:orgId/projects", () => {
       name: "Travel Ops",
       icon: "plane",
       status: "backlog",
-    }, { lane: "node", caller: "public" });
+    }, expect.objectContaining({ lane: "rust", caller: "public" }));
 
     const updated = await request(app)
       .patch("/api/projects/project-1")

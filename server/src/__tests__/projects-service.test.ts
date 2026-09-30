@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { resolveOrganizationWorkspaceRoot, resolveProjectLibraryDir } from "../home-paths.js";
-import { projectService } from "../services/projects.js";
+import { projectService, type ProjectCreateContext } from "../services/projects.js";
 import { resourceCatalogService } from "../services/resource-catalog.js";
 
 type EmbeddedPostgresInstance = {
@@ -40,6 +40,20 @@ type EmbeddedPostgresCtor = new (opts: {
   onLog?: (message: unknown) => void;
   onError?: (message: unknown) => void;
 }) => EmbeddedPostgresInstance;
+
+type ProjectService = ReturnType<typeof projectService>;
+
+function createImportProjectService(db: Parameters<typeof projectService>[0]) {
+  const service = projectService(db);
+  return {
+    ...service,
+    create: (
+      orgId: Parameters<ProjectService["create"]>[0],
+      data: Parameters<ProjectService["create"]>[1],
+      context: ProjectCreateContext = { lane: "node", caller: "import" },
+    ) => service.create(orgId, data, context),
+  };
+}
 
 async function getEmbeddedPostgresCtor(): Promise<EmbeddedPostgresCtor> {
   const mod = await import("embedded-postgres");
@@ -107,7 +121,7 @@ describe("project service workspace resolution", () => {
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
-    projectSvc = projectService(db);
+    projectSvc = createImportProjectService(db);
     instance = started.instance;
     dataDir = started.dataDir;
   }, 20_000);
