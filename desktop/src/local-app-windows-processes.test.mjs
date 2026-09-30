@@ -1,7 +1,11 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
   captureManagedWindowsProcessIdentity,
+  createWindowsProcessController,
   parseWindowsProcessTable,
   terminateWindowsProcessInstances,
   windowsProcessCreationCommand,
@@ -9,7 +13,52 @@ import {
   windowsTerminateInstancesCommand,
 } from "./local-app-windows-processes.mjs";
 
+function createHelperFixture() {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const child = Object.assign(new EventEmitter(), {
+    pid: 4321,
+    exitCode: null,
+    signalCode: null,
+    stdin: { unref() {}, write() {} },
+    stdout,
+    stderr,
+    unref() {},
+  });
+  const controller = createWindowsProcessController({
+    spawnProcess: () => child,
+    isProcessAlive: () => true,
+    requestTimeoutMs: 10,
+  });
+  stdout.write('{"id":0,"ok":true}\n');
+  return { child, controller, stdout, stderr };
+}
+
+async function nextImmediate() {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 describe("Windows Local App process-instance authority", () => {
+  it.each(["capture", "snapshot"])("reports bounded, payload-free %s timeout diagnostics", async (type) => {
+    const { child, controller, stdout, stderr } = createHelperFixture();
+    const request = controller.request(type, { pid: 76543 });
+    await nextImmediate();
+    stderr.emit("data", `${"x".repeat(9_000)}PRIVATE_COMMAND_AND_PAYLOAD`);
+
+    const error = await request.then(() => null, (reason) => reason);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain(`type=${type}, id=1`);
+    expect(error.message).toContain("helperPid=4321, helperState=alive");
+    expect(error.message).toMatch(/stderr=redacted:8192B:sha256=[a-f0-9]{12}/);
+    expect(error.message).not.toContain("PRIVATE_COMMAND_AND_PAYLOAD");
+    expect(error.message).not.toContain("76543");
+
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    stdout.end();
+    stderr.end();
+  });
+
   it("uses the same full-precision FILETIME token for capture and snapshots", () => {
     expect(windowsProcessCreationCommand(42)).toContain("ToFileTimeUtc().ToString()");
     expect(windowsProcessTreeSnapshotCommand(42)).toContain("ToFileTimeUtc().ToString()");
