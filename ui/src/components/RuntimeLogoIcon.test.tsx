@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -39,7 +40,7 @@ function render(element: ReactNode) {
 }
 
 function sha256ForPublicAsset(src: string) {
-  const filePath = path.join(process.cwd(), "ui/public", src.replace(/^\//, ""));
+  const filePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../public", src.replace(/^\//, ""));
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
 

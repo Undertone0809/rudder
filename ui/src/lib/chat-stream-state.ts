@@ -175,6 +175,7 @@ export function shouldShowMessageDuringActiveStream(
   activeStream: ActiveChatStreamVisibilityState,
 ): boolean {
   if (message.role === "user") return true;
+  if (new Date(message.createdAt).getTime() < activeStream.userCreatedAt.getTime()) return true;
   if (message.role === "assistant" && activeStream.assistantMessageId) {
     return message.id === activeStream.assistantMessageId;
   }
@@ -183,7 +184,6 @@ export function shouldShowMessageDuringActiveStream(
     && activeStream.generationId
     && message.generationId === activeStream.generationId
   ) return true;
-  if (new Date(message.createdAt).getTime() < activeStream.userCreatedAt.getTime()) return true;
   if (activeStream.chatTurnId && message.chatTurnId === activeStream.chatTurnId) return false;
   return false;
 }

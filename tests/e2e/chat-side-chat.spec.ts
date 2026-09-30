@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, sql } from "../../packages/db/node_modules/drizzle-orm/index.js";

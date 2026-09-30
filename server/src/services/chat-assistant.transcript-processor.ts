@@ -88,6 +88,8 @@ export function createChatAssistantTranscriptProcessor(input: {
             ts: entry.ts,
             text: visibleDelta,
             delta: true,
+            ...(entry.phase === "final_answer" ? { phase: "final_answer" } : {}),
+            ...(entry.segmentId ? { segmentId: entry.segmentId } : {}),
           };
           await input.callbacks.onObservedTranscriptEntry?.(assistantTranscriptEntry, input.transcriptDelivery);
           if (input.isInactive()) return;

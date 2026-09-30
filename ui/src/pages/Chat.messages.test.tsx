@@ -5,6 +5,7 @@ import { __clearWebsiteMetadataIconCacheForTests } from "@/components/MarkdownBo
 import type { MentionOption } from "@/components/MarkdownEditor";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { shouldShowMessageDuringActiveStream } from "@/lib/chat-stream-state";
 import { buildAgentMentionHref, buildAutomationMentionHref, buildIssueMentionHref, type Agent, type ChatConversation, type ChatMessage } from "@rudderhq/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -843,6 +844,47 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(completedNode).toBe(initialNode);
     expect(completedNode?.getAttribute("data-message-id")).toBe("assistant-1");
   });
+  it("preserves the historical assistant node while the current assistant is acknowledged", () => {
+    const historical = message({
+      id: "assistant-history",
+      role: "assistant",
+      status: "completed",
+      body: "Earlier reply stays visible",
+      chatTurnId: "turn-history",
+      generationId: "generation-history",
+      createdAt: new Date("2026-04-30T09:59:59.000Z"),
+    });
+    const current = message({
+      id: "assistant-current",
+      role: "assistant",
+      status: "streaming",
+      body: "Current reply",
+      chatTurnId: "turn-current",
+      generationId: "generation-current",
+      createdAt: new Date("2026-04-30T10:00:01.000Z"),
+    });
+    const stream = {
+      userCreatedAt: new Date("2026-04-30T10:00:00.000Z"),
+      chatTurnId: "turn-current",
+      generationId: "generation-current",
+      assistantMessageId: "assistant-current",
+    };
+    const rows = (active: typeof stream | null) => (
+      <div>{[historical, current]
+        .filter((item) => !active || shouldShowMessageDuringActiveStream(item, active))
+        .map((item) => <div key={item.id}>{chatMessageItemElement(item)}</div>)}</div>
+    );
+    const rendered = renderWithRerender(rows(null));
+    const node = rendered.container.querySelector('[data-message-id="assistant-history"]');
+    expect(node).not.toBeNull();
+    rendered.rerender(rows(stream));
+    expect(rendered.container.querySelector('[data-message-id="assistant-history"]')).toBe(node);
+    expect(rendered.container.textContent).toContain("Earlier reply stays visible");
+    expect(rendered.container.textContent).toContain("Current reply");
+    rendered.rerender(rows(null));
+    expect(rendered.container.querySelector('[data-message-id="assistant-history"]')).toBe(node);
+  });
+
   it("responds to an external open request after the transcript mounts", () => {
     const entries: TranscriptEntry[] = [{
       kind: "thinking",

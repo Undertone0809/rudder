@@ -25,6 +25,7 @@ import { buildRuntimeProviderProfileSnapshot, runtimeConfigFromProviderProfileSn
 import type { StorageService } from "../storage/types.js";
 import { approvalService } from "./approvals.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
+import { chatBindingInstructionsRevision } from "./chat-assistant.binding-revision.js";
 import { assertClaudeSideChatInputSafe, canRestartPristineClaudeFork, claudeForkFenceForRun, recoverClaudeDeferredForkRun } from "./chat-assistant.claude-fork-recovery.js";
 import { cursorAcpTimeoutEvidence } from "./chat-assistant.cursor-diagnostics.js";
 import {
@@ -273,7 +274,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       // using the unprepared config and supersede its native session.
       instructionsRevision: runtimeProfilePreparationFailed && existingRuntimeBinding
         ? existingRuntimeBinding.instructionsRevision
-        : revisionForRuntimeConfig(config, ["apiKey", "authToken", "token", "password"]),
+        : chatBindingInstructionsRevision({
+          runtimeType: runtimeAgentType,
+          config,
+          existingRevision: existingRuntimeBinding?.instructionsRevision,
+        }),
       capabilityRevision,
       parentBindingId: forkSource?.sourceBinding?.id ?? parentRuntimeBinding?.id ?? null,
     };
