@@ -361,7 +361,7 @@ function finiteNonNegativeNumber(value: string | null) {
 
 export type HistoricalRunProfileRun = Pick<
   RunRow,
-  "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
+  "id" | "orgId" | "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
 > & {
   sessionParamsBeforeJson?: Record<string, unknown> | null;
   sessionParamsAfterJson?: Record<string, unknown> | null;
@@ -480,9 +480,15 @@ export function createHistoricalRunRuntimeProviderCapabilityResolver(
 
   return (runtimeType, binding, context) => {
     if (runtimeType.trim() !== profile.agentRuntimeType) return null;
+    const readerInput = context?.readerInput;
+    if (readerInput && (
+      readerInput.orgId !== run.orgId
+      || readerInput.run.id !== run.id
+      || readerInput.run.orgId !== run.orgId
+    )) return null;
     const persistedSessionParams = {
-      ...asRecord(context?.readerInput?.run.sessionParamsBeforeJson),
-      ...asRecord(context?.readerInput?.run.sessionParamsAfterJson),
+      ...asRecord(readerInput?.run.sessionParamsBeforeJson),
+      ...asRecord(readerInput?.run.sessionParamsAfterJson),
     };
     const session = context?.session;
     const enrichedContext = session && Object.keys(persistedSessionParams).length > 0

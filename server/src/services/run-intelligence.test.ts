@@ -6,9 +6,12 @@ import {
   type HistoricalRunConfigRevision,
   type HistoricalRunProfileRun,
 } from "./run-intelligence.js";
+import type { RuntimeProviderCapabilityResolverContext } from "./runtime-kernel/provider-capabilities.js";
 
 function profileRun(overrides: Partial<HistoricalRunProfileRun> = {}): HistoricalRunProfileRun {
   return {
+    id: "run-1",
+    orgId: "org-1",
     agentRuntimeType: "process",
     agentRuntimeConfig: { command: "current-command" },
     runtimeConfig: { heartbeat: { wakeOnDemand: true } },
@@ -426,30 +429,90 @@ describe("run intelligence historical transcript profiles", () => {
 
   it("uses the selected OpenCode Run's config path after a later turn updates the Segment", () => {
     const transport = independentTransport("opencode_local");
-    const exportEnv = { XDG_DATA_HOME: "/tmp/opencode-home/.local/share" };
+    const selectedRunId = "run-old";
+    const laterRunId = "run-later";
+    const operatorHome = "/tmp/opencode-operator-home";
+    const managedHome = "/tmp/opencode-managed-home";
+    const exportEnv = {
+      HOME: operatorHome,
+      USERPROFILE: operatorHome,
+      RUDDER_OPERATOR_HOME: operatorHome,
+      XDG_CONFIG_HOME: `${managedHome}/.config`,
+      XDG_DATA_HOME: `${managedHome}/.local/share`,
+      XDG_CACHE_HOME: `${managedHome}/.cache`,
+    };
+    const selectedExportEnv = {
+      ...exportEnv,
+      OPENCODE_CONFIG: `${managedHome}/runtime-tmp/${selectedRunId}/opencode.json`,
+    };
+    const laterSegmentExportEnv = {
+      ...exportEnv,
+      OPENCODE_CONFIG: `${managedHome}/runtime-tmp/${laterRunId}/opencode.json`,
+    };
     const selectedParams = {
       ...persistedTransport("opencode_local").sessionParams,
       cwd: transport.cwd, directory: transport.cwd, providerVersion: transport.providerVersion,
-      exportEnv: { ...exportEnv, OPENCODE_CONFIG: "/tmp/opencode-home/runtime-tmp/run-old/opencode.json" },
+      exportEnv: selectedExportEnv,
+    };
+    const runContext = { runtimeProviderProfile: {
+      ...buildRuntimeProviderProfileSnapshot("opencode_local", { ...transport, exportEnv }),
+      serverUrl: transport.serverUrl,
+    } };
+    const session = persistedTransport("opencode_local");
+    const readerInput = {
+      orgId: binding.orgId,
+      run: {
+        id: selectedRunId,
+        orgId: binding.orgId,
+        contextSnapshot: runContext,
+        sessionParamsAfterJson: selectedParams,
+      },
+      binding: { id: "binding-1", orgId: binding.orgId },
+      segment: {
+        id: "segment-1",
+        orgId: binding.orgId,
+        bindingId: "binding-1",
+        nativeSessionId: session.sessionId,
+        providerStateJson: { exportEnv: laterSegmentExportEnv },
+      },
+      span: {
+        id: "span-1",
+        orgId: binding.orgId,
+        runId: selectedRunId,
+        bindingId: "binding-1",
+        segmentId: "segment-1",
+      },
+    } as unknown as NonNullable<RuntimeProviderCapabilityResolverContext["readerInput"]>;
+    const context: RuntimeProviderCapabilityResolverContext = {
+      session: {
+        ...session,
+        sessionParams: { ...session.sessionParams, exportEnv: laterSegmentExportEnv },
+      },
+      readerInput,
     };
     const resolver = createHistoricalRunRuntimeProviderCapabilityResolver(profileRun({
-      agentRuntimeType: "opencode_local", agentRuntimeConfig: transport, runtimeConfig: {},
-      contextSnapshot: { runtimeProviderProfile: {
-        ...buildRuntimeProviderProfileSnapshot("opencode_local", { ...transport, exportEnv }),
-        serverUrl: transport.serverUrl,
-      } },
+      id: selectedRunId,
+      orgId: binding.orgId,
+      agentRuntimeType: "opencode_local",
+      agentRuntimeConfig: transport,
+      runtimeConfig: {},
+      contextSnapshot: runContext,
       sessionParamsAfterJson: selectedParams,
     }), []);
-    const session = persistedTransport("opencode_local");
-    const resolution = resolver("opencode_local", binding, {
-      session: { ...session, sessionParams: {
-        ...selectedParams,
-        exportEnv: { ...exportEnv, OPENCODE_CONFIG: "/tmp/opencode-home/runtime-tmp/run-later/opencode.json" },
-      } },
-      readerInput: { run: { id: "run-old", sessionParamsAfterJson: selectedParams } } as any,
-    });
+    const resolution = resolver("opencode_local", binding, context);
     expect(resolution).toMatchObject({ profileResolved: true, adapter: {
       transcript: { evidence: { status: "supported", profileBound: true } },
     } });
+    expect(resolver("opencode_local", binding, {
+      ...context,
+      readerInput: {
+        ...readerInput,
+        run: { ...readerInput.run, id: laterRunId },
+      } as typeof readerInput,
+    })).toBeNull();
+    expect(resolver("opencode_local", binding, {
+      ...context,
+      readerInput: { ...readerInput, orgId: "org-2" } as typeof readerInput,
+    })).toBeNull();
   });
 });
