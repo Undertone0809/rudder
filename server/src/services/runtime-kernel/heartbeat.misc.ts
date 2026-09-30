@@ -609,7 +609,7 @@ export function createHeartbeatMiscHandlers(context: any) {
         skills.push(...inferUsedSkillsFromTranscript(transcript));
         if (!page.nextCursor) {
           const usedSkills = dedupeSkillUses(skills);
-          if (usedSkills.length === 0 && nativeHistoryIncomplete) {
+          if (nativeHistoryIncomplete) {
             throw new Error(`Native transcript history for Run ${runId} is unavailable or incomplete`);
           }
           return usedSkills;

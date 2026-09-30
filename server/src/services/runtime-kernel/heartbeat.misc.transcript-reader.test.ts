@@ -159,7 +159,7 @@ describe("heartbeat skill analytics transcript reader", () => {
     expect(analytics.skills.find((skill: { key: string }) => skill.key === "native-skill")?.count).toBe(1);
   });
 
-  it("does not report zero usage when native transcript history is unavailable", async () => {
+  it.each(["unavailable", "partial_with_observed_skill"])("does not report complete usage for %s native history", async (history) => {
     const orgId = "org-1";
     const date = new Date("2026-04-21T10:00:00.000Z");
     const db = database(new Map<unknown, Record<string, unknown>[]>([
@@ -175,9 +175,11 @@ describe("heartbeat skill analytics transcript reader", () => {
     ]));
     mocks.readRun.mockResolvedValueOnce({
       source: "native",
-      availability: "incompatible",
-      completeness: "unknown",
-      items: [],
+      availability: history === "unavailable" ? "incompatible" : "available",
+      completeness: history === "unavailable" ? "unknown" : "partial",
+      items: history === "unavailable" ? [] : [{
+        ...transcriptItem("native-unavailable-run", "observed-skill"), origin: "native", entry: undefined,
+      }],
       nextCursor: null,
     });
 
