@@ -1,4 +1,4 @@
-import type { AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
+import type { AgentRuntimeControlHandle, AgentRuntimeExecutionContext } from "@rudderhq/agent-runtime-utils";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import os from "node:os";
@@ -123,6 +123,103 @@ async function listen(handler: (req: IncomingMessage, res: ServerResponse) => un
   };
 }
 
+type HermesRunSteerScenario = {
+  advertised?: boolean;
+  steerStatus?: number;
+  steerBody?: Record<string, unknown>;
+  disconnectSteer?: boolean;
+  stopBeforeSteer?: boolean;
+  includeMedia?: boolean;
+};
+
+async function executeRunSteerScenario(options: HermesRunSteerScenario = {}) {
+  let resolveHandle!: (handle: AgentRuntimeControlHandle) => void;
+  let resolveEvents!: (response: ServerResponse) => void;
+  let stopped = false;
+  const handleReady = new Promise<AgentRuntimeControlHandle>((resolve) => { resolveHandle = resolve; });
+  const eventsReady = new Promise<ServerResponse>((resolve) => { resolveEvents = resolve; });
+  const steerBodies: Record<string, unknown>[] = [];
+  const server = await listen(async (req, res) => {
+    if (sessionRoute(req, res)) return;
+    if (req.url === "/v1/capabilities") {
+      return json(res, 200, {
+        features: {
+          runs_idempotency: { supported: true, durable: true, retention_seconds: 86_400 },
+          run_steer: options.advertised === true,
+        },
+        endpoints: options.advertised === true
+          ? { run_steer: { method: "POST", path: "/v1/runs/{run_id}/steer" } }
+          : {},
+      });
+    }
+    if (req.url === "/v1/runs" && req.method === "POST") {
+      await readJsonBody(req);
+      return json(res, 202, { run_id: "hermes-run-steer", status: "started" });
+    }
+    if (req.url === "/v1/runs/hermes-run-steer/events" && req.method === "GET") {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(": connected\n\n");
+      resolveEvents(res);
+      return;
+    }
+    if (req.url === "/v1/runs/hermes-run-steer/stop" && req.method === "POST") {
+      stopped = true;
+      await readJsonBody(req);
+      return json(res, 200, { run_id: "hermes-run-steer", status: "stopped" });
+    }
+    if (req.url === "/v1/runs/hermes-run-steer/steer" && req.method === "POST") {
+      steerBodies.push(await readJsonBody(req));
+      if (options.disconnectSteer) {
+        req.socket.destroy();
+        return;
+      }
+      const status = options.steerStatus ?? (stopped ? 409 : 200);
+      const body = options.steerBody ?? (status >= 400
+        ? { run_id: "hermes-run-steer", accepted: false }
+        : { object: "hermes.run.steer", run_id: "hermes-run-steer", accepted: true });
+      return json(res, status, body);
+    }
+    throw new Error(`unexpected ${req.method} ${req.url}`);
+  });
+
+  const executionPromise = execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
+    context: { chatMode: true, chatConversationId: "chat-hermes-steer", chatPrompt: "initial prompt" },
+    controlAttempt: {
+      attemptEpoch: 1,
+      ownerToken: "owner-hermes-steer",
+      async register(handle) {
+        resolveHandle(handle);
+        return { isCurrent: () => true, release: async () => {} };
+      },
+      async complete() {},
+    },
+  }));
+  const handle = await handleReady;
+  const eventsResponse = await eventsReady;
+  const interruptResult = options.stopBeforeSteer
+    ? await handle.interrupt("operator_stop")
+    : null;
+  const result = await handle.steer({
+    text: "focus on the failing tests",
+    clientMessageId: "chat-steer-message-1",
+    ...(options.includeMedia ? {
+      media: [{
+        source: "chat_attachment" as const,
+        attachmentId: "attachment-1",
+        assetId: "asset-1",
+        name: "screenshot.png",
+        originalFilename: "screenshot.png",
+        contentType: "image/png",
+        byteSize: 10,
+        localPath: "/tmp/screenshot.png",
+      }],
+    } : {}),
+  });
+  eventsResponse?.end(`data: ${JSON.stringify({ event: "run.completed", output: "done" })}\n\n`);
+  const execution = await executionPromise;
+  return { handle, interruptResult, result, execution, requests: server.requests, steerBodies };
+}
+
 afterEach(async () => {
   await Promise.all([
     ...servers.splice(0).map((server) => new Promise<void>((resolve) => {
@@ -148,6 +245,96 @@ describe("Hermes gateway execution", () => {
     expect(result).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_idempotency_unavailable" });
     expect(result.resultJson).toMatchObject({ runSubmission: { supported: true, durable: false, submitted: false } });
     expect(server.requests.map((request) => request.path)).toEqual(["/v1/capabilities"]);
+  });
+
+  it("registers and forwards native steer only when the authenticated gateway advertises its exact endpoint", async () => {
+    const scenario = await executeRunSteerScenario({ advertised: true });
+
+    expect(scenario.handle.capabilities.steer).toBe("native");
+    expect(scenario.result).toEqual({
+      disposition: "accepted_current",
+      providerThreadId: "hermes-session-1",
+      providerTurnId: "hermes-run-steer",
+    });
+    expect(scenario.steerBodies).toEqual([{ input: "focus on the failing tests" }]);
+    expect(scenario.requests.filter((request) => request.path.endsWith("/steer"))).toHaveLength(1);
+    expect(scenario.execution.sessionParams).toMatchObject({ hermesRunSteerAdvertised: true });
+  });
+
+  it("keeps native steer disabled when the gateway does not advertise it", async () => {
+    const scenario = await executeRunSteerScenario({ advertised: false });
+
+    expect(scenario.handle.capabilities.steer).toBe("interrupt_continue");
+    expect(scenario.result).toMatchObject({ disposition: "unsupported" });
+    expect(scenario.steerBodies).toEqual([]);
+    expect(scenario.execution.sessionParams).toMatchObject({ hermesRunSteerAdvertised: false });
+  });
+
+  it("treats a post-Stop 409 as an explicit rejection, not an accepted steer", async () => {
+    const scenario = await executeRunSteerScenario({ advertised: true, stopBeforeSteer: true });
+
+    expect(scenario.interruptResult).toBe("acknowledged");
+    expect(scenario.result).toMatchObject({
+      disposition: "rejected",
+      reason: expect.stringContaining("HTTP 409"),
+    });
+    expect(scenario.steerBodies).toEqual([{ input: "focus on the failing tests" }]);
+    expect(scenario.requests.filter((request) => request.path.endsWith("/steer"))).toHaveLength(1);
+  });
+
+  it("does not report a mismatched steer acknowledgement as accepted", async () => {
+    const scenario = await executeRunSteerScenario({
+      advertised: true,
+      steerBody: { object: "hermes.run.steer", run_id: "another-run", accepted: true },
+    });
+
+    expect(scenario.result).toMatchObject({
+      disposition: "acceptance_unknown",
+      providerTurnId: "hermes-run-steer",
+    });
+    expect(scenario.requests.filter((request) => request.path.endsWith("/steer"))).toHaveLength(1);
+  });
+
+  it("does not resend a steer whose transport response is lost", async () => {
+    const scenario = await executeRunSteerScenario({ advertised: true, disconnectSteer: true });
+
+    expect(scenario.result).toMatchObject({
+      disposition: "acceptance_unknown",
+      reason: expect.stringContaining("do not resend automatically"),
+    });
+    expect(scenario.steerBodies).toEqual([{ input: "focus on the failing tests" }]);
+    expect(scenario.requests.filter((request) => request.path.endsWith("/steer"))).toHaveLength(1);
+  });
+
+  it.each([400, 409])("keeps HTTP %s steer rejection explicit", async (status) => {
+    const scenario = await executeRunSteerScenario({ advertised: true, steerStatus: status });
+
+    expect(scenario.result).toMatchObject({
+      disposition: "rejected",
+      reason: expect.stringContaining(`HTTP ${status}`),
+    });
+    expect(scenario.requests.filter((request) => request.path.endsWith("/steer"))).toHaveLength(1);
+  });
+
+  it("preserves an explicit negative acknowledgement as a provider rejection", async () => {
+    const scenario = await executeRunSteerScenario({
+      advertised: true,
+      steerBody: { object: "hermes.run.steer", run_id: "hermes-run-steer", accepted: false },
+    });
+
+    expect(scenario.result).toMatchObject({
+      disposition: "rejected",
+      providerTurnId: "hermes-run-steer",
+      reason: expect.stringContaining("explicitly declined"),
+    });
+    expect(scenario.requests.filter((request) => request.path.endsWith("/steer"))).toHaveLength(1);
+  });
+
+  it("does not silently drop media that the steer endpoint cannot accept", async () => {
+    const scenario = await executeRunSteerScenario({ advertised: true, includeMedia: true });
+
+    expect(scenario.result).toMatchObject({ disposition: "unsupported", reason: expect.stringContaining("text only") });
+    expect(scenario.steerBodies).toEqual([]);
   });
 
   it("uses the formal Idempotency-Key header and replays the original run for the same payload", async () => {

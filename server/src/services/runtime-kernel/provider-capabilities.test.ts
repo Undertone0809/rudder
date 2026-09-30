@@ -68,6 +68,70 @@ describe("provider capability package contract", () => {
     })).not.toMatchObject(acpResolution);
   });
 
+  it("routes only an advertised Hermes HTTP steer through RuntimeDriver.control", async () => {
+    const hermesBinding = { hostId: "local", profileId: "hermes-http-profile" };
+    const runSession = (advertised: boolean) => ({
+      sessionId: "hermes-run-session",
+      sessionDisplayId: "hermes-run-session",
+      sessionParams: {
+        sessionId: "hermes-run-session",
+        hermesSessionId: "hermes-run-session",
+        hermesTransport: "hermes-http-sse",
+        profileHostId: hermesBinding.hostId,
+        profileId: hermesBinding.profileId,
+        hermesRunSteerAdvertised: advertised,
+      },
+    });
+    const runtimeConfig = {
+      gatewayUrl: "http://127.0.0.1:43123",
+      apiKey: "hermes-test-key",
+      providerVersion: "0.21.0",
+    };
+    const advertisedResolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+      runtimeType: "hermes_gateway",
+      runtimeConfig,
+    });
+    const handle = {
+      runtimeType: "hermes_gateway",
+      providerThreadId: "hermes-run-session",
+      providerTurnId: "hermes-run-1",
+      capabilities: { steer: "native" as const, interrupt: "remote" as const },
+      steer: vi.fn().mockResolvedValue({
+        disposition: "accepted_current" as const,
+        providerThreadId: "hermes-run-session",
+        providerTurnId: "hermes-run-1",
+      }),
+      interrupt: vi.fn().mockResolvedValue("acknowledged" as const),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    } satisfies AgentRuntimeControlHandle;
+    const advertisedDriver = createRuntimeDriver("hermes_gateway", {
+      providerBinding: hermesBinding,
+      providerCapabilityResolver: advertisedResolver,
+    });
+
+    await expect(advertisedDriver.control(handle, {
+      kind: "steer",
+      input: { text: "continue", clientMessageId: "message-hermes-1" },
+    }, { session: runSession(true), binding: hermesBinding })).resolves.toMatchObject({
+      status: "supported",
+      value: { disposition: "accepted_current", providerTurnId: "hermes-run-1" },
+    });
+    expect(handle.steer).toHaveBeenCalledOnce();
+
+    const unadvertisedDriver = createRuntimeDriver("hermes_gateway", {
+      providerBinding: hermesBinding,
+      providerCapabilityResolver: advertisedResolver,
+    });
+    await expect(unadvertisedDriver.control(handle, {
+      kind: "steer",
+      input: { text: "continue", clientMessageId: "message-hermes-2" },
+    }, { session: runSession(false), binding: hermesBinding })).resolves.toMatchObject({
+      status: "unsupported",
+      capability: "control",
+    });
+    expect(handle.steer).toHaveBeenCalledOnce();
+  });
+
   it("keeps the Codex resolver and bound adapter assignable to server contracts", () => {
     const packageResolver: RuntimeProviderAdapterResolver = createCodexLocalProviderCapabilityResolver(
       () => profile,

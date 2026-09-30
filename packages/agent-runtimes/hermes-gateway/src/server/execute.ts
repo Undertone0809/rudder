@@ -565,6 +565,15 @@ function hermesChatBackend(
   return null;
 }
 
+function advertisesHermesRunSteer(capabilities: Record<string, unknown>): boolean {
+  const features = asRecord(capabilities.features);
+  const endpoints = asRecord(capabilities.endpoints);
+  const steer = asRecord(endpoints?.run_steer);
+  return features?.run_steer === true
+    && steer?.method === "POST"
+    && steer.path === "/v1/runs/{run_id}/steer";
+}
+
 function hermesAcpBinding(profileIdentity: ReturnType<typeof providerProfileIdentity>): HermesAcpBinding {
   return {
     hostId: profileIdentity.hostId,
@@ -1007,6 +1016,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     };
   }
   let idempotencyRetentionSeconds = 0;
+  let nativeRunSteerAdvertised = false;
   try {
     const capabilities = await requestJson(endpoint(base, "/v1/capabilities"), config, {}, requestTimeout);
     const features = asRecord(capabilities.body.features);
@@ -1035,6 +1045,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       };
     }
     idempotencyRetentionSeconds = retentionSeconds;
+    nativeRunSteerAdvertised = capabilities.response.ok && advertisesHermesRunSteer(capabilities.body);
   } catch (error) {
     return {
       exitCode: 1,
@@ -1080,6 +1091,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ...(profileIdentity.profileOrgId ? { profileOrgId: profileIdentity.profileOrgId } : {}),
     ...(profileIdentity.workspaceBindingId ? { workspaceBindingId: profileIdentity.workspaceBindingId } : {}),
     ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+    hermesRunSteerAdvertised: nativeRunSteerAdvertised,
     ...(continuityIdentity ? { rudderContinuityIdentity: continuityIdentity.bindingDigest } : {}),
     ...(workspace.cwd ? { cwd: workspace.cwd } : {}),
     ...(workspace.workspaceId ? { workspaceId: workspace.workspaceId } : {}),
@@ -1241,6 +1253,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       },
     };
   }
+  const activeUpstreamRunId = upstreamRunId;
   await ctx.onLog("stdout", `[hermes-gateway] run accepted upstreamRunId=${upstreamRunId}\n`);
 
   let controlLease: { release(): Promise<void> } | null = null;
@@ -1248,10 +1261,85 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     controlLease = await ctx.controlAttempt.register({
       runtimeType: "hermes_gateway",
       providerThreadId: session.providerSessionId,
-      providerTurnId: upstreamRunId,
-      capabilities: { steer: "interrupt_continue", interrupt: "remote" },
-      async steer() {
-        return { disposition: "unsupported", reason: "Hermes Runs does not expose native steer." };
+      providerTurnId: activeUpstreamRunId,
+      capabilities: { steer: nativeRunSteerAdvertised ? "native" : "interrupt_continue", interrupt: "remote" },
+      async steer(steerInput) {
+        if (!nativeRunSteerAdvertised) {
+          return { disposition: "unsupported", reason: "Hermes API Server did not advertise native run steer." };
+        }
+        if (steerInput.media?.length) {
+          return { disposition: "unsupported", reason: "Hermes API Server run steer accepts text only; media was not sent through the native steer endpoint." };
+        }
+        try {
+          const steered = await requestJson(
+            endpoint(base, `/v1/runs/${encodeURIComponent(activeUpstreamRunId)}/steer`),
+            config,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ input: steerInput.text }),
+            },
+            requestTimeout,
+          );
+          if (steered.response.status === 400 || steered.response.status === 409) {
+            return {
+              disposition: "rejected",
+              providerThreadId: session.providerSessionId,
+              providerTurnId: activeUpstreamRunId,
+              reason: `Hermes API Server explicitly rejected active-run steer (HTTP ${steered.response.status}).`,
+            };
+          }
+          if (!steered.response.ok) {
+            return steered.response.status >= 500
+              ? {
+                disposition: "acceptance_unknown",
+                providerThreadId: session.providerSessionId,
+                providerTurnId: activeUpstreamRunId,
+                reason: `Hermes API Server steer acceptance is unknown after HTTP ${steered.response.status}.`,
+              }
+              : {
+                disposition: "rejected",
+                providerThreadId: session.providerSessionId,
+                providerTurnId: activeUpstreamRunId,
+                reason: `Hermes API Server rejected active-run steer (HTTP ${steered.response.status}).`,
+              };
+          }
+          if (steered.body.run_id !== activeUpstreamRunId) {
+            return {
+              disposition: "acceptance_unknown",
+              providerThreadId: session.providerSessionId,
+              providerTurnId: activeUpstreamRunId,
+              reason: "Hermes API Server steer acknowledgement did not match the active run.",
+            };
+          }
+          if (steered.body.accepted !== true) {
+            return steered.body.accepted === false
+              ? {
+                disposition: "rejected",
+                providerThreadId: session.providerSessionId,
+                providerTurnId: activeUpstreamRunId,
+                reason: "Hermes API Server explicitly declined active-run steer.",
+              }
+              : {
+                disposition: "acceptance_unknown",
+                providerThreadId: session.providerSessionId,
+                providerTurnId: activeUpstreamRunId,
+                reason: "Hermes API Server steer acknowledgement was incomplete.",
+              };
+          }
+          return {
+            disposition: "accepted_current",
+            providerThreadId: session.providerSessionId,
+            providerTurnId: activeUpstreamRunId,
+          };
+        } catch {
+          return {
+            disposition: "acceptance_unknown",
+            providerThreadId: session.providerSessionId,
+            providerTurnId: activeUpstreamRunId,
+            reason: "Hermes API Server steer response was lost; do not resend automatically.",
+          };
+        }
       },
       async interrupt() {
         return (await stopUpstream()) ? "acknowledged" : "unverified";

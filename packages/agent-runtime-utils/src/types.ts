@@ -311,6 +311,12 @@ export type AgentRuntimeControlSteerResult =
       reason: string;
     }
   | {
+      disposition: "rejected";
+      providerThreadId?: string | null;
+      providerTurnId?: string | null;
+      reason: string;
+    }
+  | {
       disposition: "closing" | "unsupported";
       reason?: string | null;
     };

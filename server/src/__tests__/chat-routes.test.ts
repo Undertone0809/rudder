@@ -5094,6 +5094,135 @@ describe("chat routes", { retry: 2 }, () => {
     }
   });
 
+  it("keeps an explicit provider rejection actionable without interrupting or scheduling continuation", async () => {
+    const conversation = createConversation();
+    const generationId = "10000000-0000-4000-8000-000000000001";
+    const controlActionId = "20000000-0000-4000-8000-000000000002";
+    const item = {
+      id: "queued-1",
+      orgId: conversation.orgId,
+      conversationId: conversation.id,
+      position: 1,
+      status: "steer_pending",
+      version: 2,
+      clientMutationId: "provider-rejected-active-steer",
+      payload: { body: "Please focus on the failing tests" },
+      deliveryIntent: "steer",
+      deliveryDisposition: "pending",
+      controlActionId,
+      expectedGenerationId: generationId,
+      activeGenerationId: generationId,
+      attemptEpoch: 1,
+      providerClientMessageId: controlActionId,
+      providerThreadId: null,
+      providerTurnId: null,
+      providerEvidence: null,
+      continuationGenerationId: null,
+      continuationMessageId: null,
+      deliveryLeaseToken: null,
+      deliveryLeaseEpoch: 0,
+      deliveryLeaseOwner: null,
+      deliveryLeaseExpiresAt: null,
+      reconciliationReason: null,
+      deliveryAttempts: 1,
+      lastAttemptAt: new Date(),
+      lastDeliveryReason: null,
+      sourceMessageId: null,
+      deliveredMessageId: null,
+      cancelledAt: null,
+      steeredAt: null,
+      dequeuedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const action = {
+      id: controlActionId,
+      localDisposition: "pending",
+      providerClientMessageId: controlActionId,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.getQueueSnapshot.mockResolvedValue({
+      activeGenerationId: generationId,
+      activeAttemptEpoch: 1,
+      activeControlVersion: 0,
+      activeGenerationStatus: "running",
+      items: [item],
+    });
+    mockChatService.beginSteerControlAction.mockResolvedValue({
+      action,
+      item,
+      generation: { id: generationId, attemptEpoch: 1, controlVersion: 1 },
+      idempotent: false,
+    });
+    mockChatService.claimSteerProviderSend.mockResolvedValue(action);
+    mockChatService.resolveSteerControlAction.mockImplementation(async (input) => ({
+      action: { ...action, localDisposition: input.disposition },
+      item: {
+        ...item,
+        status: input.status,
+        deliveryDisposition: input.disposition,
+        providerThreadId: input.providerThreadId ?? null,
+        providerTurnId: input.providerTurnId ?? null,
+        version: 3,
+      },
+    }));
+
+    const release = claimChatGeneration(conversation.id, new AbortController(), generationId);
+    const attempt = await createChatRuntimeControlCoordinator(conversation.id, generationId).beginAttempt({
+      attemptIndex: 0,
+      runtimeType: "hermes_gateway",
+      model: "hermes-native",
+      isFallback: false,
+    });
+    const interrupt = vi.fn(async () => "acknowledged" as const);
+    const steer = vi.fn(async () => ({
+      disposition: "rejected" as const,
+      providerThreadId: "hermes-session-1",
+      providerTurnId: "hermes-run-1",
+      reason: "Hermes API Server explicitly rejected active-run steer (HTTP 409).",
+    }));
+    await attempt.register({
+      runtimeType: "hermes_gateway",
+      providerThreadId: "hermes-session-1",
+      providerTurnId: "hermes-run-1",
+      capabilities: { steer: "native", interrupt: "remote" },
+      steer,
+      interrupt,
+      dispose: vi.fn(async () => undefined),
+    });
+
+    try {
+      const response = await request(createApp())
+        .post("/api/chats/chat-1/queue/queued-1/steer")
+        .send({
+          expectedActiveGenerationId: generationId,
+          controlActionId,
+          expectedAttemptEpoch: 1,
+          expectedControlVersion: 0,
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        result: "failed_actionable",
+        disposition: "failed_actionable",
+        controlActionId,
+        item: { id: "queued-1", status: "failed_actionable" },
+      });
+      expect(mockChatService.resolveSteerControlAction).toHaveBeenCalledWith(expect.objectContaining({
+        status: "failed_actionable",
+        disposition: "failed_actionable",
+        providerDisposition: "rejected",
+        providerThreadId: "hermes-session-1",
+        providerTurnId: "hermes-run-1",
+      }));
+      expect(interrupt).not.toHaveBeenCalled();
+      expect(mockChatSteerMessages.scheduleContinuation).not.toHaveBeenCalled();
+      expect(mockChatService.markQueuedMessageSteerFallback).not.toHaveBeenCalled();
+    } finally {
+      release?.();
+    }
+  });
+
   it("freezes and interrupts before scheduling feedback for a runtime without native Steer", async () => {
     const conversation = createConversation();
     const generationId = "10000000-0000-4000-8000-000000000001";

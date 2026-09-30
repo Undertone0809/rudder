@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createHermesAcpProviderCapabilities,
@@ -736,6 +737,102 @@ describe("Hermes profile-bound native capabilities", () => {
     expect(resolver("hermes_gateway", binding)?.transcript.readRange).toBeTypeOf("function");
     expect(resolver("hermes_gateway", null)?.transcript.evidence.status).toBe("unknown");
     expect(resolver("cursor", binding)).toBeNull();
+  });
+
+  it("routes only an advertised HTTP run steer through the profile-bound live handle", async () => {
+    const session = request().session;
+    session.sessionParams.hermesRunSteerAdvertised = true;
+    const resolver = createHermesGatewayProviderCapabilityResolver(() => profile(async () => new Response("{}", { status: 200 })));
+    const adapter = resolver("hermes_gateway", binding, { session });
+    const handle: AgentRuntimeControlHandle = {
+      runtimeType: "hermes_gateway",
+      providerThreadId: session.sessionId,
+      providerTurnId: "hermes-run-1",
+      capabilities: { steer: "native", interrupt: "remote" },
+      steer: vi.fn().mockResolvedValue({
+        disposition: "accepted_current",
+        providerThreadId: session.sessionId,
+        providerTurnId: "hermes-run-1",
+      }),
+      interrupt: vi.fn().mockResolvedValue("acknowledged"),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+
+    expect(adapter?.control.steer).toMatchObject({
+      mode: "native",
+      requiresHandle: true,
+      evidence: { status: "supported", profileBound: true, transport: "hermes-http-sse" },
+    });
+    await expect(adapter?.control.steer.execute?.({
+      runtimeType: "hermes_gateway",
+      handle,
+      operation: { kind: "steer", input: { text: "continue", clientMessageId: "message-1" } },
+      session,
+      binding,
+    })).resolves.toMatchObject({ disposition: "accepted_current", providerTurnId: "hermes-run-1" });
+    expect(handle.steer).toHaveBeenCalledOnce();
+  });
+
+  it.each(["runtimeType", "missingThread", "mismatchedThread"] as const)(
+    "does not forward an advertised run steer when the live handle has a mismatched %s",
+    async (mismatch) => {
+      const session = request().session;
+      session.sessionParams.hermesRunSteerAdvertised = true;
+      const resolver = createHermesGatewayProviderCapabilityResolver(() => profile(async () => new Response("{}", { status: 200 })));
+      const adapter = resolver("hermes_gateway", binding, { session });
+      const steer = vi.fn();
+      const handle: AgentRuntimeControlHandle = {
+        runtimeType: mismatch === "runtimeType" ? "cursor" : "hermes_gateway",
+        providerThreadId: mismatch === "missingThread"
+          ? null
+          : mismatch === "mismatchedThread"
+            ? "another-hermes-session"
+            : session.sessionId,
+        providerTurnId: "hermes-run-1",
+        capabilities: { steer: "native", interrupt: "remote" },
+        steer,
+        interrupt: vi.fn().mockResolvedValue("acknowledged"),
+        dispose: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await expect(adapter?.control.steer.execute?.({
+        runtimeType: "hermes_gateway",
+        handle,
+        operation: { kind: "steer", input: { text: "continue", clientMessageId: "message-1" } },
+        session,
+        binding,
+      })).resolves.toMatchObject({
+        disposition: "acceptance_unknown",
+        reason: expect.stringContaining("was not forwarded"),
+      });
+      expect(steer).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a non-advertised HTTP run steer unsupported and does not call its handle", async () => {
+    const session = request().session;
+    session.sessionParams.hermesRunSteerAdvertised = false;
+    const resolver = createHermesGatewayProviderCapabilityResolver(() => profile(async () => new Response("{}", { status: 200 })));
+    const adapter = resolver("hermes_gateway", binding, { session });
+    const handle: AgentRuntimeControlHandle = {
+      runtimeType: "hermes_gateway",
+      providerThreadId: session.sessionId,
+      providerTurnId: "hermes-run-1",
+      capabilities: { steer: "interrupt_continue", interrupt: "remote" },
+      steer: vi.fn(),
+      interrupt: vi.fn().mockResolvedValue("acknowledged"),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+
+    expect(adapter?.control.steer.evidence).toMatchObject({ status: "unsupported", profileBound: true });
+    await expect(adapter?.control.steer.execute?.({
+      runtimeType: "hermes_gateway",
+      handle,
+      operation: { kind: "steer", input: { text: "continue", clientMessageId: "message-1" } },
+      session,
+      binding,
+    })).resolves.toMatchObject({ disposition: "unsupported" });
+    expect(handle.steer).not.toHaveBeenCalled();
   });
 });
 

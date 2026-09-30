@@ -518,7 +518,10 @@ function profileResolvers(config: RuntimeProviderProfileConfig): Record<string, 
 
   const hermes: RuntimeProviderAdapterResolver = (_runtimeType, binding, context) => {
     if (!binding) return null;
-    const transport = firstString(context?.session?.sessionParams?.transport);
+    const transport = firstString(
+      context?.session?.sessionParams?.hermesTransport,
+      context?.session?.sessionParams?.transport,
+    );
     // Historical HTTP sessions retain their original reader. New Chat bindings
     // resolve the same ACP profile that execute uses, without an opt-in flag.
     if (transport === "hermes-acp-stdio" || transport === HERMES_PRODUCT_RPC_TRANSPORT || (!transport && !historical)) {
@@ -567,7 +570,7 @@ function profileResolvers(config: RuntimeProviderProfileConfig): Record<string, 
       ...(apiKey ? { apiKey } : {}),
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
     };
-    return createHermesGatewayProviderCapabilityResolver(() => profile)(_runtimeType, binding);
+    return createHermesGatewayProviderCapabilityResolver(() => profile)(_runtimeType, binding, context);
   };
 
   const openCode: RuntimeProviderAdapterResolver = (_runtimeType, binding, context) => {

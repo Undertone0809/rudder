@@ -128,6 +128,10 @@ export type HermesGatewayProfileTransportResolver = (
   binding: HermesProviderBindingRef,
 ) => HermesGatewayProfileTransport | null | undefined;
 
+export type HermesProviderCapabilityResolverContext = {
+  session?: HermesProviderSessionRef | null;
+};
+
 type HermesRecord = Record<string, unknown>;
 const HERMES_NATIVE_TRANSPORT = "hermes-http-sse";
 const HERMES_ACP_VERIFIED_VERSIONS = ["0.21.0"] as const;
@@ -1070,6 +1074,68 @@ function unsupportedNativeEvidence(
   };
 }
 
+function hermesRunSteerEvidence(
+  profile: HermesGatewayProfileTransport,
+  advertised: boolean | undefined,
+): HermesCapabilityEvidence {
+  const base = profileBaseUrl(profile);
+  const profileBound = Boolean(base && profile.binding.hostId.trim() && profile.binding.profileId.trim());
+  const authenticated = hasBearerAuth({ apiKey: profile.apiKey, headers: profile.headers });
+  const common = {
+    providerVersion: profile.providerVersion || null,
+    transport: HERMES_NATIVE_TRANSPORT,
+    profileBound,
+    profileRequired: true,
+  };
+  if (!profileBound || !authenticated) {
+    return {
+      ...common,
+      status: "unknown",
+      reason: !profileBound
+        ? "Hermes native run steer requires a bound loopback gateway profile."
+        : "Hermes native run steer requires the profile's explicit Bearer API credential.",
+    };
+  }
+  if (advertised === true) {
+    return {
+      ...common,
+      status: "supported",
+      reason: `Hermes API Server profile ${profile.binding.hostId}/${profile.binding.profileId} advertised POST /v1/runs/{run_id}/steer for this session.`,
+    };
+  }
+  if (advertised === false) {
+    return {
+      ...common,
+      status: "unsupported",
+      reason: "Hermes API Server did not advertise run_steer for this session.",
+    };
+  }
+  return {
+    ...common,
+    status: "unknown",
+    reason: "Hermes native run steer requires the active session's authenticated /v1/capabilities advertisement.",
+  };
+}
+
+function advertisedRunSteerForSession(
+  profile: HermesGatewayProfileTransport,
+  session: HermesProviderSessionRef | null | undefined,
+): boolean | undefined {
+  if (!session) return undefined;
+  const params = session.sessionParams;
+  if (
+    stringValue(params.hermesTransport) !== HERMES_NATIVE_TRANSPORT
+    || stringValue(params.hermesSessionId ?? params.sessionId) !== session.sessionId
+    || stringValue(params.profileHostId ?? params.providerHostId ?? params.hostId) !== profile.binding.hostId
+    || stringValue(params.profileId ?? params.providerProfileId) !== profile.binding.profileId
+    || (profile.binding.capabilityRevision
+      && stringValue(params.capabilityRevision) !== profile.binding.capabilityRevision)
+  ) return undefined;
+  return typeof params.hermesRunSteerAdvertised === "boolean"
+    ? params.hermesRunSteerAdvertised
+    : undefined;
+}
+
 type ProviderControlOperation =
   | { kind: "steer"; input: AgentRuntimeControlSteerInput }
   | { kind: "interrupt"; reason: AgentRuntimeControlInterruptReason };
@@ -1082,13 +1148,29 @@ type ProviderControlRequest = {
 };
 
 async function forwardLiveSteer(input: ProviderControlRequest): Promise<AgentRuntimeControlSteerResult> {
-  if (!input.handle || input.operation.kind !== "steer") {
+  const handle = input.handle;
+  const session = input.session;
+  const expectedThreadId = session
+    ? stringValue(session.sessionParams.hermesSessionId ?? session.sessionParams.sessionId)
+    : null;
+  if (
+    !handle
+    || input.operation.kind !== "steer"
+    || input.runtimeType !== "hermes_gateway"
+    || handle.runtimeType !== input.runtimeType
+    || handle.capabilities.steer !== "native"
+    || !session
+    || !expectedThreadId
+    || expectedThreadId !== session.sessionId
+    || stringValue(handle.providerThreadId) !== expectedThreadId
+    || !stringValue(handle.providerTurnId)
+  ) {
     return {
       disposition: "acceptance_unknown",
-      reason: "Hermes Gateway steer requires the live run handle registered for the active run.",
+      reason: "Hermes Gateway steer was not forwarded because the live handle identity did not match the active native run.",
     };
   }
-  return input.handle.steer(input.operation.input);
+  return handle.steer(input.operation.input);
 }
 
 async function forwardLiveInterrupt(input: ProviderControlRequest): Promise<AgentRuntimeControlInterruptResult> {
@@ -1219,11 +1301,33 @@ function unknownCapabilities(reason: string): HermesRuntimeProviderCapabilityAda
   };
 }
 
-function boundCapabilities(profile: HermesGatewayProfileTransport): HermesRuntimeProviderCapabilityAdapter {
+function boundCapabilities(
+  profile: HermesGatewayProfileTransport,
+  runSteerAdvertised?: boolean,
+): HermesRuntimeProviderCapabilityAdapter {
   const evidence = profileEvidence(profile);
   const transcriptEvidence = historyProfileFieldsPresent(profile)
     ? historyProfileEvidence(profile)
     : evidence;
+  const executeSteer = async (input: ProviderControlRequest): Promise<AgentRuntimeControlSteerResult> => {
+    if (runSteerAdvertised === false) {
+      return { disposition: "unsupported", reason: "Hermes API Server did not advertise run_steer for this session." };
+    }
+    const session = input.session;
+    if (
+      runSteerAdvertised !== true
+      || !session
+      || !input.binding
+      || !bindingMatches(input.binding, profile)
+      || advertisedRunSteerForSession(profile, session) !== true
+    ) {
+      return {
+        disposition: "acceptance_unknown",
+        reason: "Hermes native run steer requires the matching advertised session and live run handle.",
+      };
+    }
+    return forwardLiveSteer(input);
+  };
   return {
     runtimeType: "hermes_gateway",
     sessionResume: { evidence },
@@ -1241,7 +1345,10 @@ function boundCapabilities(profile: HermesGatewayProfileTransport): HermesRuntim
     fork: { evidence: unsupportedNativeEvidence(profile, "boundary fork") },
     control: {
       steer: {
-        evidence: unsupportedNativeEvidence(profile, "steer"),
+        evidence: hermesRunSteerEvidence(profile, runSteerAdvertised),
+        mode: "native",
+        requiresHandle: true,
+        execute: executeSteer,
       },
       interrupt: {
         evidence,
@@ -1261,8 +1368,12 @@ export function createHermesGatewayProviderCapabilities(
 
 export function createHermesGatewayProviderCapabilityResolver(
   resolveProfile: HermesGatewayProfileTransportResolver | null | undefined,
-): (runtimeType: string, binding?: HermesProviderBindingRef | null) => HermesRuntimeProviderCapabilityAdapter | null {
-  return (runtimeType, binding) => {
+): (
+  runtimeType: string,
+  binding?: HermesProviderBindingRef | null,
+  context?: HermesProviderCapabilityResolverContext,
+) => HermesRuntimeProviderCapabilityAdapter | null {
+  return (runtimeType, binding, context) => {
     if (runtimeType !== "hermes_gateway") return null;
     if (!binding?.hostId?.trim() || !binding.profileId?.trim()) {
       return unknownCapabilities("Hermes native history and remote control require an explicit host/profile binding.");
@@ -1282,7 +1393,7 @@ export function createHermesGatewayProviderCapabilityResolver(
       mismatch.fork.evidence = { ...mismatch.fork.evidence, status: "unsupported", reason };
       return mismatch;
     }
-    return boundCapabilities(profile);
+    return boundCapabilities(profile, advertisedRunSteerForSession(profile, context?.session));
   };
 }
 

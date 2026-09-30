@@ -3113,6 +3113,23 @@ export function chatRoutes(
           ownerChangedAfterSend: runtimeResult.ownerChangedAfterSend === true,
         },
       });
+    } else if (runtimeResult.status === "provider_rejected") {
+      resolution = await svc.resolveSteerControlAction({
+        orgId: conversation.orgId,
+        conversationId: conversation.id,
+        itemId: started.item.id,
+        controlActionId: durableControlActionId,
+        status: "failed_actionable",
+        disposition: "failed_actionable",
+        providerDisposition: "rejected",
+        providerThreadId: runtimeResult.providerThreadId,
+        providerTurnId: runtimeResult.providerTurnId,
+        providerEvidence: {
+          attemptEpoch: runtimeResult.attemptEpoch,
+          ownerChangedAfterSend: runtimeResult.ownerChangedAfterSend === true,
+        },
+        reason: runtimeResult.reason,
+      });
     } else if (runtimeResult.status === "continuation_required") {
       const cutoff = await svc.generationProtocol.beginSteerFallbackCutoff({
         orgId: conversation.orgId,
