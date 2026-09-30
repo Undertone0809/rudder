@@ -126,7 +126,7 @@ function foundationResponseProxySource(
     `const native = spawn(${JSON.stringify(nativeBinaryPath)}, [], { stdio: ["ignore", "pipe", "inherit"], env: process.env });`,
     `native.once("spawn", () => fs.writeFileSync(${JSON.stringify(nativePidMarkerPath)}, String(native.pid)));`,
     "let proxy = null;",
-    "let droppedHydrationResponse = false;",
+    `let droppedHydrationResponse = fs.existsSync(${JSON.stringify(lostResponseMarkerPath)});`,
     "let shuttingDown = false;",
     "const lines = createInterface({ input: native.stdout });",
     "lines.once(\"line\", (line) => {",
