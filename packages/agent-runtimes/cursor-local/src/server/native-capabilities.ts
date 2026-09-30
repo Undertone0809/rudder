@@ -27,6 +27,20 @@ export type CursorCapabilityEvidence = {
   profileRequired?: boolean;
 };
 
+export type CursorFeatureEvidence = {
+  mcp: {
+    project: CursorCapabilityEvidence;
+    user: CursorCapabilityEvidence;
+    team: CursorCapabilityEvidence;
+  };
+  modes: CursorCapabilityEvidence;
+  notifications: {
+    task: CursorCapabilityEvidence;
+    plan: CursorCapabilityEvidence;
+    image: CursorCapabilityEvidence;
+  };
+};
+
 export type CursorProviderBindingRef = {
   id?: string | null;
   orgId?: string | null;
@@ -1575,7 +1589,7 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
       const method = stringValue(message.method);
       if (method !== "session/update") {
         if (!promptActive || !method?.startsWith("cursor/")) return;
-        const event = redactProviderValue({ jsonrpc: "2.0", method, params: message.params }, profileSecrets(input.profile));
+        const event = redactProviderValue(message, profileSecrets(input.profile));
         logWrites = logWrites.then(() => input.onLog("stdout", `${JSON.stringify(event)}\n`))
           .catch((error) => { logFailure = error; client?.close(); });
         return;
@@ -1589,7 +1603,9 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
       }
       updates.push(update);
       if (promptActive) {
-        const event = redactProviderValue({ jsonrpc: "2.0", method: "session/update", params }, profileSecrets(input.profile));
+        // Preserve provider notifications for the host's Run-scoped transcript
+        // supplement; it assigns occurrence identity without inventing ACP IDs.
+        const event = redactProviderValue(message, profileSecrets(input.profile));
         logWrites = logWrites.then(() => input.onLog("stdout", `${JSON.stringify(event)}\n`))
           .catch((error) => { logFailure = error; client?.close(); });
       }
@@ -1790,12 +1806,6 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
         : completed
           ? null
           : "Cursor ACP Run attempt lost ownership before prompt completion.";
-    await input.onLog(completed ? "stdout" : "stderr", `[rudder] Cursor native chat ${completed ? "completed" : "failed"} ${JSON.stringify({
-      sessionId: activeSessionId,
-      updateCount: updates.length,
-      executionRef: promptBoundary.executionRef,
-      nativeRangeRef: promptBoundary.nativeRangeRef,
-    })}\n`);
     return {
       exitCode: completed ? 0 : 1,
       signal: null,
@@ -1831,7 +1841,6 @@ export async function executeCursorNativeChat(input: CursorNativeChatRequest): P
     };
   } catch (error) {
     const normalized = normalizeRpcFailure(error, requestedSessionId ? "session/load" : "chat", profileSecrets(input.profile));
-    await input.onLog("stderr", `[rudder] Cursor native chat failed ${JSON.stringify({ kind: normalized.kind, error: normalized.message })}\n`);
     const timedOut = error instanceof CursorAcpTimeoutError;
     const requestTrace = client?.requestTrace ?? [];
     const timedOutRequest = timedOut ? requestTrace.findLast((request) => request.status === "timed_out") : null;
@@ -1980,6 +1989,7 @@ async function readProfileSession(
 
 export interface CursorRuntimeProviderCapabilityAdapter {
   runtimeType: "cursor";
+  features: CursorFeatureEvidence;
   sessionResume: { evidence: CursorCapabilityEvidence };
   input: { evidence: CursorCapabilityEvidence };
   contextHandoff: { evidence: CursorCapabilityEvidence };
@@ -2038,8 +2048,79 @@ const staticForkEvidence: CursorCapabilityEvidence = {
   profileRequired: true,
 };
 
+function featureEvidence(
+  status: CursorCapabilityStatus,
+  reason: string,
+  profileBound: boolean,
+  providerVersion?: string | null,
+): CursorCapabilityEvidence {
+  return {
+    status,
+    reason,
+    providerVersion: providerVersion ?? null,
+    transport: CURSOR_NATIVE_TRANSPORT,
+    profileBound,
+    profileRequired: true,
+  };
+}
+
+function staticFeatureEvidence(reason: string): CursorFeatureEvidence {
+  const unknown = (feature: string) => featureEvidence(
+    "unknown",
+    `${reason} Cursor ${feature} support is not bound to a profile.`,
+    false,
+  );
+  return {
+    mcp: {
+      project: unknown("project MCP"),
+      user: unknown("user MCP"),
+      team: featureEvidence(
+        "unsupported",
+        "Cursor ACP does not support team-level MCP servers configured through the Cursor dashboard.",
+        false,
+      ),
+    },
+    modes: unknown("agent, plan, and ask modes"),
+    notifications: {
+      task: unknown("task notifications"),
+      plan: unknown("plan notifications"),
+      image: unknown("image notifications"),
+    },
+  };
+}
+
+function boundFeatureEvidence(profile: CursorLocalProfileTransport): CursorFeatureEvidence {
+  const providerVersion = profile.providerVersion.trim() || null;
+  const supported = (reason: string) => featureEvidence("supported", reason, true, providerVersion);
+  return {
+    mcp: {
+      project: supported(
+        "Cursor ACP supports project-level .cursor/mcp.json servers; Rudder starts the bound ACP profile in its project cwd and forwards configured HTTP/SSE servers.",
+      ),
+      user: supported(
+        "Cursor ACP supports user-level .cursor/mcp.json servers; Rudder forwards explicit profile HTTP/SSE servers and leaves native user configuration to the bound Cursor profile.",
+      ),
+      team: featureEvidence(
+        "unsupported",
+        "Cursor ACP does not support team-level MCP servers configured through the Cursor dashboard.",
+        true,
+        providerVersion,
+      ),
+    },
+    modes: supported(
+      "Cursor ACP supports agent, plan, and ask modes. Rudder selects only modes advertised by the session and fails closed when a requested mode is absent.",
+    ),
+    notifications: {
+      task: supported("Rudder preserves and presents the Cursor cursor/task notification."),
+      plan: supported("Rudder preserves ACP plan updates and handles the Cursor cursor/create_plan request."),
+      image: supported("Rudder preserves and presents the Cursor cursor/generate_image notification."),
+    },
+  };
+}
+
 type CursorRuntimeProviderCapabilityRegistration = {
   runtimeType: "cursor";
+  features: CursorFeatureEvidence;
   sessionResume: { evidence: CursorCapabilityEvidence };
   input: { evidence: CursorCapabilityEvidence };
   contextHandoff: { evidence: CursorCapabilityEvidence };
@@ -2053,6 +2134,7 @@ type CursorRuntimeProviderCapabilityRegistration = {
 
 export const runtimeProviderCapabilities: CursorRuntimeProviderCapabilityRegistration = {
   runtimeType: "cursor",
+  features: staticFeatureEvidence("Cursor native feature evidence requires a bound ACP profile."),
   sessionResume: { evidence: staticSessionResumeEvidence },
   input: { evidence: staticInputEvidence },
   contextHandoff: { evidence: staticContextEvidence },
@@ -2100,6 +2182,7 @@ function boundCapabilities(profile: CursorLocalProfileTransport): CursorRuntimeP
   const transcriptEvidence = { ...evidence };
   return {
     runtimeType: "cursor",
+    features: boundFeatureEvidence(profile),
     sessionResume: { evidence: resumeEvidence },
     input: { evidence: cliEvidence },
     contextHandoff: {
@@ -2128,6 +2211,7 @@ function unknownCapabilities(reason: string): CursorRuntimeProviderCapabilityAda
   const evidence: CursorCapabilityEvidence = { ...staticTranscriptEvidence, reason: `${reason} A profile-bound ACP source was not resolved.` };
   return {
     runtimeType: "cursor",
+    features: staticFeatureEvidence(reason),
     sessionResume: { evidence: { ...staticSessionResumeEvidence, status: "unknown", profileBound: false, reason } },
     input: { evidence: { ...staticInputEvidence, status: "unknown", profileBound: false, reason } },
     contextHandoff: { evidence: { ...staticContextEvidence, status: "unknown", profileBound: false, reason } },

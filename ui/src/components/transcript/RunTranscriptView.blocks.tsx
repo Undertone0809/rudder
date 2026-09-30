@@ -5,6 +5,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToolCallFailureIndicators } from "@/context/ThemeContext";
 import { chatInlineAnnotationsFromStructuredPayload } from "@rudderhq/shared";
+import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import {
   Check,
   ChevronRight,
@@ -340,11 +341,11 @@ export function TranscriptMessageBlock({
 
   if (!isUser || !collapsibleSummary) {
     return (
-      <div title={getTranscriptTimestampTitle(block.ts)}>
+      <div data-transcript-message-role={block.role} title={getTranscriptTimestampTitle(block.ts)}>
         {showRoleLabel && (
           <div className="mb-1.5 flex items-center gap-2 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
             {isUser && <User className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />}
-            <span>{roleLabel}</span>
+            <span data-transcript-message-label={roleLabel}>{roleLabel}</span>
           </div>
         )}
         {body}
@@ -353,7 +354,7 @@ export function TranscriptMessageBlock({
   }
 
   return (
-    <div className="rounded-lg border border-border/30 bg-muted/10" title={getTranscriptTimestampTitle(block.ts)}>
+    <div data-transcript-message-role={block.role} className="rounded-lg border border-border/30 bg-muted/10" title={getTranscriptTimestampTitle(block.ts)}>
       <button
         type="button"
         className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
@@ -364,7 +365,7 @@ export function TranscriptMessageBlock({
         <DisclosureChevron open={open} className="h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground">
           <User className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
-          <span>User</span>
+          <span data-transcript-message-label="User">User</span>
         </div>
       </button>
       {open && <div className="motion-disclosure-enter border-t border-border/20 px-2.5 pb-2.5 pt-2">{body}</div>}
@@ -375,6 +376,7 @@ export function TranscriptMessageBlock({
 export function TranscriptThinkingBlock({
   block,
   density,
+  presentation = "default",
   className,
   collapsibleSummary = false,
   onMarkdownLinkClick,
@@ -383,6 +385,7 @@ export function TranscriptThinkingBlock({
 }: {
   block: Extract<TranscriptBlock, { type: "thinking" }>;
   density: TranscriptDensity;
+  presentation?: TranscriptPresentation;
   className?: string;
   collapsibleSummary?: boolean;
   onMarkdownLinkClick?: TranscriptMarkdownLinkClickHandler;
@@ -420,7 +423,16 @@ export function TranscriptThinkingBlock({
   );
 
   if (!collapsibleSummary) {
-    return body;
+    return (
+      <div title={getTranscriptTimestampTitle(block.ts)}>
+        {presentation === "chat" ? (
+          <div className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
+            {localizeText("Thinking")}
+          </div>
+        ) : null}
+        {body}
+      </div>
+    );
   }
 
   return (
@@ -496,6 +508,7 @@ export function renderTranscriptBlock({
           <TranscriptThinkingBlock
             block={block}
             density={density}
+            presentation={presentation}
             className={thinkingClassName}
             onMarkdownLinkClick={onMarkdownLinkClick}
             annotationSource={annotationSource}
@@ -833,6 +846,9 @@ export function TranscriptToolCard({
               </div>
             </div>
           )}
+          {block.cursorAcpEvents?.length ? (
+            <CursorAcpEventDetails events={block.cursorAcpEvents} density={density} />
+          ) : null}
         </div>
       )}
     </div>
@@ -1083,6 +1099,9 @@ export function TranscriptTodoListRow({
           </li>
         ))}
       </ul>
+      {block.cursorAcpEvents?.length ? (
+        <CursorAcpEventDetails events={block.cursorAcpEvents} density={density} />
+      ) : null}
     </div>
   );
 }
@@ -1214,6 +1233,7 @@ export function TranscriptEventRow({
   const detail = presentation === "detail";
   const collapsible = block.collapseByDefault === true;
   const isFileChange = block.label === "file change";
+  const eventLabel = block.cursorAcpEvent ? "Cursor ACP event" : "stderr";
   const preview = truncate(compactWhitespace(block.text), compact ? 96 : 140);
   const toneClasses =
     block.tone === "error"
@@ -1317,7 +1337,7 @@ export function TranscriptEventRow({
               )}
               onClick={() => setOpen((value) => !value)}
               aria-expanded={open}
-              aria-label={open ? "Collapse stderr details" : "Expand stderr details"}
+            aria-label={`${open ? "Collapse" : "Expand"} ${eventLabel} details`}
             >
               <DisclosureChevron open={open} className="h-3.5 w-3.5 shrink-0" />
               <span className="min-w-0 truncate">
@@ -1346,8 +1366,47 @@ export function TranscriptEventRow({
               {block.detail}
             </pre>
           )}
+          {block.cursorAcpEvent && (!collapsible || open) ? (
+            <CursorAcpEventDetails events={[block.cursorAcpEvent]} density={density} />
+          ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+function CursorAcpEventDetails({
+  events,
+  density,
+}: {
+  events: readonly CursorAcpTranscriptEvent[];
+  density: TranscriptDensity;
+}) {
+  if (events.length === 0) return null;
+  const compact = density === "compact";
+  return (
+    <div data-testid="cursor-acp-event-details" className="mt-2 space-y-1.5 border-t border-border/30 pt-2">
+      {events.map((event, index) => (
+        <details key={`${event.method}-${event.updateKind ?? "notification"}-${index}`} className="min-w-0">
+          <summary className={cn(
+            "cursor-pointer select-none text-muted-foreground",
+            compact ? "text-[10px]" : "text-[11px]",
+          )}>
+            Cursor ACP · {event.method}{event.updateKind ? ` · ${event.updateKind}` : ""} · occurrence {index + 1}
+          </summary>
+          <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+            <dt>Provider</dt><dd className="min-w-0 break-all">{event.provider}</dd>
+            <dt>Transport</dt><dd className="min-w-0 break-all">{event.transport}</dd>
+            <dt>Method</dt><dd className="min-w-0 break-all">{event.method}</dd>
+            {event.sessionId ? <><dt>Session</dt><dd className="min-w-0 break-all">{event.sessionId}</dd></> : null}
+            {event.updateKind ? <><dt>Update</dt><dd className="min-w-0 break-all">{event.updateKind}</dd></> : null}
+            {event.requestId !== undefined ? <><dt>Request</dt><dd className="min-w-0 break-all">{event.requestId}</dd></> : null}
+          </dl>
+          <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-foreground/75">
+            {JSON.stringify(event.frame, null, 2)}
+          </pre>
+        </details>
+      ))}
     </div>
   );
 }

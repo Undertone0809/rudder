@@ -802,50 +802,12 @@ export function createClaudeStreamControlHandle(
     get providerTurnId() {
       return stream.getProviderTurnId();
     },
-    capabilities: { steer: "native", interrupt: "process" },
-    async steer(input: AgentRuntimeControlSteerInput): Promise<AgentRuntimeControlSteerResult> {
-      if ((input.media ?? []).length > 0) {
-        return {
-          disposition: "unsupported",
-          reason: "Claude stream-json native steer is verified for text input only; media was not sent.",
-        };
-      }
-      if (stream.isTurnComplete()) {
-        return { disposition: "closing", reason: "Claude stream-json turn has already completed." };
-      }
-      let requestUuid: string;
-      try {
-        requestUuid = await stream.sendUserMessage(input.text);
-      } catch (error) {
-        return {
-          disposition: "acceptance_unknown",
-          providerThreadId: stream.getSessionId(),
-          providerTurnId: stream.getProviderTurnId(),
-          reason: error instanceof Error ? error.message : String(error),
-        };
-      }
-      try {
-        await stream.waitForReplay(requestUuid);
-      } catch (error) {
-        return {
-          disposition: "acceptance_unknown",
-          providerThreadId: stream.getSessionId(),
-          providerTurnId: stream.getProviderTurnId(),
-          reason: error instanceof Error ? error.message : String(error),
-        };
-      }
-      const providerTurnReady = await stream.waitForProviderTurn();
-      const providerThreadId = stream.getSessionId();
-      const providerTurnId = stream.getProviderTurnId();
-      if (!providerTurnReady || !providerThreadId || !providerTurnId) {
-        return {
-          disposition: "acceptance_unknown",
-          providerThreadId,
-          providerTurnId,
-          reason: `Claude replayed request ${requestUuid}, but no provider turn boundary is available yet.`,
-        };
-      }
-      return { disposition: "accepted_current", providerThreadId, providerTurnId };
+    capabilities: { steer: "interrupt_continue", interrupt: "process" },
+    async steer(_input: AgentRuntimeControlSteerInput): Promise<AgentRuntimeControlSteerResult> {
+      return {
+        disposition: "unsupported",
+        reason: "Claude Code stream-json replay confirms message receipt only; it does not confirm application to the in-flight turn.",
+      };
     },
     async interrupt(_reason: AgentRuntimeControlInterruptReason) {
       return stream.interrupt();

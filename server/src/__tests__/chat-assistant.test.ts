@@ -1,5 +1,6 @@
 import type { AgentRuntimeExecutionContext, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { ChatAttachment, ChatContextLink, ChatConversation, ChatMessage } from "@rudderhq/shared";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -200,7 +201,10 @@ vi.mock("../services/runtime-kernel/native-session.js", () => ({
   revisionForRuntimeConfig: vi.fn(() => "capability"),
 }));
 
-const { chatAssistantService: createChatAssistantService } = await import("../services/chat-assistant.js");
+const {
+  chatAssistantService: createChatAssistantService,
+  sideChatRuntimeAdmissionSnapshot,
+} = await import("../services/chat-assistant.js");
 const { MAX_CHAT_ASSISTANT_STDOUT_LINE_BYTES } = await import("../services/chat-assistant.stdout-buffer.js");
 const {
   buildAutomationRunInputPromptSection,
@@ -1198,6 +1202,61 @@ describe("chatAssistantService operator profile prompt injection", () => {
     }));
     expect(mockChatAgentRuns.appendTranscriptEntry).toHaveBeenCalledWith(
       expect.anything(), expect.anything(), expect.objectContaining({ source: "legacy", persistRaw: true }),
+    );
+  });
+
+  it("keeps Side Chat lineage and recovery descriptors without duplicating session intent", () => {
+    const sessionIntent = {
+      kind: "fork" as const,
+      sourceRunId: "source-run",
+      sourceBoundaryRef: "assistant-boundary",
+      sessionId: "child-session",
+      sessionParams: { rpcArgs: ["--profile", "large-profile-args"] },
+    };
+    const selector = { kind: "codex_turn" as const, threadId: "parent-thread", turnId: "parent-turn" };
+    const deferredForkDescriptor = {
+      version: 1,
+      sourceSelector: { throughInclusiveUuid: "assistant-boundary" },
+    };
+    const snapshot = sideChatRuntimeAdmissionSnapshot({
+      admission: {
+        continuity: "native",
+        sourceConversationId: "source-conversation",
+        sourceMessageId: "source-message",
+        sourceRunId: "source-run",
+        sourceBoundaryRef: "assistant-boundary",
+        sourceSpanId: "source-span",
+        providerCapability: { status: "supported", reason: "profile-bound" },
+        downgradeReason: null,
+        session: null,
+        sessionIntent,
+      },
+      sourceSelectorJson: selector,
+      deferredForkDescriptor,
+    });
+
+    expect(snapshot).toMatchObject({
+      continuity: "native",
+      sourceConversationId: "source-conversation",
+      sourceMessageId: "source-message",
+      sourceRunId: "source-run",
+      sourceBoundaryRef: "assistant-boundary",
+      sourceSpanId: "source-span",
+      sourceSelectorJson: selector,
+      span: { id: "source-span", runId: "source-run", selectorJson: selector },
+      providerCapability: { status: "supported", reason: "profile-bound" },
+      downgradeReason: null,
+      deferredForkDescriptor,
+    });
+    expect(snapshot).not.toHaveProperty("sessionIntent");
+    expect(snapshot.sessionIntentDigest).toBe(
+      createHash("sha256").update(JSON.stringify({
+        kind: sessionIntent.kind,
+        sessionId: sessionIntent.sessionId,
+        sessionParams: sessionIntent.sessionParams,
+        sourceBoundaryRef: sessionIntent.sourceBoundaryRef,
+        sourceRunId: sessionIntent.sourceRunId,
+      }), "utf8").digest("hex"),
     );
   });
 

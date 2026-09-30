@@ -19,7 +19,16 @@ import {
   OptimisticUserDraftItem,
   StreamTranscriptItem,
 } from "./Chat.messages";
-import { chatFinalAnswerFromTranscript } from "./Chat.timeline";
+import {
+  chatAssistantMessageRowKey,
+  chatAssistantStreamRowKey,
+  buildChatTimelineRows,
+  chatStreamDraftAssistantMessage,
+  chatFinalAnswerFromTranscript,
+  chatProcessTranscriptEntries,
+  rememberChatAssistantStreamRowIdentity,
+  chatStreamingAssistantBody,
+} from "./Chat.timeline";
 
 const markdownMentionsMock = vi.hoisted(() => ({
   mentions: [] as MentionOption[],
@@ -573,7 +582,7 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(timeline).not.toBeNull();
     expect(bubble?.textContent).toContain(partialAnswer);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(0, 3),
+      entries: shortEntries.slice(1, 3),
       presentation: "chat",
     }));
 
@@ -581,7 +590,7 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(container.querySelector(".group.w-full.max-w-3xl.px-1.py-1")).toBe(bubble);
     expect(container.textContent).toContain(longerAnswer);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(0, 3),
+      entries: shortEntries.slice(1, 3),
       presentation: "chat",
     }));
 
@@ -590,7 +599,7 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect(container.textContent).toContain(completeAnswer);
     expect(container.textContent).not.toContain(longerAnswer);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(0, 3),
+      entries: shortEntries.slice(1, 3),
       presentation: "chat",
     }));
     const activeBubbleRow = bubble?.parentElement;
@@ -603,7 +612,7 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     expect((completedBubble?.textContent?.match(/The complete final answer\./g) ?? [])).toHaveLength(1);
     expect(Array.from(timeline!.children).indexOf(completedBubble!)).toBe(activePosition);
     expect(runTranscriptViewMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      entries: shortEntries.slice(0, 3),
+      entries: shortEntries.slice(1, 3),
       presentation: "chat",
     }));
   });
@@ -668,6 +677,170 @@ describe("StreamTranscriptItem controlled disclosure", () => {
     ])).toBe("abb");
   });
 
+  it("uses only an explicit final-answer channel for the streamed response body", () => {
+    const ts = "2026-07-23T10:00:00.000Z";
+    const entries: TranscriptEntry[] = [
+      { kind: "user", ts, text: "Conversation input: {\"currentMessage\":{\"body\":\"Inspect this\"}}" },
+      { kind: "assistant", ts, text: "Commentary stays in Process.", phase: "commentary" },
+      { kind: "assistant", ts, text: "Unphased assistant text stays in Process." },
+      { kind: "assistant", ts, text: "Final answer", delta: true, phase: "final_answer" },
+    ];
+
+    expect(chatStreamingAssistantBody(
+      entries.slice(1),
+      "Commentary stays in Process.Unphased assistant text stays in Process.Final answer",
+    )).toBe("Final answer");
+    expect(chatStreamingAssistantBody(entries.slice(1, 3), "unphased fallback")).toBe("");
+    expect(chatStreamingAssistantBody([entries[2]!], "unphased fallback", true)).toBe("");
+    expect(chatProcessTranscriptEntries(entries)).toEqual(entries.slice(1, 3));
+    expect(chatProcessTranscriptEntries([entries[0]!, entries[3]!])).toEqual([]);
+  });
+
+  it("keeps an active stream attached to its assistant message row through completion", () => {
+    const createdAt = new Date("2026-07-23T10:00:00.000Z");
+    const activeStream = {
+      chatId: "chat-1",
+      streamKey: "stream-1",
+      userBody: "The prompt",
+      userCreatedAt: createdAt,
+      userMessageId: "user-1",
+      chatTurnId: "turn-1",
+      turnVariant: 0,
+      editedFromCreatedAt: null,
+      body: "Partial final answer",
+      generationId: "generation-1",
+      state: "streaming" as const,
+      createdAt,
+      transcript: [],
+      replyingAgentId: "agent-1",
+    };
+    const streamingMessage = message({
+      id: "assistant-1",
+      status: "streaming",
+      body: "",
+      generationId: "generation-1",
+    });
+    const completedMessage = message({
+      id: "assistant-1",
+      status: "completed",
+      body: "The complete final answer.",
+      generationId: "generation-1",
+    });
+    const streamRowKey = chatAssistantStreamRowKey(activeStream);
+    const rowIdentities = new Map<string, string>();
+    rememberChatAssistantStreamRowIdentity(rowIdentities, activeStream);
+    const draftAssistantMessage = chatStreamDraftAssistantMessage(
+      activeStream,
+      { id: "chat-1", orgId: "org-1" },
+      activeStream.body,
+    );
+
+    expect(draftAssistantMessage).toMatchObject({
+      id: "stream-draft:stream-1",
+      conversationId: "chat-1",
+      orgId: "org-1",
+      role: "assistant",
+      status: "streaming",
+      generationId: "generation-1",
+      body: "Partial final answer",
+    });
+    expect(chatAssistantMessageRowKey(draftAssistantMessage, activeStream)).toBe(streamRowKey);
+    expect(chatAssistantMessageRowKey(streamingMessage, activeStream)).toBe(streamRowKey);
+    expect(chatAssistantMessageRowKey(completedMessage, null, null, rowIdentities)).toBe(streamRowKey);
+    expect(chatAssistantMessageRowKey({
+      ...completedMessage,
+      turnVariant: completedMessage.turnVariant + 1,
+    })).not.toBe(streamRowKey);
+
+    expect(buildChatTimelineRows([streamingMessage], activeStream, true)).toEqual([
+      { kind: "message", message: streamingMessage, messageIndex: 0, activeStream },
+    ]);
+    expect(buildChatTimelineRows([completedMessage], activeStream, true)).toEqual([
+      { kind: "message", message: completedMessage, messageIndex: 0 },
+    ]);
+
+    const projectedStreamingMessage = { ...streamingMessage, generationId: null };
+    const projectedCompletedMessage = { ...completedMessage, generationId: null };
+    expect(buildChatTimelineRows([projectedStreamingMessage], activeStream, true, "assistant-1")).toEqual([
+      { kind: "message", message: projectedStreamingMessage, messageIndex: 0, activeStream },
+    ]);
+    expect(buildChatTimelineRows([projectedCompletedMessage], activeStream, true, "assistant-1")).toEqual([
+      { kind: "message", message: projectedCompletedMessage, messageIndex: 0 },
+    ]);
+  });
+
+  it("keeps the assistant row identity from pre-ack through completion and reconstructs it after remount", () => {
+    const preAckStream = {
+      streamKey: "stream-1",
+      generationId: null,
+      chatTurnId: "turn-1",
+      turnVariant: 0,
+    };
+    const rowIdentities = new Map<string, string>();
+    const rowKey = chatAssistantStreamRowKey(preAckStream);
+    const draftMessage = message({
+      id: "stream-draft:stream-1",
+      status: "streaming",
+      body: "The answer prefix",
+      chatTurnId: "turn-1",
+      generationId: null,
+    });
+    const acknowledgedStream = {
+      ...preAckStream,
+      generationId: "generation-1",
+    };
+    const streamingMessage = message({
+      id: "assistant-1",
+      status: "streaming",
+      body: "The answer prefix",
+      chatTurnId: "turn-1",
+      generationId: "generation-1",
+    });
+    const persistedMessage = message({
+      id: "assistant-1",
+      status: "completed",
+      body: "The answer prefix and ending.",
+      chatTurnId: "turn-1",
+      generationId: "generation-1",
+    });
+    const rendered = renderWithRerender(chatMessageItemElement(
+      draftMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(draftMessage, preAckStream, null, rowIdentities),
+    ));
+    const initialNode = rendered.container.querySelector('[data-testid="chat-assistant-message"]');
+
+    expect(initialNode).not.toBeNull();
+    rememberChatAssistantStreamRowIdentity(rowIdentities, acknowledgedStream);
+    expect(chatAssistantStreamRowKey(acknowledgedStream)).toBe(rowKey);
+    rendered.rerender(chatMessageItemElement(
+      streamingMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(streamingMessage, acknowledgedStream, null, rowIdentities),
+    ));
+    expect(rendered.container.querySelector('[data-testid="chat-assistant-message"]')).toBe(initialNode);
+
+    rendered.rerender(chatMessageItemElement(
+      persistedMessage,
+      [],
+      {},
+      undefined,
+      undefined,
+      chatAssistantMessageRowKey(persistedMessage, null, null, rowIdentities),
+    ));
+
+    const completedNode = rendered.container.querySelector('[data-testid="chat-assistant-message"]');
+    expect(chatAssistantMessageRowKey(persistedMessage, null, null, rowIdentities)).toBe(rowKey);
+    expect(chatAssistantMessageRowKey(persistedMessage, null, null, new Map())).toBe(rowKey);
+    expect(completedNode).toBe(initialNode);
+    expect(completedNode?.getAttribute("data-message-id")).toBe("assistant-1");
+  });
   it("responds to an external open request after the transcript mounts", () => {
     const entries: TranscriptEntry[] = [{
       kind: "thinking",

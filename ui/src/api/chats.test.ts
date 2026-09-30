@@ -566,4 +566,29 @@ describe("atomic chat draft API", () => {
     });
     expect(form.getAll("files")).toEqual([annotationFile]);
   });
+
+  it("continues a queued message with its version, failed-generation fence, and action id", async () => {
+    const response = {
+      item: { id: "queue-1", version: 2, status: "queued" },
+      controlActionId: "00000000-0000-4000-8000-000000000003",
+      idempotent: false,
+    };
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify(response),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const request = {
+      version: 1,
+      expectedFailedGenerationId: "00000000-0000-4000-8000-000000000002",
+      controlActionId: "00000000-0000-4000-8000-000000000003",
+    };
+
+    await expect(chatsApi.continueQueuedMessage("chat-1", "queue-1", request)).resolves.toEqual(response);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/chats/chat-1/queue/queue-1/continue");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual(request);
+  });
 });

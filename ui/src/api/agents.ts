@@ -13,6 +13,7 @@ import type {
   AgentRuntimeState,
   AgentSkillAnalytics,
   AgentSkillEntry,
+  OrganizationSkillFileDetail,
   AgentSkillSnapshot,
   AgentTaskSession,
   Approval,
@@ -248,6 +249,12 @@ export const agentsApi = {
   listKeys: (id: string, orgId?: string) => api.get<AgentKey[]>(agentPath(id, orgId, "/keys")),
   skills: (id: string, orgId?: string) =>
     api.get<AgentSkillSnapshot>(agentPath(id, orgId, "/skills")),
+  skillFile: (id: string, selectionKey: string, relativePath: string, orgId?: string) => {
+    const params = new URLSearchParams({ selectionKey, path: relativePath });
+    return api.get<OrganizationSkillFileDetail>(
+      agentPath(id, orgId, `/skills/file?${params.toString()}`),
+    );
+  },
   skillsAnalytics: (
     id: string,
     options?: {

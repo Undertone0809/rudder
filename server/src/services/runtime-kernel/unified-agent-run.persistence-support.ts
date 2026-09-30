@@ -9,6 +9,7 @@ import {
 } from "@rudderhq/db";
 import type { HeartbeatRunAttemptStatus } from "@rudderhq/shared";
 import { and, desc, eq, isNull, or } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { RUN_EXECUTION_LEASE_MS } from "./heartbeat.terminal.js";
 import {
   assertRuntimeIdentity,
@@ -34,7 +35,7 @@ import { normalizeUnifiedSessionIntent, UNIFIED_AGENT_RUN_SCENES, UnifiedAgentRu
 
 export type UnifiedStoredAdmission = {
   version: 1;
-  fingerprintVersion?: 2;
+  fingerprintVersion?: 2 | 3;
   agentId?: string;
   runtimeBindingId?: string | null;
   runtimeSegmentId?: string | null;
@@ -51,6 +52,31 @@ export type UnifiedStoredAdmission = {
   attemptEpoch?: number;
   lastLeaseExpiresAt?: string | null;
 };
+
+export type UnifiedCompactAdmissionSnapshot = {
+  version: 2;
+  digestVersion: 1;
+  agentId: string;
+  runtimeBindingId: string | null;
+  runtimeSegmentId: string | null;
+  scene: UnifiedAgentRunAdmission["scene"];
+  targetType: UnifiedAgentRunAdmission["target"]["type"];
+  targetId: string;
+  idempotencyKey: string;
+  runtimeType: string;
+  model: string | null;
+  sessionIntentDigest: string;
+  admissionDigest: string;
+  ownerFenceId?: string | null;
+  lastOwnerToken?: string | null;
+  attemptEpoch?: number | null;
+  lastLeaseExpiresAt?: string | null;
+};
+
+export type UnifiedAdmissionSnapshotSource = Omit<
+  UnifiedStoredAdmission,
+  "fingerprint" | "fingerprintVersion" | "version" | "attemptEpoch"
+> & { attemptEpoch?: number | null };
 
 export type UnifiedStoredSubmission = UnifiedSubmission;
 
@@ -87,6 +113,126 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function canonicalJson(value: unknown): string | undefined {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item) ?? "null").join(",")}]`;
+  }
+  const object = value as Record<string, unknown>;
+  if (typeof object.toJSON === "function") return canonicalJson(object.toJSON());
+  const entries = Object.keys(object).sort().flatMap((key) => {
+    const serialized = canonicalJson(object[key]);
+    return serialized === undefined ? [] : [`${JSON.stringify(key)}:${serialized}`];
+  });
+  return `{${entries.join(",")}}`;
+}
+
+export function sha256JsonDigest(value: unknown): string {
+  const serialized = canonicalJson(value);
+  if (serialized === undefined) throw new TypeError("Admission digest input must be JSON serializable");
+  return createHash("sha256").update(serialized, "utf8").digest("hex");
+}
+
+function admissionIdentityDigestInput(input: {
+  agentId: string;
+  runtimeBindingId: string | null;
+  runtimeSegmentId: string | null;
+  scene: UnifiedAgentRunAdmission["scene"];
+  targetType: UnifiedAgentRunAdmission["target"]["type"];
+  targetId: string;
+  idempotencyKey: string;
+  runtimeType: string;
+  model: string | null;
+  sessionIntentDigest: string;
+}) {
+  return {
+    agentId: input.agentId,
+    runtimeBindingId: input.runtimeBindingId,
+    runtimeSegmentId: input.runtimeSegmentId,
+    scene: input.scene,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    idempotencyKey: input.idempotencyKey,
+    runtimeType: input.runtimeType,
+    model: input.model,
+    sessionIntentDigest: input.sessionIntentDigest,
+  };
+}
+
+export function admissionDigestForRun(input: {
+  agentId: string;
+  runtimeBindingId: string | null;
+  runtimeSegmentId: string | null;
+  scene: UnifiedAgentRunAdmission["scene"];
+  targetType: UnifiedAgentRunAdmission["target"]["type"];
+  targetId: string;
+  idempotencyKey: string;
+  runtimeType: string;
+  model: string | null;
+  sessionIntent: UnifiedAgentRunEntry["sessionIntent"];
+}) {
+  const sessionIntentDigest = sha256JsonDigest(input.sessionIntent);
+  return sha256JsonDigest(admissionIdentityDigestInput({ ...input, sessionIntentDigest }));
+}
+
+function admissionFingerprint(input: {
+  agentId: string;
+  runtimeBindingId: string | null;
+  runtimeSegmentId: string | null;
+  scene: UnifiedAgentRunAdmission["scene"];
+  targetType: UnifiedAgentRunAdmission["target"]["type"];
+  targetId: string;
+  runtimeType: string;
+  model: string | null;
+  sessionIntent: UnifiedAgentRunEntry["sessionIntent"];
+}) {
+  return JSON.stringify({
+    agentId: input.agentId,
+    runtimeBindingId: input.runtimeBindingId,
+    runtimeSegmentId: input.runtimeSegmentId,
+    scene: input.scene,
+    target: { type: input.targetType, id: input.targetId },
+    runtimeType: input.runtimeType,
+    model: input.model,
+    sessionIntent: input.sessionIntent,
+  });
+}
+
+export function compactUnifiedAdmissionSnapshot(
+  admission: UnifiedAdmissionSnapshotSource,
+): UnifiedCompactAdmissionSnapshot {
+  const agentId = admission.agentId;
+  if (!agentId) throw new TypeError("Unified admission snapshot requires agentId");
+  const normalizedAdmission = {
+    ...admission,
+    agentId,
+    runtimeBindingId: admission.runtimeBindingId ?? null,
+    runtimeSegmentId: admission.runtimeSegmentId ?? null,
+  };
+  const identity = {
+    agentId: normalizedAdmission.agentId,
+    runtimeBindingId: normalizedAdmission.runtimeBindingId,
+    runtimeSegmentId: normalizedAdmission.runtimeSegmentId,
+    scene: admission.scene,
+    targetType: admission.targetType,
+    targetId: admission.targetId,
+    idempotencyKey: admission.idempotencyKey,
+    runtimeType: admission.runtimeType,
+    model: admission.model,
+    sessionIntentDigest: sha256JsonDigest(admission.sessionIntent),
+  };
+  return {
+    version: 2,
+    digestVersion: 1,
+    ...identity,
+    admissionDigest: admissionDigestForRun(normalizedAdmission),
+    ...(admission.ownerFenceId !== undefined ? { ownerFenceId: admission.ownerFenceId } : {}),
+    ...(admission.lastOwnerToken !== undefined ? { lastOwnerToken: admission.lastOwnerToken } : {}),
+    ...(admission.attemptEpoch !== undefined ? { attemptEpoch: admission.attemptEpoch } : {}),
+    ...(admission.lastLeaseExpiresAt !== undefined ? { lastLeaseExpiresAt: admission.lastLeaseExpiresAt } : {}),
+  };
 }
 
 function optionalProviderField(value: unknown, field = "provider reference"): string | null {
@@ -264,7 +410,17 @@ export function normalizePersistenceAdmission(input: UnifiedAgentRunAdmission) {
   const runtimeSegmentId = input.runtimeSegmentId?.trim() || null;
   if (runtimeBindingId) assertPersistenceUuid(runtimeBindingId, "runtimeBindingId");
   if (runtimeSegmentId) assertPersistenceUuid(runtimeSegmentId, "runtimeSegmentId");
-  const fingerprint = JSON.stringify({ agentId, runtimeBindingId, runtimeSegmentId, scene: input.scene, target, runtimeType, model, sessionIntent });
+  const fingerprint = admissionFingerprint({
+    agentId,
+    runtimeBindingId,
+    runtimeSegmentId,
+    scene: input.scene,
+    targetType: target.type,
+    targetId: target.id,
+    runtimeType,
+    model,
+    sessionIntent,
+  });
   return {
     ...input,
     orgId,
@@ -314,14 +470,85 @@ export function contextWithAdmission(
     scene: admission.scene,
     targetType: admission.targetType,
     targetId: admission.targetId,
-    [UNIFIED_ADMISSION_CONTEXT_KEY]: admission,
+    [UNIFIED_ADMISSION_CONTEXT_KEY]: compactUnifiedAdmissionSnapshot(admission),
   };
 }
 
-function readStoredAdmission(contextSnapshot: unknown): UnifiedStoredAdmission | null {
+function readStoredAdmission(
+  contextSnapshot: unknown,
+  sessionIntentJson: unknown,
+): UnifiedStoredAdmission | null {
   const context = asRecord(contextSnapshot);
   const stored = asRecord(context?.[UNIFIED_ADMISSION_CONTEXT_KEY]);
   if (!stored) return null;
+  if (stored.version === 2) {
+    const sessionIntent = normalizeStoredSessionIntent(sessionIntentJson);
+    const agentId = stringValue(stored.agentId);
+    const runtimeBindingId = stored.runtimeBindingId === null
+      ? null
+      : stringValue(stored.runtimeBindingId);
+    const runtimeSegmentId = stored.runtimeSegmentId === null
+      ? null
+      : stringValue(stored.runtimeSegmentId);
+    const model = stored.model === null ? null : stringValue(stored.model);
+    const sessionIntentDigest = stringValue(stored.sessionIntentDigest);
+    const admissionDigest = stringValue(stored.admissionDigest);
+    if (
+      stored.digestVersion !== 1
+      || !sessionIntent
+      || !agentId
+      || !Object.prototype.hasOwnProperty.call(stored, "runtimeBindingId")
+      || !Object.prototype.hasOwnProperty.call(stored, "runtimeSegmentId")
+      || (stored.runtimeBindingId !== null && runtimeBindingId === null)
+      || (stored.runtimeSegmentId !== null && runtimeSegmentId === null)
+      || typeof stored.scene !== "string"
+      || typeof stored.targetType !== "string"
+      || !stringValue(stored.targetId)
+      || !stringValue(stored.idempotencyKey)
+      || !stringValue(stored.runtimeType)
+      || !Object.prototype.hasOwnProperty.call(stored, "model")
+      || (stored.model !== null && model === null)
+      || !sessionIntentDigest
+      || !admissionDigest
+    ) return null;
+    const identity = {
+      agentId,
+      runtimeBindingId,
+      runtimeSegmentId,
+      scene: stored.scene as UnifiedAgentRunAdmission["scene"],
+      targetType: stored.targetType as UnifiedAgentRunAdmission["target"]["type"],
+      targetId: stored.targetId as string,
+      idempotencyKey: stored.idempotencyKey as string,
+      runtimeType: stored.runtimeType as string,
+      model,
+      sessionIntentDigest,
+    };
+    if (
+      sha256JsonDigest(sessionIntent) !== sessionIntentDigest
+      || admissionDigestForRun({ ...identity, sessionIntent }) !== admissionDigest
+    ) return null;
+    return {
+      version: 1,
+      fingerprintVersion: 3,
+      agentId,
+      runtimeBindingId,
+      runtimeSegmentId,
+      scene: identity.scene,
+      targetType: identity.targetType,
+      targetId: identity.targetId,
+      idempotencyKey: identity.idempotencyKey,
+      runtimeType: identity.runtimeType,
+      model,
+      sessionIntent,
+      fingerprint: admissionDigest,
+      ownerFenceId: stringValue(stored.ownerFenceId),
+      lastOwnerToken: stringValue(stored.lastOwnerToken),
+      attemptEpoch: typeof stored.attemptEpoch === "number" ? stored.attemptEpoch : undefined,
+      lastLeaseExpiresAt: stored.lastLeaseExpiresAt === null || stored.lastLeaseExpiresAt === undefined
+        ? null
+        : stringValue(stored.lastLeaseExpiresAt),
+    };
+  }
   if (stored.version !== 1) return null;
   if (
     typeof stored.scene !== "string"
@@ -375,7 +602,7 @@ export function readPersistedAdmission(run: typeof heartbeatRuns.$inferSelect): 
     || run.sessionIntentJson === undefined
   ) return null;
 
-  const stored = readStoredAdmission(run.contextSnapshot);
+  const stored = readStoredAdmission(run.contextSnapshot, run.sessionIntentJson);
   if (!stored) return null;
   const sessionIntent = normalizeStoredSessionIntent(run.sessionIntentJson);
   if (!sessionIntent) return null;

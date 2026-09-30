@@ -67,11 +67,40 @@ import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
 import { createRuntimeApprovalBridge } from "./runtime-kernel/runtime-approval.js";
+import { sha256JsonDigest } from "./runtime-kernel/unified-agent-run.persistence-support.js";
 import { admitSideChatRuntimeFork, type SideChatRuntimeAdmission } from "./side-chat-runtime-admission.js";
 
 export type { ChatAssistantStaleOutcome } from "./chat-assistant.execution-owner.js";
 export * from "./chat-assistant.helpers.js";
 export * from "./chat-assistant.runtime-overrides.js";
+
+export function sideChatRuntimeAdmissionSnapshot(input: {
+  admission: SideChatRuntimeAdmission;
+  sourceSelectorJson: NativeSpanSelector | null;
+  deferredForkDescriptor?: unknown;
+}) {
+  const { admission } = input;
+  return {
+    continuity: admission.continuity,
+    sourceConversationId: admission.sourceConversationId,
+    sourceMessageId: admission.sourceMessageId,
+    sourceRunId: admission.sourceRunId,
+    sourceBoundaryRef: admission.sourceBoundaryRef,
+    sourceSpanId: admission.sourceSpanId,
+    sourceSelectorJson: input.sourceSelectorJson,
+    span: {
+      id: admission.sourceSpanId,
+      runId: admission.sourceRunId,
+      selectorJson: input.sourceSelectorJson,
+    },
+    providerCapability: admission.providerCapability,
+    downgradeReason: admission.downgradeReason,
+    sessionIntentDigest: sha256JsonDigest(admission.sessionIntent),
+    ...(input.deferredForkDescriptor
+      ? { deferredForkDescriptor: input.deferredForkDescriptor }
+      : {}),
+  };
+}
 
 export function chatAssistantService(db: Db, storage?: StorageService) {
   const chatRunsSvc = chatAgentRunService(db);
@@ -425,26 +454,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           },
           sourceMetadata: sideChatRuntimeAdmission
             ? {
-              sideChatRuntimeAdmission: {
-                continuity: sideChatRuntimeAdmission.continuity,
-                sourceConversationId: sideChatRuntimeAdmission.sourceConversationId,
-                sourceMessageId: sideChatRuntimeAdmission.sourceMessageId,
-                sourceRunId: sideChatRuntimeAdmission.sourceRunId,
-                sourceBoundaryRef: sideChatRuntimeAdmission.sourceBoundaryRef,
-                sourceSpanId: sideChatRuntimeAdmission.sourceSpanId,
+              sideChatRuntimeAdmission: sideChatRuntimeAdmissionSnapshot({
+                admission: sideChatRuntimeAdmission,
                 sourceSelectorJson: forkSource?.selectorJson ?? null,
-                span: {
-                  id: sideChatRuntimeAdmission.sourceSpanId,
-                  runId: sideChatRuntimeAdmission.sourceRunId,
-                  selectorJson: forkSource?.selectorJson ?? null,
-                },
-                providerCapability: sideChatRuntimeAdmission.providerCapability,
-                downgradeReason: sideChatRuntimeAdmission.downgradeReason,
-                sessionIntent: sideChatRuntimeAdmission.sessionIntent,
-                ...(claudeDeferredFork?.adapterIntent
-                  ? { deferredForkDescriptor: claudeDeferredFork.adapterIntent }
-                  : {}),
-              },
+                deferredForkDescriptor: claudeDeferredFork?.adapterIntent,
+              }),
             }
             : null,
           runtimeBinding,

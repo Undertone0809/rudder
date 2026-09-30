@@ -259,7 +259,7 @@ describe("Claude profile-bound native capabilities", () => {
     expect(wrongCwd).toMatchObject({ availability: "incompatible", revision: "cwd-mismatch" });
   });
 
-  it("advertises the version-pinned SDK fork only for its paired Claude Code profile", () => {
+  it("advertises the version-pinned SDK fork and keeps Claude control claims transport-bound", () => {
     const adapter = createClaudeLocalProviderCapabilities({ ...profile(), readFile: undefined });
 
     expect(adapter.fork.evidence).toMatchObject({
@@ -279,19 +279,61 @@ describe("Claude profile-bound native capabilities", () => {
     expect(redirectedProfile.fork.evidence).toMatchObject({ status: "unsupported" });
     expect(redirectedProfile.fork.evidence.reason).toContain("local host profile transport");
     expect(adapter.control.steer.evidence).toMatchObject({
-      status: "supported",
+      status: "unsupported",
+      providerVersion: "2.1.216",
       transport: "claude-cli-stream-json",
       profileBound: true,
     });
-    expect(adapter.control.steer.mode).toBe("native");
-    expect(adapter.control.steer.requiresHandle).toBe(true);
+    expect(adapter.control.steer.evidence.reason).toContain("only confirms replay");
+    expect(adapter.control.steer.evidence.reason).toContain("Finish the active Run");
+    expect(adapter.control.steer.mode).toBeUndefined();
+    expect(adapter.control.steer.requiresHandle).toBeUndefined();
+
+    const unauditedVersion = createClaudeLocalProviderCapabilities({ ...profile(), providerVersion: "2.1.217" });
+    expect(unauditedVersion.control.steer.evidence).toMatchObject({ status: "unknown", providerVersion: "2.1.217" });
+    expect(unauditedVersion.control.steer.mode).toBeUndefined();
+
     expect(adapter.control.interrupt.evidence).toMatchObject({
       status: "supported",
-      transport: "claude-cli-stream-json",
+      transport: "claude-cli-process",
       profileBound: true,
     });
+    expect(adapter.control.interrupt.evidence.reason).toContain("Query.interrupt()");
+    expect(adapter.control.interrupt.evidence.reason).toContain("process-level");
     expect(adapter.control.interrupt.mode).toBe("process");
     expect(adapter.control.interrupt.requiresHandle).toBe(true);
+  });
+
+  it("does not send an unprioritized stream-json message as native steer", async () => {
+    const adapter = createClaudeLocalProviderCapabilities(profile());
+    const handle = {
+      runtimeType: "claude_local",
+      capabilities: { steer: "native" as const, interrupt: "process" as const },
+      steer: vi.fn(async () => ({
+        disposition: "accepted_current" as const,
+        providerThreadId: sessionId,
+        providerTurnId: "turn-1",
+      })),
+      interrupt: vi.fn(async () => "waiting_safe_boundary" as const),
+      dispose: vi.fn(async () => undefined),
+    };
+
+    await expect(adapter.control.steer.execute({
+      runtimeType: "claude_local",
+      handle,
+      operation: { kind: "steer", input: { text: "Change direction.", clientMessageId: "message-1" } },
+    })).resolves.toMatchObject({
+      disposition: "unsupported",
+      reason: expect.stringContaining("Finish the active Run"),
+    });
+    expect(handle.steer).not.toHaveBeenCalled();
+
+    await expect(adapter.control.interrupt.execute({
+      runtimeType: "claude_local",
+      handle,
+      operation: { kind: "interrupt", reason: "operator_stop" },
+    })).resolves.toBe("waiting_safe_boundary");
+    expect(handle.interrupt).toHaveBeenCalledWith("operator_stop");
   });
 
   it("matches the selected completed assistant head, not the session last UUID", async () => {

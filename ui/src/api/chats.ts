@@ -2,6 +2,7 @@ import type {
   ChatAttachment,
   ChatContextLink,
   ChatConversation,
+  ContinueChatQueuedMessage,
   ChatInlineAnnotationInput,
   ChatIssueCreationMode,
   ChatMessage,
@@ -51,6 +52,14 @@ export type ChatSteerQueuedMessageRequest = {
   expectedControlVersion?: number;
   lastCommittedRenderSeq?: number;
   renderedBodyHash?: string;
+};
+
+export type ChatContinueQueuedMessageRequest = ContinueChatQueuedMessage;
+
+export type ChatContinueQueuedMessageResponse = {
+  item: ChatQueuedMessage;
+  controlActionId: string;
+  idempotent: boolean;
 };
 
 export type SideChatHistoryPage = {
@@ -366,6 +375,15 @@ export const chatsApi = {
   ) => api.post<ChatSteerResponse>(`/chats/${chatId}/queue/${itemId}/steer`, data, {
     timeoutMs: CHAT_REQUEST_TIMEOUT_MS,
   }),
+  continueQueuedMessage: (
+    chatId: string,
+    itemId: string,
+    data: ChatContinueQueuedMessageRequest,
+  ) => api.post<ChatContinueQueuedMessageResponse>(
+    `/chats/${chatId}/queue/${itemId}/continue`,
+    data,
+    { timeoutMs: CHAT_REQUEST_TIMEOUT_MS },
+  ),
   sendMessageStream: async (
     chatId: string,
     body: string,

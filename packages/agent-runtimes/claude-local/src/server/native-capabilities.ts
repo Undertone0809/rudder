@@ -1244,7 +1244,7 @@ function profileEvidence(profile: ClaudeLocalProfileTransport): ClaudeCapability
   };
 }
 
-function unsupportedNativeEvidence(
+function controlEvidence(
   profile: ClaudeLocalProfileTransport,
   capability: "steer" | "interrupt",
 ): ClaudeCapabilityEvidence {
@@ -1255,18 +1255,26 @@ function unsupportedNativeEvidence(
       reason: `${evidence.reason} Claude ${capability} remains unclassified until the verified profile transport is available.`,
     };
   }
-  const reason = capability === "steer"
-    ? "Claude Code supports text steer through its official --input-format stream-json user-message protocol; a live execute handle is required before sending it."
-    : "Claude Code has no provider message-level interrupt command; process interruption remains lifecycle-authoritative and is only available through a live execute handle.";
+  if (capability === "steer") {
+    const versionAudited = profile.providerVersion === CLAUDE_NATIVE_VERSION;
+    return {
+      ...evidence,
+      status: versionAudited ? "unsupported" : "unknown",
+      reason: versionAudited
+        ? `Claude Code ${profile.providerVersion} accepts stream-json user messages, but this CLI adapter sends no native input priority and only confirms replay; it cannot prove the message affected the active turn. Finish the active Run, then send the message through normal chat input.`
+        : `Claude Code ${profile.providerVersion} has not been audited for active-turn steer through this CLI adapter.`,
+      transport: "claude-cli-stream-json",
+    };
+  }
   return {
+    ...evidence,
     status: "supported",
-    reason: `Claude Code ${profile.providerVersion || CLAUDE_NATIVE_VERSION}: ${reason}`,
-    providerVersion: profile.providerVersion ?? null,
-    transport: "claude-cli-stream-json",
-    profileBound: true,
-    profileRequired: true,
+    reason: `Claude Agent SDK ${CLAUDE_FORK_SDK_VERSION} exposes Query.interrupt() for a live streaming Query, but this adapter owns the CLI child process instead; Stop is process-level through a live execute handle, not a native provider interrupt.`,
+    transport: "claude-cli-process",
   };
 }
+
+const CLAUDE_STEER_FALLBACK_REASON = "Claude's CLI control handle cannot verify current-turn steer. Finish the active Run, then send the message through normal chat input.";
 
 const staticSessionResumeEvidence: ClaudeCapabilityEvidence = {
   status: "supported",
@@ -1308,10 +1316,18 @@ const staticForkEvidence: ClaudeCapabilityEvidence = {
   profileRequired: true,
 };
 
-const staticControlEvidence: ClaudeCapabilityEvidence = {
+const staticSteerEvidence: ClaudeCapabilityEvidence = {
   status: "unknown",
-  reason: "Claude active-turn control requires a bound provider transport; the CLI adapter does not infer native control from process signals.",
-  transport: "claude-cli",
+  reason: "Claude native Steer requires a bound live query; the CLI adapter does not treat a stream-json replay acknowledgement as proof of active-turn application.",
+  transport: "claude-cli-stream-json",
+  profileBound: false,
+  profileRequired: true,
+};
+
+const staticInterruptEvidence: ClaudeCapabilityEvidence = {
+  status: "unknown",
+  reason: "Claude Stop requires a live execute handle; this CLI adapter uses process lifecycle interruption, not the SDK Query.interrupt() control channel.",
+  transport: "claude-cli-process",
   profileBound: false,
   profileRequired: true,
 };
@@ -1337,8 +1353,8 @@ export const runtimeProviderCapabilities: ClaudeRuntimeProviderCapabilityRegistr
   transcript: { evidence: staticTranscriptEvidence },
   fork: { evidence: staticForkEvidence },
   control: {
-    steer: { evidence: staticControlEvidence },
-    interrupt: { evidence: staticControlEvidence },
+    steer: { evidence: staticSteerEvidence },
+    interrupt: { evidence: staticInterruptEvidence },
   },
 };
 
@@ -1354,11 +1370,8 @@ type ProviderControlRequest = {
   binding?: ClaudeProviderBindingRef | null;
 };
 
-async function delegateSteer(input: ProviderControlRequest): Promise<AgentRuntimeControlSteerResult> {
-  if (!input.handle || input.operation.kind !== "steer") {
-    return { disposition: "acceptance_unknown", reason: "Claude stream-json steer requires a live execute control handle." };
-  }
-  return input.handle.steer(input.operation.input);
+async function unsupportedSteer(_input: ProviderControlRequest): Promise<AgentRuntimeControlSteerResult> {
+  return { disposition: "unsupported", reason: CLAUDE_STEER_FALLBACK_REASON };
 }
 
 async function delegateInterrupt(input: ProviderControlRequest): Promise<AgentRuntimeControlInterruptResult> {
@@ -1382,8 +1395,8 @@ export interface ClaudeRuntimeProviderCapabilityAdapter {
   control: {
     steer: {
       evidence: ClaudeCapabilityEvidence;
-      mode: "native";
-      requiresHandle: true;
+      mode?: "native";
+      requiresHandle?: true;
       execute: (input: ProviderControlRequest) => Promise<AgentRuntimeControlSteerResult>;
     };
     interrupt: {
@@ -1428,13 +1441,11 @@ function boundCapabilities(profile: ClaudeLocalProfileTransport): ClaudeRuntimeP
     },
     control: {
       steer: {
-        evidence: unsupportedNativeEvidence(profile, "steer"),
-        mode: "native",
-        requiresHandle: true,
-        execute: delegateSteer,
+        evidence: controlEvidence(profile, "steer"),
+        execute: unsupportedSteer,
       },
       interrupt: {
-        evidence: unsupportedNativeEvidence(profile, "interrupt"),
+        evidence: controlEvidence(profile, "interrupt"),
         mode: "process",
         requiresHandle: true,
         execute: delegateInterrupt,
@@ -1468,8 +1479,16 @@ function unknownCapabilities(reason: string): ClaudeRuntimeProviderCapabilityAda
       fork: async () => { throw nativeForkError(reason); },
     },
     control: {
-      steer: { evidence: { ...staticControlEvidence, reason }, mode: "native", requiresHandle: true, execute: delegateSteer },
-      interrupt: { evidence: { ...staticControlEvidence, reason }, mode: "process", requiresHandle: true, execute: delegateInterrupt },
+      steer: {
+        evidence: { ...staticSteerEvidence, reason },
+        execute: unsupportedSteer,
+      },
+      interrupt: {
+        evidence: { ...staticInterruptEvidence, reason },
+        mode: "process",
+        requiresHandle: true,
+        execute: delegateInterrupt,
+      },
     },
   };
 }

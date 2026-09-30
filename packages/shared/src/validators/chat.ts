@@ -75,7 +75,7 @@ export const chatProviderControlDispositionSchema = z.enum([
   "waiting_safe_boundary",
   "unverified",
 ]);
-export const chatControlActionKindSchema = z.enum(["stop", "steer"]);
+export const chatControlActionKindSchema = z.enum(["stop", "steer", "continue"]);
 export const chatGenerationEventKindSchema = z.enum([
   "generation_started",
   "runtime_output",
@@ -563,6 +563,13 @@ export const updateChatQueuedMessageSchema = z.object({
 export const cancelChatQueuedMessageSchema = z.object({
   version: z.number().int().positive().optional(),
 });
+
+export const continueChatQueuedMessageSchema = z.object({
+  version: z.number().int().positive(),
+  expectedFailedGenerationId: z.string().uuid(),
+  controlActionId: z.string().uuid(),
+}).strict();
+export type ContinueChatQueuedMessage = z.infer<typeof continueChatQueuedMessageSchema>;
 
 export const steerChatQueuedMessageSchema = z.object({
   expectedActiveGenerationId: z.string().uuid().optional().nullable(),

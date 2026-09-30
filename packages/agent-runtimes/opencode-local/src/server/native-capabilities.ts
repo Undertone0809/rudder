@@ -1,3 +1,9 @@
+import type {
+  AgentRuntimeControlHandle,
+  AgentRuntimeControlInterruptReason,
+  AgentRuntimeControlInterruptResult,
+  AgentRuntimeControlSteerInput,
+} from "@rudderhq/agent-runtime-utils";
 import path from "node:path";
 import {
   deleteOpenCodeSideChatForkSession,
@@ -46,6 +52,17 @@ export type OpenCodeLocalProfileTransportResolver = (
 ) => OpenCodeLocalProfileTransport | null | undefined;
 
 const nativeTransport = "opencode-managed-server-http";
+type ProviderControlOperation =
+  | { kind: "steer"; input: AgentRuntimeControlSteerInput }
+  | { kind: "interrupt"; reason: AgentRuntimeControlInterruptReason };
+type ProviderControlRequest = {
+  runtimeType: string;
+  handle: AgentRuntimeControlHandle | null;
+  operation: ProviderControlOperation;
+  session?: OpenCodeSession | null;
+  binding?: OpenCodeBinding | null;
+};
+
 const SAFE_PERSISTED_ENV_KEYS = new Set([
   "HOME",
   "USERPROFILE",
@@ -118,6 +135,60 @@ function profileEvidence(profile: OpenCodeLocalProfileTransport): OpenCodeCapabi
     profileBound: true,
     profileRequired: true,
   };
+}
+
+function interruptEvidence(profile: OpenCodeLocalProfileTransport): OpenCodeCapabilityEvidence {
+  const evidence = profileEvidence(profile);
+  return {
+    ...evidence,
+    ...(evidence.status === "supported"
+      ? { reason: "OpenCode native Runs expose remote interrupt through their profile-bound live control handle; the provider abort acknowledgement is preserved as acknowledged or unverified." }
+      : {}),
+  };
+}
+
+function forwardOpenCodeInterrupt(
+  input: ProviderControlRequest,
+  expectedBinding?: OpenCodeBinding,
+): Promise<AgentRuntimeControlInterruptResult> {
+  if (input.operation.kind !== "interrupt") return Promise.resolve("unverified");
+  const handle = input.handle;
+  if (
+    !handle
+    || input.runtimeType !== "opencode_local"
+    || handle.runtimeType !== "opencode_local"
+    || !nonEmpty(handle.providerThreadId)
+  ) return Promise.resolve("unverified");
+
+  if (input.session && nonEmpty(input.session.sessionId) !== nonEmpty(handle.providerThreadId)) {
+    return Promise.resolve("unverified");
+  }
+  const persistedSessionId = nonEmpty(input.session?.sessionParams.sessionId);
+  if (persistedSessionId && persistedSessionId !== nonEmpty(handle.providerThreadId)) {
+    return Promise.resolve("unverified");
+  }
+
+  if (expectedBinding) {
+    const requestedBinding = input.binding;
+    const expectedOptionalIdentityMatches = (key: keyof OpenCodeBinding) => {
+      const expected = expectedBinding[key];
+      return expected === undefined || expected === null || requestedBinding?.[key] === expected;
+    };
+    if (
+      !requestedBinding
+      || !bindingMatches(requestedBinding, { binding: expectedBinding })
+      || !expectedOptionalIdentityMatches("id")
+      || !expectedOptionalIdentityMatches("orgId")
+      || !expectedOptionalIdentityMatches("workspaceBindingId")
+      || !expectedOptionalIdentityMatches("capabilityRevision")
+    ) return Promise.resolve("unverified");
+  }
+
+  return handle.interrupt(input.operation.reason);
+}
+
+function unavailableInterrupt(): Promise<AgentRuntimeControlInterruptResult> {
+  return Promise.resolve("unverified");
 }
 
 function staticEvidence(reason: string): OpenCodeCapabilityEvidence {
@@ -260,13 +331,19 @@ function unknownCapabilities(reason: string): OpenCodeRuntimeProviderCapabilityA
     },
     control: {
       steer: { evidence: staticEvidence(reason) },
-      interrupt: { evidence: staticEvidence(reason) },
+      interrupt: {
+        evidence: staticEvidence(reason),
+        mode: "remote",
+        requiresHandle: true,
+        execute: unavailableInterrupt,
+      },
     },
   };
 }
 
 function boundCapabilities(profile: OpenCodeLocalProfileTransport): OpenCodeRuntimeProviderCapabilityAdapter {
   const evidence = profileEvidence(profile);
+  const controlInterruptEvidence = interruptEvidence(profile);
   const cleanupEvidence: OpenCodeCapabilityEvidence = {
     ...evidence,
     reason: "OpenCode Side Chat cleanup requires its profile-bound /doc to attest session.delete and session.children, then verifies the exact parent and no descendants.",
@@ -308,7 +385,12 @@ function boundCapabilities(profile: OpenCodeLocalProfileTransport): OpenCodeRunt
     },
     control: {
       steer: { evidence: staticEvidence("OpenCode has no verified profile-bound live steer handle.") },
-      interrupt: { evidence: staticEvidence("OpenCode has no verified profile-bound live interrupt handle.") },
+      interrupt: {
+        evidence: controlInterruptEvidence,
+        mode: "remote",
+        requiresHandle: true,
+        execute: (input) => forwardOpenCodeInterrupt(input, profile.binding),
+      },
     },
   };
 }
@@ -338,7 +420,12 @@ export interface OpenCodeRuntimeProviderCapabilityAdapter {
   };
   control: {
     steer: { evidence: OpenCodeCapabilityEvidence };
-    interrupt: { evidence: OpenCodeCapabilityEvidence };
+    interrupt: {
+      evidence: OpenCodeCapabilityEvidence;
+      mode: "remote";
+      requiresHandle: true;
+      execute: (input: ProviderControlRequest) => Promise<AgentRuntimeControlInterruptResult>;
+    };
   };
 }
 

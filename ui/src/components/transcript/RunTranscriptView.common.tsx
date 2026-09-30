@@ -22,6 +22,7 @@ import {
   Wrench
 } from "lucide-react";
 import type { TranscriptEntry } from "../../agent-runtimes";
+import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import { stripBenignStderr } from "../../lib/benign-stderr";
 import { cn } from "../../lib/utils";
 import { type MarkdownLinkClickHandler } from "../MarkdownBody";
@@ -119,6 +120,7 @@ export interface TranscriptToolCardEntry {
   isError?: boolean;
   status: "running" | "completed" | "error";
   sourceEntryIds?: string[];
+  cursorAcpEvents?: CursorAcpTranscriptEvent[];
 }
 
 export type TranscriptMemoryScope = "stable_instructions" | "daily_note" | "knowledge_graph";
@@ -143,6 +145,8 @@ export interface RunTranscriptViewProps {
   thinkingClassName?: string;
   /** Chat stream: denser rows, collapsible thinking summaries, tool cards stay expandable. */
   presentation?: TranscriptPresentation;
+  /** Run Detail marks a terminal response only after the successful Run's final Reader page is loaded. */
+  terminalRun?: boolean;
   /** Show Rudder-internal runtime/session/workspace diagnostics that are hidden from the default operator view. */
   showDeveloperDiagnostics?: boolean;
   /** For embedded chat process logs, the final assistant answer is rendered as the message body. */
@@ -277,6 +281,7 @@ export type TranscriptBlock =
       isError?: boolean;
       status: "running" | "completed" | "error";
       sourceEntryIds?: string[];
+      cursorAcpEvents?: CursorAcpTranscriptEvent[];
     }
   | {
       type: "activity";
@@ -292,6 +297,7 @@ export type TranscriptBlock =
       todoListId?: string;
       items: TranscriptTodoListItem[];
       sourceEntryIds?: string[];
+      cursorAcpEvents?: CursorAcpTranscriptEvent[];
     }
   | {
       type: "command_group";
@@ -328,6 +334,7 @@ export type TranscriptBlock =
       detail?: string;
       collapseByDefault?: boolean;
       sourceEntryIds?: string[];
+      cursorAcpEvent?: CursorAcpTranscriptEvent;
     };
 
 export function transcriptBlockIdentity(block: TranscriptBlock): string {

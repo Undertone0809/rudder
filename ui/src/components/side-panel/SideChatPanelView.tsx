@@ -27,6 +27,9 @@ import {
 import { useOptionalSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useChatRuntimeSensitiveInput } from "@/hooks/useChatRuntimeSensitiveInput";
+import { rememberChatAssistantStreamRowIdentity } from "@/pages/Chat.timeline";
+import { chatAgentUsesCodexAppServer } from "@/pages/Chat.timeline";
+import { activeChatStreamAssistantMessageId } from "@/lib/chat-stream-state";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
 import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";
@@ -193,6 +196,7 @@ function SideChatPanelViewInstance({
   onSelectResponseAnnotation,
 }: SideChatPanelViewInstanceProps) {
   const queryClient = useQueryClient();
+  const assistantRowIdentitiesRef = useRef(new Map<string, string>());
   const { pushToast } = useToast();
   const sidePanel = useOptionalSidePanel();
   const sidePanelContextKey = sidePanel?.contextKey ?? null;
@@ -646,10 +650,12 @@ function SideChatPanelViewInstance({
       )) ?? null
     : null;
   const displayedStream = authoritativeTerminalMessage ? null : stream;
+  const activeAssistantMessageId = activeChatStreamAssistantMessageId(messages, displayedStream);
   const visibleMessages = displayedStream?.generationId
     ? messages.filter((message) => (
         message.role !== "assistant"
         || message.generationId !== displayedStream.generationId
+        || message.id === activeAssistantMessageId
       ))
     : messages;
   const showOptimisticUserMessage = Boolean(
@@ -1051,6 +1057,11 @@ function SideChatPanelViewInstance({
             receivedAckEvent = true;
             acknowledgedUserMessageId = event.userMessage.id;
             retryUserMessageIdRef.current = null;
+            rememberChatAssistantStreamRowIdentity(assistantRowIdentitiesRef.current, {
+              streamKey,
+              generationId: event.generationId ?? null,
+              turnVariant: event.userMessage.turnVariant ?? 0,
+            });
             saveDraft(body, event.userMessage.id);
             upsertMessage(conversationId!, event.userMessage);
             setStreamDraftForChat(streamScopeKey, (current) => current?.streamKey === streamKey ? {
@@ -1243,7 +1254,10 @@ function SideChatPanelViewInstance({
             transcriptConversationId={target.conversationId}
             messages={visibleMessages}
             stream={displayedStream}
+            assistantRowIdentities={assistantRowIdentitiesRef.current}
+            activeAssistantMessageId={activeAssistantMessageId}
             showOptimisticUserMessage={showOptimisticUserMessage}
+            requireFinalAnswerPhase={chatAgentUsesCodexAppServer(selectedAgent)}
             agents={agents}
             decisionNotesByMessageId={decisionNotesByMessageId}
             isMessageMutationAllowed={isMessageMutationAllowed}

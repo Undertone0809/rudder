@@ -51,6 +51,7 @@ const mockCompanySkillService = vi.hoisted(() => ({
   resolveRequestedSkillKeys: vi.fn(),
   getEnabledSkillKeysForAgent: vi.fn(),
   buildAgentSkillSnapshot: vi.fn(),
+  readAgentSkillFile: vi.fn(),
   resolveDesiredSkillSelectionForAgent: vi.fn(),
   replaceEnabledSkillKeysForAgent: vi.fn(),
   addEnabledSkillKeysForAgent: vi.fn(),
@@ -438,6 +439,53 @@ describe("agent skill routes", () => {
       expect.objectContaining({ env: {} }),
     );
     expect(mockAdapter.listSkills).not.toHaveBeenCalled();
+  });
+
+  it("reads a Skill file through the selected Agent catalog", async () => {
+    const agent = makeAgent("codex_local");
+    mockAgentService.getById.mockResolvedValue(agent);
+    mockCompanySkillService.readAgentSkillFile.mockResolvedValue({
+      skillId: "agent:para-memory-files",
+      path: "SKILL.md",
+      kind: "skill",
+      content: "# Private Agent Skill",
+      language: "markdown",
+      markdown: true,
+      editable: false,
+    });
+
+    const res = await request(await createApp())
+      .get(`/api/agents/${agent.id}/skills/file?orgId=organization-1&selectionKey=agent%3Apara-memory-files&path=SKILL.md`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toMatchObject({
+      skillId: "agent:para-memory-files",
+      path: "SKILL.md",
+      content: "# Private Agent Skill",
+    });
+    expect(mockCompanySkillService.readAgentSkillFile).toHaveBeenCalledWith(
+      agent,
+      { env: {} },
+      "agent:para-memory-files",
+      "SKILL.md",
+    );
+  });
+
+  it("hides Agent Skill files from users without organization access", async () => {
+    const agent = makeAgent("codex_local");
+    mockAgentService.getById.mockResolvedValue(agent);
+
+    const res = await request(await createApp(createDb(), {
+      type: "board",
+      userId: "outside-board",
+      orgIds: [],
+      source: "authenticated",
+      isInstanceAdmin: false,
+    }))
+      .get(`/api/agents/${agent.id}/skills/file?selectionKey=agent%3Apara-memory-files&path=SKILL.md`);
+
+    expect(res.status).toBe(403);
+    expect(mockCompanySkillService.readAgentSkillFile).not.toHaveBeenCalled();
   });
 
   it("keeps runtime materialization for persistent skill adapters", async () => {

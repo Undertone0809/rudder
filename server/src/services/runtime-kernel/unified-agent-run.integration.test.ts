@@ -616,8 +616,25 @@ describe("heartbeat-backed unified agent run adapter", () => {
       target: { type: "chat_conversation" as const, id: conversationId },
       idempotencyKey: "chat-turn-1",
       runtimeType: "codex_local",
-      sessionIntent: { kind: "fresh" as const },
-      contextSnapshot: { admissionRecoveryMarker: { sourceBoundaryRef: "sealed-boundary" } },
+      sessionIntent: {
+        kind: "resume" as const,
+        reuseScope: "explicit" as const,
+        sessionId: "same-session-thread",
+        sessionParams: {
+          threadId: "same-session-thread",
+          rpcArgs: Array.from({ length: 24 }, (_, index) => `--profile-option-${index}-${"x".repeat(96)}`),
+        },
+      },
+      contextSnapshot: {
+        admissionRecoveryMarker: { sourceBoundaryRef: "sealed-boundary" },
+        sideChatRuntimeAdmission: {
+          continuity: "native",
+          sourceBoundaryRef: "side-assistant-boundary",
+          sourceSelectorJson: { kind: "codex_turn", threadId: "parent-thread", turnId: "turn-1" },
+          providerCapability: { status: "supported", reason: "profile-bound" },
+          deferredForkDescriptor: { version: 1, sourceBoundaryRef: "side-assistant-boundary" },
+        },
+      },
     };
     const first = await service.admit(input);
     const duplicate = await service.admit(input);
@@ -644,21 +661,33 @@ describe("heartbeat-backed unified agent run adapter", () => {
 
     const [storedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, first.entry.runId));
     const legacyAdmission = {
-      ...(storedRun!.contextSnapshot as Record<string, any>).unifiedAgentRun,
+      version: 1,
+      scene: input.scene,
+      targetType: input.target.type,
+      targetId: input.target.id,
+      idempotencyKey: input.idempotencyKey,
+      runtimeType: input.runtimeType,
+      model: null,
+      sessionIntent: first.entry.sessionIntent,
       fingerprint: JSON.stringify({
         scene: input.scene, target: input.target, runtimeType: input.runtimeType,
         model: null, sessionIntent: first.entry.sessionIntent,
       }),
     };
-    delete legacyAdmission.fingerprintVersion;
-    delete legacyAdmission.agentId;
-    delete legacyAdmission.runtimeBindingId;
-    delete legacyAdmission.runtimeSegmentId;
     await db.update(heartbeatRuns).set({ contextSnapshot: {
       ...storedRun!.contextSnapshot, unifiedAgentRun: legacyAdmission,
     } }).where(eq(heartbeatRuns.id, first.entry.runId));
     await expect(service.admit({ ...input, runtimeBindingId: bindingId, runtimeSegmentId: segmentId }))
       .resolves.toMatchObject({ created: false, entry: { runId: first.entry.runId } });
+    await expect(service.admit({
+      ...input,
+      runtimeBindingId: bindingId,
+      runtimeSegmentId: segmentId,
+      sessionIntent: {
+        ...input.sessionIntent,
+        sessionParams: { ...input.sessionIntent.sessionParams, changed: true },
+      },
+    })).rejects.toMatchObject({ code: "idempotency_conflict" });
     await expect(service.admit({ ...input, runtimeSegmentId: randomUUID() }))
       .rejects.toMatchObject({ code: "idempotency_conflict" });
     await expect(service.admit({ ...input, agentId: randomUUID() }))
@@ -670,22 +699,36 @@ describe("heartbeat-backed unified agent run adapter", () => {
       scene: "chat",
       targetType: "chat_conversation",
       targetId: conversationId,
+      sideChatRuntimeAdmission: {
+        continuity: "native",
+        sourceBoundaryRef: "side-assistant-boundary",
+        sourceSelectorJson: { kind: "codex_turn", threadId: "parent-thread", turnId: "turn-1" },
+        providerCapability: { status: "supported", reason: "profile-bound" },
+        deferredForkDescriptor: { version: 1, sourceBoundaryRef: "side-assistant-boundary" },
+      },
       unifiedAgentRun: {
+        version: 2,
+        digestVersion: 1,
         idempotencyKey: "chat-turn-1",
-        fingerprint: expect.any(String),
+        sessionIntentDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        admissionDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
     });
+    const compactSnapshot = (storedRun?.contextSnapshot as Record<string, any>).unifiedAgentRun;
+    expect(compactSnapshot).not.toHaveProperty("sessionIntent");
+    expect(compactSnapshot).not.toHaveProperty("fingerprint");
+    expect(JSON.stringify(compactSnapshot).length).toBeLessThan(JSON.stringify(input.sessionIntent).length / 2);
     expect(storedRun).toMatchObject({
       scene: "chat",
       targetType: "chat_conversation",
       targetId: conversationId,
       idempotencyKey: "chat-turn-1",
       sessionIntentJson: {
-        kind: "fresh",
-        reuseScope: "none",
+        kind: "resume",
+        reuseScope: "explicit",
         sourceRunId: null,
-        sessionId: null,
-        sessionParams: null,
+        sessionId: "same-session-thread",
+        sessionParams: input.sessionIntent.sessionParams,
       },
     });
     const [storedAttempt] = await db.select().from(heartbeatRunAttempts).where(eq(heartbeatRunAttempts.runId, first.entry.runId));

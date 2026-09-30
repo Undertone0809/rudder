@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
+import { describe, expect, it, vi } from "vitest";
 import {
   createOpenCodeLocalProviderCapabilityResolver,
   type OpenCodeLocalProfileTransport,
@@ -51,6 +52,12 @@ describe("OpenCode profile-bound capability resolver", () => {
       profileBound: false,
       profileRequired: true,
     });
+    expect(runtimeProviderCapabilities.control.interrupt.evidence).toMatchObject({
+      status: "unknown",
+      profileBound: false,
+      profileRequired: true,
+    });
+    expect(runtimeProviderCapabilities.control.steer.evidence.status).toBe("unknown");
   });
 
   it("attests a profile resolver while keeping transport in persisted session state", () => {
@@ -59,7 +66,49 @@ describe("OpenCode profile-bound capability resolver", () => {
 
     expect(adapter.transcript.evidence).toMatchObject({ status: "supported", profileBound: true, profileRequired: true });
     expect(adapter.fork.evidence).toMatchObject({ status: "supported", profileBound: true, profileRequired: true });
+    expect(adapter.control.interrupt).toMatchObject({
+      evidence: { status: "supported", profileBound: true, profileRequired: true },
+      mode: "remote",
+      requiresHandle: true,
+    });
+    expect(adapter.control.interrupt.execute).toBeTypeOf("function");
+    expect(adapter.control.steer.evidence.status).toBe("unknown");
     expect(resolver("opencode_local", { ...binding, profileId: "other" })?.transcript.evidence.profileBound).toBe(false);
+  });
+
+  it("forwards interrupt only through the matching live profile and session handle", async () => {
+    const resolver = createOpenCodeLocalProviderCapabilityResolver(() => profile);
+    const adapter = resolver("opencode_local", binding)!;
+    const interrupt = vi.fn(async () => "acknowledged" as const);
+    const handle = {
+      runtimeType: "opencode_local",
+      providerThreadId: "session-1",
+      providerTurnId: null,
+      capabilities: { steer: "interrupt_continue", interrupt: "remote" },
+      steer: vi.fn(async () => ({ disposition: "unsupported" as const })),
+      interrupt,
+      dispose: vi.fn(async () => undefined),
+    } satisfies AgentRuntimeControlHandle;
+    const request = {
+      runtimeType: "opencode_local",
+      handle,
+      operation: { kind: "interrupt" as const, reason: "operator_stop" as const },
+      binding,
+      session: { sessionId: "session-1", sessionDisplayId: "session-1", sessionParams: { sessionId: "session-1" } },
+    };
+
+    await expect(adapter.control.interrupt.execute(request)).resolves.toBe("acknowledged");
+    expect(interrupt).toHaveBeenCalledWith("operator_stop");
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    await expect(adapter.control.interrupt.execute({
+      ...request,
+      binding: { ...binding, profileId: "other" },
+    })).resolves.toBe("unverified");
+    await expect(adapter.control.interrupt.execute({
+      ...request,
+      session: { ...request.session, sessionId: "stale-session" },
+    })).resolves.toBe("unverified");
+    expect(interrupt).toHaveBeenCalledTimes(1);
   });
 
   it("rejects missing persisted transport before any native request can run", async () => {

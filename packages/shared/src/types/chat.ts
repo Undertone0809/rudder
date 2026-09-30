@@ -242,7 +242,7 @@ export type ChatProviderControlDisposition =
   | "waiting_safe_boundary"
   | "unverified";
 
-export type ChatControlActionKind = "stop" | "steer";
+export type ChatControlActionKind = "stop" | "steer" | "continue";
 
 export type ChatGenerationEventKind =
   | "generation_started"
@@ -357,6 +357,8 @@ export interface ChatQueuedMessage {
 }
 
 export interface ChatQueueSnapshot {
+  /** Refresh this fence before explicit Continue; it is not permission to replay failed input. */
+  latestFailedGenerationId?: string | null;
   activeGenerationId: string | null;
   activeAttemptEpoch: number | null;
   activeControlVersion: number | null;

@@ -132,19 +132,23 @@ function redactDiagnostic(value: unknown, secrets: readonly string[]): string {
 
 function invocationContext(
   context: Record<string, unknown>,
-  toolContext: { eventCount: number; hash: string },
+  toolContext: { eventCount: number; hash: string } | null,
   secrets: readonly string[],
 ): Record<string, unknown> {
   const safe = asRecord(redactInvocationValue(context, secrets)) ?? {};
-  // Raw tool interactions are already sent through the bounded prompt
-  // projection. Keep only an auditable summary in persisted invocation meta.
+  // Never retain raw transcript or tool details in invocation metadata.
   delete safe.rudderToolContext;
   delete safe.transcript;
-  safe.rudderToolContextSummary = {
-    mode: "bounded-hash",
-    eventCount: toolContext.eventCount,
-    contentHash: toolContext.hash,
-  };
+  if (toolContext) {
+    safe.rudderToolContextSummary = {
+      mode: "bounded-hash",
+      eventCount: toolContext.eventCount,
+      contentHash: toolContext.hash,
+    };
+  } else {
+    delete safe.principalScopeRef;
+    delete safe.rudderToolContextSummary;
+  }
   return safe;
 }
 
@@ -173,6 +177,43 @@ function providerProfileIdentity(config: Record<string, unknown>) {
     ...(profileOrgId ? { profileOrgId } : {}),
     ...(workspaceBindingId ? { workspaceBindingId } : {}),
     capabilityRevision: asString(config.capabilityRevision, "").trim() || null,
+  };
+}
+
+type HermesHttpChatIdentity = {
+  conversationId: string;
+  principalScopeRef: string;
+};
+
+function hermesHttpChatIdentity(ctx: AgentRuntimeExecutionContext): HermesHttpChatIdentity | null {
+  if (ctx.context.chatMode !== true) return null;
+  const conversationId = asString(ctx.context.chatConversationId, "").trim();
+  if (!conversationId) return null;
+  const runtimeParams = parseObject(ctx.runtime.sessionParams);
+  const principalScopeRef = asString(
+    ctx.context.principalScopeRef ?? runtimeParams.principalScopeRef,
+    "",
+  ).trim() || `org:${ctx.agent.orgId}`;
+  return { conversationId, principalScopeRef };
+}
+
+function hermesHttpContinuityIdentity(
+  ctx: AgentRuntimeExecutionContext,
+  profile: ReturnType<typeof providerProfileIdentity>,
+): { bindingDigest: string; workstreamKey: string } | null {
+  const chat = hermesHttpChatIdentity(ctx);
+  if (!chat) return null;
+  const bindingDigest = shortHash({
+    version: 1,
+    orgId: ctx.agent.orgId,
+    agentId: ctx.agent.id,
+    conversationId: chat.conversationId,
+    principalScopeRef: chat.principalScopeRef,
+    profile,
+  });
+  return {
+    bindingDigest,
+    workstreamKey: `rudder:chat:${bindingDigest}`,
   };
 }
 
@@ -207,6 +248,7 @@ export function validateHermesResumeSession(input: {
   base: URL;
   profile: Record<string, unknown>;
   workspace: HermesWorkspaceIdentity;
+  continuityIdentity?: string | null;
 }): string | null {
   const params = input.sessionParams;
   const storedSessionId = hermesStoredString(params, ["hermesSessionId", "sessionId", "session_id"]);
@@ -224,6 +266,10 @@ export function validateHermesResumeSession(input: {
   for (const [label, keys, expected] of identityFields) {
     const stored = hermesStoredString(params, keys);
     if (stored && stored !== expected) return `Hermes session ${label} identity does not match the requested provider binding.`;
+  }
+  const storedContinuityIdentity = hermesStoredString(params, ["rudderContinuityIdentity"]);
+  if (storedContinuityIdentity && storedContinuityIdentity !== (input.continuityIdentity ?? "")) {
+    return "Hermes session Conversation/Profile/principal identity does not match the requested Chat binding.";
   }
   const storedBase = hermesStoredString(params, ["hermesBaseUrl", "gatewayUrl"]);
   if (storedBase && storedBase !== input.base.toString()) {
@@ -262,6 +308,7 @@ function storedSessionId(
       base,
       profile: profileIdentity,
       workspace,
+      continuityIdentity: hermesHttpContinuityIdentity(ctx, profileIdentity)?.bindingDigest ?? null,
     });
     if (rejection) throw new Error(`Hermes resume rejected: ${rejection}`);
   }
@@ -920,6 +967,15 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       errorCode: "hermes_chat_backend_unavailable",
     };
   }
+  if (selectedChatBackend === "native_runs_http" && ctx.context.chatMode === true && !hermesHttpChatIdentity(ctx)) {
+    return {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorMessage: "Hermes HTTP Chat requires a stable Rudder Conversation ID.",
+      errorCode: "hermes_gateway_conversation_binding_missing",
+    };
+  }
   if (!base) return { exitCode: 1, signal: null, timedOut: false, errorMessage: "Hermes API Server URL is missing or invalid.", errorCode: "hermes_gateway_url_invalid" };
   const endpointPreflight = await preflightBaseUrl(base);
   if (!endpointPreflight.ok) return { exitCode: 1, signal: null, timedOut: false, errorMessage: endpointPreflight.reason, errorCode: "hermes_gateway_endpoint_rejected" };
@@ -990,26 +1046,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     };
   }
   const template = parseObject(config.payloadTemplate);
-  const workstreamKey = sessionKey(ctx);
-  const preliminaryToolContext = buildToolContextProjection(ctx, workstreamKey);
-  if (preliminaryToolContext.refusal) {
-    return {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      errorMessage: `Hermes tool context refused: ${preliminaryToolContext.refusal}.`,
-      errorCode: "hermes_gateway_continuity_refused",
-      resultJson: {
-        synthetic_tool_continuity: {
-          mode: "synthetic_tool_continuity",
-          native: false,
-          lossless: false,
-          projectionVersion: "RUDDER_TOOL_CONTEXT_V1",
-          refusal: preliminaryToolContext.refusal,
-        },
-      },
-    };
-  }
+  const continuityIdentity = hermesHttpContinuityIdentity(ctx, profileIdentity);
+  const workstreamKey = continuityIdentity?.workstreamKey ?? sessionKey(ctx);
   let session: HermesSessionResolution;
   try {
     session = await resolveHermesSession({
@@ -1042,6 +1080,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ...(profileIdentity.profileOrgId ? { profileOrgId: profileIdentity.profileOrgId } : {}),
     ...(profileIdentity.workspaceBindingId ? { workspaceBindingId: profileIdentity.workspaceBindingId } : {}),
     ...(profileIdentity.capabilityRevision ? { capabilityRevision: profileIdentity.capabilityRevision } : {}),
+    ...(continuityIdentity ? { rudderContinuityIdentity: continuityIdentity.bindingDigest } : {}),
     ...(workspace.cwd ? { cwd: workspace.cwd } : {}),
     ...(workspace.workspaceId ? { workspaceId: workspace.workspaceId } : {}),
     ...(workspace.repoUrl ? { repoUrl: workspace.repoUrl } : {}),
@@ -1053,28 +1092,12 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ? { hermesAuthEnvVar: configuredHermesAuthEnvVar(config) }
       : {}),
   });
-  const toolContext = buildToolContextProjection(ctx, session.providerSessionId);
-  if (toolContext.refusal) {
-    return {
-      exitCode: 1,
-      signal: null,
-      timedOut: false,
-      errorMessage: `Hermes tool context refused: ${toolContext.refusal}.`,
-      errorCode: "hermes_gateway_continuity_refused",
-      sessionParams: sessionParamsFor(),
-      sessionDisplayId: session.providerSessionId,
-      resultJson: {
-        synthetic_tool_continuity: {
-          mode: "synthetic_tool_continuity",
-          native: false,
-          lossless: false,
-          projectionVersion: "RUDDER_TOOL_CONTEXT_V1",
-          refusal: toolContext.refusal,
-        },
-      },
-    };
-  }
-  const input = runMessage(ctx, skillProjection.prompt, toolContext.text);
+  const sessionIdentity = {
+    sessionId: session.providerSessionId,
+    sessionParams: sessionParamsFor(),
+    sessionDisplayId: session.providerSessionId,
+  };
+  const input = runMessage(ctx, skillProjection.prompt, "");
   const body: Record<string, unknown> = {
     ...template,
     input,
@@ -1083,6 +1106,8 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   };
   delete body.message;
   delete body.idempotency_key;
+  delete body.conversation_history;
+  delete body.previous_response_id;
 
   if (ctx.onMeta) {
     await ctx.onMeta({
@@ -1097,7 +1122,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         skillCount: skillProjection.skills.length,
         skillBytes: skillProjection.bytes,
       },
-      context: invocationContext(ctx.context, toolContext, configuredSecrets),
+      context: invocationContext(ctx.context, null, configuredSecrets),
     });
   }
   await ctx.onLog("stdout", `[hermes-gateway] submitting run upstream=hermes-api base=${base.origin}\n`);
@@ -1141,6 +1166,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     ctx.abortSignal?.removeEventListener("abort", abortHandler);
     const diagnostic = redactDiagnostic(error, configuredSecrets);
     return {
+      ...sessionIdentity,
       exitCode: 1,
       signal: null,
       timedOut: false,
@@ -1166,6 +1192,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       && asString(safeBody.code ?? asRecord(safeBody.error)?.code, "") === "idempotency_key_conflict";
     const isAmbiguousServerError = started.response.status >= 500;
     return {
+      ...sessionIdentity,
       exitCode: 1,
       signal: null,
       timedOut: false,
@@ -1195,6 +1222,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
   if (!upstreamRunId) {
     ctx.abortSignal?.removeEventListener("abort", abortHandler);
     return {
+      ...sessionIdentity,
       exitCode: 1,
       signal: null,
       timedOut: false,
@@ -1233,7 +1261,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     if (!controlLease) {
       await stopUpstream();
       ctx.abortSignal?.removeEventListener("abort", abortHandler);
-      return { exitCode: 1, signal: null, timedOut: false, errorMessage: "Hermes runtime control lease was lost.", errorCode: "hermes_gateway_control_lost", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId };
+      return { ...sessionIdentity, exitCode: 1, signal: null, timedOut: false, errorMessage: "Hermes runtime control lease was lost.", errorCode: "hermes_gateway_control_lost" };
     }
   }
 
@@ -1401,17 +1429,11 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     : output ? String(redactInvocationValue(output, configuredSecrets)) : null;
   const usage = usageFrom(terminal?.usage ?? latestStatus.usage);
   const continuity = {
-    mode: "synthetic_tool_continuity",
-    native: false,
+    mode: "hermes_http_session",
+    native: true,
     lossless: false,
-    projectionVersion: "RUDDER_TOOL_CONTEXT_V1",
-    maxEvents: MAX_PROJECTED_EVENTS,
-    maxEventBytes: MAX_PROJECTED_EVENT_BYTES,
-    maxAggregateBytes: MAX_PROJECTED_CONTEXT_BYTES,
-    maxTokenEstimate: MAX_PROJECTED_TOKENS,
-    eventCount: events.length,
-    toolContextHash: toolContext.hash,
-    projectedEventCount: toolContext.eventCount,
+    inputPolicy: "current_turn_only",
+    priorToolContextInjected: false,
   };
   if (approvalPending && !approvalResolved && !approvalError) {
     approvalError = "Hermes approval is pending and no Rudder approval decision was supplied.";
@@ -1428,7 +1450,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     status,
     output: safeOutput,
     events: events.map((event) => safeEvent(event, configuredSecrets)),
-    synthetic_tool_continuity: continuity,
+    continuity,
     sessionMapping: {
       mode: "hermes_sessions_api_v1",
       providerSessionId: session.providerSessionId,
@@ -1450,23 +1472,23 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
     },
   }, configuredSecrets) as Record<string, unknown>;
   if (nativeInteractionError) {
-    return { exitCode: 1, signal: null, timedOut: false, errorMessage: nativeInteractionError, errorCode: "hermes_gateway_interaction_unresolved", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson };
+    return { ...sessionIdentity, exitCode: 1, signal: null, timedOut: false, errorMessage: nativeInteractionError, errorCode: "hermes_gateway_interaction_unresolved", resultJson };
   }
   if (approvalError) {
-    return { exitCode: 1, signal: null, timedOut: false, errorMessage: approvalError, errorCode: "hermes_gateway_approval_unresolved", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson };
+    return { ...sessionIdentity, exitCode: 1, signal: null, timedOut: false, errorMessage: approvalError, errorCode: "hermes_gateway_approval_unresolved", resultJson };
   }
   if (ctx.abortSignal?.aborted || stopSent || status === "cancelled" || status === "stopped") {
     if (!terminalStatus(status) || !["cancelled", "stopped"].includes(status)) {
-      return { exitCode: 1, signal: "SIGTERM", timedOut: false, errorMessage: "Hermes stop was requested but terminal state was not verified.", errorCode: "hermes_gateway_cancel_unverified", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
+      return { ...sessionIdentity, exitCode: 1, signal: "SIGTERM", timedOut: false, errorMessage: "Hermes stop was requested but terminal state was not verified.", errorCode: "hermes_gateway_cancel_unverified", resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
     }
-    return { exitCode: 1, signal: "SIGTERM", timedOut: false, errorMessage: "Hermes run stopped.", errorCode: "hermes_gateway_stopped", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
+    return { ...sessionIdentity, exitCode: 1, signal: "SIGTERM", timedOut: false, errorMessage: "Hermes run stopped.", errorCode: "hermes_gateway_stopped", resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
   }
   if (!terminalStatus(status) || Date.now() - startedAt >= timeoutMs) {
-    return { exitCode: 1, signal: null, timedOut: !stopSent, errorMessage: stopSent ? "Hermes stop was requested but terminal state was not verified." : `Hermes run timed out after ${timeoutMs}ms.`, errorCode: stopSent ? "hermes_gateway_cancel_unverified" : "hermes_gateway_timeout", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson };
+    return { ...sessionIdentity, exitCode: 1, signal: null, timedOut: !stopSent, errorMessage: stopSent ? "Hermes stop was requested but terminal state was not verified." : `Hermes run timed out after ${timeoutMs}ms.`, errorCode: stopSent ? "hermes_gateway_cancel_unverified" : "hermes_gateway_timeout", resultJson };
   }
   if (status !== "completed") {
     const errorMessage = textFrom(latestStatus.error) ?? `Hermes run ended with status ${status}.`;
-    return { exitCode: 1, signal: null, timedOut: false, errorMessage: String(redactInvocationValue(errorMessage, configuredSecrets)), errorCode: "hermes_gateway_run_failed", sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
+    return { ...sessionIdentity, exitCode: 1, signal: null, timedOut: false, errorMessage: String(redactInvocationValue(errorMessage, configuredSecrets)), errorCode: "hermes_gateway_run_failed", resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
   }
-  return { exitCode: 0, signal: null, timedOut: false, nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" }, provider: "hermes", model: asString(latestStatus.model, "") || null, ...(usage ? { usage } : {}), sessionParams: sessionParamsFor(), sessionDisplayId: session.providerSessionId, resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
+  return { ...sessionIdentity, exitCode: 0, signal: null, timedOut: false, nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" }, provider: "hermes", model: asString(latestStatus.model, "") || null, ...(usage ? { usage } : {}), resultJson, ...(safeOutput ? { summary: safeOutput } : {}) };
 }

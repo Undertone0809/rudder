@@ -24,6 +24,7 @@ import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import type { StorageService } from "../storage/types.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
+import { authorizeQueuedRecovery, hasQueueRecoveryActiveExecution, matchesQueueRecoveryAuthorization } from "./chat-queue-recovery.js";
 import { approvalService } from "./approvals.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
@@ -751,7 +752,9 @@ export function chatService(db: Db, storage?: StorageService) {
           .limit(1)
           .then((rows) => rows[0] ?? null)
         : null;
+    const latestGeneration = activeGeneration ? null : await getLatestGeneration(conversationId);
     return {
+      latestFailedGenerationId: latestGeneration?.status === "failed" ? latestGeneration.id : null,
       activeGenerationId: activeGeneration?.id ?? null,
       activeAttemptEpoch: activeGeneration?.attemptEpoch ?? null,
       activeControlVersion: activeGeneration?.controlVersion ?? null,
@@ -2391,6 +2394,22 @@ export function chatService(db: Db, storage?: StorageService) {
           const isSteer = candidate.deliveryIntent === "steer"
             || candidate.status === "steer_pending"
             || candidate.status === "continuation_pending";
+          const recoveryAction = candidate.controlActionId
+            ? await tx.select().from(chatControlActions).where(and(
+                eq(chatControlActions.id, candidate.controlActionId),
+                eq(chatControlActions.orgId, candidate.orgId),
+              )).limit(1).then((rows) => rows[0] ?? null)
+            : null;
+          const recoveryAuthorized = latestGeneration?.status === "failed"
+            && matchesQueueRecoveryAuthorization(candidate, recoveryAction, latestGeneration.id);
+          // A changed queue/reply invalidates the exact grant even if ordinary admission would now pass.
+          if (recoveryAction?.actionKind === "continue" && (
+            !recoveryAuthorized
+            || await hasQueueRecoveryActiveExecution(tx, candidate.orgId, candidate.conversationId)
+          )) {
+            retainedCandidateCount += 1;
+            continue;
+          }
           if (
             latestGeneration
             && ACTIVE_CHAT_GENERATION_STATUSES.some((status) => status === latestGeneration.status)
@@ -2402,6 +2421,7 @@ export function chatService(db: Db, storage?: StorageService) {
             candidate.status === "queued"
             && latestGeneration
             && latestGeneration.status !== "completed"
+            && !recoveryAuthorized
             && !(
               (
                 latestGeneration.status === "stopped"
@@ -5211,6 +5231,7 @@ export function chatService(db: Db, storage?: StorageService) {
     releaseSteerProviderSendClaim,
     resolveSteerControlAction,
     claimNextServerQueuedMessage,
+    authorizeQueuedRecovery: (input: Parameters<typeof authorizeQueuedRecovery>[1]) => authorizeQueuedRecovery(db, input),
     renewServerQueuedMessageClaim,
     acknowledgeServerQueuedMessageDelivery,
     completeServerQueuedMessageDelivery,

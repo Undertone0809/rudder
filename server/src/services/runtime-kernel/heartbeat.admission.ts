@@ -24,7 +24,12 @@ import {
 import type { RuntimeDriverFactoryOptions } from "./runtime-driver.js";
 import { getRuntimeDriver } from "./runtime-driver.js";
 import type { UnifiedAgentRunAdapter } from "./unified-agent-run.contracts.js";
-import { readSubmission } from "./unified-agent-run.persistence-support.js";
+import {
+  compactUnifiedAdmissionSnapshot,
+  contextWithAdmission,
+  readPersistedAdmission,
+  readSubmission,
+} from "./unified-agent-run.persistence-support.js";
 
 /** Bind the Driver to heartbeat's existing durable owners; it does not schedule work. */
 export function createHeartbeatRuntimeDriver(
@@ -109,7 +114,7 @@ function admissionSessionIntent(input: {
  * helper only makes every newly admitted row carry the same identity.
  */
 export function buildHeartbeatRunAdmissionFields(input: {
-  agent: { orgId: string; agentRuntimeType: string };
+  agent: { id: string; orgId: string; agentRuntimeType: string };
   scene?: "chat" | "side_chat" | "issue" | "review" | "automation" | "heartbeat" | "delegation" | null;
   targetType?: RuntimeBindingTargetType | null;
   source?: string | null;
@@ -194,15 +199,10 @@ export function buildHeartbeatRunAdmissionFields(input: {
     sessionParams: input.sessionParams,
     sourceRunId: input.sourceRunId,
   });
-  const fingerprint = JSON.stringify({
-    scene,
-    target: { type: targetType, id: targetId },
-    runtimeType: input.agent.agentRuntimeType,
-    model: null,
-    sessionIntent,
-  });
-  const unifiedAgentRun = {
-    version: 1,
+  const unifiedAgentRun = compactUnifiedAdmissionSnapshot({
+    agentId: input.agent.id,
+    runtimeBindingId: nonEmptyAdmissionString(input.runtimeBindingId),
+    runtimeSegmentId: nonEmptyAdmissionString(input.runtimeSegmentId),
     scene,
     targetType,
     targetId,
@@ -210,11 +210,8 @@ export function buildHeartbeatRunAdmissionFields(input: {
     runtimeType: input.agent.agentRuntimeType,
     model: null,
     sessionIntent,
-    runtimeBindingId: nonEmptyAdmissionString(input.runtimeBindingId),
-    runtimeSegmentId: nonEmptyAdmissionString(input.runtimeSegmentId),
-    fingerprint,
     ...input.ownerFence,
-  };
+  });
   const nextContext = {
     ...context,
     scene,
@@ -245,26 +242,15 @@ export function createHeartbeatAdmissionHandlers(context: {
 }) {
   const { db, getRun, unifiedRunAdapter } = context;
   function readCommonRunAdmission(run: typeof heartbeatRuns.$inferSelect) {
-    const context = admissionObject(run.contextSnapshot);
-    const stored = admissionObject(context?.[UNIFIED_ADMISSION_CONTEXT_KEY]);
-    if (
-      !nonEmptyAdmissionString(run.scene)
-      || !nonEmptyAdmissionString(run.targetType)
-      || !nonEmptyAdmissionString(run.targetId)
-      || !nonEmptyAdmissionString(run.idempotencyKey)
-      || !admissionObject(run.sessionIntentJson)
-      || !stored
-      || stored.version !== 1
-    ) {
-      return null;
-    }
+    const stored = readPersistedAdmission(run);
+    if (!stored) return null;
     return {
-      scene: run.scene,
-      targetType: run.targetType,
-      targetId: run.targetId,
-      idempotencyKey: run.idempotencyKey,
-      runtimeType: nonEmptyAdmissionString(stored.runtimeType) ?? "",
-      sessionIntent: admissionObject(run.sessionIntentJson) as Record<string, unknown>,
+      scene: stored.scene,
+      targetType: stored.targetType,
+      targetId: stored.targetId,
+      idempotencyKey: stored.idempotencyKey,
+      runtimeType: stored.runtimeType,
+      sessionIntent: stored.sessionIntent,
       stored,
     };
   }
@@ -619,16 +605,13 @@ export function createHeartbeatAdmissionHandlers(context: {
       if (!initialized) throw new HeartbeatCommonRunBoundaryError(`heartbeat run ${run.id} submission initialization lost its owner fence`);
     }
 
-    const nextContext = {
-      ...(admissionObject(run.contextSnapshot) ?? {}),
-      [UNIFIED_ADMISSION_CONTEXT_KEY]: {
-        ...admission.stored,
-        ownerFenceId: span.id,
-        lastOwnerToken: ownerToken,
-        attemptEpoch,
-        lastLeaseExpiresAt: run.executionLeaseExpiresAt?.toISOString() ?? null,
-      },
-    };
+    const nextContext = contextWithAdmission(run.contextSnapshot, {
+      ...admission.stored,
+      ownerFenceId: span.id,
+      lastOwnerToken: ownerToken,
+      attemptEpoch,
+      lastLeaseExpiresAt: run.executionLeaseExpiresAt?.toISOString() ?? null,
+    });
     const [updatedRun] = await database
       .update(heartbeatRuns)
       .set({ contextSnapshot: nextContext, updatedAt: new Date() })

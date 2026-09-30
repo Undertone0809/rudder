@@ -20,14 +20,12 @@ Object.defineProperty(window, "matchMedia", {
   }),
 });
 
-const { openPath, readDesktopShell, readAuthorizedLocalFilePreview } = vi.hoisted(() => ({
+const { openPath, readDesktopShell } = vi.hoisted(() => ({
   openPath: vi.fn(),
   readDesktopShell: vi.fn(),
-  readAuthorizedLocalFilePreview: vi.fn(),
 }));
 
 vi.mock("../../lib/desktop-shell", () => ({ readDesktopShell }));
-vi.mock("../../api/localFiles", () => ({ readAuthorizedLocalFilePreview }));
 vi.mock("../../context/OrganizationContext", () => ({
   useOptionalOrganization: () => ({ selectedOrganizationId: "org-1" }),
 }));
@@ -78,6 +76,7 @@ vi.mock("../MarkdownBody", () => ({
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const roots: Root[] = [];
+const restoreFns: Array<() => void> = [];
 const localSkillFilePath = "/tmp/org-skills/review-helper/references/guide.md";
 
 function LocalFilePreviewFlow({
@@ -127,28 +126,13 @@ afterEach(async () => {
     for (const root of roots.splice(0)) root.unmount();
   });
   document.body.replaceChildren();
+  for (const restore of restoreFns.splice(0)) restore();
   vi.clearAllMocks();
 });
 
 describe("RunTranscriptView local-file links", () => {
-  it("opens the authorized Skill preview from an ordinary browser click", async () => {
+  it("reads a user-selected local file in the browser without a server request", async () => {
     readDesktopShell.mockReturnValue(null);
-    readAuthorizedLocalFilePreview.mockResolvedValue({
-      source: "org_root",
-      rootPath: "/tmp/org-skills/review-helper",
-      repoUrl: null,
-      filePath: "references/guide.md",
-      libraryEntryId: null,
-      mentionHref: null,
-      markdownLink: null,
-      rootExists: true,
-      content: "# Authorized Skill guide",
-      contentType: "text/markdown",
-      previewKind: "text",
-      contentPath: null,
-      message: null,
-      truncated: false,
-    } satisfies OrganizationWorkspaceFileDetail);
     const onOpenFile = vi.fn();
     const container = await render(onOpenFile);
     const link = container.querySelector<HTMLAnchorElement>(
@@ -165,9 +149,55 @@ describe("RunTranscriptView local-file links", () => {
     });
 
     expect(onOpenFile).toHaveBeenCalledWith(localSkillFilePath, "guide.md");
-    expect(readAuthorizedLocalFilePreview).toHaveBeenCalledWith("org-1", localSkillFilePath);
+    expect(container.querySelector("[data-testid='chat-side-panel-local-file-picker']")?.textContent)
+      .toContain("not sent to Rudder");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    restoreFns.push(() => fetchSpy.mockRestore());
+    const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
+    expect(fileInput).not.toBeNull();
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: [new File(["# Local Skill guide"], "guide.md", { type: "text/markdown" })],
+    });
+
+    await act(async () => {
+      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
     expect(container.querySelector("[data-testid='authorized-file-preview']")?.textContent)
-      .toContain("Authorized Skill guide");
+      .toContain("Local Skill guide");
     expect(openPath).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("keeps the browser picker available after a mismatched file selection", async () => {
+    readDesktopShell.mockReturnValue(null);
+    const container = await render(vi.fn());
+    const link = container.querySelector<HTMLAnchorElement>(
+      `a[href="${localSkillFilePath}"]`,
+    );
+    await act(async () => {
+      link?.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+      }));
+    });
+    const fileInput = container.querySelector<HTMLInputElement>("input[type=file]");
+    expect(fileInput).not.toBeNull();
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: [new File(["wrong file"], "other.md", { type: "text/markdown" })],
+    });
+
+    await act(async () => {
+      fileInput?.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("guide.md");
+    expect(container.querySelector("button")?.textContent).toContain("Choose local file");
   });
 });

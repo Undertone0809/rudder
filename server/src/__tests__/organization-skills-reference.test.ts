@@ -625,6 +625,14 @@ describe("organization skill references", () => {
       "---\nname: build-advisor\ndescription: Codex advisor.\n---\n",
       "utf8",
     );
+    fs.mkdirSync(path.join(codexSkillDir, "references"), { recursive: true });
+    fs.writeFileSync(path.join(home, "outside.md"), "outside skill root", "utf8");
+    let outsideSymlinkCreated = true;
+    try {
+      fs.symlinkSync(path.join(home, "outside.md"), path.join(codexSkillDir, "references", "outside.md"));
+    } catch {
+      outsideSymlinkCreated = false;
+    }
     fs.mkdirSync(claudeSkillDir, { recursive: true });
     fs.writeFileSync(
       path.join(claudeSkillDir, "SKILL.md"),
@@ -712,6 +720,32 @@ describe("organization skill references", () => {
         source: codexSkillDir,
         description: "Codex advisor.",
       }));
+
+      await expect(skillSvc.readAgentSkillFile(
+        agent,
+        { env: { HOME: home } },
+        "adapter:codex_local:build-advisor",
+        "SKILL.md",
+      )).resolves.toMatchObject({
+        path: "SKILL.md",
+        content: "---\nname: build-advisor\ndescription: Codex advisor.\n---\n",
+        markdown: true,
+        editable: false,
+      });
+      await expect(skillSvc.readAgentSkillFile(
+        agent,
+        { env: { HOME: home } },
+        "adapter:codex_local:build-advisor",
+        "../outside.md",
+      )).rejects.toThrow("Skill file not found");
+      if (outsideSymlinkCreated) {
+        await expect(skillSvc.readAgentSkillFile(
+          agent,
+          { env: { HOME: home } },
+          "adapter:codex_local:build-advisor",
+          "references/outside.md",
+        )).rejects.toThrow("Skill file not found");
+      }
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

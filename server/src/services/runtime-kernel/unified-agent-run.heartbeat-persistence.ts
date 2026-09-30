@@ -59,6 +59,7 @@ import {
   type UnifiedSubmissionOutcome,
 } from "./unified-agent-run.js";
 import {
+  admissionDigestForRun,
   ACTIVE_RUN_STATUSES,
   admissionMatches,
   assertPersistedRuntimeIdentity,
@@ -75,6 +76,7 @@ import {
   readPersistedAdmission,
   readSubmission,
   requiredPersistenceString,
+  sha256JsonDigest,
   sessionReuseScopeForIntent,
   submissionKeyFor,
   UNIFIED_ADMISSION_CONTEXT_KEY,
@@ -96,6 +98,27 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function legacyAdmissionFingerprintMatches(
+  fingerprint: string,
+  admission: ReturnType<typeof normalizePersistenceAdmission>,
+) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fingerprint);
+  } catch {
+    return false;
+  }
+  const stored = asRecord(parsed);
+  if (!stored) return false;
+  return sha256JsonDigest(stored) === sha256JsonDigest({
+    scene: admission.scene,
+    target: admission.target,
+    runtimeType: admission.runtimeType,
+    model: admission.model,
+    sessionIntent: admission.sessionIntent,
+  });
 }
 
 export async function lockUnifiedAgentRunCapacity(database: Db, agentId: string) {
@@ -327,11 +350,23 @@ export function createHeartbeatUnifiedAgentRunAdapter(
             `idempotency key ${admission.idempotencyKey} was already admitted for a different scene or target`,
           );
         }
-        const expectedFingerprint = stored.fingerprintVersion === 2
-          ? admission.fingerprint
-          : JSON.stringify({ scene: admission.scene, target: admission.target,
-            runtimeType: admission.runtimeType, model: admission.model, sessionIntent: admission.sessionIntent });
-        if (stored.fingerprint !== expectedFingerprint) {
+        const fingerprintMatches = stored.fingerprintVersion === 3
+          ? stored.fingerprint === admissionDigestForRun({
+            agentId: admission.agentId,
+            runtimeBindingId: admission.runtimeBindingId,
+            runtimeSegmentId: admission.runtimeSegmentId,
+            scene: admission.scene,
+            targetType: admission.target.type,
+            targetId: admission.target.id,
+            idempotencyKey: admission.idempotencyKey,
+            runtimeType: admission.runtimeType,
+            model: admission.model,
+            sessionIntent: admission.sessionIntent,
+          })
+          : stored.fingerprintVersion === 2
+            ? stored.fingerprint === admission.fingerprint
+            : legacyAdmissionFingerprintMatches(stored.fingerprint, admission);
+        if (!fingerprintMatches) {
           throw new UnifiedAgentRunContractError(
             "idempotency_conflict",
             `idempotency key ${admission.idempotencyKey} was already admitted with different run inputs`,

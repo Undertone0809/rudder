@@ -1956,6 +1956,116 @@ describe("messengerService and issue follows", () => {
     });
   });
 
+  async function recoveryFixture() {
+    const orgId = randomUUID();
+    const conversationId = randomUUID();
+    const failedGenerationId = randomUUID();
+    await db.insert(organizations).values({ id: orgId, name: "Queue recovery", urlKey: deriveOrganizationUrlKey(`Recovery ${orgId}`),
+      issuePrefix: `R${orgId.replace(/-/g, "").slice(0, 6).toUpperCase()}`, requireBoardApprovalForNewAgents: false });
+    await db.insert(chatConversations).values({ id: conversationId, orgId, title: "Recovery", createdByUserId: "messenger-test-user" });
+    await db.insert(chatGenerations).values({ id: failedGenerationId, orgId, conversationId,
+      status: "failed", terminalReason: "original_reader_failure", completedAt: new Date() });
+    const old = await chatSvc.createQueuedMessage({ orgId, conversationId, clientMutationId: randomUUID(),
+      payload: { body: "Old accepted input, never replay" }, requestActor: boardQueueRequestActor(orgId) });
+    await db.update(chatQueuedMessages).set({ status: "failed_actionable", deliveryAttempts: 1 }).where(eq(chatQueuedMessages.id, old.id));
+    const queued = await chatSvc.createQueuedMessage({ orgId, conversationId, clientMutationId: randomUUID(),
+      payload: { body: "New explicit continuation" }, requestActor: boardQueueRequestActor(orgId) });
+    const command = { orgId, conversationId, itemId: queued.id, version: queued.version,
+      expectedFailedGenerationId: failedGenerationId, controlActionId: randomUUID(), requestActor: boardQueueRequestActor(orgId) };
+    return { orgId, conversationId, failedGenerationId, old, queued, command };
+  }
+
+  it("queue recovery authorizes one new input and consumes once across concurrent workers", async () => {
+    const f = await recoveryFixture();
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "before-grant", leaseMs: 30_000 })).toBeNull();
+    const results = await Promise.all([chatSvc.authorizeQueuedRecovery(f.command), chatSvc.authorizeQueuedRecovery(f.command)]);
+    expect(results.map((r) => r.idempotent).sort()).toEqual([false, true]);
+    expect(results[0].item.version).toBe(f.queued.version + 1);
+    expect((await chatSvc.getQueueSnapshot(f.conversationId)).latestFailedGenerationId).toBe(f.failedGenerationId);
+    const claims = await Promise.all(Array.from({ length: 4 }, (_, i) =>
+      chatSvc.claimNextServerQueuedMessage({ workerId: `recovery-${i}`, leaseMs: 30_000 })));
+    const claimed = claims.filter((claim) => claim !== null);
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]?.item).toMatchObject({ id: f.queued.id, deliveryAttempts: 1, deliveryLeaseEpoch: 1 });
+    expect(await db.select().from(chatGenerations).where(eq(chatGenerations.id, claimed[0]!.generationId)))
+      .toMatchObject([{ status: "active", attemptEpoch: 0 }]);
+    expect((await chatSvc.authorizeQueuedRecovery(f.command)).idempotent).toBe(true);
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, f.conversationId))).toHaveLength(1);
+    expect(await db.select().from(chatGenerations).where(eq(chatGenerations.id, f.failedGenerationId)))
+      .toMatchObject([{ status: "failed", terminalReason: "original_reader_failure" }]);
+    expect(await db.select().from(chatQueuedMessages).where(eq(chatQueuedMessages.id, f.old.id)))
+      .toMatchObject([{ status: "failed_actionable", deliveryAttempts: 1 }]);
+    expect(await db.select().from(chatControlActions).where(eq(chatControlActions.id, f.command.controlActionId)))
+      .toMatchObject([{ actionKind: "continue", localDisposition: "running_next", providerDisposition: "not_sent" }]);
+  });
+
+  it("queue recovery rejects double-action, stale version, wrong owner/org and old delivered input", async () => {
+    const f = await recoveryFixture();
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, version: 99 })).rejects.toMatchObject({ status: 409 });
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, requestActor: boardQueueRequestActor(f.orgId, "other") })).rejects.toMatchObject({ status: 403 });
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, orgId: randomUUID() })).rejects.toMatchObject({ status: 404 });
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, itemId: f.old.id })).rejects.toMatchObject({ status: 409 });
+    const commands = [f.command, { ...f.command, controlActionId: randomUUID() }];
+    const outcomes = await Promise.allSettled(commands.map((command) => chatSvc.authorizeQueuedRecovery(command)));
+    expect(outcomes.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((r) => r.status === "rejected")).toHaveLength(1);
+  });
+
+  it("queue recovery never resurrects cancellation, including authorization/cancel races", async () => {
+    const f = await recoveryFixture();
+    const outcomes = await Promise.allSettled([
+      chatSvc.authorizeQueuedRecovery(f.command),
+      chatSvc.cancelQueuedMessage({ orgId: f.orgId, conversationId: f.conversationId, itemId: f.queued.id, version: null }),
+    ]);
+    expect(outcomes[1].status).toBe("fulfilled");
+    await expect(chatSvc.authorizeQueuedRecovery(f.command)).rejects.toMatchObject({ status: 409 });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "cancel-recovery", leaseMs: 30_000 })).toBeNull();
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, f.conversationId))).toHaveLength(0);
+  });
+
+  it("queue recovery invalidates a grant on payload edit and requires fresh explicit authorization", async () => {
+    const f = await recoveryFixture();
+    const authorized = await chatSvc.authorizeQueuedRecovery(f.command);
+    const updated = await chatSvc.updateQueuedMessage({ orgId: f.orgId, conversationId: f.conversationId, itemId: f.queued.id,
+      version: authorized.item.version, payload: { body: "Changed input requires new authorization" } });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "edited-recovery", leaseMs: 30_000 })).toBeNull();
+    await chatSvc.authorizeQueuedRecovery({ ...f.command, version: updated.version, controlActionId: randomUUID() });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "reauthorized-recovery", leaseMs: 30_000 }))
+      .toMatchObject({ item: { id: f.queued.id } });
+  });
+
+  it("queue recovery grant cannot move to another failed generation or bypass active execution", async () => {
+    const f = await recoveryFixture();
+    await chatSvc.authorizeQueuedRecovery(f.command);
+    const newGeneration = randomUUID();
+    await db.insert(chatGenerations).values({ id: newGeneration, orgId: f.orgId, conversationId: f.conversationId,
+      status: "active", startedAt: new Date(Date.now() + 1000) });
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "active-recovery", leaseMs: 30_000 })).toBeNull();
+    await expect(chatSvc.authorizeQueuedRecovery({ ...f.command, version: f.queued.version + 1, controlActionId: randomUUID() })).rejects.toMatchObject({ status: 409 });
+    await db.update(chatGenerations).set({ status: "failed" }).where(eq(chatGenerations.id, newGeneration));
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "changed-failure", leaseMs: 30_000 })).toBeNull();
+  });
+
+  it("queue recovery refuses a running Run even with a terminal generation, before and after authorization", async () => {
+    const f = await recoveryFixture();
+    const agentId = randomUUID();
+    await db.insert(agents).values({ id: agentId, orgId: f.orgId, name: "Queue recovery agent", role: "engineer", adapterType: "process" });
+    const [run] = await db.insert(heartbeatRuns).values({ orgId: f.orgId, agentId, chatConversationId: f.conversationId, status: "running" }).returning();
+    await expect(chatSvc.authorizeQueuedRecovery(f.command)).rejects.toMatchObject({ status: 409 });
+    await db.update(heartbeatRuns).set({ status: "failed" }).where(eq(heartbeatRuns.id, run!.id));
+    await chatSvc.authorizeQueuedRecovery(f.command);
+    await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, run!.id));
+    expect(await chatSvc.claimNextServerQueuedMessage({ workerId: "run-still-active", leaseMs: 30_000 })).toBeNull();
+    expect(await db.select().from(chatMessages).where(eq(chatMessages.conversationId, f.conversationId))).toHaveLength(0);
+  });
+
+  it.each(["stopped", "aborted", "control_lost", "interrupted_unverified"] as const)("queue recovery cannot authorize %s parking", async (status) => {
+    const f = await recoveryFixture();
+    await db.update(chatGenerations).set({ status, terminalReason: "operator_cancelled" }).where(eq(chatGenerations.id, f.failedGenerationId));
+    await expect(chatSvc.authorizeQueuedRecovery(f.command)).rejects.toMatchObject({ status: 409 });
+    expect(await db.select().from(chatControlActions).where(eq(chatControlActions.id, f.command.controlActionId))).toHaveLength(0);
+  });
+
   it("claims an ordinary queued follow-up after an operator-stopped generation", async () => {
     const orgId = randomUUID();
     const conversationId = randomUUID();

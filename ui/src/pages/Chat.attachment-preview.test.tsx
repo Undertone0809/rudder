@@ -106,6 +106,7 @@ const mockState = vi.hoisted(() => ({
   workspaceDirectories: {} as Record<string, { directoryPath: string; entries: OrganizationWorkspaceFileEntry[] }>,
   workspaceFiles: {} as Record<string, { rootPath?: string | null; filePath: string; content: string | null; contentType: string | null; previewKind: "text" | "image" | "pdf" | "binary"; contentPath: string | null; message?: string | null; truncated: boolean }>,
   queueSnapshot: {
+    latestFailedGenerationId: null,
     activeGenerationId: null,
     activeAttemptEpoch: null,
     activeControlVersion: null,
@@ -115,6 +116,7 @@ const mockState = vi.hoisted(() => ({
   cancelQueuedMessage: vi.fn(),
   checkpointMessageStream: vi.fn(),
   createQueuedMessage: vi.fn(),
+  continueQueuedMessage: vi.fn(),
   steerQueuedMessage: vi.fn(),
   updateQueuedMessage: vi.fn(),
   invalidateQueries: vi.fn(),
@@ -697,6 +699,7 @@ vi.mock("@/api/chats", () => ({
     keepSideChat: mockState.keepSideChat,
     listQueue: vi.fn(async () => mockState.queueSnapshot),
     createQueuedMessage: mockState.createQueuedMessage,
+    continueQueuedMessage: mockState.continueQueuedMessage,
     updateQueuedMessage: mockState.updateQueuedMessage,
     cancelQueuedMessage: mockState.cancelQueuedMessage,
     steerQueuedMessage: mockState.steerQueuedMessage,
@@ -1192,6 +1195,7 @@ function queuedMessage(overrides: Partial<ChatQueuedMessage> = {}): ChatQueuedMe
 
 function queueSnapshot(overrides: Partial<ChatQueueSnapshot> = {}): ChatQueueSnapshot {
   return {
+    latestFailedGenerationId: null,
     activeGenerationId: null,
     activeAttemptEpoch: null,
     activeControlVersion: null,
@@ -1582,11 +1586,11 @@ async function startControlledChatStream() {
         });
       });
     },
-    emitFinal: async () => {
+    emitFinal: async (messages: ChatMessage[] = [message({ id: "late-final", body: "Late final body" })]) => {
       await act(async () => {
         await onStreamEvent({
           type: "final",
-          messages: [message({ id: "late-final", body: "Late final body" })],
+          messages,
         });
       });
     },
@@ -1707,6 +1711,14 @@ beforeEach(() => {
   mockState.createQueuedMessage.mockImplementation(async (_chatId: string, data: { payload: { body: string } }) =>
     queuedMessage({ payload: { body: data.payload.body, attachmentIds: [], projectId: null, skillRefs: [], accessMode: null, model: null, effort: null, metadata: null } })
   );
+  mockState.continueQueuedMessage.mockReset();
+  mockState.continueQueuedMessage.mockImplementation(async (_chatId: string, itemId: string, request: {
+    controlActionId: string;
+  }) => ({
+    item: queuedMessage({ id: itemId, version: 2, controlActionId: request.controlActionId }),
+    controlActionId: request.controlActionId,
+    idempotent: false,
+  }));
   mockState.steerQueuedMessage.mockReset();
   mockState.steerQueuedMessage.mockResolvedValue({
     result: "pending",
@@ -5414,6 +5426,79 @@ describe("Chat streaming controls", () => {
     expect(ackUpdate!(controlled.createdDraft)?.userCreatedAt).toEqual(persistedCreatedAt);
   });
 
+  it("keeps the assistant virtual row mounted from a pre-ack stream through ack and finalization", async () => {
+    const controlled = await startControlledChatStream();
+    expect(controlled.createdDraft).toMatchObject({
+      chatTurnId: null,
+      userMessageId: null,
+      generationId: null,
+    });
+
+    const assistantNode = controlled.container.querySelector('[data-testid="chat-assistant-message"]');
+    const initialRow = assistantNode?.closest<HTMLElement>("[data-virtualized-activity-key]") ?? null;
+    const initialRowKey = initialRow?.getAttribute("data-virtualized-activity-key");
+    expect(initialRow).not.toBeNull();
+    expect(initialRowKey).toBe(`assistant-stream:${controlled.createdDraft.streamKey}:variant:0`);
+
+    const callCountBeforeAck = mockState.setStreamDraftForChat.mock.calls.length;
+    const persistedCreatedAt = new Date("2026-05-12T09:04:00.000Z");
+    await controlled.emitAck(persistedCreatedAt);
+    const ackUpdate = mockState.setStreamDraftForChat.mock.calls
+      .slice(callCountBeforeAck)
+      .map((call) => call[1])
+      .find((candidate): candidate is (current: ChatStreamDraft | null) => ChatStreamDraft | null => (
+        typeof candidate === "function"
+      ));
+    expect(ackUpdate).toBeDefined();
+    const acknowledgedDraft = ackUpdate!(controlled.createdDraft);
+    expect(acknowledgedDraft).toMatchObject({
+      chatTurnId: "persisted-active-turn",
+      generationId: "persisted-generation",
+    });
+    mockState.streamDrafts = { "chat-1": acknowledgedDraft! };
+    mockState.messagesByChatId["chat-1"] = [
+      ...(mockState.messagesByChatId["chat-1"] ?? []),
+      message({
+        id: "persisted-active-user",
+        body: "Start a controlled reply.",
+        chatTurnId: "persisted-active-turn",
+        createdAt: persistedCreatedAt,
+        updatedAt: persistedCreatedAt,
+      }),
+    ];
+    controlled.rerender();
+
+    const acknowledgedRow = assistantNode?.closest<HTMLElement>("[data-virtualized-activity-key]") ?? null;
+    expect(acknowledgedRow).toBe(initialRow);
+    expect(acknowledgedRow?.getAttribute("data-virtualized-activity-key")).toBe(initialRowKey);
+    expect(controlled.container.querySelector('[data-testid="chat-assistant-message"]')).toBe(assistantNode);
+
+    const completedMessage = message({
+      id: "persisted-active-assistant",
+      role: "assistant",
+      status: "completed",
+      body: "The completed reply.",
+      chatTurnId: "persisted-active-turn",
+      generationId: "persisted-generation",
+    });
+    await controlled.emitFinal([completedMessage]);
+    mockState.streamDrafts = {};
+    mockState.messagesByChatId["chat-1"] = [
+      ...(mockState.messagesByChatId["chat-1"] ?? []),
+      completedMessage,
+    ];
+    controlled.rerender();
+
+    const finalizedRow = controlled.container
+      .querySelector('[data-testid="chat-assistant-message"]')
+      ?.closest<HTMLElement>("[data-virtualized-activity-key]") ?? null;
+    expect(finalizedRow).toBe(initialRow);
+    expect(finalizedRow?.getAttribute("data-virtualized-activity-key")).toBe(initialRowKey);
+    expect(controlled.container.querySelector('[data-testid="chat-assistant-message"]')).toBe(assistantNode);
+    expect(assistantNode?.getAttribute("data-message-id")).toBe("persisted-active-assistant");
+    await controlled.finishStream();
+  });
+
   it("clears composer loading when a final arrives before reconciliation completes", async () => {
     const stream = await startControlledChatStream();
     mockState.setChatSendInFlight.mockClear();
@@ -7043,6 +7128,242 @@ describe("Chat streaming controls", () => {
     expect(mockState.steerQueuedMessage).toHaveBeenCalledTimes(2);
     expect(mockState.steerQueuedMessage.mock.calls[1]?.[2]).not.toHaveProperty("expectedActiveGenerationId");
     expect(mockState.steerQueuedMessage.mock.calls[1]?.[2]?.controlActionId).not.toBe(failedControlActionId);
+  });
+
+  it("offers Continue only for the current failure and an eligible queue item owned by this user", () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please continue this reply." })],
+    };
+    const failedGenerationId = "10000000-0000-4000-8000-000000000001";
+    const ownedItem = queuedMessage({
+      id: "queue-recovery-eligible",
+      requestActor: { type: "board", source: "session", userId: "local-board" },
+    });
+    mockState.queueSnapshot = queueSnapshot({ latestFailedGenerationId: failedGenerationId, items: [ownedItem] });
+
+    const { container, rerender } = renderChat();
+    const continueButton = () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Continue");
+    expect(continueButton()).toBeDefined();
+
+    mockState.queueSnapshot = queueSnapshot({
+      latestFailedGenerationId: failedGenerationId,
+      activeGenerationId: "10000000-0000-4000-8000-000000000002",
+      activeGenerationStatus: "running",
+      items: [ownedItem],
+    });
+    rerender();
+    expect(continueButton()).toBeUndefined();
+
+    mockState.queueSnapshot = queueSnapshot({
+      latestFailedGenerationId: failedGenerationId,
+      items: [queuedMessage({
+        ...ownedItem,
+        status: "failed_actionable",
+        deliveryIntent: "steer",
+        deliveryDisposition: "failed_actionable",
+        deliveryAttempts: 1,
+      })],
+    });
+    rerender();
+    expect(continueButton()).toBeUndefined();
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "Retry")).toBe(true);
+
+    mockState.queueSnapshot = queueSnapshot({
+      latestFailedGenerationId: null,
+      items: [ownedItem],
+    });
+    rerender();
+    expect(continueButton()).toBeUndefined();
+
+    mockState.queueSnapshot = queueSnapshot({
+      latestFailedGenerationId: failedGenerationId,
+      items: [queuedMessage({
+        ...ownedItem,
+        requestActor: { type: "board", source: "session", userId: "another-user" },
+      })],
+    });
+    rerender();
+    expect(continueButton()).toBeUndefined();
+  });
+
+  it("continues once on repeated clicks, sends the current fences, and refreshes the queue", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please continue this reply." })],
+    };
+    const failedGenerationId = "10000000-0000-4000-8000-000000000003";
+    const item = queuedMessage({
+      id: "queue-recovery-click",
+      version: 4,
+      requestActor: { type: "board", source: "session", userId: "local-board" },
+    });
+    mockState.queueSnapshot = queueSnapshot({ latestFailedGenerationId: failedGenerationId, items: [item] });
+    mockState.continueQueuedMessage.mockImplementation(async (_chatId: string, itemId: string, request: {
+      controlActionId: string;
+    }) => ({
+      item: queuedMessage({ ...item, id: itemId, version: item.version + 1, controlActionId: request.controlActionId }),
+      controlActionId: request.controlActionId,
+      idempotent: false,
+    }));
+
+    const { container, rerender } = renderChat();
+    const button = Array.from(container.querySelectorAll("button")).find((candidate) => candidate.textContent === "Continue");
+    expect(button).toBeDefined();
+    await act(async () => {
+      button?.click();
+      button?.click();
+      await Promise.resolve();
+    });
+
+    expect(mockState.continueQueuedMessage).toHaveBeenCalledTimes(1);
+    const [chatId, itemId, request] = mockState.continueQueuedMessage.mock.calls[0]!;
+    expect(chatId).toBe("chat-1");
+    expect(itemId).toBe(item.id);
+    expect(request).toEqual({
+      version: item.version,
+      expectedFailedGenerationId: failedGenerationId,
+      controlActionId: expect.stringMatching(/^[0-9a-f-]{36}$/iu),
+    });
+    expect(mockState.invalidateQueries.mock.calls.some(([options]) => (
+      JSON.stringify(options).includes('"queue"')
+    ))).toBe(true);
+
+    const cacheWrite = mockState.setQueryData.mock.calls.find(([key]) => (
+      Array.isArray(key) && key.includes("queue")
+    ));
+    expect(cacheWrite).toBeDefined();
+    const updatedSnapshot = (cacheWrite?.[1] as (current: ChatQueueSnapshot) => ChatQueueSnapshot)(mockState.queueSnapshot);
+    expect(updatedSnapshot.items[0]).toMatchObject({ version: item.version + 1, controlActionId: request.controlActionId });
+    mockState.queueSnapshot = updatedSnapshot;
+    rerender();
+    expect(Array.from(container.querySelectorAll("button")).some((candidate) => candidate.textContent === "Continue")).toBe(false);
+
+    const authorizedItem = updatedSnapshot.items[0]!;
+    mockState.queueSnapshot = {
+      ...updatedSnapshot,
+      items: [{ ...authorizedItem, version: authorizedItem.version + 1 }],
+    };
+    rerender();
+    expect(Array.from(container.querySelectorAll("button")).some((candidate) => candidate.textContent === "Continue")).toBe(true);
+  });
+
+  it("reuses the Continue action id after an uncertain transport failure", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please continue this reply." })],
+    };
+    const failedGenerationId = "10000000-0000-4000-8000-000000000004";
+    const item = queuedMessage({
+      id: "queue-recovery-retry",
+      requestActor: { type: "board", source: "session", userId: "local-board" },
+    });
+    mockState.queueSnapshot = queueSnapshot({ latestFailedGenerationId: failedGenerationId, items: [item] });
+    mockState.continueQueuedMessage
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockImplementationOnce(async (_chatId: string, itemId: string, request: { controlActionId: string }) => ({
+        item: queuedMessage({ ...item, id: itemId, version: item.version + 1, controlActionId: request.controlActionId }),
+        controlActionId: request.controlActionId,
+        idempotent: true,
+      }));
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Continue");
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Could not confirm Continue",
+      tone: "error",
+    }));
+    await clickEnabledButton(container, "Continue");
+    expect(mockState.continueQueuedMessage).toHaveBeenCalledTimes(2);
+    expect(mockState.continueQueuedMessage.mock.calls[1]?.[2]?.controlActionId)
+      .toBe(mockState.continueQueuedMessage.mock.calls[0]?.[2]?.controlActionId);
+  });
+
+  it("replays the original Continue fence after a 500 follows durable authorization", async () => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please continue this reply." })],
+    };
+    const failedGenerationId = "10000000-0000-4000-8000-000000000006";
+    const item = queuedMessage({
+      id: "queue-recovery-ambiguous-500",
+      version: 7,
+      requestActor: { type: "board", source: "session", userId: "local-board" },
+    });
+    mockState.queueSnapshot = queueSnapshot({ latestFailedGenerationId: failedGenerationId, items: [item] });
+    mockState.continueQueuedMessage
+      .mockImplementationOnce(async (_chatId: string, itemId: string, request: {
+        version: number;
+        controlActionId: string;
+      }) => {
+        mockState.queueSnapshot = queueSnapshot({
+          latestFailedGenerationId: failedGenerationId,
+          items: [queuedMessage({
+            ...item,
+            id: itemId,
+            version: item.version + 1,
+            controlActionId: request.controlActionId,
+          })],
+        });
+        throw new ApiError("Activity logging failed after authorization", 500, { error: "Internal server error" });
+      })
+      .mockImplementationOnce(async (_chatId: string, _itemId: string, request: {
+        controlActionId: string;
+      }) => ({
+        item: mockState.queueSnapshot.items[0]!,
+        controlActionId: request.controlActionId,
+        idempotent: true,
+      }));
+
+    const { container, rerender } = renderChat();
+    await clickEnabledButton(container, "Continue");
+    await vi.waitFor(() => expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Could not continue queued message",
+      tone: "error",
+    })));
+
+    const originalRequest = mockState.continueQueuedMessage.mock.calls[0]?.[2];
+    expect(originalRequest).toMatchObject({
+      version: item.version,
+      expectedFailedGenerationId: failedGenerationId,
+      controlActionId: expect.stringMatching(/^[0-9a-f-]{36}$/iu),
+    });
+    expect(mockState.queueSnapshot.items[0]).toMatchObject({
+      version: item.version + 1,
+      controlActionId: originalRequest?.controlActionId,
+    });
+
+    rerender();
+    await clickEnabledButton(container, "Continue");
+
+    expect(mockState.continueQueuedMessage).toHaveBeenCalledTimes(2);
+    expect(mockState.continueQueuedMessage.mock.calls[1]?.[2]).toEqual(originalRequest);
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Continue already requested",
+      tone: "success",
+    }));
+  });
+
+  it.each([
+    [403, "Only the queued message owner can continue it", "You can't continue this queued message"],
+    [409, "The latest failed reply changed; refresh before continuing", "Queue changed"],
+    [409, "Queued input is already authorized to continue", "Continue already requested"],
+    [500, "Internal server error", "Could not continue queued message"],
+  ])("explains Continue API failures (%i)", async (status, messageText, expectedTitle) => {
+    mockState.messagesByChatId = {
+      "chat-1": [message({ id: "user-message-1", body: "Please continue this reply." })],
+    };
+    mockState.queueSnapshot = queueSnapshot({
+      latestFailedGenerationId: "10000000-0000-4000-8000-000000000005",
+      items: [queuedMessage({
+        requestActor: { type: "board", source: "session", userId: "local-board" },
+      })],
+    });
+    mockState.continueQueuedMessage.mockRejectedValueOnce(new ApiError(String(messageText), Number(status), { error: messageText }));
+
+    const { container } = renderChat();
+    await clickEnabledButton(container, "Continue");
+
+    expect(mockState.pushToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: expectedTitle,
+      tone: "error",
+    }));
   });
 
   it("hides accepted Steer feedback from Queue", () => {

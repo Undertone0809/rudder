@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import type { CursorAcpTranscriptEvent, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import {
   createRudderInlineVisualStreamSuppressor,
   redactRudderInlineVisualSources,
@@ -269,8 +269,36 @@ export function createChatAssistantTranscriptProcessor(input: {
             };
         }
       })();
+      const cursorAcpEvent = "cursorAcpEvent" in entry ? entry.cursorAcpEvent : undefined;
+      const safeCursorAcpEvent: CursorAcpTranscriptEvent | undefined = cursorAcpEvent
+        ? {
+            provider: cursorAcpEvent.provider,
+            transport: cursorAcpEvent.transport,
+            method: suppressTranscriptSource(cursorAcpEvent.method),
+            ...(cursorAcpEvent.sessionId
+              ? { sessionId: suppressTranscriptSource(cursorAcpEvent.sessionId) }
+              : {}),
+            ...(cursorAcpEvent.updateKind
+              ? { updateKind: suppressTranscriptSource(cursorAcpEvent.updateKind) }
+              : {}),
+            ...(typeof cursorAcpEvent.requestId === "string"
+              ? { requestId: suppressTranscriptSource(cursorAcpEvent.requestId) }
+              : typeof cursorAcpEvent.requestId === "number"
+                ? { requestId: cursorAcpEvent.requestId }
+                : {}),
+            frame: (() => {
+              const frame = suppressStructuredTranscriptValue(cursorAcpEvent.frame);
+              return frame && typeof frame === "object" && !Array.isArray(frame)
+                ? frame as Record<string, unknown>
+                : {};
+            })(),
+          }
+        : undefined;
+      const transcriptEntry: TranscriptEntry = safeCursorAcpEvent
+        ? { ...safeEntry, cursorAcpEvent: safeCursorAcpEvent } as TranscriptEntry
+        : safeEntry;
       if (entry.kind === "result") {
-        const safeResultEntry = safeEntry.kind === "result" ? safeEntry : null;
+        const safeResultEntry = transcriptEntry.kind === "result" ? transcriptEntry : null;
         const observedText = partialBodyFromRawAssistantText(safeResultEntry?.text ?? "", input.resultSentinel);
         if (observedText) {
           await input.callbacks.onObservedTranscriptEntry?.({
@@ -285,18 +313,18 @@ export function createChatAssistantTranscriptProcessor(input: {
           || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
         )
       ) {
-        await input.callbacks.onObservedTranscriptEntry?.(safeEntry, input.transcriptDelivery);
+        await input.callbacks.onObservedTranscriptEntry?.(transcriptEntry, input.transcriptDelivery);
       }
       if (input.isInactive()) return;
       const suppressVisibleEntry = shouldSuppressChatTranscriptEntry(entry, input.resultSentinel)
         || (
-        ("text" in safeEntry && typeof safeEntry.text === "string" && safeEntry.text.length === 0)
-        || (safeEntry.kind === "tool_result" && safeEntry.content.length === 0)
+        ("text" in transcriptEntry && typeof transcriptEntry.text === "string" && transcriptEntry.text.length === 0)
+        || (transcriptEntry.kind === "tool_result" && transcriptEntry.content.length === 0)
         );
       if (!suppressVisibleEntry) {
-        await input.callbacks.onTranscriptEntry?.(safeEntry, input.transcriptDelivery);
+        await input.callbacks.onTranscriptEntry?.(transcriptEntry, input.transcriptDelivery);
         if (input.isInactive()) return;
-        await input.appendTranscriptEntry(safeEntry, input.transcriptDelivery);
+        await input.appendTranscriptEntry(transcriptEntry, input.transcriptDelivery);
       }
       if (entry.kind === "tool_result") {
         await maybeEmitAssistantState(input.callbacks.onAssistantState, "streaming");

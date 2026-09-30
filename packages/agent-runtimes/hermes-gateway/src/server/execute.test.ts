@@ -175,10 +175,10 @@ describe("Hermes gateway execution", () => {
     });
 
     const first = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
-      context: { chatMode: true, chatPrompt: "same prompt" },
+      context: { chatMode: true, chatConversationId: "chat-hermes-idempotency", chatPrompt: "same prompt" },
     }));
     const replay = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
-      context: { chatMode: true, chatPrompt: "same prompt" },
+      context: { chatMode: true, chatConversationId: "chat-hermes-idempotency", chatPrompt: "same prompt" },
     }));
 
     expect(first.exitCode).toBe(0);
@@ -214,10 +214,10 @@ describe("Hermes gateway execution", () => {
     });
 
     const first = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
-      context: { chatMode: true, chatPrompt: "original prompt" },
+      context: { chatMode: true, chatConversationId: "chat-hermes-conflict", chatPrompt: "original prompt" },
     }));
     const conflict = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
-      context: { chatMode: true, chatPrompt: "changed prompt" },
+      context: { chatMode: true, chatConversationId: "chat-hermes-conflict", chatPrompt: "changed prompt" },
     }));
 
     expect(first.exitCode).toBe(0);
@@ -697,7 +697,17 @@ process.stdin.on("data", (chunk) => {
     expect(result.timedOut).toBe(false);
     expect(result.summary).toBe("hello from Hermes");
     expect(result.resultJson).toMatchObject({ upstreamRunId: "hermes-run-1", status: "completed", output: "hello from Hermes" });
-    expect((result.resultJson as { synthetic_tool_continuity: Record<string, unknown> }).synthetic_tool_continuity).toMatchObject({ native: false, lossless: false, eventCount: 3 });
+    expect(result.resultJson).toMatchObject({
+      continuity: {
+        mode: "hermes_http_session",
+        native: true,
+        lossless: false,
+        inputPolicy: "current_turn_only",
+        priorToolContextInjected: false,
+      },
+    });
+    expect(result.resultJson).not.toHaveProperty("synthetic_tool_continuity");
+    expect(result).toMatchObject({ sessionId: "hermes-session-1", sessionDisplayId: "hermes-session-1" });
     expect(server.requests.map((request) => request.path)).toEqual([
       "/v1/capabilities",
       "/api/sessions",
@@ -767,6 +777,11 @@ process.stdin.on("data", (chunk) => {
     expect(result.errorCode).toBe("hermes_gateway_run_failed");
     expect(result.errorMessage).toBe("provider unavailable");
     expect(result.resultJson).toMatchObject({ upstreamRunId: "hermes-run-failed", status: "failed" });
+    expect(result).toMatchObject({
+      sessionId: "hermes-session-1",
+      sessionDisplayId: "hermes-session-1",
+      sessionParams: { sessionId: "hermes-session-1", hermesTransport: "hermes-http-sse" },
+    });
   });
 
   it("marks a terminal status reconciled after an incomplete SSE stream as partial", async () => {
@@ -824,6 +839,8 @@ process.stdin.on("data", (chunk) => {
     ));
 
     expect(result.exitCode).toBe(0);
+    expect(result.sessionId).toBe("hermes-session-existing");
+    expect(result.sessionDisplayId).toBe("hermes-session-existing");
     expect(result.sessionParams).toMatchObject({
       sessionId: "hermes-session-existing",
       hermesTransport: "hermes-http-sse",
@@ -840,6 +857,150 @@ process.stdin.on("data", (chunk) => {
       "/v1/runs",
       "/v1/runs/hermes-run-existing/events",
     ]);
+  });
+
+  it("keeps HTTP Chat continuity on its Conversation/Profile/principal and submits only each current turn", async () => {
+    const submissions: Array<{ sessionKey: string | undefined; body: Record<string, unknown> }> = [];
+    let sessionCount = 0;
+    let runCount = 0;
+    const server = await listen(async (req, res) => {
+      if (req.url === "/api/sessions" && req.method === "POST") {
+        sessionCount += 1;
+        return json(res, 201, { object: "hermes.session", session: { id: `hermes-chat-session-${sessionCount}` } });
+      }
+      const sessionMatch = req.url?.match(/^\/api\/sessions\/([^/]+)(\/messages)?$/);
+      if (sessionMatch && req.method === "GET") {
+        const id = decodeURIComponent(sessionMatch[1]!);
+        return sessionMatch[2]
+          ? json(res, 200, { object: "list", session_id: id, data: [{ role: "user" }] })
+          : json(res, 200, { object: "hermes.session", session: { id } });
+      }
+      if (req.url === "/v1/runs" && req.method === "POST") {
+        submissions.push({
+          sessionKey: typeof req.headers["x-hermes-session-key"] === "string" ? req.headers["x-hermes-session-key"] : undefined,
+          body: await readJsonBody(req),
+        });
+        runCount += 1;
+        return json(res, 202, { run_id: `hermes-chat-run-${runCount}`, status: "started" });
+      }
+      const eventMatch = req.url?.match(/^\/v1\/runs\/(hermes-chat-run-\d+)\/events$/);
+      if (eventMatch) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        return res.end(`data: ${JSON.stringify({ event: "run.completed", output: "ok" })}\n\n`);
+      }
+      throw new Error(`unexpected ${req.method} ${req.url}`);
+    });
+    const config = {
+      url: server.url,
+      hermesChatBackend: "native_runs_http",
+      providerHostId: "host-hermes-chat",
+      providerProfileId: "profile-hermes-chat",
+      providerBindingId: "binding-hermes-chat",
+      capabilityRevision: "hermes-chat-v1",
+      payloadTemplate: {
+        conversation_history: [{ role: "assistant", content: "template history" }],
+        previous_response_id: "template-response",
+      },
+      timeoutMs: 1_000,
+    };
+    const chatContext = (conversationId: string, principalScopeRef: string, chatPrompt: string) => ({
+      chatMode: true,
+      chatConversationId: conversationId,
+      principalScopeRef,
+      chatPrompt,
+      rudderToolContext: [{ kind: "tool_result", content: "PREVIOUS_TOOL_RESULT_DO_NOT_SEND" }],
+      transcript: [{ role: "assistant", content: "PREVIOUS_TRANSCRIPT_DO_NOT_SEND" }],
+    });
+    const invocationContexts: Array<Record<string, unknown>> = [];
+
+    const first = await execute(context(config, {
+      runId: "run-hermes-chat-first",
+      context: chatContext("chat-hermes-1", "user:alice", "CURRENT TURN ONE"),
+      onMeta: async (meta) => { invocationContexts.push(meta.context ?? {}); },
+    }));
+    expect(first.exitCode).toBe(0);
+    expect(first).toMatchObject({
+      sessionId: "hermes-chat-session-1",
+      sessionDisplayId: "hermes-chat-session-1",
+      sessionParams: {
+        sessionId: "hermes-chat-session-1",
+        rudderContinuityIdentity: expect.any(String),
+      },
+    });
+
+    const second = await execute(context(config, {
+      runId: "run-hermes-chat-second",
+      runtime: {
+        sessionId: first.sessionId ?? null,
+        sessionParams: first.sessionParams ?? null,
+        sessionDisplayId: first.sessionDisplayId ?? null,
+        taskKey: null,
+      },
+      context: chatContext("chat-hermes-1", "user:alice", "CURRENT TURN TWO"),
+      onMeta: async (meta) => { invocationContexts.push(meta.context ?? {}); },
+    }));
+    expect(second.exitCode).toBe(0);
+    expect(second).toMatchObject({
+      sessionId: first.sessionId,
+      sessionDisplayId: first.sessionId,
+      sessionParams: { rudderContinuityIdentity: first.sessionParams?.rudderContinuityIdentity },
+    });
+
+    const wrongPrincipalResume = await execute(context(config, {
+      runId: "run-hermes-chat-wrong-principal-resume",
+      runtime: {
+        sessionId: first.sessionId ?? null,
+        sessionParams: first.sessionParams ?? null,
+        sessionDisplayId: first.sessionDisplayId ?? null,
+        taskKey: null,
+      },
+      context: chatContext("chat-hermes-1", "user:bob", "SHOULD NOT SUBMIT"),
+    }));
+    expect(wrongPrincipalResume).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_session_mapping_failed" });
+
+    const differentPrincipal = await execute(context(config, {
+      runId: "run-hermes-chat-other-principal",
+      context: chatContext("chat-hermes-1", "user:bob", "CURRENT TURN THREE"),
+    }));
+    const differentConversation = await execute(context(config, {
+      runId: "run-hermes-chat-other-conversation",
+      context: chatContext("chat-hermes-2", "user:alice", "CURRENT TURN FOUR"),
+    }));
+    const differentProfile = await execute(context({ ...config, providerProfileId: "profile-hermes-other", providerBindingId: "binding-hermes-other" }, {
+      runId: "run-hermes-chat-other-profile",
+      context: chatContext("chat-hermes-1", "user:alice", "CURRENT TURN FIVE"),
+    }));
+    expect([differentPrincipal.exitCode, differentConversation.exitCode, differentProfile.exitCode]).toEqual([0, 0, 0]);
+
+    expect(submissions.map(({ body }) => body.input)).toEqual([
+      "CURRENT TURN ONE",
+      "CURRENT TURN TWO",
+      "CURRENT TURN THREE",
+      "CURRENT TURN FOUR",
+      "CURRENT TURN FIVE",
+    ]);
+    expect(submissions[0]?.sessionKey).toBe(submissions[1]?.sessionKey);
+    expect(new Set(submissions.filter((_, index) => index !== 1).map(({ sessionKey }) => sessionKey)).size).toBe(4);
+    for (const { body } of submissions) {
+      expect(body).not.toHaveProperty("conversation_history");
+      expect(body).not.toHaveProperty("previous_response_id");
+      expect(JSON.stringify(body)).not.toContain("PREVIOUS_TOOL_RESULT_DO_NOT_SEND");
+      expect(JSON.stringify(body)).not.toContain("PREVIOUS_TRANSCRIPT_DO_NOT_SEND");
+    }
+    expect(invocationContexts).toHaveLength(2);
+    expect(invocationContexts[0]).not.toHaveProperty("rudderToolContextSummary");
+    expect(invocationContexts[0]).not.toHaveProperty("rudderToolContext");
+    expect(invocationContexts[0]).not.toHaveProperty("transcript");
+  });
+
+  it("fails closed for HTTP Chat without a stable Conversation ID", async () => {
+    const server = await listen(() => { throw new Error("HTTP Chat without a Conversation ID must not contact Hermes"); });
+    const result = await execute(context({ url: server.url, hermesChatBackend: "native_runs_http" }, {
+      context: { chatMode: true, chatPrompt: "current turn" },
+    }));
+
+    expect(result).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_conversation_binding_missing" });
+    expect(server.requests).toHaveLength(0);
   });
 
   it("reconciles an SSE timeout and requests upstream stop", async () => {
@@ -927,11 +1088,8 @@ process.stdin.on("data", (chunk) => {
     expect(result.sessionParams).not.toHaveProperty("hermesAuthEnvVar");
     expect(JSON.stringify(metas)).not.toContain(secret);
     expect(JSON.stringify(metas)).not.toContain(interactionSecret);
-    expect(metas[0]).toMatchObject({
-      context: {
-        rudderToolContextSummary: { mode: "bounded-hash", eventCount: 1 },
-      },
-    });
+    expect(metas[0]).toMatchObject({ context: {} });
+    expect(metas[0]).not.toHaveProperty("context.rudderToolContextSummary");
     expect(logs.join("\n")).not.toContain(secret);
     expect(logs.join("\n")).not.toContain(interactionSecret);
   });
@@ -951,6 +1109,11 @@ process.stdin.on("data", (chunk) => {
     const result = await execute(context({ url: server.url, apiKey: secret, timeoutMs: 1_000 }));
 
     expect(result).toMatchObject({ exitCode: 1, errorCode: "hermes_gateway_submission_failed" });
+    expect(result).toMatchObject({
+      sessionId: "hermes-session-1",
+      sessionDisplayId: "hermes-session-1",
+      sessionParams: { sessionId: "hermes-session-1", hermesTransport: "hermes-http-sse" },
+    });
     expect(result.errorMessage).not.toContain(secret);
     expect(result.errorMessage).not.toContain(unconfiguredSecret);
     expect(JSON.stringify(result.resultJson)).not.toContain(secret);

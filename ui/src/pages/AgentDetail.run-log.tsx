@@ -412,6 +412,11 @@ export function LogViewer({
   const transcript = liveTranscriptByRun.get(run.id) ?? [];
   const transcriptState = transcriptStateByRun.get(run.id);
   const transcriptNavigation = transcriptNavigationByRun.get(run.id);
+  const terminalTranscriptPage = run.status === "succeeded"
+    && transcriptState?.hasData === true
+    && transcriptState.availability === "available"
+    && transcriptState.completeness === "complete"
+    && transcriptNavigation?.canNext === false;
   const canPersistTranscriptAnnotations = canPersistRunTranscriptAnnotations(transcriptState);
   const transcriptError = transcriptState?.error ?? null;
   const transcriptEmptyMessage = transcriptError
@@ -436,9 +441,13 @@ export function LogViewer({
   });
   const recoveredInstructions = invocationInstructionSnapshotQuery.data?.source === "codex_native_rollout"
     ? invocationInstructionSnapshotQuery.data : null;
-  const invocationAgentInstructionStack = readInvocationAgentInstructionStack(adapterInvokePayload)
-    ?? (invocationInstructionSnapshotQuery.data && "agentInstructionStack" in invocationInstructionSnapshotQuery.data
-      ? invocationInstructionSnapshotQuery.data.agentInstructionStack : undefined);
+  const retainedInstructionStack = invocationInstructionSnapshotQuery.data?.source === "stored_snapshot"
+    ? invocationInstructionSnapshotQuery.data.agentInstructionStack
+    : undefined;
+  const invocationAgentInstructionStack = retainedInstructionStack
+    ?? (instructionSnapshotStatus === "available"
+      ? undefined
+      : readInvocationAgentInstructionStack(adapterInvokePayload));
   const invocationContentSummary = readInvocationContentSummary(adapterInvokePayload);
   const invocationPromptText =
     invocationAgentInstructionStack !== undefined
@@ -600,6 +609,7 @@ export function LogViewer({
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
+              terminalRun={terminalTranscriptPage}
               agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,
@@ -670,14 +680,22 @@ export function LogViewer({
                     {instructionSnapshotStatus === "available"
                       ? invocationInstructionSnapshotQuery.isError
                         ? "Stored instruction snapshot could not be read"
-                        : "Loading the injected instruction snapshot"
+                        : recoveredInstructions
+                          ? "The full instruction snapshot is unavailable"
+                          : invocationInstructionSnapshotQuery.isFetched
+                            ? "Stored instruction snapshot was not returned"
+                            : "Loading the injected instruction snapshot"
                       : "No historical instruction snapshot is available"}
                   </div>
                   <p>
                     {instructionSnapshotStatus === "available"
                       ? invocationInstructionSnapshotQuery.isError
                         ? "The stored snapshot could not be verified or read. Current Agent files are not a historical substitute."
-                        : "The snapshot is tied to this Run, Attempt, and Span."
+                        : recoveredInstructions
+                          ? "The original full instruction stack is unavailable. A verified developer-instruction fragment is shown below."
+                          : invocationInstructionSnapshotQuery.isFetched
+                            ? "The stored snapshot was not returned. Current Agent files are not a historical substitute."
+                            : "The snapshot is tied to this Run, Attempt, and Span."
                       : recoveredInstructions
                         ? "The original full instruction stack is unavailable. A verified developer-instruction fragment is shown below."
                         : "The original full instruction stack is unavailable. Current Agent files are not a historical substitute."}
@@ -774,6 +792,7 @@ export function LogViewer({
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
+              terminalRun={terminalTranscriptPage}
               agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,

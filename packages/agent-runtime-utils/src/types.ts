@@ -619,14 +619,24 @@ export type TranscriptEntry =
       controlActionId?: string;
       sourceEntryId?: string;
     }
-  | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string; sourceEntryId?: string }
-  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; sourceEntryId?: string }
-  | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[]; sourceEntryId?: string }
+  | { kind: "tool_call"; ts: string; name: string; input: unknown; toolUseId?: string; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
+  | { kind: "tool_result"; ts: string; toolUseId: string; toolName?: string; content: string; isError: boolean; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
+  | { kind: "todo_list"; ts: string; todoListId?: string; items: TranscriptTodoItem[]; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
   | { kind: "init"; ts: string; model: string; sessionId: string; sourceEntryId?: string }
   | { kind: "result"; ts: string; text: string; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number; subtype: string; isError: boolean; errors: string[]; sourceEntryId?: string }
   | { kind: "stderr"; ts: string; text: string; sourceEntryId?: string }
-  | { kind: "system"; ts: string; text: string; sourceEntryId?: string }
+  | { kind: "system"; ts: string; text: string; sourceEntryId?: string; cursorAcpEvent?: CursorAcpTranscriptEvent }
   | { kind: "stdout"; ts: string; text: string; sourceEntryId?: string };
+
+export interface CursorAcpTranscriptEvent {
+  provider: "cursor_agent";
+  transport: "cursor-agent-acp-stdio";
+  method: string;
+  sessionId?: string;
+  updateKind?: string;
+  requestId?: string | number;
+  frame: Record<string, unknown>;
+}
 
 export type TranscriptTodoItemStatus = "pending" | "in_progress" | "completed";
 

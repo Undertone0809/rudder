@@ -3,7 +3,7 @@ import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_ERROR_STUB, E2E_CODEX_STUB } from "./support/e2e-env";
+import { E2E_CODEX_APP_SERVER_STUB, E2E_CODEX_ERROR_STUB, E2E_CODEX_STUB } from "./support/e2e-env";
 
 const ORG_NAME = `Err-Chat-${Date.now()}`;
 
@@ -13,6 +13,9 @@ async function createRetryableFailureStub() {
   const counterPath = join(dir, "attempts");
   await writeFile(scriptPath, `#!/bin/sh
 set -eu
+case " $* " in
+  *" --version "*|*" generate-json-schema "*) exec "${E2E_CODEX_APP_SERVER_STUB}" "$@" ;;
+esac
 counter="${counterPath}"
 attempt=0
 if [ -f "$counter" ]; then
@@ -21,12 +24,9 @@ fi
 attempt=$((attempt + 1))
 printf '%s' "$attempt" > "$counter"
 if [ "$attempt" -eq 1 ]; then
-  printf '%s\\n' '{"type":"thread.started","thread_id":"thread-e2e-retry","model":"gpt-5.4"}'
-  printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Partial model output before failure."}}'
-  printf '%s\\n' '{"type":"turn.failed","error":{"message":"model generation failed after output"}}'
-  exit 1
+  export RUDDER_E2E_CODEX_FAIL_TURN=1
 fi
-exec "${E2E_CODEX_STUB}" "$@"
+exec "${E2E_CODEX_APP_SERVER_STUB}" "$@"
 `);
   await chmod(scriptPath, 0o755);
   return scriptPath;
@@ -163,7 +163,11 @@ test.describe("Chat error recovery", () => {
     const organization = await orgRes.json();
     const chatAgent = await createE2EChatAgent(page.request, organization.id, {
       name: "Retry Agent",
-      command: retryableFailureStub,
+      agentRuntimeConfig: {
+        model: "gpt-5.4",
+        command: retryableFailureStub,
+        chatAppServerEnabled: true,
+      },
     });
 
     await page.goto("/");
@@ -238,18 +242,36 @@ test.describe("Chat error recovery", () => {
     );
     await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
 
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("chat-user-message-bubble").filter({
+      hasText: "Please retry this failed request",
+    })).toHaveCount(1);
+    await expect(failedMessage).toBeVisible({ timeout: 15_000 });
+    await expect(failedMessage.getByRole("link", { name: "Open run" })).toHaveAttribute(
+      "href",
+      `/${organizationPath}/agents/${chatAgent.urlKey}/runs/${failedRunId}`,
+    );
+    await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
+    await page.screenshot({
+      path: join(tmpdir(), `rudder-chat-error-after-refresh-${Date.now()}.png`),
+      fullPage: true,
+    });
+
     await failedMessage.getByRole("button", { name: "Retry" }).click();
 
     await expect(page.getByTestId("chat-user-message-bubble").filter({
       hasText: "Please retry this failed request",
     })).toBeVisible({ timeout: 15_000 });
     const recoveredMessage = page.getByTestId("chat-assistant-message").last();
-    await expect(recoveredMessage).toContainText("Streaming reply for chat.", {
+    await expect(recoveredMessage).toContainText("Initial App Server reply (marker-false)", {
       timeout: 15_000,
     });
     await expect(failedMessage).toHaveCount(0);
     await expect(recoveredMessage.getByRole("button", { name: "Copy message" })).toBeVisible({ timeout: 15_000 });
     await expect(recoveredMessage.getByRole("button", { name: "Fork from here" })).toBeVisible({ timeout: 15_000 });
+    const originalRun = await page.request.get(`/api/agent-runs/${failedRunId}`);
+    expect(originalRun.ok()).toBe(true);
+    expect(await originalRun.json()).toMatchObject({ id: failedRunId, status: "failed" });
   });
 
   test("refreshes a completed assistant answer as another turn variant", async ({ page }) => {

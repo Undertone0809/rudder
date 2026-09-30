@@ -146,6 +146,7 @@ export type {
   QuotaWindow,
   ServerAgentRuntimeModule,
   StdoutLineParser,
+  CursorAcpTranscriptEvent,
   TranscriptEntry,
   TranscriptTodoItem,
   TranscriptTodoItemStatus,

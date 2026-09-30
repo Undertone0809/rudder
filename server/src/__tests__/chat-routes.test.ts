@@ -91,6 +91,7 @@ const mockChatService = vi.hoisted(() => ({
   renewGenerationControlLease: vi.fn(),
   markGenerationControlAttemptCompleted: vi.fn(),
   claimNextServerQueuedMessage: vi.fn(),
+  authorizeQueuedRecovery: vi.fn(),
   admitQueuedSideChatRuntime: vi.fn(),
   renewServerQueuedMessageClaim: vi.fn(),
   acknowledgeServerQueuedMessageDelivery: vi.fn(),
@@ -4555,6 +4556,53 @@ describe("chat routes", { retry: 2 }, () => {
       returnedMessages: 1,
       totalMessages: 3,
     });
+  });
+
+  it("authorizes explicit new queue continuation through the public route", async () => {
+    const conversation = createConversation();
+    mockChatService.getById.mockResolvedValue(conversation);
+    const command = { version: 1, expectedFailedGenerationId: "10000000-0000-4000-8000-000000000001",
+      controlActionId: "10000000-0000-4000-8000-000000000002" };
+    mockChatService.authorizeQueuedRecovery.mockResolvedValue({ item: { id: "queued-new", version: 2, status: "queued" },
+      controlActionId: command.controlActionId, idempotent: false });
+    const response = await request(createApp()).post("/api/chats/chat-1/queue/queued-new/continue").send(command);
+    expect(response.status).toBe(200);
+    expect(response.body.item.version).toBe(2);
+    expect(mockChatService.authorizeQueuedRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      ...command, orgId: conversation.orgId, conversationId: conversation.id, itemId: "queued-new",
+    }));
+  });
+
+  it("rejects an unfenced public queue continuation", async () => {
+    mockChatService.authorizeQueuedRecovery.mockClear();
+    const response = await request(createApp()).post("/api/chats/chat-1/queue/queued-new/continue").send({ version: 1 });
+    expect(response.status).toBe(400);
+    expect(mockChatService.authorizeQueuedRecovery).not.toHaveBeenCalled();
+  });
+
+  it("public queue continuation rejects agents and cross-org board access", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    const command = { version: 1, expectedFailedGenerationId: "10000000-0000-4000-8000-000000000001",
+      controlActionId: "10000000-0000-4000-8000-000000000002" };
+    for (const actor of [
+      { type: "agent", orgId: "organization-1", agentId: "agent-1", source: "agent_key" },
+      { type: "board", userId: "user-1", orgIds: ["another-org"], source: "session", isInstanceAdmin: false },
+    ]) {
+      const response = await request(createApp(actor)).post("/api/chats/chat-1/queue/queued-new/continue").send(command);
+      expect(response.status).toBe(403);
+    }
+    expect(mockChatService.authorizeQueuedRecovery).not.toHaveBeenCalled();
+  });
+
+  it("public queue continuation rejects an active local generation", async () => {
+    mockChatService.getById.mockResolvedValue(createConversation());
+    const release = claimChatGeneration("chat-1", new AbortController(), "10000000-0000-4000-8000-000000000001");
+    try {
+      const response = await request(createApp()).post("/api/chats/chat-1/queue/queued-new/continue").send({ version: 1,
+        expectedFailedGenerationId: "10000000-0000-4000-8000-000000000001", controlActionId: "10000000-0000-4000-8000-000000000002" });
+      expect(response.status).toBe(409);
+      expect(mockChatService.authorizeQueuedRecovery).not.toHaveBeenCalled();
+    } finally { release?.(); }
   });
 
   it("allows a queued message claim after a verified operator Stop", async () => {

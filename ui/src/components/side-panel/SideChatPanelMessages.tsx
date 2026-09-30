@@ -10,11 +10,18 @@ import {
 } from "@/components/transcript/useAgentRunTranscripts";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import {
-  AssistantDraftItem,
   ChatMessageItem,
   OptimisticUserDraftItem,
   StreamTranscriptItem,
 } from "@/pages/Chat.messages";
+import {
+  chatAssistantMessageRowKey,
+  chatAssistantStreamRowKey,
+  chatStreamDraftAssistantMessage,
+  chatStreamingAssistantBody,
+  type ChatAssistantRowIdentityMap,
+} from "@/pages/Chat.timeline";
+import { activeChatStreamTimelineInsertionIndex } from "@/lib/chat-stream-state";
 import type { ApprovalAction } from "@/pages/Chat.parts";
 import type {
   Agent,
@@ -23,14 +30,17 @@ import type {
   ChatMessage,
   ChatOperationProposalDecisionAction,
 } from "@rudderhq/shared";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type SideChatPanelMessagesProps = {
   conversation: ChatConversation | null;
   transcriptConversationId: string | null;
   messages: ChatMessage[];
   stream: ChatStreamDraft | null;
+  assistantRowIdentities: Readonly<ChatAssistantRowIdentityMap>;
+  activeAssistantMessageId: string | null;
   showOptimisticUserMessage: boolean;
+  requireFinalAnswerPhase: boolean;
   agents: Agent[] | undefined;
   decisionNotesByMessageId: Record<string, string>;
   isMessageMutationAllowed: (messageId: string) => boolean;
@@ -56,7 +66,10 @@ export function SideChatPanelMessages({
   transcriptConversationId,
   messages,
   stream,
+  assistantRowIdentities,
+  activeAssistantMessageId,
   showOptimisticUserMessage,
+  requireFinalAnswerPhase,
   agents,
   decisionNotesByMessageId,
   isMessageMutationAllowed,
@@ -82,22 +95,128 @@ export function SideChatPanelMessages({
     agentRunTranscriptTargets,
   );
   const legacyTranscriptByMessageId = useLegacyChatTranscripts(transcriptConversationId, messages);
+  const streamHasMessage = Boolean(
+    activeAssistantMessageId && messages.some((message) => message.id === activeAssistantMessageId),
+  );
+  const fallbackAssistantBody = stream && conversation
+    ? chatStreamingAssistantBody(stream.transcript, stream.body, requireFinalAnswerPhase)
+    : "";
+  const fallbackAssistantMessage = stream && conversation
+    ? chatStreamDraftAssistantMessage(stream, conversation, fallbackAssistantBody)
+    : null;
+  const displayedMessages = useMemo(() => {
+    if (!stream || !fallbackAssistantMessage || streamHasMessage) return messages;
+    const nextMessages = [...messages];
+    nextMessages.splice(
+      activeChatStreamTimelineInsertionIndex(messages, stream),
+      0,
+      fallbackAssistantMessage,
+    );
+    return nextMessages;
+  }, [fallbackAssistantMessage, messages, stream, streamHasMessage]);
+  const streamingMessage = stream
+    ? displayedMessages.find((message) => (
+      message.role === "assistant"
+      && message.status === "streaming"
+      && (message.id === fallbackAssistantMessage?.id || message.id === activeAssistantMessageId)
+    ))
+    : null;
+  const streamingAssistantRowKey = stream && streamingMessage
+    ? chatAssistantMessageRowKey(
+      streamingMessage,
+      stream,
+      activeAssistantMessageId,
+      assistantRowIdentities,
+    )
+    : null;
+  const [processOpenByRowKey, setProcessOpenByRowKey] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!streamingAssistantRowKey) return;
+    setProcessOpenByRowKey((current) => (
+      current[streamingAssistantRowKey] === undefined
+        ? { ...current, [streamingAssistantRowKey]: true }
+        : current
+    ));
+  }, [streamingAssistantRowKey]);
+
+  const updateProcessOpen = (rowKey: string, open: boolean) => {
+    setProcessOpenByRowKey((current) => (
+      current[rowKey] === open
+        ? current
+        : { ...current, [rowKey]: open }
+    ));
+  };
 
   return (
     <div className="flex min-h-[12rem] flex-col gap-5" data-testid="side-chat-messages">
-      {conversation ? messages.map((message) => {
+      {conversation ? displayedMessages.map((message) => {
+        const isDraftStreamMessage = message.id === fallbackAssistantMessage?.id;
+        const messageStream = stream && (
+          isDraftStreamMessage
+          || (message.role === "assistant" && message.id === activeAssistantMessageId)
+        ) ? stream : null;
+        const messageRowKey = chatAssistantMessageRowKey(
+          message,
+          messageStream ?? stream,
+          activeAssistantMessageId,
+          assistantRowIdentities,
+        );
         const transcript = chatTranscriptEntriesForMessage(
           message,
           Object.fromEntries(legacyTranscriptByMessageId) as Readonly<Record<string, TranscriptEntry[]>>,
           transcriptByRun,
         );
+        const streamedAssistantBody = messageStream && message.status === "streaming"
+          ? chatStreamingAssistantBody(
+            messageStream.transcript,
+            messageStream.body,
+            requireFinalAnswerPhase,
+          )
+          : undefined;
+        const displayedMessage = streamedAssistantBody === undefined
+          ? message
+          : { ...message, body: streamedAssistantBody };
         const messageMutationAllowed = isMessageMutationAllowed(message.id);
+        const isStreamingAssistant = message.role === "assistant"
+          && messageStream !== null
+          && message.status === "streaming";
         return (
-          <div key={message.id}>
-            {message.role === "assistant" && transcript.length > 0 ? (
+          <div
+            key={messageRowKey}
+            {...(messageStream && message.status === "streaming"
+              ? { "data-testid": "side-chat-streaming-reply" }
+              : {})}
+          >
+            {messageStream && showOptimisticUserMessage ? (
+              <OptimisticUserDraftItem
+                body={messageStream.userBody}
+                files={messageStream.userFiles}
+                createdAt={messageStream.userCreatedAt}
+                onCopyMessageText={onCopyMessageText}
+                onEditDraftOnly={onEditDraftOnly}
+                skillReferences={skillReferences}
+                onMarkdownLinkClick={onMarkdownLinkClick}
+              />
+            ) : null}
+            {message.role === "assistant" && messageStream && message.status === "streaming" ? (
+              <StreamTranscriptItem
+                key={`stream-transcript:${chatAssistantStreamRowKey(messageStream)}`}
+                entries={messageStream.transcript}
+                state={messageStream.state}
+                open={processOpenByRowKey[messageRowKey] ?? isStreamingAssistant}
+                onOpenChange={(open) => updateProcessOpen(messageRowKey, open)}
+                streamStartedAt={messageStream.createdAt}
+                assistantMessageBody={messageStream.body}
+                showDeveloperDiagnostics={false}
+                onOpenFile={onOpenFile}
+              />
+            ) : message.role === "assistant" && transcript.length > 0 ? (
               <StreamTranscriptItem
                 entries={transcript}
                 state={message.status}
+                open={processOpenByRowKey[messageRowKey] ?? false}
+                onOpenChange={(open) => updateProcessOpen(messageRowKey, open)}
                 generationTerminalReason={message.generationTerminalReason}
                 streamStartedAt={new Date(message.createdAt)}
                 streamEndedAt={new Date(message.updatedAt)}
@@ -113,8 +232,13 @@ export function SideChatPanelMessages({
               />
             ) : null}
             <ChatMessageItem
+              key={messageRowKey}
               conversation={conversation}
-              message={message}
+              message={displayedMessage}
+              streamedAssistantBody={streamedAssistantBody}
+              draftPresentation={Boolean(messageStream && message.status === "streaming")}
+              draftState={messageStream && message.status === "streaming" ? messageStream.state : undefined}
+              onEditDraftOnly={messageStream && message.status === "streaming" ? onEditDraftOnly : undefined}
               agents={agents}
               decisionNote={decisionNotesByMessageId[message.id] ?? ""}
               onDecisionNoteChange={(value) => {
@@ -139,41 +263,6 @@ export function SideChatPanelMessages({
           </div>
         );
       }) : null}
-      {stream && conversation ? (
-        <div className="flex flex-col gap-5" data-testid="side-chat-streaming-reply">
-          {showOptimisticUserMessage ? (
-            <OptimisticUserDraftItem
-              body={stream.userBody}
-              files={stream.userFiles}
-              createdAt={stream.userCreatedAt}
-              onCopyMessageText={onCopyMessageText}
-              onEditDraftOnly={onEditDraftOnly}
-              skillReferences={skillReferences}
-              onMarkdownLinkClick={onMarkdownLinkClick}
-            />
-          ) : null}
-          <StreamTranscriptItem
-            entries={stream.transcript}
-            state={stream.state}
-            streamStartedAt={stream.createdAt}
-            assistantMessageBody={stream.body}
-            showDeveloperDiagnostics={false}
-            onOpenFile={onOpenFile}
-          />
-          <AssistantDraftItem
-            body={stream.body}
-            transcript={stream.transcript}
-            createdAt={stream.createdAt}
-            state={stream.state}
-            replyingAgentId={stream.replyingAgentId}
-            conversation={conversation}
-            agents={agents}
-            onCopyMessageText={onCopyMessageText}
-            skillReferences={skillReferences}
-            onMarkdownLinkClick={onMarkdownLinkClick}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

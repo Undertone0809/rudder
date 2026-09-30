@@ -1360,15 +1360,45 @@ describe("OpenCode native protocol contract", () => {
     expect(await messageRequestCount(directory)).toBe(1);
   });
 
-  it("interrupts a registered native control handle through the provider abort endpoint", async () => {
+  it("stops an active Run through the profile-bound interrupt capability and settles with honest quiescence", async () => {
     const directory = await makeFixtureDirectory("rudder-opencode-native-abort-");
     const command = await makeOpenCodeFixture(directory, {
       waitForAbort: true,
       streamEvents: [{ type: "session.next.prompted", properties: { sessionID: "oc-session-1", prompt: { text: "boundary test prompt" } } }],
     });
+    const binding = {
+      id: "binding-abort",
+      orgId: "organization-1",
+      hostId: "local",
+      profileId: "opencode-profile",
+    };
+    const adapter = createOpenCodeLocalProviderCapabilityResolver(() => ({
+      binding,
+      providerVersion: "1.0.0",
+      command,
+      cwd: directory,
+    }))("opencode_local", binding)!;
     let handle: Parameters<NonNullable<NativeChatInput["controlAttempt"]>["register"]>[0] | null = null;
     let released = false;
-    const execution = runFixtureChat(directory, command, {
+    const execution = executeOpenCodeAdapter({
+      runId: "run-opencode-interrupt",
+      agent: { id: "agent-1", orgId: binding.orgId, name: "OpenCode Agent", agentRuntimeType: "opencode_local", agentRuntimeConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: {
+        command,
+        cwd: directory,
+        model: "provider/model",
+        promptTemplate: "{{context.chatPrompt}}",
+        timeoutSec: 10,
+        env: { HOME: directory },
+        providerHostId: binding.hostId,
+        providerProfileId: binding.profileId,
+        providerBindingId: binding.id,
+        providerOrgId: binding.orgId,
+      },
+      context: { chatMode: true, chatPrompt: "boundary test prompt" },
+      authToken: "fixture-token",
+      onLog: async () => {},
       controlAttempt: {
         attemptEpoch: 9,
         ownerToken: "owner-abort",
@@ -1379,17 +1409,33 @@ describe("OpenCode native protocol contract", () => {
         complete: async () => {},
       },
     });
-    const executionOutcome = execution.then(
-      () => null,
-      (error: unknown) => error,
-    );
 
     await waitForValue(() => handle);
     await waitForMessageRequest(directory);
-    await expect(handle!.interrupt("operator_stop")).resolves.toBe("acknowledged");
-    const executionError = await executionOutcome;
-    expect(executionError).toBeInstanceOf(Error);
-    expect((executionError as Error).message).toMatch(/interrupted|cancelled/u);
+    const interruptRequest = {
+      runtimeType: "opencode_local",
+      handle,
+      operation: { kind: "interrupt" as const, reason: "operator_stop" as const },
+      binding,
+      session: {
+        sessionId: "oc-session-1",
+        sessionDisplayId: "oc-session-1",
+        sessionParams: { sessionId: "oc-session-1" },
+      },
+    };
+    await expect(Promise.all([
+      adapter.control.interrupt.execute(interruptRequest),
+      adapter.control.interrupt.execute(interruptRequest),
+    ])).resolves.toEqual(["acknowledged", "acknowledged"]);
+    const result = await execution;
+    expect(result).toMatchObject({
+      exitCode: 1,
+      submissionPhase: "accepted",
+      providerThreadId: "oc-session-1",
+      sessionId: "oc-session-1",
+      nativeWriterQuiescence: { status: "unconfirmed" },
+      resultJson: { providerAbortAcknowledged: true },
+    });
     const requests = await fixtureRequests(directory);
     expect(requests.filter((request) => request.method === "POST" && request.url?.includes("/session/oc-session-1/prompt_async"))).toHaveLength(1);
     expect(requests.filter((request) => request.method === "POST" && request.url?.includes("/session/oc-session-1/abort"))).toHaveLength(1);
@@ -1403,6 +1449,18 @@ describe("OpenCode native protocol contract", () => {
       abortMode,
       streamEvents: [{ type: "session.next.prompted", properties: { sessionID: "oc-session-1", prompt: { text: "boundary test prompt" } } }],
     });
+    const binding = {
+      id: `binding-${abortMode}`,
+      orgId: "organization-1",
+      hostId: "local",
+      profileId: "opencode-profile",
+    };
+    const adapter = createOpenCodeLocalProviderCapabilityResolver(() => ({
+      binding,
+      providerVersion: "1.0.0",
+      command,
+      cwd: directory,
+    }))("opencode_local", binding)!;
     let handle: Parameters<NonNullable<NativeChatInput["controlAttempt"]>["register"]>[0] | null = null;
     let released = false;
     const execution = runFixtureChat(directory, command, {
@@ -1423,10 +1481,21 @@ describe("OpenCode native protocol contract", () => {
 
     await waitForValue(() => handle, 10_000);
     await waitForMessageRequest(directory);
+    const interruptRequest = {
+      runtimeType: "opencode_local",
+      handle,
+      operation: { kind: "interrupt" as const, reason: "operator_stop" as const },
+      binding,
+      session: {
+        sessionId: "oc-session-1",
+        sessionDisplayId: "oc-session-1",
+        sessionParams: { sessionId: "oc-session-1" },
+      },
+    };
     let interruptsSettled = false;
     const interruptions = Promise.all([
-      handle!.interrupt("operator_stop"),
-      handle!.interrupt("operator_stop"),
+      adapter.control.interrupt.execute(interruptRequest),
+      adapter.control.interrupt.execute(interruptRequest),
     ]).then((results) => {
       interruptsSettled = true;
       return results;

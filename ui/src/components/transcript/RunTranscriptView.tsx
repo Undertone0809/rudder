@@ -7,7 +7,7 @@ import { filterChatAssistantTranscriptEntries } from "./RunTranscriptView.chat";
 import { TranscriptChatTimeline } from "./RunTranscriptView.chat-timeline";
 import { filterRenderableTranscriptEntries, isInternalTranscriptLifecycleEntry, resolveTranscriptLocalFileTarget, RunTranscriptViewProps, shouldHandlePlainClick, transcriptBlockStableKey, TranscriptMarkdownLinkClickHandler } from "./RunTranscriptView.common";
 import { RawTranscriptView, TranscriptDetailTimeline } from "./RunTranscriptView.detail";
-import { normalizeTranscript } from "./RunTranscriptView.normalize";
+import { cursorAcpDisplayEntry, normalizeTranscript, terminalAssistantResponseEntryIndexes } from "./RunTranscriptView.normalize";
 import { RudderMcpPresenterProvider } from "./RunTranscriptView.rudder-mcp";
 import { collectTranscriptAgentInspections } from "./TranscriptAgentInspection";
 
@@ -29,6 +29,11 @@ function trailingEntriesByVisibleLimit(
     if (remaining === 0) break;
   }
   return entries.slice(startIndex);
+}
+
+function isRudderEchoedStructuredUserInput(entry: RunTranscriptViewProps["entries"][number]) {
+  return entry.kind === "user"
+    && /^conversation input:\s*\{/iu.test(entry.text.trim());
 }
 
 export function RunTranscriptView(props: RunTranscriptViewProps) {
@@ -53,6 +58,7 @@ function RunTranscriptViewContent({
   showDeveloperDiagnostics = false,
   hideAssistantMessages = false,
   hiddenAssistantMessageText = null,
+  terminalRun = false,
   localizeText,
   onOpenFile,
   onOpenSkill,
@@ -124,29 +130,47 @@ function RunTranscriptViewContent({
     });
   }, [onOpenFile, toastContext]);
   const renderableEntries = useMemo(
-    () => filterRenderableTranscriptEntries(entries, {
-      presentation,
-      showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
-    }),
+    () => {
+      const renderable = filterRenderableTranscriptEntries(entries, {
+        presentation,
+        showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
+      });
+      return presentation === "detail"
+        ? renderable.filter((entry) => !isRudderEchoedStructuredUserInput(entry))
+        : renderable;
+    },
     [effectiveShowDeveloperDiagnostics, entries, presentation],
   );
-  const rawEntries = presentation === "detail" ? entries : renderableEntries;
+  const displayEntries = useMemo(() => {
+    if (presentation !== "detail") return renderableEntries;
+    const projected = renderableEntries.map((entry) => cursorAcpDisplayEntry(entry) ?? entry);
+    if (!terminalRun) return projected;
+    const terminalIndexes = terminalAssistantResponseEntryIndexes(projected);
+    return projected.map((entry, index) => (
+      terminalIndexes.has(index) && entry.kind === "assistant" && !entry.phase
+        ? { ...entry, phase: "final_answer" as const }
+        : entry
+    ));
+  }, [presentation, renderableEntries, terminalRun]);
+  const rawEntries = presentation === "detail"
+    ? entries.filter((entry) => !isRudderEchoedStructuredUserInput(entry))
+    : renderableEntries;
   const blocks = useMemo(
     () => normalizeTranscript(presentation === "chat"
-      ? filterChatAssistantTranscriptEntries(renderableEntries, {
+      ? filterChatAssistantTranscriptEntries(displayEntries, {
         hideAssistantMessages,
         hiddenAssistantMessageText,
         streaming,
         preserveLifecycleBoundaries: true,
       })
-      : renderableEntries, streaming, {
+      : displayEntries, streaming, {
       showDeveloperDiagnostics: effectiveShowDeveloperDiagnostics,
       hideUserMessages: presentation === "chat",
     }),
-    [effectiveShowDeveloperDiagnostics, hiddenAssistantMessageText, hideAssistantMessages, presentation, renderableEntries, streaming],
+    [displayEntries, effectiveShowDeveloperDiagnostics, hiddenAssistantMessageText, hideAssistantMessages, presentation, streaming],
   );
   const visibleBlocks = limit ? blocks.slice(-limit) : blocks;
-  const visibleNiceEntries = trailingEntriesByVisibleLimit(renderableEntries, limit);
+  const visibleNiceEntries = trailingEntriesByVisibleLimit(displayEntries, limit);
   const agentInspections = useMemo(
     () => collectTranscriptAgentInspections(blocks),
     [blocks],

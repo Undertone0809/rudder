@@ -10,6 +10,7 @@ import {
 } from "@rudderhq/db";
 import {
   cancelChatQueuedMessageSchema,
+  continueChatQueuedMessageSchema,
   chatAutomationCreateFromStructuredPayload,
   chatDraftSchema,
   createChatConversationSchema,
@@ -2700,6 +2701,29 @@ export function chatRoutes(
       });
     }
     res.json({ item });
+  });
+
+  router.post("/chats/:id/queue/:itemId/continue", validate(continueChatQueuedMessageSchema), async (req, res) => {
+    assertBoard(req);
+    const conversation = await assertConversationAccess(req, req.params.id as string);
+    if (!conversation) throw notFound("Chat conversation not found");
+    assertChatLocalMutationAllowed(conversation as ChatConversation);
+    await assertSideChatMutationAllowed(req, conversation as ChatConversation);
+    if (hasActiveChatGeneration(conversation.id)) throw conflict("Cannot continue queued input while a reply is in progress");
+    const result = await svc.authorizeQueuedRecovery({
+      ...req.body, orgId: conversation.orgId, conversationId: conversation.id,
+      itemId: req.params.itemId as string, requestActor: queueRequestActor(req),
+    });
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      orgId: conversation.orgId, actorType: actor.actorType, actorId: actor.actorId,
+      action: "chat.queue.continue_requested", entityType: "chat", entityId: conversation.id,
+      details: { queuedMessageId: result.item.id, controlActionId: result.controlActionId,
+        expectedFailedGenerationId: req.body.expectedFailedGenerationId, requestedQueueVersion: req.body.version },
+      idempotencyKey: `chat.queue.continue:${result.controlActionId}`,
+    });
+    wakeServerQueue();
+    res.json(result);
   });
 
   router.post("/chats/:id/queue/:itemId/release-claim", async (req, res) => {

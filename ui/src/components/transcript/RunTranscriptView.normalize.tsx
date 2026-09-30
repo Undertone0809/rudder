@@ -1,5 +1,6 @@
 import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
+import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
@@ -17,7 +18,7 @@ type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
   steerMessage?: ChatMessage;
 };
 
-function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
+export function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
   const item = asRecord(entry);
   if (!item || typeof item.kind !== "string" || !item.kind.startsWith("cursor:acp:")) return null;
   const kind = item.kind;
@@ -38,6 +39,22 @@ function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
   const sourceEntryId = item.origin === "object" && typeof item.sourceEntryId === "string" && item.sourceEntryId.trim()
     ? item.sourceEntryId : undefined;
   const source = sourceEntryId ? { sourceEntryId } : {};
+  const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
+  const requestId = typeof payload.requestId === "string" || typeof payload.requestId === "number"
+    ? payload.requestId : undefined;
+  const cursorAcpEvent: CursorAcpTranscriptEvent = {
+    provider: "cursor_agent",
+    transport: "cursor-agent-acp-stdio",
+    method: payload.method,
+    ...(sessionId ? { sessionId } : {}),
+    updateKind,
+    ...(requestId === undefined ? {} : { requestId }),
+    frame: {
+      jsonrpc: "2.0",
+      method: payload.method,
+      params: { ...(sessionId ? { sessionId } : {}), update },
+    },
+  };
   const content = asRecord(update.content);
   const text = typeof content?.text === "string"
     ? content.text : typeof item.text === "string" ? item.text : null;
@@ -72,6 +89,7 @@ function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
           ...(terminal ? { status: update.status,
             result: typeof output === "string" ? output : JSON.stringify(output),
             isError: update.status !== "completed" } : {}),
+          cursorAcpEvent,
           ...source };
       }
       if (terminal) {
@@ -79,10 +97,11 @@ function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
         return { kind: "tool_result", ts, toolUseId: update.toolCallId,
           ...(toolName ? { toolName } : {}),
           content: typeof output === "string" ? output : JSON.stringify(output),
-          isError: update.status !== "completed", ...source };
+          isError: update.status !== "completed", cursorAcpEvent, ...source };
       }
       return { kind: "system", ts,
         text: `Tool ${toolName ?? update.toolCallId}: ${typeof update.status === "string" ? update.status : "updated"}`,
+        cursorAcpEvent,
         ...source };
     }
     case "plan": {
@@ -96,11 +115,35 @@ function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
       });
       if (items.some((value) => value === null)) return null;
       return { kind: "todo_list", ts,
-        items: items.filter((value): value is NonNullable<typeof value> => value !== null), ...source };
+        items: items.filter((value): value is NonNullable<typeof value> => value !== null), cursorAcpEvent, ...source };
     }
     default:
       return null;
   }
+}
+
+function isTerminalTranscriptTailEntry(entry: TranscriptEntry) {
+  if (entry.kind === "init" || entry.kind === "result" || entry.kind === "stderr" || entry.kind === "stdout") {
+    return true;
+  }
+  return entry.kind === "system" && !entry.cursorAcpEvent;
+}
+
+export function terminalAssistantResponseEntryIndexes(entries: readonly TranscriptEntry[]) {
+  const projected = entries.map((entry) => cursorAcpDisplayEntry(entry) ?? entry);
+  let index = projected.length - 1;
+  while (index >= 0 && isTerminalTranscriptTailEntry(projected[index]!)) index -= 1;
+
+  const terminal = projected[index];
+  if (terminal?.kind !== "assistant" || terminal.phase || !terminal.text.trim()) return new Set<number>();
+
+  const indexes = new Set<number>([index]);
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    const entry = projected[previous];
+    if (entry?.kind !== "assistant" || entry.phase || !entry.text.trim()) break;
+    indexes.add(previous);
+  }
+  return indexes;
 }
 
 function transcriptEntryProvenance(entry: ProvenancedTranscriptTextEntry) {
@@ -666,6 +709,8 @@ export function normalizeTranscript(
 
         const skillContext = parseClaudeSkillContext(entry.text);
         if (skillContext) {
+          if (options?.hideUserMessages) continue;
+
           const matchingTool = [...blocks].reverse().find((block): block is Extract<TranscriptBlock, { type: "tool" }> => {
             if (!isSkillToolBlock(block)) return false;
             const toolSkill = normalizeSkillSlug(readSkillToolName(block.input));
@@ -690,9 +735,8 @@ export function normalizeTranscript(
         }
       }
 
-      // Native user inputs also contain harness instructions. They are not
-      // Agent activity; retain skill evidence and explicit steer interjections.
-      if (entry.kind === "user" && options?.hideUserMessages && entry.source !== "steer") continue;
+      // User inputs are not Agent activity, including interjections delivered by Steer.
+      if (entry.kind === "user" && options?.hideUserMessages) continue;
 
       const provenance = entry.kind === "assistant"
         ? transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry)
@@ -827,6 +871,7 @@ export function normalizeTranscript(
         ...(terminal ? { endTs: entry.ts,
           result: typeof terminalResult === "string" ? terminalResult : undefined,
           isError: terminalStatus !== "completed" } : {}),
+        ...(entry.cursorAcpEvent ? { cursorAcpEvents: [entry.cursorAcpEvent] } : {}),
         sourceEntryIds: transcriptEntrySourceIds(entry),
       };
       blocks.push(toolBlock);
@@ -851,6 +896,7 @@ export function normalizeTranscript(
         matched.isError = entry.isError;
         matched.status = entry.isError ? "error" : "completed";
         matched.endTs = entry.ts;
+        if (entry.cursorAcpEvent) matched.cursorAcpEvents = [...(matched.cursorAcpEvents ?? []), entry.cursorAcpEvent];
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(matched, sourceEntryId);
         pendingToolBlocks.delete(entry.toolUseId);
       } else {
@@ -865,6 +911,7 @@ export function normalizeTranscript(
           result: entry.content,
           isError: entry.isError,
           status: entry.isError ? "error" : "completed",
+          ...(entry.cursorAcpEvent ? { cursorAcpEvents: [entry.cursorAcpEvent] } : {}),
           sourceEntryIds: transcriptEntrySourceIds(entry),
         });
       }
@@ -878,6 +925,7 @@ export function normalizeTranscript(
       if (existing) {
         existing.ts = entry.ts;
         existing.items = entry.items;
+        if (entry.cursorAcpEvent) existing.cursorAcpEvents = [...(existing.cursorAcpEvents ?? []), entry.cursorAcpEvent];
         for (const sourceEntryId of transcriptEntrySourceIds(entry)) appendTranscriptSourceId(existing, sourceEntryId);
       } else {
         const block: Extract<TranscriptBlock, { type: "todo_list" }> = {
@@ -885,6 +933,7 @@ export function normalizeTranscript(
           ts: entry.ts,
           todoListId: entry.todoListId,
           items: entry.items,
+          ...(entry.cursorAcpEvent ? { cursorAcpEvents: [entry.cursorAcpEvent] } : {}),
           sourceEntryIds: transcriptEntrySourceIds(entry),
         };
         blocks.push(block);
@@ -935,6 +984,20 @@ export function normalizeTranscript(
 
     if (entry.kind === "system") {
       if (compactWhitespace(entry.text).toLowerCase() === "turn started") {
+        continue;
+      }
+      if (entry.cursorAcpEvent) {
+        const eventName = entry.cursorAcpEvent.updateKind ?? entry.cursorAcpEvent.method;
+        blocks.push({
+          type: "event",
+          ts: entry.ts,
+          label: `Cursor ACP · ${eventName}`,
+          tone: "neutral",
+          text: entry.text,
+          collapseByDefault: true,
+          cursorAcpEvent: entry.cursorAcpEvent,
+          sourceEntryIds: transcriptEntrySourceIds(entry),
+        });
         continue;
       }
       const memoryUpdate = parseMemoryUpdateSystemText(entry.text, entry.ts);

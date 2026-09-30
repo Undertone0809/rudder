@@ -2,8 +2,12 @@ import type { TranscriptEntry } from "@/agent-runtimes";
 import { agentsApi } from "@/api/agents";
 import { approvalsApi } from "@/api/approvals";
 import { authApi } from "@/api/auth";
-import { chatsApi, type ChatSteerQueuedMessageRequest } from "@/api/chats";
-import { ApiError } from "@/api/client";
+import {
+  chatsApi,
+  type ChatContinueQueuedMessageRequest,
+  type ChatSteerQueuedMessageRequest,
+} from "@/api/chats";
+import { ApiError, ApiTimeoutError } from "@/api/client";
 import type { HealthStatus } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { issuesApi } from "@/api/issues";
@@ -53,7 +57,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { VirtualizedActivityTimeline } from "@/components/VirtualizedActivityTimeline";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { useChatGenerations } from "@/context/ChatGenerationContext";
+import { useChatGenerations, type ChatStreamDraft } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import { firstChatTurnOwner, useFirstChatTurnStore } from "@/context/FirstChatTurnContext";
 import { useI18n } from "@/context/I18nContext";
@@ -188,6 +192,7 @@ import {
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
   type ChatQueuedMessage,
+  type ChatQueueSnapshot,
   type ChatWorkManifestItem
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -237,7 +242,15 @@ import { usePendingChatResponseAnnotationSelection } from "./Chat.response-annot
 import { ChatScrollMap, countScrollMapUserMessages } from "./Chat.scroll-map";
 import { ChatSideChatSlashCommandMenu } from "./Chat.side-chat-slash-command";
 import { ChatSidePanelActions } from "./Chat.side-panel-actions";
-import { buildChatTimelineRows } from "./Chat.timeline";
+import {
+  buildChatTimelineRows,
+  chatAssistantMessageRowKey,
+  chatAssistantStreamRowKey,
+  chatAgentUsesCodexAppServer,
+  chatStreamDraftAssistantMessage,
+  chatStreamingAssistantBody,
+  rememberChatAssistantStreamRowIdentity,
+} from "./Chat.timeline";
 import {
   chatRunAnnotationContextForMessage,
   chatTranscriptPresentationForMessage,
@@ -251,6 +264,126 @@ export * from "./Chat.attachments";
 export * from "./Chat.messages";
 export * from "./Chat.parts";
 export { applyChatStreamProgressEvent } from "./Chat.workspace-helpers";
+
+function canContinueQueuedChatInput(input: {
+  item: ChatQueuedMessage;
+  snapshot: ChatQueueSnapshot | undefined;
+  activeGenerationId: string | null;
+  currentUserId: string | null;
+  conversationOwnerUserId: string | null;
+  conversationCanContinue: boolean;
+  knownAuthorization?: { version: number; failedGenerationId: string };
+  pendingRequest?: {
+    version: number;
+    failedGenerationId: string;
+    request: ChatContinueQueuedMessageRequest;
+  };
+}) {
+  const {
+    item,
+    snapshot,
+    activeGenerationId,
+    currentUserId,
+    conversationOwnerUserId,
+    conversationCanContinue,
+    knownAuthorization,
+    pendingRequest,
+  } = input;
+  const actor = item.requestActor;
+  const ownerUserId = actor?.userId ?? (actor?.source === "local_implicit" ? "local-board" : null);
+  const viewerUserId = currentUserId ?? (actor?.source === "local_implicit" ? "local-board" : null);
+  const canReplaceAuthorization = Boolean(
+    item.controlActionId
+    && knownAuthorization
+    && (knownAuthorization.version !== item.version
+      || knownAuthorization.failedGenerationId !== snapshot?.latestFailedGenerationId),
+  );
+  const canReplayPendingRequest = Boolean(
+    pendingRequest
+    && pendingRequest.failedGenerationId === snapshot?.latestFailedGenerationId
+    && pendingRequest.version <= item.version
+    && (!item.controlActionId || item.controlActionId === pendingRequest.request.controlActionId)
+    && (item.version === pendingRequest.version
+      || item.controlActionId === pendingRequest.request.controlActionId),
+  );
+  const eligible = Boolean(
+    conversationCanContinue
+    && snapshot?.latestFailedGenerationId
+    && !activeGenerationId
+    && actor?.type === "board"
+    && ownerUserId
+    && viewerUserId === ownerUserId
+    && (!conversationOwnerUserId || conversationOwnerUserId === ownerUserId)
+    && item.status === "queued"
+    && item.deliveryIntent === "queue"
+    && item.version > 0
+    && (!item.controlActionId || canReplaceAuthorization || canReplayPendingRequest)
+    && item.deliveryAttempts === 0
+    && item.deliveryLeaseEpoch === 0
+    && !item.deliveryLeaseToken
+    && !item.continuationGenerationId
+    && !item.continuationMessageId
+    && !item.sourceMessageId
+    && !item.deliveredMessageId
+    && !item.providerClientMessageId
+    && !item.providerThreadId
+    && !item.providerTurnId
+    && !item.providerEvidence
+    && !item.cancelledAt,
+  );
+  return eligible;
+}
+
+function chatQueueContinueErrorToast(error: unknown) {
+  if (error instanceof ApiError) {
+    if (error.status === 403) {
+      return {
+        title: "You can't continue this queued message",
+        body: "Only the queued message owner who owns this conversation can continue it.",
+      };
+    }
+    if (error.status === 409 && /already authorized|already.*continue|bound to another request/iu.test(error.message)) {
+      return {
+        title: "Continue already requested",
+        body: "This queued message already has a continuation request. Refresh the queue to see its current state.",
+      };
+    }
+    if (error.status === 409) {
+      return {
+        title: "Queue changed",
+        body: "The failed reply or queued message changed. Review the refreshed queue before continuing.",
+      };
+    }
+    if (error.status === 404) {
+      return {
+        title: "Queued message unavailable",
+        body: "This queued message is no longer available. The queue was refreshed.",
+      };
+    }
+  }
+  if (error instanceof ApiTimeoutError || error instanceof TypeError) {
+    return {
+      title: "Could not confirm Continue",
+      body: "Rudder could not be reached. The request may have completed, so refresh the queue before retrying.",
+    };
+  }
+  return {
+    title: "Could not continue queued message",
+    body: "Rudder could not authorize this queued message. Refresh the queue and try again.",
+  };
+}
+
+function chatAssistantStreamRowIdentity(stream: ChatStreamDraft) {
+  return {
+    streamKey: stream.streamKey,
+    generationId: stream.generationId,
+    turnVariant: stream.turnVariant,
+  };
+}
+
+function chatAssistantStableStreamRowKey(stream: ChatStreamDraft) {
+  return chatAssistantStreamRowKey(chatAssistantStreamRowIdentity(stream));
+}
 
 export function Chat() { const { selectedOrganizationId } = useOrganization(); return selectedOrganizationId ? <ChatWorkspace key={selectedOrganizationId} /> : <div className="text-sm text-muted-foreground">Select a organization first.</div>; }
 function ChatWorkspace() { const { conversationId } = useParams<{ conversationId?: string }>(); const location = useLocation(); const navigate = useNavigate(); const [searchParams] = useSearchParams(); const queryClient = useQueryClient(); const { selectedOrganization, selectedOrganizationId } = useOrganization(); const { viewedOrganizationId } = useViewedOrganization(); const { locale, t } = useI18n(); const { setBreadcrumbs } = useBreadcrumbs(); const { pushToast } = useToast(); const { confirm, openNewProject } = useDialog();
@@ -282,6 +415,25 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
   } = useChatRuntimeSensitiveInput(conversationId);
   const stopRecoveryStreamKeysRef = useRef<Record<string, string>>({});
   const streamOwnershipRef = useRef<Record<string, { streamKey: string; controller: AbortController }>>({});
+  const assistantRowIdentitiesRef = useRef(new Map<string, string>());
+  const [openProcessRowKeys, setOpenProcessRowKeys] = useState<Record<string, boolean>>({});
+  const setProcessOpenForRowKey = useCallback((rowKey: string, open: boolean) => {
+    setOpenProcessRowKeys((current) => {
+      if (current[rowKey] === open) return current;
+      return { ...current, [rowKey]: open };
+    });
+  }, []);
+  const [continuingQueuedItemIds, setContinuingQueuedItemIds] = useState<Set<string>>(() => new Set());
+  const continuingQueuedItemIdsRef = useRef(new Set<string>());
+  const continuationRequestsRef = useRef(new Map<string, {
+    version: number;
+    failedGenerationId: string;
+    request: ChatContinueQueuedMessageRequest;
+  }>());
+  const authorizedContinuationsRef = useRef(new Map<string, {
+    version: number;
+    failedGenerationId: string;
+  }>());
   const streamDraftsRef = useRef(streamDrafts);
   streamDraftsRef.current = streamDrafts;
   const submitStopRecoveryRef = useRef<(recovery: PendingChatStopRecovery) => void>(() => {});
@@ -1478,6 +1630,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                 clearPendingFilesForCurrentScope();
                 pendingFilesClearedAfterAck = true;
               }
+              rememberChatAssistantStreamRowIdentity(assistantRowIdentitiesRef.current, {
+                streamKey,
+                generationId: event.generationId ?? null,
+                turnVariant: event.userMessage.turnVariant ?? 0,
+              });
               setStreamDraftForChat(streamScopeKey, {
                 chatId: conversation.id,
                 streamKey,
@@ -1639,6 +1796,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             queryClient.setQueryData(
               queryKeys.chats.queue(selectedOrganizationId, chatId),
               (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+                latestFailedGenerationId: current?.latestFailedGenerationId !== undefined
+                  ? current.latestFailedGenerationId
+                  : queueQuery.data?.latestFailedGenerationId ?? null,
                 activeGenerationId: current?.activeGenerationId ?? queueQuery.data?.activeGenerationId ?? null,
                 activeAttemptEpoch: current?.activeAttemptEpoch ?? queueQuery.data?.activeAttemptEpoch ?? null,
                 activeControlVersion: current?.activeControlVersion ?? queueQuery.data?.activeControlVersion ?? null,
@@ -1658,6 +1818,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
             return;
           }
           if (event.type === "ack") { userMessageAcknowledged = true; settleClientMutation(); upsertMessages(chatId, [event.userMessage]);
+            rememberChatAssistantStreamRowIdentity(assistantRowIdentitiesRef.current, {
+              streamKey,
+              generationId: event.generationId ?? null,
+              turnVariant: event.userMessage.turnVariant ?? 0,
+            });
             if (usesComposerState) {
               setDraftRuntimeOverrides({ modelOverride: null, effortOverride: null });
               dispatchResponseAnnotation({ type: "clear" });
@@ -2322,7 +2487,42 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     hasConversation: Boolean(selectedConversation),
     hasLastMessageAt: Boolean(selectedConversation?.lastMessageAt),
     hasMessages: rawMessages.length > 0,
-    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight, }); const activeEditCutoffMs = activeStream?.editedFromCreatedAt ? activeStream.editedFromCreatedAt.getTime() : null; const activeStreamFilteredMessages = activeStream ? displayedMessages.filter((message) => shouldShowMessageDuringActiveEdit(message, activeStream)) : displayedMessages; const activeStreamPreviewHidden = Boolean(activeStream?.chatTurnId && branchPreview?.chatTurnId === activeStream.chatTurnId && branchPreview.turnVariant !== activeStream.turnVariant); const visibleMessages = activeStream && !activeStreamPreviewHidden ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(message, activeStream)) : activeStreamFilteredMessages; const scrollMapUserMessageCount = useMemo(
+    hasActiveStream: Boolean(activeStream), hasActiveSendInFlight: activeSendInFlight,
+  });
+  const activeEditCutoffMs = activeStream?.editedFromCreatedAt
+    ? activeStream.editedFromCreatedAt.getTime()
+    : null;
+  const activeAssistantMessageId = activeChatStreamAssistantMessageId(rawMessages, activeStream);
+  useEffect(() => {
+    if (!activeStream) return;
+    const rowKey = chatAssistantStableStreamRowKey(activeStream);
+    setOpenProcessRowKeys((current) => current[rowKey] === true
+      ? current
+      : { ...current, [rowKey]: true });
+  }, [activeStream?.chatTurnId, activeStream?.generationId, activeStream?.streamKey, activeStream?.turnVariant]);
+  useLayoutEffect(() => {
+    if (activeStream) {
+      rememberChatAssistantStreamRowIdentity(
+        assistantRowIdentitiesRef.current,
+        chatAssistantStreamRowIdentity(activeStream),
+      );
+    }
+  }, [activeStream?.generationId, activeStream?.streamKey, activeStream?.turnVariant]);
+  const activeStreamFilteredMessages = activeStream
+    ? displayedMessages.filter((message) => shouldShowMessageDuringActiveEdit(message, activeStream))
+    : displayedMessages;
+  const activeStreamPreviewHidden = Boolean(
+    activeStream?.chatTurnId
+    && branchPreview?.chatTurnId === activeStream.chatTurnId
+    && branchPreview.turnVariant !== activeStream.turnVariant,
+  );
+  const visibleMessages = activeStream && !activeStreamPreviewHidden
+    ? activeStreamFilteredMessages.filter((message) => shouldShowMessageDuringActiveStream(
+      message,
+      { ...activeStream, assistantMessageId: activeAssistantMessageId },
+    ))
+    : activeStreamFilteredMessages;
+  const scrollMapUserMessageCount = useMemo(
     () => countScrollMapUserMessages(visibleMessages), [visibleMessages],
   ); const showChatScrollMap = scrollMapUserMessageCount > CHAT_SCROLL_MAP_USER_MESSAGE_THRESHOLD; const jumpToChatMessage = useCallback((messageId: string) => {
     const scrollElement = chatMessagesScrollElementRef.current;
@@ -2504,19 +2704,29 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     [embeddedNativeSteerMessageIds, visibleMessages],
   );
   const chatTimelineRows = useMemo(() => {
-    return buildChatTimelineRows(timelineMessages, activeStream, showActiveStreamDraft)
+    return buildChatTimelineRows(
+      timelineMessages,
+      activeStream,
+      showActiveStreamDraft,
+      activeAssistantMessageId,
+    )
       .map((row) => row.kind === "message"
         ? {
             ...row,
             messageIndex: visibleMessages.findIndex((candidate) => candidate.id === row.message.id),
           }
         : row);
-  }, [activeStream, showActiveStreamDraft, timelineMessages, visibleMessages]);
+  }, [activeAssistantMessageId, activeStream, showActiveStreamDraft, timelineMessages, visibleMessages]);
   const getChatTimelineItemKey = useCallback(
     (timelineRow: (typeof chatTimelineRows)[number]) => timelineRow.kind === "active_stream"
-      ? `active-stream:${activeStream?.streamKey ?? "pending"}`
-      : timelineRow.message.id,
-    [activeStream?.streamKey],
+      ? activeStream ? chatAssistantStableStreamRowKey(activeStream) : "assistant-generation:pending"
+      : chatAssistantMessageRowKey(
+        timelineRow.message,
+        activeStream ? chatAssistantStreamRowIdentity(activeStream) : null,
+        activeAssistantMessageId,
+        assistantRowIdentitiesRef.current,
+      ),
+    [activeAssistantMessageId, activeStream],
   );
   const estimateChatTimelineItemSize = useCallback(() => 180, []);
   useAutoLoadChatSteerTranscripts({
@@ -3116,6 +3326,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     queryClient.setQueryData(
       queryKeys.chats.queue(orgId, chatId),
       (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+        latestFailedGenerationId: current?.latestFailedGenerationId !== undefined
+          ? current.latestFailedGenerationId
+          : queueQuery.data?.latestFailedGenerationId ?? null,
         activeGenerationId: current?.activeGenerationId ?? request.expectedActiveGenerationId ?? null,
         activeAttemptEpoch: current?.activeAttemptEpoch ?? request.expectedAttemptEpoch ?? null,
         activeControlVersion: current?.activeControlVersion ?? request.expectedControlVersion ?? null,
@@ -3138,6 +3351,9 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
         queryClient.setQueryData(
           queryKeys.chats.queue(orgId, chatId),
           (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+            latestFailedGenerationId: current?.latestFailedGenerationId !== undefined
+              ? current.latestFailedGenerationId
+              : queueQuery.data?.latestFailedGenerationId ?? null,
             activeGenerationId: current?.activeGenerationId ?? request.expectedActiveGenerationId ?? null,
             activeAttemptEpoch: current?.activeAttemptEpoch ?? request.expectedAttemptEpoch ?? null,
             activeControlVersion: current?.activeControlVersion ?? request.expectedControlVersion ?? null,
@@ -3206,6 +3422,107 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     steerRetryStatesRef.current.set(pending.key, pending);
     submitSteerRetry(pending);
   };
+  const continueQueuedMessage = async (itemId: string) => {
+    if (!selectedConversation || !selectedOrganizationId || continuingQueuedItemIdsRef.current.has(itemId)) return;
+    const chatId = selectedConversation.id;
+    const queueKey = queryKeys.chats.queue(selectedOrganizationId, chatId);
+    const requestKey = `${chatId}\u0000${itemId}`;
+    const knownAuthorization = authorizedContinuationsRef.current.get(requestKey);
+    const pendingRequest = continuationRequestsRef.current.get(requestKey);
+    const snapshot = queryClient.getQueryData<ChatQueueSnapshot>(queueKey) ?? queueQuery.data;
+    const item = snapshot?.items.find((candidate) => candidate.id === itemId);
+    const failedGenerationId = snapshot?.latestFailedGenerationId;
+    if (!item || !failedGenerationId || !canContinueQueuedChatInput({
+      item,
+      snapshot,
+      activeGenerationId: activeGenerationIdFromSnapshot(snapshot),
+      currentUserId,
+      conversationOwnerUserId: selectedConversation.createdByUserId,
+      conversationCanContinue: !selectedConversationExternalBound
+        && selectedConversation.conversationKind !== "side_chat",
+      knownAuthorization,
+      pendingRequest,
+    })) {
+      pushToast({
+        title: "Queue changed",
+        body: "The failed reply or queued message is no longer eligible. The queue was refreshed.",
+        tone: "warn",
+      });
+      void queryClient.invalidateQueries({ queryKey: queueKey, exact: true });
+      return;
+    }
+
+    const previousRequest = continuationRequestsRef.current.get(requestKey);
+    const canReplayPreviousRequest = Boolean(
+      previousRequest
+      && previousRequest.failedGenerationId === failedGenerationId
+      && previousRequest.version <= item.version
+      && (!item.controlActionId || item.controlActionId === previousRequest.request.controlActionId)
+      && (item.version === previousRequest.version
+        || item.controlActionId === previousRequest.request.controlActionId),
+    );
+    const request = canReplayPreviousRequest && previousRequest
+      ? previousRequest.request
+      : {
+          version: item.version,
+          expectedFailedGenerationId: failedGenerationId,
+          controlActionId: globalThis.crypto.randomUUID(),
+        };
+    continuationRequestsRef.current.set(requestKey, {
+      version: item.version,
+      failedGenerationId,
+      request,
+    });
+    continuingQueuedItemIdsRef.current.add(itemId);
+    setContinuingQueuedItemIds((current) => new Set(current).add(itemId));
+
+    try {
+      const result = await chatsApi.continueQueuedMessage(chatId, item.id, request);
+      if (result.controlActionId !== request.controlActionId) {
+        throw new Error("Continue response did not match the requested action");
+      }
+      queryClient.setQueryData<ChatQueueSnapshot>(queueKey, (current) => current ? {
+        ...current,
+        items: current.items.map((candidate) => candidate.id === result.item.id ? result.item : candidate),
+      } : current);
+      authorizedContinuationsRef.current.set(requestKey, {
+        version: result.item.version,
+        failedGenerationId,
+      });
+      continuationRequestsRef.current.delete(requestKey);
+      let queueRefreshed = true;
+      try {
+        await queryClient.invalidateQueries({ queryKey: queueKey, exact: true });
+      } catch {
+        queueRefreshed = false;
+      }
+      pushToast({
+        title: result.idempotent ? "Continue already requested" : "Continue requested",
+        body: queueRefreshed
+          ? "The queued message is authorized to continue from the latest failed reply."
+          : "Continue was accepted, but the queue could not refresh. Reload the chat to confirm progress.",
+        tone: queueRefreshed ? "success" : "warn",
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        continuationRequestsRef.current.delete(requestKey);
+      }
+      pushToast({ ...chatQueueContinueErrorToast(error), tone: "error" });
+      try {
+        await queryClient.invalidateQueries({ queryKey: queueKey, exact: true });
+      } catch {
+        // Keep the request error as the user-visible cause.
+      }
+    } finally {
+      continuingQueuedItemIdsRef.current.delete(itemId);
+      setContinuingQueuedItemIds((current) => {
+        if (!current.has(itemId)) return current;
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
   const editQueuedMessage = (itemId: string, body: string) => {
     const item = activeQueueItems.find((candidate) => candidate.id === itemId);
     if (!item) return;
@@ -3226,11 +3543,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
       queryClient.setQueryData(
         queryKeys.chats.queue(selectedOrganizationId, chatId),
         (current: Awaited<ReturnType<typeof chatsApi.listQueue>> | undefined) => ({
+          latestFailedGenerationId: current?.latestFailedGenerationId !== undefined
+            ? current.latestFailedGenerationId
+            : queueQuery.data?.latestFailedGenerationId ?? null,
           activeGenerationId: current?.activeGenerationId ?? queueQuery.data?.activeGenerationId ?? null,
           activeAttemptEpoch: current?.activeAttemptEpoch ?? queueQuery.data?.activeAttemptEpoch ?? null,
           activeControlVersion: current?.activeControlVersion ?? queueQuery.data?.activeControlVersion ?? null,
           activeGenerationStatus: current?.activeGenerationStatus ?? queueQuery.data?.activeGenerationStatus ?? null,
-          items: (current?.items ?? []).map((candidate) => candidate.id === updated.id ? updated : candidate),
+        items: (current?.items ?? []).map((candidate) => candidate.id === updated.id ? updated : candidate),
         }),
       );
       setEditingQueuedItem(null);
@@ -3298,9 +3618,25 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
           <div className="space-y-1.5">
             {visibleQueueItems.map((item, index) => {
               const itemSteering = steeringQueuedItemIds.has(item.id);
+              const itemContinuationPending = continuingQueuedItemIds.has(item.id);
               const delivery = projectChatQueueDelivery(item, itemSteering);
               const itemEditable = delivery.state === "queued" && !itemSteering;
               const itemRetryable = delivery.state === "failed" && !itemSteering;
+              const itemContinueEligible = canContinueQueuedChatInput({
+                item,
+                snapshot: queueQuery.data,
+                activeGenerationId: serverActiveGenerationId,
+                currentUserId,
+                conversationOwnerUserId: selectedConversation?.createdByUserId ?? null,
+                conversationCanContinue: !selectedConversationExternalBound
+                  && selectedConversation?.conversationKind !== "side_chat",
+                knownAuthorization: selectedConversation
+                  ? authorizedContinuationsRef.current.get(`${selectedConversation.id}\u0000${item.id}`)
+                  : undefined,
+                pendingRequest: selectedConversation
+                  ? continuationRequestsRef.current.get(`${selectedConversation.id}\u0000${item.id}`)
+                  : undefined,
+              });
               return (
                 <div key={item.id} data-testid="chat-running-queue-item" className="flex min-w-0 items-center gap-2 rounded-[var(--radius-md)] border border-border/60 bg-background/70 px-2.5 py-2 text-sm">
                   <span className="shrink-0 text-xs font-semibold text-muted-foreground">#{index + 1}</span>
@@ -3331,6 +3667,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                       ) : null}
                       {itemEditable ? (
                         <>
+                          {itemContinueEligible ? (
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                              disabled={itemContinuationPending}
+                              onClick={() => void continueQueuedMessage(item.id)}
+                            >{itemContinuationPending ? "Continuing…" : "Continue"}</button>
+                          ) : null}
                           {canSteerQueuedMessages ? (
                             <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => steerQueuedMessage(item.id)}>Steer</button>
                           ) : null}
@@ -3961,8 +4305,21 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                           {(timelineRow) => {
                             if (timelineRow.kind === "active_stream") {
                               if (!activeStream) return null;
+                              const assistantBody = chatStreamingAssistantBody(
+                                activeStream.transcript,
+                                activeStream.body,
+                                chatAgentUsesCodexAppServer(
+                                  agents?.find((agent) => agent.id === activeStream.replyingAgentId) ?? activeSkillAgent,
+                                ),
+                              );
+                              const assistantMessage = chatStreamDraftAssistantMessage(
+                                activeStream,
+                                selectedConversation,
+                                assistantBody,
+                              );
+                              const assistantRowKey = chatAssistantStableStreamRowKey(activeStream);
                               return (
-                                <Fragment key={`active-stream-${activeStream.streamKey}`}>
+                                <Fragment key={assistantRowKey}>
                                   {showOptimisticUserMessage ? (
                                     <OptimisticUserDraftItem
                                       body={activeStream.userBody}
@@ -3974,12 +4331,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       }
                                       animateAskUserAnswer={activeStream.userBody.startsWith(ASK_USER_ANSWER_PREFIX)}
                                       turnBranchControls={turnBranchControlsForTurn(activeStream.chatTurnId, activeStream.turnVariant)} /> ) : null}
-                                  <StreamTranscriptItem key={`${activeStream.chatId}-${activeStream.createdAt.getTime()}`}
+                                  <StreamTranscriptItem key={`stream-transcript:${assistantRowKey}`}
                                     entries={activeStream.transcript}
                                     steerMessages={activeStream.generationId
                                       ? nativeSteerMessagesByGenerationId.get(activeStream.generationId) ?? []
                                       : []}
                                     state={activeStream.state}
+                                    open={openProcessRowKeys[assistantRowKey]}
+                                    onOpenChange={(open) => setProcessOpenForRowKey(assistantRowKey, open)}
                                     streamStartedAt={activeStream.createdAt}
                                     assistantMessageBody={activeStream.body}
                                     localizeText={localizeChatProcessText}
@@ -3994,19 +4353,60 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                       onExpandedChange: handleSentResponseAnnotationsExpanded,
                                       unlocatableAnnotationId: unlocatableResponseAnnotationId,
                                     }} />
-                                  <AssistantDraftItem
-                                    body={activeStream.body}
-                                    transcript={activeStream.transcript}
-                                    createdAt={activeStream.createdAt}
-                                    state={activeStream.state}
-                                    replyingAgentId={activeStream.replyingAgentId}
+                                  <ChatMessageItem
+                                    key={assistantRowKey}
                                     conversation={selectedConversation}
-                                    agents={agents} onCopyMessageText={copyChatMessageText}
-                                    skillReferences={chatSkillReferences} onMarkdownLinkClick={handleChatMarkdownLinkClick} />
+                                    message={assistantMessage}
+                                    streamedAssistantBody={assistantBody}
+                                    draftPresentation
+                                    draftState={activeStream.state}
+                                    onEditDraftOnly={editDraftOnly}
+                                    agents={agents}
+                                    currentUserId={currentUserId}
+                                    currentUserAvatarUrl={currentUserAvatarUrl}
+                                    decisionNote=""
+                                    onDecisionNoteChange={() => undefined}
+                                    decisionNoteMentions={[]}
+                                    onDecisionNoteMentionQueryChange={() => undefined}
+                                    onDecisionNoteInlineTokenClick={() => undefined}
+                                    onApprovalAction={() => undefined}
+                                    onResolveOperationProposal={() => undefined}
+                                    onConvertToIssue={() => undefined}
+                                    actionPending
+                                    onCopyMessageText={copyChatMessageText}
+                                    onOpenFile={openLocalFile}
+                                    onMarkdownLinkClick={handleChatMarkdownLinkClick}
+                                    skillReferences={chatSkillReferences}
+                                    localizeText={localizeChatProcessText}
+                                  />
                                 </Fragment>
                               );
                             }
                             const { message, messageIndex } = timelineRow;
+                            const streamDraft = timelineRow.activeStream ?? null;
+                            const rowIdentityStream = streamDraft ?? activeStream;
+                            const assistantRowKey = chatAssistantMessageRowKey(
+                              message,
+                              rowIdentityStream ? chatAssistantStreamRowIdentity(rowIdentityStream) : null,
+                              activeAssistantMessageId,
+                              assistantRowIdentitiesRef.current,
+                            );
+                            const streamAgent = streamDraft?.replyingAgentId
+                              ? agents?.find((agent) => agent.id === streamDraft.replyingAgentId) ?? activeSkillAgent
+                              : activeSkillAgent;
+                            const requireFinalAnswerPhase = Boolean(
+                              streamDraft && chatAgentUsesCodexAppServer(streamAgent),
+                            );
+                            const streamedAssistantBody = streamDraft
+                              ? chatStreamingAssistantBody(
+                                streamDraft.transcript,
+                                streamDraft.body,
+                                requireFinalAnswerPhase,
+                              )
+                              : undefined;
+                            const displayedMessage = streamedAssistantBody === undefined
+                              ? message
+                              : { ...message, body: streamedAssistantBody };
                             const previousMessage = visibleMessages[messageIndex - 1] ?? null; const previousPreviousMessage = visibleMessages[messageIndex - 2] ?? null; if (shouldAttachIssueCreatedSystemMessage(previousMessage, message) || shouldAttachApprovalFeedbackSystemMessage(previousPreviousMessage, previousMessage, message)) return null; const nextMessage = visibleMessages[messageIndex + 1] ?? null; const issueCreatedMessage = shouldAttachIssueCreatedSystemMessage(message, nextMessage) ? nextMessage : null;
                             const { state: readerTranscriptState, entries: persistedTranscript, navigation: readerTranscriptNavigation } = chatTranscriptPresentationForMessage(message, loadedTranscriptsByMessageId, transcriptByRun, transcriptStateByRun, transcriptNavigationByRun);
                             const messageSteerMessages = message.generationId
@@ -4037,9 +4437,53 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                               ...historicalAnnotationsForMessage,
                             ];
                             return (
-                              <Fragment key={message.id}>
-                                {shouldRenderPersistedTranscript ? (
+                              <Fragment key={assistantRowKey}>
+                                {streamDraft && showOptimisticUserMessage ? (
+                                  <OptimisticUserDraftItem
+                                    body={streamDraft.userBody}
+                                    files={streamDraft.userFiles}
+                                    createdAt={streamDraft.userCreatedAt}
+                                    onCopyMessageText={copyChatMessageText}
+                                    onEditDraftOnly={editDraftOnly}
+                                    skillReferences={chatSkillReferences}
+                                    onMarkdownLinkClick={handleChatMarkdownLinkClick}
+                                    askUserAnswer={
+                                      activeStreamAskUserRequest
+                                        ? parseAskUserAnswerMessage(activeStreamAskUserRequest, streamDraft.userBody)
+                                        : null
+                                    }
+                                    animateAskUserAnswer={streamDraft.userBody.startsWith(ASK_USER_ANSWER_PREFIX)}
+                                    turnBranchControls={turnBranchControlsForTurn(streamDraft.chatTurnId, streamDraft.turnVariant)}
+                                  />
+                                ) : null}
+                                {streamDraft ? (
                                   <StreamTranscriptItem
+                                    key={`stream-transcript:${chatAssistantStableStreamRowKey(streamDraft)}`}
+                                    entries={streamDraft.transcript}
+                                    steerMessages={streamDraft.generationId
+                                      ? nativeSteerMessagesByGenerationId.get(streamDraft.generationId) ?? []
+                                      : []}
+                                    state={streamDraft.state}
+                                    open={openProcessRowKeys[assistantRowKey]}
+                                    onOpenChange={(open) => setProcessOpenForRowKey(assistantRowKey, open)}
+                                    streamStartedAt={streamDraft.createdAt}
+                                    assistantMessageBody={streamDraft.body}
+                                    localizeText={localizeChatProcessText}
+                                    showDeveloperDiagnostics={showDeveloperDiagnostics}
+                                    onOpenFile={openTranscriptFile}
+                                    onOpenSkill={openTranscriptSkill}
+                                    canOpenSkill={canOpenTranscriptSkill}
+                                    onOpenAgent={openSubagentInspection}
+                                    agentDirectory={agents}
+                                    sentAnnotationContext={{
+                                      onSelect: handleSelectSentResponseAnnotation,
+                                      onExpandedChange: handleSentResponseAnnotationsExpanded,
+                                      unlocatableAnnotationId: unlocatableResponseAnnotationId,
+                                    }}
+                                  />
+                                ) : shouldRenderPersistedTranscript ? (
+                                  <StreamTranscriptItem
+                                    key={`stream-transcript:${assistantRowKey}`}
                                     entries={persistedTranscript}
                                     steerMessages={messageSteerMessages}
                                     state={message.status}
@@ -4049,7 +4493,11 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                     assistantMessageBody={message.body}
                                     localizeText={localizeChatProcessText}
                                     showDeveloperDiagnostics={showDeveloperDiagnostics}
-                                    open={openProcessMessageIds[message.id]} onOpenChange={(open) => setProcessOpenForMessage(message.id, open)}
+                                    open={openProcessRowKeys[assistantRowKey] ?? openProcessMessageIds[message.id]}
+                                    onOpenChange={(open) => {
+                                      setProcessOpenForRowKey(assistantRowKey, open);
+                                      setProcessOpenForMessage(message.id, open);
+                                    }}
                                     onOpenFile={openTranscriptFile}
                                     onOpenSkill={openTranscriptSkill}
                                     canOpenSkill={canOpenTranscriptSkill}
@@ -4082,9 +4530,14 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
                                   /> ) : null}
                                 {renderChatRunTranscriptContinuation(message, messageCanShowProcess, readerTranscriptNavigation, readerTranscriptState)}
                                 <ChatMessageItem
+                                  key={assistantRowKey}
                                   localizeText={localizeChatProcessText}
                                   conversation={selectedConversation}
-                                  message={message}
+                                  message={displayedMessage}
+                                  streamedAssistantBody={streamedAssistantBody}
+                                  draftPresentation={Boolean(streamDraft)}
+                                  draftState={streamDraft?.state}
+                                  onEditDraftOnly={streamDraft ? editDraftOnly : undefined}
                                   agents={agents}
                                   currentUserId={currentUserId}
                                   currentUserAvatarUrl={currentUserAvatarUrl}

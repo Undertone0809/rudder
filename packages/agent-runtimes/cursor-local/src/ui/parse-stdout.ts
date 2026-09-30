@@ -32,6 +32,25 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
+function cursorAcpTranscriptEvent(
+  frame: Record<string, unknown>,
+  updateKind?: string,
+) {
+  const method = asString(frame.method);
+  const params = asRecord(frame.params);
+  const sessionId = asString(params?.sessionId);
+  const requestId = typeof frame.id === "string" || typeof frame.id === "number" ? frame.id : undefined;
+  return {
+    provider: "cursor_agent" as const,
+    transport: "cursor-agent-acp-stdio" as const,
+    method,
+    ...(sessionId ? { sessionId } : {}),
+    ...(updateKind ? { updateKind } : {}),
+    ...(requestId === undefined ? {} : { requestId }),
+    frame,
+  };
+}
+
 /** Max chars of stdout/stderr to show in run log for shell tool results. */
 const SHELL_OUTPUT_TRUNCATE = 2000;
 
@@ -258,9 +277,11 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
   const type = asString(parsed.type);
 
   if (parsed.method === "session/update") {
-    const update = asRecord(asRecord(parsed.params)?.update);
+    const params = asRecord(parsed.params);
+    const update = asRecord(params?.update);
     if (!update) return [];
     const kind = asString(update.sessionUpdate);
+    const nativeEvent = cursorAcpTranscriptEvent(parsed, kind);
     if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
       const content = asRecord(update.content);
       const text = asString(content?.text);
@@ -285,6 +306,7 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
           toolName: asString(update.title) || undefined,
           content,
           isError: status !== "completed",
+          cursorAcpEvent: nativeEvent,
         };
         if (kind === "tool_call_update") return [result];
         return [
@@ -294,16 +316,22 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
             toolUseId,
             name: asString(update.title, asString(update.kind, "tool")),
             input: update.rawInput ?? {},
+            cursorAcpEvent: nativeEvent,
           },
           result,
         ];
       }
-      // ACP sends one pending tool_call followed by tool_call_update
-      // in_progress messages. TranscriptEntry has no update variant, so
-      // dropping non-terminal updates preserves one lifecycle card per ID.
-      if (kind === "tool_call_update") return [];
+      if (kind === "tool_call_update") {
+        const title = asString(update.title, asString(update.kind, "tool"));
+        return [{
+          kind: "system",
+          ts,
+          text: `Cursor tool update: ${title} (${status || "updated"})`,
+          cursorAcpEvent: nativeEvent,
+        }];
+      }
       return [{ kind: "tool_call", ts, toolUseId, name: asString(update.title, asString(update.kind, "tool")),
-        input: update.rawInput ?? update.content ?? {} }];
+        input: update.rawInput ?? update.content ?? {}, cursorAcpEvent: nativeEvent }];
     }
     if (kind === "plan" && Array.isArray(update.entries)) {
       return [{ kind: "todo_list", ts, items: update.entries.flatMap((value) => {
@@ -312,9 +340,9 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
         if (!text) return [];
         const status = entry?.status === "completed" || entry?.status === "in_progress" ? entry.status : "pending";
         return [{ text, status }];
-      }) }];
+      }), cursorAcpEvent: nativeEvent }];
     }
-    return [{ kind: "system", ts, text: stringifyUnknown(update) }];
+    return [{ kind: "system", ts, text: stringifyUnknown(update), cursorAcpEvent: nativeEvent }];
   }
 
   if (typeof parsed.method === "string" && parsed.method.startsWith("cursor/")) {
@@ -323,6 +351,7 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
       const todos = Array.isArray(params.todos) ? params.todos : [];
       const items: Array<{ text: string; status: "pending" | "in_progress" | "completed" }> = [];
       const cancelled: string[] = [];
+      const nativeEvent = cursorAcpTranscriptEvent(parsed);
       for (const value of todos) {
         const todo = asRecord(value);
         const text = asString(todo?.content);
@@ -340,8 +369,20 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
           ts,
           ...(asString(params.toolCallId) ? { todoListId: asString(params.toolCallId) } : {}),
           items,
+          cursorAcpEvent: nativeEvent,
         }] : []),
-        ...cancelled.map((text) => ({ kind: "system" as const, ts, text: `Cursor todo cancelled: ${text}` })),
+        ...cancelled.map((text, index) => ({
+          kind: "system" as const,
+          ts,
+          text: `Cursor todo cancelled: ${text}`,
+          ...(items.length === 0 && index === 0 ? { cursorAcpEvent: nativeEvent } : {}),
+        })),
+        ...(items.length === 0 && cancelled.length === 0 ? [{
+          kind: "system" as const,
+          ts,
+          text: "Cursor todo update",
+          cursorAcpEvent: nativeEvent,
+        }] : []),
       ];
     }
     if (parsed.method === "cursor/task") {
@@ -354,7 +395,11 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
         asString(params.agentId) ? `Agent: ${asString(params.agentId)}` : "",
         asNumber(params.durationMs) > 0 ? `Duration: ${asNumber(params.durationMs)}ms` : "",
       ].filter(Boolean);
-      return details.length > 0 ? [{ kind: "system", ts, text: `Cursor task\n${details.join("\n")}` }] : [];
+      return [{
+        kind: "system", ts,
+        text: details.length > 0 ? `Cursor task\n${details.join("\n")}` : "Cursor task notification",
+        cursorAcpEvent: cursorAcpTranscriptEvent(parsed),
+      }];
     }
     if (parsed.method === "cursor/generate_image") {
       const references = Array.isArray(params.referenceImagePaths)
@@ -365,9 +410,16 @@ export function parseCursorStdoutLine(line: string, ts: string): TranscriptEntry
         asString(params.filePath) ? `File: ${asString(params.filePath)}` : "",
         references.length > 0 ? `References: ${references.join(", ")}` : "",
       ].filter(Boolean);
-      return details.length > 0 ? [{ kind: "system", ts, text: `Cursor image\n${details.join("\n")}` }] : [];
+      return [{
+        kind: "system", ts,
+        text: details.length > 0 ? `Cursor image\n${details.join("\n")}` : "Cursor image notification",
+        cursorAcpEvent: cursorAcpTranscriptEvent(parsed),
+      }];
     }
-    return [{ kind: "system", ts, text: `Cursor notification\n${stringifyUnknown(params)}` }];
+    return [{
+      kind: "system", ts, text: `Cursor notification\n${stringifyUnknown(params)}`,
+      cursorAcpEvent: cursorAcpTranscriptEvent(parsed),
+    }];
   }
 
   if (type === "system") {

@@ -1,3 +1,4 @@
+export { continueChatQueuedMessageSchema, type ContinueChatQueuedMessage } from "./validators/chat.js";
 export {
   BROWSER_SHORTCUT_ACTIONS,
   isBrowserShortcutAction,

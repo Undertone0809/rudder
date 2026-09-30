@@ -1,6 +1,6 @@
 import type { ChatAskUserRequest, ChatAskUserResponse } from "@rudderhq/agent-runtime-utils";
 import { runningProcesses } from "@rudderhq/agent-runtime-utils/server-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createClaudeStreamControlHandle,
   startClaudeStreamJsonProcess,
@@ -139,7 +139,7 @@ function observedControlResponses(stdout: string): Array<Record<string, unknown>
 }
 
 describe("Claude stream-json control", () => {
-  it("correlates replay acknowledgement and the active provider turn", async () => {
+  it("does not advertise or send replay-only stream-json input as in-flight Steer", async () => {
     const runId = "claude-stream-json-test-control";
     const logs: string[] = [];
     let stream: ClaudeStreamJsonProcess | null = null;
@@ -148,21 +148,22 @@ describe("Claude stream-json control", () => {
         logs.push(`${kind}:${chunk}`);
       });
       const handle = createClaudeStreamControlHandle(stream);
+      expect(handle.capabilities).toEqual({ steer: "interrupt_continue", interrupt: "process" });
 
       await expect(stream.sendUserMessage("initial", INITIAL_UUID)).resolves.toBe(INITIAL_UUID);
       await expect(stream.waitForReplay(INITIAL_UUID)).resolves.toBeUndefined();
+      await expect(stream.waitForProviderTurn()).resolves.toBe(true);
+      const sendUserMessage = vi.spyOn(stream, "sendUserMessage");
 
       await expect(handle.steer({
         text: "continue",
         clientMessageId: "client-message-1",
       })).resolves.toEqual({
-        disposition: "accepted_current",
-        providerThreadId: SESSION_ID,
-        providerTurnId: "turn-1",
+        disposition: "unsupported",
+        reason: "Claude Code stream-json replay confirms message receipt only; it does not confirm application to the in-flight turn.",
       });
 
-      await stream.waitForTurn();
-      expect(stream.getLastUuid()).toBe("result-1");
+      expect(sendUserMessage).not.toHaveBeenCalled();
       expect(stream.getProviderTurnId()).toBe("turn-1");
       const result = await stream.close();
       expect(result.exitCode).toBe(0);

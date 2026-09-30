@@ -146,7 +146,7 @@ describe("RunTranscriptView Codex-style chat activity", () => {
     expect(html).toContain("2.4s");
   });
 
-  it("keeps process content in the reading column while Steer stays full width", () => {
+  it("keeps process content in the reading column and omits Steer input", () => {
     const html = renderToStaticMarkup(
       <ThemeProvider>
         <RunTranscriptView
@@ -178,10 +178,8 @@ describe("RunTranscriptView Codex-style chat activity", () => {
 
     expect(html).toContain('data-transcript-chat-column="reading"');
     expect(html).toMatch(/data-transcript-chat-column="reading" class="w-full min-w-0 max-w-3xl px-1"/);
-    expect(html).toMatch(/data-transcript-chat-column="full" class="w-full min-w-0"/);
-    expect(html).toMatch(
-      /data-transcript-chat-column="full"[\s\S]*data-testid="chat-transcript-steer-message"/,
-    );
+    expect(html).not.toContain("Keep the revised direction.");
+    expect(html).not.toContain('data-testid="chat-transcript-steer-message"');
   });
 
   it("keeps detail-view tool disclosures hidden outside hover or focus even when details are open", () => {

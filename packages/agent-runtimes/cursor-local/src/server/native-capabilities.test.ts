@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { sessionCodec } from "./index.js";
+import { parseCursorStdoutLine } from "../ui/parse-stdout.js";
 import {
   createCursorLocalProviderCapabilities,
   createCursorLocalProviderCapabilityResolver,
@@ -770,7 +771,7 @@ describe("Cursor ACP native capabilities", () => {
     expect(result.sessionParams).not.toHaveProperty("cursorAcpAuthMethodId");
   });
 
-  it("reports request timeouts accurately with secret-free diagnostics", async () => {
+  it("reports request timeouts in structured evidence without transcript log entries", async () => {
     const secret = "cursor-acp-test-secret";
     const logs: string[] = [];
     const fixture = createSpawnFixture((request, output) => {
@@ -801,8 +802,7 @@ describe("Cursor ACP native capabilities", () => {
       ],
     });
     expect(JSON.stringify(result.resultJson)).not.toContain(secret);
-    expect(logs.join("\n")).toContain("session/new timed out after 250ms");
-    expect(logs.join("\n")).not.toContain(secret);
+    expect(logs).toEqual([]);
     expect(fixture.requests.map((request) => request.method)).toEqual(["initialize", "initialized", "session/new"]);
   });
 
@@ -1592,7 +1592,113 @@ describe("Cursor ACP native capabilities", () => {
       sessionId: "cursor-native-new",
       prompt: [{ type: "text", text: "Inspect this repository." }],
     });
-    expect(logs.join(" ")).toContain("Cursor native chat completed");
+    expect(logs).toEqual([JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "cursor-native-new",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          executionRef: "cursor-native-execution",
+          content: { type: "text", text: " ACP answer " },
+        },
+      },
+    }) + "\n"]);
+  });
+
+  it("forwards only observed prompt notifications for the Run transcript projection", async () => {
+    const priorReplay = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "cursor-session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          executionRef: "cursor-execution-1",
+          content: { type: "text", text: "Earlier Run history." },
+        },
+      },
+    };
+    const currentUpdate = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      traceId: "provider-frame-17",
+      params: {
+        sessionId: "cursor-session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          executionRef: "cursor-execution-2",
+          nativeRangeRef: "cursor-range-2",
+          apiKey: "cursor-test-secret",
+          content: { type: "text", text: "Observed chunk." },
+        },
+      },
+    };
+    const currentTodo = {
+      jsonrpc: "2.0",
+      method: "cursor/update_todos",
+      traceId: "provider-frame-18",
+      params: {
+        sessionId: "cursor-session-1",
+        toolCallId: "todo-2",
+        todos: [{ content: "Inspect source", status: "in_progress" }],
+      },
+    };
+    const fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/load") {
+        output.write(`${JSON.stringify(priorReplay)}\n`);
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: loadedSessionResult() })}\n`);
+      } else if (request.method === "session/prompt") {
+        output.write(`${JSON.stringify(currentUpdate)}\n${JSON.stringify(currentUpdate)}\n${JSON.stringify(currentTodo)}\n`);
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } })}\n`);
+      }
+    });
+    const session = requestForSession(fixture.spawn).session;
+    const logs: string[] = [];
+    const result = await executeCursorNativeChat({
+      profile: { ...profile(fixture.spawn), env: { CURSOR_API_KEY: "cursor-test-secret" } },
+      binding,
+      sessionId: session.sessionId,
+      sessionParams: session.sessionParams,
+      workspace: { workspaceId: "workspace-1" },
+      prompt: "Continue the session.",
+      model: "",
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
+    });
+
+    const emitted = logs.flatMap((chunk) => chunk.split(/\r?\n/u).filter(Boolean))
+      .map((line) => JSON.parse(line) as JsonRecord);
+    const redactedUpdate = {
+      ...currentUpdate,
+      params: {
+        ...currentUpdate.params,
+        update: { ...currentUpdate.params.update, apiKey: "[REDACTED]" },
+      },
+    };
+    expect(emitted).toEqual([redactedUpdate, redactedUpdate, currentTodo]);
+    expect(JSON.stringify(emitted)).not.toContain("Earlier Run history.");
+    expect(result).toMatchObject({
+      exitCode: 0,
+      sessionParams: {
+        profileHostId: binding.hostId,
+        profileId: binding.profileId,
+        capabilityRevision: binding.capabilityRevision,
+      },
+      resultJson: {
+        transcriptBoundary: { status: "ok" },
+        executionRef: "cursor-execution-2",
+        nativeRangeRef: "cursor-range-2",
+      },
+    });
+
+    const projected = emitted.flatMap((event) => parseCursorStdoutLine(JSON.stringify(event), "2026-09-30T00:00:00.000Z"));
+    expect(projected).toMatchObject([
+      { kind: "assistant", text: "Observed chunk.", delta: true },
+      { kind: "assistant", text: "Observed chunk.", delta: true },
+      { kind: "todo_list", todoListId: "todo-2", items: [{ text: "Inspect source", status: "in_progress" }] },
+    ]);
   });
 
   it("passes configured HTTP/SSE MCP servers to session/new and session/load without persisting credentials", async () => {
@@ -1832,26 +1938,31 @@ describe("Cursor ACP native capabilities", () => {
   });
 
   it("keeps provider turn success separate from an unavailable exact Run transcript boundary", async () => {
+    const observedUpdate = {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "unscoped-session",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "unscoped answer" } },
+      },
+    };
     const fixture = createSpawnFixture((request, output) => {
       const result = request.method === "initialize" ? initializeResult()
         : request.method === "session/new" ? { sessionId: "unscoped-session" }
           : request.method === "session/prompt" ? { stopReason: "end_turn" } : {};
       if (request.method === "session/prompt") {
-        output.write(`${JSON.stringify({
-          jsonrpc: "2.0",
-          method: "session/update",
-          params: { sessionId: "unscoped-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "unscoped answer" } } },
-        })}\n`);
+        output.write(`${JSON.stringify(observedUpdate)}\n`);
       }
       output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result })}\n`);
     });
 
+    const logs: string[] = [];
     const result = await executeCursorNativeChat({
       profile: profile(fixture.spawn),
       binding,
       prompt: "hello",
       model: "",
-      onLog: async () => {},
+      onLog: async (_stream, chunk) => { logs.push(chunk); },
     });
 
     expect(result).toMatchObject({
@@ -1862,6 +1973,9 @@ describe("Cursor ACP native capabilities", () => {
         transcriptBoundary: { status: "missing" },
       },
     });
+    expect(result.resultJson).not.toHaveProperty("executionRef");
+    expect(result.resultJson).not.toHaveProperty("nativeRangeRef");
+    expect(logs).toEqual([JSON.stringify(observedUpdate) + "\n"]);
   });
 
   it("fails closed for unknown ACP sessions and never retries with session/new", async () => {
