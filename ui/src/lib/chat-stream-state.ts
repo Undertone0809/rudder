@@ -101,6 +101,8 @@ export function mergeNativeSteerTranscriptEntries(
 export type ActiveChatStreamVisibilityState = {
   userCreatedAt: Date;
   chatTurnId: string | null;
+  generationId?: string | null;
+  assistantMessageId?: string | null;
 };
 
 export type ActiveChatStreamTimelineState = {
@@ -154,13 +156,36 @@ export function readChatScopedState<T>(
   return current[chatId] ?? null;
 }
 
+export function activeChatStreamAssistantMessageId(
+  messages: Array<Pick<ChatMessage, "id" | "role" | "status" | "generationId">>,
+  activeStream: Pick<ActiveChatStreamVisibilityState, "generationId"> | null,
+): string | null {
+  if (!activeStream?.generationId) return null;
+  const generationMessages = messages.filter((message) => (
+    message.role === "assistant" && message.generationId === activeStream.generationId
+  ));
+  return generationMessages.find((message) => message.status === "streaming")?.id
+    ?? generationMessages[0]?.id
+    ?? null;
+}
+
 export function shouldShowMessageDuringActiveStream(
-  message: Pick<ChatMessage, "role" | "chatTurnId" | "createdAt">,
+  message: Pick<ChatMessage, "role" | "chatTurnId" | "createdAt" | "generationId">
+    & Partial<Pick<ChatMessage, "id">>,
   activeStream: ActiveChatStreamVisibilityState,
 ): boolean {
   if (message.role === "user") return true;
+  if (message.role === "assistant" && activeStream.assistantMessageId) {
+    return message.id === activeStream.assistantMessageId;
+  }
+  if (
+    message.role === "assistant"
+    && activeStream.generationId
+    && message.generationId === activeStream.generationId
+  ) return true;
+  if (new Date(message.createdAt).getTime() < activeStream.userCreatedAt.getTime()) return true;
   if (activeStream.chatTurnId && message.chatTurnId === activeStream.chatTurnId) return false;
-  return new Date(message.createdAt).getTime() < activeStream.userCreatedAt.getTime();
+  return false;
 }
 
 export function activeChatStreamTimelineInsertionIndex(

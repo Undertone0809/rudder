@@ -148,6 +148,7 @@ import {
   type PendingChatStopRecovery,
 } from "@/lib/chat-stop-recovery";
 import {
+  activeChatStreamAssistantMessageId,
   nativeSteerTranscriptAnchor,
   readChatScopedFlag,
   readChatScopedState,

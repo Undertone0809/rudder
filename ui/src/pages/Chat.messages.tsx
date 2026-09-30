@@ -104,7 +104,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ChatFailedMessageActions } from "./Chat.failed-message-actions";
 import { chatForkSystemMessageParts, readStructuredPayloadString, sideChatStartedSystemMessageParts } from "./Chat.message-system-parts";
 import { ApprovalAction, AskUserAnswerRecord, AskUserAnswerValue, ChatAttachmentList, PendingAttachmentPreview, approvalNeedsAction, askUserQuestionTitle, askUserRequestFromMessage, assistantStateLabel, canContinueInterruptedChatMessage, canRetryFailedChatMessage, displayedChatMessageState, formatAskUserAnswerMessage, issueProposalFromMessage, issueProposalPrincipalLabel, operationProposalDecisionNoteFromMessage, operationProposalFromMessage, operationProposalStatusFromMessage, pendingAttachmentKey, proposalReviewBannerCopy, proposalReviewStatus, recoverableFailureFromMessage, shouldHideSteerFallbackAssistantBubble, statusChipClassName, visibleInterruptedChatMessageBody } from "./Chat.parts";
-import { chatFinalAnswerFromTranscript } from "./Chat.timeline";
+import { chatStreamingAssistantBody } from "./Chat.timeline";
 import { ChatInlineVisualContent } from "./ChatInlineVisual";
 
 export { readStructuredPayloadString } from "./Chat.message-system-parts";
@@ -2416,6 +2416,10 @@ export function AskUserPanel({
 export function ChatMessageItem({
   conversation,
   message,
+  streamedAssistantBody,
+  draftPresentation = false,
+  draftState,
+  onEditDraftOnly,
   agents,
   currentUserId,
   currentUserAvatarUrl,
@@ -2455,6 +2459,10 @@ export function ChatMessageItem({
 }: {
   conversation: ChatConversation;
   message: ChatMessage;
+  streamedAssistantBody?: string;
+  draftPresentation?: boolean;
+  draftState?: ChatStreamDraftState;
+  onEditDraftOnly?: (body: string) => void;
   agents: Agent[] | undefined;
   currentUserId?: string | null;
   currentUserAvatarUrl?: string | null;
@@ -2579,9 +2587,16 @@ export function ChatMessageItem({
   const inlineAnnotationAttachmentIds = new Set(
     inlineAnnotations.flatMap((annotation) => annotation.attachmentIds),
   );
-  const statusLabel = !isUser && displayedState !== "interrupted"
-    ? localizeText(assistantStateLabel(displayedState) ?? "") || null
-    : null;
+  const liveDraftState = draftState === "streaming"
+    || draftState === "tool_busy"
+    || draftState === "finalizing";
+  const statusLabel = !isUser && draftState !== undefined
+    ? liveDraftState || draftState === "stopping"
+      ? null
+      : localizeText(assistantStateLabel(draftState) ?? "") || null
+    : !isUser && !draftPresentation && displayedState !== "interrupted"
+      ? localizeText(assistantStateLabel(displayedState) ?? "") || null
+      : null;
   const inlineVisualAttachmentIds = new Set([...chatInlineVisualMappingsFromStructuredPayload(message.structuredPayload), ...rudderInlineVisualMappingsFromStructuredPayload(message.structuredPayload)].filter((mapping) => mapping.status === "ready").map((mapping) => mapping.attachmentId));
   const visibleMessageAttachments = message.attachments.filter(
     (attachment) => (
@@ -2594,7 +2609,9 @@ export function ChatMessageItem({
   const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
     ? "Runtime unavailable"
     : "Response failed";
-  const isEmptyStreamingAssistant = !isUser && displayedState === "streaming" && message.body.trim().length === 0;
+  const isEmptyStreamingAssistant = !isUser
+    && (draftState !== undefined || displayedState === "streaming")
+    && (streamedAssistantBody ?? message.body).trim().length === 0;
   const canAnnotateAssistantBody = !isUser
     && !isFailedAssistantMessage
     && message.kind === "message"
@@ -2616,11 +2633,21 @@ export function ChatMessageItem({
   const isInlineEditing = isUser && Boolean(inlineEdit);
   const hasVisibleUserMessageContent = message.body.trim().length > 0
     || visibleMessageAttachments.length > 0;
-  const visibleAssistantBody = isUser ? message.body : visibleInterruptedChatMessageBody(message);
+  const visibleAssistantBody = isUser
+    ? message.body
+    : streamedAssistantBody ?? visibleInterruptedChatMessageBody(message);
   const hideInterruptedPlaceholder = !isUser
     && canContinueInterruptedChatMessage(message)
     && visibleAssistantBody.trim().length === 0
     && visibleMessageAttachments.length === 0;
+
+  if (
+    !isUser
+    && draftState !== undefined
+    && !visibleAssistantBody.trim()
+    && !liveDraftState
+    && draftState !== "waiting_for_network"
+  ) return null;
 
   if (hideInterruptedPlaceholder) return null;
 
@@ -2635,7 +2662,7 @@ export function ChatMessageItem({
           />
           {statusLabel && !isEmptyStreamingAssistant ? (
             <div className="mb-2 flex items-center gap-2">
-              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(displayedState))}>
+              <span className={cn("rounded-full px-2 py-0.5 text-[10px]", statusChipClassName(draftState ?? displayedState))}>
                 {statusLabel}
               </span>
             </div>
@@ -2669,7 +2696,9 @@ export function ChatMessageItem({
           {!isFailedAssistantMessage ? (
             isEmptyStreamingAssistant ? (
               <div className="max-w-[72ch] text-[15px] leading-7 text-foreground">
-                <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
+                {draftState === "waiting_for_network" ? null : (
+                  <TextDots text={localizeText("Thinking")} className="text-muted-foreground" />
+                )}
               </div>
             ) : (
               <div
@@ -2721,6 +2750,16 @@ export function ChatMessageItem({
               />
               {canShowAssistantMessageActions ? (
                 <CopyMessageButton onClick={() => void onCopyMessageText(visibleAssistantBody)} />
+              ) : null}
+              {draftPresentation && onEditDraftOnly ? (
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground"
+                  aria-label="Edit draft"
+                  onClick={() => onEditDraftOnly(visibleAssistantBody)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
               ) : null}
               {canShowAssistantMessageActions && onRefreshAssistantMessage && canRefreshAssistantMessage ? (
                 <button
@@ -3102,6 +3141,7 @@ export function AssistantDraftItem({
   transcript,
   createdAt,
   state,
+  requireFinalAnswerPhase = false,
   replyingAgentId,
   conversation,
   agents,
@@ -3114,6 +3154,7 @@ export function AssistantDraftItem({
   transcript?: TranscriptEntry[];
   createdAt: Date;
   state: ChatStreamDraftState;
+  requireFinalAnswerPhase?: boolean;
   replyingAgentId: string | null;
   conversation: ChatConversation;
   agents: Agent[] | undefined;
@@ -3122,9 +3163,11 @@ export function AssistantDraftItem({
   onMarkdownLinkClick?: MarkdownLinkClickHandler;
   localizeText?: (text: string) => string;
 }) {
-  const displayedBody = body.trim()
-    ? body
-    : chatFinalAnswerFromTranscript(transcript ?? []) ?? body;
+  const displayedBody = chatStreamingAssistantBody(
+    transcript ?? [],
+    body,
+    requireFinalAnswerPhase,
+  );
   const streamingActive = state === "streaming" || state === "tool_busy" || state === "finalizing";
   const waitingForNetwork = state === "waiting_for_network";
   const statusLabel = streamingActive ? null : assistantStateLabel(state);

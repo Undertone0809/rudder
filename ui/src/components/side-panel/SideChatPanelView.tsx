@@ -27,7 +27,6 @@ import {
 import { useOptionalSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useChatRuntimeSensitiveInput } from "@/hooks/useChatRuntimeSensitiveInput";
-import { activeChatStreamAssistantMessageId } from "@/lib/chat-stream-state";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
 import { blockStaleAnnotationSubmission } from "@/lib/chat-annotation-runtime";

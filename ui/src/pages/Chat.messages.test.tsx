@@ -241,11 +241,13 @@ function chatMessageItemElement(
   conversationOverrides: Partial<ChatConversation> = {},
   localizeText?: (text: string) => string,
   onOpenSideChat: (message: ChatMessage) => void = vi.fn(),
+  key?: string,
 ) {
   const onForkMessage = vi.fn();
   return (
     <ThemeProvider>
       <ChatMessageItem
+        key={key}
         conversation={{
           id: "chat-1",
           orgId: "org-1",

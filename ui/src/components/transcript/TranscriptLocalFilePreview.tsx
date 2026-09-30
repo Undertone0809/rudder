@@ -362,6 +362,7 @@ export function TranscriptLocalFilePreview({
   sourceConversationId?: string | null;
 }) {
   const desktopShell = readDesktopShell();
+  const organizationId = useOptionalOrganization()?.selectedOrganizationId ?? null;
   const [preview, setPreview] = useState<TranscriptLocalFilePreviewState | null>(null);
   const [launchTargets, setLaunchTargets] = useState<DesktopWorkspaceLaunchTarget[]>([]);
   const [launchTargetsDiscovered, setLaunchTargetsDiscovered] = useState(false);
@@ -568,7 +569,7 @@ export function TranscriptLocalFilePreview({
               <div role="alert" className="text-sm text-destructive">{error}</div>
             ) : (
               <div className="text-sm text-foreground">
-                Choose a local file named {label}, or explicitly read its organization workspace copy.
+                Choose a local file named {label}; its original workspace path cannot be verified. You can also explicitly read its organization workspace copy.
               </div>
             )}
             <div className="flex flex-wrap gap-2">
