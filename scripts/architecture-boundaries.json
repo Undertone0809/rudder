@@ -28,6 +28,7 @@
       "publicEntrypoints": [
         "packages/agent-runtime-utils/src/index.ts",
         "packages/agent-runtime-utils/src/git-identity.ts",
+        "packages/agent-runtime-utils/src/gemini-cli-history.ts",
         "packages/agent-runtime-utils/src/rudder-mcp-fingerprint.ts",
         "packages/agent-runtime-utils/src/rudder-mcp-preflight.ts",
         "packages/agent-runtime-utils/src/rudder-mcp-server.ts",
@@ -40,6 +41,7 @@
       "entrypoints": {
         "@rudderhq/agent-runtime-utils": "packages/agent-runtime-utils/src/index.ts",
         "@rudderhq/agent-runtime-utils/git-identity": "packages/agent-runtime-utils/src/git-identity.ts",
+        "@rudderhq/agent-runtime-utils/gemini-cli-history": "packages/agent-runtime-utils/src/gemini-cli-history.ts",
         "@rudderhq/agent-runtime-utils/rudder-mcp-fingerprint": "packages/agent-runtime-utils/src/rudder-mcp-fingerprint.ts",
         "@rudderhq/agent-runtime-utils/rudder-mcp-preflight": "packages/agent-runtime-utils/src/rudder-mcp-preflight.ts",
         "@rudderhq/agent-runtime-utils/rudder-mcp-server": "packages/agent-runtime-utils/src/rudder-mcp-server.ts",

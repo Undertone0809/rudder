@@ -106,22 +106,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { SideChatPanelMessages } from "./SideChatPanelMessages";
+import { expiryLabel } from "./SideChatPanelView.expiry";
 import { SideChatResponseAnnotations } from "./SideChatResponseAnnotations";
 import { useSideChatComposerMenus } from "./useSideChatComposerMenus";
 import { useSideChatGenerationOwner } from "./useSideChatGenerationOwner";
 import { useSideChatSendDraft } from "./useSideChatSendDraft";
 
 type SideChatTarget = Extract<SidePanelTarget, { kind: "side_chat" }>;
-
-function expiryLabel(expiresAt: Date | string | null | undefined, now: Date) {
-  if (!expiresAt) return null;
-  const remaining = new Date(expiresAt).getTime() - now.getTime();
-  if (remaining <= 0) return "Expired · read-only";
-  const minutes = Math.max(1, Math.ceil(remaining / 60_000));
-  if (minutes < 60) return `${minutes}m left`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m left`;
-}
 
 function noop() {}
 

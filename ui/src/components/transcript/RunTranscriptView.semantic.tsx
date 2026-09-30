@@ -1,26 +1,8 @@
 import { asRecord, COMMON_FILENAME_TOKENS, compactWhitespace, humanizeLabel, pluralize, resolveTranscriptFileTarget, TranscriptDensity, TranscriptFileTarget, TranscriptSkillTarget, TranscriptToolCategory, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
-import { classifyShellCommand, cleanShellToken, commandSegmentFrom, commandSegmentUsesInPlaceSed, extractStdoutWriteRedirectTarget, findStrongEditSegment, getShellPositionalArgsFromTokens, hasHelpSignal, isShellControlToken, shellTokensForCommand, stripWrappedShell, tokenizeShell } from "./RunTranscriptView.shell";
+import { dedupeTargets, normalizePathTarget } from "./RunTranscriptView.path-targets";
+import { classifyShellCommand, commandSegmentFrom, commandSegmentUsesInPlaceSed, extractStdoutWriteRedirectTarget, findStrongEditSegment, getShellPositionalArgsFromTokens, hasHelpSignal, isShellControlToken, shellTokensForCommand, stripWrappedShell, tokenizeShell } from "./RunTranscriptView.shell";
 import { parseUnifiedDiff } from "./TranscriptUnifiedDiff";
-
-export function normalizePathTarget(value: string): string | null {
-  const normalized = cleanShellToken(compactWhitespace(value));
-  if (!normalized) return null;
-  if (/^(?:&&|\|\||[|;<>])$/.test(normalized)) return null;
-  return normalized;
-}
-
-export function dedupeTargets(values: string[]): string[] {
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = normalizePathTarget(value);
-    if (!normalized) continue;
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    unique.push(normalized);
-  }
-  return unique;
-}
+export { dedupeTargets, normalizePathTarget } from "./RunTranscriptView.path-targets";
 
 export function extractSkillSlugFromEntryPath(value: string): string | null {
   const normalized = normalizePathTarget(value)?.replace(/\\/g, "/");

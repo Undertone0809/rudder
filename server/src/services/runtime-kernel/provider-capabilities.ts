@@ -19,8 +19,7 @@ import type {
   TranscriptAvailability,
   TranscriptCompleteness,
   TranscriptRange,
-  TranscriptReadLimit,
-  TranscriptSource,
+  TranscriptSource
 } from "./transcript-reader.js";
 
 export type { NativeSpanSelector, NativeTranscriptRawItem, NativeTranscriptReadInput } from "./transcript-reader.js";
