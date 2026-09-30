@@ -579,6 +579,35 @@ describe("Hermes profile-bound native capabilities", () => {
     ]);
   });
 
+  it.each([
+    { label: "invalid", bytes: new Uint8Array([0xff]) },
+    { label: "truncated", bytes: new Uint8Array([0xe4, 0xbd]) },
+  ])("rejects $label UTF-8 in run SSE bodies", async ({ bytes }) => {
+    const transport = profile(async (input) => String(input).endsWith("/api/sessions/hermes-session-1")
+      ? new Response(JSON.stringify({ id: "hermes-session-1" }), { status: 200 })
+      : new Response(bytes, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const adapter = createHermesGatewayProviderCapabilities(transport);
+
+    const result = await adapter.transcript.readRange(request({
+      selector: { kind: "hermes_execution", providerExecutionRef: "run-1" },
+    }));
+
+    expect(result).toMatchObject({ availability: "offline", completeness: "unknown", revision: "transport-error", items: [] });
+  });
+
+  it("marks a successful run SSE response without a body partial", async () => {
+    const transport = profile(async (input) => String(input).endsWith("/api/sessions/hermes-session-1")
+      ? new Response(JSON.stringify({ id: "hermes-session-1" }), { status: 200 })
+      : new Response(null, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const adapter = createHermesGatewayProviderCapabilities(transport);
+
+    const result = await adapter.transcript.readRange(request({
+      selector: { kind: "hermes_execution", providerExecutionRef: "run-1" },
+    }));
+
+    expect(result).toMatchObject({ availability: "available", completeness: "partial", items: [] });
+  });
+
   it("fails closed when a run event explicitly belongs to another session", async () => {
     const transport = profile(async (input) => {
       if (String(input).endsWith("/api/sessions/hermes-session-1")) {

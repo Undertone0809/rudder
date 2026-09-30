@@ -792,7 +792,8 @@ async function readSseEvents(
   runId: string,
   signal: AbortSignal,
 ): Promise<{ events: HermesRecord[]; malformed: boolean }> {
-  const decoder = new TextDecoder();
+  if (!response.body) return { events: [], malformed: true };
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let buffer = "";
   let dataLines: string[] = [];
   let malformed = false;

@@ -645,6 +645,7 @@ async function runHelper(
     let stdout = "";
     let stderr = "";
     let outputBytes = 0;
+    const maxOutputBytes = Math.min(MAX_OUTPUT_BYTES, request.maxBytes + 16 * 1024);
     let settled = false;
     let killTimer: NodeJS.Timeout | undefined;
     const finish = (callback: () => void) => {
@@ -667,7 +668,7 @@ async function runHelper(
     child.stdout.on("data", (chunk: Buffer | string) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       outputBytes += buffer.length;
-      if (outputBytes > MAX_OUTPUT_BYTES) {
+      if (outputBytes > maxOutputBytes) {
         terminate(new HermesProductHistoryError("helper_failed", "Hermes history helper exceeded the bounded output limit."));
         return;
       }

@@ -248,6 +248,26 @@ describe("Hermes product history", () => {
     expect(pageLimited).toMatchObject({ items: [], nextCursor: null, completeness: "partial", limitReached: { reason: "page_bytes", maximum: 256 } });
   });
 
+  it.skipIf(!pythonCommand)("caps helper stdout by the request budget plus its envelope before JSON parsing", async () => {
+    const fixtureData = await fixture();
+    await fs.writeFile(
+      path.join(fixtureData.root, "source", "hermes_state.py"),
+      `print("x" * 17000)\n${FAKE_SESSION_DB}`,
+      "utf8",
+    );
+
+    await expect(readHermesProductHistory({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      maxBytes: 1,
+      maxItemBytes: 1,
+    })).rejects.toMatchObject({
+      code: "helper_failed",
+      message: expect.stringContaining("exceeded the bounded output limit"),
+    });
+  });
+
   it.skipIf(!pythonCommand)("keeps bounded closed-range pagination revision stable across unrelated tail appends", async () => {
     const fixtureData = await fixture();
     const input = {
