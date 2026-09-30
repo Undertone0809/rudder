@@ -585,7 +585,3 @@ pub(crate) const fn project_delete_kind() -> &'static str {
 pub(crate) const fn project_create_kind() -> &'static str {
     COMMAND_KIND_PROJECT_CREATE
 }
-
-pub(crate) const fn organization_resource_kind() -> &'static str {
-    COMMAND_KIND_ORGANIZATION_RESOURCE
-}
