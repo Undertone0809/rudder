@@ -26,6 +26,7 @@ const CLOSE_TIMEOUT_MS = 1_500;
 const MAX_UPDATE_COUNT = 512;
 const MAX_UPDATE_TEXT = 512 * 1024;
 const MAX_DIAGNOSTIC = 2_000;
+const MAX_RPC_LINE_BYTES = 8 * 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 type RpcId = number;
@@ -591,8 +592,10 @@ class HermesAcpRpcClient {
   private readonly pending = new Map<RpcId, PendingRequest>();
   private readonly exitPromise: Promise<void>;
   private buffer = "";
+  private bufferBytes = 0;
   private nextId = 1;
   private closed = false;
+  private transportFailed = false;
   private closeStarted = false;
   private stderr = "";
 
@@ -605,6 +608,8 @@ class HermesAcpRpcClient {
       const finish = (error?: Error) => {
         if (this.closed) return;
         this.closed = true;
+        this.buffer = "";
+        this.bufferBytes = 0;
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timer);
           pending.reject(error ?? new Error("Hermes ACP process exited."));
@@ -626,56 +631,84 @@ class HermesAcpRpcClient {
   }
 
   private consume(chunk: string): void {
-    this.buffer += chunk;
-    const lines = this.buffer.split(/\r?\n/u);
-    this.buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        const error = new Error("Hermes ACP emitted malformed JSON-RPC output.");
-        for (const pending of this.pending.values()) {
-          clearTimeout(pending.timer);
-          pending.reject(error);
-        }
-        this.pending.clear();
-        continue;
+    if (this.closed || this.transportFailed) return;
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf("\n", offset);
+      const end = newline < 0 ? chunk.length : newline;
+      const fragment = chunk.slice(offset, end);
+      const fragmentBytes = Buffer.byteLength(fragment, "utf8");
+      if (this.bufferBytes + fragmentBytes > MAX_RPC_LINE_BYTES) {
+        this.failTransport(new Error(`Hermes ACP JSON-RPC line exceeded ${MAX_RPC_LINE_BYTES} UTF-8 bytes.`));
+        return;
       }
-      const message = asRecord(parsed) as RpcMessage | null;
-      if (!message) continue;
-      if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
-        const pending = this.pending.get(message.id);
-        if (!pending) continue;
-        clearTimeout(pending.timer);
-        this.pending.delete(message.id);
-        if (message.error) pending.reject(new HermesAcpRpcError(message.error.code ?? -32000, message.error.message ?? "Hermes ACP request failed."));
-        else pending.resolve(message.result);
-        continue;
-      }
-      if (typeof message.method !== "string") continue;
-      if (message.id !== undefined) {
-        const request = message as AcpServerRequest;
-        void this.onServerRequest(request).then(
-          (result) => this.respond(request.id, result),
-          (error) => this.respondError(request.id, -32000, boundedDiagnostic(error)),
-        );
-      } else {
-        this.onNotification(message.method, asRecord(message.params) ?? {});
-      }
+      this.buffer += fragment;
+      this.bufferBytes += fragmentBytes;
+      if (newline < 0) return;
+
+      const line = this.buffer.endsWith("\r") ? this.buffer.slice(0, -1) : this.buffer;
+      this.buffer = "";
+      this.bufferBytes = 0;
+      this.consumeLine(line);
+      if (this.closed || this.transportFailed) return;
+      offset = newline + 1;
     }
   }
 
+  private consumeLine(line: string): void {
+    if (!line.trim()) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      this.failTransport(new Error("Hermes ACP emitted malformed JSON-RPC output."));
+      return;
+    }
+    const message = asRecord(parsed) as RpcMessage | null;
+    if (!message) return;
+    if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new HermesAcpRpcError(message.error.code ?? -32000, message.error.message ?? "Hermes ACP request failed."));
+      else pending.resolve(message.result);
+      return;
+    }
+    if (typeof message.method !== "string") return;
+    if (message.id !== undefined) {
+      const request = message as AcpServerRequest;
+      void this.onServerRequest(request).then(
+        (result) => this.respond(request.id, result),
+        (error) => this.respondError(request.id, -32000, boundedDiagnostic(error)),
+      );
+    } else {
+      this.onNotification(message.method, asRecord(message.params) ?? {});
+    }
+  }
+
+  private failTransport(error: Error): void {
+    if (this.closed || this.transportFailed) return;
+    this.transportFailed = true;
+    this.buffer = "";
+    this.bufferBytes = 0;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+    void this.close();
+  }
+
   private write(message: JsonRecord): Promise<void> {
-    if (this.closed || this.child.stdin.destroyed) return Promise.reject(new Error("Hermes ACP process is closed."));
+    if (this.closed || this.transportFailed || this.child.stdin.destroyed) return Promise.reject(new Error("Hermes ACP process is closed."));
     return new Promise((resolve, reject) => {
       this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`, (error) => error ? reject(error) : resolve());
     });
   }
 
   async request(method: string, params: JsonRecord, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<unknown> {
-    if (this.closed) throw new Error("Hermes ACP process is closed.");
+    if (this.closed || this.transportFailed) throw new Error("Hermes ACP process is closed.");
     const id = this.nextId++;
     const boundedTimeoutMs = Math.max(1, timeoutMs);
     const response = new Promise<unknown>((resolve, reject) => {

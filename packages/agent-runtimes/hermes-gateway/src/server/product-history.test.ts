@@ -6,18 +6,53 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   HERMES_PRODUCT_HISTORY_HELPER_VERSION,
   readHermesProductHistory,
+  readHermesProductHistoryExecutionSpan,
   type HermesProductHistoryProfile
 } from "./product-history.js";
 
 const FAKE_SESSION_DB = String.raw`
 import json
 from pathlib import Path
+from contextlib import contextmanager
 
 class SessionDB:
     def __init__(self, db_path=None, read_only=False):
         if not read_only:
             raise AssertionError("history helper must open SessionDB read-only")
         self.state = json.loads(Path(db_path).read_text(encoding="utf-8"))
+
+    def _read_ctx(self):
+        import sqlite3
+        @contextmanager
+        def context():
+            conn = sqlite3.connect(":memory:")
+            conn.row_factory = sqlite3.Row
+            sessions = list(self.state.get("sessions", {}).values())
+            messages = [row for rows in self.state.get("messages", {}).values() for row in rows]
+            for table, rows, required in [
+                ("sessions", sessions, ["id","source","parent_session_id","profile_name","cwd","started_at","ended_at","end_reason","message_count","tool_call_count"]),
+                ("messages", messages, ["id","session_id","role","content"])]:
+                columns = list(dict.fromkeys(required + [key for row in rows for key in row]))
+                conn.execute("CREATE TABLE " + table + " (" + ",".join('"' + col + '"' for col in columns) + ")")
+                for row in rows:
+                    values = [json.dumps(row.get(col), ensure_ascii=False) if isinstance(row.get(col), (dict,list)) else row.get(col) for col in columns]
+                    conn.execute("INSERT INTO " + table + " VALUES (" + ",".join("?" for _ in columns) + ")", values)
+            conn.commit()
+            try:
+                yield conn
+            finally:
+                conn.close()
+        return context()
+
+    def _row_to_message_dict(self, row, **kwargs):
+        result = dict(row)
+        for key in ["content", "tool_calls", "display_metadata"]:
+            if isinstance(result.get(key), str):
+                try:
+                    result[key] = json.loads(result[key])
+                except ValueError:
+                    pass
+        return result
 
     def get_session(self, session_id):
         return self.state.get("sessions", {}).get(session_id)
@@ -149,11 +184,144 @@ async function fixture(): Promise<{ root: string; profile: HermesProductHistoryP
   return { root, profile: profile(root), sessionId: "session-old" };
 }
 
+function executionProof(
+  sessionId: string,
+  range: { startExclusive: number | null; endInclusive: number },
+  freshSessionVerified = false,
+) {
+  return {
+    version: 1 as const,
+    orgId: "org-history-test",
+    runId: "run-history-test",
+    spanId: "span-history-test",
+    bindingId: "binding-history-test",
+    segmentId: "segment-history-test",
+    sessionId,
+    providerExecutionRef: "execution-history-test",
+    sourceRangeRef: JSON.stringify({ version: 1, status: "exact", sessionId, ...range }),
+    freshSessionVerified,
+  };
+}
+
+async function replaceSessionRows(
+  fixtureData: Awaited<ReturnType<typeof fixture>>,
+  rows: Array<Record<string, unknown>>,
+  stateUpdates: Record<string, unknown> = {},
+) {
+  const statePath = path.join(fixtureData.root, "home", "state.db");
+  const state = JSON.parse(await fs.readFile(statePath, "utf8")) as {
+    messages: Record<string, Array<Record<string, unknown>>>;
+    [key: string]: unknown;
+  };
+  state.messages[fixtureData.sessionId] = rows.map((row) => ({
+    ...row,
+    session_id: fixtureData.sessionId,
+    active: row.active ?? 1,
+    compacted: row.compacted ?? 0,
+  }));
+  Object.assign(state, stateUpdates);
+  await fs.writeFile(statePath, JSON.stringify(state), "utf8");
+}
+
 afterEach(async () => {
   await Promise.all(cleanupRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
 describe("Hermes product history", () => {
+  it.skipIf(!pythonCommand)("enforces per-item and projected page byte budgets", async () => {
+    const fixtureData = await fixture();
+    const itemLimited = await readHermesProductHistory({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      maxItemBytes: 64,
+    });
+    const pageLimited = await readHermesProductHistory({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      maxBytes: 256,
+      maxItemBytes: 4096,
+    });
+
+    expect(itemLimited).toMatchObject({ items: [], nextCursor: null, completeness: "partial", limitReached: { reason: "item_bytes", maximum: 64 } });
+    expect(pageLimited).toMatchObject({ items: [], nextCursor: null, completeness: "partial", limitReached: { reason: "page_bytes", maximum: 256 } });
+  });
+
+  it.skipIf(!pythonCommand)("keeps bounded closed-range pagination revision stable across unrelated tail appends", async () => {
+    const fixtureData = await fixture();
+    const input = {
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      range: { startExclusive: 1, endInclusive: 3 },
+      limit: 1,
+    };
+    const first = await readHermesProductHistory(input);
+    const statePath = path.join(fixtureData.root, "home", "state.db");
+    const state = JSON.parse(await fs.readFile(statePath, "utf8")) as {
+      messages: Record<string, Array<Record<string, unknown>>>;
+      sessions: Record<string, Record<string, unknown>>;
+    };
+    state.messages[fixtureData.sessionId]!.push({
+      id: 99,
+      session_id: fixtureData.sessionId,
+      role: "assistant",
+      content: "outside the closed source range",
+      timestamp: 999,
+      active: 1,
+      compacted: 0,
+    });
+    state.sessions[fixtureData.sessionId]!.message_count = 99;
+    await fs.writeFile(statePath, JSON.stringify(state), "utf8");
+    const second = await readHermesProductHistory({ ...input, cursor: first.nextCursor });
+
+    expect(first.items.map((item) => item.rowId)).toEqual([2]);
+    expect(second.items.map((item) => item.rowId)).toEqual([3]);
+    expect(second.nextCursor).toBeNull();
+    expect(second.metadata.tailRowId).toBe(99);
+    expect(second.revision).toBe(first.revision);
+  });
+
+  it.skipIf(!pythonCommand)("returns rows only for a verified exact span and requires fresh-session evidence for an open start", async () => {
+    const fixtureData = await fixture();
+    await replaceSessionRows(fixtureData, [
+      { id: 2, role: "user", content: "owned input", timestamp: 2 },
+      { id: 5, role: "assistant", content: "owned output", timestamp: 5 },
+    ], {
+      tips: { [fixtureData.sessionId]: fixtureData.sessionId },
+      resume: { [fixtureData.sessionId]: fixtureData.sessionId },
+    });
+    const range = { startExclusive: 1, endInclusive: 5 };
+    const proof = executionProof(fixtureData.sessionId, range);
+    const result = await readHermesProductHistoryExecutionSpan({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      range,
+      proof,
+    });
+    const unproven = await readHermesProductHistoryExecutionSpan({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      range,
+    });
+    const freshRange = { startExclusive: null, endInclusive: 5 };
+    const freshUnproven = await readHermesProductHistoryExecutionSpan({
+      runtimeType: "hermes_gateway",
+      sessionId: fixtureData.sessionId,
+      profile: fixtureData.profile,
+      range: freshRange,
+      proof: executionProof(fixtureData.sessionId, freshRange),
+    });
+
+    expect(result).toMatchObject({ availability: "available", completeness: "complete", revision: expect.stringMatching(/^execution-span:/) });
+    expect(result.items.map((item) => item.rowId)).toEqual([2, 5]);
+    expect(unproven).toMatchObject({ availability: "available", completeness: "unknown", revision: "execution-boundary-unknown", items: [] });
+    expect(freshUnproven).toMatchObject({ availability: "available", completeness: "unknown", revision: "execution-boundary-unknown", items: [] });
+  });
+
   it("rejects a different runtime without invoking a provider fallback", async () => {
     const result = await readHermesProductHistory({
       runtimeType: "codex_local",

@@ -28,6 +28,7 @@ import {
   HermesProductHistoryError,
   readHermesProductHistory,
   readHermesProductHistoryExecutionSpan,
+  type HermesProductHistoryExecutionSpanProof,
   type HermesProductHistoryProfile,
   type HermesProductHistoryRange,
 } from "./product-history.js";
@@ -91,6 +92,7 @@ export type HermesNativeTranscriptReadRequest = {
   session: HermesProviderSessionRef;
   selector?: Record<string, unknown> | null;
   binding?: HermesProviderBindingRef | null;
+  readerInput?: unknown | null;
   range?: HermesTranscriptRange | null;
   from?: string | null;
   through?: string | null;
@@ -105,6 +107,7 @@ export type HermesNativeTranscriptReadResult = {
   revision: string;
   availability: "available" | "offline" | "missing" | "expired" | "incompatible";
   completeness: "complete" | "partial" | "terminal_only" | "unknown";
+  limitReached?: { reason: "item_bytes" | "page_bytes" | "total_bytes" | "total_items"; maximum: number };
 };
 
 /** Credentials stay in this host-owned closure and never enter providerStateJson. */
@@ -271,6 +274,11 @@ function safeHistoryBoundary(value: unknown): number | null | undefined {
 }
 
 type HistoryExecutionRange = { range: HermesProductHistoryRange } | { unknown: true } | null;
+type VerifiedHistoryExecutionSpan = {
+  range: HermesProductHistoryRange;
+  proof: HermesProductHistoryExecutionSpanProof;
+};
+type HistoryExecutionSpanCheck = { ok: true; value: VerifiedHistoryExecutionSpan } | { ok: false; reason: string };
 
 function exactHistoryExecutionRange(
   selector: Record<string, unknown> | null | undefined,
@@ -296,6 +304,109 @@ function exactHistoryExecutionRange(
   } catch {
     return { unknown: true };
   }
+}
+
+function canonicalJson(value: unknown): string | null {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") return Number.isFinite(value) ? JSON.stringify(value) : null;
+  if (Array.isArray(value)) {
+    const children = value.map(canonicalJson);
+    return children.some((child) => child === null) ? null : `[${children.join(",")}]`;
+  }
+  const record = recordValue(value);
+  if (!record) return null;
+  const entries = Object.keys(record).sort().map((key) => {
+    const child = canonicalJson(record[key]);
+    return child === null ? null : `${JSON.stringify(key)}:${child}`;
+  });
+  return entries.some((entry) => entry === null) ? null : `{${entries.join(",")}}`;
+}
+
+function samePersistedSelector(left: unknown, right: unknown): boolean {
+  const leftJson = canonicalJson(left);
+  return leftJson !== null && leftJson === canonicalJson(right);
+}
+
+function verifiedHistoryExecutionSpan(
+  request: HermesNativeTranscriptReadRequest,
+  sessionId: string,
+): HistoryExecutionSpanCheck {
+  const fail = (reason: string): HistoryExecutionSpanCheck => ({ ok: false, reason });
+  const reader = recordValue(request.readerInput);
+  const run = recordValue(reader?.run);
+  const binding = recordValue(reader?.binding);
+  const segment = recordValue(reader?.segment);
+  const span = recordValue(reader?.span);
+  const persistedSelector = recordValue(span?.selectorJson);
+  const readerSelector = recordValue(reader?.selector);
+  if (!reader) return fail("reader-input-missing");
+  if (reader.readonly !== true || reader.scope !== "run" || !run || !binding || !segment || !span) {
+    return fail("reader-shape-invalid");
+  }
+  if (!persistedSelector || !readerSelector) return fail("persisted-selector-missing");
+  if (!samePersistedSelector(persistedSelector, readerSelector)
+    || !samePersistedSelector(persistedSelector, request.selector)) return fail("persisted-selector-mismatch");
+
+  const orgId = stringValue(reader.orgId);
+  const runId = stringValue(run.id);
+  const spanId = stringValue(span.id);
+  const bindingId = stringValue(binding.id);
+  const segmentId = stringValue(segment.id);
+  const sessionRef = stringValue(readerSelector.sessionRef);
+  const providerExecutionRef = stringValue(readerSelector.providerExecutionRef);
+  const sourceRangeRef = stringValue(readerSelector.sourceRangeRef);
+  if (!orgId || !runId || !spanId || !bindingId || !segmentId
+    || !stringValue(binding.orgId) || !stringValue(segment.orgId)
+    || !sessionRef || !providerExecutionRef || !sourceRangeRef) return fail("reader-identity-missing");
+
+  const scopeChecks: Array<[string, boolean]> = [
+    ["runtime", request.runtimeType === "hermes_gateway" && stringValue(binding.runtimeType) === "hermes_gateway" && stringValue(segment.runtimeType) === "hermes_gateway"],
+    ["organization", run.orgId === orgId && span.orgId === orgId && binding.orgId === orgId && segment.orgId === orgId],
+    ["run-span", span.runId === runId],
+    ["span-binding-segment", span.bindingId === bindingId && span.segmentId === segmentId && segment.bindingId === bindingId],
+    ["native-session", sessionRef === sessionId && stringValue(segment.nativeSessionId) === sessionId && run.sessionIdAfter === sessionId],
+    ["request-session", stringValue(request.session.sessionId) === sessionId && stringValue(request.session.sessionDisplayId) === sessionId],
+    ["request-binding", stringValue(request.binding?.id) === bindingId && stringValue(request.binding?.orgId) === orgId],
+    ["span-sealed-complete", span.state === "sealed" && span.completeness === "complete" && Boolean(span.closedAt)],
+    ["writer-lease-released", Boolean(span.writerLeaseReleasedAt)],
+    ["segment-continuous", (segment.state === "open" && segment.sealedAt === null)
+      || (segment.state === "sealed" && Boolean(segment.sealedAt))],
+  ];
+  const failedScope = scopeChecks.find(([, valid]) => !valid);
+  if (failedScope) return fail(`reader-${failedScope[0]}`);
+
+  const execution = exactHistoryExecutionRange(readerSelector, sessionId);
+  if (!execution || "unknown" in execution) return fail("persisted-range-invalid");
+  const intent = recordValue(run.sessionIntentJson);
+  const freshSessionVerified = run.sessionIdBefore === null
+    && run.sessionReuseScope === "none"
+    && run.sessionIdAfter === sessionId
+    && intent?.kind === "fresh"
+    && intent.reuseScope === "none"
+    && intent.sourceRunId === null
+    && intent.sessionId === null
+    && intent.sessionParams === null
+    && !("sourceBoundaryRef" in intent);
+  if (execution.range.startExclusive === null && !freshSessionVerified) return fail("fresh-session-unproven");
+
+  return {
+    ok: true,
+    value: {
+      range: execution.range,
+      proof: {
+        version: 1,
+        orgId,
+        runId,
+        spanId,
+        bindingId,
+        segmentId,
+        sessionId,
+        providerExecutionRef,
+        sourceRangeRef,
+        freshSessionVerified,
+      },
+    },
+  };
 }
 
 function numericHistoryRange(input: HermesNativeTranscriptReadRequest): HermesProductHistoryRange | null | undefined {
@@ -351,21 +462,42 @@ function historyBoundaryUnknownResult(revision: string): HermesNativeTranscriptR
   };
 }
 
+function historyOwnershipUnknownResult(revision: string): HermesNativeTranscriptReadResult {
+  return {
+    items: [],
+    nextCursor: null,
+    source: "native",
+    revision,
+    availability: "available",
+    completeness: "unknown",
+  };
+}
+
 async function readProfileProductHistory(
   request: HermesNativeTranscriptReadRequest,
   historyProfile: HermesProductHistoryProfile,
-  executionRange: HermesProductHistoryRange | null,
+  execution: VerifiedHistoryExecutionSpan | null,
 ): Promise<HermesNativeTranscriptReadResult> {
   const requested = numericHistoryRange(request);
-  const range = executionRange ? intersectHistoryRanges(executionRange, requested) : requested;
-  if (range === undefined) return historyBoundaryUnknownResult("history-range-unknown");
+  const range = execution ? intersectHistoryRanges(execution.range, requested) : requested;
+  if (range === undefined) {
+    return execution
+      ? historyOwnershipUnknownResult("history-range-unknown")
+      : historyBoundaryUnknownResult("history-range-unknown");
+  }
+  const readerInput = recordValue(request.readerInput);
+  const maxBytes = typeof readerInput?.maxBytes === "number" ? readerInput.maxBytes : undefined;
+  const maxItemBytes = typeof readerInput?.maxItemBytes === "number" ? readerInput.maxItemBytes : undefined;
   try {
-    const result = executionRange
+    const result = execution
       ? await readHermesProductHistoryExecutionSpan({
         runtimeType: request.runtimeType,
         sessionId: request.session.sessionId,
         profile: historyProfile,
         range,
+        proof: execution.proof,
+        maxBytes,
+        maxItemBytes,
         cursor: request.cursor,
         signal: request.signal,
       })
@@ -376,6 +508,8 @@ async function readProfileProductHistory(
         range,
         cursor: request.cursor,
         limit: TRANSCRIPT_PAGE_SIZE,
+        maxBytes,
+        maxItemBytes,
         signal: request.signal,
       });
     return {
@@ -385,6 +519,11 @@ async function readProfileProductHistory(
       revision: result.revision,
       availability: result.availability,
       completeness: result.completeness,
+      limitReached: result.limitReached ? {
+        reason: result.limitReached.reason === "scan_bytes" ? "total_bytes"
+          : result.limitReached.reason === "scan_items" ? "total_items" : result.limitReached.reason,
+        maximum: result.limitReached.maximum,
+      } : undefined,
     };
   } catch (error) {
     const code = error instanceof HermesProductHistoryError ? error.code : "helper_failed";
@@ -512,32 +651,97 @@ function requestHeaders(profile: HermesGatewayProfileTransport): Record<string, 
   return headers;
 }
 
-async function fetchWithTimeout(
-  profile: HermesGatewayProfileTransport,
-  url: URL,
-  init: RequestInit = {},
-  signal?: AbortSignal,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
-  const abort = () => controller.abort();
-  signal?.addEventListener("abort", abort, { once: true });
+async function abortable<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason ?? new Error("Hermes transcript read cancelled."));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
   try {
-    return await (profile.fetch ?? fetch)(url, {
-      ...init,
-      redirect: "error",
-      headers: { ...requestHeaders(profile), ...(init.headers ?? {}) },
-      signal: controller.signal,
-    });
+    return await Promise.race([operation(), aborted]);
   } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", abort);
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
-async function readJsonBody(response: Response): Promise<HermesRecord> {
-  const text = await response.text();
-  if (text.length > MAX_BODY_BYTES) throw new Error(`Hermes transcript response exceeded ${MAX_BODY_BYTES} bytes.`);
+async function cancelBody(cancel: () => Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(cancel).catch(() => undefined),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, 1_000); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readHttpResponse<T>(
+  profile: HermesGatewayProfileTransport,
+  url: URL,
+  init: RequestInit,
+  signal: AbortSignal | undefined,
+  read: (response: Response, signal: AbortSignal) => Promise<T>,
+): Promise<{ response: Response; body: T | null }> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error("Hermes HTTP response deadline exceeded.")), 15_000);
+  let response: Response | undefined;
+  let bodyReadStarted = false;
+  try {
+    response = await abortable(async () => {
+      const value = await (profile.fetch ?? fetch)(url, {
+        ...init,
+        redirect: "error",
+        headers: { ...requestHeaders(profile), ...(init.headers ?? {}) },
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) {
+        if (value.body) await cancelBody(() => value.body!.cancel());
+        controller.signal.throwIfAborted();
+      }
+      return value;
+    }, controller.signal);
+    if (!response.ok) return { response, body: null };
+    bodyReadStarted = true;
+    return { response, body: await read(response, controller.signal) };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+    controller.abort();
+    if (response?.body && !bodyReadStarted) await cancelBody(() => response!.body!.cancel());
+  }
+}
+
+async function* boundedResponseChunks(response: Response, signal: AbortSignal): AsyncGenerator<Uint8Array> {
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  let bytes = 0;
+  let completed = false;
+  try {
+    for (;;) {
+      const { done, value } = await abortable(() => reader.read(), signal);
+      if (done) {
+        completed = true;
+        return;
+      }
+      bytes += value.byteLength;
+      if (bytes > MAX_BODY_BYTES) throw new Error(`Hermes transcript response exceeded ${MAX_BODY_BYTES} bytes.`);
+      yield value;
+    }
+  } finally {
+    if (!completed) await cancelBody(() => reader.cancel());
+    reader.releaseLock();
+  }
+}
+
+async function readJsonBody(response: Response, signal: AbortSignal): Promise<HermesRecord> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of boundedResponseChunks(response, signal)) chunks.push(Buffer.from(chunk));
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
   if (!text.trim()) return {};
   const parsed = JSON.parse(text);
   return recordValue(parsed) ?? {};
@@ -586,9 +790,8 @@ function eventItems(events: HermesRecord[], runId: string, secrets: readonly str
 async function readSseEvents(
   response: Response,
   runId: string,
+  signal: AbortSignal,
 ): Promise<{ events: HermesRecord[]; malformed: boolean }> {
-  if (!response.body) return { events: [], malformed: true };
-  const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let dataLines: string[] = [];
@@ -608,9 +811,7 @@ async function readSseEvents(
       malformed = true;
     }
   };
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  for await (const value of boundedResponseChunks(response, signal)) {
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
@@ -665,18 +866,28 @@ async function readProfileTranscript(
     return { items: [], nextCursor: null, source: "native", revision: "transport-mismatch", availability: "incompatible", completeness: "unknown" };
   }
 
+  const selectorKind = stringValue(request.selector?.kind);
+  const readerBound = request.readerInput !== undefined && request.readerInput !== null;
+  const proofCheck = selectorKind === "hermes_execution"
+    ? verifiedHistoryExecutionSpan(request, sessionId)
+    : null;
+  const execution = proofCheck?.ok ? proofCheck.value : null;
+  const proofFailure = proofCheck && !proofCheck.ok ? proofCheck.reason : "reader-selector-missing";
+  if (readerBound && !execution) return historyOwnershipUnknownResult(`execution-proof-unavailable:${proofFailure}`);
+
   // A host-authorized state.db profile is the only source allowed to answer
   // Run-bound reads. In particular, do not turn a missing/unknown boundary
   // into a whole-session HTTP read when two Runs share one Hermes session.
   if (historyProfileFieldsPresent(profile)) {
     const historyProfile = historyProfileFromGatewayProfile(profile);
     if (!historyProfile) return historyBoundaryUnknownResult("history-profile-missing");
-    const executionRange = exactHistoryExecutionRange(request.selector, sessionId);
-    if (executionRange && "unknown" in executionRange) return historyBoundaryUnknownResult("execution-boundary-unknown");
+    if (selectorKind === "hermes_execution" && !execution) {
+      return historyOwnershipUnknownResult(`execution-proof-unavailable:${proofFailure}`);
+    }
     return readProfileProductHistory(
       request,
       historyProfile,
-      executionRange ? executionRange.range : null,
+      execution,
     );
   }
 
@@ -704,11 +915,12 @@ async function readProfileTranscript(
   try {
     const preflight = await preflightBaseUrl(base);
     if (!preflight.ok) return { items: [], nextCursor: null, source: "native", revision: "endpoint-rejected", availability: "incompatible", completeness: "unknown" };
-    const sessionResponse = await fetchWithTimeout(
+    const { response: sessionResponse, body: sessionBody } = await readHttpResponse(
       profile,
       endpoint(base, `/api/sessions/${encodeURIComponent(sessionId)}`),
       {},
       request.signal,
+      readJsonBody,
     );
     if (!sessionResponse.ok) {
       return {
@@ -720,24 +932,23 @@ async function readProfileTranscript(
         completeness: "unknown",
       };
     }
-    const sessionBody = await readJsonBody(sessionResponse);
-    const returnedSessionId = responseSessionId(sessionBody);
+    const returnedSessionId = responseSessionId(sessionBody!);
     if (!returnedSessionId || returnedSessionId !== sessionId) {
       return { items: [], nextCursor: null, source: "native", revision: "response-session-mismatch", availability: "incompatible", completeness: "unknown" };
     }
     if (providerExecutionRef) {
-      const response = await fetchWithTimeout(
+      const { response, body: streamed } = await readHttpResponse(
         profile,
         endpoint(base, `/v1/runs/${encodeURIComponent(providerExecutionRef)}/events`),
         { headers: { accept: "text/event-stream" } },
         request.signal,
+        (response, signal) => readSseEvents(response, providerExecutionRef, signal),
       );
       if (!response.ok) {
         return { items: [], nextCursor: null, source: "native", revision: `events-http-${response.status}`, availability: response.status === 404 ? "missing" : "offline", completeness: "unknown" };
       }
-      const streamed = await readSseEvents(response, providerExecutionRef);
       let eventSessionMismatch = false;
-      const sessionEvents = streamed.events.filter((event) => {
+      const sessionEvents = streamed!.events.filter((event) => {
         const eventRun = stringValue(event.run_id ?? event.runId);
         const eventSession = stringValue(
           event.session_id
@@ -754,26 +965,26 @@ async function readProfileTranscript(
         return { items: [], nextCursor: null, source: "native", revision: "event-session-mismatch", availability: "incompatible", completeness: "unknown" };
       }
       rawItems = eventItems(sessionEvents, providerExecutionRef, secrets);
-      completeness = streamed.malformed ? "partial" : "complete";
-      revision = stableHash(streamed.events);
+      completeness = streamed!.malformed ? "partial" : "complete";
+      revision = stableHash(streamed!.events);
     } else {
-      const response = await fetchWithTimeout(
+      const { response, body } = await readHttpResponse(
         profile,
         endpoint(base, `/api/sessions/${encodeURIComponent(sessionId)}/messages`),
         {},
         request.signal,
+        readJsonBody,
       );
       if (!response.ok) {
         return { items: [], nextCursor: null, source: "native", revision: `messages-http-${response.status}`, availability: response.status === 404 ? "missing" : "offline", completeness: "unknown" };
       }
-      const body = await readJsonBody(response);
-      const returnedSessionId = responseSessionId(body);
+      const returnedSessionId = responseSessionId(body!);
       if (returnedSessionId && returnedSessionId !== sessionId) {
         return { items: [], nextCursor: null, source: "native", revision: "response-session-mismatch", availability: "incompatible", completeness: "unknown" };
       }
-      const records = responseData(body);
+      const records = responseData(body!);
       rawItems = historyItems(records, secrets);
-      revision = stableHash(body);
+      revision = stableHash(body!);
     }
   } catch {
     return { items: [], nextCursor: null, source: "native", revision: "transport-error", availability: "offline", completeness: "unknown" };

@@ -486,6 +486,20 @@ function historyProfileFrom(profile: HermesAcpProfile): HermesProductHistoryProf
 }
 
 describe("Hermes ACP native protocol", () => {
+  it("fails the transport when an incoming JSON-RPC line exceeds its UTF-8 byte limit", async () => {
+    const code = String.raw`
+      process.stdin.once("data", () => {
+        process.stdout.write("{" + " ".repeat(8 * 1024 * 1024) + "\n");
+      });
+    `;
+    const client = await createHermesNativeRpcClient({ ...profile(), args: ["-e", code] }, () => {}, async () => null);
+    try {
+      await expect(client.request("ping", {}, 5_000)).rejects.toThrow(/JSON-RPC line exceeded/);
+    } finally {
+      await client.close();
+    }
+  }, 15_000);
+
   it("preserves JSON-RPC Unicode split across pipe chunks", async () => {
     const code = String.raw`
       process.stdin.once("data", chunk => {

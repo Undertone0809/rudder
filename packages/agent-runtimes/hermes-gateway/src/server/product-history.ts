@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-export const HERMES_PRODUCT_HISTORY_HELPER_VERSION = "rudder-hermes-product-history-v3";
+export const HERMES_PRODUCT_HISTORY_HELPER_VERSION = "rudder-hermes-product-history-v4";
 export const HERMES_PRODUCT_HISTORY_TRANSPORT = "hermes-session-db-read-only";
 const HERMES_RUNTIME_TYPE = "hermes_gateway";
 const DEFAULT_PAGE_SIZE = 100;
@@ -42,7 +42,22 @@ export type HermesProductHistoryRequest = {
   cursor?: string | null;
   limit?: number;
   timeoutMs?: number;
+  maxBytes?: number;
+  maxItemBytes?: number;
   signal?: AbortSignal;
+};
+
+export type HermesProductHistoryExecutionSpanProof = {
+  version: 1;
+  orgId: string;
+  runId: string;
+  spanId: string;
+  bindingId: string;
+  segmentId: string;
+  sessionId: string;
+  providerExecutionRef: string;
+  sourceRangeRef: string;
+  freshSessionVerified: boolean;
 };
 
 export type HermesProductHistoryRawRow = JsonRecord;
@@ -121,6 +136,7 @@ export type HermesProductHistoryResult = {
   revision: string;
   availability: "available" | "offline" | "missing" | "incompatible";
   completeness: "complete" | "partial" | "unknown";
+  limitReached?: { reason: "item_bytes" | "page_bytes" | "scan_bytes" | "scan_items"; maximum: number };
   range: { startExclusive: number | null; endInclusive: number | null };
   metadata: {
     helperVersion: typeof HERMES_PRODUCT_HISTORY_HELPER_VERSION;
@@ -151,13 +167,14 @@ export class HermesProductHistoryError extends Error {
 
 type NormalizedRange = { startExclusive: number | null; endInclusive: number | null };
 type CursorPayload = {
-  version: 2;
+  version: 3;
   runtimeType: typeof HERMES_RUNTIME_TYPE;
   sessionId: string;
   profileScope: string;
   range: NormalizedRange;
   afterRowId: number;
   rowSnapshotDigest: string;
+  revision: string;
 };
 
 type HelperResponse = {
@@ -172,6 +189,7 @@ type HelperResponse = {
   compressionTipSessionId?: string | null;
   resolvedResumeSessionId?: string | null;
   successorSession?: JsonRecord | null;
+  limitReached?: HermesProductHistoryResult["limitReached"];
 };
 
 const PYTHON_HELPER_SOURCE = String.raw`
@@ -179,6 +197,7 @@ import json
 import hashlib
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 HELPER_VERSION = "${HERMES_PRODUCT_HISTORY_HELPER_VERSION}"
@@ -217,7 +236,28 @@ def main():
     home = Path(os.environ["HERMES_HOME"]).expanduser()
     db = SessionDB(db_path=home / "state.db", read_only=True)
     try:
-        session = db.get_session(session_id)
+      with db._read_ctx() as conn:
+        conn.execute("BEGIN")
+        @contextmanager
+        def snapshot_context():
+            yield conn
+        db._read_ctx = snapshot_context
+        max_item = int(request["maxItemBytes"])
+        max_page = int(request["maxBytes"])
+        scan_max = 8 * 1024 * 1024
+        scan_rows = 10000
+        def limited(reason, maximum):
+            emit({"ok": True, "helperVersion": HELPER_VERSION, "sessionId": session_id,
+                  "limitReached": {"reason": reason, "maximum": maximum}})
+        session_columns = "id,source,parent_session_id,profile_name,cwd,started_at,ended_at,end_reason,message_count,tool_call_count"
+        def metadata(sid):
+            sizes = " + ".join("COALESCE(length(CAST(" + col + " AS BLOB)),0)" for col in session_columns.split(","))
+            size = conn.execute("SELECT " + sizes + " FROM sessions WHERE id = ?", (sid,)).fetchone()
+            if size and size[0] > 4096:
+                raise ValueError("Hermes session metadata exceeds the bounded limit")
+            row = conn.execute("SELECT " + session_columns + " FROM sessions WHERE id = ?", (sid,)).fetchone()
+            return dict(row) if row else None
+        session = metadata(session_id)
         if session is None:
             emit({"ok": False, "helperVersion": HELPER_VERSION, "error": {"code": "session_missing", "message": "Hermes history session does not exist."}})
             return
@@ -225,29 +265,58 @@ def main():
         # The official API forbids after_id with include_compacted.  The raw
         # audit read intentionally uses include_inactive and leaves compaction
         # generations un-deduped so pre-compression rows remain addressable.
-        snapshot_rows = db.get_messages(
-            session_id,
-            include_inactive=True,
-            include_compacted=False,
-            after_id=range_start,
-        )
+        # Preflight lengths before transferring message text to Python or
+        # decoding its JSON fields. SQL bounds exclude unrelated later Runs.
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(messages)")]
+        quoted = ['"' + col.replace('"', '""') + '"' for col in columns]
+        byte_size = " + ".join("COALESCE(length(CAST(" + col + " AS BLOB)),0)" for col in quoted)
+        where = "session_id = ?"
+        params = [session_id]
+        if range_start is not None:
+            where += " AND id > ?"
+            params.append(range_start)
         if range_end is not None:
-            snapshot_rows = [row for row in snapshot_rows if int(row["id"]) <= range_end]
-        row_snapshot_digest = hashlib.sha256(json.dumps(
-            snapshot_rows, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"), default=str,
-        ).encode("utf-8")).hexdigest()
-        rows = [row for row in snapshot_rows if after_id is None or int(row["id"]) > after_id][:limit]
-        tail_rows = db.get_messages(
-            session_id,
-            include_inactive=True,
-            include_compacted=False,
-            latest=True,
-            limit=1,
-        )
-        tail_row_id = tail_rows[0].get("id") if tail_rows else None
+            where += " AND id <= ?"
+            params.append(range_end)
+        digest = hashlib.sha256()
+        rows = []
+        scanned = 0
+        page_bytes = 0
+        for index, meta in enumerate(conn.execute("SELECT id, " + byte_size + " AS bytes FROM messages WHERE " + where + " ORDER BY id LIMIT ?", (*params, scan_rows + 1))):
+            if index >= scan_rows:
+                limited("scan_items", scan_rows)
+                return
+            if meta["bytes"] > max_item:
+                limited("item_bytes", max_item)
+                return
+            scanned += meta["bytes"]
+            if scanned > scan_max:
+                limited("scan_bytes", scan_max)
+                return
+            raw = conn.execute("SELECT * FROM messages WHERE session_id = ? AND id = ?", (session_id, meta["id"])).fetchone()
+            row = db._row_to_message_dict(raw, warn_context="rudder bounded history", summary_flag=True)
+            encoded = json.dumps(row, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            if len(encoded) > max_item:
+                limited("item_bytes", max_item)
+                return
+            scanned += len(encoded)
+            if scanned > scan_max:
+                limited("scan_bytes", scan_max)
+                return
+            digest.update(str(len(encoded)).encode("ascii") + b":" + encoded)
+            if (after_id is None or row["id"] > after_id) and len(rows) < limit:
+                # Reserve space for the repeated Reader projection and envelope.
+                if page_bytes + len(encoded) * 6 + 2048 > max_page:
+                    limited("page_bytes", max_page)
+                    return
+                rows.append(row)
+                page_bytes += len(encoded) * 6
+        row_snapshot_digest = digest.hexdigest()
+        tail = conn.execute("SELECT id FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+        tail_row_id = tail[0] if tail else None
         tip_id = db.get_compression_tip(session_id)
         resume_id = db.resolve_resume_session_id(session_id)
-        successor = db.get_session(tip_id) if tip_id and tip_id != session_id else None
+        successor = metadata(tip_id) if tip_id and tip_id != session_id else None
         emit({
             "ok": True,
             "helperVersion": HELPER_VERSION,
@@ -341,13 +410,15 @@ function decodeCursor(value: string): CursorPayload {
   try {
     const parsed = asRecord(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
     if (
-      parsed?.version !== 2
+      parsed?.version !== 3
       || parsed.runtimeType !== HERMES_RUNTIME_TYPE
       || typeof parsed.sessionId !== "string"
       || typeof parsed.profileScope !== "string"
       || typeof parsed.afterRowId !== "number"
       || typeof parsed.rowSnapshotDigest !== "string"
       || !/^[a-f0-9]{64}$/.test(parsed.rowSnapshotDigest)
+      || typeof parsed.revision !== "string"
+      || !/^[a-f0-9]{64}$/.test(parsed.revision)
     ) throw new Error("invalid cursor shape");
     const range = asRecord(parsed.range);
     if (!range || (range.startExclusive !== null && typeof range.startExclusive !== "number")
@@ -355,7 +426,7 @@ function decodeCursor(value: string): CursorPayload {
       throw new Error("invalid cursor range");
     }
     return {
-      version: 2,
+      version: 3,
       runtimeType: HERMES_RUNTIME_TYPE,
       sessionId: parsed.sessionId,
       profileScope: parsed.profileScope,
@@ -365,6 +436,7 @@ function decodeCursor(value: string): CursorPayload {
       },
       afterRowId: parsed.afterRowId,
       rowSnapshotDigest: parsed.rowSnapshotDigest,
+      revision: parsed.revision,
     };
   } catch (error) {
     throw new HermesProductHistoryError("invalid_cursor", `Invalid Hermes history cursor: ${boundedDiagnostic(error)}.`);
@@ -540,6 +612,8 @@ async function runHelper(
     limit: number;
     rangeStartExclusive: number | null;
     rangeEndInclusive: number | null;
+    maxBytes: number;
+    maxItemBytes: number;
   },
   timeoutMs: number,
   signal?: AbortSignal,
@@ -640,6 +714,8 @@ async function runHelper(
       limit: request.limit,
       rangeStartExclusive: request.rangeStartExclusive,
       rangeEndInclusive: request.rangeEndInclusive,
+      maxBytes: request.maxBytes,
+      maxItemBytes: request.maxItemBytes,
     }) + "\n");
   });
 }
@@ -668,12 +744,21 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
   const timeoutMs = normalizedTimeout(input.timeoutMs);
   const cursor = cursorFor({ ...input, sessionId }, profile, range);
   const afterId = cursor?.afterRowId ?? range.startExclusive;
+  const budget = (value: number | undefined, fallback: number) => {
+    if (value === undefined) return fallback;
+    if (!Number.isSafeInteger(value) || value < 1) throw new HermesProductHistoryError("invalid_range", "Invalid history byte budget.");
+    return Math.min(value, fallback);
+  };
+  const maxBytes = budget(input.maxBytes, 8 * 1024 * 1024);
+  const maxItemBytes = budget(input.maxItemBytes, Math.min(maxBytes, 1024 * 1024));
   const response = await runHelper(profile, {
     sessionId,
     afterId,
     limit: limit + 1,
     rangeStartExclusive: range.startExclusive,
     rangeEndInclusive: range.endInclusive,
+    maxBytes,
+    maxItemBytes,
   }, timeoutMs, input.signal);
   if (response.helperVersion !== HERMES_PRODUCT_HISTORY_HELPER_VERSION) {
     throw new HermesProductHistoryError("helper_failed", "Hermes history helper version is not supported.");
@@ -687,6 +772,13 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
   }
   if (response.sessionId !== sessionId) {
     throw new HermesProductHistoryError("scope_violation", "Hermes history helper returned another session identity.");
+  }
+  if (response.limitReached) {
+    return {
+      ...errorResult("available", range, unavailableLineage(sessionId), `history-limit:${response.limitReached.reason}`),
+      completeness: "partial",
+      limitReached: response.limitReached,
+    };
   }
   const rowSnapshotDigest = response.rowSnapshotDigest;
   if (typeof rowSnapshotDigest !== "string" || !/^[a-f0-9]{64}$/.test(rowSnapshotDigest)) {
@@ -715,6 +807,15 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
   const hasMore = selectedRows.length > limit;
   const pageRows = selectedRows.slice(0, limit);
   const items = pageRows.map((row) => itemFromRow(row, sessionId));
+  if (items.some((item) => Buffer.byteLength(JSON.stringify(item), "utf8") > maxItemBytes)
+    || Buffer.byteLength(JSON.stringify(items), "utf8") > maxBytes) {
+    const reason = items.some((item) => Buffer.byteLength(JSON.stringify(item), "utf8") > maxItemBytes) ? "item_bytes" : "page_bytes";
+    return {
+      ...errorResult("available", range, unavailableLineage(sessionId), `history-limit:${reason}`),
+      completeness: "partial",
+      limitReached: { reason, maximum: reason === "item_bytes" ? maxItemBytes : maxBytes },
+    };
+  }
   const tailRowId = typeof response.tailRowId === "number" && Number.isSafeInteger(response.tailRowId)
     ? response.tailRowId
     : null;
@@ -731,32 +832,48 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
     relation: successorSessionId ? "compression" : "none",
     rebound: false,
   };
+  const session = projectSession(response.session);
+  const revision = stableRevision({
+    helperVersion: HERMES_PRODUCT_HISTORY_HELPER_VERSION,
+    profileScope: profileScope(profile),
+    sessionId,
+    range,
+    rowSnapshotDigest,
+    ...(range.endInclusive === null ? { tailRowId, session } : {
+      session: session && {
+        id: session.id,
+        source: session.source,
+        parentSessionId: session.parentSessionId,
+        profileName: session.profileName,
+        cwd: session.cwd,
+        startedAt: session.startedAt,
+        compressed: session.endReason === "compression",
+      },
+    }),
+    tipId,
+    resolvedId,
+  });
+  if (cursor && cursor.revision !== revision) {
+    throw new HermesProductHistoryError("cursor_snapshot_mismatch", "Hermes history source or lineage changed after this cursor was issued; restart pagination from the first page.");
+  }
   const nextCursor = hasMore && pageRows.length > 0
     ? encodeCursor({
-        version: 2,
+        version: 3,
         runtimeType: HERMES_RUNTIME_TYPE,
         sessionId,
         profileScope: profileScope(profile),
         range,
         afterRowId: pageRows.at(-1)!.id as number,
         rowSnapshotDigest,
+        revision,
       })
     : null;
-  const session = projectSession(response.session);
   return {
     items,
     nextCursor,
     source: "native",
     transport: HERMES_PRODUCT_HISTORY_TRANSPORT,
-    revision: stableRevision({
-      helperVersion: HERMES_PRODUCT_HISTORY_HELPER_VERSION,
-      sessionId,
-      rowSnapshotDigest,
-      tailRowId,
-      session,
-      tipId,
-      resolvedId,
-    }),
+    revision,
     availability: "available",
     completeness: "complete",
     range,
@@ -771,30 +888,48 @@ export async function readHermesProductHistory(input: HermesProductHistoryReques
 }
 
 export async function readHermesProductHistoryExecutionSpan(
-  input: Omit<HermesProductHistoryRequest, "limit">,
+  input: Omit<HermesProductHistoryRequest, "limit"> & {
+    proof?: HermesProductHistoryExecutionSpanProof | null;
+  },
 ): Promise<HermesProductHistoryResult> {
   const range = normalizeRange(input.range);
   const sessionId = stringValue(input.sessionId);
   if (stringValue(input.cursor)) {
     return {
-      ...errorResult("missing", range, unavailableLineage(sessionId ?? ""), "execution-cursor-unsupported"),
+      ...errorResult("available", range, unavailableLineage(sessionId ?? ""), "execution-cursor-unsupported"),
       revision: "execution-cursor-unsupported",
     };
   }
-  if (!sessionId || range.endInclusive === null) {
+  const proof = input.proof;
+  const proofIds = proof && [proof.orgId, proof.runId, proof.spanId, proof.bindingId, proof.segmentId]
+    .every((value) => Boolean(stringValue(value)));
+  const exactRange = proof && sessionId && proof.version === 1 && proof.sessionId === sessionId
+    && Boolean(stringValue(proof.providerExecutionRef)) && Boolean(stringValue(proof.sourceRangeRef))
+    ? parseExecutionSpanRange(proof.sourceRangeRef, sessionId)
+    : null;
+  if (!sessionId || !proofIds || !exactRange
+    || (exactRange.startExclusive === null && proof?.freshSessionVerified !== true)) {
     return {
-      ...errorResult("missing", range, unavailableLineage(sessionId ?? ""), "execution-boundary-unknown"),
+      ...errorResult("available", range, unavailableLineage(sessionId ?? ""), "execution-boundary-unknown"),
       revision: "execution-boundary-unknown",
     };
   }
 
+  const sourceRange = exactRange;
+  const displayRange = intersectExecutionRanges(sourceRange, range);
+  if (!displayRange) {
+    return {
+      ...errorResult("available", sourceRange, unavailableLineage(sessionId), "execution-range-empty"),
+      revision: "execution-range-empty",
+    };
+  }
   const result = await readHermesProductHistory({
     ...input,
     sessionId,
-    range,
+    range: sourceRange,
     limit: HERMES_MAX_EXECUTION_RANGE_ROWS,
   });
-  if (result.availability !== "available") return { ...result, items: [], nextCursor: null, completeness: "unknown" };
+  if (result.availability !== "available" || result.completeness !== "complete") return { ...result, items: [], nextCursor: null };
   if (result.nextCursor) {
     return {
       ...result,
@@ -805,11 +940,48 @@ export async function readHermesProductHistoryExecutionSpan(
     };
   }
 
-  const selectedRowsRevision = stableRevision({
-    runtimeType: input.runtimeType,
+  const rowIds = result.items.map((item) => item.rowId);
+  const lineage = result.metadata.lineage;
+  const lineageConflicts = result.metadata.session?.id !== sessionId
+    || lineage.requestedSessionId !== sessionId
+    || lineage.readSessionId !== sessionId
+    || lineage.rebound
+    || lineage.relation !== "none"
+    || Boolean(lineage.successorSessionId)
+    || Boolean(lineage.compressionTipSessionId && lineage.compressionTipSessionId !== sessionId)
+    || Boolean(lineage.resolvedResumeSessionId && lineage.resolvedResumeSessionId !== sessionId);
+  if (rowIds.length === 0 || rowIds.length > HERMES_MAX_EXECUTION_RANGE_ROWS || lineageConflicts
+    || rowIds.some((rowId, index) => rowId <= (index === 0 ? sourceRange.startExclusive ?? -1 : rowIds[index - 1]!))
+    || rowIds.some((rowId) => (sourceRange.startExclusive !== null && rowId <= sourceRange.startExclusive)
+      || rowId > sourceRange.endInclusive!)
+    || rowIds.at(-1) !== sourceRange.endInclusive) {
+    return {
+      ...result,
+      items: [],
+      nextCursor: null,
+      revision: lineageConflicts ? "execution-lineage-conflict" : "execution-range-incomplete",
+      completeness: "unknown",
+    };
+  }
+
+  const selectedItems = result.items.filter((item) =>
+    (displayRange.startExclusive === null || item.rowId > displayRange.startExclusive)
+      && (displayRange.endInclusive === null || item.rowId <= displayRange.endInclusive),
+  );
+  const executionRevision = stableRevision({
+    proof: {
+      orgId: proof.orgId,
+      runId: proof.runId,
+      spanId: proof.spanId,
+      bindingId: proof.bindingId,
+      segmentId: proof.segmentId,
+      sessionId,
+      providerExecutionRef: proof.providerExecutionRef,
+      sourceRangeRef: proof.sourceRangeRef,
+    },
+    helperVersion: HERMES_PRODUCT_HISTORY_HELPER_VERSION,
+    displayRange,
     profileScope: profileScope(input.profile),
-    sessionId,
-    range: result.range,
     rows: result.items.map((item) => ({
       locator: { sessionId: item.sessionId, rowId: item.rowId, sourceEntryId: item.sourceEntryId },
       payload: item.raw,
@@ -817,9 +989,41 @@ export async function readHermesProductHistoryExecutionSpan(
   });
   return {
     ...result,
-    items: [],
+    items: selectedItems,
     nextCursor: null,
-    revision: `execution-ownership-unproven:${selectedRowsRevision}`,
-    completeness: "unknown",
+    revision: `execution-span:${executionRevision}`,
+    completeness: "complete",
+    range: displayRange,
   };
+}
+
+function parseExecutionSpanRange(sourceRangeRef: string, sessionId: string): NormalizedRange | null {
+  try {
+    const selector = asRecord(JSON.parse(sourceRangeRef));
+    if (selector?.version !== 1 || selector.status !== "exact" || selector.sessionId !== sessionId) return null;
+    const range = normalizeRange({
+      startExclusive: selector.startExclusive as number | null | undefined,
+      endInclusive: selector.endInclusive as number | null | undefined,
+    });
+    if (range.endInclusive === null || (range.startExclusive !== null && range.endInclusive <= range.startExclusive)) return null;
+    return range;
+  } catch {
+    return null;
+  }
+}
+
+function intersectExecutionRanges(source: NormalizedRange, requested: NormalizedRange): NormalizedRange | null {
+  const startExclusive = source.startExclusive === null
+    ? requested.startExclusive
+    : requested.startExclusive === null
+      ? source.startExclusive
+      : Math.max(source.startExclusive, requested.startExclusive);
+  const endInclusive = source.endInclusive === null
+    ? requested.endInclusive
+    : requested.endInclusive === null
+      ? source.endInclusive
+      : Math.min(source.endInclusive, requested.endInclusive);
+  if (startExclusive !== null && endInclusive !== null && endInclusive <= startExclusive) return null;
+  if (startExclusive === null && endInclusive === null) return null;
+  return { startExclusive, endInclusive };
 }
