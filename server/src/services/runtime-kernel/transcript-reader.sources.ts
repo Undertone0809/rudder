@@ -1018,7 +1018,12 @@ async function readNativeSpan(
     maxBytes,
     boundedSourceBudget(input.maxItemBytes, DEFAULT_NATIVE_ITEM_BYTES, MAX_NATIVE_ITEM_BYTES),
   );
-  const hookInput = { ...input, limit: normalizeLimit(input.limit), maxBytes, maxItemBytes };
+  // OpenCode export is a snapshot transport without provider continuation.
+  // Read one bounded snapshot up front, then use Reader position cursors for
+  // small consumer pages. Retrying a one-item export would spend the byte
+  // budget twice on the large instruction-bearing user item.
+  const snapshot = origin === "native" && input.binding?.runtimeType === "opencode_local" && !input.itemId;
+  const hookInput = { ...input, limit: snapshot ? MAX_PAGE_LIMIT : normalizeLimit(input.limit), maxBytes, maxItemBytes };
   let raw: NativeTranscriptReadResult | readonly NativeTranscriptRawItem[] | NativeTranscriptRawItem | null;
   if (input.itemId && hook.readItem) raw = await hook.readItem(hookInput);
   else if (hook.readRange) raw = await hook.readRange(hookInput);
@@ -1043,6 +1048,7 @@ async function readNativeSpan(
     source: origin === "object" ? "native_plus_objects" : "native",
     revision,
     providerRevision: revision,
+    providerPageLimit: hookInput.limit,
     availability,
     completeness,
     limitReached: result.limitReached ?? null,
@@ -1353,7 +1359,8 @@ async function readNativeSources(
     }
     const shouldReadLegacyNow = spanItems.length === 0
       && (isUnavailable(result.availability)
-        || (hasRetainedLegacyFallback && result.completeness === "partial"));
+        || (hasRetainedLegacyFallback && result.completeness === "partial"
+          && !result.limitReached && !result.providerNextCursor));
     if (!explicitLegacySource && !legacyContinuation && allowLegacyFallback && shouldReadLegacyNow) {
       const legacy = await readLegacySource(db, options, {
         orgId: input.orgId,
@@ -1377,6 +1384,7 @@ async function readNativeSources(
       }
     } else if (!explicitLegacySource && !legacyContinuation && allowLegacyFallback
       && hasRetainedLegacyFallback && result.completeness === "partial"
+      && !result.limitReached
       && !result.providerNextCursor) {
       result = {
         ...result,
@@ -1399,7 +1407,7 @@ async function readNativeSources(
     }));
     let source = {
       ...resultWithoutRangeHandling,
-      providerPageLimit: hookInput.limit,
+      providerPageLimit: result.providerPageLimit ?? hookInput.limit,
       // A page-local missing anchor cannot attest completeness. Providers that
       // cannot prove a full-source cutoff keep the fail-closed fallback.
       ...(missingVisibilityBoundary ? {
