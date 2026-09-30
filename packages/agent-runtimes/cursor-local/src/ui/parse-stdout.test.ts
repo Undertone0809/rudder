@@ -1,13 +1,40 @@
 import { describe, expect, it } from "vitest";
 import { parseCursorStdoutLine } from "./parse-stdout.js";
 
-const parse = (update: Record<string, unknown>) => parseCursorStdoutLine(JSON.stringify({
+function parseFrame(frame: Record<string, unknown>) {
+  const entries = parseCursorStdoutLine(JSON.stringify(frame), "now");
+  const params = frame.params as Record<string, unknown>;
+  const update = params.update as Record<string, unknown> | undefined;
+  const preservesFrame = frame.method !== "session/update"
+    || !["agent_message_chunk", "agent_thought_chunk", "user_message_chunk"].includes(String(update?.sessionUpdate));
+  if (preservesFrame && entries.length > 0) {
+    expect(entries[0]).toHaveProperty("cursorAcpEvent");
+  }
+  return entries.map((entry) => {
+    if (["tool_call", "tool_result", "todo_list"].includes(entry.kind)) {
+      expect(entry).toHaveProperty("cursorAcpEvent");
+    }
+    if (!("cursorAcpEvent" in entry)) return entry;
+    const { cursorAcpEvent, ...visible } = entry;
+    if (cursorAcpEvent) {
+      expect(cursorAcpEvent).toEqual({
+        provider: "cursor_agent", transport: "cursor-agent-acp-stdio", method: frame.method,
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+        ...(update ? { updateKind: update.sessionUpdate } : {}),
+        frame,
+      });
+    }
+    return visible;
+  });
+}
+
+const parse = (update: Record<string, unknown>) => parseFrame({
   jsonrpc: "2.0", method: "session/update", params: { sessionId: "session", update },
-}), "now");
+});
 
 describe("Cursor ACP transcript projection", () => {
   it("projects Cursor extension notifications into visible transcript entries", () => {
-    const todos = parseCursorStdoutLine(JSON.stringify({
+    const todos = parseFrame({
       jsonrpc: "2.0", method: "cursor/update_todos", params: {
         toolCallId: "todos-1", merge: true, todos: [
           { id: "1", content: "Inspect", status: "completed" },
@@ -15,17 +42,17 @@ describe("Cursor ACP transcript projection", () => {
           { id: "3", content: "Drop", status: "cancelled" },
         ],
       },
-    }), "now");
-    const task = parseCursorStdoutLine(JSON.stringify({
+    });
+    const task = parseFrame({
       jsonrpc: "2.0", method: "cursor/task", params: {
         description: "Inspect the auth flow", prompt: "Read the auth module", subagentType: "explore", agentId: "agent-1",
       },
-    }), "now");
-    const image = parseCursorStdoutLine(JSON.stringify({
+    });
+    const image = parseFrame({
       jsonrpc: "2.0", method: "cursor/generate_image", params: {
         description: "App icon", filePath: "/tmp/icon.png", referenceImagePaths: ["/tmp/ref.png"],
       },
-    }), "now");
+    });
 
     expect(todos).toEqual([
       { kind: "todo_list", ts: "now", todoListId: "todos-1", items: [
@@ -69,11 +96,11 @@ describe("Cursor ACP transcript projection", () => {
     ]);
   });
 
-  it("keeps one tool lifecycle card while ignoring progress updates", () => {
+  it("keeps one tool lifecycle card while preserving progress updates as native events", () => {
     expect(parse({ sessionUpdate: "tool_call", toolCallId: "call-1", status: "pending", title: "Read", rawInput: { path: "file" } }))
       .toEqual([{ kind: "tool_call", ts: "now", toolUseId: "call-1", name: "Read", input: { path: "file" } }]);
     expect(parse({ sessionUpdate: "tool_call_update", toolCallId: "call-1", status: "in_progress", content: "reading" }))
-      .toEqual([]);
+      .toEqual([{ kind: "system", ts: "now", text: "Cursor tool update: tool (in_progress)" }]);
     expect(parse({ sessionUpdate: "tool_call_update", toolCallId: "call-1", status: "completed", rawOutput: "contents" }))
       .toEqual([{ kind: "tool_result", ts: "now", toolUseId: "call-1", toolName: undefined, content: "contents", isError: false }]);
   });
@@ -84,7 +111,7 @@ describe("Cursor ACP transcript projection", () => {
     expect(parse({ sessionUpdate: "tool_call_update", toolCallId: "call-error", status: "error", content: "provider error" }))
       .toEqual([{ kind: "tool_result", ts: "now", toolUseId: "call-error", toolName: undefined, content: "provider error", isError: true }]);
     expect(parse({ sessionUpdate: "tool_call_update", toolCallId: "call-unknown", status: "unknown", content: "progress" }))
-      .toEqual([]);
+      .toEqual([{ kind: "system", ts: "now", text: "Cursor tool update: tool (unknown)" }]);
   });
 
   it("projects native plans without dropping steps", () => {
