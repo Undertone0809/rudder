@@ -6534,6 +6534,7 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
 
   const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.getSize());
   assert.ok(originalWindowSize, "Agent Terminal resize smoke should find the Desktop window");
+  const originalRendererSize = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
   // At 1280px the navigation breakpoint can give the terminal more space;
   // use a viewport that actually constrains its host after that transition.
   await electronApp.evaluate(({ BrowserWindow }, size) => {
@@ -6566,9 +6567,64 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
     BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
   }, originalWindowSize);
 
+  let previousRestoredLayout = null;
+  let restoredLayoutStableSamples = 0;
+  await waitForSmokeCondition("Agent Terminal restored layout to settle", async () => {
+    const layout = await terminal.evaluate((panel) => {
+      const host = panel.querySelector("[data-testid='terminal-xterm-host']");
+      const screen = panel.querySelector(".xterm-screen");
+      return {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        hostWidth: host?.getBoundingClientRect().width ?? 0,
+        screenWidth: screen?.getBoundingClientRect().width ?? 0,
+      };
+    });
+    const restored = layout.viewportWidth === originalRendererSize.width
+      && layout.viewportHeight === originalRendererSize.height
+      && Math.abs(layout.hostWidth - initialLayout.hostWidth) <= 1
+      && layout.screenWidth >= layout.hostWidth - 32;
+    const unchanged = previousRestoredLayout !== null
+      && Object.keys(layout).every((key) => Math.abs(layout[key] - previousRestoredLayout[key]) <= 1);
+
+    restoredLayoutStableSamples = restored
+      ? unchanged ? restoredLayoutStableSamples + 1 : 1
+      : 0;
+    previousRestoredLayout = restored ? layout : null;
+    return restoredLayoutStableSamples >= 2 ? layout : null;
+  }, { timeoutMs: 15_000, intervalMs: 100 });
+
   const terminalTab = sidePanel.locator('[data-testid="chat-side-panel-tab"][data-side-panel-tab-kind="terminal"]');
+  const terminalCloseButton = sidePanel.getByRole("button", { name: "Close Terminal tab" });
   await terminalTab.hover();
-  await sidePanel.getByRole("button", { name: "Close Terminal tab" }).click();
+  let closeButtonHitTest = null;
+  try {
+    await waitForSmokeCondition("Agent Terminal close button hit target", async () => {
+      closeButtonHitTest = await terminalCloseButton.evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+        const style = getComputedStyle(button);
+        const hitButton = hit?.closest("button") === button;
+        return {
+          ready: button.isConnected
+            && !button.disabled
+            && style.pointerEvents === "auto"
+            && bounds.width > 0
+            && bounds.height > 0
+            && hitButton,
+          pointerEvents: style.pointerEvents,
+          opacity: style.opacity,
+          hitTarget: hit instanceof HTMLElement
+            ? { tagName: hit.tagName, testId: hit.dataset.testid ?? null, ariaLabel: hit.getAttribute("aria-label") }
+            : null,
+        };
+      });
+      return closeButtonHitTest.ready ? closeButtonHitTest : null;
+    }, { timeoutMs: 5_000, intervalMs: 100 });
+  } catch (cause) {
+    throw new Error(`Agent Terminal close button did not receive pointer input after resize settled: ${JSON.stringify(closeButtonHitTest)}`, { cause });
+  }
+  await terminalCloseButton.click();
   await terminal.waitFor({ state: "detached", timeout: 10_000 });
 
   const listingResponse = await fetch(`${baseUrl}/api/orgs/${company.id}/workspace/files?path=agents`);
