@@ -17,6 +17,7 @@ export class FirstChatTurnStore {
   private recoveredByScope = new Map<string, PendingFirstChatTurn>();
   private snapshot: { pending: PendingFirstChatTurn | null; recovery: number; recoveredTurn: PendingFirstChatTurn | null } = { pending: null, recovery: 0, recoveredTurn: null };
   private listeners = new Set<() => void>();
+  getOwner = () => this.owner;
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
