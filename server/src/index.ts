@@ -49,6 +49,7 @@ import {
   createAuthRuntime,
   type LocalAccountAuthOptions,
 } from "./bootstrap/auth-runtime.js";
+import { assertPublicIngressExposure, preparePublicIngressStartup } from "./bootstrap/public-ingress-startup.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
 import {
@@ -400,12 +401,7 @@ async function startServerRuntime(
     process.env.RUDDER_RUNTIME_OWNER_KIND = runtimeOwnerKind;
   }
   const config = mergeRuntimeConfig(loadConfig(), options.runtimeOverrides);
-  if (config.rustPublicIngressMode === "required"
-    && config.deploymentMode === "local_trusted"
-    && !options.localAccountAuth
-    && config.host !== "127.0.0.1" && config.host !== "::1") {
-    throw new Error("Rust public ingress cannot expose an implicit local Board on a non-loopback listener");
-  }
+  assertPublicIngressExposure(config, Boolean(options.localAccountAuth));
   if (process.env.RUDDER_SECRETS_PROVIDER === undefined) {
     process.env.RUDDER_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -1081,17 +1077,7 @@ async function startServerRuntime(
   });
   
   const listenPort = await detectPort(config.port);
-  const rustPublicIngressEnabled = config.rustPublicIngressMode === "required";
-  // The unmigrated server remains a named private authority. There is no
-  // public Node listener or fallback when this explicit topology is selected.
-  const nodeListenHost = rustPublicIngressEnabled ? "127.0.0.1" : config.host;
-  const nodeListenPort = rustPublicIngressEnabled
-    ? await detectPort(listenPort === 65_535 ? 3_101 : listenPort + 1)
-    : listenPort;
-  const ingressAuthorizationKey = rustPublicIngressEnabled ? randomBytes(32).toString("hex") : undefined;
-  const ingressActorKey = rustPublicIngressEnabled
-    ? config.rustFoundationActorEnvelopeKey ?? randomBytes(32).toString("hex")
-    : undefined;
+  const ingress = await preparePublicIngressStartup(config, listenPort);
   const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
   const storageService = createStorageServiceFromConfig(config);
   options.onEvent?.({ stage: "app", message: "Creating Rudder app" });
@@ -1109,15 +1095,7 @@ async function startServerRuntime(
     bindHost: config.host,
     workspacePreviewOrigin: config.workspacePreviewOrigin,
     ...createRudderAppStartupOptions(config, activeDatabaseConnectionString, authReady),
-    ...(rustPublicIngressEnabled ? {
-      rustFoundationActorEnvelopeKey: ingressActorKey,
-      rustPublicIngressAuthKey: ingressAuthorizationKey,
-      rustPublicIngress: {
-        listenAddr: `${config.host.includes(":") ? `[${config.host}]` : config.host}:${listenPort}`,
-        nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
-        authorizationKey: ingressAuthorizationKey!,
-      },
-    } : {}),
+    ...ingress.appOptions,
     mcpDeploymentAllowlists: config.mcpDeploymentAllowlists,
     instanceId,
     localEnv,
@@ -1146,14 +1124,9 @@ async function startServerRuntime(
     logger.warn(`Requested port is busy; using next free port (requestedPort=${config.port}, selectedPort=${listenPort})`);
   }
   
-  const runtimeListenHost = config.host;
-  const runtimeApiHost =
-    runtimeListenHost === "0.0.0.0" || runtimeListenHost === "::"
-      ? "localhost"
-      : runtimeListenHost;
-  process.env.RUDDER_LISTEN_HOST = runtimeListenHost;
+  process.env.RUDDER_LISTEN_HOST = config.host;
   process.env.RUDDER_LISTEN_PORT = String(listenPort);
-  process.env.RUDDER_API_URL = `http://${runtimeApiHost}:${listenPort}`;
+  process.env.RUDDER_API_URL = ingress.publicApiUrl;
   
   const liveEventsRuntime = setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
@@ -1468,19 +1441,8 @@ async function startServerRuntime(
     };
 
     server.once("error", onError);
-    server.listen(nodeListenPort, nodeListenHost, async () => {
+    server.listen(ingress.nodeListenPort, ingress.nodeListenHost, ingress.onListening(appHandle, rejectListen, () => {
       server.off("error", onError);
-      if (rustPublicIngressEnabled) {
-        try {
-          if (!appHandle.waitForPublicIngressReady || !appHandle.publicIngressBaseUrl) {
-            throw new Error("Explicit Rust public ingress did not provide its listener identity");
-          }
-          await appHandle.waitForPublicIngressReady();
-        } catch (error) {
-          rejectListen(error);
-          return;
-        }
-      }
       logger.info(`Server listening on ${config.host}:${listenPort}`);
       const shouldOpenOnListen = options.openOnListen ?? process.env.RUDDER_OPEN_ON_LISTEN === "true";
       if (shouldOpenOnListen) {
@@ -1532,7 +1494,7 @@ async function startServerRuntime(
       }
 
       resolveListen();
-    });
+    }));
   });
   supervisor.own("http-ingress", () => {
     void beginHttpClose();
@@ -1550,7 +1512,7 @@ async function startServerRuntime(
       localEnv,
       pid: process.pid,
       listenPort,
-      apiUrl: process.env.RUDDER_API_URL ?? `http://${runtimeApiHost}:${listenPort}`,
+      apiUrl: process.env.RUDDER_API_URL ?? ingress.publicApiUrl,
       version: serverVersion,
       ownerKind: runtimeOwnerKind,
       startedAt: new Date().toISOString(),
@@ -1603,7 +1565,7 @@ async function startServerRuntime(
     server,
     host: config.host,
     listenPort,
-    apiUrl: process.env.RUDDER_API_URL ?? `http://${runtimeApiHost}:${listenPort}`,
+    apiUrl: process.env.RUDDER_API_URL ?? ingress.publicApiUrl,
     databaseUrl: activeDatabaseConnectionString,
     instancePaths: {
       homeDir: resolveRudderHomeDir(),
