@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use crate::public_ingress_forwarding::{FORWARDING_HEADERS, ForwardingPolicy};
 use actix_web::{
     HttpRequest, HttpResponse,
     http::{
@@ -38,9 +39,6 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
     "upgrade",
 ];
 
-const ORIGINAL_HOST_METADATA_HEADERS: &[&str] =
-    &["forwarded", "x-forwarded-host", "x-original-host"];
-
 // Other x-rudder fields are public protocol inputs: idempotency, agent/run
 // context, Automation signatures and telemetry consent. Their owners must
 // validate them normally after the proxy preserves them.
@@ -61,6 +59,7 @@ pub enum PublicIngressProxyConfigError {
 pub struct PublicIngressProxy {
     upstream_authority: SocketAddr,
     client: Client,
+    forwarding_policy: ForwardingPolicy,
 }
 
 impl PublicIngressProxy {
@@ -106,12 +105,18 @@ impl PublicIngressProxy {
         Ok(Self {
             upstream_authority: SocketAddr::new(ip, port),
             client,
+            forwarding_policy: Default::default(),
         })
     }
 
     /// Returns the validated socket authority used for every upstream connection.
     pub fn upstream_authority(&self) -> SocketAddr {
         self.upstream_authority
+    }
+
+    pub(crate) fn with_forwarding_policy(mut self, policy: ForwardingPolicy) -> Self {
+        self.forwarding_policy = policy;
+        self
     }
 
     /// Forwards one request to the fixed upstream while streaming both body directions.
@@ -122,6 +127,10 @@ impl PublicIngressProxy {
         if is_unsupported_upgrade(request.method(), request.headers()) {
             return proxy_error(StatusCode::NOT_IMPLEMENTED, "upgrade_not_supported");
         }
+        let identity = match self.forwarding_policy.identity(&request) {
+            Ok(identity) => identity,
+            Err(_) => return proxy_error(StatusCode::BAD_REQUEST, "invalid_forwarding_identity"),
+        };
 
         let Some(path_and_query) = request.uri().path_and_query() else {
             return HttpResponse::BadRequest().finish();
@@ -144,6 +153,10 @@ impl PublicIngressProxy {
                     .expect("SocketAddr is a valid Host value")
             }),
         ));
+        outbound = outbound
+            .insert_header(("x-forwarded-for", identity.client_ip.as_str()))
+            .insert_header(("x-real-ip", identity.client_ip.as_str()))
+            .insert_header(("x-forwarded-proto", identity.scheme));
 
         let body = payload.map(|item| item.map_err(|error| io::Error::other(error.to_string())));
         let upstream_response = match tokio::time::timeout(
@@ -208,7 +221,7 @@ fn filtered_headers(headers: &HeaderMap, from_client: bool) -> Vec<(HeaderName, 
             let client_trust = from_client
                 && (is_internal_trust_header(name)
                     || name == header::HOST.as_str()
-                    || ORIGINAL_HOST_METADATA_HEADERS.contains(&name));
+                    || FORWARDING_HEADERS.contains(&name));
             !(nominated.iter().any(|candidate| candidate.as_str() == name)
                 || HOP_BY_HOP_HEADERS.contains(&name)
                 || client_trust)
@@ -283,9 +296,14 @@ mod tests {
 
     fn start_proxy(proxy: PublicIngressProxy, payload_limit: usize) -> RunningServer {
         let upstream = format!("http://{}", proxy.upstream_authority());
+        let forwarding_policy = proxy.forwarding_policy.clone();
         let server = HttpServer::new(move || {
             App::new()
-                .app_data(web::Data::new(PublicIngressProxy::new(&upstream).unwrap()))
+                .app_data(web::Data::new(
+                    PublicIngressProxy::new(&upstream)
+                        .unwrap()
+                        .with_forwarding_policy(forwarding_policy.clone()),
+                ))
                 .app_data(web::PayloadConfig::new(payload_limit))
                 .default_service(web::to(super::proxy_handler))
         })
@@ -484,6 +502,8 @@ mod tests {
         rudder_header: Option<String>,
         nominated_header: Option<String>,
         forwarded_host: Option<String>,
+        forwarded_for: Option<String>,
+        forwarded_proto: Option<String>,
         body_bytes: usize,
     }
 
@@ -522,6 +542,14 @@ mod tests {
                 .get("x-forwarded-host")
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned),
+            forwarded_for: header_text(
+                &request,
+                header::HeaderName::from_static("x-forwarded-for"),
+            ),
+            forwarded_proto: header_text(
+                &request,
+                header::HeaderName::from_static("x-forwarded-proto"),
+            ),
             body_bytes: 0,
         };
         while let Some(chunk) = payload.next().await {
@@ -571,6 +599,8 @@ mod tests {
             .insert_header(("x-rudder-request-id", "client-forgery"))
             .insert_header(("x-rudder-actor-envelope", "client-forgery"))
             .insert_header(("x-forwarded-host", "forged.example.test"))
+            .insert_header(("x-forwarded-for", "198.51.100.99"))
+            .insert_header(("x-forwarded-proto", "https"))
             .send_body("chat-body")
             .await
             .expect("proxy response arrives");
@@ -615,8 +645,60 @@ mod tests {
         assert!(observed.rudder_header.is_none());
         assert!(observed.nominated_header.is_none());
         assert!(observed.forwarded_host.is_none());
+        assert_eq!(observed.forwarded_for.as_deref(), Some("127.0.0.1"));
+        assert_eq!(observed.forwarded_proto.as_deref(), Some("http"));
         assert_eq!(observed.body_bytes, b"chat-body".len());
 
+        stop_server((proxy_address, proxy_handle, proxy_task)).await;
+        stop_server((upstream_address, upstream_handle, upstream_task)).await;
+    }
+
+    #[actix_web::test]
+    async fn trusted_proxy_selects_nearest_client_and_rejects_ambiguous_wire_metadata() {
+        let observed = web::Data::new(Arc::new(Mutex::new(None)));
+        let upstream_observed = observed.clone();
+        let (upstream_address, upstream_handle, upstream_task) = start_server(move |config| {
+            config.app_data(upstream_observed.clone());
+            config.default_service(web::to(observe_request));
+        });
+        let proxy = PublicIngressProxy::new(&format!("http://{upstream_address}"))
+            .unwrap()
+            .with_forwarding_policy(
+                crate::public_ingress_forwarding::ForwardingPolicy::parse("127.0.0.1,192.0.2.1")
+                    .unwrap(),
+            );
+        let (proxy_address, proxy_handle, proxy_task) = start_proxy(proxy, 1024 * 1024);
+        for real_client in ["198.51.100.7", "198.51.100.8"] {
+            let response = client()
+                .get(format!("http://{proxy_address}/auth/callback"))
+                .insert_header((
+                    "x-forwarded-for",
+                    format!("203.0.113.99,{real_client},192.0.2.1"),
+                ))
+                .insert_header(("x-forwarded-proto", "https"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+            let request: ObservedRequest = observed.lock().unwrap().take().unwrap();
+            assert_eq!(request.forwarded_for.as_deref(), Some(real_client));
+            assert_eq!(request.forwarded_proto.as_deref(), Some("https"));
+        }
+        for (chain, scheme) in [
+            ("127.0.0.1", "https"),
+            ("unknown", "https"),
+            ("198.51.100.7", "https,http"),
+        ] {
+            let response = client()
+                .get(format!("http://{proxy_address}/auth/callback"))
+                .insert_header(("x-forwarded-for", chain))
+                .insert_header(("x-forwarded-proto", scheme))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(observed.lock().unwrap().is_none());
+        }
         stop_server((proxy_address, proxy_handle, proxy_task)).await;
         stop_server((upstream_address, upstream_handle, upstream_task)).await;
     }

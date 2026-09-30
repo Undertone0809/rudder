@@ -46,6 +46,7 @@ use tracing::{info, warn};
 
 mod public_ingress;
 mod public_ingress_config;
+mod public_ingress_forwarding;
 pub mod public_ingress_proxy;
 pub mod public_ingress_websocket;
 pub use public_ingress::PublicIngressRuntime;

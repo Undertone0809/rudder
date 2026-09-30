@@ -31,7 +31,7 @@ describe("explicit public ingress startup", () => {
 
   it("separates private ports and authorization keys while preserving an explicit actor signer", async () => {
     vi.mocked(detectPort).mockResolvedValue(3101);
-    const ingress = await preparePublicIngressStartup(config({ rustFoundationActorEnvelopeKey: "existing-actor-signer" }), 3100);
+    const ingress = await preparePublicIngressStartup(config({ rustFoundationActorEnvelopeKey: "existing-actor-signer", rustPublicIngressTrustedProxies: "192.0.2.1,::1" }), 3100);
     expect(ingress.nodeListenHost).toBe("127.0.0.1");
     expect(ingress.nodeListenPort).toBe(3101);
     expect(ingress.appOptions.rustPublicIngress).toMatchObject({ listenAddr: "127.0.0.1:3100", nodeUpstream: "http://127.0.0.1:3101" });
@@ -39,6 +39,7 @@ describe("explicit public ingress startup", () => {
     expect(ingress.appOptions.rustPublicIngressAuthKey).toMatch(/^[a-f0-9]{64}$/);
     expect(ingress.appOptions.rustPublicIngress?.authorizationKey).toBe(ingress.appOptions.rustPublicIngressAuthKey);
     expect(ingress.appOptions.rustPublicIngressAuthKey).not.toBe(ingress.appOptions.rustFoundationActorEnvelopeKey);
+    expect(ingress.appOptions.rustPublicIngress?.trustedProxies).toBe("192.0.2.1,::1");
   });
 
   it("fails closed if private port selection collides with the public port", async () => {

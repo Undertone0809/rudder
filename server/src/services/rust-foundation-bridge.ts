@@ -15,6 +15,8 @@ export type RustPublicIngressOptions = {
   listenAddr: string;
   nodeUpstream: string;
   authorizationKey: string;
+  /** Explicit numeric proxy IP list; Rust validates and owns forwarding trust. */
+  trustedProxies?: string;
 };
 
 export type RustFoundationBridgeOptions = {
@@ -312,6 +314,7 @@ function createFoundationChildEnvironment(input: {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
     } : {}),
   };
 }

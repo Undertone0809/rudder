@@ -214,6 +214,7 @@ describe("rust foundation bridge lifecycle", () => {
       listenAddr: "127.0.0.1:0",
       nodeUpstream: "http://127.0.0.1:3101",
       authorizationKey: "0123456789abcdef0123456789abcdef",
+      trustedProxies: "192.0.2.1,::1",
     };
     const bridge = createBridge(fixture, { mode: "off", publicIngress });
     expect(bridge.requiresStartup).toBe(true);
@@ -224,6 +225,7 @@ describe("rust foundation bridge lifecycle", () => {
       RUDDER_NATIVE_PUBLIC_LISTEN: publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: publicIngress.authorizationKey,
+      RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: publicIngress.trustedProxies,
     });
     await bridge.close();
     expect(bridge.publicIngressBaseUrl).toBeNull();

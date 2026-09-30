@@ -9,6 +9,7 @@ pub struct PublicIngressConfig {
     pub listen_addr: SocketAddr,
     pub(crate) node_upstream: String,
     pub(crate) authorization_key: String,
+    pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
 }
 
 #[derive(Debug, Error)]
@@ -35,7 +36,20 @@ impl PublicIngressConfig {
                         "numeric socket address required",
                     )
                 })?;
+                let trusted = crate::optional_env("RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES")?
+                    .unwrap_or_default();
+                let policy = crate::public_ingress_forwarding::ForwardingPolicy::parse(&trusted)
+                    .map_err(|message| {
+                        crate::ConfigError::invalid(
+                            "RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES",
+                            message,
+                        )
+                    })?;
                 Self::new(listen, &upstream, &key)
+                    .map(|mut config| {
+                        config.forwarding_policy = policy;
+                        config
+                    })
                     .map(Some)
                     .map_err(|error| {
                         crate::ConfigError::invalid(
@@ -86,6 +100,7 @@ impl PublicIngressConfig {
             listen_addr,
             node_upstream: format!("http://{socket}"),
             authorization_key: authorization_key.to_owned(),
+            forwarding_policy: Default::default(),
         })
     }
 

@@ -40,9 +40,11 @@ impl PublicIngressRuntime {
         let http = HttpServer::new(move || {
             // Client state belongs to its Actix worker; no Send/Sync workaround.
             let proxy = PublicIngressProxy::new(&config.node_upstream)
-                .expect("validated fixed loopback upstream");
+                .expect("validated fixed loopback upstream")
+                .with_forwarding_policy(config.forwarding_policy.clone());
             let websocket_proxy = PublicIngressWebSocketProxy::new(proxy.upstream_authority())
-                .expect("validated fixed loopback upstream");
+                .expect("validated fixed loopback upstream")
+                .with_forwarding_policy(config.forwarding_policy.clone());
             App::new()
                 .app_data(data.clone())
                 .app_data(web::Data::new(proxy))
@@ -133,6 +135,14 @@ async fn member_directory(
             .foundation
             .json_error(StatusCode::BAD_REQUEST, "member_directory_body_not_allowed");
     }
+    let identity = match state.config.forwarding_policy.identity(&request) {
+        Ok(identity) => identity,
+        Err(_) => {
+            return state
+                .foundation
+                .json_error(StatusCode::BAD_REQUEST, "invalid_forwarding_identity");
+        }
+    };
     let _permit = match state.foundation.admission.acquire().await {
         Ok(permit) => permit,
         Err(AdmissionError::QueueFull) => {
@@ -168,6 +178,10 @@ async fn member_directory(
             auth = auth.insert_header((name, value.clone()));
         }
     }
+    auth = auth
+        .insert_header(("x-forwarded-for", identity.client_ip.as_str()))
+        .insert_header(("x-real-ip", identity.client_ip.as_str()))
+        .insert_header(("x-forwarded-proto", identity.scheme));
     let mut response = match auth
         .send_json(&serde_json::json!({
             "organizationId": org_id.as_str(), "publicPath": public_path,
@@ -417,6 +431,7 @@ mod tests {
         .await;
         let request = test::TestRequest::get()
             .uri("/api/orgs/10000000-0000-0000-0000-000000000001/members/directory?query=a%2Bb&unused=1")
+            .peer_addr("192.0.2.7:4000".parse().unwrap())
             .insert_header(("host", "public.example:3100"))
             .insert_header(("authorization", "Bearer test-agent"))
             .insert_header((ACTOR_ENVELOPE_HEADER, "untrusted-client-envelope"))
