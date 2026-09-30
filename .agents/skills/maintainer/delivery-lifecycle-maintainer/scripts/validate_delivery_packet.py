@@ -4,13 +4,20 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+ACCEPTANCE_PACKET_FINGERPRINT_METHOD = (
+    "SHA256 jq -cS '.candidate.acceptance_packet | del(.fingerprint)' "
+    "including jq terminal newline"
+)
 STATUSES = {
     "draft",
     "in_progress",
@@ -67,7 +74,82 @@ def receipt_matches(receipt: object, candidate: dict, errors: list[str], name: s
             errors.append(f"receipts.{name}.{key} does not match candidate identity")
 
 
-def validate(packet: dict) -> list[str]:
+def acceptance_packet_fingerprint(
+    acceptance_packet: dict, packet_json: bytes | None = None
+) -> str:
+    if packet_json is None:
+        content = {
+            key: value for key, value in acceptance_packet.items() if key != "fingerprint"
+        }
+        packet_json = json.dumps(
+            {"candidate": {"acceptance_packet": content}},
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    result = subprocess.run(
+        ["jq", "-cS", ".candidate.acceptance_packet | del(.fingerprint)"],
+        input=packet_json,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def check_acceptance_packet_fingerprint(
+    candidate: dict, errors: list[str], packet_json: bytes | None = None
+) -> None:
+    acceptance_packet = candidate.get("acceptance_packet")
+    if not isinstance(acceptance_packet, dict):
+        return
+
+    method_present = "fingerprint_method" in acceptance_packet
+    method = acceptance_packet.get("fingerprint_method")
+    method_valid = not method_present or method == ACCEPTANCE_PACKET_FINGERPRINT_METHOD
+    if not method_valid:
+        errors.append(
+            "candidate.acceptance_packet.fingerprint_method is unsupported or malformed"
+        )
+
+    if "fingerprint" not in acceptance_packet:
+        if method_present:
+            errors.append(
+                "candidate.acceptance_packet.fingerprint_method requires fingerprint"
+            )
+        return
+    fingerprint = acceptance_packet["fingerprint"]
+    if (
+        not method_present
+        and isinstance(fingerprint, str)
+        and fingerprint.startswith("replace-with-")
+    ):
+        return
+    if not isinstance(fingerprint, str) or not SHA256.fullmatch(fingerprint):
+        errors.append(
+            "candidate.acceptance_packet.fingerprint must be a 64-character lowercase SHA-256"
+        )
+        return
+    if not method_valid:
+        return
+
+    try:
+        expected = acceptance_packet_fingerprint(acceptance_packet, packet_json)
+    except FileNotFoundError:
+        errors.append("jq is required to verify candidate.acceptance_packet.fingerprint")
+        return
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError, UnicodeEncodeError):
+        errors.append(
+            "candidate.acceptance_packet cannot be canonicalized as jq -cS JSON"
+        )
+        return
+    if fingerprint != expected:
+        errors.append(
+            "candidate.acceptance_packet.fingerprint does not match its canonical contents"
+        )
+
+
+def validate(packet: dict, packet_json: bytes | None = None) -> list[str]:
     errors: list[str] = []
     for path in ("schema_version", "delivery_id", "status", "owner.root_id", "owner.agent_id", "intent.raw_request", "candidate.source_ref", "candidate.source_sha", "candidate.dirty_fingerprint", "candidate.build.id", "candidate.build.source_sha", "candidate.runtime.id", "candidate.runtime.source_sha", "candidate.organization_data.data_id", "candidate.acceptance_packet.version", "candidate.acceptance_packet.criteria", "candidate.acceptance_packet.state_inventory", "integration.target_ref", "integration.base_sha", "integration.remote_ref", "integration.observed_remote_sha", "integration.patch_tree_sha", "integration.expected_old_sha", "preservation.checked"):
         require(packet, path, errors)
@@ -80,6 +162,7 @@ def validate(packet: dict) -> list[str]:
     if not isinstance(candidate, dict):
         errors.append("candidate must be an object")
         candidate = {}
+    check_acceptance_packet_fingerprint(candidate, errors, packet_json)
     for path in ("source_sha", "build.source_sha", "runtime.source_sha"):
         check_sha(get(candidate, *path.split(".")), f"candidate.{path}", errors)
     source_sha = candidate.get("source_sha")
@@ -168,14 +251,15 @@ def main() -> int:
     parser.add_argument("packet", type=Path)
     args = parser.parse_args()
     try:
-        packet = json.loads(args.packet.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        packet_json = args.packet.read_bytes()
+        packet = json.loads(packet_json)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(f"INVALID: cannot read JSON packet: {exc}", file=sys.stderr)
         return 2
     if not isinstance(packet, dict):
         print("INVALID: packet root must be an object", file=sys.stderr)
         return 2
-    errors = validate(packet)
+    errors = validate(packet, packet_json)
     if errors:
         print("INVALID")
         for error in errors:

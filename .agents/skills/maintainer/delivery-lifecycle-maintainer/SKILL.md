@@ -69,6 +69,19 @@ The packet must identify:
 - preserved unrelated dirty paths plus index/worktree fingerprints; and
 - a terminal `delivered_ref` receipt with timestamp, ref, SHA, tree, and proof.
 
+Acceptance-packet fingerprints are optional for legacy packets. When
+`candidate.acceptance_packet.fingerprint` is a real 64-character lowercase
+SHA-256, validate it over the bytes emitted by invoking
+`jq -cS '.candidate.acceptance_packet | del(.fingerprint)'`, including jq's
+terminal newline. jq is required for this check; if it is unavailable,
+validation fails closed. The optional
+`candidate.acceptance_packet.fingerprint_method` declaration, when present,
+must equal `SHA256 jq -cS '.candidate.acceptance_packet | del(.fingerprint)' including jq terminal newline`.
+Only `fingerprint` is removed from the hash input, so a declared method is part
+of the fingerprinted content. Missing fingerprints and existing
+`replace-with-...` placeholders remain valid; malformed real fingerprints,
+unsupported method declarations, and content mismatches fail validation.
+
 Use stable hashes or explicit `unknown`/`not_applicable` values in ordinary
 identity fields. SHA-typed fields are stricter: write a verified 40-character
 lowercase SHA, or keep the template's `replace-with-...-sha` placeholder and

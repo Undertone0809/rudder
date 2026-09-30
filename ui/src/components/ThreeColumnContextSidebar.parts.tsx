@@ -87,7 +87,9 @@ export function ContextColumnHeader({
         {children ?? (
           <>
             <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
-            <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
+            {description ? (
+              <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
+            ) : null}
           </>
         )}
       </div>
@@ -108,7 +110,7 @@ export function ContextColumnHeader({
 
 export function resolveContextColumnHeader(relativePath: string): { title: string; description: string } {
   if (/^\/issues(?:\/|$)/.test(relativePath) || /^\/linear(?:\/|$)/.test(relativePath)) {
-    return { title: "Issues", description: "Views and project slices" };
+    return { title: "Issues", description: "" };
   }
   if (/^\/chat(?:\/|$)/.test(relativePath)) {
     return { title: "Chats", description: "Recent conversations" };
