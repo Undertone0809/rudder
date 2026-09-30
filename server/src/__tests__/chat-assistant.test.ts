@@ -2609,7 +2609,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
   it("uses provider-aware model fallbacks for the selected chat agent runtime", async () => {
     const primaryAdapter = {
       ...mockAdapter,
-      type: "gemini_local",
+      type: "openclaw_gateway",
       execute: vi.fn(),
     };
     const fallbackAdapter = {
@@ -2633,23 +2633,23 @@ describe("chatAssistantService operator profile prompt injection", () => {
     mockFindServerAdapter.mockImplementation((agentRuntimeType: string) =>
       agentRuntimeType === "claude_local"
         ? fallbackAdapter
-        : agentRuntimeType === "gemini_local"
+        : agentRuntimeType === "openclaw_gateway"
           ? primaryAdapter
           : mockAdapter,
     );
     mockAgentService.getInternalById.mockResolvedValueOnce({
       id: "agent-1",
       orgId: "organization-1",
-      name: "Gemini Specialist",
+      name: "OpenClaw Specialist",
       status: "idle",
-      agentRuntimeType: "gemini_local",
-      agentRuntimeConfig: { model: "gemini-primary" },
+      agentRuntimeType: "openclaw_gateway",
+      agentRuntimeConfig: { model: "google/gemini-primary" },
       metadata: null,
     });
     mockRunContextService.prepareRuntimeConfig.mockResolvedValueOnce({
-      resolvedConfig: { model: "gemini-primary", modelFallbacks },
+      resolvedConfig: { model: "google/gemini-primary", modelFallbacks },
       runtimeConfig: {
-        model: "gemini-primary",
+        model: "google/gemini-primary",
         modelFallbacks,
         rudderSkillSync: { desiredSkills: [] },
         paperclipSkillSync: { desiredSkills: [] },
@@ -2672,8 +2672,8 @@ describe("chatAssistantService operator profile prompt injection", () => {
       conversation: makeConversation({
         chatRuntime: {
           ...makeConversation().chatRuntime!,
-          agentRuntimeType: "gemini_local",
-          model: "gemini-primary",
+          agentRuntimeType: "openclaw_gateway",
+          model: "google/gemini-primary",
         },
       }),
       messages: makeMessages(),

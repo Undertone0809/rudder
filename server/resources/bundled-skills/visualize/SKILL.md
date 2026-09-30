@@ -17,7 +17,7 @@ access, so design for a useful first render with declarative HTML, SVG, and CSS.
 2. Use an inline visual for charts, timelines, comparisons, spatial layouts,
    static scenario views, or compact reports that benefit from custom geometry.
 3. Use the v1 message envelope only in Rudder Chat. It is a Rudder protocol,
-   independent of Codex, Claude, Gemini, Cursor, OpenCode, Pi, Hermes, process,
+   independent of Codex, Claude, Cursor, OpenCode, Pi, Hermes, process,
    HTTP, or gateway filesystem conventions.
 4. Outside Rudder Chat, fall back to Mermaid, Markdown tables, or concise prose.
    Do not emit a Rudder envelope on a surface that cannot render it.

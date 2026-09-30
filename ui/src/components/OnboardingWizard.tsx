@@ -9,7 +9,6 @@ import {
   DEFAULT_CODEX_LOCAL_SEARCH
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import {
   AGENT_RUN_CONCURRENCY_DEFAULT,
   type AgentRuntimeEnvironmentTestResult,
@@ -23,7 +22,6 @@ import {
   Building2,
   ChevronDown,
   Code,
-  Gem,
   Loader2,
   MousePointer2,
   Sparkles,
@@ -319,7 +317,6 @@ export function OnboardingWizard() {
   const isLocalAdapter =
     agentRuntimeType === "claude_local" ||
     agentRuntimeType === "codex_local" ||
-    agentRuntimeType === "gemini_local" ||
     agentRuntimeType === "opencode_local" ||
     agentRuntimeType === "pi_local" ||
     agentRuntimeType === "cursor";
@@ -327,8 +324,6 @@ export function OnboardingWizard() {
     command.trim() ||
     (agentRuntimeType === "codex_local"
       ? "codex"
-      : agentRuntimeType === "gemini_local"
-        ? "gemini"
       : agentRuntimeType === "pi_local"
       ? "pi"
       : agentRuntimeType === "cursor"
@@ -474,8 +469,6 @@ export function OnboardingWizard() {
       model:
         agentRuntimeType === "codex_local"
           ? model || DEFAULT_CODEX_LOCAL_MODEL
-          : agentRuntimeType === "gemini_local"
-            ? model || DEFAULT_GEMINI_LOCAL_MODEL
           : agentRuntimeType === "cursor"
           ? model || DEFAULT_CURSOR_LOCAL_MODEL
           : model,
@@ -964,12 +957,6 @@ export function OnboardingWizard() {
                       <div className="grid grid-cols-2 gap-2 mt-2">
                         {[
                           {
-                            value: "gemini_local" as const,
-                            label: "Gemini CLI",
-                            icon: Gem,
-                            desc: "Local Gemini agent"
-                          },
-                          {
                             value: "opencode_local" as const,
                             label: "OpenCode",
                             icon: OpenCodeLogoIcon,
@@ -1019,7 +1006,6 @@ export function OnboardingWizard() {
                     )} </div>
                   {(agentRuntimeType === "claude_local" ||
                     agentRuntimeType === "codex_local" ||
-                    agentRuntimeType === "gemini_local" ||
                     agentRuntimeType === "opencode_local" ||
                     agentRuntimeType === "pi_local" ||
                     agentRuntimeType === "cursor") && (

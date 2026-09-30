@@ -9,7 +9,6 @@ export default defineConfig({
       "packages/agent-runtimes/claude-local",
       "packages/agent-runtimes/codex-local",
       "packages/agent-runtimes/cursor-local",
-      "packages/agent-runtimes/gemini-local",
       "packages/agent-runtimes/hermes-gateway",
       "packages/agent-runtimes/opencode-local",
       "packages/agent-runtimes/openclaw-gateway",

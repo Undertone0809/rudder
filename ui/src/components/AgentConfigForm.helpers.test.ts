@@ -151,7 +151,7 @@ describe("AgentConfigForm runtime defaults", () => {
     expect(shouldShowThinkingEffort("cursor", "auto")).toBe(false);
   });
 
-  it.each(["gemini_local", "openclaw_gateway", "process", "http"])(
+  it.each(["openclaw_gateway", "process", "http"])(
     "does not render an unsupported reasoning selector for %s",
     (runtimeType) => {
       expect(shouldShowThinkingEffort(runtimeType)).toBe(false);
@@ -221,8 +221,6 @@ describe("AgentConfigForm runtime defaults", () => {
       .toBe('opencode run --format json --model opencode/deepseek-v4-flash-free "Respond with hello."');
     expect(runtimeManualProbeCommand("codex_local", "codex", "gpt-5.1-codex-mini"))
       .toContain("--dangerously-bypass-approvals-and-sandbox");
-    expect(runtimeManualProbeCommand("gemini_local", "gemini", "gemini-3-flash-preview"))
-      .toContain("--approval-mode yolo --skip-trust");
     expect(runtimeManualProbeCommand("cursor", "cursor-agent", "auto"))
       .toBe('cursor-agent --trust -p --mode ask --output-format json "Respond with hello."');
     expect(runtimeManualProbeCommand("claude_local", "claude", "claude-sonnet-4-6"))
@@ -320,11 +318,11 @@ describe("AgentConfigForm runtime chain ordering", () => {
             },
           },
           {
-            agentRuntimeType: "gemini_local",
-            model: "gemini-fallback",
+            agentRuntimeType: "opencode_local",
+            model: "google/gemini-fallback",
             config: {
-              model: "gemini-fallback",
-              approvalMode: "yolo",
+              model: "google/gemini-fallback",
+              variant: "high",
             },
           },
         ],
@@ -337,11 +335,11 @@ describe("AgentConfigForm runtime chain ordering", () => {
       "primary",
     );
 
-    expect(reordered.primary.agentRuntimeType).toBe("gemini_local");
-    expect(reordered.primary.model).toBe("gemini-fallback");
+    expect(reordered.primary.agentRuntimeType).toBe("opencode_local");
+    expect(reordered.primary.model).toBe("google/gemini-fallback");
     expect(reordered.primary.config).toMatchObject({
-      model: "gemini-fallback",
-      approvalMode: "yolo",
+      model: "google/gemini-fallback",
+      variant: "high",
     });
     expect(reordered.fallbacks).toEqual([
       {

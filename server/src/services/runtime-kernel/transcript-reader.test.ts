@@ -1,3 +1,4 @@
+import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { describe, expect, it, vi } from "vitest";
 import {
   createLegacyTranscriptReader,
@@ -440,6 +441,60 @@ describe("transcript reader", () => {
       text: "durable",
       sourceEntryId: "42",
     }]);
+  });
+
+  it("semantically decodes a successful historical Gemini CLI Run without registering an executable parser", async () => {
+    const ts = "2026-09-30T00:00:00.000Z";
+    const records = [
+      { type: "message", role: "user", content: "private user input" },
+      { type: "user", message: "raw private user input" },
+      { type: "thinking", text: "Checking the project" },
+      { type: "tool_call", subtype: "started", call_id: "call-1", tool_call: { read_file: { args: { path: "README.md" } } } },
+      { type: "tool_call", subtype: "completed", call_id: "call-1", tool_call: { read_file: { result: "file contents" } } },
+      { type: "message", role: "assistant", content: "The project is ready." },
+      { type: "result", status: "success", result: "The project is ready." },
+    ];
+    const log = records.map((record) => JSON.stringify({
+      ts,
+      stream: "stdout",
+      chunk: `${JSON.stringify(record)}\n`,
+    })).join("\n");
+    const fixture = makeUtf8LogStore(Buffer.from(log));
+    const reader = createLegacyTranscriptReader({ logStore: fixture.store });
+
+    const result = await reader.readRun({
+      readonly: true,
+      run: {
+        id: "successful-gemini-history",
+        status: "succeeded",
+        logStore: "local_file",
+        logRef: "run.ndjson",
+        logCompressed: false,
+        startedAt: new Date(ts),
+        createdAt: new Date(ts),
+        resultJson: null,
+        contextSnapshot: null,
+      } as never,
+      runtimeType: "gemini_local",
+      events: [],
+    });
+
+    const entries: readonly TranscriptEntry[] = Array.isArray(result)
+      ? result as readonly TranscriptEntry[]
+      : (result as { entries: readonly TranscriptEntry[] }).entries;
+    expect(entries.map((entry) => entry.kind)).toEqual([
+      "thinking", "tool_call", "tool_result", "assistant", "result",
+    ]);
+    expect(entries).toEqual(expect.arrayContaining([
+      { kind: "thinking", ts, text: "Checking the project" },
+      { kind: "tool_call", ts, name: "read_file", input: { path: "README.md" } },
+      { kind: "tool_result", ts, toolUseId: "call-1", content: "file contents", isError: false },
+      { kind: "assistant", ts, text: "The project is ready." },
+      expect.objectContaining({ kind: "result", text: "The project is ready.", isError: false }),
+    ]));
+    expect(JSON.stringify(entries)).not.toContain("private user input");
+    expect(JSON.stringify(entries)).not.toContain("raw private user input");
+    expect(fixture.read).toHaveBeenCalled();
   });
 
   it("prefers native history and returns a scope-bound stable cursor", async () => {

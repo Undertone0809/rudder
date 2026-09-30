@@ -12,7 +12,6 @@ related_code:
   - packages/agent-runtimes/claude-local/src/server/execute.ts
   - packages/agent-runtimes/codex-local/src/server/execute.ts
   - packages/agent-runtimes/cursor-local/src/server/execute.ts
-  - packages/agent-runtimes/gemini-local/src/server/execute.ts
   - packages/agent-runtimes/opencode-local/src/server/execute.ts
   - packages/agent-runtimes/pi-local/src/server/execute.ts
   - server/src/services/agent-run-context.ts
@@ -30,7 +29,6 @@ related_tests:
   - server/src/__tests__/codex-local-execute.test.ts
   - server/src/__tests__/claude-local-execute.test.ts
   - server/src/__tests__/cursor-local-execute.test.ts
-  - server/src/__tests__/gemini-local-execute.test.ts
   - server/src/__tests__/opencode-local-execute.test.ts
   - server/src/__tests__/pi-local-execute.test.ts
 related_plans:
@@ -147,7 +145,7 @@ prevents transport recovery from changing Issue ownership or lifecycle.
 - Heartbeat execution loads instructions before invoking the agent runtime.
 - Chat assistant runs build scene context for the chat scene and invoke the
   adapter with the same shared instruction loading utility.
-- Runtime adapters for Claude, Codex, Cursor, Gemini, OpenCode, and Pi call
+- Runtime adapters for Claude, Codex, Cursor, OpenCode, and Pi call
   `prepareAgentInstructionRuntimeContext` and
   `loadAgentInstructionsPrefix`.
 - `instructionsFilePath` chooses the agent-owned entry instruction file.
@@ -183,8 +181,8 @@ prevents transport recovery from changing Issue ownership or lifecycle.
    resolved config, then mapped to their stable installed sources as runtime
    skill entries in the adapter config. The shared preparation path ensures a
    missing legacy installation once at actual run startup; metadata-only Chat
-   descriptors do not perform that work. Claude, Codex, Cursor, Gemini,
-   OpenCode, and Pi all receive this same resolved installed set as input and
+   descriptors do not perform that work. Claude, Codex, Cursor, OpenCode, and
+   Pi all receive this same resolved installed set as input and
    must not add
    provider-native, operator-home, project, global, or adapter-home skills that
    Rudder did not resolve as enabled or always-enabled for the invocation.
@@ -264,8 +262,8 @@ prevents transport recovery from changing Issue ownership or lifecycle.
    delivery mechanism. Codex-style stdin prompts append bootstrap prompt,
    session handoff markdown, and the selected heartbeat/chat prompt after the
    instruction prefix. Claude writes the loaded prefix to an appended system
-   prompt file. Cursor, Gemini, OpenCode, and Pi use the shared loaded prefix
-   while preserving their adapter-specific command invocation.
+   prompt file. Cursor, OpenCode, and Pi use the shared loaded prefix while
+   preserving their adapter-specific command invocation.
 
 11. The adapter reports metadata before provider execution. Rudder persists or
    emits command notes, prompt metrics, loaded/realized skills, the sanitized
@@ -438,7 +436,6 @@ through Rudder APIs, but the auth injection is separate from prompt text.
 | Claude local | Writes the loaded prefix and Rudder enabled-skill boundary to an appended system prompt file | Provider receives the appended system prompt plus bootstrap/session/wake prompt through Claude Code invocation | Claude Code may advertise built-in provider-native skills in its own init metadata; Rudder keeps those out of loaded skill metadata and tells the agent to answer Rudder skill questions from the Rudder enabled-skill boundary |
 | Codex local | Prepends the loaded prefix to the stdin prompt | Prefix, optional bootstrap prompt, optional session handoff markdown, then selected wake/chat prompt | Codex CLI can also auto-apply repo-scoped `AGENTS.md` from the current workspace; Rudder records this as a command note and does not suppress it |
 | Cursor local | Pipes the prompt through stdin | Prefix, optional bootstrap prompt, optional session handoff markdown, runtime env note, then selected wake/chat prompt | Command notes record stdin transport and auto-trust flags when applied |
-| Gemini local | Sends the full prompt through the Gemini `--prompt` argument | Prefix, optional bootstrap prompt, optional session handoff markdown, Rudder env note, API access note, then selected wake/chat prompt | Prompt metrics include `runtimeNoteChars` for the env/API notes |
 | OpenCode local | Sends the full prompt to `opencode run` stdin | Prefix, selected skill prompt, optional bootstrap prompt, optional session handoff markdown, then selected wake/chat prompt | `selectedSkillPrompt` is runtime-specific skill guidance and sits after the shared instruction prefix |
 | Pi local | Renders the loaded prefix into a system prompt extension | System prompt extension contains prefix plus "Continue your Rudder work"; user prompt contains optional bootstrap prompt, optional session handoff markdown, then selected wake prompt | Pi keeps system prompt extension and user wake prompt separate |
 
@@ -678,7 +675,6 @@ Related code:
 - `packages/agent-runtimes/claude-local/src/server/execute.ts`
 - `packages/agent-runtimes/codex-local/src/server/execute.ts`
 - `packages/agent-runtimes/cursor-local/src/server/execute.ts`
-- `packages/agent-runtimes/gemini-local/src/server/execute.ts`
 - `packages/agent-runtimes/opencode-local/src/server/execute.ts`
 - `packages/agent-runtimes/pi-local/src/server/execute.ts`
 - `server/src/services/agent-run-context.ts`
@@ -699,7 +695,6 @@ Related tests:
 - `server/src/__tests__/codex-local-execute.test.ts`
 - `server/src/__tests__/claude-local-execute.test.ts`
 - `server/src/__tests__/cursor-local-execute.test.ts`
-- `server/src/__tests__/gemini-local-execute.test.ts`
 - `server/src/__tests__/opencode-local-execute.test.ts`
 - `server/src/__tests__/pi-local-execute.test.ts`
 

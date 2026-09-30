@@ -135,7 +135,7 @@ export function RuntimeAdvancedOptions({
 
 /* ---- Internal sub-components ---- */
 
-export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local", "pi_local", "cursor"]);
+export const ENABLED_ADAPTER_TYPES = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
 const HIDDEN_ADAPTER_MENU_TYPES = new Set(["process", "http"]);
 const AVAILABILITY_GROUP_LABELS = {
   available: "Ready on this machine",

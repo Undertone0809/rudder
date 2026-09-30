@@ -15,7 +15,7 @@ import { formatDateTime } from "../lib/utils";
 type JoinType = "human" | "agent";
 const joinAdapterOptions: AgentRuntimeType[] = [...AGENT_RUNTIME_TYPES];
 
-const ENABLED_INVITE_ADAPTERS = new Set(["claude_local", "codex_local", "gemini_local", "opencode_local", "pi_local", "cursor"]);
+const ENABLED_INVITE_ADAPTERS = new Set(["claude_local", "codex_local", "opencode_local", "pi_local", "cursor"]);
 
 function dateTime(value: string) {
   return formatDateTime(value);

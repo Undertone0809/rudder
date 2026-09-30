@@ -12,7 +12,6 @@ import {
   withCodexLocalModelDefaults,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-opencode-local/server";
 import { ensurePiModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-pi-local/server";
 import type { Db } from "@rudderhq/db";
@@ -276,7 +275,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
     claude_local: "instructionsFilePath",
     codex_local: "instructionsFilePath",
-    gemini_local: "instructionsFilePath",
     opencode_local: "instructionsFilePath",
     cursor: "instructionsFilePath",
     pi_local: "instructionsFilePath",
@@ -866,10 +864,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       }
       return ensureGatewayDeviceKey(agentRuntimeType, next);
     }
-    if (agentRuntimeType === "gemini_local" && !asNonEmptyString(next.model)) {
-      next.model = DEFAULT_GEMINI_LOCAL_MODEL;
-      return ensureGatewayDeviceKey(agentRuntimeType, next);
-    }
     // OpenCode requires explicit model selection — no default
     if (agentRuntimeType === "cursor" && !asNonEmptyString(next.model)) {
       next.model = DEFAULT_CURSOR_LOCAL_MODEL;
@@ -1214,6 +1208,41 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     );
     const snapshot = await buildAgentSkillSnapshot(agent, runtimeConfig);
     res.json(snapshot);
+  });
+
+  router.get("/agents/:id/skills/file", async (req, res) => {
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    await assertCanReadAgent(req, agent);
+
+    const selectionKey = typeof req.query.selectionKey === "string"
+      ? req.query.selectionKey.trim()
+      : "";
+    const relativePath = typeof req.query.path === "string" ? req.query.path : "";
+    if (!selectionKey || !relativePath) {
+      res.status(400).json({ error: "Skill selection and relative file path are required" });
+      return;
+    }
+
+    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
+      agent.orgId,
+      agent.agentRuntimeConfig,
+    );
+    const file = await organizationSkills.readAgentSkillFile(
+      agent,
+      runtimeConfig,
+      selectionKey,
+      relativePath,
+    );
+    if (!file) {
+      res.status(404).json({ error: "Agent Skill file not found" });
+      return;
+    }
+    res.json(file);
   });
 
   router.get("/agents/:id/skills/analytics", async (req, res) => {

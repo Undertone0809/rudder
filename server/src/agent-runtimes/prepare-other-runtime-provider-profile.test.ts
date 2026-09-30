@@ -323,7 +323,7 @@ describe("other runtime provider profile preparation", () => {
 
     const legacy = { command: "not-run", providerVersion: "legacy" };
     await expect(prepareOtherRuntimeProviderProfile({
-      runtimeType: "gemini_local",
+      runtimeType: "claude_local",
       orgId: "org",
       agentId: "agent",
       config: legacy,

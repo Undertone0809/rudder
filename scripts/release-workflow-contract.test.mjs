@@ -133,6 +133,11 @@ describe("unified delivery workflows", () => {
       .toBeLessThan(desktop.indexOf("pnpm desktop:dist"));
   });
 
+  it("pins npm release package-count checks to the current 14-package map", () => {
+    expect(releaseWorkflow.match(/test "\$\(wc -l < "\$package_map" \| xargs\)" = "14"/gu)).toHaveLength(3);
+    expect(releaseWorkflow).toContain('test "$(wc -l < dist/npm-payloads/manifest.tsv | xargs)" = "14"');
+  });
+
   it("publishes only frozen run artifacts without dispatching or rebuilding Desktop", () => {
     const npmCandidate = workflowJob(releaseWorkflow, "npm-candidate");
     const desktopCandidate = workflowJob(releaseWorkflow, "desktop-candidate");

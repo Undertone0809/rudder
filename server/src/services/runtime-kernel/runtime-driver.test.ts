@@ -197,7 +197,7 @@ describe("runtime driver facade", () => {
   });
 
   it("rejects non-native runtimes at the direct factory boundary", () => {
-    for (const runtimeType of ["gemini_local", "openclaw_gateway", "hermes_local", "process", "http"]) {
+    for (const runtimeType of ["openclaw_gateway", "hermes_local", "process", "http"]) {
       expect(() => createRuntimeDriver(runtimeType)).toThrow(
         `Runtime type is not supported by the native chat driver: ${runtimeType}`,
       );

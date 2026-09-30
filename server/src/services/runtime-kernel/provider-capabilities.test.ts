@@ -128,7 +128,7 @@ describe("provider capability package contract", () => {
   });
 
   it("does not register provider capabilities for non-native runtimes", () => {
-    const nonNativeRuntimeTypes = ["gemini_local", "openclaw_gateway", "hermes_local", "process", "http"];
+    const nonNativeRuntimeTypes = ["openclaw_gateway", "hermes_local", "process", "http"];
     const registeredRuntimeTypes = REGISTERED_RUNTIME_PROVIDER_CAPABILITY_ADAPTERS.map((adapter) => adapter.runtimeType);
 
     for (const runtimeType of nonNativeRuntimeTypes) {
@@ -148,7 +148,7 @@ describe("provider capability package contract", () => {
     });
     expect(resolver("opencode_local", binding)).toBeNull();
     expect(resolver("pi_local", binding)).toBeNull();
-    for (const runtimeType of ["gemini_local", "openclaw_gateway", "hermes_local", "process", "http"]) {
+    for (const runtimeType of ["openclaw_gateway", "hermes_local", "process", "http"]) {
       expect(resolver(runtimeType, binding)).toBeNull();
     }
   });

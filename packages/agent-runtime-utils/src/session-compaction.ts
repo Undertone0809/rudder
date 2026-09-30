@@ -40,7 +40,6 @@ export const LEGACY_SESSIONED_AGENT_RUNTIME_TYPES = new Set([
   "claude_local",
   "codex_local",
   "cursor",
-  "gemini_local",
   "opencode_local",
   "pi_local",
 ]);
@@ -57,11 +56,6 @@ export const AGENT_RUNTIME_SESSION_MANAGEMENT: Record<string, AgentRuntimeSessio
     defaultSessionCompaction: RUNTIME_MANAGED_SESSION_POLICY,
   },
   cursor: {
-    supportsSessionResume: true,
-    nativeContextManagement: "unknown",
-    defaultSessionCompaction: DEFAULT_SESSION_COMPACTION_POLICY,
-  },
-  gemini_local: {
     supportsSessionResume: true,
     nativeContextManagement: "unknown",
     defaultSessionCompaction: DEFAULT_SESSION_COMPACTION_POLICY,

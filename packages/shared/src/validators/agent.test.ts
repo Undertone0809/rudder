@@ -68,6 +68,18 @@ describe("agent permission validation", () => {
   });
 });
 
+describe("agent runtime validation", () => {
+  it("rejects the removed Gemini CLI runtime for create and update requests", () => {
+    expect(() => createAgentSchema.parse({
+      name: "Builder",
+      agentRuntimeType: "gemini_local",
+    })).toThrow();
+    expect(() => updateAgentSchema.parse({
+      agentRuntimeType: "gemini_local",
+    })).toThrow();
+  });
+});
+
 describe("agent intelligence seeding validation", () => {
   it("allows organization intelligence seeding only on direct agent creation", () => {
     expect(

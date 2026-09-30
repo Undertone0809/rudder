@@ -2,7 +2,7 @@ import {
   redactTranscriptEntryPaths,
   type TranscriptEntry,
 } from "@rudderhq/agent-runtime-utils";
-import { buildTranscript, getTranscriptParser } from "@rudderhq/run-intelligence-core";
+import { buildTranscript, getHistoricalTranscriptParser } from "@rudderhq/run-intelligence-core";
 import type { RunLogHandle, RunLogReadResult, RunLogStore } from "../run-log-store.js";
 import type { HeartbeatRunRecord, TranscriptReadLimit } from "./transcript-reader.contracts.js";
 import { isoDate } from "./transcript-reader.normalize.js";
@@ -65,7 +65,7 @@ export async function readLegacyLogPage(
   },
 ): Promise<LegacyLogPage> {
   const fallbackTs = isoDate(input.run.startedAt ?? input.run.createdAt);
-  const parser = getTranscriptParser(input.runtimeType);
+  const parser = getHistoricalTranscriptParser(input.runtimeType);
   const entries: TranscriptEntry[] = [];
   const replayOffsets: number[] = [];
   let skipRemaining = input.skipEntries;

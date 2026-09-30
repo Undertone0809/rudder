@@ -10,7 +10,7 @@ export async function createE2EChatAgent(
     icon?: string | null;
     command?: string;
     model?: string;
-    agentRuntimeType?: "process" | "http" | "claude_local" | "codex_local" | "gemini_local" | "opencode_local" | "pi_local" | "cursor" | "openclaw_gateway" | "hermes_local";
+    agentRuntimeType?: "process" | "http" | "claude_local" | "codex_local" | "opencode_local" | "pi_local" | "cursor" | "openclaw_gateway" | "hermes_local";
     agentRuntimeConfig?: Record<string, unknown>;
   } = {},
 ) {

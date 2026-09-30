@@ -1155,6 +1155,7 @@ export const defaultSessionCodec: AgentRuntimeSessionCodec = {
 };
 
 export function getAgentRuntimeSessionCodec(agentRuntimeType: string) {
+  if (agentRuntimeType === "gemini_local") return defaultSessionCodec;
   const adapter = getServerAdapter(agentRuntimeType);
   return adapter.sessionCodec ?? defaultSessionCodec;
 }

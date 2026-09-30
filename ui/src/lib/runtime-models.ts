@@ -1,7 +1,6 @@
 import { models as claudeLocalModels } from "@rudderhq/agent-runtime-claude-local";
 import { models as codexLocalModels } from "@rudderhq/agent-runtime-codex-local";
 import { models as cursorLocalModels } from "@rudderhq/agent-runtime-cursor-local";
-import { models as geminiLocalModels } from "@rudderhq/agent-runtime-gemini-local";
 import type { AgentRuntimeEnvironmentTestResult } from "@rudderhq/shared";
 import type { AgentRuntimeModel } from "../api/agents";
 
@@ -9,7 +8,6 @@ const FALLBACK_MODELS_BY_RUNTIME: Record<string, readonly AgentRuntimeModel[]> =
   claude_local: claudeLocalModels,
   codex_local: codexLocalModels,
   cursor: cursorLocalModels,
-  gemini_local: geminiLocalModels,
 };
 
 export const PROVIDER_MODEL_RUNTIME_TYPES = ["opencode_local", "pi_local"] as const;
@@ -122,9 +120,6 @@ export function runtimeManualProbeCommand(agentRuntimeType: string, command: str
   if (agentRuntimeType === "codex_local") {
     return `${executable} exec --dangerously-bypass-approvals-and-sandbox --json "Respond with hello."`;
   }
-  if (agentRuntimeType === "gemini_local") {
-    return `${executable} -p "Respond with hello." --approval-mode yolo --skip-trust --output-format json`;
-  }
   if (agentRuntimeType === "opencode_local") {
     const modelArg = model.trim() ? ` --model ${model.trim()}` : "";
     return `${executable} run --format json${modelArg} "Respond with hello."`;
@@ -144,7 +139,6 @@ export function runtimeAuthRecoveryHint(agentRuntimeType: string, model: string)
   }
   if (agentRuntimeType === "cursor") return "If auth fails, set CURSOR_API_KEY in env or run cursor-agent login.";
   if (agentRuntimeType === "codex_local") return "If auth fails, run codex login or configure the OpenAI credentials Codex already uses locally.";
-  if (agentRuntimeType === "gemini_local") return "If auth fails, set GEMINI_API_KEY in env or run gemini auth.";
   if (agentRuntimeType === "opencode_local") return "If auth fails, run opencode auth login or set the provider API key in env.";
   if (agentRuntimeType === "pi_local" && provider === "deepseek") {
     return "If auth fails, set DEEPSEEK_API_KEY for native Pi DeepSeek or run pi /login. If Pi asks for openrouter, set OPENROUTER_API_KEY or add a native DeepSeek provider/model in ~/.pi/agent/models.json.";

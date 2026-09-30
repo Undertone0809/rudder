@@ -324,7 +324,6 @@ contracts:
       - packages/agent-runtimes/claude-local/src/server/execute.ts
       - packages/agent-runtimes/codex-local/src/server/execute.ts
       - packages/agent-runtimes/cursor-local/src/server/execute.ts
-      - packages/agent-runtimes/gemini-local/src/server/execute.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
       - packages/agent-runtimes/pi-local/src/server/execute.ts
       - server/src/services/agent-run-context.ts
@@ -343,7 +342,6 @@ contracts:
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/cursor-local-execute.test.ts
-      - server/src/__tests__/gemini-local-execute.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
       - server/src/__tests__/pi-local-execute.test.ts
     related_plans:
@@ -612,7 +610,6 @@ contracts:
       - packages/agent-runtimes/codex-local/src/server/codex-home.ts
       - packages/agent-runtimes/codex-local/src/server/execute.ts
       - packages/agent-runtimes/cursor-local/src/server/execute.ts
-      - packages/agent-runtimes/gemini-local/src/server/execute.ts
       - packages/agent-runtimes/opencode-local/src/server/execute.ts
       - packages/agent-runtimes/pi-local/src/server/execute.ts
       - server/src/services/agent-run-context.ts
@@ -635,7 +632,6 @@ contracts:
       - server/src/__tests__/codex-local-execute.test.ts
       - server/src/__tests__/claude-local-execute.test.ts
       - server/src/__tests__/cursor-local-execute.test.ts
-      - server/src/__tests__/gemini-local-execute.test.ts
       - server/src/__tests__/opencode-local-execute.test.ts
       - server/src/__tests__/pi-local-execute.test.ts
       - server/src/__tests__/managed-workspace-preflight.test.ts
@@ -856,7 +852,6 @@ contracts:
       - server/src/__tests__/organization-skills-prune.test.ts
       - packages/agent-runtime-utils/src/server-utils.test.ts
       - server/src/__tests__/cursor-local-skill-sync.test.ts
-      - server/src/__tests__/gemini-local-skill-sync.test.ts
       - server/src/__tests__/opencode-local-skill-sync.test.ts
       - server/src/__tests__/pi-local-skill-sync.test.ts
       - desktop/scripts/smoke.mjs

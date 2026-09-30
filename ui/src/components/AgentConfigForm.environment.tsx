@@ -194,7 +194,7 @@ export function RuntimeProviderCard({
       ? queryKeys.agents.adapterModels(selectedOrganizationId, runtimeType)
       : ["agents", "none", "adapter-models", runtimeType],
     queryFn: () => agentsApi.adapterModels(selectedOrganizationId!, runtimeType),
-    enabled: Boolean(selectedOrganizationId),
+    enabled: Boolean(selectedOrganizationId) && runtimeType !== "gemini_local",
   });
   const models = useMemo(
     () => resolveRuntimeModels(runtimeType, fetchedModels, externalModels),
@@ -273,6 +273,11 @@ export function RuntimeProviderCard({
             </button>
           ) : null}
           <div className="truncate text-sm font-medium">{title}</div>
+          {runtimeType === "gemini_local" ? (
+            <span className="shrink-0 rounded border border-amber-400/50 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+              Unsupported
+            </span>
+          ) : null}
           <RuntimeEnvironmentStatusBadge status={environmentStatus} />
         </div>
         {onRemove ? (
@@ -300,70 +305,83 @@ export function RuntimeProviderCard({
             />
           </Field>
         )}
-        <ModelDropdown
-          label="Model"
-          hint={help.model}
-          models={models}
-          value={model}
-          onChange={(nextModel) => {
-            const clearThinkingEffort = shouldClearThinkingEffortOnModelChange(nextModel);
-            onModelChange(nextModel, clearThinkingEffort);
-          }}
-          open={modelOpen}
-          onOpenChange={setModelOpen}
-          allowDefault={!requiresProviderModel && !onRemove}
-          required={requiresProviderModel || Boolean(onRemove)}
-          groupByProvider={requiresProviderModel}
-          preserveModelOrder={runtimeType === "codex_local"}
-          emptyLabel={runtimeModelEmptyLabel(runtimeType, Boolean(onRemove))}
-          searchPlaceholder={runtimeModelSearchPlaceholder(runtimeType)}
-          emptyMessage={runtimeModelEmptyMessage(runtimeType)}
-          allowCustom
-          triggerTestId={triggerTestId}
-          disabled={disabled}
-        />
-        {showThinkingEffort && (
+        {runtimeType === "gemini_local" ? (
+          <div
+            role="alert"
+            className="rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+          >
+            Gemini CLI runtime support has been removed. {hideRuntimeType
+              ? "Open Agent settings and choose a supported runtime to reconfigure this Agent."
+              : "Choose a supported runtime above to reconfigure this Agent."} Existing settings remain unchanged until you save.
+          </div>
+        ) : (
           <>
-            <ThinkingEffortDropdown
-              value={currentThinkingEffort}
-              options={thinkingEffortOptions}
-              label={thinkingEffortLabelForRuntime(runtimeType)}
-              onChange={updateThinkingEffort}
-              open={thinkingEffortOpen}
-              onOpenChange={setThinkingEffortOpen}
+            <ModelDropdown
+              label="Model"
+              hint={help.model}
+              models={models}
+              value={model}
+              onChange={(nextModel) => {
+                const clearThinkingEffort = shouldClearThinkingEffortOnModelChange(nextModel);
+                onModelChange(nextModel, clearThinkingEffort);
+              }}
+              open={modelOpen}
+              onOpenChange={setModelOpen}
+              allowDefault={!requiresProviderModel && !onRemove}
+              required={requiresProviderModel || Boolean(onRemove)}
+              groupByProvider={requiresProviderModel}
+              preserveModelOrder={runtimeType === "codex_local"}
+              emptyLabel={runtimeModelEmptyLabel(runtimeType, Boolean(onRemove))}
+              searchPlaceholder={runtimeModelSearchPlaceholder(runtimeType)}
+              emptyMessage={runtimeModelEmptyMessage(runtimeType)}
+              allowCustom
+              triggerTestId={triggerTestId}
               disabled={disabled}
             />
-          </>
-        )}
-        {runtimeType === "cursor" ? (
-          <Field label="Execution mode" hint={help.cursorMode}>
-            <select
-              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
-              value={currentCursorMode}
-              onChange={(event) => updateCursorMode(event.target.value)}
+            {showThinkingEffort && (
+              <>
+                <ThinkingEffortDropdown
+                  value={currentThinkingEffort}
+                  options={thinkingEffortOptions}
+                  label={thinkingEffortLabelForRuntime(runtimeType)}
+                  onChange={updateThinkingEffort}
+                  open={thinkingEffortOpen}
+                  onOpenChange={setThinkingEffortOpen}
+                  disabled={disabled}
+                />
+              </>
+            )}
+            {runtimeType === "cursor" ? (
+              <Field label="Execution mode" hint={help.cursorMode}>
+                <select
+                  className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+                  value={currentCursorMode}
+                  onChange={(event) => updateCursorMode(event.target.value)}
+                  disabled={disabled}
+                >
+                  <option value="">Runtime default</option>
+                  <option value="plan">Plan</option>
+                  <option value="ask">Ask</option>
+                </select>
+              </Field>
+            ) : null}
+            <CollapsibleSection
+              title="Advanced options"
+              bordered
+              open={advancedOpen}
+              onToggle={() => setAdvancedOpen(!advancedOpen)}
               disabled={disabled}
             >
-              <option value="">Runtime default</option>
-              <option value="plan">Plan</option>
-              <option value="ask">Ask</option>
-            </select>
-          </Field>
-        ) : null}
-        <CollapsibleSection
-          title="Advanced options"
-          bordered
-          open={advancedOpen}
-          onToggle={() => setAdvancedOpen(!advancedOpen)}
-          disabled={disabled}
-        >
-          <RuntimeAdvancedOptions
-            runtimeType={runtimeType}
-            adapter={adapter}
-            fieldProps={adapterFieldProps}
-            availableSecrets={availableSecrets}
-            onCreateSecret={onCreateSecret}
-          />
-        </CollapsibleSection>
+              <RuntimeAdvancedOptions
+                runtimeType={runtimeType}
+                adapter={adapter}
+                fieldProps={adapterFieldProps}
+                availableSecrets={availableSecrets}
+                onCreateSecret={onCreateSecret}
+              />
+            </CollapsibleSection>
+          </>
+        )}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import type { HeartbeatRun, HeartbeatRunEvent, RunSummary, RunSummaryPage } from
 import { diagnoseRun } from "../diagnosis.js";
 import { getTranscriptParser } from "../parsers.js";
 import { buildTranscript, parseNdjsonLog } from "../transcript.js";
+import { getHistoricalTranscriptParser } from "../parsers.js";
 import type { ObservedRunDetail, RunDiagnosis, RunDiagnosisMode, RunExportRow } from "../types.js";
 
 class RudderApiError extends Error {
@@ -323,7 +324,7 @@ function buildObservedTranscript(input: {
   agentRuntimeType: string;
 }) {
   const logChunks = parseNdjsonLog(input.logContent);
-  const transcript = buildTranscript(logChunks, getTranscriptParser(input.agentRuntimeType));
+  const transcript = buildTranscript(logChunks, getHistoricalTranscriptParser(input.agentRuntimeType));
   return {
     logChunks,
     transcript: transcript.length > 0 ? transcript : buildTranscriptFromEvents(input.events ?? []),

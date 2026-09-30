@@ -442,11 +442,11 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(fallbackConfig).not.toHaveProperty("rudderBrowserCapability");
   });
 
-  it("projects an instance-eligible Browser onto a supported fallback from an unsupported primary runtime", async () => {
+  it("projects an instance-eligible Browser onto a supported fallback from a browser-ineligible primary runtime", async () => {
     const primaryAdapter: ServerAgentRuntimeModule = {
-      type: "gemini_local",
+      type: "openclaw_gateway",
       testEnvironment: vi.fn(),
-      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "gemini unavailable" })),
+      execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "gateway unavailable" })),
     };
     const fallbackAdapter: ServerAgentRuntimeModule = {
       type: "codex_local",
@@ -464,7 +464,7 @@ describe("executeAdapterWithModelFallbacks", () => {
       source: "/tmp/rudder-docs",
     };
     const ctx = baseContext({
-      model: "gemini-primary",
+      model: "primary-model",
       rudderBrowserEnabled: false,
       rudderBrowserCapability: {
         instanceEligible: true,
@@ -476,7 +476,7 @@ describe("executeAdapterWithModelFallbacks", () => {
       paperclipRuntimeSkills: [rudderSkill],
       modelFallbacks: [{ agentRuntimeType: "codex_local", model: "gpt-backup" }],
     });
-    ctx.agent = { ...ctx.agent, agentRuntimeType: "gemini_local" };
+    ctx.agent = { ...ctx.agent, agentRuntimeType: "openclaw_gateway" };
 
     await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
       resolveAdapter: (agentRuntimeType) => agentRuntimeType === "codex_local" ? fallbackAdapter : null,
@@ -503,14 +503,14 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(fallbackConfig).not.toHaveProperty("rudderBrowserCapability");
   });
 
-  it("removes Browser skill and tools when a fallback switches to an unsupported runtime", async () => {
+  it("removes Browser skill and tools when a fallback switches to a browser-ineligible runtime", async () => {
     const primaryAdapter: ServerAgentRuntimeModule = {
       type: "codex_local",
       testEnvironment: vi.fn(),
       execute: vi.fn(async () => result({ exitCode: 1, errorMessage: "codex unavailable" })),
     };
     const fallbackAdapter: ServerAgentRuntimeModule = {
-      type: "gemini_local",
+      type: "openclaw_gateway",
       testEnvironment: vi.fn(),
       execute: vi.fn(async (ctx) => result({ model: String(ctx.config.model) })),
     };
@@ -537,11 +537,11 @@ describe("executeAdapterWithModelFallbacks", () => {
         { key: "bundled:rudder/browser", runtimeName: "browser", source: "/tmp/browser" },
         { key: "bundled:rudder/rudder-docs", runtimeName: "rudder-docs", source: "/tmp/rudder-docs" },
       ],
-      modelFallbacks: [{ agentRuntimeType: "gemini_local", model: "gemini-backup" }],
+      modelFallbacks: [{ agentRuntimeType: "openclaw_gateway", model: "gateway-backup" }],
     });
 
     await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
-      resolveAdapter: (agentRuntimeType) => agentRuntimeType === "gemini_local" ? fallbackAdapter : null,
+      resolveAdapter: (agentRuntimeType) => agentRuntimeType === "openclaw_gateway" ? fallbackAdapter : null,
       createAuthToken: (agentRuntimeType) => `token:${agentRuntimeType}`,
     });
 
@@ -722,7 +722,7 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(adapter.execute).toHaveBeenCalledOnce();
   });
 
-  it.each(["gemini_local", "openclaw_gateway"])(
+  it.each(["openclaw_gateway"])(
     "keeps unsupported %s attempts on their existing adapter fallback",
     async (runtimeType) => {
       const adapter: ServerAgentRuntimeModule = {
@@ -743,16 +743,16 @@ describe("executeAdapterWithModelFallbacks", () => {
     },
   );
 
-  it("falls back from a native driver attempt to the Gemini adapter", async () => {
+  it("falls back from a native driver attempt to the OpenClaw adapter", async () => {
     const primaryAdapter: ServerAgentRuntimeModule = {
       type: "codex_local",
       testEnvironment: vi.fn(),
       execute: vi.fn(async () => result({ model: "adapter-bypass" })),
     };
     const fallbackAdapter: ServerAgentRuntimeModule = {
-      type: "gemini_local",
+      type: "openclaw_gateway",
       testEnvironment: vi.fn(),
-      execute: vi.fn(async () => result({ model: "gemini-fallback" })),
+      execute: vi.fn(async () => result({ model: "gateway-fallback" })),
     };
     const driver = {
       resume: vi.fn(() => ({
@@ -768,16 +768,16 @@ describe("executeAdapterWithModelFallbacks", () => {
     } as any;
     const ctx = baseContext({
       model: "gpt-primary",
-      modelFallbacks: [{ agentRuntimeType: "gemini_local", model: "gemini-fallback" }],
+      modelFallbacks: [{ agentRuntimeType: "openclaw_gateway", model: "gateway-fallback" }],
     });
 
     const executed = await executeAdapterWithModelFallbacks(primaryAdapter, ctx, {
-      resolveAdapter: (runtimeType) => runtimeType === "gemini_local" ? fallbackAdapter : null,
+      resolveAdapter: (runtimeType) => runtimeType === "openclaw_gateway" ? fallbackAdapter : null,
       resolveDriver: (runtimeType) => runtimeType === "codex_local" ? driver : null,
       executeThroughDriver: true,
     });
 
-    expect(executed.model).toBe("gemini-fallback");
+    expect(executed.model).toBe("gateway-fallback");
     expect(driver.execute).toHaveBeenCalledTimes(1);
     expect(primaryAdapter.execute).not.toHaveBeenCalled();
     expect(fallbackAdapter.execute).toHaveBeenCalledTimes(1);
