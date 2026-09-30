@@ -123,6 +123,8 @@ class InvalidQueueDeliveryActionLinkError extends Error {}
 
 export type { ChatServerQueueClaim } from "./chats.types.js";
 
+import { createConversationUserStateInitializer } from "./chats.user-state-initialization.js";
+
 export function chatService(db: Db, storage?: StorageService) {
   const generationProtocol = chatGenerationProtocolService(db);
   const QUEUED_MESSAGE_CLAIM_LEASE_MS = 2 * 60 * 1000;
@@ -134,28 +136,7 @@ export function chatService(db: Db, storage?: StorageService) {
   const addUserChatMessage = createChatAnnotationMessagePersistence(db, getMessage);
   const getUserMessageMutationByClientMutationId = createChatMessageMutationLookup(db, getMessage);
 
-  async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
-    if (rows.length === 0) return;
-    const now = new Date();
-    await db.transaction(async (tx) => {
-      // A listing snapshot can outlive a concurrent deletion. Keep surviving
-      // parent rows locked through initialization instead of swallowing FK errors.
-      const parents = await tx.select({ id: chatConversations.id, orgId: chatConversations.orgId }).from(chatConversations)
-        .where(or(...rows.map((row) => and(
-          eq(chatConversations.orgId, row.orgId), eq(chatConversations.id, row.id),
-        )))).orderBy(asc(chatConversations.id)).for("key share");
-      const parentIds = new Set(parents.map((row) => `${row.orgId}:${row.id}`));
-      const survivingRows = rows.filter((row) => parentIds.has(`${row.orgId}:${row.id}`));
-      if (!survivingRows.length) return;
-      await tx.insert(chatConversationUserStates).values(survivingRows.map((row) => ({
-        orgId: row.orgId,
-        conversationId: row.id,
-        userId,
-        lastReadAt: row.lastMessageAt ?? row.updatedAt ?? row.createdAt,
-        updatedAt: now,
-      }))).onConflictDoNothing();
-    });
-  }
+  const ensureConversationUserStates = createConversationUserStateInitializer(db);
 
   async function listConversationUserStates(orgId: string, userId: string, conversationIds: string[]) {
     if (conversationIds.length === 0) return new Map<string, ConversationUserStateRow>();
