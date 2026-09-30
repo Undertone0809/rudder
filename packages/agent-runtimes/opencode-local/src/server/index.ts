@@ -36,6 +36,7 @@ const PROVIDER_SESSION_FIELDS = [
   "profileOrgId",
   "hostId",
   "profileId",
+  "openCodeProfileDataId",
   "capabilityRevision",
   "transport",
   "serverUrl",
