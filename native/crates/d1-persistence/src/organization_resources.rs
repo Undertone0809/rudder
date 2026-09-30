@@ -9,6 +9,25 @@ use sqlx::{PgPool, Row};
 const RECEIPT_FORMAT: i32 = 1;
 const MAX_COMMAND_BYTES: usize = transaction::MAX_RESULT_BYTES / 2;
 
+/// A new inline resource belongs to the same Rust creation transaction.
+/// Provision after the canonical insert so the scope guard can validate it.
+pub(crate) async fn provision_new_resource_state(
+    tx: &mut transaction::Tx<'_>,
+    organization_id: &str,
+    resource_id: &str,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO organization_resource_mutation_state
+          (resource_id, org_id, owner, fence_epoch)
+         VALUES ($1::uuid, $2::uuid, 'rust', 1)",
+    )
+    .bind(resource_id)
+    .bind(organization_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PatchField<T> {
     Unset,
@@ -135,8 +154,13 @@ async fn apply(
     }
 
     let authority = lock_resource_authority(tx, organization_id, resource_id).await?;
-    let rust_project_attached =
-        lock_attached_project_owners(tx, organization_id, resource_id).await?;
+    let rust_project_attached = lock_attached_project_owners(
+        tx,
+        organization_id,
+        resource_id,
+        command.operation == OrganizationResourceOperation::Delete,
+    )
+    .await?;
     if authority.owner != "rust" && !rust_project_attached {
         return Err(StoreError::NotOwned);
     }
@@ -530,6 +554,7 @@ async fn lock_attached_project_owners(
     tx: &mut transaction::Tx<'_>,
     organization_id: &str,
     resource_id: &str,
+    bump_versions: bool,
 ) -> Result<bool, StoreError> {
     let attachment_count = sqlx::query_scalar::<_, i64>(
         "SELECT count(*) FROM project_resource_attachments WHERE org_id=$1::uuid AND resource_id=$2::uuid",
@@ -539,7 +564,8 @@ async fn lock_attached_project_owners(
     .fetch_one(&mut **tx)
     .await?;
     let rows = sqlx::query(
-        "SELECT a.project_id::text AS project_id, p.org_id::text AS project_org_id, s.owner
+        "SELECT a.project_id::text AS project_id, p.org_id::text AS project_org_id,
+                s.owner, s.mutation_version, s.fence_epoch, s.fence_token::text AS fence_token
          FROM project_resource_attachments a
          JOIN projects p ON p.id=a.project_id
          JOIN project_goal_mutation_state s ON s.project_id=a.project_id AND s.org_id=a.org_id
@@ -560,10 +586,39 @@ async fn lock_attached_project_owners(
         if project_org != organization_id {
             return Err(StoreError::NotFound);
         }
-        match row.try_get::<String, _>("owner")?.as_str() {
+        let owner: String = row.try_get("owner")?;
+        match owner.as_str() {
             "node" => {}
             "rust" => rust_owned = true,
             _ => return Err(StoreError::InvalidReceipt),
+        }
+        let version = transaction::unsigned(row.try_get("mutation_version")?)?;
+        let epoch = transaction::unsigned(row.try_get("fence_epoch")?)?;
+        let token: String = row.try_get("fence_token")?;
+        transaction::uuid(&token)?;
+        if owner == "rust" && epoch == 0 {
+            return Err(StoreError::StaleFence);
+        }
+        if bump_versions {
+            let next = version.checked_add(1).ok_or(StoreError::VersionRange)?;
+            let updated = sqlx::query(
+                "UPDATE project_goal_mutation_state
+                 SET mutation_version=$3, updated_at=now()
+                 WHERE project_id=$1::uuid AND org_id=$2::uuid
+                   AND owner=$4 AND mutation_version=$5 AND fence_epoch=$6 AND fence_token=$7::uuid",
+            )
+            .bind(row.try_get::<String, _>("project_id")?)
+            .bind(organization_id)
+            .bind(transaction::signed(next)?)
+            .bind(&owner)
+            .bind(transaction::signed(version)?)
+            .bind(transaction::signed(epoch)?)
+            .bind(&token)
+            .execute(&mut **tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::StaleFence);
+            }
         }
     }
     Ok(rust_owned)

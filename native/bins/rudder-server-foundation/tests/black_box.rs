@@ -3565,6 +3565,15 @@ INSERT INTO project_goals (project_id, goal_id, org_id) VALUES
 "#;
 
 const PROJECT_CREATE_FIXTURE_SQL: &str = r#"
+CREATE TABLE organization_resource_mutation_state (
+  resource_id uuid PRIMARY KEY,
+  org_id uuid NOT NULL,
+  owner text NOT NULL DEFAULT 'node',
+  mutation_version bigint NOT NULL DEFAULT 0,
+  fence_epoch bigint NOT NULL DEFAULT 0,
+  fence_token uuid NOT NULL DEFAULT gen_random_uuid(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 ALTER TABLE projects
   ADD COLUMN name text NOT NULL DEFAULT 'Fixture Project',
   ADD COLUMN description text,
