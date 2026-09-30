@@ -1059,7 +1059,8 @@ export function chatAgentRunService(db: Db, options: {
       noteFenceResult(run.id, rejected);
       if (!rejected.ok) throw new Error(`Unified Chat Run ${run.id} submission admission rejected: ${rejected.reason}`);
     } else if (input.submissionPhase === "accepted") {
-      const accepted = await unifiedRunAdapter.acceptSubmission(run.id, current.fence, {
+      const accepted = await unifiedRunAdapter.reconcileAcceptance(run.id, current.fence, {
+        state: "accepted",
         providerThreadId: input.providerThreadId,
         providerTurnId: input.providerTurnId,
       });

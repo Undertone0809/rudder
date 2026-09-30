@@ -535,6 +535,51 @@ describe("Chat native fallback Attempt persistence", () => {
     await runs.finalizeRun(run.id, { status: "failed", error: "Provider acceptance is unknown" });
   });
 
+  it("reconciles trusted acceptance before finishing a result after the dispatch checkpoint", async () => {
+    const { run, runs } = await createRunFixture("Chat accepted submission reconciliation");
+    const persistence = createHeartbeatUnifiedAgentRunAdapter(db);
+    await runs.beginRuntimeAttempt(run, {
+      attemptIndex: 0,
+      fallbackIndex: null,
+      runtimeType: "codex_local",
+      model: "primary-model",
+      isFallback: false,
+      resumeSource: "fresh",
+    });
+    await expect(runs.markAcceptanceUnknown(run, {
+      phase: "indeterminate",
+      reason: "native provider dispatch starting",
+    })).resolves.toMatchObject({ state: "acceptance_unknown" });
+
+    await runs.finishRuntimeAttempt(run, {
+      status: "failed",
+      submissionPhase: "accepted",
+      providerThreadId: "thread-confirmed",
+      providerTurnId: "turn-confirmed",
+      error: "Codex turn failed after provider acceptance",
+    });
+
+    const finishedAttempt = await persistence.get(run.id);
+    expect(finishedAttempt?.attempt).toMatchObject({
+      status: "failed",
+      submission: {
+        state: "accepted",
+        phase: "accepted",
+        retry: "not_allowed",
+        providerThreadId: "thread-confirmed",
+        providerTurnId: "turn-confirmed",
+      },
+    });
+    await runs.finalizeRun(run.id, {
+      status: "failed",
+      error: "Codex turn failed after provider acceptance",
+    });
+    await expect(persistence.get(run.id)).resolves.toMatchObject({
+      status: "failed",
+      attempt: { submission: { state: "accepted", retry: "not_allowed" } },
+    });
+  });
+
   it("does not start another fallback when a provider throws after dispatch checkpoint", async () => {
     const { run, runs, orgId, conversationId } = await createRunFixture("Chat thrown provider dispatch");
     const driver = {
