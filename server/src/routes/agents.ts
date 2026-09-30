@@ -26,17 +26,11 @@ import {
   isUuidLike,
   organizationSkillCreateSchema,
   resetAgentSessionSchema,
-  RUDDER_AGENT_V1_MCP_SERVER_NAME,
-  RUDDER_BROWSER_MCP_SERVER_NAME,
-  RUDDER_BROWSER_MCP_TOOL_NAMES,
-  RUDDER_CORE_MCP_TOOL_NAMES,
   testAgentRuntimeEnvironmentSchema,
   updateAgentIntegrationSettingsSchema,
   updateCustomIntegrationBindingSchema,
-  type AgentBrowserToolSummary,
   type AgentIntegrationProviderRegion,
   type AgentIntegrationSetupSession,
-  type AgentRudderToolSummary,
   type AgentSkillAnalytics,
   type AgentSkillSnapshot,
   type InstanceSchedulerHeartbeatAgent
@@ -92,6 +86,7 @@ import {
 import { feishuIntegrationUserBindingService } from "../services/integrations/feishu/user-bindings.js";
 import type { StorageService } from "../storage/types.js";
 import { registerAgentManagementRoutes } from "./agents.management-routes.js";
+import { buildAgentRudderTools } from "./agents.rudder-tools.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo } from "./authz.js";
 
 const AGENT_AVATAR_CONTENT_TYPES = new Set([
@@ -164,37 +159,6 @@ function requestBaseUrl(req: Request) {
 
 function normalizeFeishuProviderRegion(value: unknown): AgentIntegrationProviderRegion {
   return value === "lark_global" ? "lark_global" : "feishu_cn";
-}
-
-function buildAgentRudderTools(browserAvailable: boolean): Array<AgentRudderToolSummary | AgentBrowserToolSummary> {
-  return [
-    {
-      id: RUDDER_AGENT_V1_MCP_SERVER_NAME,
-      displayName: "Rudder MCP tools",
-      kind: "rudder_mcp",
-      status: "available",
-      scope: "runtime",
-      serverName: RUDDER_AGENT_V1_MCP_SERVER_NAME,
-      contract: "agent-v1",
-      toolCount: RUDDER_CORE_MCP_TOOL_NAMES.length,
-      tools: [...RUDDER_CORE_MCP_TOOL_NAMES],
-      authMode: "runtime_managed",
-      cliFallbackAvailable: true,
-    },
-    {
-      id: RUDDER_BROWSER_MCP_SERVER_NAME,
-      displayName: "Rudder Browser",
-      kind: "rudder_browser_mcp",
-      status: browserAvailable ? "available" : "disabled",
-      scope: "runtime",
-      serverName: RUDDER_BROWSER_MCP_SERVER_NAME,
-      contract: "browser-v1",
-      toolCount: browserAvailable ? RUDDER_BROWSER_MCP_TOOL_NAMES.length : 0,
-      tools: browserAvailable ? [...RUDDER_BROWSER_MCP_TOOL_NAMES] : [],
-      authMode: "runtime_managed",
-      cliFallbackAvailable: false,
-    },
-  ];
 }
 
 const FEISHU_SUGGESTED_BOT_NAME_MAX_LENGTH = 32;

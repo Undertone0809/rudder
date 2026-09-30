@@ -135,6 +135,27 @@ export function sha256JsonDigest(value: unknown): string {
   return createHash("sha256").update(serialized, "utf8").digest("hex");
 }
 
+export function legacyAdmissionFingerprintMatches(
+  fingerprint: string,
+  admission: ReturnType<typeof normalizePersistenceAdmission>,
+) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fingerprint);
+  } catch {
+    return false;
+  }
+  const stored = asRecord(parsed);
+  if (!stored) return false;
+  return sha256JsonDigest(stored) === sha256JsonDigest({
+    scene: admission.scene,
+    target: admission.target,
+    runtimeType: admission.runtimeType,
+    model: admission.model,
+    sessionIntent: admission.sessionIntent,
+  });
+}
+
 function admissionIdentityDigestInput(input: {
   agentId: string;
   runtimeBindingId: string | null;

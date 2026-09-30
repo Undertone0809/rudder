@@ -19,7 +19,6 @@ import {
   type RunSkillEvidenceType,
 } from "@rudderhq/run-intelligence-core";
 import {
-  isUuidLike,
   shortRefFor,
   summarizeTokenUsage,
   toAgentRunOrigin,
@@ -38,7 +37,7 @@ import {
   sanitizeRuntimeProviderProfileSnapshot,
 } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
 import { createHistoricalCodexTranscriptReaderHook } from "../agent-runtimes/verify-codex-transcript-profile.js";
-import { badRequest, notFound } from "../errors.js";
+import { notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
 import { heartbeatService } from "./heartbeat.js";
@@ -50,6 +49,7 @@ import {
   sideChatVisibilityCondition,
   type RunIntelligenceAccessScope
 } from "./run-intelligence-access.js";
+import { decodeRunEventCursor, decodeRunSummaryCursor, encodeRunEventCursor, encodeRunSummaryCursor } from "./run-intelligence-cursors.js";
 import {
   MAX_DIAGNOSTIC_TRANSCRIPT_BYTES,
   MAX_DIAGNOSTIC_TRANSCRIPT_PAGE_BYTES,
@@ -252,16 +252,6 @@ export interface ListRunSummariesInput extends ListObservedRunsInput {
   cursor?: string | null;
 }
 
-interface RunSummaryCursor {
-  createdAt: string;
-  id: string;
-}
-
-interface RunEventCursor {
-  seq: number;
-  id: number;
-}
-
 type SummaryRunRow = {
   id: string;
   orgId: string;
@@ -298,53 +288,6 @@ type SummaryRunRow = {
   usageModel: string | null;
 };
 
-function encodeRunSummaryCursor(row: Pick<SummaryRunRow, "createdAt" | "id">) {
-  return Buffer.from(JSON.stringify({
-    createdAt: row.createdAt.toISOString(),
-    id: row.id,
-  } satisfies RunSummaryCursor), "utf8").toString("base64url");
-}
-
-function decodeRunSummaryCursor(value: string): { createdAt: Date; id: string } {
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RunSummaryCursor>;
-    const createdAt = typeof parsed.createdAt === "string" ? new Date(parsed.createdAt) : null;
-    if (
-      !createdAt
-      || Number.isNaN(createdAt.getTime())
-      || typeof parsed.id !== "string"
-      || !isUuidLike(parsed.id)
-    ) {
-      throw new Error("invalid cursor payload");
-    }
-    return { createdAt, id: parsed.id };
-  } catch {
-    throw badRequest("Invalid run summary cursor.");
-  }
-}
-
-function encodeRunEventCursor(row: Pick<HeartbeatRunEvent, "seq" | "id">) {
-  return Buffer.from(JSON.stringify({ seq: row.seq, id: row.id } satisfies RunEventCursor), "utf8").toString("base64url");
-}
-
-function decodeRunEventCursor(value: string): RunEventCursor {
-  try {
-    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<RunEventCursor>;
-    if (
-      typeof parsed.seq !== "number"
-      || !Number.isSafeInteger(parsed.seq)
-      || parsed.seq < 0
-      || typeof parsed.id !== "number"
-      || !Number.isSafeInteger(parsed.id)
-      || parsed.id < 0
-    ) {
-      throw new Error("invalid cursor payload");
-    }
-    return { seq: parsed.seq, id: parsed.id };
-  } catch {
-    throw badRequest("Invalid run event cursor.");
-  }
-}
 
 function clipSummaryText(value: string | null, maxLength = 500) {
   if (!value) return null;
