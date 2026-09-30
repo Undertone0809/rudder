@@ -144,9 +144,7 @@ function ContextColumnHeader({
         {children ?? (
           <>
             <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
-            {description ? (
-              <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p>
-            ) : null}
+            {description ? <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{description}</p> : null}
           </>
         )}
       </div>
