@@ -12,6 +12,7 @@ import type {
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -63,6 +64,15 @@ export type PiTranscriptResult = {
   source: "native";
   availability: "available" | "offline" | "missing" | "incompatible";
   completeness: "complete" | "partial" | "unknown";
+  visibilityCutoffHandled?: string;
+  limitReached?: { reason: "page_bytes" | "item_bytes" | "total_bytes" | "total_items"; maximum: number } | null;
+  rangeHandled?: {
+    startItemId?: string;
+    endItemId?: string;
+    exclusiveStartItemId?: string;
+    throughInclusiveItemId?: string;
+    beforeItemId?: string;
+  };
 };
 
 export type PiForkRequest = {
@@ -94,9 +104,37 @@ export class PiNativeCapabilityError extends Error {
   }
 }
 
+type PiTranscriptIndexLimit = { reason: "total_bytes" | "total_items"; maximum: number };
+
+class PiTranscriptIndexLimitError extends Error {
+  constructor(readonly limit: PiTranscriptIndexLimit, readonly prefixRevision: string) {
+    super("Pi transcript index exceeded " + limit.reason + ": " + limit.maximum + ".");
+  }
+}
+
 type JsonRecord = Record<string, unknown>;
 type PiRpcResponse = { type: "response"; command: string; success: boolean; data?: unknown; error?: string };
 type PiSessionEntry = { id: string; parentId: string | null; type: string; value: JsonRecord };
+type PiIndexedTranscriptEntry = {
+  id: string;
+  parentId: string | null;
+  type: string;
+  sourceOrdinal: number | null;
+  byteStart: number;
+  byteLength: number;
+  normalizedByteLength: number;
+  lineHash: string;
+  projectionKinds: string[];
+  exceedsItemBudget: boolean;
+};
+type PiTranscriptIndex = {
+  entries: PiIndexedTranscriptEntry[];
+  leafId: string | null;
+  hasInvalidEntries: boolean;
+  sessionHeaderIds: string[];
+  sourceVersion: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number };
+};
+type PiTranscriptItemRef = { entryIndex: number; projectionIndex: number; ordinal: number; id: string };
 type PiRequestApproval = NonNullable<AgentRuntimeExecutionContext["requestApproval"]>;
 type PiWaitForApproval = NonNullable<AgentRuntimeExecutionContext["waitForApproval"]>;
 type PiApprovalQuestion = NonNullable<AgentRuntimeApprovalRequest["inputRequest"]>;
@@ -121,6 +159,17 @@ const CONTROL_ATTEMPT_POLL_MS = 100;
 const MAX_RPC_FRAME_CHARS = 8_000_000;
 const MAX_RPC_IMAGE_BYTES = 20_000_000;
 const MAX_NATIVE_DIAGNOSTIC_TYPES = 32;
+const NATIVE_TRANSCRIPT_PAGE_ITEMS = 100;
+const NATIVE_TRANSCRIPT_PAGE_BYTES = 1024 * 1024;
+const NATIVE_TRANSCRIPT_MAX_PAGE_BYTES = 8 * 1024 * 1024;
+const NATIVE_TRANSCRIPT_ITEM_BYTES = 1024 * 1024;
+const NATIVE_TRANSCRIPT_CHUNK_BYTES = 64 * 1024;
+const NATIVE_TRANSCRIPT_MAX_RECORD_BYTES = 8 * 1024 * 1024;
+const NATIVE_TRANSCRIPT_MAX_ITEMS_PER_RECORD = 10_000;
+const NATIVE_TRANSCRIPT_MAX_SCAN_BYTES = 64 * 1024 * 1024;
+const NATIVE_TRANSCRIPT_MAX_INDEX_BYTES = 8 * 1024 * 1024;
+const NATIVE_TRANSCRIPT_MAX_INDEX_ENTRIES = 20_000;
+const NATIVE_TRANSCRIPT_MAX_INDEX_ITEMS = 100_000;
 const SAFE_ENV_KEYS = [
   "HOME",
   "USERPROFILE",
@@ -856,11 +905,11 @@ function transcriptEntriesFor(entry: PiSessionEntry, ts: string): TranscriptEntr
   return [{ kind: kind === "user" ? "user" : "system", ts, text: textFromEntry(entry) || JSON.stringify(entry.value) }];
 }
 
-function branchForLeaf(entries: readonly PiSessionEntry[], leafId: string): PiSessionEntry[] {
+function branchForLeaf<T extends { id: string; parentId: string | null }>(entries: readonly T[], leafId: string): T[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const branch: PiSessionEntry[] = [];
+  const branch: T[] = [];
   const seen = new Set<string>();
-  let current: PiSessionEntry | undefined = byId.get(leafId);
+  let current = byId.get(leafId);
   while (current) {
     if (seen.has(current.id)) throw new PiNativeCapabilityError("unknown", "Pi provider session contains a cyclic parent boundary.");
     seen.add(current.id);
@@ -916,6 +965,383 @@ function revisionFor(sessionFile: string, leafId: string | null, entries: readon
   })).digest("hex")}`;
 }
 
+function samePiFileVersion(
+  left: PiTranscriptIndex["sourceVersion"],
+  right: Awaited<ReturnType<typeof fs.stat>>,
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size
+    && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+}
+
+function transcriptItemKinds(entry: PiSessionEntry): string[] {
+  const content = asRecord(entry.value.message)?.content;
+  if (Array.isArray(content) && content.length > NATIVE_TRANSCRIPT_MAX_ITEMS_PER_RECORD) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session record exceeds the bounded transcript projection limit.");
+  }
+  const timestamp = nonEmpty(entry.value.timestamp) ?? new Date(0).toISOString();
+  const kinds = transcriptEntriesFor(entry, timestamp).map((projected) => projected.kind);
+  if (kinds.length > NATIVE_TRANSCRIPT_MAX_ITEMS_PER_RECORD) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session record exceeds the bounded transcript projection limit.");
+  }
+  return kinds;
+}
+
+function scanPiRecordMetadata(content: string): {
+  id: string;
+  parentId: string | null;
+  type: string;
+  sourceOrdinal: number | null;
+} | null {
+  let index = 0;
+  const metadata: { id?: string; parentId?: string | null; type?: string; sourceOrdinal?: number | null } = {};
+  const skipWhitespace = () => {
+    while (/\s/u.test(content[index] ?? "")) index += 1;
+  };
+  const stringEnd = (start: number): number => {
+    let escaped = false;
+    for (let cursor = start + 1; cursor < content.length; cursor += 1) {
+      const char = content[cursor]!;
+      if (char === '"' && !escaped) return cursor + 1;
+      if (char === "\\" && !escaped) escaped = true;
+      else escaped = false;
+    }
+    return -1;
+  };
+  const skipValue = (): boolean => {
+    skipWhitespace();
+    const first = content[index];
+    if (first === '"') {
+      const end = stringEnd(index);
+      if (end < 0) return false;
+      index = end;
+      return true;
+    }
+    if (first === "{" || first === "[") {
+      const closers = [first === "{" ? "}" : "]"];
+      index += 1;
+      let inString = false;
+      let escaped = false;
+      while (index < content.length && closers.length > 0) {
+        const char = content[index]!;
+        if (inString) {
+          if (char === '"' && !escaped) inString = false;
+          if (char === "\\" && !escaped) escaped = true;
+          else escaped = false;
+        } else if (char === '"') {
+          inString = true;
+        } else if (char === "{" || char === "[") {
+          closers.push(char === "{" ? "}" : "]");
+        } else if (char === "}" || char === "]") {
+          if (closers.pop() !== char) return false;
+        }
+        index += 1;
+      }
+      return closers.length === 0;
+    }
+    const start = index;
+    while (index < content.length && !/[\s,}\]]/u.test(content[index]!)) index += 1;
+    return index > start;
+  };
+
+  skipWhitespace();
+  if (content[index] !== "{") return null;
+  index += 1;
+  while (index < content.length) {
+    skipWhitespace();
+    if (content[index] === "}") {
+      index += 1;
+      skipWhitespace();
+      const id = nonEmpty(metadata.id);
+      return index === content.length && id
+        ? {
+            id,
+            parentId: metadata.parentId ?? null,
+            type: nonEmpty(metadata.type) ?? "unknown",
+            sourceOrdinal: metadata.sourceOrdinal ?? null,
+          }
+        : null;
+    }
+    if (content[index] !== '"') return null;
+    const keyStart = index;
+    const keyEnd = stringEnd(keyStart);
+    if (keyEnd < 0 || keyEnd - keyStart > 256) return null;
+    let key: string;
+    try {
+      key = JSON.parse(content.slice(keyStart, keyEnd)) as string;
+    } catch {
+      return null;
+    }
+    index = keyEnd;
+    skipWhitespace();
+    if (content[index] !== ":") return null;
+    index += 1;
+    skipWhitespace();
+    if (["id", "parentId", "type"].includes(key) && content[index] === '"') {
+      const valueStart = index;
+      const valueEnd = stringEnd(valueStart);
+      if (valueEnd < 0 || valueEnd - valueStart > 4096) return null;
+      let value: string;
+      try {
+        value = JSON.parse(content.slice(valueStart, valueEnd)) as string;
+      } catch {
+        return null;
+      }
+      if (key === "id") metadata.id = value;
+      else if (key === "parentId") metadata.parentId = nonEmpty(value);
+      else metadata.type = value;
+      index = valueEnd;
+    } else if (key === "parentId" && content.startsWith("null", index)) {
+      metadata.parentId = null;
+      index += 4;
+    } else if (key === "ordinal" && /^-?\d/u.test(content[index] ?? "")) {
+      const start = index;
+      while (/[-\d.eE+]/u.test(content[index] ?? "")) index += 1;
+      const ordinal = Number(content.slice(start, index));
+      metadata.sourceOrdinal = Number.isSafeInteger(ordinal) && ordinal >= 0 ? ordinal : null;
+    } else if (!skipValue()) {
+      return null;
+    }
+    skipWhitespace();
+    if (content[index] === ",") {
+      index += 1;
+      continue;
+    }
+    if (content[index] !== "}") return null;
+  }
+  return null;
+}
+
+function piIndexMetadataBytes(entry: PiIndexedTranscriptEntry): number {
+  return 128
+    + Buffer.byteLength(entry.id, "utf8")
+    + Buffer.byteLength(entry.parentId ?? "", "utf8")
+    + Buffer.byteLength(entry.type, "utf8")
+    + Buffer.byteLength(entry.lineHash, "utf8")
+    + entry.projectionKinds.reduce((total, kind) => total + Buffer.byteLength(kind, "utf8") + 4, 0);
+}
+
+function revisionForTranscriptIndex(
+  sessionFile: string,
+  leafId: string | null,
+  entries: readonly PiIndexedTranscriptEntry[],
+): string {
+  const hash = createHash("sha256");
+  hash.update(JSON.stringify([sessionFile, leafId]));
+  for (const entry of entries) {
+    hash.update(JSON.stringify([entry.id, entry.parentId, entry.type, entry.lineHash]));
+  }
+  return "pi:" + hash.digest("hex");
+}
+
+async function readPiTranscriptIndex(
+  sessionFile: string,
+  maxItemBytes: number,
+  signal?: AbortSignal,
+): Promise<PiTranscriptIndex> {
+  let before: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    before = await fs.stat(sessionFile);
+  } catch {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session history could not be read.");
+  }
+  const sourceVersion = {
+    dev: before.dev,
+    ino: before.ino,
+    size: before.size,
+    mtimeMs: before.mtimeMs,
+    ctimeMs: before.ctimeMs,
+  };
+  const entries: PiIndexedTranscriptEntry[] = [];
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let byteStart = 0;
+  let hasInvalidEntries = false;
+  let scannedBytes = 0;
+  let indexBytes = 0;
+  let indexedItems = 0;
+  const limitIndex = (limit: PiTranscriptIndexLimit): never => {
+    throw new PiTranscriptIndexLimitError(limit, revisionForTranscriptIndex(sessionFile, null, entries));
+  };
+  const appendIndexEntry = (entry: PiIndexedTranscriptEntry): void => {
+    if (entries.length >= NATIVE_TRANSCRIPT_MAX_INDEX_ENTRIES) {
+      limitIndex({ reason: "total_items", maximum: NATIVE_TRANSCRIPT_MAX_INDEX_ENTRIES });
+    }
+    const nextItems = indexedItems + Math.max(1, entry.projectionKinds.length);
+    if (nextItems > NATIVE_TRANSCRIPT_MAX_INDEX_ITEMS) {
+      limitIndex({ reason: "total_items", maximum: NATIVE_TRANSCRIPT_MAX_INDEX_ITEMS });
+    }
+    const nextBytes = indexBytes + piIndexMetadataBytes(entry);
+    if (nextBytes > NATIVE_TRANSCRIPT_MAX_INDEX_BYTES) {
+      limitIndex({ reason: "total_bytes", maximum: NATIVE_TRANSCRIPT_MAX_INDEX_BYTES });
+    }
+    entries.push(entry);
+    indexedItems = nextItems;
+    indexBytes = nextBytes;
+  };
+  const indexLine = (content: string, start: number) => {
+    const byteLength = Buffer.byteLength(content, "utf8");
+    if (byteLength > NATIVE_TRANSCRIPT_MAX_RECORD_BYTES) {
+      throw new PiNativeCapabilityError("unknown", "Pi provider session has a row larger than the bounded transcript record limit.");
+    }
+    if (!content.trim()) return;
+    if (entries.length >= NATIVE_TRANSCRIPT_MAX_INDEX_ENTRIES) {
+      limitIndex({ reason: "total_items", maximum: NATIVE_TRANSCRIPT_MAX_INDEX_ENTRIES });
+    }
+    if (byteLength > maxItemBytes) {
+      const metadata = scanPiRecordMetadata(content);
+      if (!metadata) {
+        hasInvalidEntries = true;
+        return;
+      }
+      const exceedsItemBudget = metadata.type !== "session";
+      appendIndexEntry({
+        ...metadata,
+        byteStart: start,
+        byteLength,
+        normalizedByteLength: maxItemBytes + 1,
+        lineHash: createHash("sha256").update(Buffer.from(content, "utf8")).digest("hex"),
+        projectionKinds: exceedsItemBudget ? ["system"] : [],
+        exceedsItemBudget,
+      });
+      return;
+    }
+    let parsed: JsonRecord | null;
+    try {
+      parsed = asRecord(JSON.parse(content));
+    } catch {
+      hasInvalidEntries = true;
+      return;
+    }
+    const id = nonEmpty(parsed?.id);
+    if (!parsed || !id) {
+      hasInvalidEntries = true;
+      return;
+    }
+    const entry: PiSessionEntry = {
+      id,
+      parentId: nonEmpty(parsed.parentId),
+      type: nonEmpty(parsed.type) ?? "unknown",
+      value: parsed,
+    };
+    appendIndexEntry({
+      id: entry.id,
+      parentId: entry.parentId,
+      type: entry.type,
+      sourceOrdinal: Number.isSafeInteger(parsed.ordinal) && typeof parsed.ordinal === "number" && parsed.ordinal >= 0
+        ? parsed.ordinal
+        : null,
+      byteStart: start,
+      byteLength,
+      normalizedByteLength: Buffer.byteLength(JSON.stringify(parsed), "utf8"),
+      lineHash: createHash("sha256").update(Buffer.from(content, "utf8")).digest("hex"),
+      projectionKinds: transcriptItemKinds(entry),
+      exceedsItemBudget: false,
+    });
+  };
+
+  try {
+    for await (const chunk of createReadStream(sessionFile, { highWaterMark: NATIVE_TRANSCRIPT_CHUNK_BYTES, signal })) {
+      if (signal?.aborted) throw new Error("Pi transcript read cancelled");
+      scannedBytes += chunk.byteLength;
+      if (scannedBytes > NATIVE_TRANSCRIPT_MAX_SCAN_BYTES) {
+        limitIndex({ reason: "total_bytes", maximum: NATIVE_TRANSCRIPT_MAX_SCAN_BYTES });
+      }
+      pending += decoder.write(chunk);
+      let newline = pending.indexOf("\n");
+      while (newline >= 0) {
+        const line = pending.slice(0, newline);
+        const physicalBytes = Buffer.byteLength(line, "utf8") + 1;
+        indexLine(line, byteStart);
+        byteStart += physicalBytes;
+        pending = pending.slice(newline + 1);
+        newline = pending.indexOf("\n");
+      }
+      if (Buffer.byteLength(pending, "utf8") > NATIVE_TRANSCRIPT_MAX_RECORD_BYTES) {
+        throw new PiNativeCapabilityError("unknown", "Pi provider session has a row larger than the bounded transcript record limit.");
+      }
+    }
+    pending += decoder.end();
+    if (pending.length > 0) indexLine(pending, byteStart);
+  } catch (error) {
+    if (error instanceof PiTranscriptIndexLimitError) throw error;
+    if (error instanceof PiNativeCapabilityError) throw error;
+    if (signal?.aborted) throw error;
+    throw new PiNativeCapabilityError("unknown", "Pi provider session history could not be streamed.");
+  }
+
+  const after = await fs.stat(sessionFile).catch(() => null);
+  if (!after || !samePiFileVersion(sourceVersion, after)) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session changed while its transcript index was built.");
+  }
+  const sessionHeaderIds = entries.filter((entry) => entry.type === "session").map((entry) => entry.id);
+  const historyEntries = entries.filter((entry) => entry.type !== "session");
+  const ids = new Set(historyEntries.map((entry) => entry.id));
+  const childIds = new Set(historyEntries.map((entry) => entry.parentId)
+    .filter((id): id is string => Boolean(id && ids.has(id))));
+  const leafId = [...historyEntries].reverse().find((entry) => !childIds.has(entry.id))?.id
+    ?? historyEntries.at(-1)?.id
+    ?? null;
+  return { entries, leafId, hasInvalidEntries, sessionHeaderIds, sourceVersion };
+}
+
+async function readPiIndexedEntry(
+  sessionFile: string,
+  indexed: PiIndexedTranscriptEntry,
+  signal?: AbortSignal,
+): Promise<PiSessionEntry> {
+  if (indexed.normalizedByteLength > NATIVE_TRANSCRIPT_MAX_RECORD_BYTES) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session row exceeds the bounded transcript record limit.");
+  }
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  const range = { start: indexed.byteStart, end: indexed.byteStart + indexed.byteLength - 1 };
+  for await (const chunk of createReadStream(sessionFile, {
+    ...range,
+    highWaterMark: NATIVE_TRANSCRIPT_CHUNK_BYTES,
+    signal,
+  })) {
+    if (signal?.aborted) throw new Error("Pi transcript read cancelled");
+    bytes += chunk.length;
+    if (bytes > indexed.byteLength) {
+      throw new PiNativeCapabilityError("unknown", "Pi provider session changed while reading a bounded transcript page.");
+    }
+    chunks.push(chunk);
+  }
+  if (bytes !== indexed.byteLength) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session changed while reading a bounded transcript page.");
+  }
+  const raw = Buffer.concat(chunks, bytes);
+  if (createHash("sha256").update(raw).digest("hex") !== indexed.lineHash) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session changed while reading a bounded transcript page.");
+  }
+  const value = asRecord(JSON.parse(raw.toString("utf8")));
+  if (!value || nonEmpty(value.id) !== indexed.id || nonEmpty(value.parentId) !== indexed.parentId
+    || (nonEmpty(value.type) ?? "unknown") !== indexed.type) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session changed while reading a bounded transcript page.");
+  }
+  return { id: indexed.id, parentId: indexed.parentId, type: indexed.type, value };
+}
+
+async function verifyPiTranscriptFileVersion(index: PiTranscriptIndex, sessionFile: string): Promise<void> {
+  const current = await fs.stat(sessionFile).catch(() => null);
+  if (!current || !samePiFileVersion(index.sourceVersion, current)) {
+    throw new PiNativeCapabilityError("unknown", "Pi provider session changed during bounded transcript reading.");
+  }
+}
+
+function piTranscriptLimits(input: PiTranscriptRequest): { limit: number; maxBytes: number; maxItemBytes: number } {
+  const readerInput = asRecord(input.readerInput) ?? {};
+  const bounded = (value: unknown, fallback: number, maximum: number) => (
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? Math.min(value, maximum) : fallback
+  );
+  const maxBytes = bounded(readerInput.maxBytes, NATIVE_TRANSCRIPT_PAGE_BYTES, NATIVE_TRANSCRIPT_MAX_PAGE_BYTES);
+  return {
+    limit: NATIVE_TRANSCRIPT_PAGE_ITEMS,
+    maxBytes,
+    maxItemBytes: Math.min(maxBytes, bounded(readerInput.maxItemBytes, NATIVE_TRANSCRIPT_ITEM_BYTES, NATIVE_TRANSCRIPT_MAX_PAGE_BYTES)),
+  };
+}
+
 function selectorRecord(value: unknown): JsonRecord | null {
   return asRecord(value);
 }
@@ -930,6 +1356,147 @@ function requestedRange(input: PiTranscriptRequest): JsonRecord | null {
     };
   }
   return null;
+}
+
+function applyIndexedRange(
+  items: PiTranscriptItemRef[],
+  branch: readonly PiIndexedTranscriptEntry[],
+  range: JsonRecord | null,
+): PiTranscriptItemRef[] {
+  if (!range) return items;
+  const idFor = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : nonEmpty(asRecord(value)?.itemId);
+  const ordinalFor = (value: unknown) => {
+    const ordinal = asRecord(value)?.ordinal;
+    return typeof ordinal === "number" && Number.isFinite(ordinal) ? ordinal : null;
+  };
+  const matchesId = (item: PiTranscriptItemRef, id: string) => item.id === id || branch[item.entryIndex]?.id === id;
+  const firstIndexFor = (records: PiTranscriptItemRef[], id: string) => records.findIndex((item) => matchesId(item, id));
+  const lastIndexFor = (records: PiTranscriptItemRef[], id: string) => {
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+      if (matchesId(records[index]!, id)) return index;
+    }
+    return -1;
+  };
+  let result = [...items];
+  const start = range.start;
+  if (start !== undefined && start !== null) {
+    const id = idFor(start);
+    const index = id ? firstIndexFor(result, id) : -1;
+    const ordinal = ordinalFor(start);
+    result = index >= 0
+      ? result.slice(index)
+      : typeof start === "number"
+        ? result.slice(Math.floor(start))
+        : ordinal !== null
+          ? result.filter((item) => item.ordinal >= ordinal)
+          : [];
+  }
+  const end = range.end;
+  if (end !== undefined && end !== null) {
+    const id = idFor(end);
+    const index = id ? lastIndexFor(result, id) : -1;
+    const ordinal = ordinalFor(end);
+    result = index >= 0
+      ? result.slice(0, index + 1)
+      : typeof end === "number"
+        ? result.slice(0, Math.floor(end) + 1)
+        : ordinal !== null
+          ? result.filter((item) => item.ordinal <= ordinal)
+          : [];
+  }
+  const from = range.fromExclusive ?? range.after;
+  if (from !== undefined && from !== null) {
+    const id = idFor(from);
+    const index = id ? lastIndexFor(result, id) : -1;
+    const ordinal = ordinalFor(from);
+    result = index >= 0
+      ? result.slice(index + 1)
+      : typeof from === "number"
+        ? result.slice(Math.floor(from) + 1)
+        : ordinal !== null
+          ? result.filter((item) => item.ordinal > ordinal)
+          : [];
+  }
+  const through = range.throughInclusive;
+  if (through !== undefined && through !== null) {
+    const id = idFor(through);
+    const index = id ? lastIndexFor(result, id) : -1;
+    const ordinal = ordinalFor(through);
+    result = index >= 0
+      ? result.slice(0, index + 1)
+      : typeof through === "number"
+        ? result.slice(0, Math.floor(through) + 1)
+        : ordinal !== null
+          ? result.filter((item) => item.ordinal <= ordinal)
+          : [];
+  }
+  const before = range.before;
+  if (before !== undefined && before !== null) {
+    const id = idFor(before);
+    const index = id ? firstIndexFor(result, id) : -1;
+    const ordinal = ordinalFor(before);
+    result = index >= 0
+      ? result.slice(0, index)
+      : typeof before === "number"
+        ? result.slice(0, Math.floor(before))
+        : ordinal !== null
+          ? result.filter((item) => item.ordinal < ordinal)
+          : [];
+  }
+  if (range.itemId !== undefined && range.itemId !== null) {
+    const id = idFor(range.itemId);
+    result = id ? result.filter((item) => item.id === id || branch[item.entryIndex]?.id === id) : [];
+  }
+  return result;
+}
+
+function piRangeHandling(range: JsonRecord | null): PiTranscriptResult["rangeHandled"] {
+  if (!range) return undefined;
+  const idFor = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : nonEmpty(asRecord(value)?.itemId);
+  const handled: NonNullable<PiTranscriptResult["rangeHandled"]> = {};
+  const startItemId = idFor(range.start);
+  const endItemId = idFor(range.end);
+  const exclusiveStartItemId = idFor(range.fromExclusive ?? range.after);
+  const throughInclusiveItemId = idFor(range.throughInclusive);
+  const beforeItemId = idFor(range.before);
+  if (startItemId) handled.startItemId = startItemId;
+  if (endItemId) handled.endItemId = endItemId;
+  if (exclusiveStartItemId) handled.exclusiveStartItemId = exclusiveStartItemId;
+  if (throughInclusiveItemId) handled.throughInclusiveItemId = throughInclusiveItemId;
+  if (beforeItemId) handled.beforeItemId = beforeItemId;
+  return Object.keys(handled).length > 0 ? handled : undefined;
+}
+
+function assertIndexedTranscriptBoundary(
+  items: readonly PiTranscriptItemRef[],
+  branch: readonly PiIndexedTranscriptEntry[],
+  boundary: unknown,
+  label: string,
+  allowPosition = false,
+): void {
+  if (boundary === undefined || boundary === null || (allowPosition && typeof boundary === "number")) return;
+  const id = boundaryId(boundary);
+  if (!id) {
+    throw new PiNativeCapabilityError("unknown", `Pi transcript ${label} is not a supported exact boundary.`);
+  }
+  if (!items.some((item) => item.id === id || branch[item.entryIndex]?.id === id)) {
+    throw new PiNativeCapabilityError("unknown", `Pi transcript ${label} is not present on the selected provider branch.`);
+  }
+}
+
+function indexedTranscriptItems(branch: readonly PiIndexedTranscriptEntry[]): PiTranscriptItemRef[] {
+  const items: PiTranscriptItemRef[] = [];
+  branch.forEach((entry, entryIndex) => {
+    entry.projectionKinds.forEach((kind, projectionIndex) => {
+      items.push({
+        entryIndex,
+        projectionIndex,
+        ordinal: entry.sourceOrdinal ?? entryIndex,
+        id: projectionIndex === 0 ? entry.id : `${entry.id}:${kind}:${projectionIndex}`,
+      });
+    });
+  });
+  return items;
 }
 
 function applyRange(items: JsonRecord[], range: JsonRecord | null): JsonRecord[] {
@@ -1016,14 +1583,15 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
     if (stateSessionFile && path.resolve(stateSessionFile) !== path.resolve(bound.sessionFile)) {
       throw new PiNativeCapabilityError("unsupported", "Pi RPC resumed a different provider session file.");
     }
-    const tree = await readSessionEntries(bound.sessionFile);
+    const limits = piTranscriptLimits(input);
+    const tree = await readPiTranscriptIndex(bound.sessionFile, limits.maxItemBytes, input.signal);
     const rangeLeafId = boundaryId(range?.throughInclusive)
       ?? boundaryId(range?.end);
     const leafId = boundaryId(selector?.leafId)
       ?? boundaryId(selector?.throughInclusive)
       ?? boundaryId(bound.params.leafId)
       ?? rangeLeafId;
-    const rangeHasBoundary = ["start", "fromExclusive", "after", "throughInclusive", "end", "itemId"]
+    const rangeHasBoundary = ["start", "end", "fromExclusive", "after", "throughInclusive", "before", "itemId"]
       .some((key) => range?.[key] !== undefined && range[key] !== null);
     const hasSessionAnchor = Boolean(
       boundaryId(bound.params.leafId)
@@ -1048,10 +1616,12 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
       && expectedSessionIds.every((id) => id === tree.sessionHeaderIds[0])
       && tree.entries.every((entry) => entry.type === "session")
     ) {
+      const revision = revisionForTranscriptIndex(bound.sessionFile, null, tree.entries);
+      await verifyPiTranscriptFileVersion(tree, bound.sessionFile);
       return {
         items: [],
         nextCursor: null,
-        revision: revisionFor(bound.sessionFile, null, tree.entries),
+        revision,
         source: "native",
         availability: "available",
         completeness: "complete",
@@ -1062,65 +1632,140 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
     if (!branch.some((entry) => entry.id === leafId) || branch.at(-1)?.id !== leafId) {
       throw new PiNativeCapabilityError("unknown", "Pi transcript selected leaf is not present on the resolved provider branch.");
     }
-    const previousLeaf = boundaryId(range?.fromExclusive)
-      ?? boundaryId(range?.after)
-      ?? (selector && Object.prototype.hasOwnProperty.call(selector, "fromExclusive")
-        ? boundaryId(selector.fromExclusive)
-        : boundaryId(bound.params.previousLeafId));
-    const hasExplicitStart =
-      (range?.fromExclusive !== undefined && range?.fromExclusive !== null) ||
-      (range?.after !== undefined && range?.after !== null) ||
-      (range?.start !== undefined && range?.start !== null);
-    const effectiveRange = range
-      ? {
-          ...range,
-          ...(previousLeaf === null || hasExplicitStart
-            ? {}
-            : { fromExclusive: previousLeaf }),
-        }
-      : previousLeaf
-        ? { fromExclusive: previousLeaf, throughInclusive: leafId }
-        : null;
-    const records = branch.flatMap((entry, ordinal) => {
-      const text = textFromEntry(entry);
-      const ts = nonEmpty(entry.value.timestamp) ?? new Date(0).toISOString();
-      return transcriptEntriesFor(entry, ts).map((projected, index) => ({
-        id: index === 0 ? entry.id : `${entry.id}:${projected.kind}:${index}`,
-        sourceEntryId: entry.id,
-        ordinal,
-        kind: projected.kind,
-        ts,
-        entry: { ...projected, sourceEntryId: entry.id },
-        payload: { provider: "pi", entryId: entry.id, text, entry: entry.value },
-        origin: "native",
-        visibility: "visible",
-        ...(text ? { text } : {}),
-      }));
-    });
+    const previousLeaf = selector && Object.prototype.hasOwnProperty.call(selector, "fromExclusive")
+      ? boundaryId(selector.fromExclusive)
+      : boundaryId(bound.params.previousLeafId);
+    const records = indexedTranscriptItems(branch);
     for (const [label, boundary] of [
       ["selector exclusive start", selector?.fromExclusive],
       ["selector inclusive end", selector?.throughInclusive],
       ["selector leaf", selector?.leafId],
-      ["range inclusive start", range?.start],
-      ["range exclusive start", range?.fromExclusive],
-      ["range exclusive start", range?.after],
-      ["range inclusive end", range?.throughInclusive],
-      ["range inclusive end", range?.end],
-      ["range item", range?.itemId],
       ["selected branch leaf", leafId],
       ["session exclusive start", previousLeaf],
     ] as const) {
-      assertTranscriptBoundary(records, boundary, label, label.startsWith("range") && label !== "range item");
+      assertIndexedTranscriptBoundary(records, branch, boundary, label);
     }
+    const scopedRecords = applyIndexedRange(records, branch, {
+      fromExclusive: previousLeaf,
+      throughInclusive: selector?.throughInclusive ?? leafId,
+    });
+    const visibilityCutoff = nonEmpty(asRecord(input.readerInput)?.visibilityCutoffRef);
+    let visibleRecords = scopedRecords;
+    if (visibilityCutoff) {
+      const isItem = scopedRecords.some((item) => item.id === visibilityCutoff || branch[item.entryIndex]?.id === visibilityCutoff);
+      if (isItem) {
+        visibleRecords = applyIndexedRange(scopedRecords, branch, { throughInclusive: visibilityCutoff });
+      } else if (/^\d+$/u.test(visibilityCutoff)) {
+        visibleRecords = scopedRecords.filter((item) => item.ordinal <= Number(visibilityCutoff));
+      } else {
+        throw new PiNativeCapabilityError("unknown", "Pi transcript visibility boundary is not present on the selected provider interval.");
+      }
+    }
+    let ranged = visibleRecords;
+    for (const [key, boundary] of Object.entries({
+      start: range?.start,
+      end: range?.end,
+      fromExclusive: range?.fromExclusive ?? range?.after,
+      throughInclusive: range?.throughInclusive,
+      before: range?.before,
+      itemId: range?.itemId,
+    })) {
+      if (boundary === undefined || boundary === null) continue;
+      if (key === "fromExclusive" && previousLeaf !== null && boundaryId(boundary) === previousLeaf) continue;
+      assertIndexedTranscriptBoundary(scopedRecords, branch, boundary, "range " + key, key !== "itemId");
+      const matching = new Set(applyIndexedRange(scopedRecords, branch, { [key]: boundary }));
+      ranged = ranged.filter((item) => matching.has(item));
+    }
+    const hasNumericRange = ["start", "end", "fromExclusive", "throughInclusive", "after", "before"]
+      .some((key) => typeof range?.[key] === "number");
+    if (hasNumericRange && branch.some((entry) => entry.exceedsItemBudget)) {
+      throw new PiNativeCapabilityError("unknown", "Pi transcript numeric positions are unavailable while a selected provider record exceeds the item budget.");
+    }
+    const revision = revisionForTranscriptIndex(bound.sessionFile, leafId, branch);
+    await verifyPiTranscriptFileVersion(tree, bound.sessionFile);
+    const targetEnd = Math.min(ranged.length, limits.limit);
+    const page: JsonRecord[] = [];
+    let pageBytes = 2;
+    let limitReached: PiTranscriptResult["limitReached"] = null;
+    let cachedEntryIndex = -1;
+    let cachedSource: PiSessionEntry | null = null;
+    let cachedProjection: TranscriptEntry[] = [];
+    let cachedText = "";
+    let cachedTimestamp = "";
+    for (const ref of ranged.slice(0, targetEnd)) {
+      const indexed = branch[ref.entryIndex]!;
+      if (cachedEntryIndex !== ref.entryIndex) {
+        if (indexed.exceedsItemBudget || indexed.normalizedByteLength > limits.maxItemBytes) {
+          limitReached = { reason: "item_bytes", maximum: limits.maxItemBytes };
+          break;
+        }
+        cachedSource = await readPiIndexedEntry(bound.sessionFile, indexed, input.signal);
+        cachedTimestamp = nonEmpty(cachedSource.value.timestamp) ?? new Date(0).toISOString();
+        cachedProjection = transcriptEntriesFor(cachedSource, cachedTimestamp);
+        if (cachedProjection.length !== indexed.projectionKinds.length
+          || cachedProjection.some((item, index) => item.kind !== indexed.projectionKinds[index])) {
+          throw new PiNativeCapabilityError("unknown", "Pi provider session projection changed during transcript reading.");
+        }
+        cachedText = textFromEntry(cachedSource);
+        cachedEntryIndex = ref.entryIndex;
+      }
+      const source = cachedSource!;
+      const projected = cachedProjection[ref.projectionIndex]!;
+      const item: JsonRecord = {
+        id: ref.id,
+        sourceEntryId: source.id,
+        ordinal: ref.ordinal,
+        kind: projected.kind,
+        ts: cachedTimestamp,
+        entry: { ...projected, sourceEntryId: source.id },
+        payload: { provider: "pi", entryId: source.id, text: cachedText, entry: source.value },
+        origin: "native",
+        visibility: "visible",
+        ...(cachedText ? { text: cachedText } : {}),
+      };
+      const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8");
+      if (itemBytes > limits.maxItemBytes) {
+        limitReached = { reason: "item_bytes", maximum: limits.maxItemBytes };
+        break;
+      }
+      const nextBytes = pageBytes + (page.length > 0 ? 1 : 0) + itemBytes;
+      if (nextBytes > limits.maxBytes) {
+        limitReached = { reason: "page_bytes", maximum: limits.maxBytes };
+        break;
+      }
+      page.push(item);
+      pageBytes = nextBytes;
+    }
+    if (!limitReached && ranged.length > targetEnd) {
+      limitReached = { reason: "total_items", maximum: limits.limit };
+    }
+    await verifyPiTranscriptFileVersion(tree, bound.sessionFile);
+    const rangeHandled = piRangeHandling(range);
     return {
-      items: applyRange(records, effectiveRange),
+      items: page,
       nextCursor: null,
-      revision: revisionFor(bound.sessionFile, leafId, branch),
+      revision,
       source: "native",
       availability: "available",
-      completeness: "complete",
+      completeness: tree.hasInvalidEntries || branch.some((entry) => entry.exceedsItemBudget) || limitReached
+        ? "partial"
+        : "complete",
+      limitReached,
+      ...(visibilityCutoff ? { visibilityCutoffHandled: visibilityCutoff } : {}),
+      ...(rangeHandled ? { rangeHandled } : {}),
     };
   } catch (error) {
+    if (error instanceof PiTranscriptIndexLimitError) {
+      return {
+        items: [],
+        nextCursor: null,
+        revision: `pi:index-limited:${error.prefixRevision}:${error.limit.reason}:${error.limit.maximum}`,
+        source: "native",
+        availability: "available",
+        completeness: "partial",
+        limitReached: error.limit,
+      };
+    }
     if (error instanceof PiNativeCapabilityError) return unavailable(error);
     throw error;
   }

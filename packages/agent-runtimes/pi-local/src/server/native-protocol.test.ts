@@ -703,6 +703,117 @@ describe("Pi native protocol contract", () => {
     expect(args).toContain("managed-extension");
   });
 
+  it("bounds native transcript reads without parsing oversized rows or exposing provider cursors", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-bounded-page-");
+    const command = await makePiFixture(directory);
+    const sessionFile = path.join(directory, "session.jsonl");
+    const original = [
+      { type: "session", version: 3, id: "pi-parent", cwd: directory },
+      { id: "first", type: "message", parentId: null, message: { role: "user", content: "first" } },
+      { id: "large", type: "message", parentId: "first", message: { role: "assistant", content: "x".repeat(200_081) } },
+      { id: "tail", type: "message", parentId: "large", message: { role: "user", content: "tail" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+    await fs.writeFile(sessionFile, original, "utf8");
+    const session = sessionFor(directory, command, "tail");
+    session.sessionParams.previousLeafId = "";
+    const request = {
+      runtimeType: "pi_local",
+      session,
+      selector: { kind: "pi_branch_range", sessionResourceRef: sessionFile, leafId: "tail" },
+      binding: { hostId: "local", profileId: "pi-profile" },
+    };
+    const parseSpy = vi.spyOn(JSON, "parse");
+    let blocked: Awaited<ReturnType<typeof readPiNativeTranscript>>;
+    try {
+      blocked = await readPiNativeTranscript({
+        ...request,
+        readerInput: { limit: 10, maxBytes: 4096, maxItemBytes: 1024 },
+      });
+      expect(parseSpy.mock.calls.some(([value]) => typeof value === "string" && value.length > 1024)).toBe(false);
+    } finally {
+      parseSpy.mockRestore();
+    }
+
+    expect(blocked!).toMatchObject({
+      availability: "available",
+      completeness: "partial",
+      limitReached: { reason: "item_bytes", maximum: 1024 },
+      items: [expect.objectContaining({ id: "first" })],
+      nextCursor: null,
+    });
+    expect(Buffer.byteLength(JSON.stringify(blocked!.items), "utf8")).toBeLessThanOrEqual(4096);
+
+    const largeItem = await readPiNativeTranscript({
+      ...request,
+      range: { itemId: "large" },
+      readerInput: { limit: 1, maxBytes: 1_000_000, maxItemBytes: 900_000 },
+    });
+    expect(largeItem).toMatchObject({ availability: "available", completeness: "complete", nextCursor: null });
+    expect(largeItem.items.map((item) => item.id)).toEqual(["large"]);
+    expect(Buffer.byteLength(JSON.stringify(largeItem.items), "utf8")).toBeLessThanOrEqual(1_000_000);
+
+    await expect(readPiNativeTranscript({ ...request, cursor: "provider-cursor" })).rejects.toThrow("provider cursors are unsupported");
+  });
+
+  it("applies numeric ranges by branch position when provider ordinals are non-monotonic", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-non-monotonic-range-");
+    const command = await makePiFixture(directory);
+    const sessionFile = path.join(directory, "session.jsonl");
+    await fs.writeFile(sessionFile, [
+      { type: "session", version: 3, id: "pi-parent", cwd: directory },
+      { id: "step-0", ordinal: 0, type: "message", parentId: null, message: { role: "user", content: "zero" } },
+      { id: "step-1", ordinal: 1000, type: "message", parentId: "step-0", message: { role: "assistant", content: "one" } },
+      { id: "step-2", ordinal: 2, type: "message", parentId: "step-1", message: { role: "user", content: "two" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+    const session = sessionFor(directory, command, "step-2");
+    session.sessionParams.previousLeafId = "";
+    const result = await readPiNativeTranscript({
+      runtimeType: "pi_local",
+      session,
+      selector: { kind: "pi_branch_range", sessionResourceRef: sessionFile, leafId: "step-2" },
+      range: { end: 10 },
+      readerInput: { limit: 10, maxBytes: 4096, maxItemBytes: 1024 },
+      binding: { hostId: "local", profileId: "pi-profile" },
+    });
+
+    expect(result.availability).toBe("available");
+    expect(result.items.map((item) => item.id)).toEqual(["step-0", "step-1", "step-2"]);
+    expect(result.items.map((item) => item.ordinal)).toEqual([0, 1000, 2]);
+    expect(result.completeness).toBe("complete");
+  });
+
+  it("reports a partial native snapshot when the bounded transcript index cannot reach its selected leaf", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-index-limit-");
+    const command = await makePiFixture(directory);
+    const sessionFile = path.join(directory, "session.jsonl");
+    const entries: Record<string, unknown>[] = [
+      { type: "session", version: 3, id: "pi-parent", cwd: directory },
+    ];
+    let parentId: string | null = null;
+    for (let index = 0; index <= 20_000; index += 1) {
+      const id = "entry-" + index;
+      entries.push({ id, type: "message", parentId, message: { role: "user", content: "x" } });
+      parentId = id;
+    }
+    await fs.writeFile(sessionFile, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+    const session = sessionFor(directory, command, "entry-20000");
+    session.sessionParams.previousLeafId = "";
+    const result = await readPiNativeTranscript({
+      runtimeType: "pi_local",
+      session,
+      selector: { kind: "pi_branch_range", sessionResourceRef: sessionFile, leafId: "entry-20000" },
+      binding: { hostId: "local", profileId: "pi-profile" },
+    });
+
+    expect(result).toMatchObject({
+      items: [],
+      nextCursor: null,
+      availability: "available",
+      completeness: "partial",
+      limitReached: { reason: "total_items", maximum: 20_000 },
+    });
+  });
+
   it("selects compressed and abandoned session history by native branch and Run span", async () => {
     const directory = await makeFixtureDirectory("rudder-pi-native-history-tree-");
     const command = await makePiFixture(directory);
