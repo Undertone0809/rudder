@@ -162,11 +162,24 @@ export interface NativeTranscriptReadInput {
   cursor: string | null;
   /** Maximum number of source items requested for this bounded read window. */
   limit?: number;
+  /** Requested source-byte cap; providers must enforce it before materializing results. */
+  maxBytes?: number;
+  /** Requested per-item byte cap; Reader validation happens after the provider resolves. */
+  maxItemBytes?: number;
   itemId?: string | null;
   /** Numeric position bounds are applied by Transcript Reader across provider pages. */
   range?: TranscriptRange | null;
   visibilityCutoffRef?: string | null;
   signal?: AbortSignal;
+}
+
+/** Item-ID bounds a provider resolved against the complete selected source before paging. */
+export interface NativeTranscriptRangeHandling {
+  startItemId?: string;
+  endItemId?: string;
+  exclusiveStartItemId?: string;
+  throughInclusiveItemId?: string;
+  beforeItemId?: string;
 }
 
 export interface NativeTranscriptReadResult {
@@ -178,7 +191,12 @@ export interface NativeTranscriptReadResult {
   source?: TranscriptSource;
   availability?: TranscriptAvailability;
   completeness?: TranscriptCompleteness;
+  limitReached?: TranscriptReadLimit | null;
   truncated?: boolean;
+  /** Exact item-ID bounds already applied before provider pagination. */
+  rangeHandled?: NativeTranscriptRangeHandling;
+  /** Exact cutoff resolved against the full selected source before pagination. */
+  visibilityCutoffHandled?: string;
 }
 
 export interface NativeTranscriptReaderHook {
@@ -241,6 +259,8 @@ export interface TranscriptReaderOptions {
   maxLegacyTotalBytes?: number;
   maxLegacyTotalItems?: number;
   maxLegacyItemBytes?: number;
+  maxNativeReadBytes?: number;
+  maxNativeItemBytes?: number;
   /** Return clipped, field-projected event payloads for bounded diagnostics. */
   diagnosticProjection?: boolean;
   authorizePrincipal?: (input: {
@@ -375,6 +395,9 @@ export type CursorPayload = {
   providerCursor?: string | null;
   /** Cursor used to obtain the provider page currently being consumed. */
   providerPageCursor?: string | null;
+  /** Original provider page size while a public cursor consumes that page. */
+  providerPageLimit?: number;
+  supplementRevision?: string;
   /** Provider cursor returned after the current page. */
   providerNextCursor?: string | null;
   /** Visible-item position in the selected Run before this provider page, including preceding spans. */
@@ -406,6 +429,10 @@ export const DEFAULT_LEGACY_TOTAL_ITEMS = 20_000;
 export const MAX_LEGACY_TOTAL_ITEMS = 100_000;
 export const DEFAULT_LEGACY_ITEM_BYTES = 1024 * 1024;
 export const MAX_LEGACY_ITEM_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_NATIVE_READ_BYTES = 1024 * 1024;
+export const MAX_NATIVE_READ_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_NATIVE_ITEM_BYTES = 1024 * 1024;
+export const MAX_NATIVE_ITEM_BYTES = 8 * 1024 * 1024;
 export const MAX_CONVERSATION_SOURCE_SCAN = MAX_PAGE_LIMIT * 4;
 
 export type TranscriptReaderErrorCode =
@@ -413,7 +440,8 @@ export type TranscriptReaderErrorCode =
   | "cursor_scope_mismatch"
   | "cursor_source_mismatch"
   | "cursor_revision_mismatch"
-  | "cursor_invalid";
+  | "cursor_invalid"
+  | "source_budget_exceeded";
 
 export type ConversationSourceAnchor = Pick<ConversationSourceCursor, "kind" | "id" | "createdAt">;
 
@@ -435,6 +463,10 @@ export type ConversationSourceRow =
   | { descriptor: ConversationSourceCursor; run?: never; message: ConversationMessageRecord };
 
 export type ResolvedSource = {
+  providerPageLimit?: number;
+  /** Leading public items from earlier spans, absent when replaying the active span alone. */
+  providerPageStart?: number;
+  supplementRevision?: string;
   items: TranscriptItem[];
   source: TranscriptSource;
   /** Source identity for the active provider continuation. */
@@ -446,6 +478,12 @@ export type ResolvedSource = {
   completeness: TranscriptCompleteness;
   limitReached?: TranscriptReadLimit | null;
   truncated?: boolean;
+  /** Validated transient provider proof; removed before constructing public pages. */
+  rangeHandled?: NativeTranscriptRangeHandling;
+  /** Validated transient full-source visibility proof. */
+  visibilityCutoffHandled?: string;
+  /** Serialized source bytes consumed before normalization. */
+  readBytes?: number;
   providerCursor: string | null;
   providerNextCursor: string | null;
   /** Visible-item position in the selected Run before this provider page, including preceding spans. */

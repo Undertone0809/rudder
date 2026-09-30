@@ -282,14 +282,16 @@ export function mergeSupplementItems(
   const items = [...primary];
   const seen = new Set<string>();
   for (const item of primary) {
-    seen.add(item.id);
-    if (item.sourceEntryId) seen.add(`source:${item.sourceEntryId}`);
+    seen.add(JSON.stringify(["id", item.kind, item.id]));
+    if (item.sourceEntryId) seen.add(JSON.stringify(["source", item.kind, item.sourceEntryId]));
   }
   for (const item of supplement) {
-    if (seen.has(item.id) || (item.sourceEntryId && seen.has(`source:${item.sourceEntryId}`))) continue;
+    const identity = JSON.stringify(["id", item.kind, item.id]);
+    const sourceIdentity = JSON.stringify(["source", item.kind, item.sourceEntryId]);
+    if (seen.has(identity) || (item.id === item.sourceEntryId && seen.has(sourceIdentity))) continue;
     items.push(item);
-    seen.add(item.id);
-    if (item.sourceEntryId) seen.add(`source:${item.sourceEntryId}`);
+    seen.add(identity);
+    if (item.sourceEntryId) seen.add(sourceIdentity);
   }
   return items
     .map((item, index) => ({ item, index }))

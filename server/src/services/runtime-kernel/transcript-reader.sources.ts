@@ -25,6 +25,7 @@ import type {
   LegacyTranscriptReadResult,
   LegacyTranscriptReaderHook,
   NativeSegmentRecord,
+  NativeTranscriptRangeHandling,
   NativeTranscriptRawItem,
   NativeTranscriptReadInput,
   NativeTranscriptReadResult,
@@ -44,10 +45,14 @@ import {
   DEFAULT_LEGACY_READ_BYTES,
   DEFAULT_LEGACY_TOTAL_ITEMS,
   DEFAULT_LEGACY_TOTAL_READ_BYTES,
+  DEFAULT_NATIVE_ITEM_BYTES,
+  DEFAULT_NATIVE_READ_BYTES,
   MAX_LEGACY_ITEM_BYTES,
   MAX_LEGACY_READ_BYTES,
   MAX_LEGACY_TOTAL_ITEMS,
   MAX_LEGACY_TOTAL_READ_BYTES,
+  MAX_NATIVE_ITEM_BYTES,
+  MAX_NATIVE_READ_BYTES,
   MAX_PAGE_LIMIT
 } from "./transcript-reader.contracts.js";
 import { decodeLegacyCursor, encodeLegacyCursor, type LegacyReadCursor } from "./transcript-reader.legacy-cursor.js";
@@ -65,7 +70,6 @@ import {
   mergeAvailability,
   mergeCompleteness,
   mergeSource,
-  mergeSupplementItems,
   nonEmptyString,
   normalizeItems,
   normalizeNativeResult,
@@ -78,6 +82,7 @@ import {
   transcriptReaderError
 } from "./transcript-reader.normalize.js";
 import {
+  applyRange,
   applyVisibilityCutoff,
   decodeCursor,
   normalizeLimit,
@@ -101,6 +106,108 @@ function rawItemsFromResult(result: NativeTranscriptReadResult): readonly Native
   return result.item ? [result.item] : [];
 }
 
+function boundedSourceBudget(value: number | undefined, fallback: number, maximum: number): number {
+  const candidate = Number.isFinite(value) ? Math.floor(value!) : fallback;
+  return Math.max(4, Math.min(maximum, candidate));
+}
+
+function jsonStringBytesWithin(value: string, maximum: number): number | null {
+  let bytes = 2;
+  for (let index = 0; index < value.length;) {
+    const codePoint = value.codePointAt(index)!;
+    const width = codePoint > 0xffff ? 2 : 1;
+    const encodedBytes = codePoint === 0x22 || codePoint === 0x5c
+      ? 2
+      : codePoint <= 0x1f
+        ? ([0x08, 0x09, 0x0a, 0x0c, 0x0d].includes(codePoint) ? 2 : 6)
+        : codePoint >= 0xd800 && codePoint <= 0xdfff
+          ? 6
+          : codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+    bytes += encodedBytes;
+    if (bytes > maximum) return null;
+    index += width;
+  }
+  return bytes <= maximum ? bytes : null;
+}
+
+function jsonBytesWithin(
+  value: unknown,
+  maximum: number,
+  ancestors: WeakSet<object> = new WeakSet(),
+  depth = 0,
+): number | null {
+  if (maximum < 1 || depth > 100) return null;
+  if (value === null || typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
+    return maximum >= 4 ? 4 : null;
+  }
+  if (typeof value === "string") return jsonStringBytesWithin(value, maximum);
+  if (typeof value === "boolean") return maximum >= (value ? 4 : 5) ? (value ? 4 : 5) : null;
+  if (typeof value === "number") {
+    const text = Number.isFinite(value) ? String(value) : "null";
+    return text.length <= maximum ? text.length : null;
+  }
+  if (typeof value === "bigint") return null;
+  if (typeof value !== "object") return null;
+  if (ancestors.has(value)) return null;
+
+  ancestors.add(value);
+  try {
+    let bytes = 2;
+    const append = (size: number | null) => {
+      if (size === null || bytes + size > maximum) return false;
+      bytes += size;
+      return true;
+    };
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        if (index > 0 && !append(1)) return null;
+        if (!append(jsonBytesWithin(value[index], maximum - bytes, ancestors, depth + 1))) return null;
+      }
+      return bytes;
+    }
+    for (const key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      const child = (value as Record<string, unknown>)[key];
+      if (typeof child === "undefined" || typeof child === "function" || typeof child === "symbol") continue;
+      if (bytes > 2 && !append(1)) return null;
+      if (!append(jsonStringBytesWithin(key, maximum - bytes))) return null;
+      if (!append(1)) return null;
+      if (!append(jsonBytesWithin(child, maximum - bytes, ancestors, depth + 1))) return null;
+    }
+    return bytes;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function nativeItemsByteLength(
+  items: readonly NativeTranscriptRawItem[],
+  maxBytes: number,
+  maxItemBytes: number,
+): number {
+  let bytes = 2;
+  for (let index = 0; index < items.length; index += 1) {
+    if (index > 0) bytes += 1;
+    const itemBytes = jsonBytesWithin(items[index], Math.min(maxItemBytes, maxBytes - bytes));
+    if (itemBytes === null) {
+      throw transcriptReaderError(
+        "source_budget_exceeded",
+        "Native transcript provider exceeded the requested source byte budget.",
+        502,
+      );
+    }
+    bytes += itemBytes;
+  }
+  if (bytes > maxBytes) {
+    throw transcriptReaderError(
+      "source_budget_exceeded",
+      "Native transcript provider exceeded the requested source byte budget.",
+      502,
+    );
+  }
+  return bytes;
+}
+
 function providerRangeForRead(range: TranscriptRange | null | undefined): TranscriptRange | null | undefined {
   if (!range) return range;
   let providerRange = range;
@@ -110,6 +217,71 @@ function providerRangeForRead(range: TranscriptRange | null | undefined): Transc
   return Object.values(providerRange).some((value) => value !== undefined && value !== null)
     ? providerRange
     : null;
+}
+
+function rangeBoundaryItemId(value: unknown): string | null {
+  if (typeof value === "string") return value.length > 0 ? value : null;
+  const record = asRecord(value);
+  return typeof record?.itemId === "string" && record.itemId.length > 0 ? record.itemId : null;
+}
+
+function verifiedRangeHandling(
+  range: TranscriptRange | null | undefined,
+  reported: NativeTranscriptRangeHandling | undefined,
+): NativeTranscriptRangeHandling | undefined {
+  const requested = asRecord(range);
+  const claimed = asRecord(reported);
+  if (!requested || !claimed) return undefined;
+  const handling: NativeTranscriptRangeHandling = {};
+  const startItemId = rangeBoundaryItemId(requested.start);
+  const endItemId = rangeBoundaryItemId(requested.end);
+  const exclusiveStartItemId = rangeBoundaryItemId(requested.fromExclusive ?? requested.after);
+  const throughInclusiveItemId = rangeBoundaryItemId(requested.throughInclusive);
+  const beforeItemId = rangeBoundaryItemId(requested.before);
+  if (startItemId && claimed.startItemId === startItemId) handling.startItemId = startItemId;
+  if (endItemId && claimed.endItemId === endItemId) handling.endItemId = endItemId;
+  if (exclusiveStartItemId && claimed.exclusiveStartItemId === exclusiveStartItemId) {
+    handling.exclusiveStartItemId = exclusiveStartItemId;
+  }
+  if (throughInclusiveItemId && claimed.throughInclusiveItemId === throughInclusiveItemId) {
+    handling.throughInclusiveItemId = throughInclusiveItemId;
+  }
+  if (beforeItemId && claimed.beforeItemId === beforeItemId) handling.beforeItemId = beforeItemId;
+  return Object.keys(handling).length > 0 ? handling : undefined;
+}
+
+function mergeRangeHandling(
+  left: NativeTranscriptRangeHandling | undefined,
+  right: NativeTranscriptRangeHandling | undefined,
+): NativeTranscriptRangeHandling | undefined {
+  if (!left || !right) return undefined;
+  const handling: NativeTranscriptRangeHandling = {};
+  for (const key of ["startItemId", "endItemId", "exclusiveStartItemId", "throughInclusiveItemId", "beforeItemId"] as const) {
+    if (left[key] && left[key] === right[key]) handling[key] = left[key];
+  }
+  return Object.keys(handling).length > 0 ? handling : undefined;
+}
+
+function rangeForProviderPage(
+  range: TranscriptRange | null | undefined,
+  handling: NativeTranscriptRangeHandling | undefined,
+): TranscriptRange | null | undefined {
+  if (!range || !handling) return range;
+  let pageRange = range;
+  const omit = (key: keyof TranscriptRange, handledId: string | undefined, value: unknown) => {
+    if (handledId && rangeBoundaryItemId(value) === handledId) {
+      pageRange = { ...pageRange, [key]: undefined };
+    }
+  };
+  omit("start", handling.startItemId, range.start);
+  omit("end", handling.endItemId, range.end);
+  omit("throughInclusive", handling.throughInclusiveItemId, range.throughInclusive);
+  omit("before", handling.beforeItemId, range.before);
+  const exclusiveStart = range.fromExclusive ?? range.after;
+  if (handling.exclusiveStartItemId && rangeBoundaryItemId(exclusiveStart) === handling.exclusiveStartItemId) {
+    pageRange = { ...pageRange, fromExclusive: undefined, after: undefined };
+  }
+  return pageRange;
 }
 
 function defaultRevision(run: HeartbeatRunRecord, prefix: string): string {
@@ -841,14 +1013,21 @@ async function readNativeSpan(
   }
 
   if (input.signal?.aborted) throw new Error("transcript read cancelled");
-  const hookInput = { ...input, limit: normalizeLimit(input.limit) };
+  const maxBytes = boundedSourceBudget(input.maxBytes, DEFAULT_NATIVE_READ_BYTES, MAX_NATIVE_READ_BYTES);
+  const maxItemBytes = Math.min(
+    maxBytes,
+    boundedSourceBudget(input.maxItemBytes, DEFAULT_NATIVE_ITEM_BYTES, MAX_NATIVE_ITEM_BYTES),
+  );
+  const hookInput = { ...input, limit: normalizeLimit(input.limit), maxBytes, maxItemBytes };
   let raw: NativeTranscriptReadResult | readonly NativeTranscriptRawItem[] | NativeTranscriptRawItem | null;
   if (input.itemId && hook.readItem) raw = await hook.readItem(hookInput);
   else if (hook.readRange) raw = await hook.readRange(hookInput);
   else if (hook.read) raw = await hook.read(hookInput);
   else raw = [];
   const result = normalizeNativeResult(raw);
-  const items = normalizeItems(rawItemsFromResult(result), {
+  const rawItems = rawItemsFromResult(result);
+  const readBytes = nativeItemsByteLength(rawItems, maxBytes, maxItemBytes);
+  const items = normalizeItems(rawItems, {
     runId: input.run.id,
     spanId: input.span.id,
     origin,
@@ -866,12 +1045,145 @@ async function readNativeSpan(
     providerRevision: revision,
     availability,
     completeness,
+    limitReached: result.limitReached ?? null,
     ...(result.truncated ? { truncated: true } : {}),
+    rangeHandled: verifiedRangeHandling(hookInput.range, result.rangeHandled),
+    visibilityCutoffHandled: hookInput.visibilityCutoffRef
+      && result.visibilityCutoffHandled === hookInput.visibilityCutoffRef
+      ? result.visibilityCutoffHandled : undefined,
+    readBytes,
     providerCursor: input.cursor,
     providerNextCursor: nextCursor,
     spanId: input.span.id,
     legacyFallbackEligible: items.length === 0 && isUnavailable(availability),
   };
+}
+
+// Bound cursor metadata independently of the source page budget. Once identity
+// tracking fills, native paging can continue, but we cannot safely add copies
+// from a supplement: return an honest partial result instead.
+const MAX_SUPPLEMENT_IDENTITIES = 512;
+const MAX_SUPPLEMENT_CURSOR_BYTES = 128 * 1024;
+const SUPPLEMENT_CURSOR_PREFIX = "rudder-supplement-v1:";
+type SupplementCursor = {
+  phase: "native" | "object";
+  nativeCursor: string | null;
+  nativeRevision: string;
+  nativeLimit: number;
+  objectCursor: string | null;
+  objectRevision: string | null;
+  scope: string;
+  seen: string[];
+  identitiesLimited: boolean;
+};
+
+async function readNativeWithSupplement(
+  options: TranscriptReaderOptions,
+  input: NativeTranscriptReadInput,
+): Promise<ResolvedSource> {
+  const scope = stableHash({ orgId: input.orgId, runId: input.run.id, spanId: input.span.id,
+    selector: input.selector, objectRef: input.span.supplementalObjectRef,
+    range: input.range, cutoff: input.visibilityCutoffRef });
+  let state: SupplementCursor | null = null;
+  if (input.cursor) {
+    try {
+      if (!input.cursor.startsWith(SUPPLEMENT_CURSOR_PREFIX)
+        || Buffer.byteLength(input.cursor) > MAX_SUPPLEMENT_CURSOR_BYTES) throw new Error("invalid cursor");
+      state = JSON.parse(Buffer.from(input.cursor.slice(SUPPLEMENT_CURSOR_PREFIX.length), "base64url").toString("utf8"));
+      if (!state || state.scope !== scope || !["native", "object"].includes(state.phase)
+        || typeof state.nativeRevision !== "string" || typeof state.identitiesLimited !== "boolean"
+        || !Number.isSafeInteger(state.nativeLimit) || state.nativeLimit < 1 || state.nativeLimit > MAX_PAGE_LIMIT
+        || (state.phase === "object" && (!state.objectCursor || !state.objectRevision))
+        || ![state.nativeCursor, state.objectCursor, state.objectRevision].every(value => value === null || typeof value === "string")
+        || !Array.isArray(state.seen) || state.seen.length > MAX_SUPPLEMENT_IDENTITIES
+        || !state.seen.every(value => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value))) throw new Error("invalid cursor");
+    } catch {
+      throw transcriptReaderError("cursor_invalid", "Invalid native supplement cursor");
+    }
+  }
+  const nativeLimit = state?.phase === "object" ? state.nativeLimit : normalizeLimit(input.limit);
+  const native = await readNativeSpan(options, { ...input, limit: nativeLimit, cursor: state?.nativeCursor ?? null }, "native");
+  if (state && state.nativeRevision !== native.revision) {
+    throw transcriptReaderError("cursor_revision_mismatch", "Transcript native revision is no longer current");
+  }
+  const forSpan = (source: ResolvedSource) => source.items.filter(item => item.runId === input.run.id && item.spanId === input.span.id);
+  const nativeItems = forSpan(native);
+  const seen = new Set(state?.seen ?? []);
+  let identitiesLimited = state?.identitiesLimited ?? false;
+  const keys = (item: ResolvedSource["items"][number]) => [stableHash(["id", item.kind, item.id]),
+    ...(item.sourceEntryId ? [stableHash(["source", item.kind, item.sourceEntryId])] : [])];
+  const remember = (item: ResolvedSource["items"][number]) => {
+    for (const key of keys(item)) {
+      if (seen.has(key)) continue;
+      if (seen.size >= MAX_SUPPLEMENT_IDENTITIES) { identitiesLimited = true; break; }
+      seen.add(key);
+    }
+  };
+  nativeItems.forEach(remember);
+  const base: ResolvedSource = { ...native, providerSource: "native", providerCursor: input.cursor,
+    items: state?.phase === "object" ? [] : nativeItems };
+  const limited = (source: ResolvedSource, reason: TranscriptReadLimit["reason"], maximum: number): ResolvedSource => ({
+    ...source, completeness: "partial", providerNextCursor: null, limitReached: { reason, maximum },
+  });
+  const continuation = (source: ResolvedSource, next: SupplementCursor): ResolvedSource => {
+    const cursor = SUPPLEMENT_CURSOR_PREFIX + Buffer.from(JSON.stringify(next)).toString("base64url");
+    return Buffer.byteLength(cursor) > MAX_SUPPLEMENT_CURSOR_BYTES
+      ? limited(source, "total_bytes", MAX_SUPPLEMENT_CURSOR_BYTES)
+      : { ...source, providerNextCursor: cursor };
+  };
+  const nextState = (overrides: Partial<SupplementCursor>): SupplementCursor => ({
+    phase: "native", nativeCursor: state?.nativeCursor ?? null, nativeRevision: native.revision, nativeLimit,
+    objectCursor: null, objectRevision: null, scope, seen: [...seen], identitiesLimited, ...overrides,
+  });
+  // partial + nextCursor means pagination, not missing native history. Do not
+  // restart the supplement on each native page (or change cursor source identity).
+  if (native.providerNextCursor) {
+    if (state?.phase === "object") throw transcriptReaderError("cursor_revision_mismatch", "Transcript native tail changed");
+    return continuation(base, nextState({ nativeCursor: native.providerNextCursor }));
+  }
+  if (native.completeness === "complete" && !isUnavailable(native.availability)) {
+    if (state?.phase === "object") throw transcriptReaderError("cursor_revision_mismatch", "Transcript native completeness changed");
+    return base;
+  }
+  if (identitiesLimited) return limited(base, "total_items", MAX_SUPPLEMENT_IDENTITIES);
+  const objectBytes = (input.maxBytes ?? DEFAULT_NATIVE_READ_BYTES) - (native.readBytes ?? 0);
+  if (objectBytes < 4) return limited(base, "page_bytes", input.maxBytes ?? DEFAULT_NATIVE_READ_BYTES);
+  const object = await readNativeSpan(options, { ...input, cursor: state?.objectCursor ?? null,
+    maxBytes: objectBytes, maxItemBytes: Math.min(input.maxItemBytes ?? DEFAULT_NATIVE_ITEM_BYTES, objectBytes) }, "object");
+  if (state?.objectRevision && state.objectRevision !== object.revision) {
+    throw transcriptReaderError("cursor_revision_mismatch", "Transcript supplement revision is no longer current");
+  }
+  const objectItems = forSpan(object).filter(item => {
+    const [identity, sourceIdentity] = keys(item);
+    if (seen.has(identity!) || (item.id === item.sourceEntryId && sourceIdentity && seen.has(sourceIdentity))) return false;
+    if (identitiesLimited) return false;
+    remember(item);
+    return true;
+  });
+  const result: ResolvedSource = {
+    ...base,
+    // The stream has a stable native-then-supplement phase order. Do not sort
+    // this tail by ordinal and insert objects before already returned native items.
+    items: [...base.items, ...objectItems],
+    source: "native_plus_objects",
+    // Provider identity remains native across the composition boundary. Object
+    // revision is independently checked by the continuation; span metadata binds its ref.
+    revision: stableHash([native.revision, object.revision]),
+    providerRevision: native.revision,
+    supplementRevision: object.revision,
+    availability: objectItems.length > 0 || object.availability === "available" ? object.availability : native.availability,
+    completeness: mergeCompleteness([native.completeness, object.completeness]),
+    readBytes: (native.readBytes ?? 0) + (object.readBytes ?? 0),
+    limitReached: object.limitReached ?? native.limitReached,
+    providerNextCursor: null,
+    rangeHandled: objectItems.length > 0 ? mergeRangeHandling(native.rangeHandled, object.rangeHandled) : native.rangeHandled,
+    visibilityCutoffHandled: objectItems.length === 0 || native.visibilityCutoffHandled === object.visibilityCutoffHandled
+      ? native.visibilityCutoffHandled : undefined,
+  };
+  if (identitiesLimited) return limited(result, "total_items", MAX_SUPPLEMENT_IDENTITIES);
+  return object.providerNextCursor
+    ? continuation(result, nextState({ phase: "object", objectCursor: object.providerNextCursor, objectRevision: object.revision }))
+    : result;
 }
 
 async function readNativeSources(
@@ -904,6 +1216,17 @@ async function readNativeSources(
     : 0;
   if (activeSpanIndex < 0) throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor span is not part of this run");
   const pageLimit = normalizeLimit(input.limit);
+  const maxNativeReadBytes = boundedSourceBudget(
+    options.maxNativeReadBytes,
+    DEFAULT_NATIVE_READ_BYTES,
+    MAX_NATIVE_READ_BYTES,
+  );
+  const maxNativeItemBytes = boundedSourceBudget(
+    options.maxNativeItemBytes,
+    DEFAULT_NATIVE_ITEM_BYTES,
+    MAX_NATIVE_ITEM_BYTES,
+  );
+  let remainingNativeReadBytes = maxNativeReadBytes;
   const applyRunGlobalItemIds = !input.spanScoped && input.spans.length > 1;
   const spanRange = applyRunGlobalItemIds ? spanRangeWithoutItemIds(input.range) : input.range;
   const runItemIdRange = applyRunGlobalItemIds ? runRangeWithItemIds(input.range) : null;
@@ -920,6 +1243,17 @@ async function readNativeSources(
       ? selectedItems.length
       : sources.reduce((count, source) => count + source.items.length, 0);
     if (collectedCount >= pageLimit) break;
+    if (remainingNativeReadBytes < 4) {
+      const lastSourceIndex = sources.length - 1;
+      if (lastSourceIndex >= 0) {
+        const lastSource = sources[lastSourceIndex]!;
+        sources[lastSourceIndex] = {
+          ...lastSource,
+          limitReached: lastSource.limitReached ?? { reason: "page_bytes", maximum: maxNativeReadBytes },
+        };
+      }
+      break;
+    }
     const providerCursor = spanOffset === 0 ? input.providerCursor ?? null : null;
     const providerOffset = sourceOffset;
     const binding = input.bindings.get(span.bindingId) ?? null;
@@ -936,6 +1270,8 @@ async function readNativeSources(
       selector: selectorFromSpan(span),
       cursor: providerCursor,
       limit: pageLimit - collectedCount,
+      maxBytes: remainingNativeReadBytes,
+      maxItemBytes: Math.min(maxNativeItemBytes, remainingNativeReadBytes),
       itemId: input.itemId ?? null,
       range: providerRangeForRead(spanRange),
       visibilityCutoffRef: input.visibilityCutoffRef ?? span.visibilityCutoffRef,
@@ -985,35 +1321,13 @@ async function readNativeSources(
       ? await readNativeSpan(options, hookInput, "object")
       : expiredSupplement
       ? await readNativeSpan(options, hookInput, "object")
+      : options.nativeReader && objectRef && options.objectReader
+      ? await readNativeWithSupplement(options, hookInput)
       : options.nativeReader
       ? await readNativeSpan(options, hookInput, "native")
       : objectRef && options.objectReader
         ? await readNativeSpan(options, hookInput, "object")
         : await readNativeSpan(options, hookInput, "native");
-    if (!explicitLegacySource && !legacyContinuation && !cursorObjectSource && !expiredSupplement && objectRef
-      && options.objectReader
-      && (isUnavailable(result.availability) || result.completeness !== "complete")) {
-      // A partial native range is not authoritative for the missing tail. Read
-      // the bounded supplement and merge by stable source identity instead of
-      // replacing the native page or silently dropping the supplement.
-      const objectResult = await readNativeSpan(options, { ...hookInput, cursor: null }, "object");
-      const nativeItems = itemsForSpan(result);
-      const objectItems = itemsForSpan(objectResult);
-      const availability = objectItems.length > 0 || objectResult.availability === "available"
-        ? objectResult.availability
-        : result.availability;
-      result = {
-        ...result,
-        items: mergeSupplementItems(nativeItems, objectItems),
-        source: "native_plus_objects",
-        revision: stableHash([result.revision, objectResult.revision]),
-        availability,
-        completeness: mergeCompleteness([result.completeness, objectResult.completeness]),
-        legacyFallbackEligible: nativeItems.length === 0
-          && objectItems.length === 0
-          && isUnavailable(availability),
-      };
-    }
     let spanItems = itemsForSpan(result);
     // Native-bound spans may show only event copies carrying this exact span/Attempt identity.
     const allowLegacyFallback = input.allowLegacyFallback !== false && !nativeSourceContract;
@@ -1072,21 +1386,41 @@ async function readNativeSources(
       };
     }
     const visibilityCutoffRef = input.visibilityCutoffRef ?? span.visibilityCutoffRef;
-    const rangeVisibleItems = applyVisibilityCutoff(spanItems, visibilityCutoffRef);
-    const source = {
-      ...result,
+    const { rangeHandled, visibilityCutoffHandled, ...resultWithoutRangeHandling } = result;
+    const pageVisibilityCutoff = visibilityCutoffRef && visibilityCutoffHandled === visibilityCutoffRef
+      ? null : visibilityCutoffRef;
+    const missingVisibilityBoundary = Boolean(pageVisibilityCutoff && !/^\d+$/u.test(pageVisibilityCutoff)
+      && !spanItems.some(item => item.visibility !== "hidden"
+        && (item.id === pageVisibilityCutoff || item.sourceEntryId === pageVisibilityCutoff)));
+    const rangeVisibleItems = applyVisibilityCutoff(spanItems, pageVisibilityCutoff);
+    const sequencedVisibleItems = rangeVisibleItems.map((item, index) => ({
+      ...item,
+      sequence: providerOffset + index,
+    }));
+    let source = {
+      ...resultWithoutRangeHandling,
+      providerPageLimit: hookInput.limit,
+      // A page-local missing anchor cannot attest completeness. Providers that
+      // cannot prove a full-source cutoff keep the fail-closed fallback.
+      ...(missingVisibilityBoundary ? {
+        availability: "incompatible" as const, completeness: "unknown" as const, providerNextCursor: null,
+      } : {}),
       // Keep each span's visibility boundary, but index numeric ranges over
       // all visible Run items before range selection.
-      items: pageItemsForRange(spanItems, {
-        range: spanRange,
-        visibilityCutoffRef,
-        sourceOffset: providerOffset,
-      }),
+      items: applyRange(sequencedVisibleItems, rangeForProviderPage(spanRange, rangeHandled), providerOffset),
       providerOffset,
       providerNextOffset: providerOffset + rangeVisibleItems.length,
       legacyFallbackEligible: allowLegacyFallback && spanItems.length === 0 && isUnavailable(result.availability),
       providerRevision: result.providerRevision ?? result.revision,
     } satisfies ResolvedSource;
+    const nativeBytesRead = result.readBytes ?? 0;
+    remainingNativeReadBytes = Math.max(0, remainingNativeReadBytes - nativeBytesRead);
+    if (remainingNativeReadBytes < 4 && spanOffset < spans.length - 1) {
+      source = {
+        ...source,
+        limitReached: source.limitReached ?? { reason: "page_bytes", maximum: maxNativeReadBytes },
+      };
+    }
     sources.push(source);
     sourceOffset = source.providerNextOffset;
     const mergedItems = sources.flatMap((entry) => entry.items);
@@ -1129,6 +1463,11 @@ async function readNativeSources(
     revision: stableHash(sources.map((entry) => entry.revision)),
     providerSource: activeSource?.providerSource ?? activeSource?.source ?? null,
     providerRevision: activeSource?.providerRevision ?? null,
+    providerPageLimit: activeSource?.providerPageLimit,
+    // Public items may include earlier spans, but an in-page cursor replays
+    // only the active span. Keep its position in that actual provider page.
+    providerPageStart: Math.max(0, items.findIndex(item => item.spanId === activeSource?.spanId)),
+    supplementRevision: activeSource?.supplementRevision,
     availability: mergeAvailability(sources.map((entry) => entry.availability)),
     completeness: mergeCompleteness(sources.map((entry) => entry.completeness)),
     limitReached: activeSource?.limitReached ?? null,
@@ -1268,7 +1607,7 @@ export async function readRunItems(
       providerSource: cursor?.source ?? null,
       providerOffset: cursor?.providerOffset ?? 0,
       allowLegacyFallback: !cursor || cursor.providerRevision === null,
-      limit: input.limit,
+      limit: cursor && cursor.position > 0 ? cursor.providerPageLimit ?? input.limit : input.limit,
       itemId,
       signal: input.signal,
     })

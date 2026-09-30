@@ -1750,6 +1750,105 @@ describe("transcript reader", () => {
     expect(nativeReader).toHaveBeenNthCalledWith(2, expect.objectContaining({ cursor: "provider-1", limit: 1 }));
   });
 
+  it("passes native byte budgets across opaque continuation pages without duplicate items", async () => {
+    const db = mockDatabase({
+      run: databaseRun(),
+      spans: [databaseSpan("span-1")],
+      bindings: [databaseBinding("span-1")],
+      segments: [databaseSegment("span-1")],
+    });
+    const pageBytes = 256 * 1024;
+    const itemBytes = 192 * 1024;
+    const emittedPageBytes: number[] = [];
+    const nativeReader = vi.fn(async (input: NativeTranscriptReadInput) => {
+      const index = input.cursor === null ? 0 : Number(input.cursor.replace("native-page-", ""));
+      const sourceItem = {
+        id: `native-large-${index}`,
+        kind: "assistant",
+        ts: `2026-09-22T00:00:0${index}.000Z`,
+        payload: { text: "x".repeat(180_000) },
+      };
+      const bytes = Buffer.byteLength(JSON.stringify([sourceItem]));
+      if (bytes > (input.maxBytes ?? 0) || bytes - 2 > (input.maxItemBytes ?? 0)) {
+        throw new Error("reader did not provide a sufficient source budget");
+      }
+      emittedPageBytes.push(bytes);
+      return {
+        items: [sourceItem],
+        nextCursor: index < 3 ? `native-page-${index + 1}` : null,
+        revision: "native-large-r1",
+        availability: "available" as const,
+        completeness: "complete" as const,
+      };
+    });
+    const reader = createTranscriptReader(db as never, {
+      nativeReader: { read: nativeReader },
+      maxNativeReadBytes: pageBytes,
+      maxNativeItemBytes: itemBytes,
+    });
+
+    const seen: string[] = [];
+    const seenSequences: Array<number | undefined> = [];
+    let cursor: string | null = null;
+    do {
+      const page = await reader.readRun({
+        orgId: "org-1",
+        runId: "run-1",
+        principal: { type: "board", orgId: "org-1", authorized: true },
+        cursor,
+        limit: 50,
+      });
+      seen.push(...page.items.map((entry) => entry.id));
+      seenSequences.push(...page.items.map((entry) => entry.sequence));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(seen).toEqual(["native-large-0", "native-large-1", "native-large-2", "native-large-3"]);
+    expect(seenSequences).toEqual([0, 1, 2, 3]);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(nativeReader.mock.calls.map(([input]) => input.cursor)).toEqual([
+      null,
+      "native-page-1",
+      "native-page-2",
+      "native-page-3",
+    ]);
+    expect(nativeReader.mock.calls.every(([input]) => input.maxBytes === pageBytes && input.maxItemBytes === itemBytes)).toBe(true);
+    expect(emittedPageBytes.every((bytes) => bytes <= pageBytes)).toBe(true);
+    expect(Math.max(...emittedPageBytes)).toBeLessThan(pageBytes);
+  });
+
+  it("rejects an oversized native hook result before transcript normalization", async () => {
+    const db = mockDatabase({
+      run: databaseRun(),
+      spans: [databaseSpan("span-1")],
+      bindings: [databaseBinding("span-1")],
+      segments: [databaseSegment("span-1")],
+    });
+    const nativeReader = vi.fn().mockResolvedValue({
+      items: [{
+        id: "oversized-native-item",
+        kind: "assistant",
+        ts: "2026-09-22T00:00:01.000Z",
+        payload: { text: "x".repeat(2_000) },
+      }],
+      revision: "native-oversized-r1",
+      availability: "available" as const,
+      completeness: "complete" as const,
+    });
+    const reader = createTranscriptReader(db as never, {
+      nativeReader: { read: nativeReader },
+      maxNativeReadBytes: 512,
+      maxNativeItemBytes: 256,
+    });
+
+    await expect(reader.readRun({
+      orgId: "org-1",
+      runId: "run-1",
+      principal: { type: "board", orgId: "org-1", authorized: true },
+      limit: 10,
+    })).rejects.toMatchObject({ code: "source_budget_exceeded", status: 502 });
+  });
+
   it("rejects a provider cursor that does not advance on continuation", async () => {
     const db = mockDatabase({
       run: databaseRun(),

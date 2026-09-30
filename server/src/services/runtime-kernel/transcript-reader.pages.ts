@@ -245,6 +245,8 @@ export function decodeCursor(value: string | null | undefined): CursorPayload | 
       || typeof parsed.orgId !== "string" || typeof parsed.principalScopeRef !== "string"
       || typeof parsed.revision !== "string" || typeof parsed.position !== "number"
       || !Number.isSafeInteger(parsed.position) || parsed.position < 0
+      || (parsed.providerPageLimit !== undefined
+        && (!Number.isSafeInteger(parsed.providerPageLimit) || parsed.providerPageLimit < 1 || parsed.providerPageLimit > MAX_PAGE_LIMIT))
       || (parsed.providerOffset !== undefined
         && (!Number.isSafeInteger(parsed.providerOffset) || parsed.providerOffset < 0))) {
       throw new Error("invalid cursor");
@@ -384,6 +386,8 @@ export function runCursorPayload(input: {
   providerRevision: string | null;
   activeSpanId: string | null;
   providerPageCursor: string | null;
+  providerPageLimit?: number;
+  supplementRevision?: string;
   providerNextCursor: string | null;
   providerOffset: number;
   position: number;
@@ -406,6 +410,8 @@ export function runCursorPayload(input: {
     providerRevision: input.providerRevision,
     activeSpanId: input.activeSpanId,
     providerPageCursor: input.providerPageCursor,
+    ...(input.providerPageLimit === undefined ? {} : { providerPageLimit: input.providerPageLimit }),
+    ...(input.supplementRevision === undefined ? {} : { supplementRevision: input.supplementRevision }),
     providerNextCursor: input.providerNextCursor,
     providerOffset: input.providerOffset,
     ...(input.sourceTransition ? { sourceTransition: true } : {}),
@@ -415,6 +421,8 @@ export function runCursorPayload(input: {
       providerRevision: input.providerRevision,
       activeSpanId: input.activeSpanId,
       providerOffset: input.providerOffset,
+      ...(input.providerPageLimit === undefined ? {} : { providerPageLimit: input.providerPageLimit }),
+      ...(input.supplementRevision === undefined ? {} : { supplementRevision: input.supplementRevision }),
       ...(input.runItemIdRangeState ? { runItemIdRangeState: input.runItemIdRangeState } : {}),
     }),
     position: input.position,
@@ -476,6 +484,9 @@ export function pageFromRunSource(
       throw transcriptReaderError("cursor_source_mismatch", "Transcript cursor does not belong to this source");
     }
     const providerRevision = source.providerRevision ?? source.revision;
+    if (cursor.supplementRevision !== undefined && cursor.supplementRevision !== source.supplementRevision) {
+      throw transcriptReaderError("cursor_revision_mismatch", "Transcript supplement revision is no longer current");
+    }
     if (cursor.providerRevision && cursor.providerRevision !== providerRevision) {
       throw transcriptReaderError("cursor_revision_mismatch", "Transcript cursor provider revision is no longer current");
     }
@@ -484,6 +495,8 @@ export function pageFromRunSource(
       providerRevision: cursor.providerRevision ?? null,
       activeSpanId: cursor.activeSpanId ?? null,
       ...(cursor.providerOffset === undefined ? {} : { providerOffset: cursor.providerOffset }),
+      ...(cursor.providerPageLimit === undefined ? {} : { providerPageLimit: cursor.providerPageLimit }),
+      ...(cursor.supplementRevision === undefined ? {} : { supplementRevision: cursor.supplementRevision }),
       ...((cursor as CursorPayload & { runItemIdRangeState?: RunItemIdRangeState }).runItemIdRangeState
         ? { runItemIdRangeState: (cursor as CursorPayload & { runItemIdRangeState?: RunItemIdRangeState }).runItemIdRangeState }
         : {}),
@@ -503,7 +516,9 @@ export function pageFromRunSource(
   const rangeEnded = numericRangeEndReached(range, source.providerNextOffset) || source.runItemIdRangeEnded === true;
   const runItemIdRangeState = source.runItemIdRangeState;
   let nextCursor: string | null = null;
-  if (nextPosition < source.items.length && !rangeEnded) {
+  // A resolved range may end inside this provider page. Drain its already
+  // selected items before suppressing further provider/span reads.
+  if (nextPosition < source.items.length) {
     nextCursor = encodeCursor(runCursorPayload({
       id: input.id,
       orgId: input.orgId,
@@ -516,9 +531,11 @@ export function pageFromRunSource(
       providerRevision: source.providerRevision ?? source.revision,
       activeSpanId: source.spanId,
       providerPageCursor: source.providerCursor,
+      providerPageLimit: source.providerPageLimit,
+      supplementRevision: source.supplementRevision,
       providerNextCursor: source.providerNextCursor,
       providerOffset: source.providerOffset ?? 0,
-      position: nextPosition,
+      position: nextPosition - (source.providerPageStart ?? 0),
       runItemIdRangeState,
     }));
   } else if (source.providerNextCursor && !rangeEnded) {
