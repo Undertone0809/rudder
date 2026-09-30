@@ -84,7 +84,7 @@ test("a stored Gemini CLI Agent Run fails without spawning and the Agent can be 
     return history;
   };
   const historyBefore = await readHistory();
-  expect(historyBefore.rows.map((row: { entry: { kind: string } }) => row.entry.kind))
+  expect(historyBefore.rows.map((row: { kind: string }) => row.kind))
     .toEqual(["thinking", "tool_call", "tool_result", "assistant"]);
 
   await page.addInitScript((orgId: string) => {
