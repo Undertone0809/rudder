@@ -200,7 +200,7 @@ test("forks a chat from a selected message and groups the fork family in Messeng
     data: { name: `Chat-Fork-${Date.now()}` },
   });
   expect(orgRes.ok()).toBe(true);
-  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const organization = await orgRes.json() as { id: string; issuePrefix: string; urlKey: string };
 
   const sourceConversationId = randomUUID();
   const sourceMessageIds = [randomUUID(), randomUUID(), randomUUID()];
@@ -342,10 +342,10 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   await sourceMessageLink.click();
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${sourceConversationId}`));
   await expect(sourceAssistant).toContainText("Middle branch point");
-  await expect(sourceAssistant).toHaveClass(/chat-message-jump-highlight/);
+  await expect(sourceAssistant.locator("[data-message-highlight-target='true']")).toHaveClass(/chat-message-jump-highlight/);
   await expectMessageInScrollViewport(page, sourceMessageIds[1]!);
   await expectMessageJumpHighlightStylesTargetBlock(page, sourceMessageIds[1]!);
-  await expect(page).toHaveURL(new RegExp(`/${organization.issuePrefix}/messenger/chat/${sourceConversationId}$`));
+  await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/messenger/chat/${sourceConversationId}$`));
 
   await page.goto(`/${organization.issuePrefix}/messenger`);
   await expect(page.getByTestId(threadTestId(`chat:${sourceConversationId}`))).toBeVisible({ timeout: 15_000 });
