@@ -1173,6 +1173,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         signal: appResult.signal,
         timedOut: appResult.timedOut,
         nativeWriterQuiescence: appResult.nativeWriterQuiescence,
+        submissionPhase: appResult.submissionPhase,
         errorMessage: appResult.errorMessage,
         ...(providerAuthFailure ? { errorCode: "codex_provider_auth_required" } : {}),
         usage: appResult.usage,

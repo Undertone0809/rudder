@@ -206,6 +206,10 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "turn/start") {
+    if (process.env.RUDDER_TEST_TURN_START_NO_ID === "1") {
+      send({ id: message.id, result: { turn: {} } });
+      return;
+    }
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
     if (process.env.RUDDER_TEST_STALL_TURN === "1") return;
@@ -512,9 +516,10 @@ describe("executeCodexAppServerChat", () => {
   });
 
   it.each([
-    ["missing", { RUDDER_TEST_TURN_STATUS_MISSING: "1" }, "unknown"],
-    ["unrecognized", { RUDDER_TEST_TURN_STATUS: "cancelled" }, "cancelled"],
-  ] as const)("fails closed when Codex reports a %s terminal Turn status", async (_kind, statusEnv, status) => {
+    ["failed", { RUDDER_TEST_TURN_STATUS: "failed" }, "failed", "accepted"],
+    ["missing", { RUDDER_TEST_TURN_STATUS_MISSING: "1" }, "unknown", "accepted"],
+    ["unrecognized", { RUDDER_TEST_TURN_STATUS: "cancelled" }, "cancelled", "accepted"],
+  ] as const)("fails closed when Codex reports a %s terminal Turn status", async (_kind, statusEnv, status, submissionPhase) => {
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
@@ -539,9 +544,38 @@ describe("executeCodexAppServerChat", () => {
       exitCode: 1,
       timedOut: false,
       errorMessage: `Codex turn ${status}`,
+      submissionPhase,
     });
     expect(result.stdout).toContain('"type":"turn.failed"');
     expect(result.stdout).not.toContain('"type":"turn.completed"');
+  });
+
+  it("keeps turn/start acceptance indeterminate when its response has no turn id", async () => {
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_TURN_START_NO_ID: "1",
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 1,
+      errorMessage: "Codex App Server did not return a turn id",
+      submissionPhase: "indeterminate",
+      providerTurnId: null,
+    });
   });
 
   it("propagates a read-only sandbox to new and resumed threads and their turns", async () => {

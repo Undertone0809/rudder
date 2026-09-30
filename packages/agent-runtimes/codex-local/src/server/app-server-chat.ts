@@ -1,6 +1,7 @@
 import type {
   AgentRuntimeControlHandleLease,
   AgentRuntimeExecutionContext,
+  AgentRuntimeNetworkSubmissionPhase,
   AgentRuntimeNativeWriterQuiescence,
   UsageSummary,
 } from "@rudderhq/agent-runtime-utils";
@@ -83,6 +84,7 @@ export interface CodexAppServerChatResult {
   sessionParams: Record<string, unknown> | null;
   chatDeveloperInstructionsRevision: string | null;
   providerTurnId: string | null;
+  submissionPhase: AgentRuntimeNetworkSubmissionPhase;
   resumed: boolean;
   clearSession: boolean;
   nativeWriterQuiescence?: AgentRuntimeNativeWriterQuiescence;
@@ -494,6 +496,7 @@ export async function executeCodexAppServerChat(
   let sessionParams: Record<string, unknown> | null = null;
   let chatDeveloperInstructionsRevision: string | null = null;
   let turnId: string | null = null;
+  let submissionPhase: AgentRuntimeNetworkSubmissionPhase = "pre_submission";
   let turnCompleted = false;
   let turnError: Error | null = null;
   let interruptAcknowledged = false;
@@ -884,6 +887,7 @@ export async function executeCodexAppServerChat(
       { type: "text", text: turnPrompt, text_elements: [] },
       ...options.imagePaths.map((imagePath) => ({ type: "localImage", path: imagePath })),
     ];
+    submissionPhase = "indeterminate";
     const turnResponse = asRecord(await client.request("turn/start", {
       threadId,
       input,
@@ -897,8 +901,9 @@ export async function executeCodexAppServerChat(
       model: options.model || null,
       effort: options.modelReasoningEffort || null,
     })) ?? {};
-    turnId = asString(asRecord(turnResponse.turn)?.id);
+    turnId = asString(asRecord(turnResponse.turn)?.id) || null;
     if (!turnId) throw new Error("Codex App Server did not return a turn id");
+    submissionPhase = "accepted";
     const activeThreadId = threadId;
     const activeTurnId = turnId;
 
@@ -985,6 +990,7 @@ export async function executeCodexAppServerChat(
       sessionParams,
       chatDeveloperInstructionsRevision,
       providerTurnId: turnId,
+      submissionPhase,
       resumed,
       clearSession,
     };
@@ -1002,6 +1008,7 @@ export async function executeCodexAppServerChat(
       sessionParams,
       chatDeveloperInstructionsRevision,
       providerTurnId: turnId,
+      submissionPhase,
       resumed,
       clearSession,
     };
