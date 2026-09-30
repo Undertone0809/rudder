@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 actix-web = { version = "4.11", default-features = false, features = ["macros"] }
+actix-ws = { version = "0.4.0", default-features = false }
 awc = { version = "3.8.2", default-features = false }
 base64 = "0.22"
 futures-util = "0.3"
