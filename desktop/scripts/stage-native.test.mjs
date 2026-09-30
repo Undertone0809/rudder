@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const script = readFileSync(new URL("./stage-native.mjs", import.meta.url), "utf8");
+const rootPackage = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 
 describe("Desktop native staging contract", () => {
   it("builds and stages the server foundation at the resolved target-relative path", () => {
@@ -29,5 +30,18 @@ describe("Desktop native staging contract", () => {
     ]) {
       expect(script).toContain(binary);
     }
+  });
+});
+
+describe("Desktop verification contract", () => {
+  it("builds only the development process host before running Desktop smoke", () => {
+    const verifyScript = rootPackage.scripts["desktop:verify"];
+    const debugHostBuild = "cargo build --locked --manifest-path native/Cargo.toml --bin rudder-process-host";
+    const debugHostBuildIndex = verifyScript.indexOf(debugHostBuild);
+    const desktopSmokeIndex = verifyScript.indexOf("pnpm --filter @rudderhq/desktop smoke");
+
+    expect(debugHostBuildIndex).toBeGreaterThanOrEqual(0);
+    expect(desktopSmokeIndex).toBeGreaterThan(debugHostBuildIndex);
+    expect(verifyScript).not.toContain("pnpm native:build");
   });
 });
