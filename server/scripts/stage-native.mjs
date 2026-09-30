@@ -83,6 +83,22 @@ async function validateFoundationArtifacts(artifacts, options) {
   }
 }
 
+async function publishFoundationArtifact(sourcePath, destinationPath, target) {
+  const destinationDir = path.dirname(destinationPath);
+  await fs.mkdir(destinationDir, { recursive: true });
+  const temporaryDir = await fs.mkdtemp(path.join(destinationDir, ".foundation-stage-"));
+  const temporaryPath = path.join(temporaryDir, path.basename(destinationPath));
+  try {
+    await fs.copyFile(sourcePath, temporaryPath);
+    await fs.chmod(temporaryPath, 0o755);
+    await inspectSource(temporaryPath, target, { requireExecutable: true });
+    // A fresh inode avoids macOS retaining the signature of an overwritten executable.
+    await fs.rename(temporaryPath, destinationPath);
+  } finally {
+    await fs.rm(temporaryDir, { recursive: true, force: true });
+  }
+}
+
 export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targets = Object.keys(FOUNDATION_TARGETS) }) {
   const sources = Object.fromEntries(targets.map((target) => [
     target,
@@ -95,9 +111,7 @@ export async function stageFoundationArtifacts({ artifactDir, resourcesDir, targ
   for (const target of targets) {
     const sourcePath = sources[target];
     const destinationPath = path.join(resourceRoot, "native", target, foundationBinaryName(target));
-    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-    await fs.copyFile(sourcePath, destinationPath);
-    await fs.chmod(destinationPath, 0o755);
+    await publishFoundationArtifact(sourcePath, destinationPath, target);
     staged.push({ target, path: destinationPath });
   }
   return staged;
@@ -222,9 +236,7 @@ async function main() {
   const sourcePath = await buildCargoFoundation(process.platform === "win32" ? "cargo.exe" : "cargo", cargoArgs);
   await inspectSource(sourcePath, target);
   const destinationPath = path.join(resourcesDir, "native", target, binaryName);
-  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-  await fs.copyFile(sourcePath, destinationPath);
-  await fs.chmod(destinationPath, 0o755);
+  await publishFoundationArtifact(sourcePath, destinationPath, target);
   console.log(`[server:stage-native] staged ${target}/${binaryName}`);
 }
 
