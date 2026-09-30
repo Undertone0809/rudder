@@ -1926,7 +1926,6 @@ describe("heartbeat run concurrency", () => {
         && !activeSpan;
     });
 
-    mockRuntimeAdapter.reset();
     const high = await seedAgentFixture(999);
     const highCreatedAt = new Date("2026-04-27T03:00:00.000Z");
     for (let i = 0; i < 11; i += 1) {
