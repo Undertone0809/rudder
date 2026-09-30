@@ -10,7 +10,7 @@ import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import type { LocalAccountExchangePolicy } from "../services/local-account-auth.js";
 import type { LocalAccountSessionRevocation } from "../services/local-account-session-revocation.js";
 import type { McpDeploymentAllowlists } from "../services/mcp/security-policy.js";
-import type { RustFoundationMode } from "../services/rust-foundation-bridge.js";
+import type { RustFoundationMode, RustPublicIngressOptions } from "../services/rust-foundation-bridge.js";
 import type { StorageService } from "../storage/types.js";
 
 export type UiMode = "none" | "static" | "vite-dev";
@@ -64,6 +64,7 @@ export interface RudderAppOptions {
   rustFoundationActorEnvelopeKey?: string;
   /** Explicit private authorization adapter for the public Actix ingress. */
   rustPublicIngressAuthKey?: string;
+  rustPublicIngress?: RustPublicIngressOptions;
   hostVersion?: string;
   localPluginDir?: string;
   betterAuthHandler?: RequestHandler;

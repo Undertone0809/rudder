@@ -115,6 +115,7 @@ export interface Config {
   rustProjectGoalSetMode: RustFoundationMode;
   rustFoundationBinaryPath: string | undefined;
   rustFoundationActorEnvelopeKey: string | undefined;
+  rustPublicIngressMode?: "off" | "required";
   embeddedPostgresDataDir: string;
   embeddedPostgresPort: number;
   databaseBackupEnabled: boolean;
@@ -374,6 +375,10 @@ export function loadConfig(): Config {
   );
   const rustFoundationBinaryPath = process.env.RUDDER_SERVER_FOUNDATION_PATH?.trim() || undefined;
   const rustFoundationActorEnvelopeKey = process.env.RUDDER_NATIVE_ACTOR_ENVELOPE_KEY?.trim() || undefined;
+  const rustPublicIngressMode = process.env.RUDDER_RUST_PUBLIC_INGRESS_MODE?.trim() || "off";
+  if (rustPublicIngressMode !== "off" && rustPublicIngressMode !== "required") {
+    throw new Error("RUDDER_RUST_PUBLIC_INGRESS_MODE must be off or required");
+  }
   const mcpDeploymentAllowlists = parseMcpDeploymentPolicyEnv(process.env);
 
   return {
@@ -393,6 +398,7 @@ export function loadConfig(): Config {
     rustProjectGoalSetMode,
     rustFoundationBinaryPath,
     rustFoundationActorEnvelopeKey,
+    rustPublicIngressMode,
     embeddedPostgresDataDir: resolveHomeAwarePath(
       fileConfig?.database.embeddedPostgresDataDir ?? resolveDefaultEmbeddedPostgresDir(),
     ),
