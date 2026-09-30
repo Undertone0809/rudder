@@ -15,6 +15,7 @@ import { logger } from "../middleware/logger.js";
 import { privateHostnameGuard, resolvePrivateHostnameAllowSet } from "../middleware/private-hostname-guard.js";
 import { createChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
 import { llmRoutes } from "../routes/llms.js";
+import { publicIngressAuthRoutes } from "../routes/public-ingress-auth.js";
 import {
   configuredOrganizationBrandingOrgIds,
   handoffOrganizationBrandingAuthorityInTransaction,
@@ -46,6 +47,14 @@ export async function createHttpApp(
   db: Db,
   opts: RudderAppOptions,
 ): Promise<HttpAppHandle> {
+  // Build the adapter before acquiring app resources so invalid or reused
+  // keys fail startup without leaving a child process behind.
+  const ingressAuthorization = opts.rustPublicIngressAuthKey
+    ? publicIngressAuthRoutes({
+      internalIngressAuthKey: opts.rustPublicIngressAuthKey,
+      actorEnvelopeKey: opts.rustFoundationActorEnvelopeKey ?? "",
+    })
+    : null;
   const app = express();
   const previewOrigin = opts.workspacePreviewOrigin ?? `http://preview.localhost:${opts.serverPort}`;
   const workspacePreview = workspaceWebPreviewRuntime(db, {
@@ -139,6 +148,7 @@ export async function createHttpApp(
   const authRequirement =
     opts.authRequirement ?? authRequirementForDeploymentMode(opts.deploymentMode);
   app.use(accountSessionRequired(authRequirement));
+  if (ingressAuthorization) app.use("/api", ingressAuthorization);
   app.get("/api/auth/get-session", (req, res) => {
     if (req.actor.type !== "board" || !req.actor.userId) {
       res.status(401).json({ error: "Unauthorized" });

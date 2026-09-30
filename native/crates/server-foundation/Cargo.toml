@@ -6,7 +6,10 @@ publish.workspace = true
 
 [dependencies]
 actix-web = { version = "4.11", default-features = false, features = ["macros"] }
+awc = { version = "3.8.2", default-features = false }
 base64 = "0.22"
+futures-util = "0.3"
+percent-encoding = "2.3"
 rudder-archive-core = { path = "../archive-core" }
 rudder-auth-core = { path = "../auth-core" }
 rudder-d1-persistence = { path = "../d1-persistence" }
@@ -22,6 +25,8 @@ tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "signal", "
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+url = "2.5"
+uuid = { version = "1", features = ["v4"] }
 zip = { version = "4.6", default-features = false }
 
 [dev-dependencies]

@@ -62,6 +62,8 @@ export interface RudderAppOptions {
   rustProjectGoalSetMode?: RustFoundationMode;
   rustFoundationBinaryPath?: string;
   rustFoundationActorEnvelopeKey?: string;
+  /** Explicit private authorization adapter for the public Actix ingress. */
+  rustPublicIngressAuthKey?: string;
   hostVersion?: string;
   localPluginDir?: string;
   betterAuthHandler?: RequestHandler;
