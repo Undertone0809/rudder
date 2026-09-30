@@ -21,6 +21,7 @@ import { applyPendingMigrations, ensurePostgresDatabase } from "../client.js";
 const migrations = path.dirname(fileURLToPath(import.meta.url));
 const originalOrg = randomUUID();
 const originalProject = randomUUID();
+const originalResource = randomUUID();
 const catchupOrg = randomUUID();
 const catchupProject = randomUUID();
 let root = "";
@@ -71,7 +72,8 @@ async function receipt(
     | "organization_branding"
     | "project_goal_link"
     | "project_delete"
-    | "project_create" = "organization_branding",
+    | "project_create"
+    | "organization_resource" = "organization_branding",
   fenceEpoch = 0,
 ) {
   return sql.unsafe(
@@ -150,6 +152,9 @@ beforeAll(async () => {
 
   const throughCurrent = migrationSnapshot("through-0176", 176);
   await migrate(drizzle(db), { migrationsFolder: throughCurrent });
+  await db`INSERT INTO organization_resources
+    (id, org_id, name, kind, source_type, locator)
+    VALUES (${originalResource}, ${originalOrg}, 'Before resource fence', 'file', 'external', 'https://example.test/before-resource-fence')`;
   const legacyReceiptActivity = await activity(originalOrg);
   await receipt(db, originalOrg, legacyReceiptActivity, "pre-0177-receipt");
 
@@ -244,6 +249,17 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
         fence_epoch: "0",
       },
     ]);
+    expect(
+      await db`SELECT org_id, owner, mutation_version::text, fence_epoch::text
+        FROM organization_resource_mutation_state WHERE resource_id = ${originalResource}`,
+    ).toEqual([
+      {
+        org_id: originalOrg,
+        owner: "node",
+        mutation_version: "0",
+        fence_epoch: "0",
+      },
+    ]);
     await db`UPDATE organizations SET name = 'Node still writes' WHERE id = ${originalOrg}`;
     const org = await organization();
     const [row] =
@@ -321,6 +337,60 @@ describe("D1 durable mutation schema on real PostgreSQL", () => {
     expect(
       await db`SELECT org_id FROM project_goal_mutation_state WHERE project_id = ${projectId}`,
     ).toEqual([{ org_id: projectOrg }]);
+  });
+
+  it("keeps resource authority scoped, monotonic, and durable after canonical deletion", async () => {
+    const resourceOrg = await organization();
+    const otherOrg = await organization();
+    const resourceId = randomUUID();
+    await db`INSERT INTO organization_resources
+      (id, org_id, name, kind, source_type, locator)
+      VALUES (${resourceId}, ${resourceOrg}, 'Fenced resource', 'file', 'external', 'https://example.test/fenced-resource')`;
+    await db`INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+      VALUES (${resourceId}, ${resourceOrg})`;
+
+    await expect(db`INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+      VALUES (${resourceId}, ${otherOrg})`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`UPDATE organization_resource_mutation_state SET org_id = ${otherOrg}
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`UPDATE organization_resource_mutation_state SET owner = 'rust'
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await db`UPDATE organization_resource_mutation_state
+      SET owner = 'rust', fence_epoch = 1, fence_token = gen_random_uuid()
+      WHERE resource_id = ${resourceId}`;
+    await expect(db`UPDATE organization_resource_mutation_state
+      SET mutation_version = -1 WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`UPDATE organization_resource_mutation_state
+      SET fence_epoch = 2 WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+    await expect(db`DELETE FROM organization_resource_mutation_state
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+
+    await db`DELETE FROM organization_resources WHERE id = ${resourceId}`;
+    expect(await db`SELECT resource_id::text AS resource_id, org_id::text AS org_id,
+      owner, mutation_version::text, fence_epoch::text
+      FROM organization_resource_mutation_state WHERE resource_id = ${resourceId}`)
+      .toEqual([{
+        resource_id: resourceId,
+        org_id: resourceOrg,
+        owner: "rust",
+        mutation_version: "0",
+        fence_epoch: "1",
+      }]);
+    await expect(db`DELETE FROM organization_resource_mutation_state
+      WHERE resource_id = ${resourceId}`).rejects.toMatchObject({ code: "23514" });
+  });
+
+  it("requires activity-backed organization-resource mutation receipts", async () => {
+    const org = await organization();
+    const audit = await activity(org);
+    await receipt(db, org, audit, "resource-command", "organization_resource");
+    await expect(db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'resource-command-without-activity', 'organization_resource', ${"b".repeat(64)},
+        'applied', 1, 0, NULL,
+        ${JSON.stringify({ organization_id: org, version: 1, fence_epoch: 0 })}::jsonb)`)
+      .rejects.toMatchObject({ code: "23514" });
   });
 
   it("rejects deleting live Project authority and keeps its fence intact", async () => {

@@ -4,8 +4,8 @@ use rudder_archive_core::create_archive;
 use rudder_server_foundation_core::{
     ACTOR_ENVELOPE_AUDIENCE, ACTOR_ENVELOPE_HEADER, ACTOR_ENVELOPE_REQUEST_ID_HEADER,
     ActorEnvelope, ActorIdentity, IDEMPOTENCY_KEY_HEADER, MEMBER_DIRECTORY_ACTION,
-    ORGANIZATION_BRANDING_ACTION, PROJECT_CREATE_ACTION, PROJECT_DELETE_ACTION,
-    PROJECT_GOAL_SET_ACTION,
+    ORGANIZATION_BRANDING_ACTION, ORGANIZATION_RESOURCE_ACTION, PROJECT_CREATE_ACTION,
+    PROJECT_DELETE_ACTION, PROJECT_GOAL_SET_ACTION,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1573,6 +1573,96 @@ async fn project_patch_accepts_user_wire_board_actor_for_resource_attachment() {
     stop_server(child, stdout);
 }
 
+#[test]
+fn resource_mutations_require_board_signed_key_and_explicit_run_context() {
+    const ORG: &str = "00000000-0000-0000-0000-000000000001";
+    const SECRET: &str = "resource-auth-contract-test-secret";
+    let (child, stdout, addr) = spawn_server(&[("RUDDER_NATIVE_ACTOR_ENVELOPE_KEY", SECRET)]);
+    let route = format!("/api/orgs/{ORG}/resources/60000000-0000-0000-0000-000000000001");
+    let body = br#"{"data":{"name":"Updated"},"runId":null}"#;
+    for method in ["PATCH", "DELETE"] {
+        let agent = signed_mutation_request_with_actor_and_action_and_signed_key(
+            SignedRequestOptions::new(
+                addr,
+                &route,
+                ORG,
+                SECRET,
+                &format!("agent-{method}"),
+                "resource-key",
+                body,
+            ),
+            method,
+            "agent",
+            "agent-1",
+            ORGANIZATION_RESOURCE_ACTION,
+            Some("resource-key"),
+        );
+        assert!(agent.starts_with("HTTP/1.1 403"), "{agent}");
+        let substituted_key = signed_mutation_request_with_actor_and_action_and_signed_key(
+            SignedRequestOptions::new(
+                addr,
+                &route,
+                ORG,
+                SECRET,
+                &format!("key-{method}"),
+                "substituted-key",
+                body,
+            ),
+            method,
+            "user",
+            "board-user",
+            ORGANIZATION_RESOURCE_ACTION,
+            Some("resource-key"),
+        );
+        assert!(
+            substituted_key.starts_with("HTTP/1.1 401"),
+            "{substituted_key}"
+        );
+        let missing_run = signed_mutation_request_with_actor_and_action_and_signed_key(
+            SignedRequestOptions::new(
+                addr,
+                &route,
+                ORG,
+                SECRET,
+                &format!("run-{method}"),
+                "resource-key",
+                br#"{"data":{}}"#,
+            ),
+            method,
+            "user",
+            "board-user",
+            ORGANIZATION_RESOURCE_ACTION,
+            Some("resource-key"),
+        );
+        assert!(missing_run.starts_with("HTTP/1.1 422"), "{missing_run}");
+        let valid_disabled = signed_mutation_request_with_actor_and_action_and_signed_key(
+            SignedRequestOptions::new(
+                addr,
+                &route,
+                ORG,
+                SECRET,
+                &format!("valid-{method}"),
+                "resource-key",
+                body,
+            ),
+            method,
+            "user",
+            "board-user",
+            ORGANIZATION_RESOURCE_ACTION,
+            Some("resource-key"),
+        );
+        assert!(
+            valid_disabled.starts_with("HTTP/1.1 503"),
+            "{valid_disabled}"
+        );
+        assert!(
+            valid_disabled.contains("database_disabled"),
+            "{valid_disabled}"
+        );
+    }
+    stop_server(child, stdout);
+}
+
 struct SignedRequestOptions<'a> {
     addr: SocketAddr,
     route: &'a str,
@@ -1888,7 +1978,8 @@ fn health_readiness_capabilities_and_sigterm_are_observable() {
             "organization_branding",
             "project_goal_set_replacement",
             "project_delete",
-            "project_create"
+            "project_create",
+            "organization_resource"
         ])
     );
     assert_eq!(

@@ -394,9 +394,12 @@ async fn create_resources(
                 .map(serde_json::to_string)
                 .transpose()
                 .map_err(|_| StoreError::InvalidInput)?;
-            sqlx::query_scalar("INSERT INTO organization_resources (org_id, name, kind, source_type, locator, description, metadata) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id::text")
+            let id: String = sqlx::query_scalar("INSERT INTO organization_resources (org_id, name, kind, source_type, locator, description, metadata) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7::jsonb) RETURNING id::text")
                 .bind(org).bind(resource.name.trim()).bind(&resource.kind).bind(source).bind(locator)
                 .bind(nullable_text(resource.description.as_deref())).bind(metadata).fetch_one(&mut **tx).await?
+            ;
+            crate::organization_resources::provision_new_resource_state(tx, org, &id).await?;
+            id
         };
         attachments.push(crate::project_patches::ResourceAttachmentInput {
             resource_id: id,

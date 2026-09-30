@@ -266,11 +266,18 @@ async function runChildProcess(
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
-    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    const stdoutStream = child.stdout;
+    const stderrStream = child.stderr;
+    if (!stdoutStream || !stderrStream) throw new Error("Child process output streams were not piped");
+    stdoutStream.on("data", (chunk) => { stdout += String(chunk); });
+    stderrStream.on("data", (chunk) => { stderr += String(chunk); });
     child.once("error", reject);
     child.once("close", (exitCode) => resolve({ exitCode, stdout, stderr }));
-    if (input !== undefined) child.stdin.end(input);
+    if (input !== undefined) {
+      const stdinStream = child.stdin;
+      if (!stdinStream) throw new Error("Child process input stream was not piped");
+      stdinStream.end(input);
+    }
   });
 }
 
@@ -356,6 +363,11 @@ async function main() {
       });
       sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
     };
+    const currentServer = (): ServerHandle => {
+      const server = current as ServerHandle | null;
+      if (!server) throw new Error("Smoke server is not running");
+      return server;
+    };
     await start();
 
     const request = async (
@@ -364,7 +376,7 @@ async function main() {
       body?: Json,
       headers: Record<string, string> = {},
     ): Promise<Reply> => {
-      return await readResponse(await fetch(current!.apiUrl + "/api" + url, {
+      return await readResponse(await fetch(currentServer().apiUrl + "/api" + url, {
         method,
         headers: { "content-type": "application/json", ...headers },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -385,7 +397,32 @@ async function main() {
     assert.match(String(organization.id), /^[0-9a-f-]{36}$/u);
 
     const idempotencyKey = "project-create-author-" + randomUUID();
-    const projectInput = { name: "Rust Project-create author smoke project" };
+    const projectInput = {
+      name: "Rust Project-create author smoke project",
+      newResources: [{
+        name: "Project-create shared resource",
+        kind: "url",
+        sourceType: "external",
+        locator: "https://example.com/rudder-project-create-real-entry/shared-resource",
+        description: "Created with the public Rust Project request",
+        metadata: { fixture: "rust-project-create-real-entry", revision: 1 },
+        role: "reference",
+        note: "Initial Project attachment metadata",
+        sortOrder: 1,
+        isPrimary: true,
+      }, {
+        name: "Project-create Rust outage resource fixture",
+        kind: "url",
+        sourceType: "external",
+        locator: "https://example.com/rudder-project-create-real-entry/outage-resource",
+        description: "Remains present for the Rust-unavailable no-fallback assertion",
+        metadata: { fixture: "rust-project-create-real-entry", purpose: "native-outage" },
+        role: "reference",
+        note: "Legacy Node writer must not update this Rust-owned resource during outage",
+        sortOrder: 2,
+        isPrimary: false,
+      }],
+    };
     const created = await create(
       "/orgs/" + organization.id + "/projects",
       projectInput,
@@ -400,6 +437,47 @@ async function main() {
       [organization.id, created.id],
     );
     assert.deepEqual(Array.from(ownerRows), [{ owner: "rust" }], "new Project did not persist Rust ownership");
+
+    const inlineResourceRows = await sql.unsafe(
+      "SELECT r.id::text AS id, r.org_id::text AS org_id, r.name, r.kind, r.source_type, r.locator, "
+        + "r.description, r.metadata::text AS metadata, a.id::text AS attachment_id, "
+        + "a.project_id::text AS project_id, a.role, a.note, a.sort_order, a.is_primary "
+        + "FROM organization_resources r JOIN project_resource_attachments a "
+        + "ON a.org_id = r.org_id AND a.resource_id = r.id "
+        + "WHERE r.org_id = $1 AND a.project_id = $2 AND r.name = $3",
+      [organization.id, created.id, projectInput.newResources[0]!.name],
+    ) as Json[];
+    assert.equal(inlineResourceRows.length, 1, "Rust Project create did not create exactly one inline Organization Resource");
+    const inlineResource = inlineResourceRows[0]!;
+    const resourceId = String(inlineResource.id);
+    assert.match(resourceId, /^[0-9a-f-]{36}$/u);
+    assert.equal(inlineResource.org_id, organization.id);
+    assert.equal(inlineResource.project_id, created.id);
+    assert.deepEqual({
+      name: inlineResource.name,
+      role: inlineResource.role,
+      note: inlineResource.note,
+      sortOrder: inlineResource.sort_order,
+      isPrimary: inlineResource.is_primary,
+    }, {
+      name: projectInput.newResources[0]!.name,
+      role: projectInput.newResources[0]!.role,
+      note: projectInput.newResources[0]!.note,
+      sortOrder: projectInput.newResources[0]!.sortOrder,
+      isPrimary: projectInput.newResources[0]!.isPrimary,
+    });
+    const outageResourceRows = await sql.unsafe(
+      "SELECT r.id::text AS id, r.org_id::text AS org_id, a.project_id::text AS project_id "
+        + "FROM organization_resources r JOIN project_resource_attachments a "
+        + "ON a.org_id = r.org_id AND a.resource_id = r.id "
+        + "WHERE r.org_id = $1 AND a.project_id = $2 AND r.name = $3",
+      [organization.id, created.id, projectInput.newResources[1]!.name],
+    ) as Json[];
+    assert.equal(outageResourceRows.length, 1, "public Rust create did not persist the outage resource fixture");
+    const outageResourceId = String(outageResourceRows[0]!.id);
+    assert.match(outageResourceId, /^[0-9a-f-]{36}$/u);
+    assert.equal(outageResourceRows[0]!.org_id, organization.id);
+    assert.equal(outageResourceRows[0]!.project_id, created.id);
 
     const { resolveProjectLibraryDir } = await import("../../server/src/home-paths.js");
     const libraryRoot = resolveProjectLibraryDir({
@@ -432,6 +510,7 @@ async function main() {
         marker: "RUST_PROJECT_CREATE_BASIC_AUTHOR_SMOKE",
         organizationId: organization.id,
         projectId: created.id,
+        resourceId,
         persistedOwner: "rust",
         libraryReadme: "node-compatible-and-ready",
         keyedReplay: "exact",
@@ -463,6 +542,282 @@ async function main() {
     );
     assert.equal(mutation.status, 200, JSON.stringify(mutation.body));
     assert.equal(mutation.body.description, "updated through persisted Rust ownership after restart");
+
+    const secondRustProject = await create(
+      "/orgs/" + organization.id + "/projects",
+      { name: "Rust Project-create second shared-resource project" },
+      { "x-rudder-idempotency-key": "resource-second-rust-project-" + randomUUID() },
+    );
+    assertCliCompatibleProjectId(secondRustProject.id);
+    const secondRustOwner = await sql.unsafe(
+      "SELECT owner FROM project_goal_mutation_state WHERE org_id = $1 AND project_id = $2",
+      [organization.id, secondRustProject.id],
+    );
+    assert.deepEqual(Array.from(secondRustOwner), [{ owner: "rust" }]);
+
+    // Legacy fixture preparation: preserve a Node-owned Project through the
+    // trusted import lane only; public Node Project creation is not supported.
+    const { projectService } = await import("../../server/src/services/projects.js");
+    const legacyNodeProject = await projectService(drizzle(sql) as never).create(
+      organization.id,
+      { name: "Node legacy shared-resource project" },
+      { lane: "node", caller: "import" },
+    );
+    assertCliCompatibleProjectId(legacyNodeProject.id);
+    assert.equal(legacyNodeProject.orgId, organization.id);
+    const legacyNodeOwner = await sql.unsafe(
+      "SELECT owner FROM project_goal_mutation_state WHERE org_id = $1 AND project_id = $2",
+      [organization.id, legacyNodeProject.id],
+    );
+    assert.deepEqual(Array.from(legacyNodeOwner), [{ owner: "node" }]);
+
+    const attachSharedResource = async (projectId: string, note: string, key: string) => {
+      const response = await request(
+        "/projects/" + projectId + "/resources",
+        "POST",
+        { resourceId, role: "reference", note, sortOrder: 4, isPrimary: false },
+        { "x-rudder-idempotency-key": key },
+      );
+      assert.equal(response.status, 201, JSON.stringify(response.body));
+      assert.equal(response.body.projectId, projectId);
+      assert.equal(response.body.resourceId, resourceId);
+      assert.equal(response.body.note, note);
+      return response.body;
+    };
+    const secondRustAttachment = await attachSharedResource(
+      secondRustProject.id,
+      "Shared with the second Rust Project",
+      "resource-attach-rust-" + randomUUID(),
+    );
+    const legacyNodeAttachment = await attachSharedResource(
+      legacyNodeProject.id,
+      "Shared with the legacy Node Project",
+      "resource-attach-node-" + randomUUID(),
+    );
+    assert.equal(secondRustAttachment.resourceId, legacyNodeAttachment.resourceId);
+
+    const resourcePath = "/orgs/" + organization.id + "/resources/" + resourceId;
+    const resourcePatchKey = "organization-resource-update-" + randomUUID();
+    const resourceDeleteKey = "organization-resource-delete-" + randomUUID();
+    const resourceOutageKey = "organization-resource-outage-" + randomUUID();
+    const resourceMutationKeys = [resourcePatchKey, resourceDeleteKey].sort();
+    const resourceProjectIds = [created.id, secondRustProject.id, legacyNodeProject.id];
+    const readResourceMutationSnapshot = async (
+      targetResourceId = resourceId,
+      targetMutationKeys = resourceMutationKeys,
+      targetProjectIds = resourceProjectIds,
+    ) => {
+      const [resourceRows, resourceStateRows, attachmentRows, projectStateRows, receiptRows, activityRows, outboxRows] = await Promise.all([
+        sql.unsafe(
+          "SELECT id::text AS id, org_id::text AS org_id, name, kind, source_type, locator, description, "
+            + "metadata::text AS metadata, created_at::text AS created_at, updated_at::text AS updated_at "
+            + "FROM organization_resources WHERE org_id = $1 AND id = $2",
+          [organization.id, targetResourceId],
+        ),
+        sql.unsafe(
+          "SELECT resource_id::text AS resource_id, org_id::text AS org_id, owner, "
+            + "mutation_version::text AS mutation_version, fence_epoch::text AS fence_epoch "
+            + "FROM organization_resource_mutation_state WHERE org_id = $1 AND resource_id = $2",
+          [organization.id, targetResourceId],
+        ),
+        sql.unsafe(
+          "SELECT id::text AS id, org_id::text AS org_id, project_id::text AS project_id, "
+            + "resource_id::text AS resource_id, role, note, sort_order, is_primary "
+            + "FROM project_resource_attachments WHERE org_id = $1 AND resource_id = $2 ORDER BY project_id",
+          [organization.id, targetResourceId],
+        ),
+        sql.unsafe(
+          "SELECT project_id::text AS project_id, owner, mutation_version::text AS mutation_version "
+            + "FROM project_goal_mutation_state WHERE org_id = $1 AND project_id = ANY($2::uuid[]) ORDER BY project_id",
+          [organization.id, targetProjectIds],
+        ),
+        sql.unsafe(
+          "SELECT idempotency_key, command_kind, outcome, activity_id::text AS activity_id, result::text AS result "
+            + "FROM organization_mutation_receipts WHERE org_id = $1 AND idempotency_key = ANY($2::text[]) "
+            + "ORDER BY idempotency_key",
+          [organization.id, targetMutationKeys],
+        ),
+        sql.unsafe(
+          "SELECT id::text AS id, action, entity_type, entity_id FROM activity_log "
+            + "WHERE org_id = $1 AND entity_type = 'organization_resource' AND entity_id = $2::text "
+            + "AND action IN ('organization.resource.updated', 'organization.resource.deleted') ORDER BY action, id",
+          [organization.id, targetResourceId],
+        ),
+        sql.unsafe(
+          "SELECT outbox.activity_id::text AS activity_id FROM organization_mutation_outbox outbox "
+            + "JOIN activity_log activity ON activity.id = outbox.activity_id AND activity.org_id = outbox.org_id "
+            + "WHERE activity.org_id = $1 AND activity.entity_type = 'organization_resource' "
+            + "AND activity.entity_id = $2::text ORDER BY outbox.activity_id",
+          [organization.id, targetResourceId],
+        ),
+      ]);
+      return {
+        resource: Array.from(resourceRows) as Json[],
+        resourceState: Array.from(resourceStateRows) as Json[],
+        attachments: Array.from(attachmentRows) as Json[],
+        projectStates: Array.from(projectStateRows) as Json[],
+        receipts: Array.from(receiptRows) as Json[],
+        activities: Array.from(activityRows) as Json[],
+        outbox: Array.from(outboxRows) as Json[],
+      };
+    };
+
+    const beforeResourceUpdate = await readResourceMutationSnapshot();
+    assert.equal(beforeResourceUpdate.resource.length, 1);
+    assert.equal(beforeResourceUpdate.attachments.length, 3, "shared resource is not attached to all three Projects");
+    assert.deepEqual(
+      beforeResourceUpdate.attachments.map((attachment) => attachment.project_id).sort(),
+      resourceProjectIds.slice().sort(),
+    );
+    assert.deepEqual(
+      beforeResourceUpdate.projectStates.map((project) => project.owner).sort(),
+      ["node", "rust", "rust"],
+    );
+
+    const resourcePatchInput = {
+      name: "Project-create shared resource updated",
+      description: "Updated through the public Rust organization-resource route",
+      metadata: { fixture: "rust-project-create-real-entry", revision: 2 },
+    };
+    // A real public request must roll back every effect if atomic audit fails.
+    // This trigger exists only in this disposable smoke database.
+    await sql.unsafe(
+      "CREATE FUNCTION fail_resource_smoke_audit() RETURNS trigger LANGUAGE plpgsql AS $$ "
+        + "BEGIN IF NEW.action = 'organization.resource.updated' THEN "
+        + "RAISE EXCEPTION 'resource smoke audit failure'; END IF; RETURN NEW; END; $$",
+    );
+    await sql.unsafe(
+      "CREATE TRIGGER fail_resource_smoke_audit_trigger BEFORE INSERT ON activity_log "
+        + "FOR EACH ROW EXECUTE FUNCTION fail_resource_smoke_audit()",
+    );
+    try {
+      const auditFailure = await request(resourcePath, "PATCH", resourcePatchInput,
+        { "x-rudder-idempotency-key": resourcePatchKey });
+      assert.equal(auditFailure.status, 500, JSON.stringify(auditFailure.body));
+      assert.deepEqual(await readResourceMutationSnapshot(), beforeResourceUpdate,
+        "audit failure committed resource, ownership, attachment, receipt, activity or outbox effects");
+    } finally {
+      await sql.unsafe("DROP TRIGGER fail_resource_smoke_audit_trigger ON activity_log");
+      await sql.unsafe("DROP FUNCTION fail_resource_smoke_audit()");
+    }
+    const resourcePatchResponse = await request(
+      resourcePath,
+      "PATCH",
+      resourcePatchInput,
+      { "x-rudder-idempotency-key": resourcePatchKey },
+    );
+    assert.equal(resourcePatchResponse.status, 200, JSON.stringify(resourcePatchResponse.body));
+    assert.deepEqual(Object.keys(resourcePatchResponse.body).sort(), [
+      "createdAt", "description", "id", "kind", "locator", "metadata", "name", "orgId", "sourceType", "updatedAt",
+    ].sort(), "resource mutation did not return the existing OrganizationResource response shape");
+    assert.equal(resourcePatchResponse.body.id, resourceId);
+    assert.equal(resourcePatchResponse.body.orgId, organization.id);
+    assert.equal(resourcePatchResponse.body.name, resourcePatchInput.name);
+    assert.deepEqual(resourcePatchResponse.body.metadata, resourcePatchInput.metadata);
+    const afterResourceUpdate = await readResourceMutationSnapshot();
+    assert.equal(afterResourceUpdate.resource[0]?.id, resourceId);
+    assert.equal(afterResourceUpdate.resource[0]?.name, resourcePatchInput.name);
+    assert.equal(afterResourceUpdate.resource[0]?.description, resourcePatchInput.description);
+    assert.deepEqual(JSON.parse(String(afterResourceUpdate.resource[0]?.metadata)), resourcePatchInput.metadata);
+    assert.equal(afterResourceUpdate.resourceState[0]?.owner, "rust");
+    assert.equal(
+      BigInt(afterResourceUpdate.resourceState[0]?.mutation_version),
+      BigInt(beforeResourceUpdate.resourceState[0]?.mutation_version) + 1n,
+      "resource update did not advance its mutation version",
+    );
+    assert.deepEqual(afterResourceUpdate.attachments, beforeResourceUpdate.attachments,
+      "resource update changed an attachment ID or its metadata");
+    assert.deepEqual(afterResourceUpdate.receipts.map((receipt) => receipt.idempotency_key), [resourcePatchKey]);
+    assert.equal(afterResourceUpdate.receipts[0]?.command_kind, "organization_resource");
+    assert.deepEqual(afterResourceUpdate.activities.map((activity) => activity.action), ["organization.resource.updated"]);
+    assert.equal(afterResourceUpdate.outbox.length, 1, "resource update did not commit its outbox effect");
+
+    const resourcePatchReplay = await request(
+      resourcePath,
+      "PATCH",
+      resourcePatchInput,
+      { "x-rudder-idempotency-key": resourcePatchKey },
+    );
+    assert.equal(resourcePatchReplay.status, 200, JSON.stringify(resourcePatchReplay.body));
+    assert.deepEqual(resourcePatchReplay.body, resourcePatchResponse.body, "same-key resource update replay changed its response");
+    assert.deepEqual(await readResourceMutationSnapshot(), afterResourceUpdate,
+      "same-key resource update replay added another receipt or audit");
+
+    const changedResourcePayload = await request(
+      resourcePath,
+      "PATCH",
+      { ...resourcePatchInput, name: "Changed payload under the same resource key" },
+      { "x-rudder-idempotency-key": resourcePatchKey },
+    );
+    assert.equal(changedResourcePayload.status, 409, JSON.stringify(changedResourcePayload.body));
+    assert.deepEqual(await readResourceMutationSnapshot(), afterResourceUpdate,
+      "changed-payload conflict modified resource, attachments, receipts, or audits");
+
+    const beforeResourceDelete = await readResourceMutationSnapshot();
+    const resourceDeleteResponse = await request(
+      resourcePath,
+      "DELETE",
+      undefined,
+      { "x-rudder-idempotency-key": resourceDeleteKey },
+    );
+    assert.equal(resourceDeleteResponse.status, 200, JSON.stringify(resourceDeleteResponse.body));
+    assert.deepEqual(resourceDeleteResponse.body, resourcePatchResponse.body,
+      "resource delete did not return the original OrganizationResource object");
+    const afterResourceDelete = await readResourceMutationSnapshot();
+    assert.equal(afterResourceDelete.resource.length, 0, "resource delete left the canonical resource row");
+    assert.equal(afterResourceDelete.attachments.length, 0, "resource delete did not cascade all Project attachments");
+    assert.equal(afterResourceDelete.resourceState.length, 1, "resource delete removed the mutation tombstone");
+    assert.equal(afterResourceDelete.resourceState[0]?.owner, "rust");
+    assert.equal(
+      BigInt(afterResourceDelete.resourceState[0]?.mutation_version),
+      BigInt(beforeResourceDelete.resourceState[0]?.mutation_version) + 1n,
+      "resource delete did not advance the resource mutation version",
+    );
+    assert.equal(afterResourceDelete.projectStates.length, beforeResourceDelete.projectStates.length);
+    for (const projectAfterDelete of afterResourceDelete.projectStates) {
+      const projectBeforeDelete = beforeResourceDelete.projectStates.find(
+        (project) => project.project_id === projectAfterDelete.project_id,
+      );
+      assert.ok(projectBeforeDelete, "resource deletion removed a Project ownership row");
+      assert.equal(projectAfterDelete.owner, projectBeforeDelete.owner, "resource deletion changed a Project owner");
+      assert.equal(
+        BigInt(projectAfterDelete.mutation_version),
+        BigInt(projectBeforeDelete.mutation_version) + 1n,
+        "resource deletion did not advance an affected Project version",
+      );
+    }
+    assert.deepEqual(afterResourceDelete.receipts.map((receipt) => receipt.idempotency_key), resourceMutationKeys);
+    assert.ok(afterResourceDelete.receipts.every((receipt) => receipt.command_kind === "organization_resource"));
+    assert.equal(afterResourceDelete.outbox.length, 2, "resource delete did not commit its outbox effect");
+    assert.deepEqual(
+      afterResourceDelete.activities.map((activity) => activity.action),
+      ["organization.resource.deleted", "organization.resource.updated"],
+    );
+
+    const resourceDeleteReplay = await request(
+      resourcePath,
+      "DELETE",
+      undefined,
+      { "x-rudder-idempotency-key": resourceDeleteKey },
+    );
+    assert.equal(resourceDeleteReplay.status, 200, JSON.stringify(resourceDeleteReplay.body));
+    assert.deepEqual(resourceDeleteReplay.body, resourcePatchResponse.body, "same-key resource delete replay lost the original resource");
+    assert.deepEqual(await readResourceMutationSnapshot(), afterResourceDelete,
+      "same-key resource delete replay added another receipt or audit");
+
+    await stop();
+    await start();
+    const resourceDeleteReplayAfterRestart = await request(
+      resourcePath,
+      "DELETE",
+      undefined,
+      { "x-rudder-idempotency-key": resourceDeleteKey },
+    );
+    assert.equal(resourceDeleteReplayAfterRestart.status, 200, JSON.stringify(resourceDeleteReplayAfterRestart.body));
+    assert.deepEqual(resourceDeleteReplayAfterRestart.body, resourcePatchResponse.body,
+      "restart replay did not return the original OrganizationResource object");
+    assert.deepEqual(await readResourceMutationSnapshot(), afterResourceDelete,
+      "restart replay changed resource tombstone, Project versions, receipts, or audits");
 
     const importedProject = await create("/orgs/" + organization.id + "/projects", {
       name: "Rust Project-create import recovery target",
@@ -542,10 +897,10 @@ async function main() {
         ),
       ]);
       return {
-        project: Array.from(projectRows),
-        workspaces: Array.from(workspaceRows),
-        receipts: Array.from(receiptRows),
-        counts: counts[0],
+        project: Array.from(projectRows) as Json[],
+        workspaces: Array.from(workspaceRows) as Json[],
+        receipts: Array.from(receiptRows) as Json[],
+        counts: counts[0] as Json,
       };
     };
 
@@ -640,7 +995,7 @@ async function main() {
         "--description",
         "Created through the actual CLI process",
         "--api-base",
-        current.apiUrl,
+        currentServer().apiUrl,
         "--data-dir",
         path.join(home, "cli-data"),
         "--full-ids",
@@ -649,7 +1004,7 @@ async function main() {
       repoRoot,
       {
         ...process.env,
-        RUDDER_API_URL: current.apiUrl,
+        RUDDER_API_URL: currentServer().apiUrl,
         RUDDER_API_KEY: agentKey.token,
         RUDDER_ORG_ID: organization.id,
         RUDDER_AGENT_ID: agent.id,
@@ -702,7 +1057,7 @@ async function main() {
       repoRoot,
       {
         ...process.env,
-        RUDDER_API_URL: current.apiUrl,
+        RUDDER_API_URL: currentServer().apiUrl,
         RUDDER_API_KEY: agentKey.token,
         RUDDER_ORG_ID: organization.id,
         RUDDER_AGENT_ID: agent.id,
@@ -747,6 +1102,25 @@ async function main() {
       scopedHeaders,
     );
     assert.equal(foreignDenied.status, 403, JSON.stringify(foreignDenied.body));
+    const resourceSnapshotBeforeAgentDenials = await readResourceMutationSnapshot();
+    const resourceOrganizationScopeDenied = await request(
+      "/orgs/" + foreignOrganization.id + "/resources/" + resourceId,
+      "PATCH",
+      { name: "Must not cross organization scope" },
+      scopedHeaders,
+    );
+    assert.equal(resourceOrganizationScopeDenied.status, 403, JSON.stringify(resourceOrganizationScopeDenied.body));
+    assert.deepEqual(await readResourceMutationSnapshot(), resourceSnapshotBeforeAgentDenials,
+      "cross-organization resource mutation changed persisted state");
+    const resourceBoardOnlyDenied = await request(
+      resourcePath,
+      "PATCH",
+      { name: "Agent must not update an Organization Resource" },
+      scopedHeaders,
+    );
+    assert.equal(resourceBoardOnlyDenied.status, 403, JSON.stringify(resourceBoardOnlyDenied.body));
+    assert.deepEqual(await readResourceMutationSnapshot(), resourceSnapshotBeforeAgentDenials,
+      "Agent Organization Resource denial changed persisted state");
     await sql.unsafe("UPDATE agents SET status = 'terminated' WHERE id = $1", [agent.id]);
     const terminatedDenied = await request(
       "/orgs/" + organization.id + "/projects",
@@ -795,12 +1169,40 @@ async function main() {
       [organization.id],
     );
     assert.deepEqual(Array.from(countAfterOutage), Array.from(countBeforeOutage), "Rust outage fell back to a Node Project write");
+    const resourceSnapshotBeforeOutage = await readResourceMutationSnapshot(
+      outageResourceId,
+      [resourceOutageKey],
+      [created.id],
+    );
+    assert.equal(resourceSnapshotBeforeOutage.resource.length, 1);
+    assert.equal(resourceSnapshotBeforeOutage.resourceState[0]?.owner, "rust");
+    assert.equal(resourceSnapshotBeforeOutage.attachments.length, 1);
+    const resourceOutageResponse = await request(
+      "/orgs/" + organization.id + "/resources/" + outageResourceId,
+      "PATCH",
+      { name: "Must not be written while Rust is unavailable" },
+      { "x-rudder-idempotency-key": resourceOutageKey },
+    );
+    assert.equal(resourceOutageResponse.status, 503, JSON.stringify(resourceOutageResponse.body));
+    assert.deepEqual(await readResourceMutationSnapshot(outageResourceId, [resourceOutageKey], [created.id]), resourceSnapshotBeforeOutage,
+      "Rust resource outage fell back to a Node write or created an audit/receipt");
 
     console.log(JSON.stringify({
       marker: "RUST_PROJECT_CREATE_AUTHOR_SMOKE",
       organizationId: organization.id,
       projectId: created.id,
       persistedOwner: "rust",
+      inlineResourceId: resourceId,
+      sharedResourceProjectIds: resourceProjectIds,
+      resourceUpdateStatus: resourcePatchResponse.status,
+      resourceUpdateReplayStatus: resourcePatchReplay.status,
+      resourceChangedPayloadStatus: changedResourcePayload.status,
+      resourceDeleteStatus: resourceDeleteResponse.status,
+      resourceDeleteReplayStatus: resourceDeleteReplay.status,
+      resourceDeleteReplayAfterRestartStatus: resourceDeleteReplayAfterRestart.status,
+      resourceOutageStatus: resourceOutageResponse.status,
+      resourceDeleteReceiptCount: afterResourceDelete.receipts.length,
+      resourceDeleteAuditCount: afterResourceDelete.activities.length,
       libraryReadme: "node-compatible-and-ready",
       keyedReplay: "exact",
       replayAfterRestart: "exact",
@@ -823,9 +1225,10 @@ async function main() {
   } finally {
     const cleanupErrors: unknown[] = [];
     try { await sql?.end({ timeout: 2 }); } catch (error) { cleanupErrors.push(error); }
-    if (current) {
-      try { await current.stop(); } catch (error) { cleanupErrors.push(error); }
-      try { await current.dispose(); } catch (error) { cleanupErrors.push(error); }
+    const activeServer = current as ServerHandle | null;
+    if (activeServer) {
+      try { await activeServer.stop(); } catch (error) { cleanupErrors.push(error); }
+      try { await activeServer.dispose(); } catch (error) { cleanupErrors.push(error); }
     }
     for (const key of Object.keys(process.env)) {
       if (!(key in originalEnv)) delete process.env[key];

@@ -68,7 +68,7 @@ if (mode === "invalid") {
       res.end(mode === "not-ready" ? "not ready" : "ready");
       return;
     }
-    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
+    if (req.url?.includes("/members") || req.url?.includes("/branding") || req.url?.includes("/goal-set") || req.url?.includes("/resources/") || req.method === "DELETE" || (req.method === "POST" && req.url?.endsWith("/projects"))) {
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -749,6 +749,33 @@ describe("rust foundation bridge lifecycle", () => {
       mode: "off",
       projectGoalSetMode: "invalid" as never,
     })).toThrow("RUDDER_RUST_PROJECT_GOAL_SET_MODE");
+  });
+
+  it.each(["update", "delete"] as const)("signs resource %s method, scope, payload and replay key", async (operation) => {
+    const fixture = await createFixture("ready");
+    const bridge = createBridge(fixture, { mode: "off", projectGoalSetMode: "required" });
+    const actor = { type: "board", source: "session", userId: "user-1", sessionId: "session-1", authEpoch: 3 } as const;
+    const req = { actor } as unknown as Request;
+    const body = Buffer.from(JSON.stringify({ data: operation === "update" ? { title: "Updated resource" } : {}, runId: null }));
+    const response = await bridge.organizationResourceMutation!(req, "org-1", "resource-1", operation, body, " resource-key ");
+    expect(response.status).toBe(200);
+    const captured = await fixture.readRequest();
+    const method = operation === "update" ? "PATCH" : "DELETE";
+    expect(captured.method).toBe(method);
+    expect(captured.url).toBe("/api/orgs/org-1/resources/resource-1");
+    expect(captured.body).toBe(body.toString());
+    expect(captured.headers["x-rudder-idempotency-key"]).toBe("resource-key");
+    expectEnvelopeSignedWith(captured, {
+      actor, organizationId: "org-1", method, path: captured.url,
+      action: "organization.resource.mutate", body, idempotencyKey: "resource-key",
+    }, "bridge-test-secret");
+  });
+
+  it.each(["off", "shadow"] as const)("rejects resource writes in %s mode before startup", async (projectGoalSetMode) => {
+    const bridge = createRustFoundationBridge({ databaseUrl: "", mode: "off", projectGoalSetMode });
+    await expect(bridge.organizationResourceMutation!({ actor: { type: "board", source: "local_implicit" } } as unknown as Request,
+      "org-1", "resource-1", "delete", Buffer.from(JSON.stringify({ data: {}, runId: null })), "resource-key"))
+      .rejects.toMatchObject({ code: "request_failed" });
   });
 
   it("binds Project creation actor/run, payload, trusted roots and key to the captured signer", async () => {

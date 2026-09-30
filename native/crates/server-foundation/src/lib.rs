@@ -10,7 +10,8 @@ use base64::Engine;
 pub use rudder_auth_core::{ActorEnvelope, ActorIdentity, VerifiedActor};
 use rudder_auth_core::{NonceReplayGuard, RequestContext, SigningKey};
 use rudder_d1_persistence::{
-    MutationStore, ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
+    MutationStore, OrganizationResourceCommand, OrganizationResourceOperation,
+    ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
     ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
     ProjectPatchMutationOrigin, ResultState, StoreError,
     project_library::{
@@ -66,12 +67,14 @@ pub const ORGANIZATION_BRANDING_ACTION: &str = "organization.branding.update";
 pub const PROJECT_GOAL_SET_ACTION: &str = "project.goal_set.replace";
 pub const PROJECT_DELETE_ACTION: &str = "project.delete";
 pub const PROJECT_CREATE_ACTION: &str = "project.create";
+pub const ORGANIZATION_RESOURCE_ACTION: &str = "organization.resource.mutate";
 
 const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
     "organization_branding",
     "project_goal_set_replacement",
     "project_delete",
     "project_create",
+    "organization_resource",
 ];
 
 const DEFAULT_REQUEST_BYTES: usize = 1024 * 1024;
@@ -305,6 +308,14 @@ struct ProjectCreateRequest {
     activity_details: serde_json::Value,
     organization_workspace_root: String,
     project_create_state_root: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct OrganizationResourceMutationRequest {
+    #[serde(deserialize_with = "deserialize_required_run_id")]
+    run_id: Option<String>,
+    data: serde_json::Value,
 }
 
 struct ScopedProjectCreateProvisioner {
@@ -1097,6 +1108,10 @@ impl AppState {
             StoreError::IdempotencyConflict => {
                 (StatusCode::CONFLICT, "mutation_idempotency_conflict")
             }
+            StoreError::ResourceConflict => (
+                StatusCode::CONFLICT,
+                "A Library resource already exists for this path.",
+            ),
             StoreError::ProvisioningConflict => {
                 (StatusCode::CONFLICT, "project_create_intent_conflict")
             }
@@ -1831,6 +1846,99 @@ impl AppState {
         }
     }
 
+    async fn organization_resource_mutate(
+        &self,
+        request: &HttpRequest,
+        org_id: &str,
+        resource_id: &str,
+        body: &[u8],
+    ) -> HttpResponse {
+        let operation = match *request.method() {
+            actix_web::http::Method::PATCH => OrganizationResourceOperation::Update,
+            actix_web::http::Method::DELETE => OrganizationResourceOperation::Delete,
+            _ => return self.json_error(StatusCode::METHOD_NOT_ALLOWED, "resource_method_invalid"),
+        };
+        let Some(key) = request
+            .headers()
+            .get(IDEMPOTENCY_KEY_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return self.json_error(StatusCode::BAD_REQUEST, "idempotency_key_required");
+        };
+        let actor = match self.verify_actor_envelope(
+            request,
+            org_id,
+            ORGANIZATION_RESOURCE_ACTION,
+            Some(key),
+            body,
+        ) {
+            Ok(actor) => actor,
+            Err(ActorEnvelopeVerificationError::Unconfigured) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "actor_envelope_unconfigured",
+                );
+            }
+            Err(ActorEnvelopeVerificationError::Invalid) => {
+                return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+            }
+        };
+        // The existing organization resource mutation API is Board-only.
+        if actor.actor().kind != "user" {
+            return self.json_error(StatusCode::FORBIDDEN, "Board access required");
+        }
+        let input = match serde_json::from_slice::<OrganizationResourceMutationRequest>(body) {
+            Ok(input) if input.data.is_object() => input,
+            _ => {
+                return self.json_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "resource_mutation_invalid",
+                );
+            }
+        };
+        let Some(store) = self.d1_mutations.as_ref() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        };
+        let command = OrganizationResourceCommand {
+            organization_id: org_id.to_owned(),
+            resource_id: resource_id.to_owned(),
+            actor_kind: "board".to_owned(),
+            actor_id: actor.actor().id.clone(),
+            idempotency_key: key.to_owned(),
+            run_id: input.run_id,
+            operation,
+            data: input.data,
+        };
+        match store.organization_resource_mutate(command).await {
+            Ok(committed) => match committed.receipt.result {
+                ResultState::OrganizationResourceMutated {
+                    resource_id: persisted_id,
+                    response,
+                    operation: persisted_operation,
+                } if persisted_id.eq_ignore_ascii_case(resource_id)
+                    && persisted_operation == operation
+                    && response
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|id| id.eq_ignore_ascii_case(resource_id))
+                    && response
+                        .get("orgId")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|id| id.eq_ignore_ascii_case(org_id)) =>
+                {
+                    HttpResponse::Ok().json(response)
+                }
+                _ => self.mutation_error(StoreError::InvalidReceipt),
+            },
+            Err(StoreError::NotFound) => {
+                self.json_error(StatusCode::NOT_FOUND, "Resource not found")
+            }
+            Err(error) => self.mutation_error(error),
+        }
+    }
+
     async fn project_create(
         &self,
         request: &HttpRequest,
@@ -2362,6 +2470,18 @@ async fn project_delete(
         .await
 }
 
+async fn organization_resource_mutate(
+    state: web::Data<AppState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    route: web::Path<(String, String)>,
+) -> HttpResponse {
+    let (org_id, resource_id) = route.into_inner();
+    state
+        .organization_resource_mutate(&request, &org_id, &resource_id, body.as_ref())
+        .await
+}
+
 async fn project_create(
     state: web::Data<AppState>,
     request: HttpRequest,
@@ -2468,6 +2588,11 @@ impl ServerRuntime {
                 .route(
                     "/api/orgs/{org_id}/projects",
                     web::post().to(project_create),
+                )
+                .service(
+                    web::resource("/api/orgs/{org_id}/resources/{resource_id}")
+                        .route(web::patch().to(organization_resource_mutate))
+                        .route(web::delete().to(organization_resource_mutate)),
                 )
         })
         .workers(config.workers)

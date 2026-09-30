@@ -3,6 +3,7 @@ import {
   createDb,
   ensurePostgresDatabase,
   organizationMutationState,
+  organizationResourceMutationState,
   organizationResources,
   organizations,
   projectGoalMutationState,
@@ -16,7 +17,8 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { lockNodeOrganizationResourceMutationAuthority } from "../services/organization-resource-mutation-fence.js";
 import { resourceCatalogService } from "../services/resource-catalog.js";
 
 type EmbeddedPostgresInstance = {
@@ -256,6 +258,11 @@ describe("resource catalog mutation authority", () => {
       sourceType: "external",
       locator: "https://example.test/shared",
     }).returning().then((rows) => rows[0]!);
+    await db.insert(organizationResourceMutationState).values({
+      resourceId: resource.id,
+      orgId,
+      owner: "node",
+    });
     await db.insert(projectResourceAttachments).values([
       { orgId, projectId: nodeProject.id, resourceId: resource.id },
       { orgId, projectId: rustProject.id, resourceId: resource.id },
@@ -293,6 +300,10 @@ describe("resource catalog mutation authority", () => {
       .where(eq(projectResourceAttachments.resourceId, resource.id));
     expect(persistedResource?.name).toBe("Shared resource");
     expect(persistedAttachments).toHaveLength(2);
+    expect(await db.select({ owner: organizationResourceMutationState.owner })
+      .from(organizationResourceMutationState)
+      .where(eq(organizationResourceMutationState.resourceId, resource.id)))
+      .toEqual([{ owner: "node" }]);
   });
 
   it("allows organization resource update and deletion when attached projects are Node-owned", async () => {
@@ -324,5 +335,177 @@ describe("resource catalog mutation authority", () => {
     expect(await db.select({ id: projectResourceAttachments.id })
       .from(projectResourceAttachments)
       .where(eq(projectResourceAttachments.resourceId, resource.id))).toEqual([]);
+    expect(await db.select({ orgId: organizationResourceMutationState.orgId })
+      .from(organizationResourceMutationState)
+      .where(eq(organizationResourceMutationState.resourceId, resource.id)))
+      .toEqual([{ orgId }]);
+  });
+
+  it("rejects stale Node resource writers after Rust ownership survives canonical deletion", async () => {
+    const orgId = await createOrganization("Rust Resource Tombstone Org", "RTO");
+    const catalog = resourceCatalogService(db);
+    const resource = await catalog.createOrganizationResource(orgId, {
+      name: "Tombstoned resource",
+      kind: "file",
+      sourceType: "external",
+      locator: "https://example.test/tombstoned-resource",
+    });
+    await db.update(organizationResourceMutationState)
+      .set({ owner: "rust", fenceEpoch: 2n, mutationVersion: 7n, fenceToken: randomUUID() })
+      .where(eq(organizationResourceMutationState.resourceId, resource.id));
+
+    await db.delete(organizationResources).where(eq(organizationResources.id, resource.id));
+
+    const rustOwned = {
+      status: 409,
+      message: "Organization resource mutation authority is owned by Rust",
+    };
+    await expect(catalog.updateOrganizationResource(orgId, resource.id, {
+      name: "Stale Node update",
+    })).rejects.toMatchObject(rustOwned);
+    await expect(catalog.removeOrganizationResource(orgId, resource.id))
+      .rejects.toMatchObject(rustOwned);
+    expect(await db.select({
+      owner: organizationResourceMutationState.owner,
+      orgId: organizationResourceMutationState.orgId,
+      mutationVersion: organizationResourceMutationState.mutationVersion,
+      fenceEpoch: organizationResourceMutationState.fenceEpoch,
+    }).from(organizationResourceMutationState)
+      .where(eq(organizationResourceMutationState.resourceId, resource.id)))
+      .toEqual([{
+        owner: "rust",
+        orgId,
+        mutationVersion: 7n,
+        fenceEpoch: 2n,
+      }]);
+  });
+
+  it("provisions Node ownership transactionally for new inline resources", async () => {
+    const orgId = await createOrganization("Inline Node Resource Org", "INR");
+    const project = await createProject(orgId, "Inline Node Resource Project");
+    const attachments = await resourceCatalogService(db).replaceProjectResourceAttachments({
+      orgId,
+      projectId: project.id,
+      attachments: [],
+      newResources: [{
+        name: "New inline resource",
+        kind: "file",
+        sourceType: "external",
+        locator: "https://example.test/inline-node-resource",
+        role: "reference",
+      }],
+    });
+    const resourceId = attachments[0]!.resourceId;
+
+    expect(await db.select({ owner: organizationResourceMutationState.owner,
+      orgId: organizationResourceMutationState.orgId,
+      mutationVersion: organizationResourceMutationState.mutationVersion,
+      fenceEpoch: organizationResourceMutationState.fenceEpoch })
+      .from(organizationResourceMutationState)
+      .where(eq(organizationResourceMutationState.resourceId, resourceId)))
+      .toEqual([{ owner: "node", orgId, mutationVersion: 0n, fenceEpoch: 0n }]);
+  });
+
+  it("keeps foreign resource IDs indistinguishable from missing resources", async () => {
+    const requestedOrg = await createOrganization("Requested Resource Org", "RRO");
+    const ownerOrg = await createOrganization("Foreign Resource Org", "FRO");
+    const resource = await db.insert(organizationResources).values({
+      orgId: ownerOrg,
+      name: "Foreign resource",
+      kind: "file",
+      sourceType: "external",
+      locator: "https://example.test/foreign-resource",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(organizationResourceMutationState).values({
+      resourceId: resource.id,
+      orgId: ownerOrg,
+      owner: "rust",
+      fenceEpoch: 1n,
+    });
+
+    const catalog = resourceCatalogService(db);
+    await expect(catalog.updateOrganizationResource(requestedOrg, resource.id, {
+      name: "Must remain private",
+    })).resolves.toBeNull();
+    await expect(catalog.removeOrganizationResource(requestedOrg, resource.id)).resolves.toBeNull();
+    expect(await db.select({ name: organizationResources.name, orgId: organizationResources.orgId })
+      .from(organizationResources)
+      .where(eq(organizationResources.id, resource.id)))
+      .toEqual([{ name: "Foreign resource", orgId: ownerOrg }]);
+    expect(await db.select({ owner: organizationResourceMutationState.owner, orgId: organizationResourceMutationState.orgId })
+      .from(organizationResourceMutationState)
+      .where(eq(organizationResourceMutationState.resourceId, resource.id)))
+      .toEqual([{ owner: "rust", orgId: ownerOrg }]);
+  });
+
+  it("fails closed when a scoped canonical resource has corrupt component scope", async () => {
+    const requestedOrg = "33333333-3333-4333-8333-333333333333";
+    const corruptOrg = "44444444-4444-4444-8444-444444444444";
+    const resourceId = "55555555-5555-4555-8555-555555555555";
+    const execute = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{
+        resource_id: resourceId,
+        org_id: corruptOrg,
+        owner: "node",
+        mutation_version: "0",
+        fence_epoch: "0",
+        fence_token: "66666666-6666-4666-8666-666666666666",
+      }]);
+
+    await expect(lockNodeOrganizationResourceMutationAuthority(
+      { execute },
+      requestedOrg,
+      resourceId,
+      { initializeFromCanonical: true },
+    )).rejects.toMatchObject({
+      status: 409,
+      message: "Organization resource mutation authority has an invalid scope",
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses a Rust-owned Library resource without changing its resource fence", async () => {
+    const orgId = await createOrganization("Rust Library Reuse Org", "RLR");
+    const project = await createProject(orgId, "Library Reuse Project");
+    const resource = await db.insert(organizationResources).values({
+      orgId,
+      name: "Rust-owned Library row",
+      kind: "file",
+      sourceType: "library",
+      locator: "projects/shared/README.md",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(organizationResourceMutationState).values({
+      resourceId: resource.id,
+      orgId,
+      owner: "rust",
+      mutationVersion: 11n,
+      fenceEpoch: 3n,
+    });
+
+    const attachments = await resourceCatalogService(db).replaceProjectResourceAttachments({
+      orgId,
+      projectId: project.id,
+      attachments: [],
+      newResources: [{
+        name: "Requested Library row",
+        kind: "file",
+        sourceType: "library",
+        locator: "projects/shared/README.md",
+        role: "reference",
+      }],
+    });
+
+    expect(attachments.map((attachment) => attachment.resourceId)).toEqual([resource.id]);
+    expect(await db.select({ owner: organizationResourceMutationState.owner,
+      mutationVersion: organizationResourceMutationState.mutationVersion,
+      fenceEpoch: organizationResourceMutationState.fenceEpoch })
+      .from(organizationResourceMutationState)
+      .where(eq(organizationResourceMutationState.resourceId, resource.id)))
+      .toEqual([{ owner: "rust", mutationVersion: 11n, fenceEpoch: 3n }]);
+    expect(await db.select({ name: organizationResources.name })
+      .from(organizationResources)
+      .where(eq(organizationResources.id, resource.id)))
+      .toEqual([{ name: "Rust-owned Library row" }]);
   });
 });

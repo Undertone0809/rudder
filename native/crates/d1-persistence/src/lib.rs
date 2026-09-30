@@ -8,6 +8,7 @@
 mod branding;
 mod goal_sets;
 mod links;
+mod organization_resources;
 mod project_creations;
 mod project_deletions;
 pub mod project_library;
@@ -35,6 +36,7 @@ const COMMAND_KIND_PROJECT_GOAL_LINK: &str = "project_goal_link";
 const COMMAND_KIND_PROJECT_GOAL_SET: &str = "project_goal_set_replacement";
 const COMMAND_KIND_PROJECT_DELETE: &str = "project_delete";
 const COMMAND_KIND_PROJECT_CREATE: &str = "project_create";
+const COMMAND_KIND_ORGANIZATION_RESOURCE: &str = "organization_resource";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,6 +100,30 @@ pub enum ResultState {
         project_id: String,
         response: Value,
     },
+    OrganizationResourceMutated {
+        resource_id: String,
+        response: Value,
+        operation: OrganizationResourceOperation,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationResourceOperation {
+    Update,
+    Delete,
+}
+
+#[derive(Clone, Debug)]
+pub struct OrganizationResourceCommand {
+    pub organization_id: String,
+    pub resource_id: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    pub idempotency_key: String,
+    pub run_id: Option<String>,
+    pub operation: OrganizationResourceOperation,
+    pub data: Value,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -178,6 +204,8 @@ pub enum StoreError {
     InvalidInput,
     #[error("invalid project resource input")]
     InvalidResource,
+    #[error("a conflicting Library resource already exists")]
+    ResourceConflict,
     #[error("project Library provisioning failed: {0}")]
     Provisioning(String),
     #[error("project Library create intent conflicts with its original binding")]
@@ -527,6 +555,15 @@ impl MutationStore {
         let result = project_deletions::apply(&mut tx, command, &metadata).await;
         transaction::finish(tx, result).await
     }
+
+    /// Apply an organization resource update or delete through its component
+    /// ownership fence and persist the resource response as a durable receipt.
+    pub async fn organization_resource_mutate(
+        &self,
+        command: OrganizationResourceCommand,
+    ) -> Result<CommittedMutation, StoreError> {
+        organization_resources::mutate(&self.pool, command).await
+    }
 }
 
 pub(crate) const fn branding_kind() -> &'static str {
@@ -547,4 +584,8 @@ pub(crate) const fn project_delete_kind() -> &'static str {
 
 pub(crate) const fn project_create_kind() -> &'static str {
     COMMAND_KIND_PROJECT_CREATE
+}
+
+pub(crate) const fn organization_resource_kind() -> &'static str {
+    COMMAND_KIND_ORGANIZATION_RESOURCE
 }

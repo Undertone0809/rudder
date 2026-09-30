@@ -44,6 +44,7 @@ import {
   workspaceBackupService,
 } from "../services/index.js";
 import { libraryEntryService } from "../services/library-entries.js";
+import { forwardRustOrganizationResourceMutation } from "../services/organization-resource-rust-authority.js";
 import { organizationWorkspaceBrowserService } from "../services/organization-workspace-browser.js";
 import type { RustFoundationBridge } from "../services/rust-foundation-bridge.js";
 import type { WorkspaceWebPreviewRuntime } from "../services/workspace-web-preview.js";
@@ -500,6 +501,13 @@ export function organizationRoutes(
     const resourceId = req.params.resourceId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
+    const rustResponse = await forwardRustOrganizationResourceMutation(
+      db, rustFoundationBridge, req, orgId, resourceId, "update", req.body,
+    );
+    if (rustResponse) {
+      res.status(rustResponse.status).type(rustResponse.contentType).send(rustResponse.body);
+      return;
+    }
     const resource = await resources.updateOrganizationResource(orgId, resourceId, req.body);
     if (!resource) {
       res.status(404).json({ error: "Resource not found" });
@@ -525,6 +533,13 @@ export function organizationRoutes(
     const resourceId = req.params.resourceId as string;
     assertCompanyAccess(req, orgId);
     assertBoard(req);
+    const rustResponse = await forwardRustOrganizationResourceMutation(
+      db, rustFoundationBridge, req, orgId, resourceId, "delete", {},
+    );
+    if (rustResponse) {
+      res.status(rustResponse.status).type(rustResponse.contentType).send(rustResponse.body);
+      return;
+    }
     const resource = await resources.removeOrganizationResource(orgId, resourceId);
     if (!resource) {
       res.status(404).json({ error: "Resource not found" });
