@@ -529,7 +529,7 @@ describe("Hermes ACP native protocol", () => {
       async (meta) => { pid = meta.pid; });
     try { await client.request("ping", {}); }
     finally { await client.close(); }
-    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 2_000 });
+    expect(() => process.kill(pid, 0)).toThrow();
   });
 
   it("confirms terminal quiescence and lets a second Run reuse the loaded ACP session", async () => {

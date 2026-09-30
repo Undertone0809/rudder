@@ -23,6 +23,7 @@ export const HERMES_ACP_NATIVE_TRANSPORT = "hermes-acp-stdio";
 const DEFAULT_PROTOCOL_VERSION = 1;
 const DEFAULT_REQUEST_TIMEOUT_MS = 45_000;
 const CLOSE_TIMEOUT_MS = 1_500;
+const SIGKILL_CLOSE_TIMEOUT_MS = 1_500;
 const MAX_UPDATE_COUNT = 512;
 const MAX_UPDATE_TEXT = 512 * 1024;
 const MAX_DIAGNOSTIC = 2_000;
@@ -590,13 +591,13 @@ class HermesAcpRpcClient {
   private readonly stdoutDecoder = new StringDecoder("utf8");
   private readonly stderrDecoder = new StringDecoder("utf8");
   private readonly pending = new Map<RpcId, PendingRequest>();
-  private readonly exitPromise: Promise<void>;
+  private readonly childClosePromise: Promise<void>;
   private buffer = "";
   private bufferBytes = 0;
   private nextId = 1;
   private closed = false;
   private transportFailed = false;
-  private closeStarted = false;
+  private shutdownPromise: Promise<void> | null = null;
   private stderr = "";
 
   constructor(
@@ -604,22 +605,22 @@ class HermesAcpRpcClient {
     private readonly onNotification: (method: string, params: JsonRecord) => void,
     private readonly onServerRequest: (request: AcpServerRequest) => Promise<unknown>,
   ) {
-    this.exitPromise = new Promise((resolve) => {
-      const finish = (error?: Error) => {
-        if (this.closed) return;
-        this.closed = true;
-        this.buffer = "";
-        this.bufferBytes = 0;
-        for (const pending of this.pending.values()) {
-          clearTimeout(pending.timer);
-          pending.reject(error ?? new Error("Hermes ACP process exited."));
-        }
-        this.pending.clear();
-        resolve();
-      };
-      child.once("error", (error) => finish(new Error(`Hermes ACP process failed: ${boundedDiagnostic(error)}`)));
-      child.once("exit", (code, signal) => finish(new Error(`Hermes ACP process exited (${code ?? signal ?? "unknown"}).`)));
+    this.childClosePromise = new Promise((resolve) => {
+      child.once("close", () => resolve());
     });
+    const finish = (error?: Error) => {
+      if (this.closed) return;
+      this.closed = true;
+      this.buffer = "";
+      this.bufferBytes = 0;
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(error ?? new Error("Hermes ACP process exited."));
+      }
+      this.pending.clear();
+    };
+    child.once("error", (error) => finish(new Error(`Hermes ACP process failed: ${boundedDiagnostic(error)}`)));
+    child.once("exit", (code, signal) => finish(new Error(`Hermes ACP process exited (${code ?? signal ?? "unknown"}).`)));
     child.stdout.on("data", (chunk: Buffer) => this.consume(this.stdoutDecoder.write(chunk)));
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderr = `${this.stderr}${this.stderrDecoder.write(chunk)}`.slice(-MAX_DIAGNOSTIC);
@@ -697,7 +698,7 @@ class HermesAcpRpcClient {
       pending.reject(error);
     }
     this.pending.clear();
-    void this.close();
+    void this.close().catch(() => {});
   }
 
   private write(message: JsonRecord): Promise<void> {
@@ -744,20 +745,29 @@ class HermesAcpRpcClient {
     void this.write({ id, error: { code, message } }).catch(() => {});
   }
 
-  async close(): Promise<void> {
-    if (this.closeStarted) {
-      await this.exitPromise.catch(() => {});
-      return;
-    }
-    this.closeStarted = true;
-    if (this.child.exitCode === null && !this.child.killed) this.child.kill("SIGTERM");
+  close(): Promise<void> {
+    this.shutdownPromise ??= this.shutdownChild();
+    return this.shutdownPromise;
+  }
+
+  private async shutdownChild(): Promise<void> {
+    if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill("SIGTERM");
     let closeTimer: NodeJS.Timeout | undefined;
-    await Promise.race([
-      this.exitPromise,
-      new Promise<void>((resolve) => { closeTimer = setTimeout(resolve, CLOSE_TIMEOUT_MS); }),
+    const gracefulClose = await Promise.race([
+      this.childClosePromise.then(() => true),
+      new Promise<boolean>((resolve) => { closeTimer = setTimeout(() => resolve(false), CLOSE_TIMEOUT_MS); }),
     ]);
     if (closeTimer) clearTimeout(closeTimer);
+    if (gracefulClose) return;
+
     if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill("SIGKILL");
+    closeTimer = undefined;
+    const forcedClose = await Promise.race([
+      this.childClosePromise.then(() => true),
+      new Promise<boolean>((resolve) => { closeTimer = setTimeout(() => resolve(false), SIGKILL_CLOSE_TIMEOUT_MS); }),
+    ]);
+    if (closeTimer) clearTimeout(closeTimer);
+    if (!forcedClose) throw new Error("Hermes ACP process did not close after SIGKILL.");
   }
 }
 

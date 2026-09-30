@@ -91,6 +91,8 @@ export type HermesProductRpcClientFactory = (input: {
 const FORK_HELPER_TIMEOUT_MS = 30_000;
 const FORK_HELPER_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 const FORK_HELPER_KILL_GRACE_MS = 5_000;
+const MCP_CONFIG_HELPER_TIMEOUT_MS = 15_000;
+const MCP_CONFIG_HELPER_KILL_GRACE_MS = 1_000;
 
 function record(value: unknown): JsonRecord | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null;
@@ -253,6 +255,13 @@ const MCP_ENV_KEYS = [
   "RUDDER_RUN_ID",
 ] as const;
 
+const HERMES_STATE_FILES = ["state.db", "state.db-wal", "state.db-shm", "state.db-journal"] as const;
+const HERMES_STATE_DIRECTORIES = ["sessions", "memories"] as const;
+const HERMES_PERSISTENT_HOME_ENTRIES = new Set<string>([
+  ...HERMES_STATE_FILES,
+  ...HERMES_STATE_DIRECTORIES,
+]);
+
 const WRITE_MCP_CONFIG_SOURCE = String.raw`
 import json, os, sys, yaml
 
@@ -295,7 +304,10 @@ async function writeRunScopedMcpConfig(input: {
   sourcePath: string;
   targetPath: string;
   server: Record<string, unknown>;
+  timeoutMs: number;
+  signal?: AbortSignal;
 }): Promise<void> {
+  if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP config preparation was cancelled.");
   await new Promise<void>((resolve, reject) => {
     const helperEnv: NodeJS.ProcessEnv = {
       PATH: process.env.PATH ?? "",
@@ -319,13 +331,45 @@ async function writeRunScopedMcpConfig(input: {
       reject(new Error("Hermes Product RPC could not prepare a run-scoped MCP config."));
       return;
     }
+    let failure: Error | null = null;
+    let closed = false;
+    let timeout: NodeJS.Timeout | null = null;
+    let killTimeout: NodeJS.Timeout | null = null;
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout);
+      if (killTimeout) clearTimeout(killTimeout);
+      input.signal?.removeEventListener("abort", onAbort);
+    };
+    const terminate = (message: string) => {
+      if (failure || closed) return;
+      failure = new Error(message);
+      child.kill("SIGTERM");
+      killTimeout = setTimeout(() => {
+        if (!closed) child.kill("SIGKILL");
+      }, MCP_CONFIG_HELPER_KILL_GRACE_MS);
+      killTimeout.unref();
+    };
+    const onAbort = () => terminate("Hermes Product RPC MCP config preparation was cancelled.");
     child.stdout.resume();
     child.stderr.resume();
-    child.once("error", () => reject(new Error("Hermes Product RPC could not prepare a run-scoped MCP config.")));
+    child.once("error", () => {
+      failure ??= new Error("Hermes Product RPC could not prepare a run-scoped MCP config.");
+    });
+    child.stdin.once("error", () => terminate("Hermes Product RPC could not prepare a run-scoped MCP config."));
     child.once("close", (code) => {
-      if (code === 0) resolve();
+      closed = true;
+      cleanup();
+      if (failure) reject(failure);
+      else if (code === 0) resolve();
       else reject(new Error("Hermes Product RPC could not prepare a run-scoped MCP config."));
     });
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    if (input.signal?.aborted) onAbort();
+    timeout = setTimeout(
+      () => terminate("Hermes Product RPC MCP config preparation timed out."),
+      Math.max(1, input.timeoutMs),
+    );
+    timeout.unref();
     child.stdin.end(JSON.stringify(input.server));
   });
 }
@@ -333,7 +377,10 @@ async function writeRunScopedMcpConfig(input: {
 export async function prepareHermesProductRpcMcpOverlay(input: {
   profile: HermesProductRpcProfile;
   mcp: HermesProductRpcRunMcp;
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<HermesProductRpcMcpOverlay> {
+  if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
   const identity = Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, input.mcp.identity[key]?.trim() ?? ""])) as Record<typeof MCP_ENV_KEYS[number], string>;
   if (MCP_ENV_KEYS.some((key) => !identity[key])) {
     throw new Error("Hermes Product RPC requires a complete local Rudder Run identity.");
@@ -356,8 +403,22 @@ export async function prepareHermesProductRpcMcpOverlay(input: {
   try {
     await fs.chmod(home, 0o700);
     for (const entry of await fs.readdir(originalHome, { withFileTypes: true })) {
-      if (["config.yaml", ".env", ".op.env"].includes(entry.name)) continue;
+      if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
+      if (["config.yaml", ".env", ".op.env"].includes(entry.name)
+        || HERMES_PERSISTENT_HOME_ENTRIES.has(entry.name)) continue;
       await fs.symlink(path.join(originalHome, entry.name), path.join(home, entry.name));
+    }
+    for (const name of HERMES_STATE_FILES) {
+      await fs.symlink(path.join(originalHome, name), path.join(home, name), "file");
+    }
+    for (const name of HERMES_STATE_DIRECTORIES) {
+      const sourcePath = path.join(originalHome, name);
+      const sourceStat = await fs.stat(sourcePath).catch(() => null);
+      if (!sourceStat) await fs.mkdir(sourcePath, { recursive: true, mode: 0o700 });
+      else if (!sourceStat.isDirectory()) {
+        throw new Error("Hermes Product RPC session resource path is not a directory.");
+      }
+      await fs.symlink(sourcePath, path.join(home, name), process.platform === "win32" ? "junction" : "dir");
     }
     for (const name of [".env", ".op.env"]) {
       const sourcePath = path.join(originalHome, name);
@@ -379,12 +440,16 @@ export async function prepareHermesProductRpcMcpOverlay(input: {
       args: [...input.mcp.command.args],
       env: serverEnv,
     };
+    if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
     await writeRunScopedMcpConfig({
       profile: input.profile,
       sourcePath: path.join(originalHome, "config.yaml"),
       targetPath: path.join(home, "config.yaml"),
       server,
+      timeoutMs: Math.min(input.timeoutMs ?? MCP_CONFIG_HELPER_TIMEOUT_MS, MCP_CONFIG_HELPER_TIMEOUT_MS),
+      signal: input.signal,
     });
+    if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
     await fs.writeFile(
       path.join(home, `${HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE}.py`),
       runScopedMcpBootstrap(Object.values(aliases)),
@@ -1391,6 +1456,7 @@ function selectedApprovalChoice(
 
 type ExecuteInput = {
   profile: HermesProductRpcProfile;
+  rudderMcp?: HermesProductRpcRunMcp;
   sessionId: string | null;
   sessionParams: JsonRecord | null;
   workspace?: HermesAcpWorkspace | null;
@@ -1430,6 +1496,7 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
   let createdFreshSession = false;
   let gatewayPid: number | null = null;
   let client: HermesProductRpcClient | null = null;
+  let mcpOverlay: HermesProductRpcMcpOverlay | null = null;
   let controlLease: AgentRuntimeControlHandleLease | null = null;
   let promptSubmissionStarted = false;
   let stopRequested = false;
@@ -2003,7 +2070,15 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
     }
     if (input.signal?.aborted) throw new Error("Hermes Product Gateway execution was cancelled before session submission.");
 
-    const launchProfile = rpcProfile(profile);
+    if (input.rudderMcp) {
+      mcpOverlay = await prepareHermesProductRpcMcpOverlay({
+        profile,
+        mcp: input.rudderMcp,
+        timeoutMs: input.timeoutMs,
+        signal: input.signal,
+      });
+    }
+    const launchProfile = rpcProfile(profile, mcpOverlay);
     const activeClient = await createClient({
       profile: launchProfile,
       onNotification: (method, params) => {
@@ -2431,6 +2506,7 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
   } finally {
     secrets.splice(configuredSecretCount);
     await historyFence?.release().catch(() => {});
-    await client?.close().catch(() => {});
+    await client?.close();
+    await mcpOverlay?.cleanup();
   }
 }

@@ -15,9 +15,12 @@ import {
   deriveHermesProductRpcTranscriptBoundary,
   executeHermesProductRpcChat,
   forkHermesProductRpcNativeSession,
-  prepareHermesProductRpcMcpOverlay,
+  HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE,
   HERMES_PRODUCT_RPC_TRANSPORT,
   HermesProductRpcForkError,
+  type HermesProductRpcClient,
+  prepareHermesProductRpcMcpOverlay,
+  type HermesProductRpcClientFactory,
   type HermesProductRpcProfile,
 } from "./product-rpc.js";
 
@@ -28,19 +31,6 @@ const pythonCommand = (() => {
     return null;
   }
 })();
-const yamlPythonCommand = (() => {
-  for (const candidate of [process.env.RUDDER_HERMES_021_PYTHON_COMMAND, pythonCommand]) {
-    if (!candidate) continue;
-    try {
-      execFileSync(candidate, ["-c", "import yaml"], { stdio: "ignore" });
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
-  return null;
-})();
-
 const HISTORY_FENCE_SEED_SCRIPT = [
   "import sqlite3, sys",
   "connection = sqlite3.connect(sys.argv[1])",
@@ -591,6 +581,16 @@ async function makeProfile(): Promise<{ profile: HermesProductRpcProfile; cleanu
   };
 }
 
+async function addJsonYamlFixture(profile: HermesProductRpcProfile): Promise<void> {
+  const source = [
+    "import json",
+    "def safe_load(stream): return json.load(stream)",
+    "def safe_dump(data, stream, sort_keys=False, allow_unicode=True): json.dump(data, stream, ensure_ascii=not allow_unicode)",
+    "",
+  ].join("\n");
+  await fs.writeFile(path.join(profile.hermesSourcePath, "yaml.py"), source, { flag: "wx" });
+}
+
 function mockGateway(handler: GatewayHandler = () => undefined) {
   let notify: ((method: string, params: Record<string, unknown>) => void) | null = null;
   let activeSessionId = "hermes-product-runtime-1";
@@ -652,7 +652,7 @@ function emitTurnComplete(emit: GatewayEvent, status = "complete") {
 
 function runInput(
   profile: HermesProductRpcProfile,
-  createClient: ReturnType<typeof mockGateway>["createClient"],
+  createClient: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["createClient"]>,
   readHistoryTail?: NonNullable<Parameters<typeof executeHermesProductRpcChat>[0]["readHistoryTail"]>,
   overrides: Pick<Parameters<typeof executeHermesProductRpcChat>[0], "acquireHistoryFence" | "waitForSessionLease"> = {},
 ) {
@@ -677,14 +677,18 @@ function runInput(
 }
 
 describe("Hermes Product Gateway RPC", () => {
-  it.skipIf(!yamlPythonCommand)("keeps Rudder MCP identity per Run while resuming one native session", async () => {
+  it.skipIf(!pythonCommand)("keeps Rudder MCP identity per Run while resuming one native session", async () => {
     const fixture = await makeProfile();
     const configPath = path.join(fixture.profile.hermesHome, "config.yaml");
     const statePath = path.join(fixture.profile.hermesHome, "state.db");
-    const originalConfig = "model: local-test\nmcp_servers:\n  external-local:\n    type: stdio\n    command: existing-server\n";
+    const originalConfig = JSON.stringify({
+      model: "local-test",
+      mcp_servers: { "external-local": { type: "stdio", command: "existing-server" } },
+    });
     await fs.writeFile(configPath, originalConfig, { mode: 0o600 });
     await fs.writeFile(statePath, "native session database");
-    const profile = { ...fixture.profile, hermesPythonCommand: yamlPythonCommand! };
+    await addJsonYamlFixture(fixture.profile);
+    const profile = { ...fixture.profile, hermesPythonCommand: pythonCommand! };
     const command = {
       command: process.execPath,
       args: ["mcp-server"],
@@ -713,14 +717,8 @@ describe("Hermes Product Gateway RPC", () => {
 
       const firstConfig = await fs.readFile(path.join(first.home, "config.yaml"), "utf8");
       const secondConfig = await fs.readFile(path.join(second.home, "config.yaml"), "utf8");
-      const firstServer = JSON.parse(execFileSync(yamlPythonCommand!, [
-        "-c",
-        "import json,sys,yaml; print(json.dumps(yaml.safe_load(sys.stdin.read())['mcp_servers']))",
-      ], { input: firstConfig, encoding: "utf8" })) as Record<string, Record<string, unknown>>;
-      const secondServer = JSON.parse(execFileSync(yamlPythonCommand!, [
-        "-c",
-        "import json,sys,yaml; print(json.dumps(yaml.safe_load(sys.stdin.read())['mcp_servers']))",
-      ], { input: secondConfig, encoding: "utf8" })) as Record<string, Record<string, unknown>>;
+      const firstServer = JSON.parse(firstConfig).mcp_servers as Record<string, Record<string, unknown>>;
+      const secondServer = JSON.parse(secondConfig).mcp_servers as Record<string, Record<string, unknown>>;
       const firstEnv = firstServer["rudder-tools"].env as Record<string, string>;
       const secondEnv = secondServer["rudder-tools"].env as Record<string, string>;
       const firstAlias = firstEnv.RUDDER_API_KEY.match(/^\$\{(.+)\}$/u)?.[1];
@@ -754,6 +752,186 @@ describe("Hermes Product Gateway RPC", () => {
     } finally {
       await first?.cleanup();
       await second?.cleanup();
+      await fixture.cleanup();
+    }
+  });
+
+  it.skipIf(!pythonCommand)("launches the trusted MCP bootstrap and persists fresh native data in the original home", async () => {
+    const fixture = await makeProfile();
+    const originalConfig = JSON.stringify({
+      model: "local-test",
+      mcp_servers: { "external-local": { type: "stdio", command: "existing-server" } },
+    });
+    const configPath = path.join(fixture.profile.hermesHome, "config.yaml");
+    await fs.writeFile(configPath, originalConfig, { mode: 0o600 });
+    await addJsonYamlFixture(fixture.profile);
+    const profile = { ...fixture.profile, hermesPythonCommand: pythonCommand! };
+    const identity = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "run-scoped-secret-never-persist",
+      RUDDER_ORG_ID: "org-product-rpc",
+      RUDDER_AGENT_ID: "agent-product-rpc",
+      RUDDER_RUN_ID: "run-product-rpc",
+    };
+    const command = {
+      command: process.execPath,
+      args: ["mcp-server"],
+      env: { RUDDER_MCP_RUDDER_BIN: "/tmp/rudder-cli" },
+      provenance: "repo" as const,
+    };
+    const gateway = mockGateway((method, _params, emit) => {
+      if (method !== "prompt.submit") return undefined;
+      emit("message.start");
+      emitTurnComplete(emit);
+      return { status: "streaming" };
+    });
+    let launchHome: string | null = null;
+    let launchArgs: readonly string[] | null = null;
+    const createClient: HermesProductRpcClientFactory = async (input) => {
+      launchHome = String(input.profile.env?.HERMES_HOME ?? "");
+      launchArgs = input.profile.args;
+      const launchedHome = launchHome;
+      const nativeWrite = [
+        "import os, sqlite3",
+        "home = os.environ['HERMES_HOME']",
+        "db = sqlite3.connect(os.path.join(home, 'state.db'))",
+        "db.execute('CREATE TABLE native_proof (value TEXT NOT NULL)')",
+        "db.execute('INSERT INTO native_proof VALUES (?)', ('persisted',))",
+        "db.commit()",
+        "db.close()",
+      ].join("\n");
+      execFileSync(pythonCommand!, ["-c", nativeWrite], {
+        cwd: profile.hermesSourcePath,
+        env: { ...process.env, ...input.profile.env },
+      });
+      await fs.writeFile(path.join(launchedHome, "sessions", "fresh-session.jsonl"), "native transcript\n");
+      await fs.writeFile(path.join(launchedHome, "memories", "fresh-memory.md"), "native memory\n");
+      return gateway.createClient({ onNotification: input.onNotification, onSpawn: input.onSpawn });
+    };
+
+    try {
+      const result = await executeHermesProductRpcChat({
+        ...runInput(profile, createClient),
+        rudderMcp: { command, identity },
+      });
+
+      expect(result).toMatchObject({ exitCode: 0, resultJson: { backend: "native_product_rpc" } });
+      expect(launchHome).not.toBe(fixture.profile.hermesHome);
+      expect(launchArgs).toEqual(["-m", HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE]);
+      expect(JSON.stringify(result)).not.toContain(identity.RUDDER_API_KEY);
+      await expect(fs.stat(launchHome!)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await fs.readFile(path.join(fixture.profile.hermesHome, "sessions", "fresh-session.jsonl"), "utf8"))
+        .toBe("native transcript\n");
+      expect(await fs.readFile(path.join(fixture.profile.hermesHome, "memories", "fresh-memory.md"), "utf8"))
+        .toBe("native memory\n");
+      const persisted = execFileSync(pythonCommand!, [
+        "-c",
+        "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute('SELECT value FROM native_proof').fetchone()[0]); db.close()",
+        path.join(fixture.profile.hermesHome, "state.db"),
+      ], { encoding: "utf8" }).trim();
+      expect(persisted).toBe("persisted");
+      expect(await fs.readFile(configPath, "utf8")).toBe(originalConfig);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it.skipIf(!pythonCommand)("retains the MCP overlay when the native process close is unconfirmed", async () => {
+    const fixture = await makeProfile();
+    const configPath = path.join(fixture.profile.hermesHome, "config.yaml");
+    await fs.writeFile(configPath, JSON.stringify({ model: "local-test" }), { mode: 0o600 });
+    await addJsonYamlFixture(fixture.profile);
+    const profile = { ...fixture.profile, hermesPythonCommand: pythonCommand! };
+    const identity = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "run-scoped-close-test-secret",
+      RUDDER_ORG_ID: "org-close-test",
+      RUDDER_AGENT_ID: "agent-close-test",
+      RUDDER_RUN_ID: "run-close-test",
+    };
+    const gateway = mockGateway((method, _params, emit) => {
+      if (method !== "prompt.submit") return undefined;
+      emit("message.start");
+      emitTurnComplete(emit);
+      return { status: "streaming" };
+    });
+    let overlayHome: string | null = null;
+    try {
+      await expect(executeHermesProductRpcChat({
+        ...runInput(profile, gateway.createClient),
+        rudderMcp: {
+          command: { command: process.execPath, args: ["mcp-server"], provenance: "repo" },
+          identity,
+        },
+        createClient: async (input) => {
+          overlayHome = String(input.profile.env?.HERMES_HOME ?? "");
+          const client = await gateway.createClient(input) as unknown as HermesProductRpcClient;
+          return {
+            ...client,
+            async close() {
+              throw new Error("Hermes ACP process close was not confirmed.");
+            },
+          };
+        },
+      })).rejects.toThrow(/close was not confirmed/u);
+
+      expect(overlayHome).toBeTruthy();
+      const overlayStats = await fs.stat(overlayHome!);
+      expect(overlayStats.isDirectory()).toBe(true);
+    } finally {
+      if (overlayHome) await fs.rm(overlayHome, { recursive: true, force: true });
+      await fixture.cleanup();
+    }
+  });
+
+  it.each(["timeout", "abort"] as const)("kills and waits for the MCP config helper on %s before overlay cleanup", async (mode) => {
+    const fixture = await makeProfile();
+    const fixtureRoot = path.dirname(fixture.profile.hermesHome);
+    const markerPath = path.join(fixtureRoot, `helper-${mode}.txt`);
+    const helperPath = path.join(fixtureRoot, `slow-python-${mode}`);
+    await fs.writeFile(
+      helperPath,
+      `#!/bin/sh\nprintf '%s' "$4" > '${markerPath}'\ntrap '' TERM\nexec /bin/sleep 30\n`,
+      { mode: 0o700 },
+    );
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const preparation = prepareHermesProductRpcMcpOverlay({
+      profile: { ...fixture.profile, hermesPythonCommand: helperPath },
+      mcp: {
+        command: { command: process.execPath, args: [], provenance: "repo" },
+        identity: {
+          RUDDER_API_URL: "http://127.0.0.1:3100",
+          RUDDER_API_KEY: "run-scoped-helper-secret",
+          RUDDER_ORG_ID: "org-helper",
+          RUDDER_AGENT_ID: "agent-helper",
+          RUDDER_RUN_ID: "run-helper",
+        },
+      },
+      timeoutMs: mode === "timeout" ? 500 : 5_000,
+      ...(mode === "abort" ? { signal: controller.signal } : {}),
+    });
+    const settledPreparation = preparation.then(
+      () => ({ status: "resolved" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    try {
+      await vi.waitFor(async () => expect(await fs.readFile(markerPath, "utf8")).toContain("config.yaml"));
+      if (mode === "abort") {
+        controller.abort();
+      }
+      const outcome = await settledPreparation;
+      expect(outcome.status).toBe("rejected");
+      if (outcome.status === "rejected") {
+        expect(outcome.error).toBeInstanceOf(Error);
+        expect((outcome.error as Error).message).toMatch(mode === "timeout" ? /timed out/u : /cancelled/u);
+      }
+      const targetPath = await fs.readFile(markerPath, "utf8");
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(800);
+      await expect(fs.stat(path.dirname(targetPath))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      controller.abort();
       await fixture.cleanup();
     }
   });

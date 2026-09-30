@@ -1,7 +1,8 @@
-import type {
-  AgentRuntimeExecutionContext,
-  AgentRuntimeExecutionResult,
-  AgentRuntimeLoadedSkillMeta,
+import {
+  pickRudderMcpManagedEnv,
+  type AgentRuntimeExecutionContext,
+  type AgentRuntimeExecutionResult,
+  type AgentRuntimeLoadedSkillMeta,
 } from "@rudderhq/agent-runtime-utils";
 import {
   asNumber,
@@ -16,7 +17,6 @@ import {
   wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
 import { preflightRudderMcpServer } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
-import { pickRudderMcpManagedEnv } from "@rudderhq/agent-runtime-utils/rudder-mcp";
 import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
