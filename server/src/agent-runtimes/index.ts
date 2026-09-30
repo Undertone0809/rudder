@@ -25,6 +25,7 @@ import {
 } from "@rudderhq/agent-runtime-hermes-gateway/server";
 import {
   createOpenCodeLocalProviderCapabilityResolver,
+  isManagedOpenCodeRunConfigEnvironment,
   OpenCodeNativeCapabilityError,
   type OpenCodeLocalProfileTransport,
   type OpenCodeLocalProfileTransportResolver,
@@ -170,28 +171,6 @@ function piWorkspaceFromReaderContext(
 }
 
 // Execution adds this run-scoped config path; static host profile snapshots omit it.
-function generatedOpenCodeConfigPath(
-  expected: Record<string, string>,
-  context: RuntimeProviderCapabilityResolverContext | undefined,
-): string | null {
-  const dataHome = readString(expected.XDG_DATA_HOME);
-  const runId = readString(context?.cleanupRunId) ?? readString(context?.readerInput?.run.id);
-  if (
-    !dataHome
-    || !path.isAbsolute(dataHome)
-    || path.basename(dataHome) !== "share"
-    || path.basename(path.dirname(dataHome)) !== ".local"
-    || !runId
-    || runId === "."
-    || runId === ".."
-    || path.basename(runId) !== runId
-  ) {
-    return null;
-  }
-  const managedHome = path.dirname(path.dirname(dataHome));
-  return path.join(managedHome, "runtime-tmp", runId, "opencode.json");
-}
-
 function normalizedOpenCodeSessionEnvironment(
   context: RuntimeProviderCapabilityResolverContext | undefined,
   expected: Record<string, string>,
@@ -202,8 +181,8 @@ function normalizedOpenCodeSessionEnvironment(
 
   const expectedHasConfig = Object.prototype.hasOwnProperty.call(expected, "OPENCODE_CONFIG");
   if (!expectedHasConfig && Object.prototype.hasOwnProperty.call(actual, "OPENCODE_CONFIG")) {
-    const generatedConfigPath = generatedOpenCodeConfigPath(expected, context);
-    if (actual.OPENCODE_CONFIG !== generatedConfigPath) return null;
+    const runId = readString(context?.cleanupRunId) ?? readString(context?.readerInput?.run.id);
+    if (!runId || !isManagedOpenCodeRunConfigEnvironment({ ...expected, OPENCODE_CONFIG: actual.OPENCODE_CONFIG }, runId)) return null;
   }
 
   const normalized = { ...actual };

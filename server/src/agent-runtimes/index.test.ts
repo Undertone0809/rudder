@@ -228,6 +228,30 @@ describe("OpenCode historical profile resolver", () => {
     });
   });
 
+  it("reads an isolated data profile while accepting only the selected Run's managed config", () => {
+    const exportEnv = {
+      ...hostEnv,
+      XDG_DATA_HOME: path.join(managedHome, "provider-data", "a".repeat(32)),
+    };
+    const resolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+      runtimeType: "opencode_local", resolutionMode: "historical", cwd: "/workspace",
+      runtimeConfig: {
+        serverCommand: "opencode", exportCommand: "opencode",
+        serverUrl: "http://127.0.0.1:43123", providerVersion: "1.15.11", exportEnv,
+      },
+    });
+    const currentConfig = path.join(managedHome, "runtime-tmp", runId, "opencode.json");
+    expect(resolver("opencode_local", binding, contextWithEnv({ ...exportEnv, OPENCODE_CONFIG: currentConfig })))
+      .toMatchObject({ profileResolved: true, adapter: { transcript: { evidence: { status: "supported" } } } });
+    for (const configPath of [
+      path.join(managedHome, "runtime-tmp", "another-run", "opencode.json"),
+      "/tmp/untrusted/opencode.json",
+    ]) {
+      expect(resolver("opencode_local", binding, contextWithEnv({ ...exportEnv, OPENCODE_CONFIG: configPath })))
+        .toBeNull();
+    }
+  });
+
   it("binds a Reader call to the Run's persisted environment, not an older segment config", async () => {
     const currentConfig = path.join(managedHome, "runtime-tmp", runId, "opencode.json");
     const olderConfig = path.join(managedHome, "runtime-tmp", "previous-run", "opencode.json");

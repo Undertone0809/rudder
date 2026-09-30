@@ -4491,6 +4491,50 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
+  it("keeps OpenCode preparation, binding and execution on the configured provider profile across turns", async () => {
+    const { ensureRuntimeBinding } = await import("../services/runtime-kernel/native-session.js");
+    const preparedConfig = {
+      model: "opencode-test",
+      providerHostId: "host-explicit",
+      providerProfileId: "profile-explicit",
+      providerWorkspaceBindingId: "workspace-explicit",
+      hostId: "host-stale",
+      profileId: "profile-stale",
+      workspaceBindingId: "workspace-stale",
+    };
+    mockAgentService.getInternalById.mockResolvedValue({
+      id: "agent-1", orgId: "organization-1", name: "OpenCode",
+      status: "idle", agentRuntimeType: "opencode_local",
+      agentRuntimeConfig: preparedConfig, metadata: null,
+    });
+    mockPrepareRuntimeProviderProfile.mockResolvedValueOnce(preparedConfig).mockResolvedValueOnce(preparedConfig);
+    const svc = chatAssistantService({} as any);
+    for (let turn = 0; turn < 2; turn += 1) {
+      await svc.streamChatAssistantReply({
+        conversation: makeConversation(), messages: makeMessages(), contextLinks: [],
+      });
+    }
+    expect(ensureRuntimeBinding).toHaveBeenCalledTimes(2);
+    for (const [, identity] of vi.mocked(ensureRuntimeBinding).mock.calls) {
+      expect(identity).toMatchObject({
+        hostId: preparedConfig.providerHostId,
+        profileId: preparedConfig.providerProfileId,
+        workspaceBindingId: preparedConfig.providerWorkspaceBindingId,
+      });
+    }
+    expect(mockPrepareRuntimeProviderProfile).toHaveBeenCalledWith(expect.objectContaining({ runtimeType: "opencode_local" }));
+    expect(mockGetRuntimeDriver).toHaveBeenCalledWith("opencode_local", expect.objectContaining({
+      providerBinding: expect.objectContaining({
+        hostId: preparedConfig.providerHostId,
+        profileId: preparedConfig.providerProfileId,
+        workspaceBindingId: preparedConfig.providerWorkspaceBindingId,
+      }),
+    }));
+    expect(mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeType: "opencode_local", runtimeConfig: preparedConfig,
+    }));
+  });
+
   it("records provider profile preparation failures as linked pre-submission boot attempts", async () => {
     const profileError = new Error(
       "Command failed: /tmp/codex-error --version\nError: Missing optional dependency @openai/codex-darwin-arm64",

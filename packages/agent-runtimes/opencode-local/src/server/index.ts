@@ -16,7 +16,7 @@ export {
   disposeOpenCodeNativeServersForTests,
   ensureManagedOpenCodeServer,
   executeOpenCodeNativeChat,
-  forkOpenCodeNativeSession, OpenCodeNativeCapabilityError, readOpenCodeNativeTranscript
+  forkOpenCodeNativeSession, isManagedOpenCodeRunConfigEnvironment, OpenCodeNativeCapabilityError, readOpenCodeNativeTranscript
 } from "./native-protocol.js";
 export type {
   OpenCodeBinding,

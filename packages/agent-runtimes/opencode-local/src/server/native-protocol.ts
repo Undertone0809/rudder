@@ -345,8 +345,8 @@ async function exportEnvironmentForTranscript(env: Record<string, string>): Prom
   return durableConfigPath ? { ...env, OPENCODE_CONFIG: durableConfigPath } : env;
 }
 
-export function isManagedOpenCodeRunConfigEnvironment(env: Record<string, string>): boolean {
-  return managedRunConfigPath(env) !== null;
+export function isManagedOpenCodeRunConfigEnvironment(env: Record<string, string>, runId?: string | null): boolean {
+  return managedRunConfigPath(env, runId) !== null;
 }
 
 export function restoreOpenCodeManagedSessionFlags(input: {

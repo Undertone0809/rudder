@@ -216,9 +216,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const principalScopeRef = input.principalScopeRef
       ?? asString(input.runContext?.principalScopeRef)
       ?? `org:${input.conversation.orgId}`;
-    const hostId = asString(config.hostId ?? config.runtimeHostId) || "local";
-    const profileId = asString(config.profileId ?? config.profile ?? config.authProfile) || "default";
-    const workspaceBindingId = asString(workspace?.workspaceId ?? workspace?.id ?? workspace?.cwd) || null;
+    const hostId = asString(config.providerHostId ?? config.hostId ?? config.runtimeHostId).trim() || "local";
+    const profileId = asString(config.providerProfileId ?? config.profileId ?? config.profile ?? config.authProfile).trim() || "default";
+    const workspaceBindingId = asString(config.providerWorkspaceBindingId ?? config.workspaceBindingId
+      ?? workspace?.workspaceId ?? workspace?.id ?? workspace?.cwd).trim() || null;
     const providerProfileCwd = asString(config.cwd)
       || asString(workspace?.executionWorkspaceCwd ?? workspace?.cwd ?? workspace?.worktreePath);
     const capabilityRevision = revisionForRuntimeConfig({
