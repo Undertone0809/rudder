@@ -161,6 +161,32 @@ bulk backfill, or whole-creator retirement is implied. New Rust-created rows
 already receive their owner/epoch atomically. Off/shadow retain Node creation;
 existing Rust ownership remains fail closed and is never downgraded.
 
+### Owner-fence repair after v27.5
+
+Independent real-entry verification found that onboarding reseed returned 200
+and changed a Rust-owned Project description while its mutation version and
+epoch stayed unchanged. Scalar `projects.update` had an escape hatch that locked
+only the organization owner. Commit `719619b3006de870adf4430a1a845efff3c9ffab`
+removes that escape hatch and requires the organization-then-Project owner lock
+for every update. Onboarding and existing-target portability replacement route
+Rust-owned Project patches through the signed Rust entry; Node-owned rows retain
+their fenced Node service path. The import path preflights board authorization,
+required mode, and Rust startup before beginning writes. New-organization import
+and agent-safe source-organization delegation stay on their established Node
+lanes. Rust-owned import patches now produce transaction-coupled Rust audit and
+receipt records; the stage reviewer must reconcile this additional per-Project
+activity against the prior no-new-import-audit expectation. Startup preflight
+does not make the multi-command import atomic against a later runtime failure.
+
+For `719619b3`, 60 focused server tests, server typecheck, scoped import lint,
+and `git diff --check` pass. These are implementation checks, not installed
+acceptance. v27.5 is retained as a historical reviewer reject and independent
+FAIL. Its fresh seed/merge/guard observations passed, but onboarding scalar
+ownership failed; the prior upgrade fixture also stopped at migration preflight
+`mismatch` instead of `pending`, so upgrade remains unproved. The next candidate
+is packet v27.6, pending exact stage review, a refreshed server artifact, and
+independent onboarding/import/upgrade workflow verification.
+
 Preserve ordinary HTTP compatibility by generating one internal key per keyless
 PATCH/resource invocation, while retaining explicit-key replay/conflict. Extend
 the existing installed member-directory harness with mode/path/signer overrides
@@ -179,3 +205,27 @@ and precommit retries cannot silently adopt a second resolved path. Resolve thos
 before activating any create path; no default-path or retirement claim follows
 from helper implementation. Preserve synchronous readiness and all existing
 onboarding/import/merge behavior. All full-migration terminal claims stay false.
+
+### v27.6 package and verifier progress
+
+On 2026-09-29, the exact 719619b3 server outputs were packaged as
+`/tmp/rudder-project-create-v27.6.hrMVrS/rudderhq-server-0.7.24.tgz`
+(SHA-256 `d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f`).
+The tarball contains the three changed compiled server modules, UI output, and
+all six platform foundation binaries. `stage-native.mjs --check-packaged`
+passed; Vite output and `server/ui-dist` are identical at 214 files. The tarball
+was created with `npm pack --ignore-scripts` because normal `prepack` reruns UI
+TypeScript checks, which currently fail at
+`MessengerContextSidebar.tsx:1572` (`directDomPrepaintRows` is absent from
+`ReactVirtualizerOptions`). Vite itself passed. This artifact may support
+isolated installed runtime acceptance, but does not prove the full prepack,
+release readiness, or production behavior.
+
+Halley's v27.6 stage verdict is `accept` for source 719619b3. An additional
+independent code review and the independent installed verifier are running.
+The v27.5 upgrade result remains historical: preflight refused with `mismatch`
+before applying migrations. The new verifier must capture full
+`history.diagnostics` and `appliedMigrations` from a fresh isolated predecessor
+fixture; preflight must not be bypassed or the fixture edited to claim success.
+PR #236 still points to d56c9406; 719619b3 is not yet pushed. Final review,
+verifier PASS, and exact-head CI are still required before publication.

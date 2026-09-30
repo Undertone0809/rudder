@@ -268,6 +268,31 @@ afterEach(async () => {
   }
 }, migrationTestTimeout(30_000));
 
+describe("migration catalog", () => {
+  it("keeps the latest journal migration linked to its SQL and generated snapshot", () => {
+    const migrationsUrl = new URL("./migrations/", import.meta.url);
+    const journal = JSON.parse(
+      fs.readFileSync(new URL("meta/_journal.json", migrationsUrl), "utf8"),
+    ) as { entries: MigrationJournalEntry[] };
+    const latestEntry = journal.entries.at(-1);
+    if (!latestEntry) throw new Error("Migration journal must not be empty");
+
+    expect(latestEntry).toMatchObject({
+      idx: journal.entries.length - 1,
+      tag: "0177_organization_import_receipt_activity_mode",
+    });
+    expect(fs.existsSync(new URL(`${latestEntry.tag}.sql`, migrationsUrl))).toBe(true);
+
+    const latestSnapshot = JSON.parse(
+      fs.readFileSync(new URL("meta/0177_snapshot.json", migrationsUrl), "utf8"),
+    ) as { id: string; prevId: string };
+    const previousSnapshot = JSON.parse(
+      fs.readFileSync(new URL("meta/0176_snapshot.json", migrationsUrl), "utf8"),
+    ) as { id: string };
+    expect(latestSnapshot.prevId).toBe(previousSnapshot.id);
+  });
+});
+
 describe("applyPendingMigrations", () => {
   it(
     "serializes migration attempts with a database advisory lock",
@@ -968,6 +993,7 @@ describe("applyPendingMigrations", () => {
           "0174_project_goal_mutation_authority.sql",
           "0175_project_delete_receipt_kind.sql",
           "0176_project_create_receipt_kind.sql",
+          "0177_organization_import_receipt_activity_mode.sql",
         ],
         reason: "pending-migrations",
       });
@@ -1165,6 +1191,7 @@ describe("applyPendingMigrations", () => {
           "0174_project_goal_mutation_authority.sql",
           "0175_project_delete_receipt_kind.sql",
           "0176_project_create_receipt_kind.sql",
+          "0177_organization_import_receipt_activity_mode.sql",
         ],
         reason: "pending-migrations",
       });

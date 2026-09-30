@@ -87,6 +87,8 @@ pub enum ResultState {
         goal_ids: Vec<String>,
         primary_goal_after: Option<String>,
         state_integrity: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mutation_origin: Option<ProjectPatchMutationOrigin>,
     },
     ProjectDeleted {
         project_id: String,
@@ -96,6 +98,13 @@ pub enum ResultState {
         project_id: String,
         response: Value,
     },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPatchMutationOrigin {
+    Standard,
+    OrganizationImport,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +118,7 @@ pub struct ProjectPatchCommand {
     pub expected_version: u64,
     pub fence_epoch: u64,
     pub patch: Value,
+    pub mutation_origin: ProjectPatchMutationOrigin,
 }
 
 #[derive(Clone, Debug)]
@@ -136,7 +146,7 @@ pub struct Receipt {
     pub version: u64,
     pub fence_epoch: u64,
     pub fingerprint: String,
-    pub activity_id: String,
+    pub activity_id: Option<String>,
     pub outcome: Outcome,
     pub result: ResultState,
 }

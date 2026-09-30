@@ -18,9 +18,10 @@ import {
   type WorkspaceRuntimeService,
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { join } from "node:path";
-import { HttpError, forbidden, unauthorized, unprocessable } from "../errors.js";
+import { HttpError, conflict, forbidden, unauthorized, unprocessable } from "../errors.js";
 import {
   ensureOrganizationWorkspaceLayout,
   ensureProjectLibraryLayout,
@@ -54,6 +55,28 @@ type ProjectRow = typeof projects.$inferSelect;
 // user-facing Project Workspace management surface.
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
 type WorkspaceRuntimeServiceRow = typeof workspaceRuntimeServices.$inferSelect;
+type WorkspaceImportIdentity = {
+  importKey: string;
+  portableWorkspaceKey: string;
+};
+type WorkspaceImportValues = Pick<
+  ProjectWorkspaceRow,
+  | "orgId"
+  | "projectId"
+  | "name"
+  | "sourceType"
+  | "cwd"
+  | "repoUrl"
+  | "repoRef"
+  | "defaultRef"
+  | "visibility"
+  | "setupCommand"
+  | "cleanupCommand"
+  | "remoteProvider"
+  | "remoteWorkspaceRef"
+  | "sharedWorkspaceKey"
+  | "metadata"
+>;
 const REPO_ONLY_CWD_SENTINEL = "/__paperclip_repo_only__";
 type CreateWorkspaceInput = {
   name?: string | null;
@@ -72,6 +95,47 @@ type CreateWorkspaceInput = {
   isPrimary?: boolean;
 };
 type UpdateWorkspaceInput = Partial<CreateWorkspaceInput>;
+
+function deriveImportedProjectWorkspaceId(
+  orgId: string,
+  projectId: string,
+  identity: WorkspaceImportIdentity,
+) {
+  const namespace = Buffer.from("6ba7b8119dad11d180b400c04fd430c8", "hex");
+  const digest = createHash("sha1")
+    .update(namespace)
+    .update(JSON.stringify([
+      "rudder:project-workspace-import:v1",
+      identity.importKey,
+      orgId,
+      projectId,
+      identity.portableWorkspaceKey,
+    ]))
+    .digest()
+    .subarray(0, 16);
+  digest[6] = (digest[6]! & 0x0f) | 0x50;
+  digest[8] = (digest[8]! & 0x3f) | 0x80;
+  const hex = digest.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function matchesImportedWorkspace(row: ProjectWorkspaceRow, expected: WorkspaceImportValues) {
+  return row.orgId === expected.orgId
+    && row.projectId === expected.projectId
+    && row.name === expected.name
+    && row.sourceType === expected.sourceType
+    && row.cwd === expected.cwd
+    && row.repoUrl === expected.repoUrl
+    && row.repoRef === expected.repoRef
+    && row.defaultRef === expected.defaultRef
+    && row.visibility === expected.visibility
+    && row.setupCommand === expected.setupCommand
+    && row.cleanupCommand === expected.cleanupCommand
+    && row.remoteProvider === expected.remoteProvider
+    && row.remoteWorkspaceRef === expected.remoteWorkspaceRef
+    && row.sharedWorkspaceKey === expected.sharedWorkspaceKey
+    && isDeepStrictEqual(row.metadata, expected.metadata);
+}
 
 interface ProjectWithGoals extends Omit<ProjectRow, "executionWorkspacePolicy"> {
   urlKey: string;
@@ -810,6 +874,7 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
     createWorkspace: async (
       projectId: string,
       data: CreateWorkspaceInput,
+      importIdentity?: WorkspaceImportIdentity,
     ): Promise<ProjectWorkspace | null> => {
       const project = await db
         .select()
@@ -832,6 +897,29 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
         cwd,
         repoUrl,
       });
+      if (importIdentity && (!importIdentity.importKey.trim() || !importIdentity.portableWorkspaceKey.trim())) {
+        throw unprocessable("Idempotent workspace imports require an import key and portable workspace key");
+      }
+      const importWorkspaceId = importIdentity
+        ? deriveImportedProjectWorkspaceId(project.orgId, projectId, importIdentity)
+        : null;
+      const workspaceValues: WorkspaceImportValues = {
+        orgId: project.orgId,
+        projectId,
+        name,
+        sourceType,
+        cwd: cwd ?? null,
+        repoUrl: repoUrl ?? null,
+        repoRef: readNonEmptyString(data.repoRef),
+        defaultRef: readNonEmptyString(data.defaultRef) ?? readNonEmptyString(data.repoRef),
+        visibility: readNonEmptyString(data.visibility) ?? "default",
+        setupCommand: readNonEmptyString(data.setupCommand),
+        cleanupCommand: readNonEmptyString(data.cleanupCommand),
+        remoteProvider: readNonEmptyString(data.remoteProvider),
+        remoteWorkspaceRef,
+        sharedWorkspaceKey: readNonEmptyString(data.sharedWorkspaceKey),
+        metadata: (data.metadata as Record<string, unknown> | null | undefined) ?? null,
+      };
 
       const existing = await db
         .select()
@@ -843,6 +931,19 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
       const shouldBePrimary = data.isPrimary === true || existing.length === 0;
       const created = await db.transaction(async (tx) => {
         await lockNodeMutationAuthority(tx, project.orgId);
+        if (importWorkspaceId) {
+          const existingImportedWorkspace = await tx
+            .select()
+            .from(projectWorkspaces)
+            .where(eq(projectWorkspaces.id, importWorkspaceId))
+            .then((rows) => rows[0] ?? null);
+          if (existingImportedWorkspace) {
+            if (!matchesImportedWorkspace(existingImportedWorkspace, workspaceValues)) {
+              throw conflict("Project workspace import key conflicts with existing workspace content");
+            }
+            return existingImportedWorkspace;
+          }
+        }
         if (shouldBePrimary) {
           await tx
             .update(projectWorkspaces)
@@ -858,21 +959,8 @@ export function projectService(db: Db, rustFoundationBridge?: RustFoundationBrid
         const row = await tx
           .insert(projectWorkspaces)
           .values({
-            orgId: project.orgId,
-            projectId,
-            name,
-            sourceType,
-            cwd: cwd ?? null,
-            repoUrl: repoUrl ?? null,
-            repoRef: readNonEmptyString(data.repoRef),
-            defaultRef: readNonEmptyString(data.defaultRef) ?? readNonEmptyString(data.repoRef),
-            visibility: readNonEmptyString(data.visibility) ?? "default",
-            setupCommand: readNonEmptyString(data.setupCommand),
-            cleanupCommand: readNonEmptyString(data.cleanupCommand),
-            remoteProvider: readNonEmptyString(data.remoteProvider),
-            remoteWorkspaceRef,
-            sharedWorkspaceKey: readNonEmptyString(data.sharedWorkspaceKey),
-            metadata: (data.metadata as Record<string, unknown> | null | undefined) ?? null,
+            ...(importWorkspaceId ? { id: importWorkspaceId } : {}),
+            ...workspaceValues,
             isPrimary: shouldBePrimary,
           })
           .returning()

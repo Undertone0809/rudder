@@ -235,4 +235,47 @@ describe("organization portability routes", () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toContain("Board access required");
   });
+
+  it("forwards the same public import idempotency key on an existing-organization retry", async () => {
+    const orgId = "11111111-1111-4111-8111-111111111111";
+    mockCompanyPortabilityService.importBundle.mockResolvedValue({
+      organization: { id: orgId, name: "Target", action: "updated" },
+      agents: [],
+      projects: [],
+      envInputs: [],
+      warnings: [],
+    });
+    const app = await createApp({
+      type: "board",
+      source: "local_implicit",
+      userId: "user-1",
+    });
+    const importInput = {
+      source: { type: "inline", files: { "ORGANIZATION.md": "---\nname: Target\n---\n" } },
+      include: { organization: false, agents: false, projects: true, issues: false, skills: false },
+      target: { mode: "existing_organization", orgId },
+      collisionStrategy: "replace",
+    };
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await request(app)
+        .post("/api/orgs/import")
+        .set("x-rudder-idempotency-key", "public-import-retry-key")
+        .send(importInput);
+      expect(res.status).toBe(200);
+    }
+
+    const calls = mockCompanyPortabilityService.importBundle.mock.calls as unknown as Array<[
+      { target: { orgId: string } },
+      string | null,
+      unknown,
+      { header(name: string): string | undefined },
+    ]>;
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call) => call[0].target.orgId)).toEqual([orgId, orgId]);
+    expect(calls.map((call) => call[3].header("x-rudder-idempotency-key"))).toEqual([
+      "public-import-retry-key",
+      "public-import-retry-key",
+    ]);
+  });
 });

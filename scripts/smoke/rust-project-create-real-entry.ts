@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { chmod, copyFile, mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, copyFile, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import os from "node:os";
@@ -24,11 +24,185 @@ export function assertCliCompatibleProjectId(projectId: unknown): asserts projec
   );
 }
 
+export function projectImportMutationKey(
+  importKey: string,
+  orgId: string,
+  projectId: string,
+  phase: "replace" | "hydrate",
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify(["portability-project-update", importKey, orgId, projectId, phase]))
+    .digest("hex");
+}
+
+export function isOrganizationImportHydrationResponse(
+  requestPath: string,
+  requestBody: string,
+): boolean {
+  if (!/^\/api\/orgs\/[^/]+\/projects\/[^/]+\/goal-set$/u.test(requestPath)) return false;
+  try {
+    const payload = JSON.parse(requestBody) as Json;
+    const workspaceId = payload.projectPatch?.executionWorkspacePolicy?.defaultProjectWorkspaceId;
+    return payload.mutationOrigin === "organization_import"
+      && typeof workspaceId === "string"
+      && workspaceId.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function buildExistingOrganizationProjectImport(input: {
+  targetOrgId: string;
+  projectSlug: string;
+  projectName: string;
+  description: string;
+  workspaceRepoUrl: string;
+}): Json {
+  const { targetOrgId, projectSlug, projectName, description, workspaceRepoUrl } = input;
+  const extension = {
+    schema: "rudder/v1",
+    projects: {
+      [projectSlug]: {
+        executionWorkspacePolicy: {
+          enabled: true,
+          defaultMode: "shared_workspace",
+          defaultProjectWorkspaceKey: "primary",
+        },
+        workspaces: {
+          primary: {
+            name: "Imported primary workspace",
+            sourceType: "git_repo",
+            repoUrl: workspaceRepoUrl,
+            repoRef: "main",
+            defaultRef: "main",
+            visibility: "default",
+            setupCommand: null,
+            cleanupCommand: null,
+            metadata: { source: "project-create-real-entry" },
+            isPrimary: true,
+          },
+        },
+      },
+    },
+  };
+  return {
+    source: {
+      type: "inline",
+      files: {
+        "ORGANIZATION.md": "---\nname: Rust Project-create import source\n---\n",
+        [`projects/${projectSlug}/PROJECT.md`]: [
+          "---",
+          "kind: project",
+          `name: ${projectName}`,
+          `slug: ${projectSlug}`,
+          `description: ${description}`,
+          "---",
+          "Imported through the public organization portability API.",
+          "",
+        ].join("\n"),
+        ".rudder.yaml": JSON.stringify(extension),
+      },
+    },
+    include: { organization: false, agents: false, projects: true, issues: false, skills: false },
+    target: { mode: "existing_organization", orgId: targetOrgId },
+    collisionStrategy: "replace",
+  };
+}
+
+function foundationResponseProxySource(
+  nativeBinaryPath: string,
+  lostResponseMarkerPath: string,
+  nativePidMarkerPath: string,
+): string {
+  return [
+    `#!${process.execPath}`,
+    'const fs = require("node:fs");',
+    'const http = require("node:http");',
+    'const { spawn } = require("node:child_process");',
+    'const { createInterface } = require("node:readline");',
+    `const isOrganizationImportHydrationResponse = ${isOrganizationImportHydrationResponse.toString()};`,
+    `const native = spawn(${JSON.stringify(nativeBinaryPath)}, [], { stdio: ["ignore", "pipe", "inherit"], env: process.env });`,
+    `native.once("spawn", () => fs.writeFileSync(${JSON.stringify(nativePidMarkerPath)}, String(native.pid)));`,
+    "let proxy = null;",
+    "let droppedHydrationResponse = false;",
+    "let shuttingDown = false;",
+    "const lines = createInterface({ input: native.stdout });",
+    "lines.once(\"line\", (line) => {",
+    "  let startup;",
+    "  try { startup = JSON.parse(line); } catch (error) { console.error(error); process.exit(1); return; }",
+    "  const upstream = new URL(\"http://\" + startup.boundAddr);",
+    "  proxy = http.createServer((request, response) => {",
+    "    const requestChunks = [];",
+    "    request.on(\"data\", (chunk) => requestChunks.push(Buffer.from(chunk)));",
+    "    request.once(\"error\", () => response.destroy());",
+    "    request.once(\"end\", () => {",
+    "      const body = Buffer.concat(requestChunks);",
+    "      const forwarded = http.request({",
+    "        hostname: upstream.hostname,",
+    "        port: upstream.port,",
+    "        path: request.url || \"/\",",
+    "        method: request.method,",
+    "        headers: Object.assign({}, request.headers, { host: upstream.host }),",
+    "      }, (upstreamResponse) => {",
+    "        const responseChunks = [];",
+    "        upstreamResponse.on(\"data\", (chunk) => responseChunks.push(Buffer.from(chunk)));",
+    "        upstreamResponse.once(\"error\", () => response.destroy());",
+    "        upstreamResponse.once(\"end\", () => {",
+    "          if (!droppedHydrationResponse && upstreamResponse.statusCode >= 200 && upstreamResponse.statusCode < 300",
+    "            && isOrganizationImportHydrationResponse(request.url || \"/\", body.toString(\"utf8\"))) {",
+    "            droppedHydrationResponse = true;",
+    `            fs.writeFileSync(${JSON.stringify(lostResponseMarkerPath)}, "organization_import_hydration_response_dropped\\n");`,
+    "            response.destroy();",
+    "            return;",
+    "          }",
+    "          response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);",
+    "          response.end(Buffer.concat(responseChunks));",
+    "        });",
+    "      });",
+    "      forwarded.once(\"error\", () => {",
+    "        if (response.destroyed) return;",
+    "        response.writeHead(502, { \"content-type\": \"application/json\" });",
+    "        response.end(JSON.stringify({ error: \"Rust foundation proxy connection failed\" }));",
+    "      });",
+    "      forwarded.end(body);",
+    "    });",
+    "  });",
+    "  proxy.once(\"error\", (error) => { console.error(error); process.exit(1); });",
+    "  proxy.listen(0, \"127.0.0.1\", () => {",
+    "    const address = proxy.address();",
+    "    if (!address || typeof address === \"string\") { console.error(\"Rust foundation proxy did not bind\"); process.exit(1); return; }",
+    "    process.stdout.write(JSON.stringify(Object.assign({}, startup, { boundAddr: address.address + \":\" + address.port })) + \"\\n\");",
+    "  });",
+    "});",
+    "native.once(\"error\", (error) => { console.error(error); process.exit(1); });",
+    "native.once(\"exit\", (code, signal) => {",
+    "  if (!shuttingDown) { console.error(\"Rust foundation child exited\", code, signal); process.exitCode = code || 1; }",
+    "  if (proxy) proxy.close(() => process.exit(shuttingDown ? 0 : (process.exitCode || 1)));",
+    "  else process.exit(shuttingDown ? 0 : (process.exitCode || 1));",
+    "});",
+    "function shutdown() {",
+    "  if (shuttingDown) return;",
+    "  shuttingDown = true;",
+    "  if (native.exitCode === null) native.kill(\"SIGTERM\");",
+    "  const timer = setTimeout(() => {",
+    "    if (native.exitCode === null) native.kill(\"SIGKILL\");",
+    "    if (proxy) proxy.close(() => process.exit(0)); else process.exit(0);",
+    "  }, 2500);",
+    "  timer.unref();",
+    "}",
+    "process.once(\"SIGTERM\", shutdown);",
+    "process.once(\"SIGINT\", shutdown);",
+  ].join("\n") + "\n";
+}
+
 export function ownedFoundationPids(processListing: string, parentPid: number, binaryPath: string): number[] {
   return processListing.split("\n").flatMap((line) => {
     const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/u);
+    const commandTokens = match?.[3]?.trim().split(/\s+/u) ?? [];
+    const nodeRunsExactScript = path.basename(commandTokens[0] ?? "") === "node"
+      && commandTokens[1] === binaryPath;
     return match && Number(match[2]) === parentPid
-      && (match[3] === binaryPath || match[3].startsWith(binaryPath + " "))
+      && (match[3] === binaryPath || match[3].startsWith(binaryPath + " ") || nodeRunsExactScript)
       ? [Number(match[1])] : [];
   });
 }
@@ -104,6 +278,9 @@ async function main() {
   const home = await mkdtemp(path.join(os.tmpdir(), "rudder-rust-project-create-"));
   const originalEnv = { ...process.env };
   const binaryPath = path.join(home, "rudder-server-foundation");
+  const nativeBinaryPath = path.join(home, "rudder-server-foundation.real");
+  const lostHydrationResponseMarker = path.join(home, "organization-import-hydration-response-dropped");
+  const nativePidMarker = path.join(home, "rudder-server-foundation.pid");
   const apiPort = await availablePort();
   const databasePort = await availablePort();
   let current: ServerHandle | null = null;
@@ -113,7 +290,13 @@ async function main() {
     await copyFile(
       originalEnv.RUDDER_SERVER_FOUNDATION_PATH
         ?? path.join(repoRoot, "native/target/debug/rudder-server-foundation"),
+      nativeBinaryPath,
+    );
+    await chmod(nativeBinaryPath, 0o755);
+    await writeFile(
       binaryPath,
+      foundationResponseProxySource(nativeBinaryPath, lostHydrationResponseMarker, nativePidMarker),
+      "utf8",
     );
     await chmod(binaryPath, 0o755);
     for (const key of Object.keys(process.env)) {
@@ -274,6 +457,142 @@ async function main() {
     assert.equal(mutation.status, 200, JSON.stringify(mutation.body));
     assert.equal(mutation.body.description, "updated through persisted Rust ownership after restart");
 
+    const importedProject = await create("/orgs/" + organization.id + "/projects", {
+      name: "Rust Project-create import recovery target",
+      description: "Original target Project description",
+    });
+    assertCliCompatibleProjectId(importedProject.id);
+    assert.equal(importedProject.orgId, organization.id);
+    assert.equal(typeof importedProject.urlKey, "string");
+    const importedProjectOwner = await sql.unsafe(
+      "SELECT owner FROM project_goal_mutation_state WHERE org_id = $1 AND project_id = $2",
+      [organization.id, importedProject.id],
+    );
+    assert.deepEqual(Array.from(importedProjectOwner), [{ owner: "rust" }], "import target Project was not Rust-owned");
+
+    const projectImportKey = "project-create-import-" + randomUUID();
+    const projectImportInput = buildExistingOrganizationProjectImport({
+      targetOrgId: organization.id,
+      projectSlug: importedProject.urlKey,
+      projectName: importedProject.name,
+      description: "Description imported through the public portability API",
+      workspaceRepoUrl: "https://example.com/rudder-import-recovery.git",
+    });
+    const projectImportMutationKeys = [
+      projectImportMutationKey(projectImportKey, organization.id, importedProject.id, "replace"),
+      projectImportMutationKey(projectImportKey, organization.id, importedProject.id, "hydrate"),
+    ].sort();
+    const applyProjectImport = async (body: Json = projectImportInput) => await request(
+      "/orgs/import",
+      "POST",
+      body,
+      { "x-rudder-idempotency-key": projectImportKey },
+    );
+    const readProjectImportState = async () => {
+      const [projectRows, workspaceRows, receiptRows, counts] = await Promise.all([
+        sql!.unsafe(
+          "SELECT p.id::text AS id, p.org_id::text AS org_id, p.name, p.description, p.url_key, "
+            + "p.execution_workspace_policy::text AS execution_workspace_policy, p.updated_at::text AS updated_at, "
+            + "state.owner, state.mutation_version::text AS mutation_version, state.fence_epoch::text AS fence_epoch "
+            + "FROM projects p LEFT JOIN project_goal_mutation_state state ON state.project_id = p.id "
+            + "WHERE p.org_id = $1 AND p.id = $2",
+          [organization.id, importedProject.id],
+        ),
+        sql!.unsafe(
+          "SELECT id::text AS id, org_id::text AS org_id, project_id::text AS project_id, name, source_type, "
+            + "repo_url, repo_ref, default_ref, visibility, setup_command, cleanup_command, metadata::text AS metadata, is_primary "
+            + "FROM project_workspaces WHERE org_id = $1 AND project_id = $2 ORDER BY id",
+          [organization.id, importedProject.id],
+        ),
+        sql!.unsafe(
+          "SELECT idempotency_key, command_kind, result->'result'->>'mutation_origin' AS mutation_origin, "
+            + "activity_id::text AS activity_id, result::text AS result "
+            + "FROM organization_mutation_receipts WHERE org_id = $1 AND idempotency_key = ANY($2::text[]) "
+            + "ORDER BY idempotency_key",
+          [organization.id, projectImportMutationKeys],
+        ),
+        sql!.unsafe(
+          "SELECT "
+            + "(SELECT count(*)::text FROM activity_log WHERE org_id = $1 AND action = 'organization.imported' "
+            + "AND entity_type = 'organization' AND entity_id = $1::text) AS organization_imported_activities, "
+            + "(SELECT count(*)::text FROM activity_log WHERE org_id = $1 AND action = 'project.updated' "
+            + "AND entity_type = 'project' AND entity_id = $2::text) AS project_updated_activities, "
+            + "(SELECT count(*)::text FROM organization_mutation_outbox WHERE org_id = $1 "
+            + "AND payload->>'action' = 'project.updated' AND payload->>'entityId' = $2::text) AS project_updated_outbox",
+          [organization.id, importedProject.id],
+        ),
+      ]);
+      return {
+        project: Array.from(projectRows),
+        workspaces: Array.from(workspaceRows),
+        receipts: Array.from(receiptRows),
+        counts: counts[0],
+      };
+    };
+
+    const lostHydrationResponse = await applyProjectImport();
+    assert.equal(lostHydrationResponse.status, 503, JSON.stringify(lostHydrationResponse.body));
+    assert.equal(
+      await readFile(lostHydrationResponseMarker, "utf8"),
+      "organization_import_hydration_response_dropped\n",
+      "the real Rust hydration reply was not dropped after its commit",
+    );
+    const afterLostHydrationResponse = await readProjectImportState();
+    assert.equal(afterLostHydrationResponse.workspaces.length, 1, "lost reply duplicated or omitted the imported workspace");
+    assert.equal(afterLostHydrationResponse.project[0]?.owner, "rust");
+    assert.equal(afterLostHydrationResponse.project[0]?.description, "Description imported through the public portability API");
+    assert.equal(afterLostHydrationResponse.workspaces[0]?.repo_url, "https://example.com/rudder-import-recovery.git");
+    const hydratedPolicy = JSON.parse(
+      String(afterLostHydrationResponse.project[0]?.execution_workspace_policy),
+    ) as Json;
+    assert.equal(
+      afterLostHydrationResponse.workspaces[0]?.id,
+      hydratedPolicy.defaultProjectWorkspaceId,
+      "Rust Project policy did not hydrate to the imported workspace identity",
+    );
+    assert.deepEqual(
+      afterLostHydrationResponse.receipts.map((receipt) => receipt.idempotency_key).sort(),
+      projectImportMutationKeys,
+      "replace and hydration Rust receipts were not both committed before the lost response",
+    );
+    assert.ok(afterLostHydrationResponse.receipts.every((receipt) =>
+      receipt.command_kind === "project_goal_set_replacement"
+        && receipt.mutation_origin === "organization_import"
+        && receipt.activity_id === null),
+    "import-origin Rust receipts unexpectedly created per-Project activity identities");
+    assert.equal(afterLostHydrationResponse.counts.organization_imported_activities, "0");
+
+    const retriedProjectImport = await applyProjectImport();
+    assert.equal(retriedProjectImport.status, 200, JSON.stringify(retriedProjectImport.body));
+    const importedProjectResult = (retriedProjectImport.body.projects as Json[]).find(
+      (project) => project.id === importedProject.id,
+    );
+    assert.equal(importedProjectResult?.action, "updated");
+    const afterImportRetry = await readProjectImportState();
+    assert.deepEqual(afterImportRetry.project, afterLostHydrationResponse.project, "same-key retry changed Rust Project state");
+    assert.deepEqual(afterImportRetry.workspaces, afterLostHydrationResponse.workspaces, "same-key retry created another workspace");
+    assert.deepEqual(afterImportRetry.receipts, afterLostHydrationResponse.receipts, "same-key retry created another Rust receipt");
+    assert.equal(afterImportRetry.counts.organization_imported_activities, "1", "successful retry did not log one aggregate import activity");
+    assert.equal(afterImportRetry.counts.project_updated_activities, "0", "import-origin Project patch emitted project.updated activity");
+    assert.equal(afterImportRetry.counts.project_updated_outbox, "0", "import-origin Project patch emitted project.updated outbox event");
+
+    const beforeChangedWorkspaceConflict = await readProjectImportState();
+    const changedWorkspaceImport = buildExistingOrganizationProjectImport({
+      targetOrgId: organization.id,
+      projectSlug: importedProject.urlKey,
+      projectName: importedProject.name,
+      description: "Description imported through the public portability API",
+      workspaceRepoUrl: "https://example.com/changed-rudder-import-recovery.git",
+    });
+    const changedWorkspaceConflict = await applyProjectImport(changedWorkspaceImport);
+    assert.equal(changedWorkspaceConflict.status, 409, JSON.stringify(changedWorkspaceConflict.body));
+    assert.match(String(changedWorkspaceConflict.body.error), /workspace import key conflicts/i);
+    assert.deepEqual(
+      await readProjectImportState(),
+      beforeChangedWorkspaceConflict,
+      "changed workspace payload modified rows, Rust state/receipts, or import activities before conflict",
+    );
+
     const agent = await create("/orgs/" + organization.id + "/agents", {
       name: "Project-create CLI smoke agent",
       role: "engineer",
@@ -428,9 +747,16 @@ async function main() {
       : ["-eo", "pid=,ppid=,args="];
     const processListing = execFileSync("ps", processArgs, { encoding: "utf8" });
     const foundationChildren = ownedFoundationPids(processListing, process.pid, binaryPath);
-    assert.equal(foundationChildren.length, 1, "expected one native child launched from this smoke's private binary copy");
+    assert.equal(foundationChildren.length, 1, "expected one proxy child launched from this smoke's private binary copy");
+    const nativeFoundationPid = Number(await readFile(nativePidMarker, "utf8"));
+    assert.ok(Number.isSafeInteger(nativeFoundationPid) && nativeFoundationPid > 0, "proxy did not record its Rust child PID");
+    assert.deepEqual(
+      ownedFoundationPids(processListing, foundationChildren[0]!, nativeBinaryPath),
+      [nativeFoundationPid],
+      "expected exactly the proxy-owned Rust foundation child before outage injection",
+    );
     await rename(binaryPath, binaryPath + ".disabled");
-    process.kill(foundationChildren[0]!, "SIGKILL");
+    process.kill(nativeFoundationPid, "SIGKILL");
     await waitForExit(foundationChildren[0]!);
     const outageResponse = await request(
       "/orgs/" + organization.id + "/projects",
@@ -457,6 +783,14 @@ async function main() {
       subsequentMutation: "persisted-owner-routed",
       cliProjectId: cliProject.id,
       mcpProjectId: mcpProject.id,
+      importedProjectId: importedProject.id,
+      importedWorkspaceId: afterImportRetry.workspaces[0]?.id,
+      importLostHydrationResponseStatus: lostHydrationResponse.status,
+      importRetryStatus: retriedProjectImport.status,
+      importAggregateActivities: afterImportRetry.counts.organization_imported_activities,
+      importProjectUpdatedActivities: afterImportRetry.counts.project_updated_activities,
+      importProjectUpdatedOutbox: afterImportRetry.counts.project_updated_outbox,
+      changedWorkspacePayloadStatus: changedWorkspaceConflict.status,
       crossOrganizationDenied: foreignDenied.status,
       terminatedActorDenied: terminatedDenied.status,
       rustOutageCreateStatus: outageResponse.status,

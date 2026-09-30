@@ -148,7 +148,8 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
         throw new HttpError(503, "Rust Project-Goal authority is unavailable");
       }
     }
-    const projectCommandKey = request?.header("x-rudder-idempotency-key")?.trim() || randomUUID();
+    const trustedImportKey = request?.header("x-rudder-idempotency-key")?.trim() || null;
+    const projectCommandKey = trustedImportKey ?? randomUUID();
     const updateImportedProject = async (
       orgId: string,
       projectId: string,
@@ -170,7 +171,11 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
       try {
         response = await rustFoundationBridge!.projectGoalSet(
           forwarded, orgId, projectId,
-          Buffer.from(JSON.stringify({ projectPatch: patch, runId: authenticatedRequest.actor.runId ?? null }), "utf8"),
+          Buffer.from(JSON.stringify({
+            projectPatch: patch,
+            runId: authenticatedRequest.actor.runId ?? null,
+            mutationOrigin: "organization_import",
+          }), "utf8"),
           `/api/orgs/${encodeURIComponent(orgId)}/projects/${encodeURIComponent(projectId)}/goal-set`,
         );
       } catch {
@@ -564,7 +569,10 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
         if (!projectId) continue;
 
         for (const workspace of manifestProject.workspaces) {
-          const createdWorkspace = await projects.createWorkspace(projectId, {
+          const workspaceImportIdentity = input.target.mode === "existing_organization" && trustedImportKey
+            ? { importKey: trustedImportKey, portableWorkspaceKey: workspace.key }
+            : undefined;
+          const workspaceInput = {
             name: workspace.name,
             sourceType: workspace.sourceType ?? undefined,
             repoUrl: workspace.repoUrl ?? undefined,
@@ -575,7 +583,10 @@ export function createOrganizationPortabilityImportHandlers(context: ImportConte
             cleanupCommand: workspace.cleanupCommand ?? undefined,
             metadata: workspace.metadata ?? undefined,
             isPrimary: workspace.isPrimary,
-          });
+          };
+          const createdWorkspace = workspaceImportIdentity
+            ? await projects.createWorkspace(projectId, workspaceInput, workspaceImportIdentity)
+            : await projects.createWorkspace(projectId, workspaceInput);
           if (!createdWorkspace) {
             warnings.push(`Project ${planProject.slug} workspace ${workspace.key} could not be created during import.`);
             continue;

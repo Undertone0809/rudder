@@ -1,7 +1,7 @@
 use crate::{
-    CommittedMutation, Outcome, ProjectCreateCommand, ProjectDeleteCommand, Receipt, ResultState,
-    StoreError, branding_kind, project_create_kind, project_delete_kind, project_goal_kind,
-    project_goal_set_kind,
+    CommittedMutation, Outcome, ProjectCreateCommand, ProjectDeleteCommand,
+    ProjectPatchMutationOrigin, Receipt, ResultState, StoreError, branding_kind,
+    project_create_kind, project_delete_kind, project_goal_kind, project_goal_set_kind,
 };
 use rudder_organization_mutation_core::{
     OrganizationBrandingCommand, OrganizationSettingsSnapshot,
@@ -59,6 +59,7 @@ pub(crate) enum ExpectedReceipt {
         goal_ids: Option<Vec<String>>,
         primary_goal_after: Option<Option<String>>,
         resource_attachment_operation: Option<ProjectResourceAttachmentOperationIdentity>,
+        mutation_origin: ProjectPatchMutationOrigin,
     },
     ProjectDelete {
         project_id: String,
@@ -90,6 +91,16 @@ pub(crate) struct Metadata {
     pub link_identifier: Option<String>,
     pub expected_receipt: ExpectedReceipt,
     pub receipt_format: i32,
+}
+
+fn is_organization_import_project_patch(metadata: &Metadata) -> bool {
+    matches!(
+        &metadata.expected_receipt,
+        ExpectedReceipt::ProjectPatch {
+            mutation_origin: ProjectPatchMutationOrigin::OrganizationImport,
+            ..
+        }
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -340,7 +351,7 @@ impl Metadata {
             serde_json::to_vec(&command.patch).map_err(|_| StoreError::InvalidInput)?,
         ));
         let resource_attachment_operation = project_resource_attachment_operation(&command.patch)?;
-        let identity = json!({
+        let mut identity = json!({
             "adapter_format": 1,
             "kind": project_goal_set_kind(),
             "organization_id": org,
@@ -351,10 +362,18 @@ impl Metadata {
             "idempotency_key": key,
             "patch_fingerprint": patch_fingerprint,
         });
+        if command.mutation_origin == ProjectPatchMutationOrigin::OrganizationImport {
+            identity["mutation_origin"] = json!("organization_import");
+        }
         ensure_json_size(&identity, MAX_COMMAND_BYTES)?;
         let fingerprint = hex_digest(Sha256::digest(
             serde_json::to_vec(&identity).map_err(|_| StoreError::InvalidInput)?,
         ));
+        if command.mutation_origin == ProjectPatchMutationOrigin::OrganizationImport
+            && resource_attachment_operation.is_some()
+        {
+            return Err(StoreError::InvalidInput);
+        }
         signed(command.expected_version)?;
         signed(command.fence_epoch)?;
         if patch_fingerprint != patch.fingerprint() {
@@ -382,6 +401,7 @@ impl Metadata {
                     .as_ref()
                     .map(|goal_ids| goal_ids.first().cloned()),
                 resource_attachment_operation: resource_attachment_operation.clone(),
+                mutation_origin: command.mutation_origin,
             },
             receipt_format: if resource_attachment_operation.is_some() {
                 3
@@ -867,7 +887,7 @@ pub(crate) async fn replay(
         || receipt.fingerprint != metadata.fingerprint
         || receipt.version != resulting_version
         || receipt.fence_epoch != fence_epoch
-        || receipt.activity_id != row.try_get::<String, _>("activity_id")?
+        || receipt.activity_id != row.try_get::<Option<String>, _>("activity_id")?
         || receipt.outcome.as_str() != row_outcome
     {
         return Err(StoreError::InvalidReceipt);
@@ -926,7 +946,7 @@ pub(crate) async fn branding_replay(
         || receipt.fingerprint != metadata.fingerprint
         || receipt.version != resulting_version
         || receipt.fence_epoch != fence_epoch
-        || receipt.activity_id != row.try_get::<String, _>("activity_id")?
+        || receipt.activity_id != row.try_get::<Option<String>, _>("activity_id")?
         || receipt.outcome.as_str() != row_outcome
     {
         return Err(StoreError::InvalidReceipt);
@@ -984,7 +1004,11 @@ async fn persist_with_resource_attachment_response(
         version: effect.version,
         fence_epoch: effect.fence_epoch,
         fingerprint: metadata.fingerprint.clone(),
-        activity_id: String::new(),
+        activity_id: if is_organization_import_project_patch(metadata) {
+            None
+        } else {
+            Some(String::new())
+        },
         outcome: effect.outcome,
         result: effect.result,
     };
@@ -1031,35 +1055,37 @@ async fn persist_with_resource_attachment_response(
         return Err(StoreError::StaleFence);
     }
 
-    let details = serde_json::to_string(&effect.details).map_err(|_| StoreError::InvalidReceipt)?;
     let activity_action = effect.activity_action.unwrap_or("project.updated");
     let activity_entity_type = effect.activity_entity_type.unwrap_or("project");
-    let activity_id: String = sqlx::query_scalar(
-        "INSERT INTO activity_log
-          (org_id, actor_type, actor_id, action, entity_type, entity_id,
-           agent_id, run_id, details, idempotency_key)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::uuid, $9::jsonb, $10)
-         RETURNING id::text",
-    )
-    .bind(&metadata.org)
-    .bind(if metadata.actor.kind == "board" {
-        "user"
-    } else {
-        "agent"
-    })
-    .bind(&metadata.actor.principal_id)
-    .bind(activity_action)
-    .bind(activity_entity_type)
-    .bind(&effect.entity_id)
-    .bind(metadata.actor.agent_id.as_deref())
-    .bind(metadata.run_id.as_deref())
-    .bind(details)
-    .bind(activity_idempotency_key(&metadata.key))
-    .fetch_one(&mut **tx)
-    .await?;
-
     let mut receipt = receipt;
-    receipt.activity_id = activity_id;
+    if !is_organization_import_project_patch(metadata) {
+        let details =
+            serde_json::to_string(&effect.details).map_err(|_| StoreError::InvalidReceipt)?;
+        let activity_id: String = sqlx::query_scalar(
+            "INSERT INTO activity_log
+              (org_id, actor_type, actor_id, action, entity_type, entity_id,
+               agent_id, run_id, details, idempotency_key)
+             VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::uuid, $9::jsonb, $10)
+             RETURNING id::text",
+        )
+        .bind(&metadata.org)
+        .bind(if metadata.actor.kind == "board" {
+            "user"
+        } else {
+            "agent"
+        })
+        .bind(&metadata.actor.principal_id)
+        .bind(activity_action)
+        .bind(activity_entity_type)
+        .bind(&effect.entity_id)
+        .bind(metadata.actor.agent_id.as_deref())
+        .bind(metadata.run_id.as_deref())
+        .bind(details)
+        .bind(activity_idempotency_key(&metadata.key))
+        .fetch_one(&mut **tx)
+        .await?;
+        receipt.activity_id = Some(activity_id);
+    }
     let mut receipt_value =
         serde_json::to_value(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
     if let Some(response) = resource_attachment_response {
@@ -1086,37 +1112,39 @@ async fn persist_with_resource_attachment_response(
     .bind(receipt.outcome.as_str())
     .bind(signed(receipt.version)?)
     .bind(signed(receipt.fence_epoch)?)
-    .bind(&receipt.activity_id)
+    .bind(receipt.activity_id.as_deref())
     .bind(receipt_json)
     .execute(&mut **tx)
     .await?;
 
-    let actor_type = if metadata.actor.kind == "board" {
-        "user"
-    } else {
-        "agent"
-    };
-    let event_payload = json!({
-        "actorType": actor_type,
-        "actorId": metadata.actor.principal_id,
-        "action": activity_action,
-        "entityType": activity_entity_type,
-        "entityId": effect.entity_id,
-        "agentId": metadata.actor.agent_id,
-        "runId": metadata.run_id,
-        "details": effect.details,
-    });
-    ensure_json_size(&event_payload, MAX_RESULT_BYTES)?;
-    sqlx::query(
-        "INSERT INTO organization_mutation_outbox
-          (org_id, activity_id, event_type, payload)
-         VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb)",
-    )
-    .bind(&metadata.org)
-    .bind(&receipt.activity_id)
-    .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
-    .execute(&mut **tx)
-    .await?;
+    if let Some(activity_id) = receipt.activity_id.as_deref() {
+        let actor_type = if metadata.actor.kind == "board" {
+            "user"
+        } else {
+            "agent"
+        };
+        let event_payload = json!({
+            "actorType": actor_type,
+            "actorId": metadata.actor.principal_id,
+            "action": activity_action,
+            "entityType": activity_entity_type,
+            "entityId": effect.entity_id,
+            "agentId": metadata.actor.agent_id,
+            "runId": metadata.run_id,
+            "details": effect.details,
+        });
+        ensure_json_size(&event_payload, MAX_RESULT_BYTES)?;
+        sqlx::query(
+            "INSERT INTO organization_mutation_outbox
+              (org_id, activity_id, event_type, payload)
+             VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb)",
+        )
+        .bind(&metadata.org)
+        .bind(activity_id)
+        .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
+        .execute(&mut **tx)
+        .await?;
+    }
 
     Ok(CommittedMutation {
         replayed: false,
@@ -1143,7 +1171,7 @@ pub(crate) async fn persist_branding(
         version: effect.version,
         fence_epoch: effect.fence_epoch,
         fingerprint: metadata.fingerprint.clone(),
-        activity_id: String::new(),
+        activity_id: Some(String::new()),
         outcome: effect.outcome,
         result: effect.result,
     };
@@ -1202,7 +1230,7 @@ pub(crate) async fn persist_branding(
     .await?;
 
     let mut receipt = receipt;
-    receipt.activity_id = activity_id.clone();
+    receipt.activity_id = Some(activity_id.clone());
     let receipt_json = serde_json::to_string(&receipt).map_err(|_| StoreError::InvalidReceipt)?;
     if receipt_json.len() > MAX_RESULT_BYTES {
         return Err(StoreError::InvalidInput);
@@ -1220,7 +1248,7 @@ pub(crate) async fn persist_branding(
     .bind(receipt.outcome.as_str())
     .bind(signed(receipt.version)?)
     .bind(signed(receipt.fence_epoch)?)
-    .bind(&receipt.activity_id)
+    .bind(receipt.activity_id.as_deref())
     .bind(&receipt_json)
     .execute(&mut **tx)
     .await?;
@@ -1310,7 +1338,7 @@ async fn persist_project_lifecycle(
         version,
         fence_epoch,
         fingerprint: metadata.fingerprint.clone(),
-        activity_id: String::new(),
+        activity_id: Some(String::new()),
         outcome: Outcome::Applied,
         result: if creating {
             ResultState::ProjectCreated {
@@ -1355,7 +1383,7 @@ async fn persist_project_lifecycle(
     .fetch_one(&mut **tx)
     .await?;
 
-    receipt.activity_id = activity_id;
+    receipt.activity_id = Some(activity_id);
     // Lifecycle responses contain complete Projects without a new application
     // byte cap. Serialize and persist before commit so storage failure rolls
     // every business effect back.
@@ -1375,7 +1403,7 @@ async fn persist_project_lifecycle(
     .bind(receipt.outcome.as_str())
     .bind(signed(receipt.version)?)
     .bind(signed(receipt.fence_epoch)?)
-    .bind(&receipt.activity_id)
+    .bind(receipt.activity_id.as_deref())
     .bind(&receipt_json)
     .execute(&mut **tx)
     .await?;
@@ -1399,7 +1427,7 @@ async fn persist_project_lifecycle(
          VALUES ($1::uuid, $2::uuid, 'activity.logged', $3::jsonb)",
     )
     .bind(&metadata.org)
-    .bind(&receipt.activity_id)
+    .bind(receipt.activity_id.as_deref())
     .bind(serde_json::to_string(&event_payload).map_err(|_| StoreError::InvalidReceipt)?)
     .execute(&mut **tx)
     .await?;
@@ -1414,6 +1442,7 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
     if receipt.organization_id != metadata.org
         || !is_sha256_hex(&receipt.fingerprint)
         || receipt.fingerprint != metadata.fingerprint
+        || receipt.activity_id.is_none() != is_organization_import_project_patch(metadata)
     {
         return Err(StoreError::InvalidReceipt);
     }
@@ -1648,6 +1677,7 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 goal_ids,
                 primary_goal_after,
                 state_integrity,
+                mutation_origin,
             },
             kind,
         ) if *kind == *project_goal_set_kind() => {
@@ -1678,6 +1708,7 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 patch_fingerprint: expected_patch_fingerprint,
                 goal_ids: expected_goal_ids,
                 primary_goal_after: expected_primary_goal_after,
+                mutation_origin: expected_mutation_origin,
                 ..
             } = &metadata.expected_receipt
             else {
@@ -1698,6 +1729,11 @@ fn validate_receipt_result(metadata: &Metadata, receipt: &Receipt) -> Result<(),
                 || expected_primary_goal_after
                     .as_ref()
                     .is_some_and(|expected| expected.as_deref() != primary_goal_after.as_deref())
+                || mutation_origin
+                    .as_ref()
+                    .copied()
+                    .unwrap_or(ProjectPatchMutationOrigin::Standard)
+                    != *expected_mutation_origin
             {
                 return Err(StoreError::InvalidReceipt);
             }

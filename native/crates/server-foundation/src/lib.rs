@@ -11,7 +11,8 @@ pub use rudder_auth_core::{ActorEnvelope, ActorIdentity, VerifiedActor};
 use rudder_auth_core::{NonceReplayGuard, RequestContext, SigningKey};
 use rudder_d1_persistence::{
     MutationStore, ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
-    ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand, ResultState, StoreError,
+    ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
+    ProjectPatchMutationOrigin, ResultState, StoreError,
     project_library::{
         ProjectLibraryCommand, ProjectLibraryError, ensure_project_create_intent,
         ensure_project_library,
@@ -284,6 +285,8 @@ struct ProjectGoalSetRequest {
     run_id: Option<String>,
     #[serde(default)]
     project_patch: Option<serde_json::Value>,
+    #[serde(default)]
+    mutation_origin: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1532,6 +1535,21 @@ impl AppState {
                     .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
             }
         };
+        let mutation_origin = match input.mutation_origin.as_deref() {
+            None => ProjectPatchMutationOrigin::Standard,
+            Some("organization_import") => ProjectPatchMutationOrigin::OrganizationImport,
+            Some(_) => {
+                return self
+                    .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
+            }
+        };
+        if mutation_origin == ProjectPatchMutationOrigin::OrganizationImport
+            && (input.project_patch.is_none()
+                || input.goal_ids.is_some()
+                || input.primary_goal_id.is_some())
+        {
+            return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
+        }
         let Some(store) = self.d1_mutations.as_ref() else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
@@ -1603,6 +1621,7 @@ impl AppState {
                 expected_version: scope.version,
                 fence_epoch: scope.fence_epoch,
                 patch,
+                mutation_origin,
             };
             return match store.project_patch(command).await {
                 Ok(committed) => bounded_json(

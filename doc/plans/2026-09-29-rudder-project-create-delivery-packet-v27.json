@@ -21,41 +21,53 @@
   },
   "candidate": {
     "branch": "codex/project-create-pilot-20260929",
-    "source_ref": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-    "source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-    "dirty_fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
-    "source_tree": "a8bc2bd76f19df8ae195a9c10b16416566a76dff",
-    "frozen": true,
+    "source_ref": "719619b3006de870adf4430a1a845efff3c9ffab",
+    "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+    "dirty_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+    "source_tree": "cc91713959cd716ff783103b4dbccbf9a16effed",
+    "frozen": false,
     "build": {
-      "id": "server-f54f7190-cli-09238fd9-db-1c03f711-host-514d101c",
-      "source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-      "origin_source_sha": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
-      "equivalence": "All847 installed DB files match a6ca normal package. CLI emitted files/maps byte-identical; packageJSON ordering-only difference. All1903 server files, six native binaries and external preflight unchanged. Restore/seed workflows require fresh verification.",
-      "server_tarball_sha256": "f54f7190c4623f328ca673c5b7ede01f540450ebc280efab5bde09ea20bd81f0",
-      "foundation_sha256": "514d101c7aa30c23b535a6553cdad6b83a5dd0119e531b023fdead34c3754875",
-      "migration_preflight_sha256": "1110ba6a1e988f80bb6fefd362776264f266bd19d4126363db56e0b5a6c3eb97",
-      "preparation_receipt": "/private/tmp/rudder-create-verifier.DSx0ST/db-a6ca.Ka5J0P/preparation-receipt-v27.5.json",
-      "migration_identity": "/private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/migration-preflight-identity.json",
-      "installed_root": "/private/tmp/rudder-create-verifier.DSx0ST/cli-dee9.75wyUf/install",
-      "cli_tarball_sha256": "09238fd930eaecc0d1726678e874df190b11894a5b5f5d3975e35c8836259815",
-      "cli_index_sha256": "668d1a00b05c592edb0a4997533d4116a7eaeb75dc3f417d1a519dde7935aa12",
-      "db_tarball_sha256": "1c03f71167d209da1c621e9389b5877e9039b0055c08071281a4debd45175571"
+      "id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "state": "tarball_created_prepack_lifecycle_skipped_for_current_tsc_failure",
+      "artifact": {
+        "path": "/tmp/rudder-project-create-v27.6.hrMVrS/rudderhq-server-0.7.24.tgz",
+        "sha256": "d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+        "packing_command": "npm pack --ignore-scripts",
+        "compressed_bytes": 28682411,
+        "unpacked_bytes": 84240437,
+        "file_count": 1923
+      },
+      "validated_outputs": [
+        "All six packaged native target artifacts pass server/scripts/stage-native.mjs --check-packaged; native sources unchanged from the prior package build.",
+        "Candidate server dist contains projects.js, onboarding.js, and organization-portability.import.js; package listing includes all three.",
+        "Vite build output ui/dist and packaged server/ui-dist compare equal; both contain 214 files.",
+        "Tarball listing includes the three changed server modules, UI index, and all six native target binaries."
+      ],
+      "lifecycle_limit": "Full server prepack is not PASS: UI TypeScript checking fails at ui/src/.../MessengerContextSidebar.tsx:1572 because directDomPrepaintRows is not a ReactVirtualizerOptions property. Vite build itself succeeded. The checked-in/ignored prepared outputs were packaged with scripts disabled for installed runtime acceptance only.",
+      "related_artifacts": {
+        "cli_sha256": "9e73c0b2f76d98abe4fc27aa26ef0a692ac93a40003075ea893407bc52a6db35",
+        "db_sha256": "1c03f71167d209da1c621e9389b5877e9039b0055c08071281a4debd45175571",
+        "cli_and_db_scope": "unchanged between d56c9406 and 719619b3; old 692ce7 artifact bundle predates their repairs and must not be reused for CLI/DB"
+      },
+      "prior_artifact_source_sha": "d56c9406c0aa7295a7477835915c2bf29f4c8b85",
+      "prior_artifact_bundle": "server-f54f7190 is stale for changed server files; CLI/DB artifacts were refreshed after their prior repairs and are source-unchanged in 719619b3"
     },
     "runtime": {
-      "id": "create-v27.5-a6ca-db1c03-macos-arm64",
-      "source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-      "state": "exclusive_PG_lease_granted_not_yet_started"
+      "id": "pending-create-v27.6-macos-arm64",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "state": "awaiting_independent_verifier_runtime_lease_on_refreshed_server_tarball"
     },
     "organization_data": {
       "organization_id": null,
-      "data_id": "create-v27.5-fresh-seed-under-rudder-create-verifier.DSx0ST",
-      "fixture_parent": "/private/tmp/rudder-create-verifier.DSx0ST",
-      "binding_rule": "Before first product mutation, verifier records actual created child root, runtime PIDs/ports and organization IDs in its lease; all are isolated disposable fixture data."
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "fixture_parent": "new /private/tmp/rudder-create-v276.* root assigned by verifier; prior v27.5 fixture is historical and must not be reused or modified",
+      "binding_rule": "Before first product mutation, verifier records actual created child root, runtime PIDs/ports and organization IDs in its lease; all are isolated disposable fixture data. Existing local services and databases are not owned by this verifier."
     },
     "workload_fixture": "Project Create HTTP/CLI/MCP/onboarding, preserved import/worktree merge, shared Library files, intent crash recovery, audit/receipt rollback, owner routing and outbox replay.",
     "acceptance_packet": {
-      "version": "27.5",
-      "fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
+      "version": "27.6",
+      "fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
       "criteria": [
         "public-entry-parity: HTTP201 legacy shape/defaults; CLI/MCP create with empty/multiple goals; goalIds precedence over goalId; board onboarding creates once, preserves caller metadata and current actor/run.",
         "resources: Existing scoped resource attachments and supported newResources atomically created; foreign references rejected with no durable effects.",
@@ -67,7 +79,8 @@
         "receipt-no-fs: Same-key replay exact response and single audit/outbox; changed intent409; current actor/org/run reauthorization. After Project deletion, replay creates no Project or Project-specific filesystem artifacts; Node organization-layout preparation remains outside this claim and preserves new same-name/UUID incarnation and user files.",
         "outbox: Actual public WS activity.logged and persisted published record; pending across restart then delivery once by dedupe identity, no delayed mutation of recreated content.",
         "dynamic-ownership: Generated Rust-owned ID immediately PATCH/goals/DELETE routes by stored owner, without predeclared allowlist; repeat after restart; stale Node writes rejected and outage no fallback. Default-off creates remain explicitly Node-owned; existing Rust ownership fails closed when required authority is disabled.",
-        "preserved-node-lanes: Real import remains explicit Node lane, preserving source-org CEO/run delegation semantics and no new per-Project import audits. Real worktree merge commits complete Node-owned transaction; failures atomic; later Node route still works.",
+        "scalar-owner-boundary: Real onboarding description reseed and existing-target portability replacement/hydration route by persisted owner. Node transactions reject stale scalar updates under the Project lock; Rust failures do not fall back. Verify Node-owned compatibility, Rust-owned audit/receipt semantics, and no preflight partial write.",
+        "preserved-node-lanes: New-organization import and agent-safe source-org CEO/run delegation remain Node-owned. Existing-target Rust Project replacement uses the authenticated Rust lane while other import steps retain behavior. Real worktree merge commits the complete Node-owned transaction; failures atomic; later Node route still works.",
         "scope-failures: Foreign org, terminated/current caller, stale run and invalid references rejected; no receipt disclosure, DB write or unauthorized projectFS. Public data cannot choose trusted roots or caller lane; root/lane spoofing cannot redirect files or select Node fallback.",
         "size-and-latency: Representative large supported payload and name/path edge cases; preserve response/replay; record lock-held provisioning timing without inventing performance budget.",
         "installed-upgrade-cleanup: Normal six-target package/fresh install; upgrade isolated predecessor data; preserve unrelated state. Record actual roots/PIDs/ports/IDs, restore own hidden assets and stop only owned processes.",
@@ -75,44 +88,59 @@
       ],
       "state_inventory": []
     },
-    "freeze_scope": "Stage accepted exact source and normal lifecycle-refreshed DB artifact. Fresh seed verifier must bind new target identities before mutation.",
+    "freeze_scope": "Freeze exact source 719619b3 and the SHA-bound server tarball for isolated installed acceptance. The server tarball uses prepared outputs with lifecycle scripts skipped because full prepack currently fails the UI tsc check; do not claim full build or release readiness. Independent verifier binds the fresh runtime/data identities before mutation.",
     "budget_lease": {
-      "id": "create-v27.5-a6ca-db1c03-macos-arm64",
-      "fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
+      "id": "create-v27.6-independent-macos-arm64-verification",
+      "fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
       "expires_at": "2026-10-01T00:00:00Z",
       "scope": "Isolated local installed acceptance only; sole local PG slot."
     }
   },
+  "candidate_history": [
+    {
+      "packet_version": "27.5",
+      "source_sha": "d56c9406c0aa7295a7477835915c2bf29f4c8b85",
+      "source_tree": "2982ef42adb327bfa71f4da9733bdb4bd4b3f273",
+      "fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
+      "reviewer": "reject; scalar Node writers mutated Rust-owned Project without advancing its fence",
+      "review_receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-scalar-owner-review-v27.5.json",
+      "verifier": "FAIL; onboarding reseed changed a Rust-owned Project description with mutation_version unchanged",
+      "verifier_receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-independent-verifier-v27.5.json",
+      "disposition": "Superseded by owner-lock and owner-aware dispatch repair in 719619b3. Fresh candidate acceptance required."
+    }
+  ],
   "receipts": {
     "reviewer": {
       "verdict": "accept",
-      "candidate_fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
-      "source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-      "build_id": "server-f54f7190-cli-09238fd9-db-1c03f711-host-514d101c",
-      "runtime_id": "create-v27.5-a6ca-db1c03-macos-arm64",
-      "data_id": "create-v27.5-fresh-seed-under-rudder-create-verifier.DSx0ST",
-      "packet_version": "27.5",
+      "candidate_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "build_id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "runtime_id": "pending-create-v27.6-macos-arm64",
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "packet_version": "27.6",
       "agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
       "level": "stage",
-      "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.5.json"
+      "scope": "Committed source and acceptance-packet review; package listing and output hashes are recorded, but the reviewer did not claim a full prepack lifecycle or installed runtime verdict.",
+      "evidence": "doc/plans/artifacts/2026-09-29-rudder-project-create-stage-review-v27.6.json"
     },
     "verifier": {
       "verdict": "pending",
-      "candidate_fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
-      "source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-      "build_id": "server-f54f7190-cli-09238fd9-db-1c03f711-host-514d101c",
-      "runtime_id": "create-v27.5-a6ca-db1c03-macos-arm64",
-      "data_id": "create-v27.5-fresh-seed-under-rudder-create-verifier.DSx0ST",
-      "packet_version": "27.5"
+      "candidate_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "build_id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "runtime_id": "pending-create-v27.6-macos-arm64",
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "packet_version": "27.6",
+      "evidence": null
     },
     "final_review": {
       "verdict": "pending",
-      "candidate_fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
-      "source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-      "build_id": "server-f54f7190-cli-09238fd9-db-1c03f711-host-514d101c",
-      "runtime_id": "create-v27.5-a6ca-db1c03-macos-arm64",
-      "data_id": "create-v27.5-fresh-seed-under-rudder-create-verifier.DSx0ST",
-      "packet_version": "27.5"
+      "candidate_fingerprint": "0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba",
+      "source_sha": "719619b3006de870adf4430a1a845efff3c9ffab",
+      "build_id": "rudderhq-server-0.7.24-sha256-d4a2a7ae45c5039dc0df2944e3be6c2631eaa186af2e6637d6117c1c2bf4267f",
+      "runtime_id": "pending-create-v27.6-macos-arm64",
+      "data_id": "create-v27.6-independent-fresh-isolated-fixture",
+      "packet_version": "27.6"
     }
   },
   "drift": {
@@ -120,10 +148,12 @@
     "events": [
       "Installed verifier FAIL exposed missing lazy CLI modules. Local esbuild entries and build-regression test repair packaging; log-store test-only stabilization also pending checkpoint. Backend runtime source unchanged; passed backend observations may be reused only with explicit equivalence and verifier rebind. CLI install/merge evidence must be refreshed.",
       "7a4 thin-diagnostic repair accepted at stage; CLI artifact refreshed via normal lifecycle. v27.2 FAIL and v27.3 reject retained in receipt_history.",
-      "a6ca backup schema preservation checkpoint9focusedPASS including true PostgreSQL restore. New DB artifact prepared; source/build stage binding pending."
+      "a6ca backup schema preservation checkpoint9focusedPASS including true PostgreSQL restore. New DB artifact prepared; source/build stage binding pending.",
+      "v27.5 reviewer reject and independent FAIL bound d56 scalar-owner bypass. Commit719619b3 removes the bypass, locks all scalar Project updates, and adds owner-aware onboarding/import routing. Previous PASS observations require unaffected-equivalence rebind; changed workflows require fresh installed proof.",
+      "v27.6 server tarball d4a2a7ae was created from prepared candidate outputs with npm pack --ignore-scripts after confirming all six native targets and 214-file Vite/UI output equality. Automatic prepack remains blocked by the existing MessengerContextSidebar.tsx:1572 UI type error; this package is for installed acceptance only and does not establish full build/release readiness."
     ],
     "invalidated_receipts": [
-      "Current whole-candidate stage binding requires refresh for CLI packaging delta; final review remains pending."
+      "v27.5 receipts apply only to d56 and are historical. v27.6 stage review accepted source 719619b3 and server package hash d4a2; the independent installed verifier is running with a fresh runtime/data lease, then final review and exact-head CI remain pending."
     ]
   },
   "integration": {
@@ -138,7 +168,7 @@
     ],
     "isolation_trigger": "independent_runtime",
     "isolated_worktree": "/Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss",
-    "patch_tree_sha": "a8bc2bd76f19df8ae195a9c10b16416566a76dff",
+    "patch_tree_sha": "cc91713959cd716ff783103b4dbccbf9a16effed",
     "expected_old_sha": "89859a26b002828a61faf7a542d8f07d3b522884",
     "cas": {
       "attempted": false,
@@ -169,9 +199,9 @@
   "publication": {
     "pr": "https://github.com/Undertone0809/rudder/pull/236",
     "draft": true,
-    "published_head": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-    "matrix_run": 36514647753,
-    "real_entry_run": 36514647764,
+    "published_head": "d56c9406c0aa7295a7477835915c2bf29f4c8b85",
+    "matrix_run": 36516032181,
+    "real_entry_run": 36516032204,
     "real_entry_verdict": "PASS"
   },
   "author_evidence": {
@@ -198,7 +228,7 @@
     "receipt": "doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json",
     "delete_regression": "/tmp/rudder-goal-delete-queued.nzFPBz/results.md"
   },
-  "next_executable": "Hubble executes fresh normal installed seed/merge/public PATCH and remaining criteria under exclusive PG; final review follows terminal verifier PASS and current CI.",
+  "next_executable": "Collect Linnaeus's independent code review and Mill's v27.6 installed verifier receipt. Resolve any precise blocker without bypassing migration preflight; after verifier PASS obtain final reviewer acceptance, then update PR236 and run exact-head CI.",
   "terminal_claims": {
     "implementation_complete": false,
     "release_ready": false,

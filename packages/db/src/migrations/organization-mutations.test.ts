@@ -148,6 +148,11 @@ beforeAll(async () => {
     await db`SELECT org_id FROM organization_mutation_state WHERE org_id = ${catchupOrg}`,
   ).toHaveLength(0);
 
+  const throughCurrent = migrationSnapshot("through-0176", 176);
+  await migrate(drizzle(db), { migrationsFolder: throughCurrent });
+  const legacyReceiptActivity = await activity(originalOrg);
+  await receipt(db, originalOrg, legacyReceiptActivity, "pre-0177-receipt");
+
   await applyPendingMigrations(url);
   await applyPendingMigrations(url);
 }, 120_000);
@@ -159,6 +164,63 @@ afterAll(async () => {
 });
 
 describe("D1 durable mutation schema on real PostgreSQL", () => {
+  it("preserves existing activity-backed receipts and narrowly permits import patch receipts", async () => {
+    expect(
+      await db`SELECT command_kind, activity_id::text AS activity_id
+        FROM organization_mutation_receipts
+        WHERE org_id = ${originalOrg} AND idempotency_key = 'pre-0177-receipt'`,
+    ).toHaveLength(1);
+    const legacyReceipt = await db`SELECT activity_id::text AS activity_id
+      FROM organization_mutation_receipts
+      WHERE org_id = ${originalOrg} AND idempotency_key = 'pre-0177-receipt'`;
+    expect(legacyReceipt[0]?.activity_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+
+    const org = await organization();
+    const projectId = await insertProject(org);
+    const importedResult = {
+      organization_id: org,
+      version: 1,
+      fence_epoch: 0,
+      fingerprint: "a".repeat(64),
+      activity_id: null,
+      outcome: "applied",
+      result: {
+        kind: "project_patch",
+        project_id: projectId,
+        mutation_origin: "organization_import",
+      },
+    };
+    await db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'import-patch', 'project_goal_set_replacement', ${"a".repeat(64)},
+        'applied', 1, 0, NULL, ${JSON.stringify(importedResult)}::jsonb)`;
+
+    const ordinaryResult = {
+      ...importedResult,
+      activity_id: null,
+      result: { kind: "project_goal_set_replacement", project_id: projectId },
+    };
+    await expect(db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'ordinary-without-activity', 'project_goal_set_replacement', ${"b".repeat(64)},
+        'applied', 1, 0, NULL, ${JSON.stringify(ordinaryResult)}::jsonb)`).rejects.toMatchObject({
+      code: "23514",
+    });
+
+    const importWithActivity = await activity(org);
+    await expect(db`INSERT INTO organization_mutation_receipts
+      (org_id, idempotency_key, command_kind, command_fingerprint, outcome,
+       resulting_version, fence_epoch, activity_id, result)
+      VALUES (${org}, 'import-with-activity', 'project_goal_set_replacement', ${"c".repeat(64)},
+        'applied', 1, 0, ${importWithActivity}, ${JSON.stringify(importedResult)}::jsonb)`).rejects.toMatchObject({
+      code: "23514",
+    });
+  });
+
   it("backfills Node-owned baselines without activating Rust or changing old writes", async () => {
     expect(
       await db`SELECT name FROM organizations WHERE id = ${originalOrg}`,

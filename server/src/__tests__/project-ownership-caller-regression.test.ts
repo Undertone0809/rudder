@@ -293,7 +293,117 @@ describe("Project ownership-aware callers", () => {
     expect(JSON.parse(calls[0][3].toString())).toMatchObject({ projectPatch: { name: "Project", description: "Imported description" }, runId: "run-1" });
     expect(JSON.parse(calls[1][3].toString())).toEqual({ projectPatch: { executionWorkspacePolicy: {
       enabled: true, defaultMode: "shared_workspace", defaultProjectWorkspaceId: "workspace-1",
-    } }, runId: "run-1" });
+    } }, runId: "run-1", mutationOrigin: "organization_import" });
+  });
+
+  it("reuses imported workspace identity after a lost Rust hydrate response and rejects changed content", async () => {
+    const plan = createImportPlan({ projectAction: "update", hydrate: true });
+    const storedWorkspaces = new Map<string, { id: string; payload: string; workspace: Record<string, unknown> }>();
+    const rustReceipts = new Map<string, string>();
+    const actor = { type: "board", source: "local_implicit", userId: "user-1", runId: "run-1" };
+    const importRequest = Object.assign(Object.create(express.request), {
+      actor, headers: { "x-rudder-idempotency-key": "workspace-import-key" },
+    }) as Request;
+    const success = { status: 200, contentType: "application/json", body: Buffer.from("{}") };
+    let loseHydrateResponse = true;
+    const forward = vi.fn().mockImplementation(async (
+      req: Request,
+      _orgId: string,
+      _projectId: string,
+      body: Buffer,
+    ) => {
+      const bodyText = body.toString("utf8");
+      const requestKey = req.header("x-rudder-idempotency-key")!;
+      const previousReceipt = rustReceipts.get(requestKey);
+      if (previousReceipt !== undefined) {
+        return previousReceipt === bodyText
+          ? success
+          : { status: 409, contentType: "application/json", body: Buffer.from('{"error":"key conflict"}') };
+      }
+
+      rustReceipts.set(requestKey, bodyText);
+      const payload = JSON.parse(bodyText) as { projectPatch: Record<string, unknown> };
+      const policy = payload.projectPatch.executionWorkspacePolicy as Record<string, unknown> | undefined;
+      if (policy?.defaultProjectWorkspaceId && loseHydrateResponse) {
+        loseHydrateResponse = false;
+        throw new Error("Connection lost after Rust applied the hydrate");
+      }
+      return success;
+    });
+    const { handlers, projects } = createPortabilityHandlers(
+      "rust",
+      plan,
+      { projectGoalSetMode: "required", start: vi.fn().mockResolvedValue(undefined), projectGoalSet: forward } as unknown as RustFoundationBridge,
+    );
+    projects.getById.mockResolvedValue({ id: "project-1", orgId: "org-1", name: "Project", urlKey: "project" });
+    projects.createWorkspace.mockImplementation(async (
+      projectId: string,
+      data: Record<string, unknown>,
+      identity: { importKey: string; portableWorkspaceKey: string },
+    ) => {
+      const identityKey = JSON.stringify([
+        identity.importKey,
+        "org-1",
+        projectId,
+        identity.portableWorkspaceKey,
+      ]);
+      const payload = JSON.stringify(data);
+      const existing = storedWorkspaces.get(identityKey);
+      if (existing) {
+        if (existing.payload !== payload) {
+          throw new HttpError(409, "Project workspace import key conflicts with existing workspace content");
+        }
+        return existing.workspace;
+      }
+      const workspace = {
+        id: `workspace-${storedWorkspaces.size + 1}`,
+        orgId: "org-1",
+        projectId,
+        ...data,
+      };
+      storedWorkspaces.set(identityKey, { id: workspace.id, payload, workspace });
+      return workspace;
+    });
+
+    const importBundle = () => handlers.importBundle({
+      source: { type: "inline", rootPath: "bundle", files: {} },
+      include: { organization: false, agents: false, projects: true, issues: false, skills: false },
+      target: { mode: "existing_organization", orgId: "org-1" },
+      collisionStrategy: "replace",
+    } as never, "user-1", undefined, importRequest);
+
+    await expect(importBundle()).rejects.toMatchObject({ status: 503 });
+    expect(storedWorkspaces.size).toBe(1);
+    expect(projects.createWorkspace).toHaveBeenNthCalledWith(
+      1,
+      "project-1",
+      expect.objectContaining({ repoUrl: "https://example.com/repo.git" }),
+      { importKey: "workspace-import-key", portableWorkspaceKey: "main" },
+    );
+
+    await expect(importBundle()).resolves.toMatchObject({
+      projects: [expect.objectContaining({ id: "project-1", action: "updated" })],
+    });
+    expect(storedWorkspaces.size).toBe(1);
+    const hydrationCalls = forward.mock.calls.filter((call) => {
+      const payload = JSON.parse(call[3].toString("utf8")) as { projectPatch: Record<string, unknown> };
+      const policy = payload.projectPatch.executionWorkspacePolicy as Record<string, unknown> | undefined;
+      return Boolean(policy?.defaultProjectWorkspaceId);
+    });
+    expect(hydrationCalls).toHaveLength(2);
+    expect(hydrationCalls.every((call) =>
+      JSON.parse(call[3].toString("utf8")).mutationOrigin === "organization_import",
+    )).toBe(true);
+    expect(hydrationCalls[0]![0].header("x-rudder-idempotency-key")).toBe(
+      hydrationCalls[1]![0].header("x-rudder-idempotency-key"),
+    );
+    expect(hydrationCalls[0]![3].toString("utf8")).toBe(hydrationCalls[1]![3].toString("utf8"));
+
+    plan.source.manifest.projects[0]!.workspaces[0]!.repoUrl = "https://example.com/changed.git";
+    await expect(importBundle()).rejects.toMatchObject({ status: 409 });
+    expect(storedWorkspaces.size).toBe(1);
+    expect(projects.createWorkspace).toHaveBeenCalledTimes(3);
+    expect(forward).toHaveBeenCalledTimes(5);
   });
 
   it("keeps Node-owned portability updates on the existing service path", async () => {

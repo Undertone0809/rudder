@@ -1240,6 +1240,13 @@
       "when": 1790638485790,
       "tag": "0176_project_create_receipt_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "7",
+      "when": 1790697590321,
+      "tag": "0177_organization_import_receipt_activity_mode",
+      "breakpoints": true
     }
   ]
 }

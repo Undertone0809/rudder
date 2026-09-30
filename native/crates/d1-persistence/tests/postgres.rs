@@ -3,7 +3,7 @@ mod support;
 use rudder_d1_persistence::{
     MutationStore, Outcome, ProjectCreateCommand, ProjectCreateProvisionRequest,
     ProjectCreateProvisioned, ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
-    Receipt, ResultState, StoreError,
+    ProjectPatchMutationOrigin, Receipt, ResultState, StoreError,
 };
 use rudder_organization_mutation_core::OrganizationBrandingCommand;
 use rudder_project_goal_link_core::{
@@ -75,6 +75,13 @@ fn created_response(receipt: &Receipt) -> &serde_json::Value {
         panic!("create receipt")
     };
     response
+}
+
+fn required_activity_id(receipt: &Receipt) -> &str {
+    receipt
+        .activity_id
+        .as_deref()
+        .expect("ordinary mutation activity id")
 }
 
 // This mock tests the SQL boundary when the host rejects a changed intent.
@@ -417,7 +424,7 @@ async fn project_create_atomic_response_replay_authorization_and_deleted_incarna
     assert_eq!(provisioner.requests.lock().unwrap().len(), 1);
     let details: String =
         sqlx::query_scalar("SELECT details::text FROM activity_log WHERE id=$1::uuid")
-            .bind(&first.receipt.activity_id)
+            .bind(required_activity_id(&first.receipt))
             .fetch_one(&database.pool)
             .await
             .unwrap();
@@ -750,6 +757,7 @@ fn project_patch_command(patch: serde_json::Value, version: u64, key: &str) -> P
         expected_version: version,
         fence_epoch: 7,
         patch,
+        mutation_origin: ProjectPatchMutationOrigin::Standard,
     }
 }
 
@@ -1276,7 +1284,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
     assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL));
     assert_eq!(project_goals(&database).await, vec![GOAL.to_owned()]);
     assert_eq!(
-        project_details(&database, &first.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&first.receipt)).await["goalIds"],
         json!([GOAL])
     );
     let first_state = match &first.receipt.result {
@@ -1298,7 +1306,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
         vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
     );
     assert_eq!(
-        project_details(&database, &second.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&second.receipt)).await["goalIds"],
         json!([GOAL, GOAL_TWO])
     );
     let second_state = match &second.receipt.result {
@@ -1323,7 +1331,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
     assert_eq!(project_primary(&database).await.as_deref(), Some(GOAL_TWO));
     assert_eq!(project_goals(&database).await, vec![GOAL_TWO.to_owned()]);
     assert_eq!(
-        project_details(&database, &detach_primary.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&detach_primary.receipt)).await["goalIds"],
         json!([GOAL_TWO])
     );
 
@@ -1357,7 +1365,7 @@ async fn project_goal_mutations_keep_multi_goal_and_legacy_primary_projection_in
     assert_eq!(project_primary(&database).await, None);
     assert!(project_goals(&database).await.is_empty());
     assert_eq!(
-        project_details(&database, &detach_last.receipt.activity_id).await["goalIds"],
+        project_details(&database, required_activity_id(&detach_last.receipt)).await["goalIds"],
         json!([])
     );
 }
@@ -1382,7 +1390,7 @@ async fn project_goal_set_replacement_is_atomic_and_replays_its_original_receipt
         vec![GOAL.to_owned(), GOAL_TWO.to_owned()]
     );
     assert_eq!(
-        project_details(&database, &first.receipt.activity_id).await,
+        project_details(&database, required_activity_id(&first.receipt)).await,
         json!({"goalIds": [GOAL, GOAL_TWO], "primaryGoalId": GOAL})
     );
     match &first.receipt.result {
@@ -1533,7 +1541,7 @@ async fn project_delete_large_response_survives_fence_cascade_restart_and_uuid_r
         "SELECT event_type, state, payload::text AS payload
          FROM organization_mutation_outbox WHERE activity_id=$1::uuid",
     )
-    .bind(&deleted.receipt.activity_id)
+    .bind(required_activity_id(&deleted.receipt))
     .fetch_one(&database.pool)
     .await
     .unwrap();
@@ -1911,7 +1919,7 @@ async fn mixed_project_patch_updates_project_goals_resources_and_activity_atomic
     assert_eq!(attached[1].3, 4);
     assert!(attached[1].4);
     assert_eq!(
-        project_details(&database, &committed.receipt.activity_id).await,
+        project_details(&database, required_activity_id(&committed.receipt)).await,
         patch
     );
     assert_eq!(database.counts().await, (1, 1, 1));
@@ -2232,7 +2240,7 @@ async fn dedicated_project_resource_operations_preserve_identity_and_replay_atom
              WHERE org_id=$1::uuid AND id=$2::uuid",
         )
         .bind(ORG)
-        .bind(&original.receipt.activity_id)
+        .bind(required_activity_id(&original.receipt))
         .fetch_one(&database.pool)
         .await
         .unwrap();
@@ -2245,7 +2253,7 @@ async fn dedicated_project_resource_operations_preserve_identity_and_replay_atom
              WHERE org_id=$1::uuid AND activity_id=$2::uuid",
         )
         .bind(ORG)
-        .bind(&original.receipt.activity_id)
+        .bind(required_activity_id(&original.receipt))
         .fetch_one(&database.pool)
         .await
         .unwrap();
@@ -2362,6 +2370,83 @@ async fn mixed_project_patch_replay_returns_original_receipt_without_reapplying_
             .unwrap();
     assert_eq!(resource_count, 1);
     assert_eq!(database.counts().await, (2, 2, 2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn organization_import_project_patch_keeps_fence_and_receipt_without_activity_or_outbox() {
+    let database = Database::start().await;
+    let store = MutationStore::new(database.pool.clone());
+    seed_patch_agent(&database).await;
+    let mut command = project_patch_command(
+        json!({"name": "Imported project"}),
+        0,
+        "organization-import-project-patch",
+    );
+    command.mutation_origin = ProjectPatchMutationOrigin::OrganizationImport;
+
+    let committed = store.project_patch(command.clone()).await.unwrap();
+    assert!(!committed.replayed);
+    assert_eq!(committed.receipt.version, 1);
+    assert_eq!(committed.receipt.activity_id, None);
+    match &committed.receipt.result {
+        ResultState::ProjectPatch {
+            mutation_origin, ..
+        } => assert_eq!(
+            *mutation_origin,
+            Some(ProjectPatchMutationOrigin::OrganizationImport)
+        ),
+        result => panic!("unexpected project result: {result:?}"),
+    }
+
+    let persisted: (Option<String>, serde_json::Value) = sqlx::query_as(
+        "SELECT activity_id::text, result
+         FROM organization_mutation_receipts
+         WHERE org_id=$1::uuid AND idempotency_key=$2",
+    )
+    .bind(ORG)
+    .bind(&command.idempotency_key)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted.0, None);
+    assert_eq!(
+        persisted.1["result"]["mutation_origin"],
+        "organization_import"
+    );
+
+    let audit_counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT
+           (SELECT count(*) FROM activity_log WHERE org_id=$1::uuid),
+           (SELECT count(*) FROM organization_mutation_outbox WHERE org_id=$1::uuid),
+           (SELECT count(*) FROM organization_mutation_receipts WHERE org_id=$1::uuid)",
+    )
+    .bind(ORG)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_counts, (0, 0, 1));
+    let state: (i64, i64, String) = sqlx::query_as(
+        "SELECT mutation_version, fence_epoch, owner
+         FROM project_goal_mutation_state WHERE project_id=$1::uuid",
+    )
+    .bind(PROJECT)
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+    assert_eq!(state, (1, 7, "rust".to_owned()));
+
+    let replay = store.project_patch(command.clone()).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.receipt, committed.receipt);
+    assert_eq!(database.counts().await, (1, 0, 1));
+
+    let mut different_actor = command;
+    different_actor.actor_id = CEO.to_owned();
+    assert!(matches!(
+        store.project_patch(different_actor).await,
+        Err(StoreError::IdempotencyConflict)
+    ));
+    assert_eq!(database.counts().await, (1, 0, 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2616,7 +2701,7 @@ async fn project_goal_replay_rejects_a_forked_history() {
         version: branch_state.version,
         fence_epoch: branch_state.fence_epoch,
         fingerprint: adapter_fingerprint(&core_fingerprint, primary_goal_after.as_deref()),
-        activity_id: activity_id.to_owned(),
+        activity_id: Some(activity_id.to_owned()),
         outcome: Outcome::Noop,
         result: ResultState::ProjectGoalLink {
             state: Box::new(branch_state.clone()),

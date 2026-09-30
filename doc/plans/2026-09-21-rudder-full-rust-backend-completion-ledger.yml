@@ -2,16 +2,17 @@ schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-09-29
 source:
-  candidate_sha: a6cae08a4ac5c4df043cd2b8915c9b27a89f88da
-  candidate_tree: a8bc2bd76f19df8ae195a9c10b16416566a76dff
-  source_fingerprint: 8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f
-  publication: PR236_DRAFT_CI_in_progress_not_acceptance
+  candidate_sha: 719619b3006de870adf4430a1a845efff3c9ffab
+  candidate_tree: cc91713959cd716ff783103b4dbccbf9a16effed
+  source_fingerprint: 0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba
+  publication: PR236_DRAFT_remote_head_d56_current_719619b3_not_pushed_awaiting_v27_6_acceptance
   receipt_packet: doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json
   main_base_sha: 89859a26b002828a61faf7a542d8f07d3b522884
-  acceptance: Project_Create_v27_4_installed_FAIL_clone_loses_authority_schema_backup_repair_and_reverification_pending
+  acceptance: Project_Create_v27_6_stage_accept_server_tarball_d4a2_built_with_prepack_lifecycle_limit_independent_verifier_running
   row_refresh_scope: provenance_only_no_whole_authority_advancement_before_acceptance
   project_create: {implemented: true, private_verified: true, author_real_entry_verified: true, independent_verified: false, default_path_verified: false, whole_component_retired: false}
   author_receipt: doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json
+  author_real_entry_scope: historical_source_aef29616_HTTP_CLI_MCP_create_replay_and_no_fallback_only; v27_6_onboarding_import_owner_fence_and_upgrade_acceptance_not_covered
   remaining_Node_authority: organization_root_preparation_import_worktree_merge_public_HTTP_auth_and_other_writers
 delivered_project_delete_source:
   candidate_sha: 4353c6a4c7391d6f298a06b146026e12a08493df

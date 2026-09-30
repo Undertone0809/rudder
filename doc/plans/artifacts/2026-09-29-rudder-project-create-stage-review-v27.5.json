@@ -2,8 +2,14 @@
   "verdict": "accept",
   "level": "stage",
   "reviewer_agent_id": "01a0ea70-c551-7c92-b589-5b3e64798b99",
-  "source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
-  "source_tree": "a8bc2bd76f19df8ae195a9c10b16416566a76dff",
+  "source_sha": "d56c9406c0aa7295a7477835915c2bf29f4c8b85",
+  "source_tree": "2982ef42adb327bfa71f4da9733bdb4bd4b3f273",
+  "rebind": {
+    "original_source_sha": "a6cae08a4ac5c4df043cd2b8915c9b27a89f88da",
+    "original_source_tree": "a8bc2bd76f19df8ae195a9c10b16416566a76dff",
+    "issuing_reviewer_confirmed": true,
+    "basis": "Only four plan/receipt files changed; all three reviewed DB files are unchanged. Stage accept rebound without repeating implementation review."
+  },
   "source_fingerprint": "8f13df6e453dad55d4c30693d3e4e4277fe56d0bd83e92ced716fb8dca70236f",
   "packet_version": "27.5",
   "reviewed_delta": "packages/db/src/backup-lib.ts plus focused unit and real PostgreSQL restore regression tests",
