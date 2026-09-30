@@ -1,9 +1,8 @@
 import type { TranscriptEntry, TranscriptTodoItemStatus } from "@rudderhq/agent-runtime-utils";
 import type { HeartbeatRun, HeartbeatRunEvent, RunSummary, RunSummaryPage } from "@rudderhq/shared";
 import { diagnoseRun } from "../diagnosis.js";
-import { getTranscriptParser } from "../parsers.js";
-import { buildTranscript, parseNdjsonLog } from "../transcript.js";
 import { getHistoricalTranscriptParser } from "../parsers.js";
+import { buildTranscript, parseNdjsonLog } from "../transcript.js";
 import type { ObservedRunDetail, RunDiagnosis, RunDiagnosisMode, RunExportRow } from "../types.js";
 
 class RudderApiError extends Error {

@@ -1,3 +1,4 @@
+import { parseRemovedGeminiLocalHistoryLine } from "@rudderhq/agent-runtime-utils/gemini-cli-history";
 import { claudeLocalUIAdapter } from "./claude-local";
 import { codexLocalUIAdapter } from "./codex-local";
 import { cursorLocalUIAdapter } from "./cursor";
@@ -7,7 +8,6 @@ import { openClawGatewayUIAdapter } from "./openclaw-gateway";
 import { openCodeLocalUIAdapter } from "./opencode-local";
 import { piLocalUIAdapter } from "./pi-local";
 import { processUIAdapter } from "./process";
-import { parseRemovedGeminiLocalHistoryLine } from "@rudderhq/agent-runtime-utils/gemini-cli-history";
 import type { UIAgentRuntimeModule } from "./types";
 
 const uiAdapters: UIAgentRuntimeModule[] = [

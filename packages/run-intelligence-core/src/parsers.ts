@@ -5,8 +5,8 @@ import { parseHermesGatewayStdoutLine } from "@rudderhq/agent-runtime-hermes-gat
 import { parseOpenClawGatewayStdoutLine } from "@rudderhq/agent-runtime-openclaw-gateway/ui";
 import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
 import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
-import { parseRemovedGeminiLocalHistoryLine } from "@rudderhq/agent-runtime-utils/gemini-cli-history";
 import type { StdoutLineParser } from "@rudderhq/agent-runtime-utils";
+import { parseRemovedGeminiLocalHistoryLine } from "@rudderhq/agent-runtime-utils/gemini-cli-history";
 
 const genericParser: StdoutLineParser = (line, ts) => [{ kind: "stdout", ts, text: line }];
 
