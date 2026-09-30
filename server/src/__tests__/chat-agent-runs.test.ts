@@ -2701,6 +2701,8 @@ describe("chatAgentRunService", () => {
         reason: "provider call was never made",
       },
     });
+    await expect(svc.getSubmissionState(run.id, run.orgId)).resolves.toBe("rejected");
+    await expect(svc.getSubmissionState(run.id, randomUUID())).resolves.toBeNull();
     // Rejection permits retry only after the invocation writer has stopped.
     await expect(svc.beginRuntimeAttempt(run, {
       attemptIndex: 1, fallbackIndex: 1, runtimeType: "codex_local",
@@ -2753,6 +2755,7 @@ describe("chatAgentRunService", () => {
         providerThreadId: "provider-thread-unknown",
       },
     });
+    await expect(svc.getSubmissionState(run.id, run.orgId)).resolves.toBe("acceptance_unknown");
     await expect(svc.beginRuntimeAttempt(run, {
       attemptIndex: 1,
       fallbackIndex: 1,

@@ -400,6 +400,55 @@ export function chatRoutes(
     );
   }
 
+  async function assertChatEditSourceSubmissionResolved(
+    conversation: ChatConversation,
+    editUserMessageId: string | null | undefined,
+  ) {
+    if (!editUserMessageId) return;
+    const messages = await svc.listMessages(conversation.id, { includeTranscript: false }) as ChatMessage[];
+    const source = messages.find((message) =>
+      message.id === editUserMessageId
+      && message.role === "user"
+      && message.kind === "message",
+    );
+    if (!source?.chatTurnId) return;
+
+    const runIds = new Set<string>();
+    for (const message of messages) {
+      if (
+        message.role !== "assistant"
+        || message.kind !== "message"
+        || message.status !== "failed"
+        || message.chatTurnId !== source.chatTurnId
+        || message.turnVariant !== source.turnVariant
+      ) continue;
+      const payload = message.structuredPayload;
+      const failure = payload && typeof payload === "object" && !Array.isArray(payload)
+        ? payload.recoverableFailure
+        : null;
+      const failureRunId = failure && typeof failure === "object" && !Array.isArray(failure)
+        ? (failure as Record<string, unknown>).runId
+        : null;
+      const runId = typeof message.runId === "string" && message.runId.trim()
+        ? message.runId.trim()
+        : typeof failureRunId === "string" && failureRunId.trim()
+          ? failureRunId.trim()
+          : null;
+      if (runId) runIds.add(runId);
+    }
+
+    for (const runId of runIds) {
+      const submissionState = await chatRunsSvc.getSubmissionState(runId, conversation.orgId);
+      if (submissionState !== "acceptance_unknown" && submissionState !== null) continue;
+      throw conflict(
+        submissionState === "acceptance_unknown"
+          ? "Provider acceptance is unknown for the previous Chat Run. Reconcile it before retrying this input."
+          : "Provider acceptance for the previous Chat Run could not be verified. Inspect it before retrying this input.",
+        { code: "chat_retry_acceptance_unresolved", runId },
+      );
+    }
+  }
+
   async function touchSideChat(req: Request, conversation: ChatConversation) {
     await sideChats.touch(
       conversation,
@@ -3223,6 +3272,7 @@ export function chatRoutes(
     assistantSvc,
     assertConversationAccess,
     assertChatLocalMutationAllowed,
+    assertChatEditSourceSubmissionResolved,
     assertSideChatMutationAllowed,
     addAgentAuthoredMessage,
     inlineAnnotations,
@@ -3260,6 +3310,7 @@ export function chatRoutes(
     heartbeat,
     assertConversationAccess,
     assertChatLocalMutationAllowed,
+    assertChatEditSourceSubmissionResolved,
     assertSideChatMutationAllowed,
     touchSideChat,
     sideChats,

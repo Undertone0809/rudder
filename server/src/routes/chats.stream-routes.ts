@@ -87,6 +87,7 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
     heartbeat,
     assertConversationAccess,
     assertChatLocalMutationAllowed,
+    assertChatEditSourceSubmissionResolved,
     assertSideChatMutationAllowed,
     touchSideChat,
     sideChats,
@@ -211,6 +212,10 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       writeStreamEvent,
     });
     if (clientMutationFingerprint === undefined) return;
+    await assertChatEditSourceSubmissionResolved(
+      conversation as ChatConversation,
+      parsedBody.data.editUserMessageId ?? null,
+    );
     const preparedAnnotations = !atomicFirstTurn && inlineAnnotationsProvided
       ? await inlineAnnotations.prepare({
         orgId: conversation.orgId,

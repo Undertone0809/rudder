@@ -10,6 +10,7 @@ export type ChatRecoverableFailureCode =
   | "chat_runtime_boot_failed"
   | "chat_runtime_exception"
   | "codex_provider_auth_required"
+  | "chat_submission_acceptance_unknown"
   | "claude_fork_acceptance_unknown"
   | "claude_fork_completion_unresolved"
   | "claude_fork_unsubmitted"
@@ -138,6 +139,9 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "codex_provider_auth_required") {
     return "The configured Codex provider credentials are not ready. Update provider authentication before retrying.";
+  }
+  if (code === "chat_submission_acceptance_unknown") {
+    return "The provider may have received this input. Inspect the Run and reconcile its acceptance before retrying.";
   }
   if (code === "claude_fork_acceptance_unknown") {
     return "Claude may have received this Side Chat input. Inspect this Run before sending another message; do not retry the same input.";

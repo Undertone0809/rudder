@@ -487,6 +487,7 @@ export async function executeAdapterWithModelFallbacks(
               timedOut: false,
               errorMessage: `Runtime Driver cannot resume ${attemptRuntimeType} (${sessionInput.status}): ${sessionInput.reason}`,
               errorCode: "runtime_session_resume_rejected",
+              submissionPhase: "pre_submission",
               sessionId: attemptContext.runtime.sessionId ?? null,
               sessionParams: attemptContext.runtime.sessionParams ?? null,
               sessionDisplayId: attemptContext.runtime.sessionDisplayId ?? attemptContext.runtime.sessionId ?? null,

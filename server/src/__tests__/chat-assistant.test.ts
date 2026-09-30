@@ -2963,6 +2963,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
           expect.objectContaining({
             status: "failed",
             errorCode: "runtime_session_resume_rejected",
+            submissionPhase: "pre_submission",
           }),
         );
         expect(cursorExecute).toHaveBeenCalledTimes(2);
@@ -4253,6 +4254,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         timedOut: false,
         exitCode: 1,
         errorMessage: "runtime process exited",
+        submissionPhase: "accepted",
       };
     });
 
@@ -4386,6 +4388,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         timedOut: false,
         exitCode: 1,
         errorMessage: "runtime process exited",
+        submissionPhase: "accepted",
       };
     });
 
@@ -4451,6 +4454,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
       exitCode: 137,
       signal: "SIGKILL",
       errorMessage: "Codex exited with code 137",
+      submissionPhase: "pre_submission",
     }));
 
     await expect(svc.streamChatAssistantReply({
@@ -4751,6 +4755,7 @@ describe("chatAssistantService operator profile prompt injection", () => {
         timedOut: false,
         exitCode: 1,
         errorMessage: "post-processing failed",
+        submissionPhase: "accepted",
       };
     });
 
@@ -4777,6 +4782,49 @@ describe("chatAssistantService operator profile prompt injection", () => {
           retryable: true,
           failurePhase: "model_generation",
           action: "retry",
+        }),
+      }),
+    );
+  });
+
+  it("disables retry for partial output when provider acceptance is indeterminate", async () => {
+    const svc = chatAssistantService({} as any);
+
+    mockAdapter.execute.mockImplementationOnce(async (ctx) => ({
+      summary: assistantSummary(ctx, "I have enough to answer."),
+      resultJson: null,
+      timedOut: false,
+      exitCode: 1,
+      errorMessage: "provider completion confirmation was lost",
+      submissionPhase: "indeterminate",
+    }));
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation(),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      message: "provider completion confirmation was lost",
+      errorCode: "chat_submission_acceptance_unknown",
+      partialBody: "I have enough to answer.",
+      partialBodyUserVisible: true,
+      retryable: false,
+      failurePhase: "model_generation",
+      action: "inspect_run",
+      userMessage: "The provider may have received this input. Inspect the Run and reconcile its acceptance before retrying.",
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith(
+      "chat-run-1",
+      expect.objectContaining({
+        status: "failed",
+        errorCode: "chat_submission_acceptance_unknown",
+        resultJson: expect.objectContaining({
+          recoverable: false,
+          retryable: false,
+          submissionPhase: "indeterminate",
+          nativeCompletion: "unknown",
+          action: "inspect_run",
+          partialBody: "I have enough to answer.",
         }),
       }),
     );

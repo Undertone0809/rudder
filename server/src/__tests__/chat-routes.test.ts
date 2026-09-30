@@ -186,6 +186,7 @@ const mockChatAssistantService = vi.hoisted(() => ({
 }));
 
 const mockChatAgentRuns = vi.hoisted(() => ({
+  getSubmissionState: vi.fn(),
   linkAssistantMessage: vi.fn(),
   finalizeRun: vi.fn(),
   releaseOwnedRun: vi.fn(),
@@ -501,6 +502,7 @@ describe("chat routes", { retry: 2 }, () => {
   beforeEach(() => {
     vi.resetAllMocks();
     clearActiveChatGenerationsForTest();
+    mockChatService.listMessages.mockResolvedValue([]);
     mockCompanyService.getById.mockResolvedValue({
       id: "organization-1",
       defaultChatIssueCreationMode: "manual_approval",
@@ -510,6 +512,7 @@ describe("chat routes", { retry: 2 }, () => {
     ]);
     mockChatAssistantService.enrichConversation.mockImplementation(async (conversation) => conversation);
     mockChatAssistantService.enrichConversations.mockImplementation(async (conversations) => conversations);
+    mockChatAgentRuns.getSubmissionState.mockResolvedValue(null);
     mockChatAgentRuns.linkAssistantMessage.mockResolvedValue(null);
     mockChatAgentRuns.finalizeRun.mockResolvedValue(null);
     mockChatSteerMessages.beginControlAction.mockImplementation((input) => (
@@ -7295,7 +7298,61 @@ describe("chat routes", { retry: 2 }, () => {
     );
   });
 
-  it("starts a fresh generation when retrying a turn whose prior generation lost control", async () => {
+  it("blocks a refreshed retry when the linked Run still has unknown provider acceptance", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = createMessage(
+      "10000000-0000-4000-8000-000000000201",
+      "user",
+      "message",
+      "Run this once",
+    );
+    const failedAssistantMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000202",
+        "assistant",
+        "message",
+        "Partial provider output",
+      ),
+      status: "failed",
+      runId: "20000000-0000-4000-8000-000000000201",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_adapter_failed",
+          runId: "20000000-0000-4000-8000-000000000201",
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, failedAssistantMessage]);
+    mockChatAgentRuns.getSubmissionState.mockResolvedValue("acceptance_unknown");
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-after-refresh",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: {
+        code: "chat_retry_acceptance_unresolved",
+        runId: "20000000-0000-4000-8000-000000000201",
+      },
+    });
+    expect(mockChatAgentRuns.getSubmissionState).toHaveBeenCalledWith(
+      "20000000-0000-4000-8000-000000000201",
+      conversation.orgId,
+    );
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("allows a fresh generation after a known terminal provider rejection", async () => {
     const conversation = createConversation();
     const originalUserMessage = createMessage(
       "10000000-0000-4000-8000-000000000091",
@@ -7312,11 +7369,13 @@ describe("chat routes", { retry: 2 }, () => {
       ),
       status: "failed",
       generationId: "generation-control-lost",
+      runId: "20000000-0000-4000-8000-000000000091",
       structuredPayload: {
         recoverableFailure: {
           recoverable: true,
           code: "control_lost",
           message: "The prior runtime owner was lost.",
+          runId: "20000000-0000-4000-8000-000000000091",
         },
       },
     };
@@ -7340,6 +7399,7 @@ describe("chat routes", { retry: 2 }, () => {
       turnVariant: 1,
     };
     mockChatService.getById.mockResolvedValue(conversation);
+    mockChatAgentRuns.getSubmissionState.mockResolvedValue("rejected");
     mockChatService.addUserChatMessage.mockResolvedValueOnce(retryUserMessage);
     mockChatService.listMessages.mockResolvedValue([
       originalUserMessage,
@@ -7395,6 +7455,10 @@ describe("chat routes", { retry: 2 }, () => {
       });
 
     expect(res.status).toBe(201);
+    expect(mockChatAgentRuns.getSubmissionState).toHaveBeenCalledWith(
+      "20000000-0000-4000-8000-000000000091",
+      conversation.orgId,
+    );
     expect(mockChatService.createGeneration).toHaveBeenCalledTimes(1);
     expect(mockChatService.beginGenerationControlAttempt).toHaveBeenCalledWith(
       expect.objectContaining({

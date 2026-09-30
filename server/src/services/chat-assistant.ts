@@ -1056,6 +1056,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         : isAgentRuntimeNetworkSuspension(result.suspension)
           ? result.suspension
           : null;
+      const submissionPhase = resolveExecutionSubmissionPhase(result);
       const { providerThreadId, providerTurnId } = chatProviderResultIds(result);
       if (claudeDeferredForkReference && claudeDeferredFork?.adapterIntent && claudeForkRunFence) {
         const reference = claudeDeferredForkReference;
@@ -1094,7 +1095,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             : (result.exitCode ?? 0) !== 0 || result.errorMessage
               ? "failed"
               : "succeeded",
-          submissionPhase: resolveExecutionSubmissionPhase(result),
+          submissionPhase,
           providerThreadId,
           providerTurnId,
           sessionDisplayId: result.sessionDisplayId ?? result.sessionId ?? null,
@@ -1205,16 +1206,20 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           }
           : null;
         const forkAcceptanceUnknown = result.errorCode === "claude_fork_acceptance_unknown";
+        const submissionAcceptanceUnknown = submissionPhase === "indeterminate";
         const errorCode: ChatRecoverableFailureCode = authProviderFailure
           ? "codex_provider_auth_required"
           : forkAcceptanceUnknown
             ? "claude_fork_acceptance_unknown"
+            : submissionAcceptanceUnknown
+              ? "chat_submission_acceptance_unknown"
           : hasModelOutputEvidence
             ? "chat_adapter_failed"
             : "chat_runtime_boot_failed";
-        const retryable = !authProviderFailure && !forkAcceptanceUnknown && errorCode !== "chat_runtime_boot_failed";
-        const failurePhase = forkAcceptanceUnknown || errorCode === "chat_adapter_failed" ? "model_generation" : "runtime_boot";
-        const action = forkAcceptanceUnknown ? "inspect_run" : errorCode === "chat_adapter_failed" ? "retry" : "repair_runtime";
+        const acceptanceUnknown = forkAcceptanceUnknown || submissionAcceptanceUnknown;
+        const retryable = !authProviderFailure && !acceptanceUnknown && errorCode !== "chat_runtime_boot_failed";
+        const failurePhase = acceptanceUnknown || errorCode === "chat_adapter_failed" ? "model_generation" : "runtime_boot";
+        const action = acceptanceUnknown ? "inspect_run" : errorCode === "chat_adapter_failed" ? "retry" : "repair_runtime";
         const adapterErrorMessage = redactChatInlineVisualDiagnosticText(
           result.errorMessage,
           "Chat adapter execution failed while handling private presentation data",
@@ -1232,7 +1237,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             action,
             exitCode: result.exitCode ?? null,
             partialBody: finalPartialBody,
-            ...(forkAcceptanceUnknown ? { submissionPhase: "indeterminate", nativeCompletion: "unknown" } : {}),
+            ...(acceptanceUnknown ? { submissionPhase: "indeterminate", nativeCompletion: "unknown" } : {}),
             ...(authProviderFailure ? { providerFailure: authProviderFailure } : {}),
             ...(nativeFailure ? { nativeFailure } : {}),
           },

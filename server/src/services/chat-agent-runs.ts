@@ -226,6 +226,11 @@ export function chatAgentRunService(db: Db, options: {
   const transcriptObjectStore = options.transcriptObjectStore ?? getTranscriptObjectStore();
   const transcriptSupplements = new Map<string, Promise<TranscriptObjectHandle>>();
 
+  async function getSubmissionState(runId: string, orgId: string) {
+    const entry = await unifiedRunAdapter.get(runId);
+    return entry?.orgId === orgId ? entry.attempt.submission.state : null;
+  }
+
   async function appendNativeSupplement(run: ChatRunFenceCarrier, entry: TranscriptEntry) {
     const identity = fenceIdentityFromRun(run);
     if (!identity) throw new Error("Native transcript requires an immutable span owner");
@@ -1463,6 +1468,7 @@ export function chatAgentRunService(db: Db, options: {
   }
 
   return {
+    getSubmissionState,
     beginOwnedRunExecution,
     appendAdapterInvoke,
     appendEvent,

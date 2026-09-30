@@ -43,6 +43,7 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
     assistantSvc,
     assertConversationAccess,
     assertChatLocalMutationAllowed,
+    assertChatEditSourceSubmissionResolved,
     assertSideChatMutationAllowed,
     addAgentAuthoredMessage,
     inlineAnnotations,
@@ -126,6 +127,11 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
         res.status(200).json({ messages: [replayedUserMessage] });
         return;
       }
+
+      await assertChatEditSourceSubmissionResolved(
+        conversation as ChatConversation,
+        req.body.editUserMessageId ?? null,
+      );
 
       const preparedAnnotations = inlineAnnotationsProvided && !deferAcceptedSideChatFirstInputReplay
         ? await inlineAnnotations.prepare({
