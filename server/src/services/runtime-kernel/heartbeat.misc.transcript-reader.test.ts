@@ -4,14 +4,17 @@ import { createHeartbeatMiscHandlers } from "./heartbeat.misc.js";
 
 const mocks = vi.hoisted(() => ({
   createLegacyTranscriptReader: vi.fn(),
-  createTranscriptReader: vi.fn(),
+  createHistoricalTranscriptReader: vi.fn(),
   legacyReadRun: vi.fn(),
   readRun: vi.fn(),
 }));
 
 vi.mock("./transcript-reader.js", () => ({
   createLegacyTranscriptReader: mocks.createLegacyTranscriptReader,
-  createTranscriptReader: mocks.createTranscriptReader,
+}));
+
+vi.mock("./historical-transcript-reader.js", () => ({
+  createHistoricalTranscriptReader: mocks.createHistoricalTranscriptReader,
 }));
 
 function database(rowsByTable: unknown) {
@@ -60,7 +63,7 @@ describe("heartbeat skill analytics transcript reader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createLegacyTranscriptReader.mockReturnValue({ readRun: mocks.legacyReadRun });
-    mocks.createTranscriptReader.mockImplementation((_db: unknown, options: { legacyReader: { readRun: (input: unknown) => Promise<unknown> } }) => ({
+    mocks.createHistoricalTranscriptReader.mockImplementation((_db: unknown, options: { legacyReader: { readRun: (input: unknown) => Promise<unknown> } }) => ({
       async readRun(input: { runId: string; cursor?: string | null }) {
         if (input.runId === "legacy-run") {
           await options.legacyReader.readRun({
@@ -74,7 +77,7 @@ describe("heartbeat skill analytics transcript reader", () => {
     }));
   });
 
-  it("reads paged legacy evidence through the org-scoped Reader and keeps native evidence excluded", async () => {
+  it("reads paged legacy and native-only evidence through the org-scoped historical Reader", async () => {
     const orgId = "org-1";
     const date = new Date("2026-04-21T10:00:00.000Z");
     const db = database(new Map<unknown, Record<string, unknown>[]>([
@@ -92,9 +95,9 @@ describe("heartbeat skill analytics transcript reader", () => {
           id: "native-run",
           agentRuntimeType: "codex_local",
           createdAt: date,
-          logStore: "local_file",
-          logRef: "stale-native.ndjson",
-          logBytes: 64,
+          logStore: null,
+          logRef: null,
+          logBytes: 0,
         },
       ]],
     ]));
@@ -113,8 +116,8 @@ describe("heartbeat skill analytics transcript reader", () => {
         }
       : {
         source: "native",
-        items: [transcriptItem(input.runId, "stale-native-skill")],
-        nextCursor: null,
+        items: [{ ...transcriptItem(input.runId, "native-skill"), origin: "native", entry: undefined }],
+        nextCursor: input.cursor === null ? "native-page-2" : null,
       });
 
     const handlers = createHeartbeatMiscHandlers({ db, runLogStore: {} });
@@ -125,9 +128,12 @@ describe("heartbeat skill analytics transcript reader", () => {
 
     expect(analytics.skills.map((skill: { key: string }) => skill.key)).toEqual([
       "first-skill",
+      "native-skill",
       "second-skill",
     ]);
-    expect(mocks.readRun).toHaveBeenCalledTimes(3);
+    expect(analytics.totalCount).toBe(3);
+    expect(analytics.totalRunsWithSkills).toBe(2);
+    expect(mocks.readRun).toHaveBeenCalledTimes(4);
     expect(mocks.readRun.mock.calls[0]?.[0]).toMatchObject({
       orgId,
       runId: "legacy-run",
@@ -144,6 +150,6 @@ describe("heartbeat skill analytics transcript reader", () => {
       logStore: {},
       maxReadBytes: 450_000,
     });
-    expect(analytics.skills.some((skill: { key: string }) => skill.key === "stale-native-skill")).toBe(false);
+    expect(analytics.skills.find((skill: { key: string }) => skill.key === "native-skill")?.count).toBe(1);
   });
 });

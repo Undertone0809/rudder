@@ -5,7 +5,10 @@ import {
   ensurePostgresDatabase,
   heartbeatRunEvents,
   heartbeatRuns,
+  nativeSegments,
   organizations,
+  runRuntimeSpans,
+  runtimeBindings,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { randomUUID } from "node:crypto";
@@ -13,8 +16,14 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { heartbeatService } from "../services/heartbeat.ts";
+
+const nativeRangeRead = vi.hoisted(() => vi.fn());
+vi.mock("../services/runtime-kernel/provider-capabilities.js", async (importOriginal) => ({
+  ...await importOriginal<object>(),
+  createRuntimeNativeTranscriptReaderHook: () => ({ readRange: nativeRangeRead }),
+}));
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -107,10 +116,70 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
   }, 20_000);
 
   afterEach(async () => {
+    nativeRangeRead.mockReset();
+    await db.delete(runRuntimeSpans);
+    await db.delete(nativeSegments);
+    await db.delete(runtimeBindings);
     await db.delete(heartbeatRunEvents);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(organizations);
+  });
+
+  it("counts native Skill use without legacy logs or usage events through the stored Run span", async () => {
+    const orgId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const bindingId = randomUUID();
+    const segmentId = randomUUID();
+    const spanId = randomUUID();
+    const createdAt = new Date("2026-04-21T10:00:00.000Z");
+    await db.insert(organizations).values({
+      id: orgId, name: "Native Skill Analytics", urlKey: deriveOrganizationUrlKey(`Native Skill ${orgId}`),
+      issuePrefix: "NSA", requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId, orgId, name: "Native Skill Agent", role: "engineer", status: "idle",
+      agentRuntimeType: "codex_local", agentRuntimeConfig: {}, runtimeConfig: {}, permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId, orgId, agentId, invocationSource: "on_demand", status: "succeeded", createdAt,
+      contextSnapshot: { transcriptSource: "native" }, logStore: null, logRef: null,
+    });
+    await db.insert(runtimeBindings).values({
+      id: bindingId, orgId, agentId, targetType: "manual", targetId: runId,
+      principalScopeRef: "user:skill-analytics-test", runtimeType: "codex_local",
+    });
+    await db.insert(nativeSegments).values({
+      id: segmentId, orgId, bindingId, runtimeType: "codex_local", nativeSessionId: "skill-native-thread",
+    });
+    await db.insert(runRuntimeSpans).values({
+      id: spanId, orgId, runId, bindingId, segmentId, attemptRef: "skill-native-attempt", ownerToken: "skill-native-owner",
+      selectorJson: { kind: "codex_turn", threadId: "skill-native-thread", turnId: "skill-native-turn" },
+      state: "sealed", completeness: "complete", openedAt: createdAt,
+      closedAt: new Date("2026-04-21T10:05:00.000Z"),
+      writerLeaseReleasedAt: new Date("2026-04-21T10:05:00.000Z"),
+    });
+    nativeRangeRead.mockImplementation(async (input) => {
+      expect(input.orgId).toBe(orgId);
+      expect(input.run.id).toBe(runId);
+      expect(input.span.id).toBe(spanId);
+      expect(input.selector).toMatchObject({ threadId: "skill-native-thread", turnId: "skill-native-turn" });
+      return {
+        items: [{ kind: "tool_call", ts: createdAt.toISOString(), name: "Skill", input: { skill: "native-only" } }],
+        revision: "skill-native-r1", availability: "available", completeness: "complete", nextCursor: null,
+      };
+    });
+
+    const analytics = await svc.getAgentSkillAnalytics(agentId, { startDate: "2026-04-21", endDate: "2026-04-21" });
+    expect(analytics.totalCount).toBe(1);
+    expect(analytics.totalRunsWithSkills).toBe(1);
+    expect(analytics.skills).toEqual([{
+      key: "native-only", label: "native-only", count: 1, evidence: "used",
+      evidenceCounts: { used: 1, requested: 0, loaded: 0 },
+    }]);
+    expect(nativeRangeRead).toHaveBeenCalledOnce();
+    expect(await db.select().from(heartbeatRunEvents)).toEqual([]);
   });
 
   afterAll(async () => {

@@ -21,7 +21,8 @@ export { prioritizeProjectWorkspaceCandidatesForRun, type ResolvedWorkspaceForRu
 
 import * as heartbeatCore from "./heartbeat.core.js";
 import * as heartbeatSessions from "./heartbeat.sessions.js";
-import { createLegacyTranscriptReader, createTranscriptReader, type TranscriptItem, type TranscriptReader } from "./transcript-reader.js";
+import { createHistoricalTranscriptReader } from "./historical-transcript-reader.js";
+import { createLegacyTranscriptReader, type TranscriptItem, type TranscriptReader } from "./transcript-reader.js";
 const { MAX_LIVE_LOG_CHUNK_BYTES, HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT, HEARTBEAT_MAX_CONCURRENT_RUNS_MIN, HEARTBEAT_MAX_CONCURRENT_RUNS_MAX, DEFERRED_WAKE_CONTEXT_KEY, DETACHED_PROCESS_ERROR_CODE, ORPHANED_PROCESS_TERMINATION_GRACE_MS, ORPHANED_PROCESS_KILL_WAIT_MS, ORPHANED_PROCESS_POLL_INTERVAL_MS, startLocksByAgent, MAX_RECOVERY_CHAIN_DEPTH, ISSUE_PASSIVE_FOLLOWUP_REASON, ISSUE_PASSIVE_FOLLOWUP_WAKE_SOURCE, ISSUE_PASSIVE_FOLLOWUP_FAILURE_REASON, ISSUE_PASSIVE_FOLLOWUP_MAX_ATTEMPTS, ISSUE_REVIEW_CLOSEOUT_REASON, ISSUE_REVIEW_CLOSEOUT_FAILURE_REASON, ISSUE_REVIEW_CLOSEOUT_MAX_ATTEMPTS, ISSUE_PASSIVE_FOLLOWUP_COOLDOWN_MS_BY_ATTEMPT, ISSUE_PASSIVE_FOLLOWUP_TIMER_CONTINUITY_MAX_WINDOW_MS, SESSIONED_LOCAL_ADAPTERS, heartbeatRunListColumns, appendExcerpt, appendTranscriptEntriesFromChunk, normalizeMaxConcurrentRuns, withAgentStartLock, readNonEmptyString, resolveHeartbeatObservabilitySurface, buildHeartbeatObservationName, compactTraceText, buildIssueRunTraceName, buildHeartbeatRuntimeTraceMetadata, buildHeartbeatAdapterInvokePayload, buildRecentDateKeys, buildDateKeysBetween, fallbackSkillLabel, normalizeLoadedSkill, normalizeLoadedSkillForPayload, emptySkillEvidenceCounts, incrementSkillEvidenceCount, strongestSkillEvidence, resolveSkillEvidence, readSkillEvidenceFromPayload, extractSkillSlugFromPath, collectSkillPathsFromText, collectStringValues, normalizeSkillUseFromPath, dedupeSkillUses, collectSkillUsesFromText, readToolCommandInput, isCommandTranscriptTool, isReadTranscriptTool, inferUsedSkillsFromTranscript, normalizeSkillCandidate, addSkillCandidate, readSkillReferenceSlug, collectSkillReferences, inferUsedSkillsFromPrompt, normalizeLedgerBillingType, resolveLedgerBiller, normalizeBilledCostCents, resolveLedgerScopeForRun } = heartbeatCore;
 const { buildExplicitResumeSessionOverride, normalizeUsageTotals, readRawUsageTotals, deriveNormalizedUsageDelta, formatCount, parseSessionCompactionPolicy, resolveRuntimeSessionParamsForWorkspace, parseIssueAssigneeAgentRuntimeOverrides, deriveTaskKey, shouldResetTaskSessionForWake, formatRuntimeWorkspaceWarningLog, describeSessionResetReason, deriveCommentId, enrichWakeContextSnapshot, mergeCoalescedContextSnapshot, issueCommentAuthorKind, issueCommentAuthorLabel, buildDeferredWakePayload, readDeferredWakeContext, readDeferredWakePayload, deriveDeferredWakeTaskKey, hydrateWakeContextSnapshot, firstNonEmptyLine, deriveRecoveryFailureKind, deriveRecoveryFailureSummary, mergeMissingRecoveryContextFields, hydrateRecoveryBaseContextSnapshot, buildRecoveryContextSnapshot, normalizePassiveFollowupContext, normalizeReviewCloseoutContext, passiveFollowupCooldownMs, issueHasReviewer, isAgentEligibleForTimerContinuation, hasCredibleTimerContinuation, buildPassiveFollowupContextSnapshot, runTaskKey, isSameTaskScope, isTrackedLocalChildProcessAdapter, isProcessAlive, waitForProcessExit, terminateOrphanedProcess, truncateDisplayId, normalizeAgentNameKey, defaultSessionCodec, getAgentRuntimeSessionCodec, normalizeSessionParams, resolveNextSessionState } = heartbeatSessions;
 
@@ -584,7 +585,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       orgId: string,
       runId: string,
     ) {
-      const transcript: TranscriptEntry[] = [];
+      const skills: Array<{ key: string; label: string }> = [];
       let cursor: string | null = null;
       for (let pageCount = 0; pageCount < 100_000; pageCount += 1) {
         const page = await reader.readRun({
@@ -594,12 +595,13 @@ export function createHeartbeatMiscHandlers(context: any) {
           cursor,
           limit: 200,
         });
-        if (page.source !== "legacy") return [];
+        const transcript: TranscriptEntry[] = [];
         for (const item of page.items) {
           const entry = transcriptEntryFromReaderItem(item);
           if (entry) transcript.push(entry);
         }
-        if (!page.nextCursor) return inferUsedSkillsFromTranscript(transcript);
+        skills.push(...inferUsedSkillsFromTranscript(transcript));
+        if (!page.nextCursor) return dedupeSkillUses(skills);
         if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
         cursor = page.nextCursor;
       }
@@ -633,7 +635,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       );
 
     const runtimeTypeByRunId = new Map(runRows.map((row) => [row.id, row.agentRuntimeType]));
-    const transcriptReader = createTranscriptReader(db, {
+    const transcriptReader = createHistoricalTranscriptReader(db, {
       logStore: runLogStore,
       legacyReader: {
         readRun(input) {
@@ -647,7 +649,6 @@ export function createHeartbeatMiscHandlers(context: any) {
     });
 
     for (const row of runRows) {
-      if (row.logStore !== "local_file" || !row.logRef) continue;
       const usedSkills = await inferUsedSkillsFromStoredRunTranscript(transcriptReader, scope.orgId, row.id)
         .catch(() => []);
       if (usedSkills.length === 0) continue;

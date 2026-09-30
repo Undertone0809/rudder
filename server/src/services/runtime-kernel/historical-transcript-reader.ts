@@ -2,7 +2,7 @@ import type { Db } from "@rudderhq/db";
 import { agentConfigRevisions, agents } from "@rudderhq/db";
 import { and, desc, eq } from "drizzle-orm";
 import { createTranscriptObjectReader } from "./transcript-object-store.js";
-import { createTranscriptReader } from "./transcript-reader.js";
+import { createTranscriptReader, type TranscriptReaderOptions } from "./transcript-reader.js";
 
 /**
  * Chat and annotation reads use the same historical profile resolution as Run
@@ -12,9 +12,11 @@ import { createTranscriptReader } from "./transcript-reader.js";
  */
 export function createHistoricalTranscriptReader(
   db: Pick<Db, "select">,
-  options: { includeObjects?: boolean } = {},
+  options: { includeObjects?: boolean } & Pick<TranscriptReaderOptions, "logStore" | "legacyReader"> = {},
 ) {
   return createTranscriptReader(db, {
+    ...(options.logStore ? { logStore: options.logStore } : {}),
+    ...(options.legacyReader ? { legacyReader: options.legacyReader } : {}),
     nativeReader: {
       async read(input) {
         const [agent] = await db.select({
