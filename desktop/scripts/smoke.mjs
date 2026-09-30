@@ -6539,7 +6539,7 @@ async function verifyAgentWorkspaceTerminal(electronApp, page, baseUrl, company,
   // use a viewport that actually constrains its host after that transition.
   await electronApp.evaluate(({ BrowserWindow }, size) => {
     BrowserWindow.getAllWindows()[0]?.setSize(size[0], size[1]);
-  }, [1_000, 900]);
+  }, [1_080, 900]);
   await waitForSmokeCondition("Agent Terminal constrained layout", async () => {
     const layout = await terminal.evaluate((panel) => {
       const host = panel.querySelector("[data-testid='terminal-xterm-host']");

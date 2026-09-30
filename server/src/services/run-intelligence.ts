@@ -475,7 +475,9 @@ function resolveBundleForRun(
   const afterConfigRecord = typeof afterConfig === "object" && afterConfig !== null ? afterConfig as Record<string, unknown> : {};
 
   return {
-    agentRuntimeType: run.agentRuntimeType,
+    agentRuntimeType: readString(asRecord(run.contextSnapshot).agentRuntimeType)
+      ?? readString(afterConfigRecord.agentRuntimeType)
+      ?? run.agentRuntimeType,
     agentConfigRevisionId: revision?.id ?? null,
     agentConfigRevisionCreatedAt: revision?.createdAt ? new Date(revision.createdAt).toISOString() : null,
     agentConfigFingerprint: hashValue(afterConfigRecord.agentRuntimeConfig ?? run.agentRuntimeConfig),
