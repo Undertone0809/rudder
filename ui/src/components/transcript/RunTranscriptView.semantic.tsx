@@ -1446,6 +1446,10 @@ export function parseStructuredToolResult(result: string | undefined) {
     }
   }
 
+  const hasStructuredMetadata = metadata.has("command")
+    || (metadata.has("status") && metadata.has("exit_code"));
+  if (!hasStructuredMetadata) return null;
+
   const body = lines.slice(Math.min(bodyStartIndex + 1, lines.length)).join("\n").trim();
 
   return {

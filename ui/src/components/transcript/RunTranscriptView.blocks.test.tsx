@@ -17,7 +17,7 @@ import {
   TranscriptMessageBlock,
   TranscriptRunAnnotationBlock,
 } from "./RunTranscriptView.blocks";
-import { TranscriptChatActionGroup } from "./RunTranscriptView.chat";
+import { TranscriptChatActionGroup, TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import type { ChatTranscriptAction, TranscriptBlock } from "./RunTranscriptView.common";
 import { normalizeTranscript } from "./RunTranscriptView.normalize";
 
@@ -62,6 +62,49 @@ describe("native transcript event tolerance", () => {
       sourceEntryId: "native-event-1",
     } as unknown as TranscriptEntry;
     expect(normalizeTranscript([textless], false)).toEqual([]);
+  });
+});
+
+describe("command activity output", () => {
+  it("shows plain tool result output when command details are expanded", () => {
+    const blocks = normalizeTranscript([
+      {
+        kind: "tool_call",
+        ts: "2026-09-30T00:00:01.000Z",
+        name: "command_execution",
+        toolUseId: "command-1",
+        input: { command: "printf done" },
+      },
+      {
+        kind: "tool_result",
+        ts: "2026-09-30T00:00:02.000Z",
+        toolUseId: "command-1",
+        content: "done",
+        isError: false,
+      },
+    ], false);
+    const commandGroup = blocks.find((block) => block.type === "command_group");
+    if (commandGroup?.type !== "command_group") throw new Error("Expected command activity group");
+
+    expect(commandGroup.items[0]).toMatchObject({
+      toolUseId: "command-1",
+      result: "done",
+      status: "completed",
+    });
+    const container = render(
+      <ThemeProvider>
+        <TranscriptChatToolActionRow block={commandGroup.items[0]!} density="compact" />
+      </ThemeProvider>,
+    );
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      'button[aria-expanded="false"][aria-labelledby]',
+    );
+    expect(disclosure).not.toBeNull();
+    act(() => disclosure?.click());
+
+    const shellPanel = container.querySelector('[data-command-terminal-panel="shell"]');
+    expect(shellPanel?.textContent).toContain("$ printf done");
+    expect(shellPanel?.textContent).toContain("done");
   });
 });
 
