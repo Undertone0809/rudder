@@ -1859,10 +1859,28 @@ function recordsForMessages(messages: readonly OpenCodeMessage[]): JsonRecord[] 
 function revisionFor(info: JsonRecord, messages: readonly OpenCodeMessage[]): string {
   const value = JSON.stringify({
     id: info.id,
-    updatedAt: info.time ?? info.updatedAt,
-    messages: messages.map((message) => ({ id: message.info.id, parentID: message.info.parentID, role: message.info.role, partCount: message.parts.length })),
+    // A sealed Run is independent of later session updates, but edits to any
+    // selected message info or part (including tool output) invalidate it.
+    messages,
   });
   return `opencode:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+let lastInputTimestamp = 0;
+let inputIdCounter = 0;
+
+function nextOpenCodeInputId(): string {
+  const timestamp = Date.now();
+  if (timestamp !== lastInputTimestamp) {
+    lastInputTimestamp = timestamp;
+    inputIdCounter = 0;
+  }
+  // Match OpenCode Identifier.ascending: its prompt loop compares message IDs
+  // lexically to decide whether the latest user input has already been answered.
+  const encoded = (BigInt(timestamp) * 0x1000n + BigInt(++inputIdCounter)) & 0xffffffffffffn;
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const suffix = [...randomBytes(14)].map((byte) => alphabet[byte % alphabet.length]).join("");
+  return `msg_${encoded.toString(16).padStart(12, "0")}${suffix}`;
 }
 
 function unavailable(error: OpenCodeNativeCapabilityError): OpenCodeTranscriptResult {
@@ -2253,7 +2271,7 @@ export async function executeOpenCodeNativeChat(input: {
     ...(managed.providerVersion ? { providerVersion: managed.providerVersion } : {}),
   });
 
-  const userMessageId = `msg${randomBytes(18).toString("base64url")}`;
+  const userMessageId = nextOpenCodeInputId();
   const observedAssistantMessageIds = new Set<string>();
   const candidateAssistantMessageIds = new Set<string>();
   const turnController = new AbortController();
@@ -2261,7 +2279,9 @@ export async function executeOpenCodeNativeChat(input: {
   let controlLease: AgentRuntimeControlHandleLease | null = null;
   let promptSent = false;
   let submissionAccepted = false;
-  let turnActivityObserved = false;
+  let currentInputObserved = false;
+  let busyAfterCurrentInput = false;
+  let idleExport: Awaited<ReturnType<typeof exportSession>> | null = null;
   let idleObserved = false;
   let terminalResponseObserved = false;
   let eventStreamConnected = false;
@@ -2489,8 +2509,9 @@ export async function executeOpenCodeNativeChat(input: {
       }
       const observedAssistantMessageId = assistantMessageIdFromEvent(event);
       const updatedMessageInfo = event.type === "message.updated" ? asRecord(event.properties.info) : null;
+      if (updatedMessageInfo?.id === userMessageId && updatedMessageInfo.role === "user") currentInputObserved = true;
       const updatedMessageParentId = nonEmpty(updatedMessageInfo?.parentID);
-      const updateBelongsToInput = event.type === "message.updated" && (
+      const updateBelongsToInput = event.type === "message.updated" && updatedMessageInfo?.role === "assistant" && (
         updatedMessageParentId === userMessageId
         || Boolean(updatedMessageParentId && observedAssistantMessageIds.has(updatedMessageParentId))
       );
@@ -2512,8 +2533,22 @@ export async function executeOpenCodeNativeChat(input: {
         ));
         return;
       }
-      if (event.type === "session.idle" || (event.type === "session.status" && event.properties.status === "idle")) {
-        if (!turnActivityObserved) return;
+      const status = nonEmpty(asRecord(event.properties.status)?.type) ?? nonEmpty(event.properties.status);
+      if (event.type === "session.status" && status === "busy" && currentInputObserved) busyAfterCurrentInput = true;
+      if (event.type === "session.idle" || (event.type === "session.status" && status === "idle")) {
+        if (!busyAfterCurrentInput && observedAssistantMessageIds.size === 0) {
+          // A persisted input or unrelated delta followed by idle is not a
+          // completion fence. Recover ancestry from the provider when SSE did
+          // not include message.updated; never submit the prompt again.
+          const snapshot = await exportSession({ command, serverCommand: command, sessionId, cwd, env, binding: input.binding, managed, signal: turnSignal });
+          const hasCurrentAssistant = snapshot.messages.some((message) => message.info.role === "assistant"
+            && ancestorUserId(snapshot.messages, nonEmpty(message.info.id)!) === userMessageId);
+          if (!hasCurrentAssistant) {
+            await streamLog("idle_ignored", { userMessageId, reason: "no_current_input_completion_fence" });
+            return;
+          }
+          idleExport = snapshot;
+        }
         if (!idleObserved) {
           idleObserved = true;
           if (idleTimeout) clearTimeout(idleTimeout);
@@ -2521,7 +2556,6 @@ export async function executeOpenCodeNativeChat(input: {
         }
         return;
       }
-      turnActivityObserved = true;
       if (event.type === "session.next.prompted"
         || updateBelongsToInput
         || (observedAssistantMessageId && nonEmpty(event.properties.delta))
@@ -2668,7 +2702,7 @@ export async function executeOpenCodeNativeChat(input: {
     if (!currentAttemptIsCurrent()) {
       throw new OpenCodeNativeCapabilityError("unknown", "OpenCode native control attempt is no longer current.");
     }
-    const exported = await exportSession({
+    const exported = idleExport ?? await exportSession({
       command,
       serverCommand: command,
       sessionId,

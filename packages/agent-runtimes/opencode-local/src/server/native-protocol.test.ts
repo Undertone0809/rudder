@@ -92,6 +92,8 @@ async function makeOpenCodeFixture(directory: string, options: {
   exportDelayMs?: number;
   truncateExportBytes?: number;
   serverMessagesOverride?: unknown;
+  enforceMessageOrder?: boolean;
+  deferAssistantUntilRelease?: boolean;
 } = {}): Promise<string> {
   const command = path.join(directory, "opencode-fixture.mjs");
   const sourceExport: FixtureExport = options.sourceExport ?? {
@@ -171,6 +173,8 @@ async function makeOpenCodeFixture(directory: string, options: {
     exportDelayMs: options.exportDelayMs ?? 0,
     truncateExportBytes: options.truncateExportBytes ?? null,
     serverMessagesOverride: options.serverMessagesOverride ?? null,
+    enforceMessageOrder: options.enforceMessageOrder === true,
+    deferAssistantUntilRelease: options.deferAssistantUntilRelease === true,
   }), { encoding: "utf8" });
   await fs.writeFile(command, `#!/usr/bin/env node
 import { createServer } from "node:http";
@@ -360,7 +364,9 @@ const server = createServer(async (request, response) => {
       process.stderr.write("opencode-provider-stderr-secret\\n");
       const userMessageId = body?.messageID;
       if (typeof userMessageId !== "string" || !userMessageId) throw new Error("prompt_async omitted messageID");
-      const assistantMessageId = "assistant-" + userMessageId;
+      const assistantMessageId = fixtureOptions.enforceMessageOrder
+        ? "msg_" + ((BigInt(Date.now()) * 4096n + 1n) & 0xffffffffffffn).toString(16).padStart(12, "0") + "AAAAAAAAAAAAAA"
+        : "assistant-" + userMessageId;
       const configured = JSON.parse(fs.readFileSync(path.join(process.cwd(), "message-response.json"), "utf8"));
       const configuredBody = configured.body && typeof configured.body === "object" ? configured.body : {};
       const configuredInfo = configuredBody.info && typeof configuredBody.info === "object" ? configuredBody.info : {};
@@ -373,6 +379,7 @@ const server = createServer(async (request, response) => {
         sessionID: "oc-session-1",
       };
       const current = JSON.parse(fs.readFileSync(path.join(process.cwd(), "current-export.json"), "utf8"));
+      const previousAssistant = current.messages.findLast((message) => message.info.role === "assistant");
       current.messages.push({
         info: {
           id: userMessageId,
@@ -382,6 +389,24 @@ const server = createServer(async (request, response) => {
         },
         parts: Array.isArray(body?.parts) ? body.parts : [],
       });
+      if (fixtureOptions.deferAssistantUntilRelease) {
+        fs.writeFileSync(path.join(process.cwd(), "current-export.json"), JSON.stringify(current));
+        writeEvent({ type: "message.updated", properties: { info: current.messages.at(-1).info } });
+        writeEvent({ type: "message.part.delta", properties: { sessionID: "oc-session-1", messageID: "old-assistant", delta: "old activity" } });
+        writeEvent({ type: "session.idle", properties: { sessionID: "oc-session-1" } });
+        while (!fs.existsSync(path.join(process.cwd(), "release-assistant")) && !aborted) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        if (aborted) return;
+      }
+      // OpenCode 1.15.11 exits its prompt loop when the last finished assistant
+      // sorts after the submitted user ID, without starting another model turn.
+      if (fixtureOptions.enforceMessageOrder && previousAssistant?.info.finish && userMessageId < previousAssistant.info.id) {
+        fs.writeFileSync(path.join(process.cwd(), "current-export.json"), JSON.stringify(current));
+        writeEvent({ type: "message.updated", properties: { info: current.messages.at(-1).info } });
+        writeEvent({ type: "session.idle", properties: { sessionID: "oc-session-1" } });
+        return;
+      }
       if (!fixtureOptions.waitForAbort) {
         current.messages.push({ info: terminalInfo, parts: configuredParts });
         fs.writeFileSync(path.join(process.cwd(), "current-export.json"), JSON.stringify(current));
@@ -416,6 +441,7 @@ const server = createServer(async (request, response) => {
           ...(event.properties?.sessionID ? { sessionID: "oc-session-1" } : {}),
           ...(event.properties?.messageID ? { messageID: event.properties.messageID === "$FOREIGN_ASSISTANT" ? "foreign-assistant" : assistantMessageId } : {}),
           ...(event.properties?.partID ? { partID: "part-" + userMessageId } : {}),
+          ...(event.properties?.info ? { info: { ...event.properties.info, id: event.properties.info.role === "user" ? userMessageId : assistantMessageId, parentID: event.properties.info.role === "assistant" ? userMessageId : undefined } } : {}),
         };
         writeEvent(event);
         const eventType = event.type;
@@ -561,6 +587,101 @@ afterEach(async () => {
 });
 
 describe("OpenCode native protocol contract", () => {
+  it("ignores an idle after input persistence and old activity until a current assistant arrives", async () => {
+    const directory = await makeFixtureDirectory("rudder-opencode-early-idle-");
+    const command = await makeOpenCodeFixture(directory, { deferAssistantUntilRelease: true });
+    let ignoredIdle = false;
+    let settled = false;
+    const execution = runFixtureChat(directory, command, { onLog: async (_stream, chunk) => { if (chunk.includes("idle_ignored")) ignoredIdle = true; } });
+    const outcome = execution.then((result) => { settled = true; return result; }, (error) => { settled = true; throw error; });
+    await waitForValue(() => ignoredIdle ? true : null);
+    expect(settled).toBe(false);
+    expect(await messageRequestCount(directory)).toBe(1);
+    await fs.writeFile(path.join(directory, "release-assistant"), "release");
+    const result = await outcome;
+    expect(result.summary).toBe("native answer");
+    expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
+    expect(await messageRequestCount(directory)).toBe(1);
+  });
+
+  it("reports an accepted unresolved input after its own causal busy-to-idle without resubmission", async () => {
+    const directory = await makeFixtureDirectory("rudder-opencode-causal-empty-idle-");
+    const command = await makeOpenCodeFixture(directory, {
+      messageResponse: { body: { info: { role: "user" }, parts: [] } },
+      streamEvents: [
+        { type: "message.updated", properties: { info: { id: "$CURRENT_USER", role: "user", sessionID: "oc-session-1" } } },
+        { type: "session.status", properties: { sessionID: "oc-session-1", status: { type: "busy" } } },
+        { type: "session.status", properties: { sessionID: "oc-session-1", status: { type: "idle" } } },
+      ],
+    });
+    await expect(runFixtureChat(directory, command)).rejects.toMatchObject({
+      status: "unknown",
+      message: expect.stringContaining("without an assistant message for the accepted input"),
+      sessionContext: { submissionPhase: "accepted", sessionId: "oc-session-1" },
+    });
+    expect(await messageRequestCount(directory)).toBe(1);
+  });
+
+  it("continues two turns with provider-ordered input IDs instead of exiting at the previous assistant", async () => {
+    const directory = await makeFixtureDirectory("rudder-opencode-ordered-input-");
+    const command = await makeOpenCodeFixture(directory, {
+      enforceMessageOrder: true,
+      sourceExport: { info: { id: "oc-session-1" }, messages: [] },
+    });
+    const first = await runFixtureChat(directory, command);
+    const second = await runFixtureChat(directory, command, { session: first.sessionParams ?? {} });
+    const firstInput = String(first.resultJson?.userMessageId);
+    const firstAssistant = String(first.resultJson?.providerMessageId);
+    const secondInput = String(second.resultJson?.userMessageId);
+    expect(firstInput).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/u);
+    expect(secondInput).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/u);
+    expect(secondInput > firstAssistant).toBe(true);
+    expect(first.sessionId).toBe(second.sessionId);
+    expect(second.summary).toBe("native answer");
+    expect(second.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
+    expect(await messageRequestCount(directory)).toBe(2);
+  });
+
+  it("keeps a sealed range revision stable across later turns but invalidates selected content changes", async () => {
+    const directory = await makeFixtureDirectory("rudder-opencode-range-revision-");
+    const command = await makeOpenCodeFixture(directory);
+    const read = () => readOpenCodeNativeTranscript({
+      runtimeType: "opencode_local",
+      session: sessionFor(directory, command),
+      selector: { kind: "opencode_input", sessionId: "oc-session-1", userMessageId: "provider-user-1", terminalMessageIds: ["provider-assistant-1"] },
+      binding: { hostId: "local", profileId: "opencode-profile" },
+    });
+    const first = await read();
+    expect(first.availability).toBe("available");
+    const exportPath = path.join(directory, "current-export.json");
+    const exported: FixtureExport = JSON.parse(await fs.readFile(exportPath, "utf8"));
+    exported.info.time = { updated: 999 };
+    exported.messages[2]!.info.time = { created: 998 };
+    exported.messages[2]!.parts[0]!.text = "edited later input";
+    exported.messages.push({ info: { id: "later-assistant", role: "assistant", parentID: "provider-user-2", sessionID: "oc-session-1" }, parts: [{ type: "text", text: "later answer" }] });
+    await fs.writeFile(exportPath, JSON.stringify(exported));
+    const later = await read();
+    expect(later.items).toEqual(first.items);
+    expect(later.revision).toBe(first.revision);
+    const selected = exported.messages[1]!;
+    selected.parts[0]!.text = "edited answer";
+    await fs.writeFile(exportPath, JSON.stringify(exported));
+    const edited = await read();
+    expect(edited.revision).not.toBe(first.revision);
+    expect(edited.items.at(-1)?.entry).toMatchObject({ text: "edited answer" });
+    selected.info.finish = "length";
+    await fs.writeFile(exportPath, JSON.stringify(exported));
+    expect((await read()).revision).not.toBe(edited.revision);
+    selected.parts[0] = { type: "tool", tool: "read", callID: "call-1", state: { status: "completed", input: { path: "file" }, output: "before" } };
+    await fs.writeFile(exportPath, JSON.stringify(exported));
+    const tool = await read();
+    (selected.parts[0]!.state as Record<string, unknown>).output = "after";
+    await fs.writeFile(exportPath, JSON.stringify(exported));
+    const changedTool = await read();
+    expect(changedTool.revision).not.toBe(tool.revision);
+    expect(changedTool.items.find((item) => item.kind === "tool_result")?.entry).toMatchObject({ content: "after" });
+  });
+
   it("uses managed server/session/message transport without --pure and persists provider identity", async () => {
     const directory = await makeFixtureDirectory("rudder-opencode-native-");
     const command = await makeOpenCodeFixture(directory);
@@ -904,7 +1025,7 @@ describe("OpenCode native protocol contract", () => {
       runId: "run-stale-idle-terminal",
       agent: { id: "agent-1", orgId: "organization-1", name: "OpenCode Agent", agentRuntimeType: "opencode_local", agentRuntimeConfig: {} },
       runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
-      config: { command, cwd: directory, model: "provider/model", promptTemplate: "{{context.chatPrompt}}", env: { HOME: directory } },
+      config: { command, cwd: directory, model: "provider/model", timeoutSec: 1, promptTemplate: "{{context.chatPrompt}}", env: { HOME: directory } },
       context: { chatMode: true, chatPrompt: "current input" },
       authToken: "fixture-token",
       onLog: async () => {},
@@ -912,7 +1033,7 @@ describe("OpenCode native protocol contract", () => {
     expect(result).toMatchObject({
       exitCode: 1,
       submissionPhase: "accepted",
-      errorMessage: expect.stringContaining("without an assistant message for the accepted input"),
+      errorMessage: expect.stringContaining("timed out"),
       nativeWriterQuiescence: { status: "unconfirmed" },
     });
   });
