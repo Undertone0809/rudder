@@ -59,7 +59,7 @@ export type PiTranscriptRequest = {
 
 export type PiTranscriptResult = {
   items: readonly Record<string, unknown>[];
-  nextCursor: null;
+  nextCursor: string | null;
   revision: string;
   source: "native";
   availability: "available" | "offline" | "missing" | "incompatible";
@@ -1336,10 +1336,59 @@ function piTranscriptLimits(input: PiTranscriptRequest): { limit: number; maxByt
   );
   const maxBytes = bounded(readerInput.maxBytes, NATIVE_TRANSCRIPT_PAGE_BYTES, NATIVE_TRANSCRIPT_MAX_PAGE_BYTES);
   return {
-    limit: NATIVE_TRANSCRIPT_PAGE_ITEMS,
+    limit: bounded(readerInput.limit, NATIVE_TRANSCRIPT_PAGE_ITEMS, NATIVE_TRANSCRIPT_PAGE_ITEMS),
     maxBytes,
     maxItemBytes: Math.min(maxBytes, bounded(readerInput.maxItemBytes, NATIVE_TRANSCRIPT_ITEM_BYTES, NATIVE_TRANSCRIPT_MAX_PAGE_BYTES)),
   };
+}
+
+function piCursorScope(input: PiTranscriptRequest, leafId: string | null): string {
+  return createHash("sha256").update(JSON.stringify({
+    sessionId: input.session.sessionId,
+    sessionFile: input.session.sessionParams.sessionFile,
+    binding: input.binding
+      ? {
+          id: input.binding.id ?? null,
+          orgId: input.binding.orgId ?? null,
+          hostId: input.binding.hostId,
+          profileId: input.binding.profileId,
+          workspaceBindingId: input.binding.workspaceBindingId ?? null,
+          capabilityRevision: input.binding.capabilityRevision ?? null,
+        }
+      : null,
+    workspace: input.workspace ?? null,
+    selector: input.selector ?? null,
+    range: input.range ?? null,
+    from: input.from ?? null,
+    through: input.through ?? null,
+    visibilityCutoffRef: asRecord(input.readerInput)?.visibilityCutoffRef ?? null,
+    leafId,
+  })).digest("hex");
+}
+
+type PiTranscriptPosition = { entryId: string; projectionIndex: number };
+
+function decodePiTranscriptCursor(cursor: string, revision: string, scope: string): PiTranscriptPosition | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
+      version?: number;
+      revision?: string;
+      scope?: string;
+      entryId?: string;
+      projectionIndex?: number;
+    };
+    return parsed.version === 2 && parsed.revision === revision && parsed.scope === scope
+      && typeof parsed.entryId === "string" && parsed.entryId.length > 0
+      && Number.isSafeInteger(parsed.projectionIndex) && parsed.projectionIndex! >= 0
+      ? { entryId: parsed.entryId, projectionIndex: parsed.projectionIndex! }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function encodePiTranscriptCursor(revision: string, scope: string, position: PiTranscriptPosition): string {
+  return Buffer.from(JSON.stringify({ version: 2, revision, scope, ...position }), "utf8").toString("base64url");
 }
 
 function selectorRecord(value: unknown): JsonRecord | null {
@@ -1564,7 +1613,6 @@ function unavailable(error: PiNativeCapabilityError): PiTranscriptResult {
 export async function readPiNativeTranscript(input: PiTranscriptRequest): Promise<PiTranscriptResult> {
   const bound = requireBoundSession(input.session, input.binding, input.workspace);
   if (input.runtimeType !== "pi_local") throw new PiNativeCapabilityError("unsupported", `Pi transport cannot serve ${input.runtimeType}.`);
-  if (input.cursor) throw new PiNativeCapabilityError("unknown", "Pi native session history is a complete snapshot transport; provider cursors are unsupported.");
   try {
     const selector = selectorRecord(input.selector);
     if (selector && selector.kind !== "pi_branch_range") throw new PiNativeCapabilityError("unsupported", "The Pi native reader received a non-Pi span selector.");
@@ -1683,7 +1731,16 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
     }
     const revision = revisionForTranscriptIndex(bound.sessionFile, leafId, branch);
     await verifyPiTranscriptFileVersion(tree, bound.sessionFile);
-    const targetEnd = Math.min(ranged.length, limits.limit);
+    const scope = piCursorScope(input, leafId);
+    const position = input.cursor ? decodePiTranscriptCursor(input.cursor, revision, scope) : null;
+    // Keep an oversized metadata-only entry at the current position so a larger budget can retry it.
+    const offset = input.cursor && position ? ranged.findIndex((ref) =>
+      branch[ref.entryIndex]?.id === position.entryId
+      && (ref.projectionIndex === position.projectionIndex || branch[ref.entryIndex]?.exceedsItemBudget)) : 0;
+    if ((input.cursor && !position) || offset < 0) {
+      throw new PiNativeCapabilityError("unknown", "Pi transcript cursor does not match this source revision and range.");
+    }
+    const targetEnd = Math.min(ranged.length, offset + limits.limit);
     const page: JsonRecord[] = [];
     let pageBytes = 2;
     let limitReached: PiTranscriptResult["limitReached"] = null;
@@ -1692,7 +1749,7 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
     let cachedProjection: TranscriptEntry[] = [];
     let cachedText = "";
     let cachedTimestamp = "";
-    for (const ref of ranged.slice(0, targetEnd)) {
+    for (const ref of ranged.slice(offset, targetEnd)) {
       const indexed = branch[ref.entryIndex]!;
       if (cachedEntryIndex !== ref.entryIndex) {
         if (indexed.exceedsItemBudget || indexed.normalizedByteLength > limits.maxItemBytes) {
@@ -1740,10 +1797,18 @@ export async function readPiNativeTranscript(input: PiTranscriptRequest): Promis
       limitReached = { reason: "total_items", maximum: limits.limit };
     }
     await verifyPiTranscriptFileVersion(tree, bound.sessionFile);
+    const nextOffset = offset + page.length;
+    const nextCursor = nextOffset < ranged.length
+      && (!limitReached || page.length > 0)
+      ? encodePiTranscriptCursor(revision, scope, {
+          entryId: branch[ranged[nextOffset]!.entryIndex]!.id,
+          projectionIndex: ranged[nextOffset]!.projectionIndex,
+        })
+      : null;
     const rangeHandled = piRangeHandling(range);
     return {
       items: page,
-      nextCursor: null,
+      nextCursor,
       revision,
       source: "native",
       availability: "available",

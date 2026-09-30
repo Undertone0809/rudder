@@ -703,14 +703,79 @@ describe("Pi native protocol contract", () => {
     expect(args).toContain("managed-extension");
   });
 
-  it("bounds native transcript reads without parsing oversized rows or exposing provider cursors", async () => {
+  it("applies exact ID bounds before paging and refuses a missing boundary", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-id-range-");
+    const command = await makePiFixture(directory);
+    const sessionFile = path.join(directory, "session.jsonl");
+    await fs.writeFile(sessionFile, [
+      { type: "session", version: 3, id: "pi-parent", cwd: directory },
+      { id: "root", type: "message", parentId: null, message: { role: "user", content: "root" } },
+      { id: "start", type: "message", parentId: "root", message: { role: "assistant", content: [
+        { type: "thinking", thinking: "planning" },
+        { type: "toolCall", id: "call-1", name: "read", arguments: { path: "note.txt" } },
+      ] } },
+      { id: "boundary", type: "message", parentId: "start", message: { role: "user", content: "boundary" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+    const session = sessionFor(directory, command, "boundary");
+    session.sessionParams.previousLeafId = "";
+    const request = {
+      runtimeType: "pi_local",
+      session,
+      selector: { kind: "pi_branch_range", sessionResourceRef: sessionFile, leafId: "boundary" },
+      binding: { hostId: "local", profileId: "pi-profile" },
+      readerInput: { limit: 1, maxBytes: 4096, maxItemBytes: 1024 },
+    };
+
+    const projectionRange = { start: "start", end: "start" };
+    const startPage = await readPiNativeTranscript({ ...request, range: projectionRange });
+    expect(startPage).toMatchObject({
+      availability: "available",
+      rangeHandled: { startItemId: "start" },
+      items: [expect.objectContaining({ id: "start", sourceEntryId: "start" })],
+      nextCursor: expect.any(String),
+    });
+    const projectionPage = await readPiNativeTranscript({
+      ...request,
+      range: projectionRange,
+      cursor: startPage.nextCursor,
+    });
+    expect(projectionPage.items.map((item) => item.id)).toEqual(["start:tool_call:1"]);
+    expect(projectionPage.nextCursor).toBeNull();
+
+    const beforePage = await readPiNativeTranscript({ ...request, range: { before: "boundary" } });
+    expect(beforePage).toMatchObject({
+      availability: "available",
+      rangeHandled: { beforeItemId: "boundary" },
+      items: [expect.objectContaining({ id: "root", sourceEntryId: "root" })],
+      nextCursor: expect.any(String),
+    });
+
+    const missingBoundary = await readPiNativeTranscript({ ...request, range: { before: "missing" } });
+    expect(missingBoundary).toMatchObject({
+      items: [],
+      nextCursor: null,
+      availability: "incompatible",
+    });
+    expect(missingBoundary.rangeHandled).toBeUndefined();
+
+    const changedScope = await readPiNativeTranscript({
+      ...request,
+      range: { before: "boundary" },
+      cursor: startPage.nextCursor,
+    });
+    expect(changedScope).toMatchObject({ items: [], nextCursor: null, availability: "incompatible" });
+  });
+
+  it.each([false, true])("keeps native paging resumable across budget changes with multiple projections=%s", async (multipleProjections) => {
     const directory = await makeFixtureDirectory("rudder-pi-native-bounded-page-");
     const command = await makePiFixture(directory);
     const sessionFile = path.join(directory, "session.jsonl");
     const original = [
       { type: "session", version: 3, id: "pi-parent", cwd: directory },
       { id: "first", type: "message", parentId: null, message: { role: "user", content: "first" } },
-      { id: "large", type: "message", parentId: "first", message: { role: "assistant", content: "x".repeat(200_081) } },
+      { id: "large", type: "message", parentId: "first", message: { role: "assistant", content: multipleProjections
+        ? [{ type: "thinking", thinking: "x".repeat(200_081) }, { type: "toolCall", id: "call-large", name: "read", arguments: {} }]
+        : "x".repeat(200_081) } },
       { id: "tail", type: "message", parentId: "large", message: { role: "user", content: "tail" } },
     ].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
     await fs.writeFile(sessionFile, original, "utf8");
@@ -739,20 +804,102 @@ describe("Pi native protocol contract", () => {
       completeness: "partial",
       limitReached: { reason: "item_bytes", maximum: 1024 },
       items: [expect.objectContaining({ id: "first" })],
-      nextCursor: null,
     });
+    expect(blocked!.nextCursor).toEqual(expect.any(String));
     expect(Buffer.byteLength(JSON.stringify(blocked!.items), "utf8")).toBeLessThanOrEqual(4096);
-
-    const largeItem = await readPiNativeTranscript({
-      ...request,
-      range: { itemId: "large" },
-      readerInput: { limit: 1, maxBytes: 1_000_000, maxItemBytes: 900_000 },
+    const oldCursor = JSON.parse(Buffer.from(blocked!.nextCursor!, "base64url").toString("utf8"));
+    const obsolete = await readPiNativeTranscript({ ...request,
+      cursor: Buffer.from(JSON.stringify({ ...oldCursor, version: 1, offset: 1 })).toString("base64url"),
+      readerInput: { limit: 1, maxBytes: 4096, maxItemBytes: 1024 },
     });
-    expect(largeItem).toMatchObject({ availability: "available", completeness: "complete", nextCursor: null });
-    expect(largeItem.items.map((item) => item.id)).toEqual(["large"]);
-    expect(Buffer.byteLength(JSON.stringify(largeItem.items), "utf8")).toBeLessThanOrEqual(1_000_000);
+    expect(obsolete).toMatchObject({ items: [], nextCursor: null, availability: "incompatible" });
 
-    await expect(readPiNativeTranscript({ ...request, cursor: "provider-cursor" })).rejects.toThrow("provider cursors are unsupported");
+    const largePage = await readPiNativeTranscript({
+      ...request,
+      cursor: blocked!.nextCursor,
+      readerInput: { limit: multipleProjections ? 2 : 1, maxBytes: 2_000_000, maxItemBytes: 2_000_000 },
+    });
+    expect(largePage).toMatchObject({
+      availability: "available",
+      completeness: "partial",
+      limitReached: { reason: "total_items" },
+    });
+    const largeIds = multipleProjections ? ["large", "large:tool_call:1"] : ["large"];
+    expect(largePage.items.map((item) => item.id)).toEqual(largeIds);
+    expect(Buffer.byteLength(JSON.stringify(largePage.items), "utf8")).toBeLessThanOrEqual(2_000_000);
+    expect(largePage.revision).toBe(blocked!.revision);
+    expect(largePage.nextCursor).toEqual(expect.any(String));
+
+    const tailPage = await readPiNativeTranscript({
+      ...request,
+      cursor: largePage.nextCursor,
+      readerInput: { limit: 1, maxBytes: 4096, maxItemBytes: 1024 },
+    });
+    expect(tailPage.items.map((item) => item.id)).toEqual(["tail"]);
+    expect(tailPage.nextCursor).toBeNull();
+    expect(tailPage.revision).toBe(blocked!.revision);
+    expect([...blocked!.items, ...largePage.items, ...tailPage.items].map((item) => item.id))
+      .toEqual(["first", ...largeIds, "tail"]);
+    if (multipleProjections) {
+      const split = await readPiNativeTranscript({ ...request, cursor: blocked!.nextCursor,
+        readerInput: { limit: 1, maxBytes: 2_000_000, maxItemBytes: 2_000_000 },
+      });
+      const limited = await readPiNativeTranscript({ ...request, cursor: split.nextCursor,
+        readerInput: { limit: 1, maxBytes: 4096, maxItemBytes: 1024 },
+      });
+      expect(limited).toMatchObject({ items: [], completeness: "partial", limitReached: { reason: "item_bytes" } });
+      const resumed = await readPiNativeTranscript({ ...request, cursor: split.nextCursor,
+        readerInput: { limit: 1, maxBytes: 2_000_000, maxItemBytes: 2_000_000 },
+      });
+      expect(resumed.items.map((item) => item.id)).toEqual(["large:tool_call:1"]);
+      const final = await readPiNativeTranscript({ ...request, cursor: resumed.nextCursor,
+        readerInput: { limit: 1, maxBytes: 4096, maxItemBytes: 1024 },
+      });
+      expect(final.items.map((item) => item.id)).toEqual(["tail"]);
+    }
+  });
+
+  it("continues native pages stopped by the aggregate byte budget", async () => {
+    const directory = await makeFixtureDirectory("rudder-pi-native-page-bytes-");
+    const command = await makePiFixture(directory);
+    const sessionFile = path.join(directory, "session.jsonl");
+    await fs.writeFile(sessionFile, [
+      { type: "session", version: 3, id: "pi-parent", cwd: directory },
+      { id: "entry-001", type: "message", parentId: null, message: { role: "user", content: "x".repeat(800) } },
+      { id: "entry-002", type: "message", parentId: "entry-001", message: { role: "assistant", content: "x".repeat(800) } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+    const session = sessionFor(directory, command, "entry-002");
+    session.sessionParams.previousLeafId = "";
+    const request = {
+      runtimeType: "pi_local",
+      session,
+      selector: { kind: "pi_branch_range", sessionResourceRef: sessionFile, leafId: "entry-002" },
+      binding: { hostId: "local", profileId: "pi-profile" },
+    };
+    const complete = await readPiNativeTranscript({
+      ...request,
+      readerInput: { limit: 10, maxBytes: 12_000, maxItemBytes: 12_000 },
+    });
+    expect(complete.items).toHaveLength(2);
+    const pageByteBudget = Math.max(...complete.items.map((item) => Buffer.byteLength(JSON.stringify(item), "utf8"))) + 2;
+    expect(Buffer.byteLength(JSON.stringify(complete.items), "utf8")).toBeGreaterThan(pageByteBudget);
+
+    const firstPage = await readPiNativeTranscript({
+      ...request,
+      readerInput: { limit: 10, maxBytes: pageByteBudget, maxItemBytes: pageByteBudget },
+    });
+    expect(firstPage.items.map((item) => item.id)).toEqual(["entry-001"]);
+    expect(firstPage).toMatchObject({ completeness: "partial", limitReached: { reason: "page_bytes" } });
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+
+    const secondPage = await readPiNativeTranscript({
+      ...request,
+      cursor: firstPage.nextCursor,
+      readerInput: { limit: 10, maxBytes: pageByteBudget, maxItemBytes: pageByteBudget },
+    });
+    expect(secondPage.items.map((item) => item.id)).toEqual(["entry-002"]);
+    expect(secondPage.nextCursor).toBeNull();
+    expect(secondPage.revision).toBe(firstPage.revision);
   });
 
   it("applies numeric ranges by branch position when provider ordinals are non-monotonic", async () => {
