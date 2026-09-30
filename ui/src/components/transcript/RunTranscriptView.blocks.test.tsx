@@ -856,24 +856,36 @@ describe("native Steer transcript blocks", () => {
   });
 
   it("keeps adjacent same-anchor Steer messages as separate durable blocks", () => {
-    const entries: TranscriptEntry[] = [
-      {
-        kind: "user",
+    const makeSteerMessage = (id: string, body: string, generationSeq: number): ChatMessage => ({
+      id,
+      orgId: "org-1",
+      conversationId: "chat-1",
+      role: "user",
+      kind: "message",
+      status: "completed",
+      body,
+      structuredPayload: {
         source: "steer",
-        messageId: "steer-message-1",
-        controlActionId: "steer-action-1",
-        ts: "2026-07-21T08:00:00.000Z",
-        text: "First same-anchor direction",
+        targetGenerationId: "generation-1",
+        afterTranscriptEntryCount: 0,
+        generationSeq,
+        controlActionId: `steer-action-${generationSeq}`,
+        deliveryDisposition: "accepted_current",
       },
-      {
-        kind: "user",
-        source: "steer",
-        messageId: "steer-message-2",
-        controlActionId: "steer-action-2",
-        ts: "2026-07-21T08:00:00.000Z",
-        text: "Second same-anchor direction",
-      },
-    ];
+      approvalId: null,
+      approval: null,
+      attachments: [],
+      replyingAgentId: null,
+      chatTurnId: `turn-${id}`,
+      turnVariant: 0,
+      supersededAt: null,
+      createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      updatedAt: new Date("2026-07-21T08:00:00.000Z"),
+    });
+    const entries = mergeNativeSteerTranscriptEntries([], [
+      makeSteerMessage("steer-message-1", "First same-anchor direction", 1),
+      makeSteerMessage("steer-message-2", "Second same-anchor direction", 2),
+    ]);
 
     const blocks = normalizeTranscript(entries, false);
     expect(blocks).toMatchObject([

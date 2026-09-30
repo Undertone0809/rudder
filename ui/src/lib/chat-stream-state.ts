@@ -56,6 +56,24 @@ export function nativeSteerTranscriptAnchor(
   };
 }
 
+export function isNativeSteerTranscriptEntry(
+  entry: TranscriptEntry,
+): entry is NativeSteerTranscriptEntry {
+  if (entry.kind !== "user" || entry.source !== "steer") return false;
+
+  const rawSteerMessage = (entry as unknown as { steerMessage?: unknown }).steerMessage;
+  if (!rawSteerMessage || typeof rawSteerMessage !== "object") return false;
+
+  const steerMessage = rawSteerMessage as ChatMessage;
+  const anchor = nativeSteerTranscriptAnchor(steerMessage);
+  return Boolean(
+    anchor
+    && entry.messageId === steerMessage.id
+    && entry.text === steerMessage.body
+    && (entry.controlActionId ?? null) === anchor.controlActionId,
+  );
+}
+
 export function mergeNativeSteerTranscriptEntries(
   entries: TranscriptEntry[],
   steerMessages: ChatMessage[],

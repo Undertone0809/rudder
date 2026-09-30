@@ -1,6 +1,7 @@
 import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
+import { isNativeSteerTranscriptEntry } from "../../lib/chat-stream-state";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";
@@ -13,10 +14,6 @@ type ProvenancedTranscriptTextEntry = Extract<
   generationSeqStart: number;
   generationSeqEnd: number;
 }>;
-
-type NativeSteerTranscriptEntry = Extract<TranscriptEntry, { kind: "user" }> & {
-  steerMessage?: ChatMessage;
-};
 
 export function cursorAcpDisplayEntry(entry: TranscriptEntry): TranscriptEntry | null {
   const item = asRecord(entry);
@@ -687,10 +684,9 @@ export function normalizeTranscript(
     }
 
     if (entry.kind === "assistant" || entry.kind === "user") {
-      const steerMessage = entry.kind === "user"
-        ? (entry as NativeSteerTranscriptEntry).steerMessage
-        : undefined;
-      if (entry.kind === "user") {
+      const isNativeSteerMessage = entry.kind === "user" && isNativeSteerTranscriptEntry(entry);
+      const steerMessage = isNativeSteerMessage ? entry.steerMessage : undefined;
+      if (entry.kind === "user" && !isNativeSteerMessage) {
         if (isInternalAgentInstructionText(entry.text)) {
           if (options?.showDeveloperDiagnostics) {
             blocks.push({
@@ -735,8 +731,7 @@ export function normalizeTranscript(
         }
       }
 
-      // User inputs are not Agent activity, including interjections delivered by Steer.
-      if (entry.kind === "user" && options?.hideUserMessages) continue;
+      if (entry.kind === "user" && options?.hideUserMessages && !isNativeSteerMessage) continue;
 
       const provenance = entry.kind === "assistant"
         ? transcriptEntryProvenance(entry as ProvenancedTranscriptTextEntry)
@@ -787,8 +782,8 @@ export function normalizeTranscript(
           type: "message",
           role: entry.kind,
           ...(entry.kind === "assistant" && entry.phase ? { phase: entry.phase } : {}),
-          ...(entry.kind === "user" && entry.source ? {
-            source: entry.source,
+          ...(entry.kind === "user" && isNativeSteerMessage ? {
+            source: "steer" as const,
             messageId: entry.messageId,
             controlActionId: entry.controlActionId,
             steerMessage,

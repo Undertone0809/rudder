@@ -1,7 +1,8 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import {
-  activeChatStreamTimelineInsertionIndex
+  activeChatStreamTimelineInsertionIndex,
+  isNativeSteerTranscriptEntry,
 } from "@/lib/chat-stream-state";
 import type { Agent, ChatConversation, ChatMessage } from "@rudderhq/shared";
 
@@ -179,8 +180,9 @@ export function chatStreamingAssistantBody(
 }
 
 export function chatProcessTranscriptEntries(entries: TranscriptEntry[]) {
-  return entries.filter((entry) => entry.kind !== "user"
-    && !(entry.kind === "assistant" && entry.phase === "final_answer"));
+  return entries.filter((entry) => entry.kind === "user"
+    ? isNativeSteerTranscriptEntry(entry)
+    : !(entry.kind === "assistant" && entry.phase === "final_answer"));
 }
 
 export function buildChatTimelineRows(
