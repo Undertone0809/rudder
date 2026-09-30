@@ -47,6 +47,7 @@ use tracing::{info, warn};
 mod public_ingress;
 mod public_ingress_config;
 pub mod public_ingress_proxy;
+pub mod public_ingress_websocket;
 pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
 pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};

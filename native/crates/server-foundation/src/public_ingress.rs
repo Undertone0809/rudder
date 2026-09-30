@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::public_ingress_proxy::PublicIngressProxy;
+use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
 use uuid::Uuid;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
@@ -40,9 +41,12 @@ impl PublicIngressRuntime {
             // Client state belongs to its Actix worker; no Send/Sync workaround.
             let proxy = PublicIngressProxy::new(&config.node_upstream)
                 .expect("validated fixed loopback upstream");
+            let websocket_proxy = PublicIngressWebSocketProxy::new(proxy.upstream_authority())
+                .expect("validated fixed loopback upstream");
             App::new()
                 .app_data(data.clone())
                 .app_data(web::Data::new(proxy))
+                .app_data(web::Data::new(websocket_proxy))
                 .route("/healthz", web::get().to(ingress_health))
                 .route("/readyz", web::get().to(ingress_readiness))
                 .route(
@@ -102,9 +106,18 @@ async fn ingress_readiness(state: web::Data<IngressState>, request: HttpRequest)
 
 async fn proxy_request(
     proxy: web::Data<PublicIngressProxy>,
+    websocket_proxy: web::Data<PublicIngressWebSocketProxy>,
     request: HttpRequest,
     payload: web::Payload,
 ) -> HttpResponse {
+    if request
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("websocket"))
+    {
+        return websocket_proxy.forward(request, payload).await;
+    }
     proxy.forward(request, payload).await
 }
 
@@ -242,6 +255,89 @@ mod tests {
     use actix_web::test;
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";
+
+    #[actix_web::test]
+    async fn actual_public_router_relays_same_origin_event_websocket_and_closes() {
+        use futures_util::{SinkExt, StreamExt};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let mock = HttpServer::new(|| {
+            App::new().route(
+                "/api/orgs/{org_id}/events/ws",
+                web::get().to(|request: HttpRequest, payload: web::Payload| async move {
+                    assert_eq!(request.headers().get("cookie").unwrap(), "session=test");
+                    assert_eq!(
+                        request.headers().get("host").unwrap(),
+                        "public.example:3100"
+                    );
+                    assert_eq!(request.uri().query(), Some("resume=a%2Bb"));
+                    assert!(request.headers().get(ACTOR_ENVELOPE_HEADER).is_none());
+                    let (response, mut session, mut stream) =
+                        actix_ws::handle(&request, payload).unwrap();
+                    actix_web::rt::spawn(async move {
+                        while let Some(message) = stream.recv().await {
+                            match message.unwrap() {
+                                actix_ws::Message::Text(text) => {
+                                    session.text(text).await.unwrap();
+                                }
+                                actix_ws::Message::Close(reason) => {
+                                    let _ = session.close(reason).await;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
+                    response
+                }),
+            )
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let mock_handle = mock.handle();
+        let mock_task = actix_web::rt::spawn(mock);
+        let runtime = PublicIngressRuntime::bind(
+            PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL).unwrap(),
+            Arc::new(
+                AppState::new(ServerConfig {
+                    actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                    ..ServerConfig::default()
+                })
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let address = runtime.bound_addr();
+        let control = runtime.control();
+        let task = actix_web::rt::spawn(runtime.run());
+        let (_, mut socket) = awc::Client::default()
+            .ws(format!("ws://{address}/api/orgs/10000000-0000-0000-0000-000000000001/events/ws?resume=a%2Bb"))
+            .set_header("host", "public.example:3100")
+            .set_header("cookie", "session=test")
+            .set_header(ACTOR_ENVELOPE_HEADER, "untrusted-client-assertion")
+            .connect().await.unwrap();
+        socket
+            .send(awc::ws::Message::Text("resume-event".into()))
+            .await
+            .unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(3), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(frame, awc::ws::Frame::Text(ref bytes) if bytes.as_ref() == b"resume-event")
+        );
+        socket.send(awc::ws::Message::Close(None)).await.unwrap();
+        drop(socket);
+        control.stop(true).await;
+        task.await.unwrap().unwrap();
+        mock_handle.stop(true).await;
+        mock_task.await.unwrap().unwrap();
+    }
 
     #[actix_web::test]
     async fn public_member_read_uses_adapter_signature_ignores_client_trust_and_never_proxies_query()
