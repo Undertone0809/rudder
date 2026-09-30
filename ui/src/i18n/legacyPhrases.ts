@@ -748,7 +748,6 @@ const zhExactPhrases: Record<string, string> = {
   "Working dir:": "工作目录：",
   "Org": "组织",
   "Organization surfaces": "组织页面",
-  "Views and project slices": "视图与项目切片",
   "Recent conversations": "最近会话",
   "All Issues": "全部任务",
   "Draft Issues": "草稿任务",
