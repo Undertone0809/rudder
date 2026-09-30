@@ -235,6 +235,19 @@ vi.mock("../../agent-runtimes/index.js", async (importOriginal) => {
   };
 });
 
+// The historical consumer uses Run Detail's native Reader. Keep this synthetic
+// provider behind that current seam as well; invoking the installed Codex CLI
+// for its invented fixture thread IDs would not test retention or quiescence.
+vi.mock("../run-intelligence.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../run-intelligence.js")>();
+  return {
+    ...actual,
+    createHistoricalRunNativeTranscriptReader: vi.fn(() => ({
+      readRange: (input: unknown) => fakeNativeProvider.readRange(input),
+    })),
+  };
+});
+
 import { heartbeatService } from "../heartbeat.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { runRuntimeRetentionMaintenance } from "./runtime-retention.js";
@@ -855,7 +868,14 @@ describe("heartbeat native transcript retention integration", () => {
     const cleanedSubagentSpan = cleanedNativeSpans.find((candidate) => candidate.relation === "native_subagent");
     const cleanedNativeEvents = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
     const cleanedSqlEvidence = JSON.stringify({ run: cleanedNativeRun, spans: cleanedNativeSpans, events: cleanedNativeEvents });
-    expect(cleanedNativeRun).toMatchObject({
+    expect(cleanedNativeRun, JSON.stringify({
+      retention: (cleanedNativeRun?.contextSnapshot as Record<string, unknown>)?.nativeTranscriptRetention,
+      writers: cleanedNativeSpans.map((span) => ({
+        relation: span.relation,
+        state: span.state,
+        writerReleased: Boolean(span.writerLeaseReleasedAt),
+      })),
+    })).toMatchObject({
       status: "succeeded",
       logRef: null,
       logStore: null,
@@ -908,6 +928,33 @@ describe("heartbeat native transcript retention integration", () => {
     });
     expect(verifiedProof.ok).toBe(true);
     if (!verifiedProof.ok) throw new Error(`Expected complete native proof, got ${verifiedProof.reason}`);
+
+    // A terminal primary process does not prove its native child writer has
+    // stopped. Neither the initial proof nor a previously obtained proof may
+    // authorize cleanup while any selected span retains its writer lease.
+    expect(cleanedSubagentSpan?.writerLeaseReleasedAt).toBeInstanceOf(Date);
+    await db.update(runRuntimeSpans).set({ writerLeaseReleasedAt: null })
+      .where(eq(runRuntimeSpans.id, cleanedSubagentSpan!.id));
+    try {
+      await expect(proveSealedNativeRunTranscript({
+        db,
+        reader: rereadAfterCleanup,
+        orgId,
+        runId: native.run.id,
+      })).resolves.toMatchObject({ ok: false, reason: "span_attempt_identity_incomplete" });
+      await expect(cleanSealedNativeTranscriptMirrors({
+        db,
+        proof: verifiedProof.proof,
+        runLogStore: {} as any,
+        transcriptObjectStore: {} as any,
+        readerFactory: () => rereadAfterCleanup,
+        retainResultJson: (value) => value ?? {},
+      })).resolves.toMatchObject({ cleaned: false, reason: "cleanup_identity_mismatch" });
+    } finally {
+      await db.update(runRuntimeSpans).set({
+        writerLeaseReleasedAt: cleanedSubagentSpan!.writerLeaseReleasedAt,
+      }).where(eq(runRuntimeSpans.id, cleanedSubagentSpan!.id));
+    }
 
     const legacy = await queueRun(agentId);
     fakeNativeProvider.setProfileMode("unsupported");

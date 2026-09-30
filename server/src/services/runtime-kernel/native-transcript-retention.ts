@@ -259,6 +259,7 @@ export async function proveSealedNativeRunTranscript(input: {
     const attempt = span.attemptId ? attemptById.get(span.attemptId) : null;
     if (!attempt || !span.ownerToken || !Number.isInteger(span.attemptEpoch)
       || span.state !== "sealed" || span.completeness !== "complete"
+      || !span.writerLeaseReleasedAt
       || span.visibilityCutoffRef || !selectorBoundaryIsExact(span.selectorJson)
       || attempt.ownerToken !== span.ownerToken || attempt.attemptEpoch !== span.attemptEpoch
       || !TERMINAL_STATUSES.has(attempt.status) || !attempt.finishedAt) {
@@ -312,6 +313,7 @@ export async function proveSealedNativeRunTranscript(input: {
     if (!span || !attempt || span.ownerToken !== proof.ownerToken
       || span.attemptEpoch !== proof.attemptEpoch || span.attemptId !== proof.attemptId
       || span.state !== "sealed" || span.completeness !== "complete"
+      || !span.writerLeaseReleasedAt
       || !attempt.finishedAt || attempt.ownerToken !== proof.ownerToken
       || attempt.attemptEpoch !== proof.attemptEpoch) return { ok: false, reason: "span_attempt_identity_changed" };
   }
@@ -403,6 +405,7 @@ export async function selectAndVerifyNativeTranscriptCleanupState(tx: any, proof
     if (!span || !attempt || span.orgId !== proof.orgId || span.runId !== proof.runId
       || span.ownerToken !== expected.ownerToken || span.attemptEpoch !== expected.attemptEpoch
       || span.attemptId !== expected.attemptId || span.state !== "sealed" || span.completeness !== "complete"
+      || !span.writerLeaseReleasedAt
       || stableJson(span.selectorJson) !== stableJson(expected.selectorJson)
       || span.supplementalObjectRef !== expected.supplementalObjectRef
       || attempt.ownerToken !== expected.ownerToken || attempt.attemptEpoch !== expected.attemptEpoch
