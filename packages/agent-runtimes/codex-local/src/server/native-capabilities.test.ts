@@ -56,7 +56,7 @@ function profile(overrides: Partial<CodexAppServerProfileTransport> = {}): Codex
       RUDDER_NATIVE_CAPTURE: capturePath,
     },
     providerVersion: "0.155.0-alpha.9.2",
-    methods: { threadResume: true, threadRead: true, threadFork: true },
+    methods: { threadResume: true, threadRead: true, threadFork: true, threadReadFullSnapshot: true },
     ...overrides,
   };
 }
@@ -107,7 +107,7 @@ const thread = (id, turns, forkedFromId = null) => ({
   model: "gpt-test",
   modelProvider: "openai",
   cwd: process.cwd(),
-  updatedAt: 1726963200,
+  updatedAt: Number(process.env.RUDDER_NATIVE_UPDATED_AT || 1726963200),
   turns,
 });
 
@@ -134,7 +134,24 @@ rl.on("line", (line) => {
       }]) } });
       return;
     }
-    send({ id: message.id, result: { thread: thread(message.params.threadId, parentTurns) } });
+    send({ id: message.id, result: { thread: thread(message.params.threadId, message.params.includeTurns === false ? [] : parentTurns) } });
+    return;
+  }
+  if (message.method === "thread/turns/list") {
+    const prefix = Array.from({length:Number(process.env.RUDDER_NATIVE_PREFIX_TURNS || 0)}, (_,i)=>({id:'old-'+i,status:'completed'}));
+    const turns = [...prefix, ...parentTurns];
+    const index = Number(message.params.cursor || 0);
+    const turn = turns[index];
+    send({id:message.id,result:{data:turn?[{...turn,items:[],itemsView:'notLoaded'}]:[],nextCursor:index+1<turns.length?String(index+1):null}});
+    return;
+  }
+  if (message.method === "thread/items/list") {
+    const turn = parentTurns.find(t=>t.id===message.params.turnId);
+    const index = Number(message.params.cursor || 0);
+    const item = turn?.items[index];
+    if (item && process.env.RUDDER_NATIVE_OVERSIZED === '1' && index===Number(process.env.RUDDER_NATIVE_OVERSIZED_INDEX||0)) item.text = '😀'.repeat(8192);
+    send({id:message.id,result:{data:item?[{item,turnId:process.env.RUDDER_NATIVE_WRONG_TURN === '1'?'foreign-turn':turn.id}]:[],
+      nextCursor:process.env.RUDDER_NATIVE_STUCK === '1' ? message.params.cursor : index+1<(turn?.items.length||0)?String(index+1):null}});
     return;
   }
   if (message.method === "thread/resume") {
@@ -159,6 +176,106 @@ afterEach(async () => {
 });
 
 describe("Codex native history and fork capabilities", () => {
+  function pagedProfile(env: Record<string, string> = {}) {
+    const base = profile();
+    return profile({ methods: { threadRead: true, threadTurnsList: true, threadItemsList: true }, env: { ...base.env, ...env } });
+  }
+  const pageInput = {
+    runtimeType: "codex_local", session, binding,
+    selector: { kind: "codex_turn", threadId: "parent-thread", turnId: "turn-1" },
+    readerInput: { readonly: true, scope: "run", limit: 1, maxBytes: 8192, maxItemBytes: 4096 },
+  };
+  it("pages exact-turn items with stable revision and preserves split tool call/result projections", async () => {
+    const read = createCodexLocalProviderCapabilities(pagedProfile()).transcript!.readRange!;
+    const ids: unknown[] = [];
+    const kinds: unknown[] = [];
+    const ordinals: unknown[] = [];
+    const revisions = new Set();
+    let cursor: string | null = null;
+    for (let count = 0; count < 10; count += 1) {
+      const page = await read({ ...pageInput, cursor });
+      expect(Array.isArray(page)).toBe(false);
+      if (Array.isArray(page)) throw new Error("expected page");
+      const value = page as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+      const records = resultItems(value);
+      expect(records).toHaveLength(1);
+      ids.push(...records.map(r=>r.id)); kinds.push(...records.map(r=>r.kind)); ordinals.push(...records.map(r=>r.ordinal));
+      revisions.add(value.revision);
+      cursor = value.nextCursor ?? null;
+      expect(value.completeness).toBe(cursor ? "partial" : "complete");
+      if (!cursor) break;
+    }
+    expect(ids).toEqual(["user-1", "tool-1", "tool-1:tool_result:1", "assistant-1"]);
+    expect(kinds).toEqual(["user", "tool_call", "tool_result", "assistant"]);
+    expect(ordinals).toEqual([0, 1, 2, 3]);
+    expect(revisions.size).toBe(1);
+    const requests = await capturedRequests();
+    expect(requests.filter(r=>r.method==="thread/read").every(r=>(r.params as any).includeTurns===false)).toBe(true);
+    expect(requests.filter(r=>r.method==="thread/items/list").every(r=>(r.params as any).turnId==="turn-1" && (r.params as any).limit===1)).toBe(true);
+    expect(requests.some(r=>r.method==="thread/resume" || r.method==="thread/fork")).toBe(false);
+  });
+  it("continues bounded turn discovery without loading unrelated history", async () => {
+    const read = createCodexLocalProviderCapabilities(pagedProfile({RUDDER_NATIVE_PREFIX_TURNS:"70"})).transcript!.readRange!;
+    const first = await read(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(first.items).toEqual([]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(first.completeness).toBe("partial");
+    const next = await read({...pageInput,cursor:first.nextCursor}) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(next.items?.[0]?.id).toBe("user-1");
+    expect(next.revision).toBe(first.revision);
+  });
+  it("rejects cross-turn cursors before provider I/O and source revision changes on continuation", async () => {
+    const read = createCodexLocalProviderCapabilities(pagedProfile()).transcript!.readRange!;
+    const first = await read(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    const before = (await capturedRequests()).length;
+    await expect(read({...pageInput,selector:{...pageInput.selector,turnId:"turn-2"},cursor:first.nextCursor})).rejects.toThrow("scoped");
+    expect((await capturedRequests()).length).toBe(before);
+    const changed = createCodexLocalProviderCapabilities(pagedProfile({RUDDER_NATIVE_UPDATED_AT:"1726963201"})).transcript!.readRange!;
+    await expect(changed({...pageInput,cursor:first.nextCursor})).resolves.toMatchObject({availability:"incompatible",completeness:"unknown"});
+  });
+  it("fails closed on oversized frames before parsing or claiming completeness", async () => {
+    const read = createCodexLocalProviderCapabilities(pagedProfile({RUDDER_NATIVE_OVERSIZED:"1"})).transcript!.readRange!;
+    await expect(read(pageInput)).resolves.toMatchObject({items:[],nextCursor:null,completeness:"partial",limitReached:{reason:"item_bytes",maximum:4096}});
+  });
+  it("rejects item pages from a different native turn", async () => {
+    const read = createCodexLocalProviderCapabilities(pagedProfile({RUDDER_NATIVE_WRONG_TURN:"1"})).transcript!.readRange!;
+    await expect(read(pageInput)).resolves.toMatchObject({availability:"incompatible",completeness:"unknown"});
+  });
+  it("retains the unconsumed item after a frame cap and permits retry with a larger budget", async () => {
+    const read = createCodexLocalProviderCapabilities(pagedProfile({RUDDER_NATIVE_OVERSIZED:"1",RUDDER_NATIVE_OVERSIZED_INDEX:"1"})).transcript!.readRange!;
+    const first = await read({...pageInput,readerInput:{...pageInput.readerInput,limit:50}}) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(first.items?.map(item=>item.id)).toEqual(["user-1"]);
+    expect(first.limitReached).toEqual({reason:"item_bytes",maximum:4096});
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(first.completeness).toBe("partial");
+    const next = await read({...pageInput,cursor:first.nextCursor,readerInput:{...pageInput.readerInput,limit:50,maxBytes:524288,maxItemBytes:262144}}) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(next.items?.map(item=>item.id)).toEqual(["tool-1","tool-1:tool_result:1","assistant-1"]);
+    expect(next.completeness).toBe("complete");
+    expect(next.revision).toBe(first.revision);
+  });
+  it("respects output byte budgets across continuation without dropping projections", async () => {
+    const read = createCodexLocalProviderCapabilities(pagedProfile()).transcript!.readRange!;
+    let cursor: string|null = null;
+    const ids:unknown[]=[];
+    for(let count=0;count<10;count++) {
+      const page = await read({...pageInput,cursor,readerInput:{...pageInput.readerInput,limit:50,maxBytes:1400}}) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+      expect(page.limitReached).toBeUndefined();
+      expect((page.items??[]).reduce((bytes,item)=>bytes+Buffer.byteLength(JSON.stringify(item)),0)).toBeLessThanOrEqual(1400);
+      ids.push(...(page.items??[]).map(item=>item.id));cursor=page.nextCursor??null;
+      if(!cursor)break;
+    }
+    expect(ids).toEqual(["user-1","tool-1","tool-1:tool_result:1","assistant-1"]);
+  });
+  it("rejects a non-progressing provider cursor", async () => {
+    const first = await createCodexLocalProviderCapabilities(pagedProfile()).transcript!.readRange!(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    const read = createCodexLocalProviderCapabilities(pagedProfile({RUDDER_NATIVE_STUCK:"1"})).transcript!.readRange!;
+    await expect(read({...pageInput,cursor:first.nextCursor})).resolves.toMatchObject({availability:"incompatible",completeness:"unknown"});
+  });
+  it("does not infer full-snapshot history from thread/read method support", async () => {
+    const read = createCodexLocalProviderCapabilities(profile({methods:{threadRead:true}})).transcript!.readRange!;
+    await expect(read(pageInput)).resolves.toMatchObject({availability:"incompatible",completeness:"unknown"});
+    expect(await capturedRequests()).toEqual([]);
+  });
   it("rejects missing and mismatched native session attestations before opening a provider", async () => {
     const authorized = { ...binding, id: "binding-a", orgId: "org-a", workspaceBindingId: "workspace-a" };
     const transport = profile({ binding: authorized });
