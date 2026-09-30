@@ -115,7 +115,6 @@ vi.mock("@/pages/Chat.attachments", () => ({
 }));
 
 vi.mock("@/pages/Chat.messages", () => ({
-  AssistantDraftItem: () => <div>Assistant draft</div>,
   OptimisticUserDraftItem: ({ body }: { body: string }) => (
     <div data-testid="optimistic-user-message">{body}</div>
   ),
@@ -136,6 +135,9 @@ vi.mock("@/pages/Chat.messages", () => ({
   ),
   ChatMessageItem: ({
     message,
+    streamedAssistantBody,
+    draftPresentation = false,
+    draftState,
     actionPending,
     onApprovalAction,
     onConvertToIssue,
@@ -145,6 +147,9 @@ vi.mock("@/pages/Chat.messages", () => ({
     skillReferences,
   }: {
     message: ChatMessage;
+    streamedAssistantBody?: string;
+    draftPresentation?: boolean;
+    draftState?: ChatGenerationStreamDraft["state"];
     actionPending?: boolean;
     onApprovalAction?: (approvalId: string, action: "approve" | "reject" | "requestRevision", messageId: string) => void;
     onConvertToIssue?: (message: ChatMessage) => void;
@@ -156,12 +161,27 @@ vi.mock("@/pages/Chat.messages", () => ({
     onOpenFile?: (targetPath: string) => void;
     skillReferences?: Array<{ label?: string | null; displayName?: string | null }>;
   }) => {
+    const assistantBody = streamedAssistantBody ?? message.body;
+    const liveDraft = draftState === "streaming"
+      || draftState === "tool_busy"
+      || draftState === "finalizing";
+    if (
+      draftPresentation
+      && !assistantBody.trim()
+      && !liveDraft
+      && draftState !== "waiting_for_network"
+    ) return null;
     const inlineAnnotations = (
       message.structuredPayload?.inlineAnnotations ?? []
     ) as Array<ChatInlineAnnotationInput & { attachmentIds: string[] }>;
     return (
-      <div>
-        {message.body}
+      <div
+        data-testid={draftPresentation ? "side-chat-assistant-draft" : undefined}
+        data-stream-state={draftPresentation ? draftState : undefined}
+      >
+        {assistantBody.trim()
+          ? assistantBody
+          : draftPresentation && draftState !== "waiting_for_network" ? "Thinking" : null}
         {skillReferences?.map((reference, index) => (
           <span key={`${reference.label ?? "skill"}-${index}`} data-testid="side-chat-skill-reference">
             {reference.displayName ?? reference.label}
@@ -390,6 +410,7 @@ beforeEach(() => {
     items: [],
   });
   vi.mocked(chatsApi.createSideChat).mockReset().mockResolvedValue(sideConversation);
+  vi.mocked(chatsApi.destroySideChat).mockReset().mockResolvedValue(undefined);
   vi.mocked(chatsApi.stopMessageStream).mockReset().mockResolvedValue({
     stopped: true,
     controlActionId: "side-chat-stop-default",
@@ -417,6 +438,16 @@ afterEach(() => {
   latestSidePanel = null;
   host.remove();
 });
+
+async function waitForStreamingAssistantDraft() {
+  await vi.waitFor(() => {
+    const assistantDraft = host.querySelector<HTMLElement>(
+      '[data-testid="side-chat-assistant-draft"]',
+    );
+    expect(assistantDraft).not.toBeNull();
+    expect(assistantDraft?.getAttribute("data-stream-state")).toBe("streaming");
+  });
+}
 
 async function renderView({
   viewTarget = target,
@@ -962,7 +993,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       )?.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(host.textContent).toContain("Assistant draft"));
+    await waitForStreamingAssistantDraft();
 
     renderProvidedView(false);
     expect(host.querySelector('[data-testid="side-chat-process"]')).toBeNull();
@@ -1235,7 +1266,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
     act(() => {
       closePromise = closeHandlers.get(streamScopeKey)!();
     });
-    expect(chatsApi.destroySideChat).toHaveBeenCalledWith(sideConversation.id);
+    await vi.waitFor(() => expect(chatsApi.destroySideChat).toHaveBeenCalledWith(sideConversation.id));
 
     const draft = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Side Chat draft"]')!;
     changeTextarea(draft, "Do not start while close is pending.");
@@ -1424,7 +1455,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       )?.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(host.textContent).toContain("Assistant draft"));
+    await waitForStreamingAssistantDraft();
 
     const closeHandler = closeHandlers.get(sideChatGenerationScopeKey(sourceConversation.orgId, target));
     expect(closeHandler).toBeDefined();
@@ -1550,7 +1581,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
       )?.click();
       await Promise.resolve();
     });
-    await vi.waitFor(() => expect(host.textContent).toContain("Assistant draft"));
+    await waitForStreamingAssistantDraft();
 
     const streamScopeKey = sideChatGenerationScopeKey(sourceConversation.orgId, target);
     const closeHandler = closeHandlers.get(streamScopeKey);
@@ -1804,8 +1835,16 @@ describe("SideChatPanelView streaming reconciliation", () => {
     await vi.waitFor(() => expect(
       host.querySelector('[data-testid="optimistic-user-message"]')?.textContent,
     ).toBe(userMessage.body));
-    expect(host.textContent?.indexOf(userMessage.body)).toBeLessThan(
-      host.textContent?.indexOf("Assistant draft") ?? -1,
+    await waitForStreamingAssistantDraft();
+    const userDraft = host.querySelector('[data-testid="optimistic-user-message"]');
+    const assistantDraft = host.querySelector('[data-testid="side-chat-assistant-draft"]');
+    expect(userDraft).not.toBeNull();
+    expect(assistantDraft).not.toBeNull();
+    const orderedDraftNodes = Array.from(host.querySelectorAll(
+      '[data-testid="optimistic-user-message"], [data-testid="side-chat-assistant-draft"]',
+    ));
+    expect(orderedDraftNodes.indexOf(userDraft!)).toBeLessThan(
+      orderedDraftNodes.indexOf(assistantDraft!),
     );
 
     releaseStream();
@@ -2142,7 +2181,7 @@ describe("SideChatPanelView streaming reconciliation", () => {
     });
 
     await vi.waitFor(() => expect(host.textContent).toContain("Durable provider failure details"));
-    expect(host.textContent).not.toContain("Assistant draft");
+    expect(host.querySelector('[data-testid="side-chat-assistant-draft"]')).toBeNull();
   });
 });
 
