@@ -2,6 +2,7 @@ import {
   buildModelAttemptSpecs,
   isAgentRuntimeNetworkSuspension,
   parseOpenCodeNativeFailureDiagnostic,
+  type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
 } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
@@ -104,6 +105,14 @@ export function sideChatRuntimeAdmissionSnapshot(input: {
       ? { deferredForkDescriptor: input.deferredForkDescriptor }
       : {}),
   };
+}
+
+function adapterSupportsLocalAgentJwt(
+  adapter: ReturnType<typeof findServerAdapter>,
+  context: AgentRuntimeExecutionContext,
+): boolean {
+  return adapter?.supportsLocalAgentJwt === true
+    || adapter?.supportsLocalAgentJwtForContext?.(context) === true;
 }
 
 export function chatAssistantService(db: Db, storage?: StorageService) {
@@ -923,7 +932,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           && !piSessionRpcArgsMatchHostProfile(resumeSession.sessionParams, continuationTransport.rpcArgs)) {
           throw new Error("Pi continuation requires RPC args matching the host-owned transport profile.");
         }
-        return executeAdapterWithModelFallbacks(adapter, {
+        const executionContext: AgentRuntimeExecutionContext = {
           runId,
           agent: stubAgent({
             orgId: input.conversation.orgId,
@@ -976,14 +985,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               loadedSkills: runtimeSource.runtimeSkills,
             });
           },
-          authToken: adapter.supportsLocalAgentJwt
-            ? createLocalAgentJwt(
-              runtimeAgentId,
-              input.conversation.orgId,
-              runtimeAgentType,
-              runId,
-            ) ?? undefined
-            : undefined,
+          authToken: undefined,
           abortSignal: executionSignal,
           controlCoordinator: input.controlCoordinator,
           requestApproval: attemptPorts.requestApproval,
@@ -1003,19 +1005,30 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               await stdoutBuffer.append(chunk);
             }
           },
-        }, {
+        };
+        executionContext.authToken = adapterSupportsLocalAgentJwt(adapter, executionContext)
+          ? createLocalAgentJwt(
+            runtimeAgentId,
+            input.conversation.orgId,
+            runtimeAgentType,
+            runId,
+          ) ?? undefined
+          : undefined;
+        return executeAdapterWithModelFallbacks(adapter, executionContext, {
           resolveAdapter: findServerAdapter,
           resolveDriver: attemptPorts.resolveDriver,
           submitInputThroughDriver: true,
           nativeDriverRequired,
           onProviderDispatch: () => { providerDispatched = true; },
-          createAuthToken: (agentRuntimeType) =>
-            createLocalAgentJwt(
-              runtimeAgentId,
-              input.conversation.orgId,
-              agentRuntimeType,
-              runId,
-            ) ?? undefined,
+          createAuthToken: (agentRuntimeType, attemptAdapter, attemptContext) =>
+            adapterSupportsLocalAgentJwt(attemptAdapter, attemptContext)
+              ? createLocalAgentJwt(
+                runtimeAgentId,
+                input.conversation.orgId,
+                agentRuntimeType,
+                runId,
+              ) ?? undefined
+              : undefined,
           onAttemptStart: async (attempt, attemptAdapter) => {
             if (isExecutionInactive()) throw ownerLostError;
             const attemptRuntimeType = attempt.agentRuntimeType ?? runtimeAgentType;

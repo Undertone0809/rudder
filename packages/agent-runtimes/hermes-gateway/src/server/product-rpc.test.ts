@@ -15,6 +15,7 @@ import {
   deriveHermesProductRpcTranscriptBoundary,
   executeHermesProductRpcChat,
   forkHermesProductRpcNativeSession,
+  prepareHermesProductRpcMcpOverlay,
   HERMES_PRODUCT_RPC_TRANSPORT,
   HermesProductRpcForkError,
   type HermesProductRpcProfile,
@@ -26,6 +27,18 @@ const pythonCommand = (() => {
   } catch {
     return null;
   }
+})();
+const yamlPythonCommand = (() => {
+  for (const candidate of [process.env.RUDDER_HERMES_021_PYTHON_COMMAND, pythonCommand]) {
+    if (!candidate) continue;
+    try {
+      execFileSync(candidate, ["-c", "import yaml"], { stdio: "ignore" });
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 })();
 
 const HISTORY_FENCE_SEED_SCRIPT = [
@@ -664,6 +677,87 @@ function runInput(
 }
 
 describe("Hermes Product Gateway RPC", () => {
+  it.skipIf(!yamlPythonCommand)("keeps Rudder MCP identity per Run while resuming one native session", async () => {
+    const fixture = await makeProfile();
+    const configPath = path.join(fixture.profile.hermesHome, "config.yaml");
+    const statePath = path.join(fixture.profile.hermesHome, "state.db");
+    const originalConfig = "model: local-test\nmcp_servers:\n  external-local:\n    type: stdio\n    command: existing-server\n";
+    await fs.writeFile(configPath, originalConfig, { mode: 0o600 });
+    await fs.writeFile(statePath, "native session database");
+    const profile = { ...fixture.profile, hermesPythonCommand: yamlPythonCommand! };
+    const command = {
+      command: process.execPath,
+      args: ["mcp-server"],
+      env: { RUDDER_MCP_RUDDER_BIN: "/tmp/rudder-cli" },
+      provenance: "repo" as const,
+    };
+    const firstIdentity = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "run-token-first",
+      RUDDER_ORG_ID: "org-first",
+      RUDDER_AGENT_ID: "agent-first",
+      RUDDER_RUN_ID: "run-first",
+    };
+    const secondIdentity = {
+      RUDDER_API_URL: "http://127.0.0.1:3100",
+      RUDDER_API_KEY: "run-token-second",
+      RUDDER_ORG_ID: "org-second",
+      RUDDER_AGENT_ID: "agent-second",
+      RUDDER_RUN_ID: "run-second",
+    };
+    let first: Awaited<ReturnType<typeof prepareHermesProductRpcMcpOverlay>> | null = null;
+    let second: Awaited<ReturnType<typeof prepareHermesProductRpcMcpOverlay>> | null = null;
+    try {
+      first = await prepareHermesProductRpcMcpOverlay({ profile, mcp: { command, identity: firstIdentity } });
+      second = await prepareHermesProductRpcMcpOverlay({ profile, mcp: { command, identity: secondIdentity } });
+
+      const firstConfig = await fs.readFile(path.join(first.home, "config.yaml"), "utf8");
+      const secondConfig = await fs.readFile(path.join(second.home, "config.yaml"), "utf8");
+      const firstServer = JSON.parse(execFileSync(yamlPythonCommand!, [
+        "-c",
+        "import json,sys,yaml; print(json.dumps(yaml.safe_load(sys.stdin.read())['mcp_servers']))",
+      ], { input: firstConfig, encoding: "utf8" })) as Record<string, Record<string, unknown>>;
+      const secondServer = JSON.parse(execFileSync(yamlPythonCommand!, [
+        "-c",
+        "import json,sys,yaml; print(json.dumps(yaml.safe_load(sys.stdin.read())['mcp_servers']))",
+      ], { input: secondConfig, encoding: "utf8" })) as Record<string, Record<string, unknown>>;
+      const firstEnv = firstServer["rudder-tools"].env as Record<string, string>;
+      const secondEnv = secondServer["rudder-tools"].env as Record<string, string>;
+      const firstAlias = firstEnv.RUDDER_API_KEY.match(/^\$\{(.+)\}$/u)?.[1];
+      const secondAlias = secondEnv.RUDDER_API_KEY.match(/^\$\{(.+)\}$/u)?.[1];
+      const firstBootstrap = await fs.readFile(path.join(first.home, "rudder_product_rpc_bootstrap.py"), "utf8");
+
+      expect(first.home).not.toBe(second.home);
+      expect(await fs.realpath(path.join(first.home, "state.db"))).toBe(await fs.realpath(statePath));
+      expect(await fs.realpath(path.join(second.home, "state.db"))).toBe(await fs.realpath(statePath));
+      expect(firstServer).toHaveProperty("external-local");
+      expect(secondServer).toHaveProperty("external-local");
+      expect(firstAlias).toBeTruthy();
+      expect(secondAlias).toBeTruthy();
+      expect(firstAlias).not.toBe(secondAlias);
+      expect(first.env[firstAlias!]).toBe(firstIdentity.RUDDER_API_KEY);
+      expect(second.env[secondAlias!]).toBe(secondIdentity.RUDDER_API_KEY);
+      expect(firstConfig).not.toContain(firstIdentity.RUDDER_API_KEY);
+      expect(firstConfig).not.toContain(secondIdentity.RUDDER_API_KEY);
+      expect(secondConfig).not.toContain(firstIdentity.RUDDER_API_KEY);
+      expect(secondConfig).not.toContain(secondIdentity.RUDDER_API_KEY);
+      expect(firstBootstrap.indexOf('discover_mcp_tools(["rudder-tools"])'))
+        .toBeLessThan(firstBootstrap.indexOf("os.environ.pop(key, None)"));
+      expect(firstBootstrap.indexOf("os.environ.pop(key, None)"))
+        .toBeLessThan(firstBootstrap.indexOf("from tui_gateway.entry import main"));
+
+      const sessionParams = buildHermesProductRpcSessionParams({ sessionId: "native-session-shared", profile });
+      expect(sessionParams.hermesSessionId).toBe("native-session-shared");
+      expect(JSON.stringify(sessionParams)).not.toContain(firstIdentity.RUDDER_API_KEY);
+      expect(JSON.stringify(sessionParams)).not.toContain(secondIdentity.RUDDER_API_KEY);
+      expect(await fs.readFile(configPath, "utf8")).toBe(originalConfig);
+    } finally {
+      await first?.cleanup();
+      await second?.cleanup();
+      await fixture.cleanup();
+    }
+  });
+
   it("submits through a native session and round-trips the correlated approval choice", async () => {
     const fixture = await makeProfile();
     try {

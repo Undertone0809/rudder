@@ -575,6 +575,8 @@ export interface ServerAgentRuntimeModule {
    * execution attempt. Model selection must not affect this fingerprint.
    */
   getProviderReadinessFingerprint?: (ctx: AgentRuntimeExecutionContext) => Promise<string | null>;
+  /** Decide whether this exact execution context may receive a local per-Run JWT. */
+  supportsLocalAgentJwtForContext?: (ctx: AgentRuntimeExecutionContext) => boolean;
   testEnvironment(ctx: AgentRuntimeEnvironmentTestContext): Promise<AgentRuntimeEnvironmentTestResult>;
   parseStdoutLine?: StdoutLineParser;
   listSkills?: (ctx: AgentRuntimeSkillContext) => Promise<AgentRuntimeSkillSnapshot>;

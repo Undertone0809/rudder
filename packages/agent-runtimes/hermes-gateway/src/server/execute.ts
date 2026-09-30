@@ -7,6 +7,7 @@ import {
   asNumber,
   asString,
   asStringArray,
+  buildRudderEnv,
   parseObject,
   readRudderRuntimeSkillEntries,
   redactEnvForLogs,
@@ -14,6 +15,9 @@ import {
   RUDDER_PROMPT_SECTION_TAGS,
   wrapPromptSection,
 } from "@rudderhq/agent-runtime-utils/server-utils";
+import { preflightRudderMcpServer } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
+import { pickRudderMcpManagedEnv } from "@rudderhq/agent-runtime-utils/rudder-mcp";
+import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -30,9 +34,11 @@ import {
 } from "./native-protocol.js";
 import {
   executeHermesProductRpcChat,
+  HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE,
   HERMES_PRODUCT_RPC_TRANSPORT,
   isHermesProductRpcProfile,
   type HermesProductRpcProfile,
+  type HermesProductRpcRunMcp,
 } from "./product-rpc.js";
 
 const MAX_PROJECTED_EVENTS = 200;
@@ -565,6 +571,25 @@ function hermesChatBackend(
   return null;
 }
 
+export function supportsLocalAgentJwtForContext(ctx: AgentRuntimeExecutionContext): boolean {
+  if (ctx.agent.agentRuntimeType !== "hermes_gateway" || ctx.context.chatMode !== true) return false;
+  const config = parseObject(ctx.config);
+  const runtimeParams = parseObject(ctx.runtime.sessionParams);
+  const productProfile = hermesProductRpcProfile(
+    config,
+    providerProfileIdentity(config),
+    hermesWorkspaceIdentity(ctx),
+  );
+  if (!productProfile || !isHermesProductRpcProfile(productProfile)) return false;
+  return hermesChatBackend(
+    ctx.context,
+    config,
+    runtimeParams,
+    true,
+    Boolean(baseUrl(config.url)),
+  ) === "native_product_rpc";
+}
+
 function advertisesHermesRunSteer(capabilities: Record<string, unknown>): boolean {
   const features = asRecord(capabilities.features);
   const endpoints = asRecord(capabilities.endpoints);
@@ -672,6 +697,53 @@ async function executeHermesProductRpc(
   };
   const prompt = runMessage(ctx, skillProjection.prompt, "");
   const timeoutMs = positiveMs(config.timeoutMs ?? (asNumber(config.timeoutSec, 120) * 1000), 120_000);
+  let rudderMcp: HermesProductRpcRunMcp | undefined;
+  if (ctx.context.chatMode === true) {
+    const authToken = ctx.authToken?.trim();
+    if (!authToken) {
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        submissionPhase: "pre_submission",
+        ...(sessionId ? { sessionId, sessionDisplayId: sessionId, sessionParams: runtimeParams } : {}),
+        errorMessage: "Hermes local Product RPC requires a Rudder Run-scoped MCP credential.",
+        errorCode: "hermes_product_rpc_mcp_identity_missing",
+      };
+    }
+    const managedEnv = {
+      ...buildRudderEnv(ctx.agent),
+      RUDDER_API_KEY: authToken,
+      RUDDER_RUN_ID: ctx.runId,
+      RUDDER_BROWSER_ENABLED: "false",
+    };
+    try {
+      const command = await resolveRudderMcpCliCommand(__moduleDir);
+      const preflight = await preflightRudderMcpServer({
+        command,
+        runtimeEnv: { ...process.env, ...managedEnv },
+        managedEnv: pickRudderMcpManagedEnv(managedEnv),
+        browserEnabled: false,
+      });
+      if (!preflight.available) {
+        throw new Error(preflight.diagnostic ?? "Rudder MCP typed tools are unavailable.");
+      }
+      rudderMcp = {
+        command,
+        identity: pickRudderMcpManagedEnv(managedEnv),
+      };
+    } catch {
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        submissionPhase: "pre_submission",
+        ...(sessionId ? { sessionId, sessionDisplayId: sessionId, sessionParams: runtimeParams } : {}),
+        errorMessage: "Hermes local Rudder MCP typed tools could not be prepared.",
+        errorCode: "hermes_product_rpc_mcp_unavailable",
+      };
+    }
+  }
   if (ctx.onMeta) {
     await ctx.onMeta({
       agentRuntimeType: "hermes_gateway",
@@ -680,8 +752,9 @@ async function executeHermesProductRpc(
       commandNotes: [
         "Using the installed Hermes TUI Product Gateway over newline-delimited JSON-RPC stdio.",
         "Native session.create/session.resume and prompt.submit own product history; synthetic Rudder tool context is not sent as session continuity.",
+        ...(rudderMcp ? ["Rudder tools are attached as a trusted local stdio MCP with per-Run identity; the JWT is not sent to a remote Hermes gateway."] : []),
       ],
-      commandArgs: ["-m", "tui_gateway.entry"],
+      commandArgs: ["-m", rudderMcp ? HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE : "tui_gateway.entry"],
       env: redactEnvForLogs(profile.env ?? {}),
       prompt,
       agentInstructionStack: prompt,
@@ -696,6 +769,7 @@ async function executeHermesProductRpc(
   const secrets = [...new Set([...configuredHermesSecrets(config), ...(ctx.authToken ? [ctx.authToken] : [])])];
   const result = await executeHermesProductRpcChat({
     profile,
+    ...(rudderMcp ? { rudderMcp } : {}),
     sessionId,
     sessionParams: sessionId ? runtimeParams : null,
     workspace: nativeWorkspace,

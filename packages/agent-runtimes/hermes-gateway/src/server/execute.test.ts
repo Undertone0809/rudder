@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execute } from "./execute.js";
+import { execute, supportsLocalAgentJwtForContext } from "./execute.js";
 import { testEnvironment } from "./test.js";
 
 const servers: Server[] = [];
@@ -70,6 +70,33 @@ function context(config: Record<string, unknown>, overrides: Partial<AgentRuntim
     ...overrides,
   };
 }
+
+describe("Hermes local Run credential gate", () => {
+  const productRpcConfig = {
+    hermesPythonCommand: "/opt/hermes/python",
+    hermesSourcePath: "/opt/hermes/source",
+    hermesHome: "/tmp/hermes-profile",
+    hermesProviderVersion: "0.21.0",
+    hermesChatBackend: "native_product_rpc",
+  };
+
+  it("allows a Rudder JWT only for local Product RPC Chat, not HTTP or ACP", () => {
+    expect(supportsLocalAgentJwtForContext(context(productRpcConfig, {
+      context: { chatMode: true, chatConversationId: "chat-local-product-rpc" },
+    }))).toBe(true);
+    expect(supportsLocalAgentJwtForContext(context({
+      ...productRpcConfig,
+      hermesChatBackend: "native_runs_http",
+      url: "http://127.0.0.1:8642",
+    }, {
+      context: { chatMode: true, chatConversationId: "chat-remote-http" },
+    }))).toBe(false);
+    expect(supportsLocalAgentJwtForContext(context({ ...productRpcConfig, hermesChatBackend: "acp" }, {
+      context: { chatMode: true, chatConversationId: "chat-acp" },
+    }))).toBe(false);
+    expect(supportsLocalAgentJwtForContext(context(productRpcConfig))).toBe(false);
+  });
+});
 
 function json(res: ServerResponse, status: number, body: Record<string, unknown>): void {
   res.writeHead(status, { "content-type": "application/json" });

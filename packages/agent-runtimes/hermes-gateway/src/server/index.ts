@@ -1,4 +1,4 @@
-export { execute } from "./execute.js";
+export { execute, supportsLocalAgentJwtForContext } from "./execute.js";
 export {
   createHermesAcpProviderCapabilities,
   createHermesAcpProviderCapabilityResolver,

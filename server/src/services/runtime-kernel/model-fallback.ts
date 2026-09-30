@@ -31,7 +31,11 @@ export interface ModelFallbackExecutionOptions {
   submitInputThroughDriver?: boolean;
   /** Route already-prepared non-Chat execution contexts through the driver. */
   executeThroughDriver?: boolean;
-  createAuthToken?: (agentRuntimeType: string) => string | undefined;
+  createAuthToken?: (
+    agentRuntimeType: string,
+    adapter: ServerAgentRuntimeModule,
+    context: AgentRuntimeExecutionContext,
+  ) => string | undefined;
   onAttemptStart?: (attempt: ModelAttemptSpec, adapter: ServerAgentRuntimeModule) => Promise<void> | void;
   /** Called only when this attempt failed and the next fallback will run. */
   onAttemptFailure?: (attempt: ModelAttemptSpec, failure: AgentRuntimeExecutionResult | Error) => Promise<void> | void;
@@ -426,8 +430,10 @@ export async function executeAdapterWithModelFallbacks(
         config: attemptConfig,
         context: buildAttemptContext(ctx.context, attempt),
         runtime: attempt.isFallback ? clearRuntimeSession(ctx.runtime) : ctx.runtime,
-        authToken: options.createAuthToken?.(attemptRuntimeType) ?? ctx.authToken,
       };
+      attemptContext.authToken = options.createAuthToken
+        ? options.createAuthToken(attemptRuntimeType, attemptAdapter, attemptContext)
+        : ctx.authToken;
       const readinessFingerprint = await attemptAdapter.getProviderReadinessFingerprint?.(
         attemptContext,
       ) ?? null;

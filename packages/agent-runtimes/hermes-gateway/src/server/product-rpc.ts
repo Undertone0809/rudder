@@ -8,10 +8,13 @@ import {
   type AgentRuntimeTransientInputKind,
   type AgentRuntimeTransientInputRequest,
   type AgentRuntimeTransientInputResult,
+  type RudderMcpCliCommand,
+  type RudderMcpManagedEnv,
 } from "@rudderhq/agent-runtime-utils";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { HermesAcpBinding, HermesAcpForkResult, HermesAcpProfile, HermesAcpWorkspace } from "./native-protocol.js";
@@ -26,6 +29,7 @@ import {
 export const HERMES_PRODUCT_RPC_TRANSPORT = "hermes-tui-gateway-stdio";
 export const HERMES_PRODUCT_RPC_VERIFIED_VERSIONS = ["0.21.0"] as const;
 export const HERMES_PRODUCT_RPC_FORK_HELPER_VERSION = "rudder-hermes-product-fork-v1";
+export const HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE = "rudder_product_rpc_bootstrap";
 
 const MAX_EVENTS = 200;
 const MAX_EVENT_BYTES = 64 * 1024;
@@ -68,6 +72,10 @@ export type HermesProductRpcProfile = HermesAcpProfile & {
   hermesPythonCommand: string;
   hermesSourcePath: string;
   hermesHome: string;
+};
+export type HermesProductRpcRunMcp = {
+  command: RudderMcpCliCommand;
+  identity: Pick<RudderMcpManagedEnv, "RUDDER_API_URL" | "RUDDER_API_KEY" | "RUDDER_ORG_ID" | "RUDDER_AGENT_ID" | "RUDDER_RUN_ID">;
 };
 type HermesProductRpcEvent = { type: string; payload: JsonRecord; sessionId: string | null };
 export type HermesProductRpcClient = {
@@ -231,15 +239,175 @@ export function validateHermesProductRpcSession(input: {
   return null;
 }
 
-function rpcProfile(profile: HermesProductRpcProfile): HermesAcpProfile {
+type HermesProductRpcMcpOverlay = {
+  home: string;
+  env: Record<string, string>;
+  cleanup(): Promise<void>;
+};
+
+const MCP_ENV_KEYS = [
+  "RUDDER_API_URL",
+  "RUDDER_API_KEY",
+  "RUDDER_ORG_ID",
+  "RUDDER_AGENT_ID",
+  "RUDDER_RUN_ID",
+] as const;
+
+const WRITE_MCP_CONFIG_SOURCE = String.raw`
+import json, os, sys, yaml
+
+source_path, target_path = sys.argv[1], sys.argv[2]
+try:
+    with open(source_path, "r", encoding="utf-8") as source:
+        config = yaml.safe_load(source) or {}
+except FileNotFoundError:
+    config = {}
+if not isinstance(config, dict):
+    raise SystemExit(2)
+servers = config.get("mcp_servers")
+if servers is None:
+    servers = {}
+if not isinstance(servers, dict):
+    raise SystemExit(3)
+rudder_server = json.load(sys.stdin)
+servers["rudder-tools"] = rudder_server
+config["mcp_servers"] = servers
+fd = os.open(target_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as target:
+    yaml.safe_dump(config, target, sort_keys=False, allow_unicode=True)
+`;
+
+function runScopedMcpBootstrap(environmentKeys: readonly string[]): string {
+  return [
+    "import os",
+    "from tools.mcp_tool_discovery import discover_mcp_tools",
+    'registered = discover_mcp_tools(["rudder-tools"])',
+    'if not registered: raise SystemExit("Rudder MCP did not register any typed tools")',
+    `for key in ${JSON.stringify(environmentKeys)}: os.environ.pop(key, None)`,
+    "from tui_gateway.entry import main",
+    "main()",
+    "",
+  ].join("\n");
+}
+
+async function writeRunScopedMcpConfig(input: {
+  profile: HermesProductRpcProfile;
+  sourcePath: string;
+  targetPath: string;
+  server: Record<string, unknown>;
+}): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const helperEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      PYTHONPATH: path.resolve(input.profile.hermesSourcePath),
+      PYTHONDONTWRITEBYTECODE: "1",
+    };
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(input.profile.hermesPythonCommand, [
+        "-c",
+        WRITE_MCP_CONFIG_SOURCE,
+        input.sourcePath,
+        input.targetPath,
+      ], {
+        cwd: path.resolve(input.profile.hermesSourcePath),
+        env: helperEnv,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch {
+      reject(new Error("Hermes Product RPC could not prepare a run-scoped MCP config."));
+      return;
+    }
+    child.stdout.resume();
+    child.stderr.resume();
+    child.once("error", () => reject(new Error("Hermes Product RPC could not prepare a run-scoped MCP config.")));
+    child.once("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error("Hermes Product RPC could not prepare a run-scoped MCP config."));
+    });
+    child.stdin.end(JSON.stringify(input.server));
+  });
+}
+
+export async function prepareHermesProductRpcMcpOverlay(input: {
+  profile: HermesProductRpcProfile;
+  mcp: HermesProductRpcRunMcp;
+}): Promise<HermesProductRpcMcpOverlay> {
+  const identity = Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, input.mcp.identity[key]?.trim() ?? ""])) as Record<typeof MCP_ENV_KEYS[number], string>;
+  if (MCP_ENV_KEYS.some((key) => !identity[key])) {
+    throw new Error("Hermes Product RPC requires a complete local Rudder Run identity.");
+  }
+
+  const originalHome = path.resolve(input.profile.hermesHome);
+  const originalHomeStat = await fs.stat(originalHome).catch(() => null);
+  if (!originalHomeStat?.isDirectory()) {
+    throw new Error("Hermes Product RPC HERMES_HOME is unavailable for a run-scoped MCP overlay.");
+  }
+
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-hermes-rpc-run-"));
+  let cleaned = false;
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    await fs.rm(home, { recursive: true, force: true });
+  };
+
+  try {
+    await fs.chmod(home, 0o700);
+    for (const entry of await fs.readdir(originalHome, { withFileTypes: true })) {
+      if (["config.yaml", ".env", ".op.env"].includes(entry.name)) continue;
+      await fs.symlink(path.join(originalHome, entry.name), path.join(home, entry.name));
+    }
+    for (const name of [".env", ".op.env"]) {
+      const sourcePath = path.join(originalHome, name);
+      const content = await fs.readFile(sourcePath).catch(() => null);
+      if (content) await fs.writeFile(path.join(home, name), content, { mode: 0o600, flag: "wx" });
+    }
+
+    const suffix = randomUUID().replaceAll("-", "").toUpperCase();
+    const aliases = Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `RUDDER_PRODUCT_RPC_${suffix}_${key}`])) as Record<typeof MCP_ENV_KEYS[number], string>;
+    const env = Object.fromEntries(MCP_ENV_KEYS.map((key) => [aliases[key], identity[key]]));
+    const serverEnv = {
+      ...(input.mcp.command.env ?? {}),
+      ...Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `\u0024{${aliases[key]}}`])),
+      RUDDER_BROWSER_ENABLED: "false",
+    };
+    const server = {
+      type: "stdio",
+      command: input.mcp.command.command,
+      args: [...input.mcp.command.args],
+      env: serverEnv,
+    };
+    await writeRunScopedMcpConfig({
+      profile: input.profile,
+      sourcePath: path.join(originalHome, "config.yaml"),
+      targetPath: path.join(home, "config.yaml"),
+      server,
+    });
+    await fs.writeFile(
+      path.join(home, `${HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE}.py`),
+      runScopedMcpBootstrap(Object.values(aliases)),
+      { mode: 0o600, flag: "wx" },
+    );
+    return { home, env, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+function rpcProfile(profile: HermesProductRpcProfile, overlay?: HermesProductRpcMcpOverlay | null): HermesAcpProfile {
   return {
     ...profile,
     command: profile.hermesPythonCommand,
-    args: ["-m", "tui_gateway.entry"],
+    args: overlay ? ["-m", HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE] : ["-m", "tui_gateway.entry"],
     env: {
       ...(profile.env ?? {}),
-      HERMES_HOME: path.resolve(profile.hermesHome),
-      PYTHONPATH: [path.resolve(profile.hermesSourcePath), profile.env?.PYTHONPATH].filter(Boolean).join(path.delimiter),
+      ...(overlay?.env ?? {}),
+      HERMES_HOME: overlay?.home ?? path.resolve(profile.hermesHome),
+      PYTHONPATH: [overlay?.home, path.resolve(profile.hermesSourcePath), profile.env?.PYTHONPATH]
+        .filter(Boolean).join(path.delimiter),
     },
   };
 }

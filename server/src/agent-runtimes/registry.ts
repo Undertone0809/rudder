@@ -36,6 +36,7 @@ import {
 import {
   execute as hermesGatewayExecute,
   testEnvironment as hermesGatewayTestEnvironment,
+  supportsLocalAgentJwtForContext as hermesSupportsLocalAgentJwtForContext,
   listHermesGatewaySkills,
   syncHermesGatewaySkills,
 } from "@rudderhq/agent-runtime-hermes-gateway/server";
@@ -200,6 +201,7 @@ const hermesGatewayAdapter: ServerAgentRuntimeModule = {
   syncSkills: syncHermesGatewaySkills,
   models: hermesGatewayModels,
   supportsLocalAgentJwt: false,
+  supportsLocalAgentJwtForContext: hermesSupportsLocalAgentJwtForContext,
   agentConfigurationDoc: hermesGatewayAgentConfigurationDoc,
 };
 
