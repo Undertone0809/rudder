@@ -27,8 +27,6 @@ import {
 import { useOptionalSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useChatRuntimeSensitiveInput } from "@/hooks/useChatRuntimeSensitiveInput";
-import { rememberChatAssistantStreamRowIdentity } from "@/pages/Chat.timeline";
-import { chatAgentUsesCodexAppServer } from "@/pages/Chat.timeline";
 import { activeChatStreamAssistantMessageId } from "@/lib/chat-stream-state";
 import { formatChatAgentLabel } from "@/lib/agent-labels";
 import { selectableChatAgents } from "@/lib/chat-agent-selection";
@@ -46,6 +44,7 @@ import {
   buildChatSkillReferenceOptions,
   filterChatSkillOptions,
 } from "@/lib/chat-skill-options";
+import { activeChatStreamAssistantMessageId } from "@/lib/chat-stream-state";
 import { resolveLocalFileTarget } from "@/lib/local-file-targets";
 import { appendSkillReferencesToDraft } from "@/lib/organization-skill-picker";
 import { queryKeys } from "@/lib/queryKeys";
@@ -85,6 +84,7 @@ import {
   shouldHandlePlainChatLinkClick
 } from "@/pages/Chat.parts";
 import { ChatPlanModeChip, ChatPlanModeMenuToggle } from "@/pages/Chat.plan-mode-controls";
+import { chatAgentUsesCodexAppServer, rememberChatAssistantStreamRowIdentity } from "@/pages/Chat.timeline";
 import { EMPTY_CHAT_BODY_SHA256, applyChatStreamProgressEvent } from "@/pages/Chat.workspace-helpers";
 import type {
   Agent,

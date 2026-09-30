@@ -2,7 +2,6 @@ import type {
   ChatAttachment,
   ChatContextLink,
   ChatConversation,
-  ContinueChatQueuedMessage,
   ChatInlineAnnotationInput,
   ChatIssueCreationMode,
   ChatMessage,
@@ -17,6 +16,7 @@ import type {
   ChatStreamEvent,
   ChatStreamTranscriptEntry,
   ChatWorkManifestResponse,
+  ContinueChatQueuedMessage,
   ForkChatConversation,
 } from "@rudderhq/shared";
 import {

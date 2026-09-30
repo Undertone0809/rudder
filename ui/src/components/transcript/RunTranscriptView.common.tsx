@@ -1,3 +1,4 @@
+import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import {
   isInternalChatTranscriptLifecycleEntry,
   type AgentRole,
@@ -22,7 +23,6 @@ import {
   Wrench
 } from "lucide-react";
 import type { TranscriptEntry } from "../../agent-runtimes";
-import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import { stripBenignStderr } from "../../lib/benign-stderr";
 import { cn } from "../../lib/utils";
 import { type MarkdownLinkClickHandler } from "../MarkdownBody";

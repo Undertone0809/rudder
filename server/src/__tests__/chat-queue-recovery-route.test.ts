@@ -22,8 +22,8 @@ import path from "node:path";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { errorHandler } from "../middleware/index.js";
-import { chatRoutes } from "../routes/chats.js";
 import type { ChatBackgroundRuntime } from "../routes/chat-background-runtime.js";
+import { chatRoutes } from "../routes/chats.js";
 import { chatService } from "../services/chats.js";
 
 type EmbeddedPostgresInstance = {

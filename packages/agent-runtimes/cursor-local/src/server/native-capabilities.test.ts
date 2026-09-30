@@ -2,9 +2,9 @@ import type { AgentRuntimeControlHandle, ChatAskUserRequest } from "@rudderhq/ag
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
-import { sessionCodec } from "./index.js";
+import { describe, expect, it, vi } from "vitest";
 import { parseCursorStdoutLine } from "../ui/parse-stdout.js";
+import { sessionCodec } from "./index.js";
 import {
   createCursorLocalProviderCapabilities,
   createCursorLocalProviderCapabilityResolver,

@@ -13,7 +13,6 @@ import type {
   AgentRuntimeState,
   AgentSkillAnalytics,
   AgentSkillEntry,
-  OrganizationSkillFileDetail,
   AgentSkillSnapshot,
   AgentTaskSession,
   Approval,
@@ -25,6 +24,7 @@ import type {
   McpAgentConnectionSummary,
   McpProviderAvailability,
   OrganizationSkillCreateRequest,
+  OrganizationSkillFileDetail,
   UpdateAgentIntegrationSettings,
   UpdateCustomIntegrationBinding,
 } from "@rudderhq/shared";

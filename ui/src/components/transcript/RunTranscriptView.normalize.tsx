@@ -1,6 +1,6 @@
+import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import type { ChatMessage } from "@rudderhq/shared";
 import type { TranscriptEntry } from "../../agent-runtimes";
-import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
 import { asRecord, ChatTranscriptTurn, compactWhitespace, filterRoutineStdout, humanizeLabel, isInternalAgentInstructionText, isInternalTranscriptLifecycleEntry, isTurnStartedText, pluralize, shouldCollapseEventText, TranscriptBlock, transcriptBlockStableKey, TranscriptDensity, TranscriptTodoListItem, TranscriptToolSemanticInfo, truncate } from "./RunTranscriptView.common";
 import { describeToolSemanticInfo, extractSkillSlugFromEntryPath, extractToolUseId, isCommandTool, parseStructuredToolResult, readStringField } from "./RunTranscriptView.semantic";
 import { parseFileChangeSystemText, parseMemoryUpdateSystemText } from "./RunTranscriptView.shell";

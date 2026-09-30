@@ -24,12 +24,12 @@ import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import type { StorageService } from "../storage/types.js";
 import { logActivity } from "./activity-log.js";
 import { agentService } from "./agents.js";
-import { authorizeQueuedRecovery, hasQueueRecoveryActiveExecution, matchesQueueRecoveryAuthorization } from "./chat-queue-recovery.js";
 import { approvalService } from "./approvals.js";
 import { ensureChatFamilyGroup } from "./chat-family-groups.js";
 import { chatGenerationProtocolService } from "./chat-generation-protocol.js";
 import { validateCanonicalChatInlineAnnotations } from "./chat-inline-annotation-validation.js";
 import { selectedChatMessageBranchCondition } from "./chat-message-branch.js";
+import { authorizeQueuedRecovery, hasQueueRecoveryActiveExecution, matchesQueueRecoveryAuthorization } from "./chat-queue-recovery.js";
 import {
   hydrateQueuedMessage,
   materializeQueuedUserMessage,

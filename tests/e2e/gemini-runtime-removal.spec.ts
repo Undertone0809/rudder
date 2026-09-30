@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { agents, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
+import { agents, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
 import { E2E_DATABASE_URL, E2E_INSTANCE_ROOT } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);

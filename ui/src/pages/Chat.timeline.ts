@@ -1,7 +1,7 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
 import {
-  activeChatStreamTimelineInsertionIndex,
+  activeChatStreamTimelineInsertionIndex
 } from "@/lib/chat-stream-state";
 import type { Agent, ChatConversation, ChatMessage } from "@rudderhq/shared";
 

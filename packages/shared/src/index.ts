@@ -1,4 +1,3 @@
-export { continueChatQueuedMessageSchema, type ContinueChatQueuedMessage } from "./validators/chat.js";
 export {
   BROWSER_SHORTCUT_ACTIONS,
   isBrowserShortcutAction,
@@ -108,6 +107,7 @@ export {
   type CreateAppBuilderApp,
   type UpdateAppBuilderBuild
 } from "./validators/app-builder.js";
+export { continueChatQueuedMessageSchema, type ContinueChatQueuedMessage } from "./validators/chat.js";
 
 export {
   MCP_AGENT_ACCESS_MODES,

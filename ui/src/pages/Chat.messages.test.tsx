@@ -20,14 +20,14 @@ import {
   StreamTranscriptItem,
 } from "./Chat.messages";
 import {
+  buildChatTimelineRows,
   chatAssistantMessageRowKey,
   chatAssistantStreamRowKey,
-  buildChatTimelineRows,
-  chatStreamDraftAssistantMessage,
   chatFinalAnswerFromTranscript,
   chatProcessTranscriptEntries,
-  rememberChatAssistantStreamRowIdentity,
+  chatStreamDraftAssistantMessage,
   chatStreamingAssistantBody,
+  rememberChatAssistantStreamRowIdentity,
 } from "./Chat.timeline";
 
 const markdownMentionsMock = vi.hoisted(() => ({

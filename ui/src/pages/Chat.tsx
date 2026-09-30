@@ -191,8 +191,8 @@ import {
   type ChatInlineAnnotationInput,
   type ChatMessage,
   type ChatOperationProposalDecisionAction,
-  type ChatQueuedMessage,
   type ChatQueueSnapshot,
+  type ChatQueuedMessage,
   type ChatWorkManifestItem
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -244,9 +244,9 @@ import { ChatSideChatSlashCommandMenu } from "./Chat.side-chat-slash-command";
 import { ChatSidePanelActions } from "./Chat.side-panel-actions";
 import {
   buildChatTimelineRows,
+  chatAgentUsesCodexAppServer,
   chatAssistantMessageRowKey,
   chatAssistantStreamRowKey,
-  chatAgentUsesCodexAppServer,
   chatStreamDraftAssistantMessage,
   chatStreamingAssistantBody,
   rememberChatAssistantStreamRowIdentity,

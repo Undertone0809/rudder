@@ -9,11 +9,13 @@ import {
   useLegacyChatTranscripts,
 } from "@/components/transcript/useAgentRunTranscripts";
 import type { ChatStreamDraft } from "@/context/ChatGenerationContext";
+import { activeChatStreamTimelineInsertionIndex } from "@/lib/chat-stream-state";
 import {
   ChatMessageItem,
   OptimisticUserDraftItem,
   StreamTranscriptItem,
 } from "@/pages/Chat.messages";
+import type { ApprovalAction } from "@/pages/Chat.parts";
 import {
   chatAssistantMessageRowKey,
   chatAssistantStreamRowKey,
@@ -21,8 +23,6 @@ import {
   chatStreamingAssistantBody,
   type ChatAssistantRowIdentityMap,
 } from "@/pages/Chat.timeline";
-import { activeChatStreamTimelineInsertionIndex } from "@/lib/chat-stream-state";
-import type { ApprovalAction } from "@/pages/Chat.parts";
 import type {
   Agent,
   ChatConversation,

@@ -4,8 +4,8 @@ import {
 } from "@/components/chat/ResponseAnnotations";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToolCallFailureIndicators } from "@/context/ThemeContext";
-import { chatInlineAnnotationsFromStructuredPayload } from "@rudderhq/shared";
 import type { CursorAcpTranscriptEvent } from "@rudderhq/agent-runtime-utils";
+import { chatInlineAnnotationsFromStructuredPayload } from "@rudderhq/shared";
 import {
   Check,
   ChevronRight,
