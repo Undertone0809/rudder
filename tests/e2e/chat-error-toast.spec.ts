@@ -272,9 +272,16 @@ test.describe("Chat error recovery", () => {
     await expect(failedMessage).toHaveCount(0);
     await expect(recoveredMessage.getByRole("button", { name: "Copy message" })).toBeVisible({ timeout: 15_000 });
     await expect(recoveredMessage.getByRole("button", { name: "Fork from here" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("chat-user-message-bubble").filter({
+      hasText: "Please retry this failed request",
+    })).toHaveCount(1);
     const originalRun = await page.request.get(`/api/agent-runs/${failedRunId}`);
     expect(originalRun.ok()).toBe(true);
     expect(await originalRun.json()).toMatchObject({ id: failedRunId, status: "failed" });
+    await page.screenshot({
+      path: join(tmpdir(), `rudder-chat-retry-completed-${Date.now()}.png`),
+      fullPage: true,
+    });
   });
 
   test("refreshes a completed assistant answer as another turn variant", async ({ page }) => {
