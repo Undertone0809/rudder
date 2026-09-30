@@ -1210,41 +1210,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
     res.json(snapshot);
   });
 
-  router.get("/agents/:id/skills/file", async (req, res) => {
-    const id = req.params.id as string;
-    const agent = await svc.getById(id);
-    if (!agent) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
-    }
-    await assertCanReadAgent(req, agent);
-
-    const selectionKey = typeof req.query.selectionKey === "string"
-      ? req.query.selectionKey.trim()
-      : "";
-    const relativePath = typeof req.query.path === "string" ? req.query.path : "";
-    if (!selectionKey || !relativePath) {
-      res.status(400).json({ error: "Skill selection and relative file path are required" });
-      return;
-    }
-
-    const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-      agent.orgId,
-      agent.agentRuntimeConfig,
-    );
-    const file = await organizationSkills.readAgentSkillFile(
-      agent,
-      runtimeConfig,
-      selectionKey,
-      relativePath,
-    );
-    if (!file) {
-      res.status(404).json({ error: "Agent Skill file not found" });
-      return;
-    }
-    res.json(file);
-  });
-
   router.get("/agents/:id/skills/analytics", async (req, res) => {
     const id = req.params.id as string;
     const agent = await svc.getById(id);
