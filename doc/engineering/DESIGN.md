@@ -351,6 +351,32 @@ Rules:
   navigation in `ThreeColumnContextSidebar` (or a dedicated sidebar selected
   there), and use the shared `workspace-context-card` /
   `workspace-main-card` surfaces.
+- Compose shared sidebar chrome with `WorkspaceContextSidebar` as the outer
+  semantic flex region, `WorkspaceContextHeader` for the non-scrolling header surface,
+  and `WorkspaceSidebarCollapseButton` only when the caller owns a collapse
+  action. The caller owns the header's title and action wrappers and the body
+  structure. The surrounding layout owns the sidebar column width. Each
+  workspace owns its overflow containers, scroll refs, and virtualization.
+  Keep `Sources` and other work details inside the main work region instead of
+  extending the navigation column. Import these primitives from
+  `ui/src/components/workbench/WorkspaceContextSidebar.tsx`. Window dragging is
+  opt-in through `desktop-window-drag` on the header; interactive controls stay
+  `desktop-window-no-drag`. Library may retain its editor-specific header.
+  For example, with `scrollRef` provided by `useScrollbarActivityRef`:
+
+  ```tsx
+  <WorkspaceContextSidebar>
+    <WorkspaceContextHeader>
+      <div className="min-w-0 flex-1">
+        <h2>Workspace</h2>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <WorkspaceSidebarCollapseButton onClick={onCollapse} />
+      </div>
+    </WorkspaceContextHeader>
+    <nav ref={scrollRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto">...</nav>
+  </WorkspaceContextSidebar>
+  ```
 - A workspace that needs document-style tabs should follow the Messenger
   workbench composition: a separate compact tab card above the main work card.
   Use `WorkspaceTab` for tab chrome and interaction rather than introducing a
