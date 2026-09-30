@@ -28,15 +28,6 @@ import {
   syncCursorSkills,
 } from "@rudderhq/agent-runtime-cursor-local/server";
 import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
-import { agentConfigurationDoc as geminiAgentConfigurationDoc, models as geminiModels } from "@rudderhq/agent-runtime-gemini-local";
-import {
-  execute as geminiExecute,
-  sessionCodec as geminiSessionCodec,
-  testEnvironment as geminiTestEnvironment,
-  listGeminiSkills,
-  syncGeminiSkills,
-} from "@rudderhq/agent-runtime-gemini-local/server";
-import { parseGeminiStdoutLine } from "@rudderhq/agent-runtime-gemini-local/ui";
 import {
   agentConfigurationDoc as hermesGatewayAgentConfigurationDoc,
   models as hermesGatewayModels,
@@ -189,20 +180,6 @@ const cursorLocalAdapter: ServerAgentRuntimeModule = {
   agentConfigurationDoc: cursorAgentConfigurationDoc,
 };
 
-const geminiLocalAdapter: ServerAgentRuntimeModule = {
-  type: "gemini_local",
-  execute: geminiExecute,
-  testEnvironment: geminiTestEnvironment,
-  parseStdoutLine: parseGeminiStdoutLine,
-  listSkills: listGeminiSkills,
-  syncSkills: syncGeminiSkills,
-  sessionCodec: geminiSessionCodec,
-  sessionManagement: getAgentRuntimeSessionManagement("gemini_local") ?? undefined,
-  models: geminiModels,
-  supportsLocalAgentJwt: true,
-  agentConfigurationDoc: geminiAgentConfigurationDoc,
-};
-
 const openclawGatewayAdapter: ServerAgentRuntimeModule = {
   type: "openclaw_gateway",
   execute: openclawGatewayExecute,
@@ -271,7 +248,6 @@ const adaptersByType = new Map<string, ServerAgentRuntimeModule>(
     openCodeLocalAdapter,
     piLocalAdapter,
     cursorLocalAdapter,
-    geminiLocalAdapter,
     openclawGatewayAdapter,
     hermesGatewayAdapter,
     hermesLocalAdapter,
@@ -304,6 +280,9 @@ function mergeRuntimeModels(
 }
 
 export function getServerAdapter(type: string): ServerAgentRuntimeModule {
+  if (type === "gemini_local") {
+    throw new Error("Gemini CLI runtime has been removed; reconfigure this agent with a supported runtime.");
+  }
   const adapter = adaptersByType.get(type);
   if (!adapter) {
     // Fall back to process adapter for unknown types

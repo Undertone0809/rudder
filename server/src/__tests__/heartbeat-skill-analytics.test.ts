@@ -823,6 +823,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
     ]);
   });
 
+
   it("infers used skills from Gemini activate_skill tool calls in stored local runtime logs", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { parseRemovedGeminiLocalHistoryLine } from "@rudderhq/agent-runtime-utils/gemini-cli-history";
 import {
   agents,
   agentWakeupRequests,
@@ -578,8 +579,9 @@ export function createHeartbeatMiscHandlers(context: any) {
           return null;
         }
       })();
-      if (!adapter) return [];
-      const parser = adapter.parseStdoutLine ?? null;
+      const parser = row.agentRuntimeType === "gemini_local"
+        ? parseRemovedGeminiLocalHistoryLine
+        : adapter?.parseStdoutLine ?? null;
       if (!parser) return [];
 
       const limitBytes = Math.min(Math.max(row.logBytes ?? 0, 256_000), 2_000_000);

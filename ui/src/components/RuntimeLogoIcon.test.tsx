@@ -48,7 +48,6 @@ describe("RuntimeLogoIcon", () => {
     const expectedSources = {
       claude_local: "/brands/claude-logo.svg",
       codex_local: "/brands/openai-logo.svg",
-      gemini_local: "/brands/google-gemini-logo.svg",
       pi_local: "/brands/pi-logo.svg",
       cursor: "/brands/cursor-logo.svg",
     };

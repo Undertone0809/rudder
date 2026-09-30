@@ -25,11 +25,6 @@ export const runtimeLogoSources: Record<string, RuntimeLogoSource> = {
     sourceSha256: "1da76493b0ffed215d15e33b0ef5c9bd81c11ea170eac1f7690fecad0453410b",
     className: "dark:invert",
   },
-  gemini_local: {
-    src: "/brands/google-gemini-logo.svg",
-    sourceUrl: "https://cdn.simpleicons.org/googlegemini",
-    sourceSha256: "404eba6940a54e63d40edcce2d2e7cb2b3dbfec765e7a1d523662b6f4e0d6747",
-  },
   pi_local: {
     src: "/brands/pi-logo.svg",
     sourceUrl: "https://pi.dev/logo-auto.svg",

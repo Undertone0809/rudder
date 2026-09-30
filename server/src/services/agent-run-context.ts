@@ -36,7 +36,6 @@ const DEFAULT_MANAGED_INSTRUCTION_RUNTIMES = new Set([
   "claude_local",
   "codex_local",
   "cursor",
-  "gemini_local",
   "opencode_local",
   "pi_local",
 ]);

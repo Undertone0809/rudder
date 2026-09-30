@@ -479,7 +479,6 @@ const runtimeProviders: Record<string, string> = {
   claude_local: "Anthropic",
   codex_local: "OpenAI",
   cursor: "Cursor",
-  gemini_local: "Google",
   hermes_gateway: "Hermes",
   hermes_local: "Hermes",
   http: "HTTP",

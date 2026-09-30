@@ -394,10 +394,10 @@ If no safe identity is available, `git commit` fails with Git's auto-detection-d
 instead of creating a `*@*.local` fallback commit.
 
 Local runtimes expose `RUDDER_OPERATOR_HOME` for host desktop and CLI state. Codex, Claude, Pi,
-Gemini, Cursor, and OpenCode local runs keep child `HOME` as the operator home and use
+Cursor, and OpenCode local runs keep child `HOME` as the operator home and use
 Rudder-managed provider sidecars for runtime state and selected skills. Runtimes with a verified
-provider allowlist surface use it directly (`CODEX_HOME`, Claude `--add-dir`, Pi `--skill`, and
-Gemini `GEMINI_CLI_HOME` plus `--extensions ""`). OpenCode points `OPENCODE_CONFIG` and XDG state at
+provider allowlist surface use it directly (`CODEX_HOME`, Claude `--add-dir`, and Pi `--skill`).
+OpenCode points `OPENCODE_CONFIG` and XDG state at
 Rudder-managed sanitized runtime state and injects selected Rudder `SKILL.md` content through
 Rudder's prompt path because its CLI does not expose a verified skill-directory allowlist. Cursor also
 uses prompt injection for selected Rudder `SKILL.md` content;

@@ -59,15 +59,6 @@ test.describe("Agent configuration advanced options", () => {
             checkedAt: "2026-07-07T00:00:00.000Z",
           },
           {
-            agentRuntimeType: "gemini_local",
-            status: "unavailable",
-            command: "gemini",
-            resolvedCommand: null,
-            message: "Gemini CLI default command was not found on PATH.",
-            hint: "Install the gemini CLI, or set a custom command path in Advanced options and run Test runtime chain.",
-            checkedAt: "2026-07-07T00:00:00.000Z",
-          },
-          {
             agentRuntimeType: "openclaw_gateway",
             status: "unknown",
             command: null,
@@ -131,11 +122,11 @@ test.describe("Agent configuration advanced options", () => {
     await page.getByRole("button", { name: "Codex (local)", exact: true }).first().click();
     const runtimeTypePopover = page.locator("[data-radix-popper-content-wrapper]").last();
     await expect(runtimeTypePopover.getByText("Ready on this machine", { exact: true })).toBeVisible();
-    await expect(runtimeTypePopover.getByText("Needs setup", { exact: true })).toBeVisible();
+    await expect(runtimeTypePopover.getByText("Needs setup", { exact: true })).toHaveCount(0);
     await expect(runtimeTypePopover.getByText("Claude Code (local)", { exact: true })).toBeVisible();
     await expect(runtimeTypePopover.getByText("Ready", { exact: true }).first()).toBeVisible();
-    await expect(runtimeTypePopover.getByText("Gemini CLI (local)", { exact: true })).toBeVisible();
-    await expect(runtimeTypePopover.getByText("Default CLI missing", { exact: true }).first()).toBeVisible();
+    await expect(runtimeTypePopover.getByText("Gemini CLI (local)", { exact: true })).toHaveCount(0);
+    await expect(runtimeTypePopover.getByText("Default CLI missing", { exact: true })).toHaveCount(0);
     await expect(runtimeTypePopover.getByText("OpenClaw Gateway", { exact: true })).toBeVisible();
     await expect(runtimeTypePopover.getByText("Process", { exact: true })).toHaveCount(0);
     await expect(runtimeTypePopover.getByText("HTTP", { exact: true })).toHaveCount(0);

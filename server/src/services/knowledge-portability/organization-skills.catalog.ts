@@ -199,12 +199,6 @@ export const ADAPTER_SKILL_HOME_DEFINITIONS: Record<string, AdapterSkillHomeDefi
     locationLabel: "~/.cursor/skills",
     resolveRoot: (config) => path.join(resolveConfiguredHomeDir(config), ".cursor", "skills"),
   },
-  gemini_local: {
-    mode: "persistent",
-    label: "Adapter skill",
-    locationLabel: "~/.gemini/skills",
-    resolveRoot: (config) => path.join(resolveConfiguredHomeDir(config), ".gemini", "skills"),
-  },
   pi_local: {
     mode: "persistent",
     label: "Adapter skill",

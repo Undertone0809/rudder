@@ -11,7 +11,6 @@ PUBLISH_SKILLS_PACKAGE_DIRS=(
   "packages/agent-runtimes/claude-local"
   "packages/agent-runtimes/codex-local"
   "packages/agent-runtimes/cursor-local"
-  "packages/agent-runtimes/gemini-local"
   "packages/agent-runtimes/opencode-local"
 )
 

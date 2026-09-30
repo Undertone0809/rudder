@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { basename, resolve } from "node:path";
 
 export const CANDIDATE_MANIFEST_VERSION = 1;
-export const EXPECTED_NPM_ARTIFACT_COUNT = 15;
+export const EXPECTED_NPM_ARTIFACT_COUNT = 14;
 export const EXPECTED_WORKFLOW_PATH = ".github/workflows/release.yml";
 export const EXPECTED_DESKTOP_IDENTITIES = Object.freeze([
   "macos/x64/portable",

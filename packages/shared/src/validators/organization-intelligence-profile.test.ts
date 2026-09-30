@@ -24,14 +24,14 @@ describe("organization intelligence profile validators", () => {
     expect(parsed.agentRuntimeConfig.modelFallbacks).toHaveLength(1);
   });
 
-  it("rejects invalid fallback runtime types", () => {
+  it.each(["unknown", "gemini_local"])("rejects unsupported fallback runtime type %s", (runtimeType) => {
     expect(() => upsertOrganizationIntelligenceProfileSchema.parse({
       agentRuntimeType: "codex_local",
       agentRuntimeConfig: {
         model: "gpt-5.4",
         modelFallbacks: [
           {
-            agentRuntimeType: "unknown",
+            agentRuntimeType: runtimeType,
             model: "backup",
           },
         ],

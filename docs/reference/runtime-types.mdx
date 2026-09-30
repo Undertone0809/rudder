@@ -4,7 +4,7 @@ description: "Compare the local programs Rudder can use to execute Agent work."
 icon: "terminal"
 keywords:
   - "Rudder runtime types"
-  - "Codex Claude Cursor Gemini OpenCode Pi"
+  - "Codex Claude Cursor OpenCode Pi"
   - "Agent runtime"
 canonical: "https://docs.rudderhq.dev/reference/runtime-types"
 "og:url": "https://docs.rudderhq.dev/reference/runtime-types"
@@ -26,7 +26,6 @@ the role; the runtime executes; the Run records that attempt.
 | Codex | `codex` |
 | Claude Code | `claude` |
 | Cursor | `cursor-agent` |
-| Gemini CLI | `gemini` |
 | OpenCode | `opencode` |
 | Pi | `pi` |
 
@@ -45,8 +44,7 @@ misconfigured.
 
 Model choices, sessions, Skills, transcripts, cost, Browser tools, Rudder tools,
 and mid-run controls depend on the runtime. Codex, Claude Code, OpenCode, and Pi
-support Rudder-managed control tools. Cursor and Gemini use their own adapter
-behavior.
+support Rudder-managed control tools. Cursor uses its own adapter behavior.
 
 The interface should show only what the selected runtime supports. Switching to
 a fallback starts another attempt; it does not make two runtimes equivalent.

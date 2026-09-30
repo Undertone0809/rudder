@@ -219,7 +219,7 @@ Invariants:
   typed tool and non-Rudder Plugin work do not activate this documentation
   workflow. Advisory creation questions may activate documentation retrieval
   but do not authorize or imply a mutation.
-- Persistent Cursor, OpenCode, Gemini, and Pi homes remove retired managed
+- Persistent Cursor, OpenCode, and Pi homes remove retired managed
   creation-skill entries only when an exact retired-source symlink or matching
   Rudder materialization provenance proves ownership. Same-named user paths,
   native provider skills, unknown links, files, and changed entries are

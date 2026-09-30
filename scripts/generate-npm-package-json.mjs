@@ -36,7 +36,6 @@ const runtimeWorkspacePackages = new Set([
   "@rudderhq/agent-runtime-claude-local",
   "@rudderhq/agent-runtime-codex-local",
   "@rudderhq/agent-runtime-cursor-local",
-  "@rudderhq/agent-runtime-gemini-local",
   "@rudderhq/agent-runtime-openclaw-gateway",
   "@rudderhq/agent-runtime-opencode-local",
   "@rudderhq/agent-runtime-pi-local",

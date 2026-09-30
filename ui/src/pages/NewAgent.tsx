@@ -19,7 +19,6 @@ import {
   DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -38,7 +37,6 @@ import { agentUrl } from "../lib/utils";
 const SUPPORTED_ADVANCED_ADAPTER_TYPES = new Set<CreateConfigValues["agentRuntimeType"]>([
   "claude_local",
   "codex_local",
-  "gemini_local",
   "opencode_local",
   "pi_local",
   "cursor",
@@ -77,8 +75,6 @@ function createValuesForAdapterType(
     nextValues.search = DEFAULT_CODEX_LOCAL_SEARCH;
     nextValues.dangerouslyBypassSandbox =
       DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-  } else if (agentRuntimeType === "gemini_local") {
-    nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
   } else if (agentRuntimeType === "cursor") {
     nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
   } else if (requiresExplicitProviderModel(agentRuntimeType)) {

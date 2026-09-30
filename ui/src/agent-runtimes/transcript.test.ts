@@ -1,7 +1,6 @@
 import { parseClaudeStdoutLine } from "@rudderhq/agent-runtime-claude-local/ui";
 import { parseCodexStdoutLine } from "@rudderhq/agent-runtime-codex-local/ui";
 import { parseCursorStdoutLine } from "@rudderhq/agent-runtime-cursor-local/ui";
-import { parseGeminiStdoutLine } from "@rudderhq/agent-runtime-gemini-local/ui";
 import { parseOpenCodeStdoutLine } from "@rudderhq/agent-runtime-opencode-local/ui";
 import { parsePiStdoutLine } from "@rudderhq/agent-runtime-pi-local/ui";
 import { describe, expect, it } from "vitest";
@@ -323,15 +322,6 @@ describe("buildTranscript", () => {
         line: JSON.stringify({
           type: "user",
           message: { content: [{ type: "text", text: instructionText }] },
-        }),
-      },
-      {
-        name: "gemini",
-        parser: parseGeminiStdoutLine,
-        line: JSON.stringify({
-          type: "message",
-          role: "user",
-          content: instructionText,
         }),
       },
     ];

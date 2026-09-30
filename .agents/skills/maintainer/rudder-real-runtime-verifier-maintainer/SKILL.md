@@ -57,12 +57,13 @@ Test one runtime for a runtime-specific claim. Use the full supported matrix for
 an explicit all-runtime claim or a shared adapter/tool change that affects it:
 
 - Codex
-- Claude
+- Claude Code
+- Hermes
 - OpenCode
 - Pi
+- Cursor
 
-Extend the matrix when the user names additional supported runtimes such as Cursor or
-Gemini. Do not treat a Codex pass as proof for another runtime.
+Do not treat a Codex pass as proof for another runtime.
 
 Read only the relevant reference files:
 
