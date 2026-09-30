@@ -15,7 +15,7 @@ export type {
   LegacyTranscriptReadResult, NativeSpanSelector, NativeTranscriptRawItem, NativeTranscriptReaderHook, NativeTranscriptReadInput,
   NativeTranscriptReadResult, ReadConversationTranscript, ReadRunTranscript, ReadTranscriptItem, ReadTranscriptScope, TranscriptAvailability,
   TranscriptCompleteness, TranscriptCursor, TranscriptItem,
-  TranscriptPage, TranscriptPrincipal, TranscriptRange, TranscriptRangeBoundary, TranscriptReadAuthorization, TranscriptReader, TranscriptReaderErrorCode, TranscriptReaderFactoryOptions, TranscriptReaderOptions, TranscriptReadScope, TranscriptSource, TranscriptStreamEvent
+  TranscriptPage, TranscriptPrincipal, TranscriptRange, TranscriptRangeBoundary, TranscriptReadAuthorization, TranscriptReader, TranscriptReaderErrorCode, TranscriptReaderFactoryOptions, TranscriptReaderOptions, TranscriptReadLimit, TranscriptReadLimitReason, TranscriptReadScope, TranscriptSource, TranscriptStreamEvent
 } from "./transcript-reader.contracts.js";
 export { TranscriptReaderError } from "./transcript-reader.normalize.js";
 export { decodeTranscriptCursor, encodeTranscriptCursor } from "./transcript-reader.pages.js";
