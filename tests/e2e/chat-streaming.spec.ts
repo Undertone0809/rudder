@@ -1244,13 +1244,16 @@ test.describe("Chat streaming", () => {
     const userBubble = timeline.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
     await expect(userBubble).toHaveCount(1);
     const streamingTranscript = timeline.getByTestId("chat-transcript-item").last();
-    await expect(streamingTranscript).toContainText(visiblePrefix, { timeout: 20_000 });
+    const streamingBubble = timeline.getByTestId("chat-assistant-message").filter({ hasText: visiblePrefix });
+    await expect(streamingBubble).toHaveCount(1, { timeout: 20_000 });
+    await expect(streamingTranscript).not.toContainText(visiblePrefix);
     await expect(streamingTranscript).not.toContainText(finalBody);
     const streamingTranscriptTop = (await streamingTranscript.boundingBox())?.y;
     expect(streamingTranscriptTop).not.toBeNull();
     const userBubbleTop = (await userBubble.boundingBox())?.y;
     expect(userBubbleTop).not.toBeNull();
     expect(userBubbleTop!).toBeLessThan(streamingTranscriptTop!);
+    const streamingBubbleGap = await assistantBubbleGap(streamingBubble, userBubble);
 
     const countVisibleText = (text: string) => timeline.evaluate(
       (element, value) => element.innerText.split(value).length - 1,
@@ -1263,7 +1266,7 @@ test.describe("Chat streaming", () => {
       return [...messages].reverse().find((message) => message.role === "assistant")?.status ?? null;
     };
     await expect.poll(readAssistantStatus, { timeout: 10_000 }).toBe("streaming");
-    await expect(streamingTranscript).toContainText(visiblePrefix);
+    await expect(streamingBubble).toContainText(visiblePrefix);
     expect(await countVisibleText(visiblePrefix)).toBe(1);
     await page.screenshot({ path: isolatedFinalAnswerScreenshotPath("main-streaming") });
 
@@ -1277,6 +1280,7 @@ test.describe("Chat streaming", () => {
     const completedBubbleTop = (await completedBubble.locator(".group.w-full.max-w-3xl").boundingBox())?.y;
     expect(completedBubbleTop).not.toBeNull();
     expect(streamingTranscriptTop!).toBeLessThan(completedBubbleTop!);
+    expect(Math.abs(await assistantBubbleGap(completedBubble, userBubble) - streamingBubbleGap)).toBeLessThanOrEqual(2);
 
     await page.reload({ waitUntil: "domcontentloaded" });
     const refreshedTimeline = page.getByTestId("chat-virtual-timeline");

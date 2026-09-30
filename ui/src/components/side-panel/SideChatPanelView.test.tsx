@@ -410,7 +410,7 @@ beforeEach(() => {
     items: [],
   });
   vi.mocked(chatsApi.createSideChat).mockReset().mockResolvedValue(sideConversation);
-  vi.mocked(chatsApi.destroySideChat).mockReset().mockResolvedValue(undefined);
+  vi.mocked(chatsApi.destroySideChat).mockReset().mockResolvedValue({ id: sideConversation.id });
   vi.mocked(chatsApi.stopMessageStream).mockReset().mockResolvedValue({
     stopped: true,
     controlActionId: "side-chat-stop-default",

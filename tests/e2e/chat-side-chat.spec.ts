@@ -1018,13 +1018,18 @@ test("keeps streamed final-answer deltas from a Codex-shaped stub in one stable 
   const userMessage = sideChatMessages.getByTestId("chat-user-message-bubble").filter({ hasText: userPrompt });
   await expect(userMessage).toHaveCount(1);
   const streamingTranscript = sideChatMessages.getByTestId("chat-transcript-item").last();
-  await expect(streamingTranscript).toContainText(visiblePrefix, { timeout: 20_000 });
+  const streamingBubble = sideChatMessages.getByTestId("chat-assistant-message").filter({ hasText: visiblePrefix });
+  await expect(streamingBubble).toHaveCount(1, { timeout: 20_000 });
+  await expect(streamingTranscript).not.toContainText(visiblePrefix);
   await expect(streamingTranscript).not.toContainText(finalBody);
   const streamingTranscriptTop = (await streamingTranscript.boundingBox())?.y;
   expect(streamingTranscriptTop).not.toBeNull();
   const userMessageTop = (await userMessage.boundingBox())?.y;
   expect(userMessageTop).not.toBeNull();
   expect(userMessageTop!).toBeLessThan(streamingTranscriptTop!);
+  const streamingBubbleTop = (await streamingBubble.locator(".group.w-full.max-w-3xl").boundingBox())?.y;
+  expect(streamingBubbleTop).not.toBeNull();
+  const streamingBubbleGap = streamingBubbleTop! - userMessageTop!;
 
   const countVisibleText = (text: string) => sideChatMessages.evaluate(
     (element, value) => (element.innerText.split(value).length ?? 1) - 1,
@@ -1037,7 +1042,7 @@ test("keeps streamed final-answer deltas from a Codex-shaped stub in one stable 
     return [...messages].reverse().find((message) => message.role === "assistant")?.status ?? null;
   };
   await expect.poll(readAssistantStatus, { timeout: 10_000 }).toBe("streaming");
-  await expect(streamingTranscript).toContainText(visiblePrefix);
+  await expect(streamingBubble).toContainText(visiblePrefix);
   expect(await countVisibleText(visiblePrefix)).toBe(1);
   await page.screenshot({ path: isolatedSideChatFinalAnswerScreenshotPath(), fullPage: true });
 
@@ -1052,6 +1057,9 @@ test("keeps streamed final-answer deltas from a Codex-shaped stub in one stable 
   const completedBubbleTop = (await completedBubble.locator(".group.w-full.max-w-3xl").boundingBox())?.y;
   expect(completedBubbleTop).not.toBeNull();
   expect(streamingTranscriptTop!).toBeLessThan(completedBubbleTop!);
+  const completedUserTop = (await userMessage.boundingBox())?.y;
+  expect(completedUserTop).not.toBeNull();
+  expect(Math.abs(completedBubbleTop! - completedUserTop! - streamingBubbleGap)).toBeLessThanOrEqual(2);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(panel).toBeVisible({ timeout: 15_000 });
