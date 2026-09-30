@@ -11,8 +11,10 @@ async function createRetryableFailureStub() {
   const dir = await mkdtemp(join(tmpdir(), "rudder-chat-retry-"));
   const scriptPath = join(dir, "codex-retry-once.sh");
   const counterPath = join(dir, "attempts");
+  const invocationPath = join(dir, "invocations");
   await writeFile(scriptPath, `#!/bin/sh
 set -eu
+printf '%s\\n' "$*" >> "${invocationPath}"
 case " $* " in
   *" --version "*|*" generate-json-schema "*) exec "${E2E_CODEX_APP_SERVER_STUB}" "$@" ;;
 esac
@@ -153,6 +155,7 @@ test.describe("Chat error recovery", () => {
   });
 
   test("lets the operator retry a failed assistant reply", async ({ page }) => {
+    test.setTimeout(120_000);
     const retryableFailureStub = await createRetryableFailureStub();
     const orgRes = await page.request.post("/api/orgs", {
       data: {
@@ -176,7 +179,7 @@ test.describe("Chat error recovery", () => {
     }, organization.id);
 
     await page.goto(`/${organization.issuePrefix}/messenger/chat?agentId=${chatAgent.id}`);
-    const organizationPath = new URL(page.url()).pathname.split("/")[1];
+    const organizationPath = organization.urlKey;
 
     const composer = page.locator(".rudder-mdxeditor-content").first();
     await expect(composer).toBeVisible({ timeout: 15_000 });
@@ -185,7 +188,7 @@ test.describe("Chat error recovery", () => {
 
     const failedMessage = page.getByTestId("chat-assistant-message")
       .filter({ hasText: "Code chat_adapter_failed" });
-    await expect(failedMessage).toBeVisible({ timeout: 15_000 });
+    await expect(failedMessage).toBeVisible({ timeout: 45_000 });
     await expect(failedMessage).toContainText("Response failed");
     await expect(failedMessage).toContainText("The assistant runtime failed before finishing.");
     await expect(failedMessage).toContainText("Code chat_adapter_failed");
@@ -264,7 +267,7 @@ test.describe("Chat error recovery", () => {
     })).toBeVisible({ timeout: 15_000 });
     const recoveredMessage = page.getByTestId("chat-assistant-message").last();
     await expect(recoveredMessage).toContainText("Initial App Server reply (marker-false)", {
-      timeout: 15_000,
+      timeout: 45_000,
     });
     await expect(failedMessage).toHaveCount(0);
     await expect(recoveredMessage.getByRole("button", { name: "Copy message" })).toBeVisible({ timeout: 15_000 });

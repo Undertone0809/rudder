@@ -15,7 +15,11 @@ if (process.argv.includes("generate-json-schema")) {
   const path = await import("node:path");
   const outputDir = process.argv[process.argv.indexOf("--out") + 1];
   fs.mkdirSync(outputDir, { recursive: true });
-  fs.writeFileSync(path.join(outputDir, "ClientRequest.json"), JSON.stringify({ oneOf: [] }));
+  fs.writeFileSync(path.join(outputDir, "ClientRequest.json"), JSON.stringify({
+    oneOf: ["thread/start", "thread/resume", "turn/start", "turn/interrupt"].map((method) => ({
+      properties: { method: { const: method } },
+    })),
+  }));
   process.exit(0);
 }
 
