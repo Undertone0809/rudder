@@ -2,6 +2,7 @@
 
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 
+use crate::public_ingress_forwarding::{FORWARDING_HEADERS, ForwardingPolicy};
 use actix_web::{
     HttpRequest, HttpResponse,
     http::{
@@ -34,9 +35,6 @@ const HOP_BY_HOP_HEADERS: &[&str] = &[
     "upgrade",
 ];
 
-const ORIGINAL_HOST_METADATA_HEADERS: &[&str] =
-    &["forwarded", "x-forwarded-host", "x-original-host"];
-
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PublicIngressWebSocketConfigError {
     #[error("upstream must be a nonzero loopback socket address")]
@@ -47,6 +45,7 @@ pub enum PublicIngressWebSocketConfigError {
 pub struct PublicIngressWebSocketProxy {
     upstream_authority: SocketAddr,
     upstream_connections: Arc<Semaphore>,
+    forwarding_policy: ForwardingPolicy,
 }
 
 impl PublicIngressWebSocketProxy {
@@ -59,11 +58,17 @@ impl PublicIngressWebSocketProxy {
         Ok(Self {
             upstream_authority,
             upstream_connections: Arc::new(Semaphore::new(MAX_UPSTREAM_CONNECTIONS)),
+            forwarding_policy: Default::default(),
         })
     }
 
     pub fn upstream_authority(&self) -> SocketAddr {
         self.upstream_authority
+    }
+
+    pub(crate) fn with_forwarding_policy(mut self, policy: ForwardingPolicy) -> Self {
+        self.forwarding_policy = policy;
+        self
     }
 
     /// Opens the private Node websocket before accepting the public handshake.
@@ -76,6 +81,10 @@ impl PublicIngressWebSocketProxy {
                 .insert_header((header::ALLOW, "GET"))
                 .finish();
         }
+        let identity = match self.forwarding_policy.identity(&request) {
+            Ok(identity) => identity,
+            Err(_) => return proxy_error(StatusCode::BAD_REQUEST, "invalid_forwarding_identity"),
+        };
 
         let Some(host) = request.headers().get(header::HOST).cloned() else {
             return proxy_error(StatusCode::BAD_REQUEST, "missing_host");
@@ -121,6 +130,10 @@ impl PublicIngressWebSocketProxy {
         for (name, value) in forwarded_request_headers(request.headers()) {
             upstream_request = upstream_request.header(name, value);
         }
+        upstream_request = upstream_request
+            .set_header("x-forwarded-for", identity.client_ip.as_str())
+            .set_header("x-real-ip", identity.client_ip.as_str())
+            .set_header("x-forwarded-proto", identity.scheme);
         if !protocols.is_empty() {
             upstream_request = upstream_request.protocols(protocols.iter());
         }
@@ -364,7 +377,7 @@ fn forwarded_request_headers(headers: &HeaderMap) -> Vec<(HeaderName, HeaderValu
                 && name_text != "content-length"
                 && name_text != "content-type"
                 && !name_text.starts_with("sec-websocket-")
-                && !ORIGINAL_HOST_METADATA_HEADERS.contains(&name_text)
+                && !FORWARDING_HEADERS.contains(&name_text)
         })
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect()
@@ -567,6 +580,8 @@ mod tests {
             .set_header("x-rudder-request-id", "client-forgery")
             .set_header("x-rudder-ingress-auth", "client-forgery")
             .set_header("x-rudder-ingress-forwarding-assertion", "client-forgery")
+            .set_header("x-forwarded-for", "198.51.100.99")
+            .set_header("x-forwarded-proto", "https")
             .protocols(["rudder.events.v1"])
     }
 
@@ -825,6 +840,8 @@ mod tests {
                 "session=session-one",
             );
             assert_header(&handshakes[0], "x-rudder-agent-id", "agent-one");
+            assert_header(&handshakes[0], "x-forwarded-for", "127.0.0.1");
+            assert_header(&handshakes[0], "x-forwarded-proto", "http");
             assert_header(&handshakes[0], "x-rudder-run-id", "run-one");
             for (name, value) in [
                 ("x-rudder-idempotency-key", "ws-operation-1"),

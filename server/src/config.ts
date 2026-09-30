@@ -116,6 +116,7 @@ export interface Config {
   rustFoundationBinaryPath: string | undefined;
   rustFoundationActorEnvelopeKey: string | undefined;
   rustPublicIngressMode?: "off" | "required";
+  rustPublicIngressTrustedProxies?: string;
   embeddedPostgresDataDir: string;
   embeddedPostgresPort: number;
   databaseBackupEnabled: boolean;
@@ -399,6 +400,7 @@ export function loadConfig(): Config {
     rustFoundationBinaryPath,
     rustFoundationActorEnvelopeKey,
     rustPublicIngressMode,
+    rustPublicIngressTrustedProxies: process.env.RUDDER_RUST_PUBLIC_INGRESS_TRUSTED_PROXIES?.trim() || undefined,
     embeddedPostgresDataDir: resolveHomeAwarePath(
       fileConfig?.database.embeddedPostgresDataDir ?? resolveDefaultEmbeddedPostgresDir(),
     ),

@@ -30,6 +30,7 @@ export async function preparePublicIngressStartup(config: Config, publicPort: nu
       listenAddr: `${config.host.includes(":") ? `[${config.host}]` : config.host}:${publicPort}`,
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
+      trustedProxies: config.rustPublicIngressTrustedProxies,
     };
   }
   return {
