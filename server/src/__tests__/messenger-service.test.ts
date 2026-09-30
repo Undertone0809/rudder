@@ -64,6 +64,7 @@ import {
   hashChatAnnotationSource,
 } from "../services/chat-inline-annotations.ts";
 import { chatSteerMessageService } from "../services/chat-steer-messages.ts";
+import { createChatConversationListingService } from "../services/chats.conversation-listing.js";
 import { chatService } from "../services/chats.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { issueService } from "../services/issues.ts";
@@ -281,6 +282,74 @@ describe("messengerService and issue follows", () => {
     if (dataDir) {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("hydrates stale conversation listing snapshots without recreating deleted user states", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({ id: orgId, name: "Listing deletion", urlKey: `listing-${orgId}`, issuePrefix: "LST" });
+    const rows = await db.insert(chatConversations).values([
+      { orgId, title: "Deleted parent" }, { orgId, title: "Surviving child" },
+    ]).returning();
+    await db.delete(chatConversations).where(eq(chatConversations.id, rows[0].id));
+    const listing = createChatConversationListingService(db);
+    await expect(listing.hydrateConversations(rows, "listing-user")).resolves.toHaveLength(2);
+    const states = await db.select().from(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId));
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({ conversationId: rows[1].id, userId: "listing-user", lastReadAt: rows[1].updatedAt });
+    const pinnedAt = new Date();
+    await db.update(chatConversationUserStates).set({ pinnedAt }).where(eq(chatConversationUserStates.id, states[0].id));
+    await listing.listSummariesByIds(orgId, rows.map((row) => row.id), "listing-user");
+    expect((await db.select().from(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId)))[0])
+      .toMatchObject({ id: states[0].id, pinnedAt, lastReadAt: states[0].lastReadAt });
+  });
+
+  it("does not initialize conversation listing state for a mismatched parent organization", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      { id: orgId, name: "Listing owner", urlKey: `listing-${orgId}`, issuePrefix: "LOW" },
+      { id: otherOrgId, name: "Other owner", urlKey: `listing-${otherOrgId}`, issuePrefix: "OTH" },
+    ]);
+    const [row] = await db.insert(chatConversations).values({ orgId, title: "Owned chat" }).returning();
+    await createChatConversationListingService(db).hydrateConversations([{ ...row, orgId: otherOrgId }], "listing-user");
+    expect(await db.select().from(chatConversationUserStates)).toEqual([]);
+  });
+
+  it("hydrates conversation listing safely when deletion commits while parent locking waits", async () => {
+    const orgId = randomUUID();
+    await db.insert(organizations).values({ id: orgId, name: "Listing lock race", urlKey: `listing-${orgId}`, issuePrefix: "LCK" });
+    const rows = await db.insert(chatConversations).values([
+      { orgId, title: "Deleting parent" }, { orgId, title: "Surviving child" },
+    ]).returning();
+    let releaseDeletion!: () => void;
+    let markDeleted!: (pid: number) => void;
+    const release = new Promise<void>((resolve) => { releaseDeletion = resolve; });
+    const deleted = new Promise<number>((resolve) => { markDeleted = resolve; });
+    const deletion = db.transaction(async (tx) => {
+      const pidRows = await tx.execute(sql`select pg_backend_pid() as pid`);
+      await tx.delete(chatConversations).where(eq(chatConversations.id, rows[0].id));
+      markDeleted(Number(pidRows[0].pid));
+      await release;
+    });
+    const deletingPid = await deleted;
+    const hydration = createChatConversationListingService(db).hydrateConversations(rows, "race-user");
+    try {
+      // Observe a real DB lock wait instead of depending on a timer or ordering
+      // two uncoordinated operations and hoping the race happened.
+      await expect.poll(async () => {
+        const waiters = await db.execute(sql`select exists (
+          select 1 from pg_stat_activity where ${deletingPid} = any(pg_blocking_pids(pid))
+        ) as waiting`);
+        return waiters[0].waiting;
+      }, { timeout: 5_000 }).toBe(true);
+    } finally {
+      releaseDeletion();
+      await deletion;
+    }
+    await expect(hydration).resolves.toHaveLength(2);
+    const states = await db.select().from(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId));
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({ conversationId: rows[1].id, userId: "race-user" });
   });
 
   it("records human chat creation separately from the initial work start", async () => {
