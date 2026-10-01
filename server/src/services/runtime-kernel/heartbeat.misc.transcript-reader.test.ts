@@ -187,7 +187,11 @@ describe("heartbeat skill analytics transcript reader", () => {
     await expect(handlers.buildSkillAnalytics({ orgId }, {
       startDate: "2026-04-21",
       endDate: "2026-04-21",
-    })).rejects.toThrow("Native transcript history for Run native-unavailable-run is unavailable or incomplete");
+    })).rejects.toMatchObject({
+      status: 409,
+      message: "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.",
+      details: { code: "native_transcript_incomplete", runId: "native-unavailable-run" },
+    });
   });
 
   it("propagates native transcript read errors instead of treating them as no skill usage", async () => {

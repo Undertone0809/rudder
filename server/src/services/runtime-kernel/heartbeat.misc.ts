@@ -610,7 +610,10 @@ export function createHeartbeatMiscHandlers(context: any) {
         if (!page.nextCursor) {
           const usedSkills = dedupeSkillUses(skills);
           if (nativeHistoryIncomplete) {
-            throw new Error(`Native transcript history for Run ${runId} is unavailable or incomplete`);
+            throw conflict("Native transcript history is unavailable or incomplete; skill analytics cannot be computed.", {
+              code: "native_transcript_incomplete",
+              runId,
+            });
           }
           return usedSkills;
         }
