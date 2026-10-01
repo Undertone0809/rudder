@@ -7,6 +7,8 @@ import { E2E_CODEX_STUB, E2E_DATABASE_URL } from "./support/e2e-env";
 const e2eDb = createDb(E2E_DATABASE_URL);
 const IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const LOCAL_CHOOSER_IMAGE_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAoAAAAFoCAMAAADw7LpjAAAAElBMVEX18uomPVs6frBTno7npEn///+9jVZhAAAEvklEQVR4nO3SiWkDQAADQefrv+V0EHMsh4I9U4EQ+/iAocd6AO9NgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmRKgEwJkCkBMiVApgTIlACZEiBTAmTqAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOx9vrFn33zxlAADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIM8nl06wiW1t8jQNbWESytv0eArK0jWFp/jwBZW0ewtP4eAbK2jmBp/T0CZG0dwdL6ewTI2jqCpfX3CJC1dQRL6+8RIGvrCJbW3yPAP33zlAADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXYCDATYCTAQYCfAQICdAAMBdgIMBNgJMBBgJ8BAgJ0AAwF2AgwE2AkwEGAnwECAnQADAXY5QAAAAAAAAAAAAAAAAF7Dzwtaf8qBdSw3rD/lwDqWG9afcmAdyw3rTzmwjuWG9accWMdyw/pTDqxjuWH9KQfWsdyw/pQD61huWH/KgXUsN6w/5cA6lhvWn3JgHcsN6085sI7lhvWnHFjHcsP6Uw6sY7lh/SkH1rHcsP6UA+tYblh/yoF1LDesPwUAAAAAAAAAAAAAAAAA/rtfx0scbDIPET0AAAAASUVORK5CYII=";
 
 test.afterAll(async () => {
   await (e2eDb as unknown as { $client?: { end: () => Promise<void> } }).$client?.end();
@@ -203,16 +205,18 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
   await first.click();
   const picker = transcript.getByTestId("transcript-browser-image-picker");
   await expect(picker).toContainText("original workspace path cannot be verified");
+  await page.screenshot({ path: `${screenshotBase}-picker.png`, fullPage: true });
   const firstFileChooserPromise = page.waitForEvent("filechooser");
   await picker.getByRole("button", { name: "Choose local image" }).click();
   const firstFileChooser = await firstFileChooserPromise;
   await firstFileChooser.setFiles({
     name: "screenshot.png",
     mimeType: "image/png",
-    buffer: Buffer.from(IMAGE_BASE64, "base64"),
+    buffer: Buffer.from(LOCAL_CHOOSER_IMAGE_BASE64, "base64"),
   });
   const thumbnail = transcript.getByAltText("Preview of screenshot.png");
   await expect(thumbnail).toHaveAttribute("src", /^blob:/u);
+  await page.screenshot({ path: `${screenshotBase}-inline.png`, fullPage: true });
   const firstBlob = await thumbnail.getAttribute("src");
   const previewTrigger = transcript.getByRole("button", { name: "Open image preview: screenshot.png" });
   await previewTrigger.click();
@@ -220,7 +224,15 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
   await expect(fullscreen).toBeVisible();
   await expect(fullscreen.getByRole("button", { name: "Copy Image" })).toBeVisible();
   await expect(fullscreen.getByRole("button", { name: "Download Image" })).toBeVisible();
-  await page.screenshot({ path: `${screenshotBase}-fullscreen.png`, fullPage: true });
+  await expect.poll(() => fullscreen.locator("img").evaluate((image: HTMLImageElement) => [
+    image.naturalWidth,
+    image.naturalHeight,
+  ])).toEqual([640, 360]);
+  await page.screenshot({
+    path: `${screenshotBase}-fullscreen.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
   await fullscreen.getByRole("button", { name: "Close image preview" }).click();
   await expect(fullscreen).toHaveCount(0);
   await expect(previewTrigger).toBeFocused();
@@ -245,10 +257,10 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
   await secondFileChooser.setFiles({
     name: "screenshot.png",
     mimeType: "image/png",
-    buffer: Buffer.from(IMAGE_BASE64, "base64"),
+    buffer: Buffer.from(LOCAL_CHOOSER_IMAGE_BASE64, "base64"),
   });
   await expect(transcript.getByAltText("Preview of screenshot.png")).toHaveAttribute("src", /^blob:/u);
-  await page.screenshot({ path: `${screenshotBase}-open.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotBase}-second-inline.png`, fullPage: true });
   await transcript.getByRole("button", { name: "Collapse image screenshot.png" }).click();
   await expect(transcript.getByTestId("transcript-browser-image-picker")).toHaveCount(0);
   await page.screenshot({ path: `${screenshotBase}-closed.png`, fullPage: true });
