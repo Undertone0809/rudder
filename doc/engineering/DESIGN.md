@@ -379,6 +379,25 @@ Rules:
   ```
 - A workspace that needs document-style tabs should follow the Messenger
   workbench composition: a separate compact tab card above the main work card.
+  Library and Side Panel share `WorkspaceTabbedSurface`,
+  `WorkspaceTabbedSurfaceHeader`, `WorkspaceTabbedSurfaceStrip`, and
+  `WorkspaceTabbedSurfaceContent` from
+  `ui/src/components/workbench/WorkspaceTabbedSurface.tsx`. The root keeps the
+  header and content cards 6px apart. Choose the root's semantic element with
+  `as="section"` for a main workspace or `as="aside"` for a side panel; pass
+  native attributes and refs directly. Keep tab selection, close actions,
+  menus, dragging, scroll containers, and live surface ownership in the caller.
+  Use the same composition in split and expanded Side Panel views:
+
+  ```tsx
+  <WorkspaceTabbedSurface as="section" className="min-h-0 min-w-0 flex-1">
+    <WorkspaceTabbedSurfaceHeader>
+      <WorkspaceTabbedSurfaceStrip className="overflow-x-auto">{tabs}</WorkspaceTabbedSurfaceStrip>
+    </WorkspaceTabbedSurfaceHeader>
+    <WorkspaceTabbedSurfaceContent>{content}</WorkspaceTabbedSurfaceContent>
+  </WorkspaceTabbedSurface>
+  ```
+
   Use `WorkspaceTab` for tab chrome and interaction rather than introducing a
   browser-tab silhouette, page-local active treatment, or page-local close
   affordance.
@@ -398,7 +417,11 @@ Rules:
   context column and tabs, the required references are `Layout`,
   `ThreeColumnContextSidebar`, `MessengerContextSidebar`, and
   `MessengerMainWorkbench`.
-- The gap between the middle card and main card should stay minimal, the top inset should stay tight, and both cards should use a small radius.
+- Use `WorkspaceColumnGutter` in `Layout` between the context card and main
+  region: 8px below the medium breakpoint, 9px above it, and zero when the
+  context column is collapsed. Interactive column dividers use this same
+  spacing with caller-owned resize handlers. Library uses an inert gutter
+  without a resize handle. Keep the top inset tight and both cards' radius small.
 - In light mode, pale or glass rails use dark neutral icon and text colors by default. Active emphasis should come from surface treatment, not white text on a pale background.
 - In dark mode, the primary rail may stay translucent, but it should still read as a quiet structural surface rather than a bright wallpaper reveal.
 - Desktop settings open as a compact modal tool window. In modal mode, do not render an org identity header, org selector, or a large “System settings” block above the nav.

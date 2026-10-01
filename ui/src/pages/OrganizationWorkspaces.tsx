@@ -51,6 +51,12 @@ import { IssueDetailFind } from "../components/IssueDetailFind";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
+import {
+  WorkspaceTabbedSurface,
+  WorkspaceTabbedSurfaceContent,
+  WorkspaceTabbedSurfaceHeader,
+  WorkspaceTabbedSurfaceStrip,
+} from "../components/workbench/WorkspaceTabbedSurface";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
 import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
 import { WorkspaceLibraryBinaryPreview } from "../components/WorkspaceMediaPreview";
@@ -2327,25 +2333,25 @@ function OrganizationWorkspaceBrowserForOrganization({
             </section>
           ) : null}
 
-          <section
+          <WorkspaceTabbedSurface
+            as="section"
             data-testid="org-workspaces-editor-card"
             data-active-surface={selectedWorkspaceSavePending || uploadWorkspaceImage.isPending ? "workspace-document" : undefined}
             className={cn(
-              "rudder-doc-editor-surface flex min-h-[420px] min-w-0 flex-col gap-1.5 bg-transparent lg:min-h-0 lg:flex-1",
+              "rudder-doc-editor-surface min-h-[420px] min-w-0 lg:min-h-0 lg:flex-1",
               (selectedWorkspaceSavePending || uploadWorkspaceImage.isPending) && "active-surface-ring",
             )}
           >
             {showWorkspaceFileTabs ? (
-              <div
+              <WorkspaceTabbedSurfaceHeader
                 data-testid="org-workspaces-editor-tabs"
                 role="tablist"
                 aria-label="Open files"
-                className="workspace-tab-header-card workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]"
               >
-                <div
+                <WorkspaceTabbedSurfaceStrip
                   ref={setOpenFileTabsScrollerRef}
                   data-testid="org-workspaces-editor-tab-scroller"
-                  className="workspace-tab-strip rudder-doc-editor-tab-scroller scrollbar-auto-hide flex min-w-0 shrink-0 items-center gap-1 overflow-x-auto px-2 py-1.5"
+                  className="rudder-doc-editor-tab-scroller scrollbar-auto-hide min-w-0 overflow-x-auto"
                 >
                   <>
                     {openFilePaths.map((filePath) => {
@@ -2411,12 +2417,10 @@ function OrganizationWorkspaceBrowserForOrganization({
                     })}
                     <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer h-7 min-w-6 flex-1" />
                   </>
-                </div>
-              </div>
+                </WorkspaceTabbedSurfaceStrip>
+              </WorkspaceTabbedSurfaceHeader>
             ) : null}
-            <div
-              className="workspace-tab-content-card workspace-main-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]"
-            >
+            <WorkspaceTabbedSurfaceContent>
               {visibleWorkspaceBreadcrumbPath !== null ? (
                 <div
                   data-testid="org-workspaces-path-breadcrumb"
@@ -2893,8 +2897,8 @@ function OrganizationWorkspaceBrowserForOrganization({
                 </div>
               )}
               </div>
-            </div>
-          </section>
+            </WorkspaceTabbedSurfaceContent>
+          </WorkspaceTabbedSurface>
 
         </div>
       )}
