@@ -1,14 +1,12 @@
-import {
-  DEFAULT_CODEX_LOCAL_MODEL,
-  DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
-} from "@rudderhq/agent-runtime-codex-local";
+import { DEFAULT_CODEX_LOCAL_REASONING_EFFORT } from "@rudderhq/agent-runtime-codex-local";
 import type { Db } from "@rudderhq/db";
 import { organizationIntelligenceProfiles } from "@rudderhq/db";
-import type {
-  AgentRuntimeType,
-  OrganizationIntelligenceProfile,
-  OrganizationIntelligenceProfilePurpose,
-  OrganizationIntelligenceProfileStatus,
+import {
+  DEFAULT_ORGANIZATION_INTELLIGENCE_CODEX_MODEL,
+  type AgentRuntimeType,
+  type OrganizationIntelligenceProfile,
+  type OrganizationIntelligenceProfilePurpose,
+  type OrganizationIntelligenceProfileStatus,
 } from "@rudderhq/shared";
 import { eq } from "drizzle-orm";
 import {
@@ -84,7 +82,7 @@ export function buildIntelligenceProfileConfigWithPurposeDefaults(
     delete config.reasoningEffort;
     return {
       ...config,
-      model: DEFAULT_CODEX_LOCAL_MODEL,
+      model: DEFAULT_ORGANIZATION_INTELLIGENCE_CODEX_MODEL,
       modelReasoningEffort: DEFAULT_CODEX_LOCAL_REASONING_EFFORT,
     };
   }

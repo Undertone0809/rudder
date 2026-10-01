@@ -5,7 +5,7 @@ function uniqueIssuePrefix() {
 }
 
 test.describe("Organization intelligence profiles", () => {
-  test("uses one Default model profile with Codex Luna Medium", async ({ page }) => {
+  test("uses one Default model profile with GPT-6 Luna Medium", async ({ page }) => {
     const orgRes = await page.request.post("/api/orgs", {
       data: { name: "Intelligence Profiles " + Date.now(), issuePrefix: uniqueIssuePrefix() },
     });
@@ -23,7 +23,7 @@ test.describe("Organization intelligence profiles", () => {
       await expect(page.getByTestId("intelligence-profile-lightweight")).toHaveCount(0);
       await expect(page.getByTestId("intelligence-profile-reasoning")).toHaveCount(0);
       await expect(profile.getByText("Default model", { exact: true })).toBeVisible();
-      await expect(profile.getByRole("button", { name: /gpt-5\.6-luna/i })).toBeVisible();
+      await expect(profile.getByRole("button", { name: /gpt-6-luna/i })).toBeVisible();
       await expect(profile.getByRole("button", { name: "Medium", exact: true })).toBeVisible();
 
       const saveResponse = page.waitForResponse((response) =>
@@ -40,7 +40,7 @@ test.describe("Organization intelligence profiles", () => {
       };
       expect(saved.purpose).toBe("default");
       expect(saved.agentRuntimeType).toBe("codex_local");
-      expect(saved.agentRuntimeConfig.model).toBe("gpt-5.6-luna");
+      expect(saved.agentRuntimeConfig.model).toBe("gpt-6-luna");
       expect(saved.agentRuntimeConfig.modelReasoningEffort).toBe("medium");
       expect(saved.status).toBe("disabled");
     } finally {
