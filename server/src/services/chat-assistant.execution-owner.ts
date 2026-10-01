@@ -17,6 +17,8 @@ export function createChatAssistantExecutionOwner<TFinalState, TFinalized>(input
   stopSignal?: AbortSignal;
   finalize: (state: TFinalState) => Promise<TFinalized>;
   failureState: (error: unknown) => TFinalState;
+  /** Persist dependent terminal state while this Run still owns its live fence. */
+  beforeFinalize?: (state: TFinalState) => Promise<void>;
 }) {
   const isStopped = () => input.stopSignal?.aborted === true;
   const isOwnerLost = () => input.ownerSignal.aborted && !isStopped();
@@ -29,6 +31,10 @@ export function createChatAssistantExecutionOwner<TFinalState, TFinalized>(input
   let finalized = false;
 
   const finalize = async (state: TFinalState) => {
+    if (isOwnerLost()) throw ownerLostError;
+    // Dependent native intent state needs the live Run fence, including Stop.
+    // Releasing the Run first can strand a reserved intent on a sealed span.
+    await input.beforeFinalize?.(state);
     if (isOwnerLost()) throw ownerLostError;
     const result = await input.finalize(state);
     if (isOwnerLost()) throw ownerLostError;
