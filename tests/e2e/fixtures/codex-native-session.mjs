@@ -132,6 +132,20 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           aggregatedOutput: `Read ${skillTelemetry} skill instructions`,
         });
       }
+      const storagePayloadNonce = [...prompt.matchAll(/\bNative storage payload nonce:\s*([a-f0-9]{32})\b/gi)].at(-1)?.[1];
+      if (storagePayloadNonce) {
+        const marker = `NATIVE_TOOL_OUTPUT_${storagePayloadNonce}`;
+        const outputBytes = 256 * 1024;
+        turn.items.push({
+          type: "commandExecution",
+          id: randomUUID(),
+          command: "rudder-native-storage-fixture",
+          cwd: process.cwd(),
+          status: "completed",
+          exitCode: 0,
+          aggregatedOutput: `${marker}${"x".repeat(outputBytes - marker.length)}`,
+        });
+      }
       if (prompt.includes("Keep Steer message position stable")) {
         activeTurn = { thread, turn };
         setTimeout(() => send({
