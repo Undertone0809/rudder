@@ -402,7 +402,7 @@ test("ordinary Main native fork keeps exact alias history and its child session 
       && response.url().endsWith("/messages/stream"));
     await page.getByRole("button", { name: "Send", exact: true }).click();
     const streamResponse = await stream;
-    expect(streamResponse.status()).toBe(200);
+    expect(streamResponse.status()).toBe(201);
     await streamResponse.finished();
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText(reply, { timeout: 30_000 });
   };
