@@ -1,5 +1,6 @@
-import { ImageOff, Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { FolderOpen, ImageOff, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { createBrowserLocalFilePreview } from "../../api/browserLocalFiles";
 import { readDesktopShell, type DesktopLocalFilePreview } from "../../lib/desktop-shell";
 import { InspectableImage } from "../InspectableImage";
 
@@ -34,9 +35,16 @@ export function TranscriptImageArtifact({
   displayLabel: string;
 }) {
   const durableAssetPath = isRudderAssetPath(path);
+  const desktopShell = readDesktopShell();
   const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
+  const [browserImageSrc, setBrowserImageSrc] = useState<{ path: string; url: string } | null>(null);
+  const browserUrlRef = useRef<string | null>(null);
+  const browserRequestRef = useRef(0);
+  const currentPathRef = useRef(path);
+  currentPathRef.current = path;
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!durableAssetPath);
+  const browserFileInputRef = useRef<HTMLInputElement | null>(null);
   const previewRequestRef = useRef<{
     path: string;
     promise: Promise<DesktopLocalFilePreview>;
@@ -44,16 +52,21 @@ export function TranscriptImageArtifact({
 
   useEffect(() => {
     let cancelled = false;
+    browserRequestRef.current += 1;
+    setBrowserImageSrc(null);
+    if (browserUrlRef.current) {
+      URL.revokeObjectURL(browserUrlRef.current);
+      browserUrlRef.current = null;
+    }
     if (durableAssetPath) {
       setLoading(false);
       setError(null);
       setPreview(null);
       return undefined;
     }
-    const desktopShell = readDesktopShell();
     if (!desktopShell) {
       setLoading(false);
-      setError("Image previews are available in the Rudder Desktop app.");
+      setError(null);
       return undefined;
     }
 
@@ -87,7 +100,47 @@ export function TranscriptImageArtifact({
     return () => {
       cancelled = true;
     };
-  }, [displayLabel, durableAssetPath, path]);
+  }, [desktopShell, displayLabel, durableAssetPath, path]);
+
+  useEffect(() => () => {
+    browserRequestRef.current += 1;
+    if (browserUrlRef.current) URL.revokeObjectURL(browserUrlRef.current);
+    browserUrlRef.current = null;
+  }, [displayLabel, path]);
+
+  const chooseBrowserImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const selectedFile = input.files?.[0] ?? null;
+    input.value = "";
+    if (!selectedFile) return;
+    const request = ++browserRequestRef.current;
+    const selectedPath = path;
+    if (browserUrlRef.current) URL.revokeObjectURL(browserUrlRef.current);
+    browserUrlRef.current = null;
+    setBrowserImageSrc(null);
+    setLoading(true);
+    setError(null);
+    try {
+      const selectedPreview = await createBrowserLocalFilePreview(selectedFile, path);
+      if (selectedPreview.previewKind !== "image" || !selectedPreview.contentPath) {
+        if (selectedPreview.contentPath?.startsWith("blob:")) URL.revokeObjectURL(selectedPreview.contentPath);
+        throw new Error("Select an image file matching the recorded filename.");
+      }
+      if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) {
+        if (selectedPreview.contentPath.startsWith("blob:")) URL.revokeObjectURL(selectedPreview.contentPath);
+        return;
+      }
+      if (browserUrlRef.current) URL.revokeObjectURL(browserUrlRef.current);
+      browserUrlRef.current = selectedPreview.contentPath.startsWith("blob:") ? selectedPreview.contentPath : null;
+      setBrowserImageSrc({ path: selectedPath, url: selectedPreview.contentPath });
+    } catch (cause) {
+      if (request !== browserRequestRef.current || selectedPath !== currentPathRef.current) return;
+      setBrowserImageSrc(null);
+      setError(imagePreviewFailureMessage(cause, displayLabel));
+    } finally {
+      if (request === browserRequestRef.current && selectedPath === currentPathRef.current) setLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -98,8 +151,31 @@ export function TranscriptImageArtifact({
     );
   }
 
-  const src = durableAssetPath ? path : preview ? imagePreviewDataUrl(preview) : null;
+  const currentBrowserImageSrc = browserImageSrc?.path === path ? browserImageSrc.url : null;
+  const src = durableAssetPath ? path : preview ? imagePreviewDataUrl(preview) : currentBrowserImageSrc;
   if (error || !src) {
+    if (!durableAssetPath && !desktopShell) {
+      return (
+        <div className="ml-5 mt-1.5 max-w-sm rounded-lg border border-border/45 bg-muted/10 px-3 py-2 text-xs text-muted-foreground" data-testid="transcript-browser-image-picker">
+          <input
+            ref={browserFileInputRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            aria-label={`Choose ${displayLabel} from this device`}
+            onChange={(event) => void chooseBrowserImage(event)}
+          />
+          {error ? <p role="alert">{error}</p> : (
+            <p>Choose a local image named {displayLabel}. Its original workspace path cannot be verified.</p>
+          )}
+          <button type="button" className="mt-2 inline-flex items-center gap-1.5 rounded-sm border border-border px-2 py-1 text-foreground" onClick={() => browserFileInputRef.current?.click()}>
+            <FolderOpen className="h-3.5 w-3.5" aria-hidden />
+            Choose local image
+          </button>
+          <p className="mt-2">File contents stay in this browser and are not sent to Rudder.</p>
+        </div>
+      );
+    }
     return (
       <div className="ml-5 mt-1.5 flex max-w-sm items-center gap-2 rounded-lg border border-border/45 bg-muted/10 px-3 py-2 text-xs text-muted-foreground" role="alert">
         <ImageOff className="h-4 w-4 shrink-0" aria-hidden />
@@ -120,6 +196,22 @@ export function TranscriptImageArtifact({
         triggerClassName="rounded-md"
         wrapperClassName="block"
       />
+      {currentBrowserImageSrc && !desktopShell ? (
+        <div className="mt-1.5 max-w-xs text-xs text-muted-foreground">
+          <p>Selected in this browser by filename; original workspace path is not verified.</p>
+          <input
+            ref={browserFileInputRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            aria-label={`Choose another ${displayLabel} from this device`}
+            onChange={(event) => void chooseBrowserImage(event)}
+          />
+          <button type="button" className="mt-1 rounded-sm text-foreground underline-offset-2 hover:underline" onClick={() => browserFileInputRef.current?.click()}>
+            Choose another image
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
