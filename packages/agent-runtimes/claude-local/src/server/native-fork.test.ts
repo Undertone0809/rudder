@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { validateClaudeResumeSession } from "./execute.js";
 import {
   createClaudeLocalProviderCapabilities,
   parseClaudeSessionJsonl,
@@ -236,12 +237,27 @@ describe("Claude exact assistant-boundary native fork", () => {
       continuity: "native",
       session: {
         sessionParams: {
+          transport: "claude_cli",
+          forkTransport: "claude-agent-sdk-0.3.216",
           forkedFromSessionId: sessionId,
           lastAssistantUuid: result.boundary,
         },
       },
     });
     expect(result.session.sessionId).not.toBe(sessionId);
+    expect(validateClaudeResumeSession({
+      sessionId: result.session.sessionId,
+      sessionParams: result.session.sessionParams,
+      cwd: fixture.cwd,
+      configDir: fixture.configDir,
+      profile: {
+        hostId: binding.hostId,
+        profileId: binding.profileId,
+        profileBindingId: binding.id,
+        profileOrgId: binding.orgId,
+        capabilityRevision: binding.capabilityRevision,
+      },
+    })).toBeNull();
     expect(result.boundary).toBe(result.identityMap[assistantTwo]);
     expect(Object.keys(result.identityMap)).toEqual([userOne, assistantOne, userTwo, assistantTwo]);
     expect(Object.values(result.identityMap)).not.toContain(assistantTwo);

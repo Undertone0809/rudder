@@ -1532,7 +1532,10 @@ async function forkClaudeNativeSession(
           cwd: canonicalCwd,
           claudeConfigDir: path.resolve(profile.configDir),
           sessionFilePath: childPath,
-          transport: CLAUDE_FORK_TRANSPORT,
+          // SDK creates the fork; the resulting profile-owned JSONL session
+          // is resumed by the CLI, not by an SDK inference transport.
+          transport: "claude_cli",
+          forkTransport: CLAUDE_FORK_TRANSPORT,
           profileHostId: profile.binding.hostId,
           profileId: profile.binding.profileId,
           ...(profile.binding.id ? { profileBindingId: profile.binding.id } : {}),

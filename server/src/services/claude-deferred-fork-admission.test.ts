@@ -5,7 +5,7 @@ import {
   runtimeBindings,
   type Db,
 } from "@rudderhq/db";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   admitClaudeDeferredFork,
   assertClaudeDeferredForkReplaySafety,
@@ -14,6 +14,13 @@ import {
 } from "./claude-deferred-fork-admission.js";
 import type { NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
 import type { SideChatForkSource } from "./side-chat-runtime-admission.js";
+
+const verifyClaudeHead = vi.hoisted(() => vi.fn());
+
+vi.mock("@rudderhq/agent-runtime-claude-local/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@rudderhq/agent-runtime-claude-local/server")>();
+  return { ...actual, verifyClaudeSessionAssistantHead: verifyClaudeHead };
+});
 
 const source: SideChatForkSource = {
   sourceConversationId: "source-conversation",
@@ -64,6 +71,8 @@ const common = {
 };
 
 describe("Claude deferred Side Chat admission", () => {
+  beforeEach(() => verifyClaudeHead.mockReset());
+
   it("does not reserve a fork when the selected Span and assistant UUID disagree", async () => {
     const result = await admitClaudeDeferredFork({
       ...common,
@@ -100,6 +109,111 @@ describe("Claude deferred Side Chat admission", () => {
     });
     expect(result.admission.continuity).toBe("context_handoff");
     expect(result.adapterIntent).toBeNull();
+  });
+
+  it.each(["initial", "bounded", "exact"])(
+    "routes a sealed historical %s selector through the exact native fork path",
+    async (boundaryStatus) => {
+      verifyClaudeHead.mockResolvedValueOnce({
+        status: "mismatch",
+        sourceAssistantUuid: "selected-assistant",
+        currentAssistantUuid: "later-assistant",
+        revision: "verified-provider-file-revision",
+        reason: "Claude session head advanced to a later assistant",
+      });
+
+      const result = await admitClaudeDeferredFork({
+        ...common,
+        source: {
+          ...source,
+          selectorJson: { ...source.selectorJson!, boundaryStatus },
+        },
+      });
+
+      expect(result.useExactNativeFork).toBe(true);
+      expect(result.adapterIntent).toBeNull();
+      expect(result.reservation).toBeNull();
+      expect(verifyClaudeHead).toHaveBeenCalledWith(expect.objectContaining({
+        sourceAssistantUuid: "selected-assistant",
+      }));
+    },
+  );
+
+  it.each([undefined, "unknown", "partial", "missing"])(
+    "keeps a historical selector with boundary status %s on the safe handoff path",
+    async (boundaryStatus) => {
+      verifyClaudeHead.mockResolvedValueOnce({
+        status: "mismatch",
+        sourceAssistantUuid: "selected-assistant",
+        currentAssistantUuid: "later-assistant",
+        revision: "verified-provider-file-revision",
+        reason: "Claude session head advanced to a later assistant",
+      });
+      const selectorJson = {
+        ...source.selectorJson!,
+        ...(boundaryStatus ? { boundaryStatus } : {}),
+      };
+
+      const result = await admitClaudeDeferredFork({
+        ...common,
+        source: { ...source, selectorJson },
+      });
+
+      expect(result.useExactNativeFork).not.toBe(true);
+      expect(result.admission).toMatchObject({
+        continuity: "context_handoff",
+      });
+      expect(result.admission.downgradeReason).toBe(boundaryStatus === "missing"
+        ? "claude_exact_source_boundary_unavailable"
+        : "claude_selected_reply_is_not_provider_head");
+    },
+  );
+
+  it("does not route a historical selector whose otherwise exact metadata is incomplete", async () => {
+    verifyClaudeHead.mockResolvedValueOnce({
+      status: "mismatch",
+      sourceAssistantUuid: "selected-assistant",
+      currentAssistantUuid: "later-assistant",
+      revision: "verified-provider-file-revision",
+      reason: "Claude session head advanced to a later assistant",
+    });
+
+    const result = await admitClaudeDeferredFork({
+      ...common,
+      source: {
+        ...source,
+        selectorJson: { ...source.selectorJson!, boundaryStatus: "exact", completeness: "partial" },
+      },
+    });
+
+    expect(result.useExactNativeFork).not.toBe(true);
+    expect(result.admission.downgradeReason).toBe("claude_selected_reply_is_not_provider_head");
+  });
+
+  it.each([
+    { currentAssistantUuid: null, revision: "verified-provider-file-revision" },
+    { currentAssistantUuid: "later-assistant", revision: null },
+  ])("requires both a verifiable current head and file revision before routing history (%o)", async (proof) => {
+    verifyClaudeHead.mockResolvedValueOnce({
+      status: "mismatch",
+      sourceAssistantUuid: "selected-assistant",
+      ...proof,
+      reason: "Claude source head cannot be fully verified",
+    });
+
+    const result = await admitClaudeDeferredFork({
+      ...common,
+      source: {
+        ...source,
+        selectorJson: { ...source.selectorJson!, boundaryStatus: "initial" },
+      },
+    });
+
+    expect(result.useExactNativeFork).not.toBe(true);
+    expect(result.admission).toMatchObject({
+      continuity: "context_handoff",
+      downgradeReason: "claude_source_head_cannot_be_verified",
+    });
   });
 });
 

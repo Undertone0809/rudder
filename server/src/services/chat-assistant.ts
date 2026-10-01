@@ -302,9 +302,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       ? await admitClaudeDeferredFork({
         db, source: forkSource, sourceBindingMatchesTarget, bindingInput, providerBinding, config, conversationId: input.conversation.id,
       }) : null;
+    // Exact historical selectors use the durable native fork route below;
+    // deferred CLI forking remains limited to a verified provider head.
+    const claudeDeferredAdmission = claudeDeferredFork?.useExactNativeFork
+      ? null
+      : claudeDeferredFork?.admission ?? null;
     const sideChatRuntimeAdmission: SideChatRuntimeAdmission | null = runtimeProfilePreparationFailed
       ? null
-      : claudeDeferredFork?.admission ?? (sideChatFirstSend && forkSource
+      : claudeDeferredAdmission ?? (sideChatFirstSend && forkSource
       ? await admitSideChatRuntimeFork({
         driver: nativeForkDriver,
         source: forkSource,

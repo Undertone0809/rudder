@@ -30,6 +30,16 @@ async function runsForConversation(conversationId: string) {
     .orderBy(asc(heartbeatRuns.startedAt));
 }
 
+async function nativeForkIntentForConversation(conversationId: string) {
+  const [binding] = await db.select().from(runtimeBindings)
+    .where(eq(runtimeBindings.conversationId, conversationId)).limit(1);
+  expect(binding?.currentSegmentId).toBeTruthy();
+  const [segment] = await db.select().from(nativeSegments)
+    .where(eq(nativeSegments.id, binding!.currentSegmentId!)).limit(1);
+  expect(segment).toBeTruthy();
+  return segment!.providerStateJson?.__rudderNativeForkIntent as Record<string, any> | undefined;
+}
+
 async function readJsonl(filePath: string) {
   return (await fs.readFile(filePath, "utf8"))
     .split(/\r?\n/)
@@ -69,6 +79,9 @@ async function expectCompleteTranscript(
       && typeof entry.text === "string")
     .map((entry: Record<string, any>) => ({ kind: entry.kind as string, text: entry.text as string }));
   const readerKinds = readerMessages.map((entry: { kind: string; text: string }) => entry.kind);
+  const userMessages = readerMessages
+    .filter((entry: { kind: string; text: string }) => entry.kind === "user")
+    .map((entry: { kind: string; text: string }) => entry.text);
   const assistantMessages = readerMessages
     .filter((entry: { kind: string; text: string }) => entry.kind === "assistant")
     .map((entry: { kind: string; text: string }) => entry.text);
@@ -90,6 +103,7 @@ async function expectCompleteTranscript(
     completeness: transcript.completeness as string,
     spanIds: spans.map((span) => span.id),
     readerKinds,
+    userMessages,
     assistantMessages,
   };
 }
@@ -187,6 +201,7 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     completeness: string;
     spanIds: string[];
     readerKinds: string[];
+    userMessages: string[];
     assistantMessages: string[];
   }> = [];
   test.setTimeout(240_000);
@@ -196,7 +211,12 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   const agent = await createE2EChatAgent(page.request, org.id, {
     name: "Claude Native Fork Agent",
     agentRuntimeType: "claude_local",
-    agentRuntimeConfig: { command: CLAUDE_FIXTURE, model: "claude-e2e" },
+    agentRuntimeConfig: {
+      command: CLAUDE_FIXTURE,
+      model: "claude-e2e",
+      // Keep the stub's project key aligned with the SDK's canonical path on macOS.
+      cwd: path.resolve(E2E_ROOT, "../.."),
+    },
   }) as { id: string };
 
   await page.goto("/");
@@ -234,6 +254,8 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
       `Claude native reply ${index + 1}`,
     ));
   }
+  expect(readerEvidence[0]!.userMessages[0]).not.toContain("Second Claude native request");
+  expect(readerEvidence[1]!.userMessages[0]).not.toContain("First Claude native request");
 
   const parentParams = parentRuns[1]!.sessionParamsAfterJson ?? {};
   const configDir = String(parentParams.claudeConfigDir ?? "");
@@ -247,13 +269,21 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   expect(parentUserRecords.some((record) => messageText(record).includes("First Claude native request"))).toBe(true);
   expect(parentUserRecords.some((record) => messageText(record).includes("Second Claude native request"))).toBe(true);
   expect(parentAssistantRecords.map(messageText)).toEqual(["Claude native reply 1", "Claude native reply 2"]);
+  const firstAssistantUuid = parentAssistantRecords[0]?.uuid;
   const parentHeadUuid = parentAssistantRecords.at(-1)?.uuid;
+  expect(firstAssistantUuid).toBeTruthy();
   expect(parentHeadUuid).toBeTruthy();
+  const parentSessionBytes = await fs.readFile(parentSessionPath);
+  expect(readerEvidence[0]?.spanIds).toHaveLength(1);
+  expect(readerEvidence[1]?.spanIds).toHaveLength(1);
+  const firstParentSpanId = readerEvidence[0]!.spanIds[0]!;
+  const secondParentSpanId = readerEvidence[1]!.spanIds[0]!;
+  expect(secondParentSpanId).not.toBe(firstParentSpanId);
 
   const mainDraft = "Keep the main Chat draft through Side Chat.";
   await mainComposer.fill(mainDraft);
-  await assistantMessages.last().hover();
-  await assistantMessages.last().locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  await assistantMessages.first().hover();
+  await assistantMessages.first().locator('[data-testid="chat-message-actions-trigger"]:visible').click();
   await page.getByTestId("chat-message-actions-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
@@ -265,7 +295,8 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   expect(invocationsBeforeSend).toHaveLength(2);
   expect(invocationsBeforeSend.every((call) => !call.fork)).toBe(true);
 
-  const sidePrompt = "Branch from the latest completed Claude answer.";
+  const sidePrompt = "Branch from Main1 after Main2 has advanced the Claude session.";
+  const side2Prompt = "Continue Side1 in the same historical child session.";
   const createPromise = page.waitForResponse((response) => (
     response.request().method() === "POST" && response.url().includes(`/api/chats/${parentId}/side-chats`)
   ));
@@ -277,44 +308,143 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   await panel.getByRole("button", { name: "Send Side Chat message" }).click();
   const createResponse = await createPromise;
   expect(createResponse.ok(), await createResponse.text()).toBe(true);
-  expect(createResponse.request().postDataJSON()).toMatchObject({ sourceMessageId: latestAssistantMessageId });
+  expect(createResponse.request().postDataJSON()).toMatchObject({ sourceMessageId: firstAssistantMessageId });
   const child = await createResponse.json() as { id: string };
   const sideStream = await sideStreamPromise;
   expect(sideStream.ok(), await sideStream.text()).toBe(true);
   await sideStream.finished();
 
-  const childRuns = await runsForConversation(child.id);
-  expect(childRuns).toHaveLength(1);
-  expect(childRuns[0]!.status).toBe("succeeded");
-  expect(childRuns[0]!.sessionIdAfter).toBeTruthy();
-  expect(childRuns[0]!.sessionIdAfter).not.toBe(parentSessionId);
-  readerEvidence.push(await expectCompleteTranscript(page, childRuns[0]!.id, sidePrompt, "Claude native fork reply"));
+  const side1Runs = await runsForConversation(child.id);
+  expect(side1Runs).toHaveLength(1);
+  expect(side1Runs[0]!.status).toBe("succeeded");
+  expect(side1Runs[0]!.sessionIdAfter).toBeTruthy();
+  expect(side1Runs[0]!.sessionIdAfter).not.toBe(parentSessionId);
+  const side1Reader = await expectCompleteTranscript(page, side1Runs[0]!.id, sidePrompt, "Claude native fork reply");
+  readerEvidence.push(side1Reader);
+  expect(side1Reader.spanIds).toHaveLength(1);
+  expect(side1Reader.userMessages).toHaveLength(1);
+  expect(side1Reader.userMessages[0]).toContain(sidePrompt);
+  expect(side1Reader.userMessages[0]).not.toContain(side2Prompt);
+  expect(side1Reader.userMessages[0]).not.toContain("Second Claude native request");
 
-  const childParams = childRuns[0]!.sessionParamsAfterJson ?? {};
+  const childParams = side1Runs[0]!.sessionParamsAfterJson ?? {};
   const childSessionPath = String(childParams.sessionFilePath ?? "");
   expect(childSessionPath).toBeTruthy();
 
   const invocations = await readJsonl(invocationPath);
   expect(invocations).toHaveLength(3);
   const forkInvocation = invocations[2]!;
-  expect(forkInvocation.fork).toBe(true);
-  const resumeArg = forkInvocation.args.indexOf("--resume");
-  expect(resumeArg).toBeGreaterThanOrEqual(0);
-  expect(forkInvocation.args[resumeArg + 1]).toBe(parentSessionId);
+  expect(forkInvocation.fork).toBe(false);
+  expect(forkInvocation.args).not.toContain("--fork-session");
+  expect(forkInvocation.resumedSessionId).toBe(side1Runs[0]!.sessionIdAfter);
   expect(forkInvocation.inputText).toContain(sidePrompt);
-  expect(forkInvocation.sessionId).toBe(childRuns[0]!.sessionIdAfter);
-  expect(forkInvocation.sessionId).not.toBe(forkInvocation.resumedSessionId);
+  expect(forkInvocation.sessionId).toBe(side1Runs[0]!.sessionIdAfter);
+  expect(forkInvocation.sessionId).not.toBe(parentSessionId);
 
   const childRecords = await readJsonl(childSessionPath);
   const childAssistantRecords = childRecords.filter((record) => record.type === "assistant");
+  const copiedSourceUuids = childRecords
+    .filter((record) => (record.type === "user" || record.type === "assistant")
+      && typeof record.forkedFrom?.messageUuid === "string")
+    .map((record) => record.forkedFrom.messageUuid as string);
+  expect(copiedSourceUuids).toEqual([parentUserRecords[0]!.uuid, firstAssistantUuid]);
+  expect(childRecords.some((record) => messageText(record).includes("Second Claude native request"))).toBe(false);
+  expect(childRecords.some((record) => messageText(record).includes("Claude native reply 2"))).toBe(false);
+  expect(childRecords.some((record) => messageText(record).includes(side2Prompt))).toBe(false);
+  expect(childAssistantRecords.map(messageText)).toEqual(["Claude native reply 1", "Claude native fork reply"]);
   expect(childAssistantRecords.at(-1)).toMatchObject({
-    session_id: childRuns[0]!.sessionIdAfter,
+    sessionId: side1Runs[0]!.sessionIdAfter,
     parentUuid: expect.any(String),
   });
   expect(messageText(childAssistantRecords.at(-1)!)).toBe("Claude native fork reply");
-  expect(childRecords.every((record) => record.session_id === childRuns[0]!.sessionIdAfter)).toBe(true);
-  expect(childAssistantRecords.some((record) => record.uuid === parentHeadUuid)).toBe(true);
+  expect(childRecords.every((record) => record.sessionId === side1Runs[0]!.sessionIdAfter)).toBe(true);
+  const side1Intent = await nativeForkIntentForConversation(child.id);
+  expect(side1Intent).toMatchObject({
+    status: "accepted",
+    idempotencyKey: `side-chat:${child.id}`,
+    source: {
+      sourceConversationId: parentId,
+      sourceRunId: parentRuns[0]!.id,
+      sourceSpanId: firstParentSpanId,
+      sourceBoundaryRef: firstAssistantUuid,
+      selectorJson: {
+        kind: "claude_chain",
+        sessionId: parentSessionId,
+        throughInclusiveUuid: firstAssistantUuid,
+      },
+    },
+  });
+  expect(await fs.readFile(parentSessionPath)).toEqual(parentSessionBytes);
   await expect(panel.getByTestId("chat-assistant-message").last()).toContainText("Claude native fork reply", { timeout: 30_000 });
+
+  await sendSideChatPrompt(page, panel, side2Prompt, "Claude native reply 3");
+  const childRuns = await runsForConversation(child.id);
+  expect(childRuns).toHaveLength(2);
+  expect(childRuns[0]!.id).not.toBe(childRuns[1]!.id);
+  expect(childRuns.every((run) => run.status === "succeeded")).toBe(true);
+  const historicalChildSessionId = childRuns[0]!.sessionIdAfter;
+  expect(historicalChildSessionId).toBeTruthy();
+  expect(childRuns[1]!.sessionIdBefore).toBe(historicalChildSessionId);
+  expect(childRuns[1]!.sessionIdAfter).toBe(historicalChildSessionId);
+  const side1Span = await db.select({
+    id: runRuntimeSpans.id,
+    nativeExecutionRef: runRuntimeSpans.nativeExecutionRef,
+    selectorJson: runRuntimeSpans.selectorJson,
+    state: runRuntimeSpans.state,
+    completeness: runRuntimeSpans.completeness,
+  }).from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, childRuns[0]!.id));
+  const side2Span = await db.select({
+    id: runRuntimeSpans.id,
+    nativeExecutionRef: runRuntimeSpans.nativeExecutionRef,
+    selectorJson: runRuntimeSpans.selectorJson,
+    state: runRuntimeSpans.state,
+    completeness: runRuntimeSpans.completeness,
+  }).from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, childRuns[1]!.id));
+  expect(side1Span).toHaveLength(1);
+  expect(side2Span).toHaveLength(1);
+  expect(side1Span[0]).toMatchObject({ state: "sealed", completeness: "complete" });
+  expect(side2Span[0]).toMatchObject({ state: "sealed", completeness: "complete" });
+  expect(side1Span[0]!.id).not.toBe(side2Span[0]!.id);
+  expect(side1Span[0]!.nativeExecutionRef).toBeTruthy();
+  expect(side2Span[0]!.nativeExecutionRef).toBeTruthy();
+  expect(side2Span[0]!.nativeExecutionRef).not.toBe(side1Span[0]!.nativeExecutionRef);
+  expect(side2Span[0]!.selectorJson).toMatchObject({
+    kind: "claude_chain",
+    sessionId: historicalChildSessionId,
+    startExclusiveUuid: side1Span[0]!.nativeExecutionRef,
+    throughInclusiveUuid: side2Span[0]!.nativeExecutionRef,
+  });
+  const side2Reader = await expectCompleteTranscript(
+    page,
+    childRuns[1]!.id,
+    side2Prompt,
+    "Claude native reply 3",
+  );
+  readerEvidence.push(side2Reader);
+  expect(side2Reader.spanIds).toHaveLength(1);
+  expect(side2Reader.userMessages).toHaveLength(1);
+  expect(side2Reader.userMessages[0]).toContain(side2Prompt);
+  expect(side2Reader.userMessages[0]).not.toContain(sidePrompt);
+  expect(side2Reader.userMessages[0]).not.toContain("Second Claude native request");
+  expect(side1Reader.spanIds[0]).not.toBe(side2Reader.spanIds[0]);
+  expect(side1Reader.assistantMessages).toEqual(["Claude native fork reply"]);
+  expect(side2Reader.assistantMessages).toEqual(["Claude native reply 3"]);
+  const invocationsAfterSide2 = await readJsonl(invocationPath);
+  expect(invocationsAfterSide2).toHaveLength(4);
+  const side2Invocation = invocationsAfterSide2[3]!;
+  expect(side2Invocation.fork).toBe(false);
+  expect(side2Invocation.args).not.toContain("--fork-session");
+  expect(side2Invocation.resumedSessionId).toBe(historicalChildSessionId);
+  expect(side2Invocation.sessionId).toBe(historicalChildSessionId);
+  expect(side2Invocation.inputText).toContain(side2Prompt);
+  const childRecordsAfterSide2 = await readJsonl(childSessionPath);
+  expect(childRecordsAfterSide2.every((record) => record.sessionId === historicalChildSessionId)).toBe(true);
+  expect(childRecordsAfterSide2.some((record) => messageText(record).includes("Second Claude native request"))).toBe(false);
+  expect(childRecordsAfterSide2.some((record) => messageText(record).includes("Claude native reply 2"))).toBe(false);
+  expect(childRecordsAfterSide2.some((record) => messageText(record).includes(sidePrompt))).toBe(true);
+  expect(childRecordsAfterSide2.some((record) => messageText(record).includes(side2Prompt))).toBe(true);
+  expect((await nativeForkIntentForConversation(child.id))?.intentId).toBe(side1Intent?.intentId);
+  expect(await fs.readFile(parentSessionPath)).toEqual(parentSessionBytes);
 
   const keepPromise = page.waitForResponse((response) => (
     response.request().method() === "POST" && response.url().includes(`/api/chats/${child.id}/side-chat/keep`)
@@ -328,10 +458,10 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${child.id}$`));
 
   await page.reload();
-  await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Claude native fork reply");
+  await expect(page.getByTestId("chat-assistant-message").last()).toContainText("Claude native reply 3");
   await expect(page.getByRole("link", { name: "Open source message" })).toHaveAttribute(
     "href",
-    `chat://${parentId}?messageId=${latestAssistantMessageId}`,
+    `chat://${parentId}?messageId=${firstAssistantMessageId}`,
   );
   expect((await runsForConversation(parentId)).map((run) => [run.id, run.sessionIdAfter]))
     .toEqual(parentRuns.map((run) => [run.id, run.sessionIdAfter]));
@@ -339,59 +469,91 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     .toEqual(childRuns.map((run) => [run.id, run.sessionIdAfter]));
 
   await page.goto(`/${org.urlKey}/messenger/chat/${parentId}`);
-  const staleAssistant = page.locator(
-    `[data-testid="chat-assistant-message"][data-message-id="${firstAssistantMessageId}"]`,
+  const headAssistant = page.locator(
+    `[data-testid="chat-assistant-message"][data-message-id="${latestAssistantMessageId}"]`,
   );
-  await expect(staleAssistant).toBeVisible();
-  await staleAssistant.hover();
-  await staleAssistant.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  await expect(headAssistant).toBeVisible();
+  await headAssistant.hover();
+  await headAssistant.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
   await page.getByTestId("chat-message-actions-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
-  const stalePanel = page.getByTestId("chat-side-panel");
-  await expect(stalePanel.getByTestId("side-chat-panel-view")).toBeVisible();
-  const stalePrompt = "Continue from this older Claude answer with an explicit handoff.";
-  const staleCreatePromise = page.waitForResponse((response) => (
+  const headPanel = page.getByTestId("chat-side-panel");
+  await expect(headPanel.getByTestId("side-chat-panel-view")).toBeVisible();
+  const headPrompt = "Branch from Main2 in its own current-head Claude child.";
+  const headCreatePromise = page.waitForResponse((response) => (
     response.request().method() === "POST" && response.url().includes(`/api/chats/${parentId}/side-chats`)
   ));
-  const staleStreamPromise = page.waitForResponse((response) => (
+  const headStreamPromise = page.waitForResponse((response) => (
     response.request().method() === "POST" && response.url().endsWith("/messages/stream")
   ));
-  const staleComposer = stalePanel.locator('[data-testid="side-chat-composer"]:visible .rudder-mdxeditor-content').first();
-  await staleComposer.fill(stalePrompt);
-  await stalePanel.getByRole("button", { name: "Send Side Chat message" }).click();
-  const staleCreate = await staleCreatePromise;
-  expect(staleCreate.ok(), await staleCreate.text()).toBe(true);
-  expect(staleCreate.request().postDataJSON()).toMatchObject({ sourceMessageId: firstAssistantMessageId });
-  const staleChild = await staleCreate.json() as { id: string };
-  const staleStream = await staleStreamPromise;
-  expect(staleStream.ok(), await staleStream.text()).toBe(true);
-  await staleStream.finished();
-  await expect(stalePanel.getByTestId("side-chat-context-handoff")).toBeVisible({ timeout: 30_000 });
-  await expect(stalePanel.getByTestId("chat-assistant-message").last()).toContainText("Claude native reply 1", {
+  const headComposer = headPanel.locator('[data-testid="side-chat-composer"]:visible .rudder-mdxeditor-content').first();
+  await headComposer.fill(headPrompt);
+  await headPanel.getByRole("button", { name: "Send Side Chat message" }).click();
+  const headCreate = await headCreatePromise;
+  expect(headCreate.ok(), await headCreate.text()).toBe(true);
+  expect(headCreate.request().postDataJSON()).toMatchObject({ sourceMessageId: latestAssistantMessageId });
+  const headChild = await headCreate.json() as { id: string };
+  expect(headChild.id).not.toBe(child.id);
+  const headStream = await headStreamPromise;
+  expect(headStream.ok(), await headStream.text()).toBe(true);
+  await headStream.finished();
+  await expect(headPanel.getByTestId("side-chat-context-handoff")).toHaveCount(0);
+  await expect(headPanel.getByTestId("chat-assistant-message").last()).toContainText("Claude native fork reply", {
     timeout: 30_000,
   });
 
-  const staleRuns = await runsForConversation(staleChild.id);
-  expect(staleRuns).toHaveLength(1);
-  expect(staleRuns[0]!.status).toBe("succeeded");
-  expect(staleRuns[0]!.sessionIdAfter).toBeTruthy();
-  expect(staleRuns[0]!.sessionIdAfter).not.toBe(parentSessionId);
+  const headRuns = await runsForConversation(headChild.id);
+  expect(headRuns).toHaveLength(1);
+  expect(headRuns[0]!.status).toBe("succeeded");
+  expect(headRuns[0]!.sessionIdAfter).toBeTruthy();
+  expect(headRuns[0]!.sessionIdAfter).not.toBe(parentSessionId);
+  expect(headRuns[0]!.sessionIdAfter).not.toBe(historicalChildSessionId);
   readerEvidence.push(await expectCompleteTranscript(
     page,
-    staleRuns[0]!.id,
-    stalePrompt,
-    "Claude native reply 1",
-    "legacy",
+    headRuns[0]!.id,
+    headPrompt,
+    "Claude native fork reply",
   ));
 
-  const invocationsAfterStaleSend = await readJsonl(invocationPath);
-  expect(invocationsAfterStaleSend).toHaveLength(4);
-  const staleInvocation = invocationsAfterStaleSend[3]!;
-  expect(staleInvocation.fork).toBe(false);
-  expect(staleInvocation.args).not.toContain("--fork-session");
-  expect(staleInvocation.resumedSessionId).toBeNull();
-  expect(staleInvocation.sessionId).toBe(staleRuns[0]!.sessionIdAfter);
-  expect(staleInvocation.inputText).toContain(stalePrompt);
-  expect(await readJsonl(parentSessionPath)).toEqual(parentRecords);
+  const invocationsAfterHeadChild = await readJsonl(invocationPath);
+  expect(invocationsAfterHeadChild).toHaveLength(5);
+  const headInvocation = invocationsAfterHeadChild[4]!;
+  expect(headInvocation.fork).toBe(true);
+  expect(headInvocation.args).toContain("--fork-session");
+  expect(headInvocation.resumedSessionId).toBe(parentSessionId);
+  expect(headInvocation.sessionId).toBe(headRuns[0]!.sessionIdAfter);
+  expect(headInvocation.inputText).toContain(headPrompt);
+  const headSessionPath = String(headRuns[0]!.sessionParamsAfterJson?.sessionFilePath ?? "");
+  expect(headSessionPath).toBeTruthy();
+  const headRecords = await readJsonl(headSessionPath);
+  const headUserRecords = headRecords.filter((record) => record.type === "user");
+  const headAssistantRecords = headRecords.filter((record) => record.type === "assistant");
+  expect(headUserRecords).toHaveLength(3);
+  expect(headUserRecords.some((record) => messageText(record).includes("First Claude native request"))).toBe(true);
+  expect(headUserRecords.some((record) => messageText(record).includes("Second Claude native request"))).toBe(true);
+  expect(headUserRecords.some((record) => messageText(record).includes(headPrompt))).toBe(true);
+  expect(headAssistantRecords.map(messageText)).toEqual([
+    "Claude native reply 1", "Claude native reply 2", "Claude native fork reply",
+  ]);
+  expect(headRecords.some((record) => messageText(record).includes(sidePrompt))).toBe(false);
+  expect(headRecords.some((record) => messageText(record).includes(side2Prompt))).toBe(false);
+  const headIntent = await nativeForkIntentForConversation(headChild.id);
+  expect(headIntent).toMatchObject({
+    status: "accepted",
+    idempotencyKey: `side-chat:${headChild.id}`,
+    source: {
+      sourceConversationId: parentId,
+      sourceRunId: parentRuns[1]!.id,
+      sourceSpanId: secondParentSpanId,
+      sourceBoundaryRef: parentHeadUuid,
+      selectorJson: {
+        kind: "claude_chain",
+        sessionId: parentSessionId,
+        throughInclusiveUuid: parentHeadUuid,
+      },
+    },
+  });
+  expect(headIntent?.intentId).not.toBe(side1Intent?.intentId);
+  expect(await fs.readFile(parentSessionPath)).toEqual(parentSessionBytes);
   expect((await runsForConversation(parentId)).map((run) => [run.id, run.sessionIdAfter]))
     .toEqual(parentRuns.map((run) => [run.id, run.sessionIdAfter]));
 
@@ -423,12 +585,12 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   expect(lostRun.sessionIdAfter).toBeNull();
 
   const invocationsAfterProcessLoss = await readJsonl(invocationPath);
-  expect(invocationsAfterProcessLoss).toHaveLength(5);
-  expect(invocationsAfterProcessLoss[4]).toMatchObject({
+  expect(invocationsAfterProcessLoss).toHaveLength(6);
+  expect(invocationsAfterProcessLoss[5]).toMatchObject({
     resumedSessionId: parentSessionId,
     fork: true,
   });
-  expect(invocationsAfterProcessLoss[4]!.inputText).toContain(processLossPrompt);
+  expect(invocationsAfterProcessLoss[5]!.inputText).toContain(processLossPrompt);
   const [recoveryBinding] = await db.select().from(runtimeBindings)
     .where(eq(runtimeBindings.conversationId, recoveryChild.id)).limit(1);
   const [lostSegment] = await db.select().from(nativeSegments)
@@ -482,14 +644,14 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     "Claude native fork reply",
   ));
   const invocationsAfterNativeRetry = await readJsonl(invocationPath);
-  expect(invocationsAfterNativeRetry).toHaveLength(6);
-  expect(invocationsAfterNativeRetry[5]).toMatchObject({
+  expect(invocationsAfterNativeRetry).toHaveLength(7);
+  expect(invocationsAfterNativeRetry[6]).toMatchObject({
     resumedSessionId: parentSessionId,
     sessionId: recoveryRuns[1]!.sessionIdAfter,
     fork: true,
   });
-  expect(invocationsAfterNativeRetry[5]!.inputText).toContain(retriedNativePrompt);
-  expect(invocationsAfterNativeRetry[5]!.args).toContain("--fork-session");
+  expect(invocationsAfterNativeRetry[6]!.inputText).toContain(retriedNativePrompt);
+  expect(invocationsAfterNativeRetry[6]!.args).toContain("--fork-session");
 
   await page.goto(`/${org.urlKey}/messenger/chat/${parentId}`);
   const driftAnchor = page.locator(
@@ -527,7 +689,7 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
       type: "user",
       uuid: driftUserUuid,
       parentUuid: parentHeadUuid,
-      session_id: parentSessionId,
+      sessionId: parentSessionId,
       cwd: parentRecords[0]?.cwd,
       timestamp: driftTimestamp,
       message: { role: "user", content: [{ type: "text", text: "External Claude session advance" }] },
@@ -536,7 +698,7 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
       type: "assistant",
       uuid: driftAssistantUuid,
       parentUuid: driftUserUuid,
-      session_id: parentSessionId,
+      sessionId: parentSessionId,
       cwd: parentRecords[0]?.cwd,
       timestamp: driftTimestamp,
       message: {
@@ -566,13 +728,13 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     "legacy",
   ));
   const finalInvocations = await readJsonl(invocationPath);
-  expect(finalInvocations).toHaveLength(8);
-  expect(finalInvocations[7]).toMatchObject({
+  expect(finalInvocations).toHaveLength(9);
+  expect(finalInvocations[8]).toMatchObject({
     resumedSessionId: null,
     fork: false,
   });
-  expect(finalInvocations[7]!.inputText).toContain(driftHandoffPrompt);
-  expect(finalInvocations[7]!.args).not.toContain("--fork-session");
+  expect(finalInvocations[8]!.inputText).toContain(driftHandoffPrompt);
+  expect(finalInvocations[8]!.args).not.toContain("--fork-session");
 
   console.log("CLAUDE_NATIVE_FORK_E2E_EVIDENCE", JSON.stringify({
     parentConversationId: parentId,
@@ -580,12 +742,22 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     latestAssistantMessageId,
     sourceAssistantHeadUuid: parentHeadUuid,
     sideChats: [
-      { id: child.id, sourceMessageId: latestAssistantMessageId, outcome: "kept" },
-      { id: staleChild.id, sourceMessageId: firstAssistantMessageId, outcome: "context_handoff" },
+      {
+        id: child.id,
+        sourceMessageId: firstAssistantMessageId,
+        sourceSpanId: firstParentSpanId,
+        side1RunId: childRuns[0]!.id,
+        side1SpanId: side1Span[0]!.id,
+        side2RunId: childRuns[1]!.id,
+        side2SpanId: side2Span[0]!.id,
+        sessionId: historicalChildSessionId,
+        outcome: "historical_exact_fork_then_same_child_followup",
+      },
+      { id: headChild.id, sourceMessageId: latestAssistantMessageId, sourceSpanId: secondParentSpanId, outcome: "current_head_native_fork" },
       { id: recoveryChild.id, sourceMessageId: latestAssistantMessageId, outcome: "process_loss_then_native_retry" },
       { id: driftChild.id, sourceMessageId: latestAssistantMessageId, outcome: "process_loss_then_head_drift_handoff" },
     ],
-    runs: [...parentRuns, ...childRuns, ...staleRuns, ...recoveryRuns, ...driftRuns].map((run) => ({
+    runs: [...parentRuns, ...childRuns, ...headRuns, ...recoveryRuns, ...driftRuns].map((run) => ({
       id: run.id,
       conversationId: run.chatConversationId,
       status: run.status,
@@ -593,11 +765,18 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     })),
     readers: readerEvidence,
     keepReload: { messengerVisible: true, childReplyRestored: true, sourceLinkRestored: true },
-    staleHead: {
+    historicalHead: {
       selectedMessageId: firstAssistantMessageId,
       latestMessageId: latestAssistantMessageId,
-      continuity: "context_handoff",
-      nativeFork: false,
+      sourceSpanId: firstParentSpanId,
+      continuity: "native",
+      nativeFork: true,
+      exactPrefix: [parentUserRecords[0]!.uuid, firstAssistantUuid],
+      laterTurnExcluded: true,
+      sameChildFollowupRunId: childRuns[1]!.id,
+      sameChildFollowupSpanId: side2Span[0]!.id,
+      sameChildSession: true,
+      followupDidNotForkAgain: true,
       sourceSessionUnchanged: true,
     },
     processLossRecovery: {

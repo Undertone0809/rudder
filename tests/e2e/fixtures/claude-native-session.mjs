@@ -71,11 +71,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const sourceRecords = resumedSessionId ? readSession(resumedSessionId) : [];
   const sessionId = isFork || !resumedSessionId ? randomUUID() : resumedSessionId;
   const records = isFork
-    ? sourceRecords.map((record) => ({ ...record, session_id: sessionId }))
+    ? sourceRecords.map((record) => ({ ...record, sessionId }))
     : sourceRecords;
   const previousAssistant = [...records].reverse().find((record) => record.type === "assistant" && record.uuid);
   const assistantUuid = randomUUID();
-  const reply = isFork
+  // An SDK-created child is resumed without --fork-session. Its first new
+  // assistant follows only inherited assistant records marked forkedFrom.
+  const firstSdkChildTurn = sourceRecords.some((record) => record.forkedFrom)
+    && !sourceRecords.some((record) => record.type === "assistant" && !record.forkedFrom);
+  const reply = isFork || firstSdkChildTurn
     ? "Claude native fork reply"
     : `Claude native reply ${records.filter((record) => record.type === "assistant").length + 1}`;
   const now = new Date().toISOString();
@@ -85,7 +89,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     type: "user",
     uuid: userUuid,
     parentUuid: previousAssistant?.uuid ?? null,
-    session_id: sessionId,
+    // Native JSONL uses sessionId; stream-json below uses session_id.
+    sessionId,
     cwd: sessionCwd,
     timestamp: now,
     message: { role: "user", content: [{ type: "text", text: inputText }] },
@@ -94,7 +99,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     type: "assistant",
     uuid: assistantUuid,
     parentUuid: userUuid,
-    session_id: sessionId,
+    sessionId,
     cwd: sessionCwd,
     timestamp: now,
     message: { role: "assistant", content: [{ type: "text", text: reply }], stop_reason: "end_turn" },

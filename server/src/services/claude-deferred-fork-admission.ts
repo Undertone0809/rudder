@@ -119,7 +119,31 @@ export type ClaudeDeferredForkAdmission = {
   adapterIntent: ClaudeDeferredForkIntent | null;
   reference: NativeForkIntentReference | null;
   reservation: Parameters<typeof reserveNativeForkIntent>[1] | null;
+  useExactNativeFork?: boolean;
 };
+
+const VERIFIED_CLAUDE_SELECTOR_STATUSES = new Set(["initial", "bounded", "exact"]);
+
+function hasSealedExactHistoricalSelector(input: {
+  source: SideChatForkSource;
+  selector: Record<string, unknown>;
+  sourceAssistantUuid: string;
+  boundaryStatus: string | null;
+}): boolean {
+  const selectorCompleteness = stringValue(input.selector.completeness);
+  return Boolean(
+    input.source.sourceConversationId
+      && input.source.sourceMessageId
+      && input.source.sourceRunId
+      && input.source.sourceSpanId
+      && input.source.sourceBoundaryRef === input.sourceAssistantUuid
+      && input.selector.sessionId === input.source.session?.sessionId
+      && input.selector.throughInclusiveUuid === input.sourceAssistantUuid
+      && input.boundaryStatus
+      && VERIFIED_CLAUDE_SELECTOR_STATUSES.has(input.boundaryStatus)
+      && (!selectorCompleteness || selectorCompleteness === "complete"),
+  );
+}
 
 function handoff(source: SideChatForkSource, reason: string): ClaudeDeferredForkAdmission {
   return {
@@ -181,10 +205,34 @@ export async function admitClaudeDeferredFork(input: {
     session: source.session,
     sourceAssistantUuid,
   });
+  if (head.status === "mismatch") {
+    const exactHistoricalSelector = hasSealedExactHistoricalSelector({
+      source,
+      selector: selector as Record<string, unknown>,
+      sourceAssistantUuid,
+      boundaryStatus,
+    });
+    if (exactHistoricalSelector
+      && stringValue(head.currentAssistantUuid)
+      && head.currentAssistantUuid !== sourceAssistantUuid
+      && stringValue(head.revision)) {
+      // The caller routes null through admitSideChatRuntimeFork, whose durable
+      // native-fork reservation rechecks the sealed Span and whose adapter
+      // validates and copies the exact selected prefix under a stable file read.
+      return {
+        admission: handoff(source, "claude_exact_historical_selector_requires_native_fork").admission,
+        adapterIntent: null,
+        reference: null,
+        reservation: null,
+        useExactNativeFork: true,
+      };
+    }
+    return handoff(source, exactHistoricalSelector
+      ? "claude_source_head_cannot_be_verified"
+      : "claude_selected_reply_is_not_provider_head");
+  }
   if (head.status !== "matched") {
-    return handoff(source, head.status === "mismatch"
-      ? "claude_selected_reply_is_not_provider_head"
-      : "claude_source_head_cannot_be_verified");
+    return handoff(source, "claude_source_head_cannot_be_verified");
   }
 
   const targetBinding = await ensureRuntimeBinding(input.db, {
