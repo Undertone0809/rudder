@@ -934,6 +934,7 @@ async function loadRunRowById(
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
+      agentWorkspaceKey: agents.workspaceKey,
       agentRuntimeType: agents.agentRuntimeType,
       agentRuntimeConfig: agents.agentRuntimeConfig,
       runtimeConfig: agents.runtimeConfig,
