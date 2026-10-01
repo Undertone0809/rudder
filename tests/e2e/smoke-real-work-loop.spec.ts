@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
@@ -177,6 +177,9 @@ async function createRetryOnceStub() {
   const counterPath = join(directory, "attempts");
   await writeFile(scriptPath, `#!/bin/sh
 set -eu
+case " $* " in
+  *" --version "*|*" generate-json-schema "*) exec ${JSON.stringify(E2E_CODEX_STUB)} "$@" ;;
+esac
 counter=${JSON.stringify(counterPath)}
 attempt=0
 if [ -f "$counter" ]; then
@@ -193,7 +196,7 @@ fi
 exec ${JSON.stringify(E2E_CODEX_STUB)} "$@"
 `);
   await chmod(scriptPath, 0o755);
-  return scriptPath;
+  return { scriptPath, counterPath };
 }
 
 test.describe("@smoke real work loop", () => {
@@ -263,19 +266,20 @@ test.describe("@smoke real work loop", () => {
     await expect(page.getByRole("button", { name: /Stopped/ })).toHaveCount(0);
   });
 
-  test("preserves a failed attempt and retries the same work item successfully", async ({ page }) => {
+  test("keeps an uncertain native submission blocked after refresh", async ({ page }) => {
     const retryStub = await createRetryOnceStub();
     try {
-      const organization = await createSmokeOrganization(page, `Smoke-Retry-${Date.now()}`, retryStub);
+      const organization = await createSmokeOrganization(page, `Smoke-Retry-${Date.now()}`, retryStub.scriptPath);
       await openChat(page, organization);
 
-      const task = "Retry this work item after the first runtime attempt fails.";
+      const task = "Check the result of this work item after an interrupted native turn.";
       const chatId = await sendTask(page, task);
       const failedMessage = page.getByTestId("chat-assistant-message")
-        .filter({ hasText: "Code chat_adapter_failed" });
+        .filter({ hasText: "Code chat_submission_acceptance_unknown" });
       await expect(failedMessage).toBeVisible({ timeout: WORK_LOOP_TIMEOUT });
       await expect(failedMessage).toContainText("Response failed");
-      await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
+      await expect(failedMessage.getByRole("button", { name: "Retry" })).toHaveCount(0);
+      expect(await readFile(retryStub.counterPath, "utf8")).toBe("1");
 
       const failedMessages = await readMessages(page, chatId);
       const failedAssistant = [...failedMessages].reverse()
@@ -286,9 +290,9 @@ test.describe("@smoke real work loop", () => {
         replyingAgentId: organization.chatAgent.id,
         structuredPayload: {
           recoverableFailure: {
-            action: "retry",
-            code: "chat_adapter_failed",
-            recoverable: true,
+            action: "inspect_run",
+            code: "chat_submission_acceptance_unknown",
+            recoverable: false,
           },
         },
       });
@@ -297,39 +301,23 @@ test.describe("@smoke real work loop", () => {
         orgId: organization.id,
         agentId: organization.chatAgent.id,
         chatConversationId: chatId,
-        resultJson: { outcome: "failed", retryable: true },
+        resultJson: { outcome: "failed", retryable: false, submissionPhase: "indeterminate" },
       });
-
-      await failedMessage.getByRole("button", { name: "Retry" }).click();
-      await expect(page.getByTestId("chat-user-message-bubble").filter({ hasText: task }).last()).toBeVisible({
-        timeout: 15_000,
-      });
-      await expect(page.getByTestId("chat-assistant-message").last()).toContainText(
-        "Streaming reply for chat.",
-        { timeout: WORK_LOOP_TIMEOUT },
-      );
-
-      const messagesAfterRetry = await readMessages(page, chatId);
-      const preservedFailure = messagesAfterRetry.find((message) => message.id === failedAssistant!.id);
-      expect(preservedFailure).toMatchObject({
-        status: "failed",
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(failedMessage).toBeVisible({ timeout: 15_000 });
+      await expect(failedMessage.getByRole("button", { name: "Retry" })).toHaveCount(0);
+      const refreshedMessages = await readMessages(page, chatId);
+      expect(refreshedMessages.filter((message) => message.role === "user")).toHaveLength(1);
+      expect(refreshedMessages.filter((message) => message.role === "assistant")).toMatchObject([{
+        id: failedAssistant!.id,
         runId: failedAssistant!.runId,
-        supersededAt: expect.any(String),
-      });
-      const successfulAssistant = [...messagesAfterRetry].reverse()
-        .find((message) => message.role === "assistant" && message.status === "completed");
-      expect(successfulAssistant).toMatchObject({
-        body: "Streaming reply for chat.",
-        runId: expect.any(String),
-        replyingAgentId: organization.chatAgent.id,
-      });
-      const retryRun = await waitForRun(page, successfulAssistant!.runId!, "succeeded");
-      await assertRunEvidence(page, retryRun, chatId, organization);
-      const preservedFailedRun = await waitForRun(page, failedAssistant!.runId!, "failed");
-      expect(preservedFailedRun.resultJson).toMatchObject({ outcome: "failed", retryable: true });
-      await expect(failedMessage).toHaveCount(0);
+        status: "failed",
+      }]);
+      // This counts CLI invocations, not provider protocol submissions. The
+      // App Server lost-ack test covers protocol-level dispatch separately.
+      expect(await readFile(retryStub.counterPath, "utf8")).toBe("1");
     } finally {
-      await rm(dirname(retryStub), { recursive: true, force: true });
+      await rm(dirname(retryStub.scriptPath), { recursive: true, force: true });
     }
   });
 });
