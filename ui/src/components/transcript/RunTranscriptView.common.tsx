@@ -29,6 +29,7 @@ import { type MarkdownLinkClickHandler } from "../MarkdownBody";
 
 export type TranscriptMode = "nice" | "raw";
 export type TranscriptDensity = "comfortable" | "compact";
+export const UNVERIFIED_RUDDER_AGENT_ME_RESULT = "Rudder agent identity could not be verified. Inspect the original result in Raw.";
 export type TranscriptPresentation = "default" | "chat" | "detail";
 
 export type TranscriptToolCategory =
