@@ -18,8 +18,8 @@ import {
   HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE,
   HERMES_PRODUCT_RPC_TRANSPORT,
   HermesProductRpcForkError,
-  type HermesProductRpcClient,
   prepareHermesProductRpcMcpOverlay,
+  type HermesProductRpcClient,
   type HermesProductRpcClientFactory,
   type HermesProductRpcProfile,
 } from "./product-rpc.js";

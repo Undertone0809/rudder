@@ -4,15 +4,15 @@ import {
   pickRudderMcpManagedEnv,
   preflightManagedExternalMcpBindings,
   rudderMcpRuntimeMetadata,
-  type AgentRuntimeLoadedMcpServerMeta,
   type AgentRuntimeExecutionContext,
   type AgentRuntimeExecutionResult,
+  type AgentRuntimeLoadedMcpServerMeta,
   type RudderMcpCliCommand,
   type RudderMcpPreflightResult,
 } from "@rudderhq/agent-runtime-utils";
+import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import { preflightRudderMcpServer } from "@rudderhq/agent-runtime-utils/rudder-mcp-preflight";
 import { resolveRudderMcpCliCommand } from "@rudderhq/agent-runtime-utils/rudder-mcp-server";
-import { applyGitCredentialHelperPolicyEnv, applyGitIdentityPreparationEnv, ensureGitIdentityFileConfig } from "@rudderhq/agent-runtime-utils/git-identity";
 import {
   asNumber,
   asString,

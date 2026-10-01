@@ -1,8 +1,8 @@
+import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createHermesAcpProviderCapabilities,

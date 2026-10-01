@@ -1,9 +1,10 @@
+import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { expect, test } from "@playwright/test";
+import { resolveManagedCodexHomeDir } from "../../packages/agent-runtimes/codex-local/src/server/codex-home.ts";
 import { asc, eq, inArray } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
   chatMessageTranscriptEntries,
@@ -14,7 +15,6 @@ import {
   nativeSegments,
   runRuntimeSpans,
 } from "../../packages/db/src/index.ts";
-import { resolveManagedCodexHomeDir } from "../../packages/agent-runtimes/codex-local/src/server/codex-home.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_DATABASE_URL, E2E_HOME, E2E_INSTANCE_ID, E2E_PORT, E2E_ROOT } from "./support/e2e-env";
 
