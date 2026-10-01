@@ -810,6 +810,98 @@ describe("Cursor ACP native capabilities", () => {
     expect(capabilities.transcript.evidence.status).toBe("supported");
   });
 
+  it("continues a cold native session from provider-loaded history without Reader warmup", async () => {
+    const sessionId = "cursor-cold-continuation-session";
+    const marker = "CURSOR_COLD_NATIVE_CONTEXT_4F2A";
+    const persistedTurns = new Map<string, Array<{ user: string; assistant: string; executionRef: string }>>();
+    const promptText = (request: JsonRecord) => {
+      const params = request.params as JsonRecord;
+      const prompt = Array.isArray(params.prompt) ? params.prompt[0] as JsonRecord | undefined : undefined;
+      return typeof prompt?.text === "string" ? prompt.text : "";
+    };
+    const emitTurnUpdate = (
+      output: PassThrough,
+      activeSessionId: string,
+      executionRef: string,
+      sessionUpdate: "user_message_chunk" | "agent_message_chunk",
+      text: string,
+    ) => output.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: activeSessionId,
+        update: { sessionUpdate, executionRef, content: { type: "text", text } },
+      },
+    })}\n`);
+
+    const createdFixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/new") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { sessionId } })}\n`);
+      } else if (request.method === "session/prompt") {
+        const user = promptText(request);
+        const assistant = `Stored ${marker}`;
+        persistedTurns.set(sessionId, [{ user, assistant, executionRef: "cursor-cold-execution-1" }]);
+        emitTurnUpdate(output, sessionId, "cursor-cold-execution-1", "user_message_chunk", user);
+        emitTurnUpdate(output, sessionId, "cursor-cold-execution-1", "agent_message_chunk", assistant);
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } })}\n`);
+      }
+    });
+    const created = await executeCursorNativeChat({
+      profile: profile(createdFixture.spawn), binding,
+      prompt: `Remember this exact marker: ${marker}`, model: "", onLog: async () => {},
+    });
+    expect(created).toMatchObject({ exitCode: 0, sessionId, summary: `Stored ${marker}` });
+
+    let loadedTurns: Array<{ user: string; assistant: string; executionRef: string }> = [];
+    const resumedFixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult() })}\n`);
+      } else if (request.method === "session/load") {
+        const requestedSessionId = String((request.params as JsonRecord).sessionId);
+        loadedTurns = [...(persistedTurns.get(requestedSessionId) ?? [])];
+        for (const turn of loadedTurns) {
+          emitTurnUpdate(output, requestedSessionId, turn.executionRef, "user_message_chunk", turn.user);
+          emitTurnUpdate(output, requestedSessionId, turn.executionRef, "agent_message_chunk", turn.assistant);
+        }
+        output.write(`${JSON.stringify({
+          jsonrpc: "2.0", id: request.id, result: { sessionId: requestedSessionId, modes: {} },
+        })}\n`);
+      } else if (request.method === "session/prompt") {
+        const answer = loadedTurns.some((turn) => turn.assistant.includes(marker)) ? marker : "NO_LOADED_CONTEXT";
+        emitTurnUpdate(output, sessionId, "cursor-cold-execution-2", "user_message_chunk", promptText(request));
+        emitTurnUpdate(output, sessionId, "cursor-cold-execution-2", "agent_message_chunk", answer);
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } })}\n`);
+      }
+    });
+    const continued = await executeCursorNativeChat({
+      profile: profile(resumedFixture.spawn), binding,
+      sessionId: created.sessionId,
+      sessionParams: created.sessionParams,
+      prompt: "Return only the exact marker from our prior turn.",
+      model: "",
+      onLog: async () => {},
+    });
+
+    expect(continued).toMatchObject({
+      exitCode: 0,
+      sessionId,
+      summary: marker,
+      resultJson: {
+        transcriptBoundary: { status: "ok" },
+        executionRef: "cursor-cold-execution-2",
+      },
+    });
+    expect(resumedFixture.requests.map((request) => request.method)).toEqual([
+      "initialize", "initialized", "session/load", "session/prompt",
+    ]);
+    expect(resumedFixture.requests.find((request) => request.method === "session/load")?.params).toMatchObject({ sessionId });
+    expect(resumedFixture.requests.some((request) => request.method === "session/new")).toBe(false);
+    expect(loadedTurns).toHaveLength(1);
+    expect(loadedTurns[0]?.assistant).toBe(`Stored ${marker}`);
+  });
+
   it("reuses the persisted authentication method before transcript replay", async () => {
     const fixture = createSpawnFixture((request, output) => {
       if (request.method === "initialize") {
