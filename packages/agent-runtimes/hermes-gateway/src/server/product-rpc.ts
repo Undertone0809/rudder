@@ -271,7 +271,10 @@ const MCP_ENV_KEYS = [
 ] as const;
 
 const HERMES_STATE_FILES = ["state.db", "state.db-wal", "state.db-shm", "state.db-journal"] as const;
-const HERMES_STATE_DIRECTORIES = ["sessions", "memories"] as const;
+// Hermes creates runtime/active_sessions.json on first session admission. Link
+// runtime before boot so its atomic registry writes share the durable home read
+// by the Run lease verifier, while Run MCP config and credentials stay isolated.
+const HERMES_STATE_DIRECTORIES = ["sessions", "memories", "runtime"] as const;
 const HERMES_PERSISTENT_HOME_ENTRIES = new Set<string>([
   ...HERMES_STATE_FILES,
   ...HERMES_STATE_DIRECTORIES,

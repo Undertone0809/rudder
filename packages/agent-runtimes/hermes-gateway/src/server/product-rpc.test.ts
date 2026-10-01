@@ -755,6 +755,15 @@ describe("Hermes Product Gateway RPC", () => {
       expect(first.home).not.toBe(second.home);
       expect(await fs.realpath(path.join(first.home, "state.db"))).toBe(await fs.realpath(statePath));
       expect(await fs.realpath(path.join(second.home, "state.db"))).toBe(await fs.realpath(statePath));
+      const durableRuntime = path.join(fixture.profile.hermesHome, "runtime");
+      expect(await fs.realpath(path.join(first.home, "runtime"))).toBe(await fs.realpath(durableRuntime));
+      expect(await fs.realpath(path.join(second.home, "runtime"))).toBe(await fs.realpath(durableRuntime));
+      const registry = path.join(first.home, "runtime", "active_sessions.json");
+      const pendingRegistry = `${registry}.pending`;
+      await fs.writeFile(pendingRegistry, JSON.stringify({ entries: [{ session_id: "native-session-shared" }] }), { mode: 0o600 });
+      await fs.rename(pendingRegistry, registry);
+      expect(await fs.readFile(path.join(durableRuntime, "active_sessions.json"), "utf8"))
+        .toContain("native-session-shared");
       expect(firstServer).toHaveProperty("external-local");
       expect(secondServer).toHaveProperty("external-local");
       expect(firstAlias).toBeTruthy();
@@ -781,6 +790,12 @@ describe("Hermes Product Gateway RPC", () => {
       expect(JSON.stringify(sessionParams)).not.toContain(firstIdentity.RUDDER_API_KEY);
       expect(JSON.stringify(sessionParams)).not.toContain(secondIdentity.RUDDER_API_KEY);
       expect(await fs.readFile(configPath, "utf8")).toBe(originalConfig);
+      expect(await fs.readdir(fixture.profile.hermesHome)).not.toContain("rudder_product_rpc_bootstrap.py");
+      expect(await fs.readdir(durableRuntime)).toEqual(["active_sessions.json"]);
+      await first.cleanup();
+      expect(await fs.readFile(path.join(durableRuntime, "active_sessions.json"), "utf8"))
+        .toContain("native-session-shared");
+      expect(await fs.stat(first.home).catch(() => null)).toBeNull();
     } finally {
       await first?.cleanup();
       await second?.cleanup();
@@ -1436,6 +1451,8 @@ describe("Hermes Product Gateway RPC", () => {
     const fixture = await makeProfile();
     try {
       const sessionId = "hermes-product-session";
+      await fs.writeFile(path.join(fixture.profile.hermesHome, "config.yaml"), JSON.stringify({ model: "local-test" }), { mode: 0o600 });
+      await addJsonYamlFixture(fixture.profile);
       execFileSync(pythonCommand!, ["-c", HISTORY_FENCE_SEED_SCRIPT, path.join(fixture.profile.hermesHome, "state.db"), sessionId], {
         encoding: "utf8",
       });
@@ -1456,6 +1473,7 @@ describe("Hermes Product Gateway RPC", () => {
       };
       let interleavedWriterResult: string | null = null;
       let nativePromptWriteResult: string | null = null;
+      let overlayHome: string | null = null;
       const gateway = mockGateway(async (method, _params, emit) => {
         if (method !== "prompt.submit") return undefined;
         order.push("prompt-submit");
@@ -1466,8 +1484,8 @@ describe("Hermes Product Gateway RPC", () => {
           sessionId,
           "41",
         ], { encoding: "utf8" }).trim();
-        const registryPath = path.join(profile.hermesHome, "runtime", "active_sessions.json");
-        await fs.mkdir(path.dirname(registryPath), { recursive: true });
+        if (!overlayHome) throw new Error("Hermes Run overlay was not created");
+        const registryPath = path.join(overlayHome, "runtime", "active_sessions.json");
         await fs.writeFile(registryPath, JSON.stringify({ entries: [{
           lease_id: "test-lease",
           session_id: sessionId,
@@ -1489,9 +1507,22 @@ describe("Hermes Product Gateway RPC", () => {
       });
 
       const result = await executeHermesProductRpcChat({
-        ...runInput(profile, gateway.createClient, readHistoryTail, {
+        ...runInput(profile, async (input) => {
+          overlayHome = input.profile.env?.HERMES_HOME ?? null;
+          return gateway.createClient(input);
+        }, readHistoryTail, {
           acquireHistoryFence: undefined,
         }),
+        rudderMcp: {
+          command: { command: process.execPath, args: ["mcp-server"], provenance: "repo" },
+          identity: {
+            RUDDER_API_URL: "http://127.0.0.1:3100",
+            RUDDER_API_KEY: "run-scoped-fence-secret",
+            RUDDER_ORG_ID: "org-fence-test",
+            RUDDER_AGENT_ID: "agent-fence-test",
+            RUDDER_RUN_ID: "run-fence-test",
+          },
+        },
       });
 
       const expectedRangeRef = JSON.stringify({
@@ -1515,6 +1546,11 @@ describe("Hermes Product Gateway RPC", () => {
         },
       });
       expect(hasConfirmedNativeWriterQuiescence(result)).toBe(true);
+      expect(overlayHome).toBeTruthy();
+      expect(await fs.stat(overlayHome!).catch(() => null)).toBeNull();
+      expect(await fs.readFile(path.join(profile.hermesHome, "runtime", "active_sessions.json"), "utf8"))
+        .toContain(sessionId);
+      expect(await fs.readdir(profile.hermesHome)).not.toContain("rudder_product_rpc_bootstrap.py");
       expect(interleavedWriterResult).toBe("blocked");
       expect(nativePromptWriteResult).toBe("inserted");
       expect(order).toEqual(["before-history-tail", "prompt-submit", "after-history-tail"]);
