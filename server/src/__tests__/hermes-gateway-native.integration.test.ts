@@ -51,7 +51,18 @@ const HERMES_PRODUCT_RPC_MOCK = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 const historyPath = path.join(process.env.HERMES_HOME || process.cwd(), "history.json");
-if (process.argv[2] === "-c") {
+if (process.argv[2] === "-c" && process.argv.length > 5) {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { input += chunk; });
+  process.stdin.on("end", () => {
+    const server = JSON.parse(input);
+    if (server.type !== "stdio" || !server.command || !server.env?.RUDDER_API_KEY) process.exit(12);
+    const config = fs.existsSync(process.argv[4]) ? JSON.parse(fs.readFileSync(process.argv[4], "utf8")) : {};
+    config.mcp_servers = { ...config.mcp_servers, "rudder-tools": server };
+    fs.writeFileSync(process.argv[5], JSON.stringify(config), { flag: "wx", mode: 0o600 });
+  });
+} else if (process.argv[2] === "-c") {
   let input = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk) => { input += chunk; });
@@ -66,6 +77,22 @@ if (process.argv[2] === "-c") {
     process.stdout.write(JSON.stringify({ ok: true, helperVersion: request.helperVersion, sessionId: request.sessionId, rows, tailRowId: state.rows.at(-1)?.id ?? null, session: state.session, compressionTipSessionId: null, resolvedResumeSessionId: request.sessionId, successorSession: null }) + "\n");
   });
 } else {
+const overlayConfig = JSON.parse(fs.readFileSync(path.join(process.env.HERMES_HOME, "config.yaml"), "utf8"));
+const rudderServer = overlayConfig.mcp_servers?.["rudder-tools"];
+const aliasRef = /^\$\{([A-Z0-9_]+)\}$/;
+const apiKeyAlias = aliasRef.exec(rudderServer?.env?.RUDDER_API_KEY || "")?.[1];
+const runAlias = aliasRef.exec(rudderServer?.env?.RUDDER_RUN_ID || "")?.[1];
+if (rudderServer?.type !== "stdio" || !apiKeyAlias || !runAlias || !process.env[apiKeyAlias] || !process.env[runAlias]) {
+  process.stderr.write("typed Rudder MCP fixture configuration missing\n");
+  process.exit(13);
+}
+const receiptPath = process.env.RUDDER_HERMES_PRODUCT_RPC_READY_PATH;
+const receiptNonce = process.env.RUDDER_HERMES_PRODUCT_RPC_READY_NONCE;
+if (!receiptPath || !receiptNonce) process.exit(14);
+fs.writeFileSync(receiptPath, JSON.stringify({
+  version: 1, nonce: receiptNonce, serverName: "rudder-tools", status: "ready",
+  toolNames: ["mcp__rudder_tools__rudder_agent_me"]
+}), { flag: "wx", mode: 0o600 });
 process.stdin.setEncoding("utf8");
 let buffer = "";
 function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
@@ -92,6 +119,7 @@ process.stdin.on("data", (chunk) => {
       send({ id: message.id, result: { session_id: "product-session-1", stored_session_id: "product-session-key-1" } });
     }
     else if (message.method === "prompt.submit") {
+      if (!fs.existsSync(receiptPath)) process.exit(15);
       const state = JSON.parse(fs.readFileSync(historyPath, "utf8"));
       state.rows.push(
         { id: 1, session_id: "product-session-key-1", role: "user", content: params.text, timestamp: new Date().toISOString() },
@@ -221,6 +249,7 @@ describe("Hermes gateway native server integration", () => {
 
     try {
       await fs.mkdir(path.join(source, "tui_gateway"), { recursive: true });
+      await fs.mkdir(path.join(root, "hermes-home"), { recursive: true });
       await fs.writeFile(path.join(source, "tui_gateway", "entry.py"), "# test fixture\n");
       await fs.writeFile(gatewayPath, HERMES_PRODUCT_RPC_MOCK, { mode: 0o755 });
       await fs.chmod(gatewayPath, 0o755);
@@ -235,6 +264,7 @@ describe("Hermes gateway native server integration", () => {
       };
 
       const result = await adapter.execute(context(config, {
+        authToken: "hermes-product-test-run-credential",
         onLog: async (_stream, chunk) => { logs.push(chunk); },
       }));
 
