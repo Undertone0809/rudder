@@ -17,13 +17,32 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import type { HermesAcpBinding, HermesAcpForkResult, HermesAcpProfile, HermesAcpWorkspace } from "./native-protocol.js";
-import { createHermesNativeRpcClient, hermesNativeRpcErrorCode } from "./native-protocol.js";
+import type {
+  HermesAcpBinding,
+  HermesAcpForkResult,
+  HermesAcpProfile,
+  HermesAcpWorkspace,
+  HermesNativeProcessDiagnostics,
+} from "./native-protocol.js";
+import {
+  createHermesNativeRpcClient,
+  HermesNativeProcessCloseError,
+  hermesNativeRpcErrorCode,
+  isHermesNativeProcessCloseError,
+} from "./native-protocol.js";
 import {
   readHermesProductHistory,
   type HermesProductHistoryProfile,
   type HermesProductHistoryResult,
 } from "./product-history.js";
+import {
+  HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE,
+  HERMES_PRODUCT_RPC_MCP_ENV_KEYS_ENV,
+  HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV,
+  HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV,
+  waitForHermesProductRpcMcpReady,
+  type HermesProductRpcMcpOverlay,
+} from "./product-rpc-mcp-bootstrap.js";
 
 /* Sensitive values use only the Host's one-shot transient input callback. */
 export const HERMES_PRODUCT_RPC_TRANSPORT = "hermes-tui-gateway-stdio";
@@ -81,6 +100,8 @@ type HermesProductRpcEvent = { type: string; payload: JsonRecord; sessionId: str
 export type HermesProductRpcClient = {
   request(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
   close(): Promise<void>;
+  processExit?: Promise<HermesNativeProcessDiagnostics>;
+  getProcessDiagnostics?(): HermesNativeProcessDiagnostics;
 };
 export type HermesProductRpcClientFactory = (input: {
   profile: HermesAcpProfile;
@@ -241,12 +262,6 @@ export function validateHermesProductRpcSession(input: {
   return null;
 }
 
-type HermesProductRpcMcpOverlay = {
-  home: string;
-  env: Record<string, string>;
-  cleanup(): Promise<void>;
-};
-
 const MCP_ENV_KEYS = [
   "RUDDER_API_URL",
   "RUDDER_API_KEY",
@@ -285,19 +300,6 @@ fd = os.open(target_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(fd, "w", encoding="utf-8") as target:
     yaml.safe_dump(config, target, sort_keys=False, allow_unicode=True)
 `;
-
-function runScopedMcpBootstrap(environmentKeys: readonly string[]): string {
-  return [
-    "import os",
-    "from tools.mcp_tool_discovery import discover_mcp_tools",
-    'registered = discover_mcp_tools(["rudder-tools"])',
-    'if not registered: raise SystemExit("Rudder MCP did not register any typed tools")',
-    `for key in ${JSON.stringify(environmentKeys)}: os.environ.pop(key, None)`,
-    "from tui_gateway.entry import main",
-    "main()",
-    "",
-  ].join("\n");
-}
 
 async function writeRunScopedMcpConfig(input: {
   profile: HermesProductRpcProfile;
@@ -428,7 +430,14 @@ export async function prepareHermesProductRpcMcpOverlay(input: {
 
     const suffix = randomUUID().replaceAll("-", "").toUpperCase();
     const aliases = Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `RUDDER_PRODUCT_RPC_${suffix}_${key}`])) as Record<typeof MCP_ENV_KEYS[number], string>;
-    const env = Object.fromEntries(MCP_ENV_KEYS.map((key) => [aliases[key], identity[key]]));
+    const readyNonce = randomUUID();
+    const readyReceiptPath = path.join(home, "rudder-tools-ready.json");
+    const env = {
+      ...Object.fromEntries(MCP_ENV_KEYS.map((key) => [aliases[key], identity[key]])),
+      [HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV]: readyReceiptPath,
+      [HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV]: readyNonce,
+      [HERMES_PRODUCT_RPC_MCP_ENV_KEYS_ENV]: JSON.stringify(Object.values(aliases)),
+    };
     const serverEnv = {
       ...(input.mcp.command.env ?? {}),
       ...Object.fromEntries(MCP_ENV_KEYS.map((key) => [key, `\u0024{${aliases[key]}}`])),
@@ -452,10 +461,10 @@ export async function prepareHermesProductRpcMcpOverlay(input: {
     if (input.signal?.aborted) throw new Error("Hermes Product RPC MCP setup was cancelled.");
     await fs.writeFile(
       path.join(home, `${HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE}.py`),
-      runScopedMcpBootstrap(Object.values(aliases)),
+      HERMES_PRODUCT_RPC_BOOTSTRAP_SOURCE,
       { mode: 0o600, flag: "wx" },
     );
-    return { home, env, cleanup };
+    return { home, env, readyReceiptPath, readyNonce, cleanup };
   } catch (error) {
     await cleanup();
     throw error;
@@ -467,6 +476,7 @@ function rpcProfile(profile: HermesProductRpcProfile, overlay?: HermesProductRpc
     ...profile,
     command: profile.hermesPythonCommand,
     args: overlay ? ["-m", HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE] : ["-m", "tui_gateway.entry"],
+    hermesHome: overlay?.home ?? path.resolve(profile.hermesHome),
     env: {
       ...(profile.env ?? {}),
       ...(overlay?.env ?? {}),
@@ -1075,6 +1085,39 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
+function hermesProcessExitMessage(
+  phase: string,
+  diagnostics: HermesNativeProcessDiagnostics,
+  secrets: readonly string[],
+): string {
+  const exit = diagnostics.exitCode !== null
+    ? `exit=${diagnostics.exitCode}`
+    : diagnostics.signal
+      ? `signal=${diagnostics.signal}`
+      : diagnostics.spawnError
+        ? `spawn=${safeText(diagnostics.spawnError, secrets, 300)}`
+        : diagnostics.processExited
+          ? "exit=unknown"
+          : "exit=pending";
+  const stderr = safeText(diagnostics.stderr, secrets, 1_200);
+  return `Hermes Product Gateway process ${phase} (${exit}; close_ack=${diagnostics.closeAcknowledged ? "confirmed" : "unknown"})${stderr ? `; stderr: ${stderr}` : ""}.`;
+}
+
+function raceWithHermesProcessExit<T>(
+  operation: Promise<T>,
+  client: HermesProductRpcClient,
+  phase: string,
+  secrets: readonly string[],
+): Promise<T> {
+  if (!client.processExit) return operation;
+  return Promise.race([
+    operation,
+    client.processExit.then((diagnostics) => {
+      throw new Error(hermesProcessExitMessage(phase, diagnostics, secrets));
+    }),
+  ]);
+}
+
 const HERMES_PRODUCT_RPC_HISTORY_FENCE_HELPER = String.raw`
 import json
 from pathlib import Path
@@ -1484,7 +1527,10 @@ type ExecuteInput = {
 
 export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<AgentRuntimeExecutionResult> {
   const profile = input.profile;
-  const secrets = [...(input.secrets ?? [])];
+  const executionStartedAt = Date.now();
+  const runIdentitySecrets = input.rudderMcp ? Object.values(input.rudderMcp.identity) : [];
+  const secrets = [...(input.secrets ?? []), ...runIdentitySecrets]
+    .filter((secret): secret is string => typeof secret === "string" && Boolean(secret));
   const configuredSecretCount = secrets.length;
   let sessionId = input.sessionId;
   let sessionParams = input.sessionParams;
@@ -1497,6 +1543,7 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
   let gatewayPid: number | null = null;
   let client: HermesProductRpcClient | null = null;
   let mcpOverlay: HermesProductRpcMcpOverlay | null = null;
+  let retainMcpOverlayOnUnknownClose = false;
   let controlLease: AgentRuntimeControlHandleLease | null = null;
   let promptSubmissionStarted = false;
   let stopRequested = false;
@@ -2079,24 +2126,50 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
       });
     }
     const launchProfile = rpcProfile(profile, mcpOverlay);
-    const activeClient = await createClient({
-      profile: launchProfile,
-      onNotification: (method, params) => {
-        const event = parseGatewayEvent(method, params);
-        if (event) handleEvent(event);
-      },
-      onSpawn: async (meta) => {
-        gatewayPid = meta.pid;
-        await input.onSpawn?.(meta);
-      },
-    });
+    let activeClient: HermesProductRpcClient;
+    try {
+      activeClient = await createClient({
+        profile: launchProfile,
+        onNotification: (method, params) => {
+          const event = parseGatewayEvent(method, params);
+          if (event) handleEvent(event);
+        },
+        onSpawn: async (meta) => {
+          gatewayPid = meta.pid;
+          await input.onSpawn?.(meta);
+        },
+      });
+    } catch (error) {
+      retainMcpOverlayOnUnknownClose = isHermesNativeProcessCloseError(error) && !error.closeAcknowledged;
+      throw error;
+    }
     client = activeClient;
-    await withTimeout(gatewayReady.promise, Math.min(input.timeoutMs, GATEWAY_READY_TIMEOUT_MS), "Hermes Product Gateway did not emit gateway.ready.");
+    await raceWithHermesProcessExit(
+      withTimeout(gatewayReady.promise, Math.min(input.timeoutMs, GATEWAY_READY_TIMEOUT_MS), "Hermes Product Gateway did not emit gateway.ready."),
+      activeClient,
+      "exited before gateway.ready",
+      secrets,
+    ).catch((error: unknown) => {
+      const diagnostics = activeClient.getProcessDiagnostics?.();
+      if (!diagnostics || diagnostics.processExited) throw error;
+      const suffix = hermesProcessExitMessage("startup did not become ready", diagnostics, secrets);
+      throw new Error(`${error instanceof Error ? error.message : String(error)} ${suffix}`);
+    });
     const ping = record(await activeClient.request("ping", {}, Math.min(input.timeoutMs, 5_000)));
     if (ping?.pong !== true) throw new Error("Hermes Product Gateway ping did not confirm the installed RPC service.");
     const capabilities = record(await activeClient.request("gateway.capabilities", {}, Math.min(input.timeoutMs, 5_000)));
     if (capabilities?.per_session_exclusive_submit !== true) {
       throw new Error("Hermes Product Gateway must confirm per_session_exclusive_submit=true before accepting session ownership.");
+    }
+
+    if (mcpOverlay) {
+      const admissionTimeoutMs = Math.max(1, input.timeoutMs - (Date.now() - executionStartedAt));
+      const readiness = waitForHermesProductRpcMcpReady({
+        overlay: mcpOverlay,
+        timeoutMs: admissionTimeoutMs,
+        signal: input.signal,
+      });
+      await raceWithHermesProcessExit(readiness, activeClient, "exited before typed Rudder MCP readiness", secrets);
     }
 
     if (sessionId) {
@@ -2506,7 +2579,18 @@ export async function executeHermesProductRpcChat(input: ExecuteInput): Promise<
   } finally {
     secrets.splice(configuredSecretCount);
     await historyFence?.release().catch(() => {});
-    await client?.close();
-    await mcpOverlay?.cleanup();
+    try {
+      await client?.close();
+      const diagnostics = client?.getProcessDiagnostics?.();
+      if (diagnostics && !diagnostics.closeAcknowledged) {
+        retainMcpOverlayOnUnknownClose = true;
+        throw new HermesNativeProcessCloseError(diagnostics);
+      }
+    } catch (error) {
+      retainMcpOverlayOnUnknownClose = true;
+      throw error;
+    } finally {
+      if (!retainMcpOverlayOnUnknownClose) await mcpOverlay?.cleanup();
+    }
   }
 }

@@ -10,6 +10,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { createHermesNativeRpcClient, HermesNativeProcessCloseError } from "./native-protocol.js";
+import {
+  HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV,
+  HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV,
+  waitForHermesProductRpcMcpReady,
+} from "./product-rpc-mcp-bootstrap.js";
 import {
   buildHermesProductRpcSessionParams,
   deriveHermesProductRpcTranscriptBoundary,
@@ -269,6 +275,11 @@ async function makeForkFixture(mode = ""): Promise<ForkFixture> {
 const installedHermes021SourcePath = process.env.RUDDER_HERMES_021_SOURCE_PATH;
 const installedHermes021PythonCommand = process.env.RUDDER_HERMES_021_PYTHON_COMMAND;
 const installedHermes021Describe = installedHermes021SourcePath && installedHermes021PythonCommand ? describe : describe.skip;
+const installedHermes021ProductRpcDescribe = installedHermes021SourcePath
+  && installedHermes021PythonCommand
+  && process.env.RUDDER_HERMES_021_PRODUCT_RPC_INTEGRATION === "1"
+  ? describe
+  : describe.skip;
 
 const INSTALLED_HERMES_SEED_SCRIPT = [
   "import os",
@@ -591,7 +602,10 @@ async function addJsonYamlFixture(profile: HermesProductRpcProfile): Promise<voi
   await fs.writeFile(path.join(profile.hermesSourcePath, "yaml.py"), source, { flag: "wx" });
 }
 
-function mockGateway(handler: GatewayHandler = () => undefined) {
+function mockGateway(
+  handler: GatewayHandler = () => undefined,
+  options: { writeMcpReadyReceipt?: boolean } = {},
+) {
   let notify: ((method: string, params: Record<string, unknown>) => void) | null = null;
   let activeSessionId = "hermes-product-runtime-1";
   const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
@@ -626,12 +640,25 @@ function mockGateway(handler: GatewayHandler = () => undefined) {
     },
   };
   const createClient = async ({
+    profile,
     onNotification,
     onSpawn,
   }: {
+    profile: { env?: Record<string, string> };
     onNotification: (method: string, params: Record<string, unknown>) => void;
     onSpawn?: (meta: { pid: number; startedAt: string }) => Promise<void>;
   }) => {
+    const readyPath = profile.env?.[HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV];
+    const readyNonce = profile.env?.[HERMES_PRODUCT_RPC_MCP_READY_NONCE_ENV];
+    if (options.writeMcpReadyReceipt !== false && readyPath && readyNonce) {
+      await fs.writeFile(readyPath, JSON.stringify({
+        version: 1,
+        nonce: readyNonce,
+        serverName: "rudder-tools",
+        status: "ready",
+        toolNames: ["mcp__rudder_tools__rudder_agent_me"],
+      }), { mode: 0o600 });
+    }
     notify = onNotification;
     await onSpawn?.({ pid: process.pid, startedAt: new Date().toISOString() });
     queueMicrotask(() => emit("gateway.ready", {}, null));
@@ -739,10 +766,15 @@ describe("Hermes Product Gateway RPC", () => {
       expect(firstConfig).not.toContain(secondIdentity.RUDDER_API_KEY);
       expect(secondConfig).not.toContain(firstIdentity.RUDDER_API_KEY);
       expect(secondConfig).not.toContain(secondIdentity.RUDDER_API_KEY);
-      expect(firstBootstrap.indexOf('discover_mcp_tools(["rudder-tools"])'))
-        .toBeLessThan(firstBootstrap.indexOf("os.environ.pop(key, None)"));
-      expect(firstBootstrap.indexOf("os.environ.pop(key, None)"))
-        .toBeLessThan(firstBootstrap.indexOf("from tui_gateway.entry import main"));
+      expect(firstBootstrap).toContain("mcp_startup.set_mcp_server_filter([SERVER_NAME])");
+      expect(firstBootstrap).toContain("mcp_tool_discovery.discover_mcp_tools = _discover_rudder_tools");
+      expect(firstBootstrap).toContain("entry.main()");
+      expect(firstBootstrap.indexOf("mcp_startup.set_mcp_server_filter([SERVER_NAME])"))
+        .toBeLessThan(firstBootstrap.indexOf("entry.main()"));
+      expect(firstBootstrap.indexOf("mcp_tool_discovery.discover_mcp_tools = _discover_rudder_tools"))
+        .toBeLessThan(firstBootstrap.indexOf("from tui_gateway import entry"));
+      expect(firstBootstrap.indexOf("returned_names = _original_discover_rudder_tools(*args, **kwargs)"))
+        .toBeLessThan(firstBootstrap.indexOf("for key in ENV_KEYS:"));
 
       const sessionParams = buildHermesProductRpcSessionParams({ sessionId: "native-session-shared", profile });
       expect(sessionParams.hermesSessionId).toBe("native-session-shared");
@@ -753,6 +785,64 @@ describe("Hermes Product Gateway RPC", () => {
       await first?.cleanup();
       await second?.cleanup();
       await fixture.cleanup();
+    }
+  });
+
+  it.skipIf(!pythonCommand)("does not create a session or submit a prompt before typed Rudder tools are ready", async () => {
+    const fixture = await makeProfile();
+    const configPath = path.join(fixture.profile.hermesHome, "config.yaml");
+    await fs.writeFile(configPath, JSON.stringify({ model: "local-test" }), { mode: 0o600 });
+    await addJsonYamlFixture(fixture.profile);
+    const profile = { ...fixture.profile, hermesPythonCommand: pythonCommand! };
+    const gateway = mockGateway(() => undefined, { writeMcpReadyReceipt: false });
+    try {
+      const result = await executeHermesProductRpcChat({
+        ...runInput(profile, gateway.createClient),
+        timeoutMs: 1_000,
+        rudderMcp: {
+          command: { command: process.execPath, args: ["mcp-server"], provenance: "repo" },
+          identity: {
+            RUDDER_API_URL: "http://127.0.0.1:1",
+            RUDDER_API_KEY: "readiness-test-only-token",
+            RUDDER_ORG_ID: "org-readiness-test",
+            RUDDER_AGENT_ID: "agent-readiness-test",
+            RUDDER_RUN_ID: "run-readiness-test",
+          },
+        },
+      });
+
+      expect(result).toMatchObject({ exitCode: 1, submissionPhase: "pre_submission" });
+      expect(result.errorMessage).toMatch(/did not register typed rudder-tools/u);
+      expect(gateway.calls.map(({ method }) => method)).toEqual(["ping", "gateway.capabilities"]);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it.each([
+    ["empty tool set", [], "ready", "non-empty typed Rudder MCP tool set"],
+    ["missing rudder_agent_me", ["mcp__rudder_tools__rudder_probe"], "ready", "including rudder_agent_me"],
+    ["failed discovery", [], "failed", "discovery failed (no_typed_rudder_tools_registered)"],
+  ] as const)("rejects an invalid readiness receipt: %s", async (_case, toolNames, status, expectedMessage) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-hermes-ready-receipt-"));
+    const readyReceiptPath = path.join(root, "ready.json");
+    const readyNonce = "test-ready-nonce";
+    try {
+      await fs.writeFile(readyReceiptPath, JSON.stringify({
+        version: 1,
+        nonce: readyNonce,
+        serverName: "rudder-tools",
+        status,
+        toolNames,
+        ...(status === "failed" ? { errorCode: "no_typed_rudder_tools_registered" } : {}),
+      }));
+
+      await expect(waitForHermesProductRpcMcpReady({
+        overlay: { readyReceiptPath, readyNonce },
+        timeoutMs: 100,
+      })).rejects.toThrow(expectedMessage);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
     }
   });
 
@@ -786,9 +876,11 @@ describe("Hermes Product Gateway RPC", () => {
       return { status: "streaming" };
     });
     let launchHome: string | null = null;
+    let launchHomeField: string | null = null;
     let launchArgs: readonly string[] | null = null;
     const createClient: HermesProductRpcClientFactory = async (input) => {
       launchHome = String(input.profile.env?.HERMES_HOME ?? "");
+      launchHomeField = input.profile.hermesHome ?? null;
       launchArgs = input.profile.args;
       const launchedHome = launchHome;
       const nativeWrite = [
@@ -806,7 +898,7 @@ describe("Hermes Product Gateway RPC", () => {
       });
       await fs.writeFile(path.join(launchedHome, "sessions", "fresh-session.jsonl"), "native transcript\n");
       await fs.writeFile(path.join(launchedHome, "memories", "fresh-memory.md"), "native memory\n");
-      return gateway.createClient({ onNotification: input.onNotification, onSpawn: input.onSpawn });
+      return gateway.createClient(input);
     };
 
     try {
@@ -817,6 +909,8 @@ describe("Hermes Product Gateway RPC", () => {
 
       expect(result).toMatchObject({ exitCode: 0, resultJson: { backend: "native_product_rpc" } });
       expect(launchHome).not.toBe(fixture.profile.hermesHome);
+      expect(launchHomeField).toBe(launchHome);
+      expect(launchHomeField).not.toBe(fixture.profile.hermesHome);
       expect(launchArgs).toEqual(["-m", HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE]);
       expect(JSON.stringify(result)).not.toContain(identity.RUDDER_API_KEY);
       await expect(fs.stat(launchHome!)).rejects.toMatchObject({ code: "ENOENT" });
@@ -869,11 +963,17 @@ describe("Hermes Product Gateway RPC", () => {
           return {
             ...client,
             async close() {
-              throw new Error("Hermes ACP process close was not confirmed.");
+              throw new HermesNativeProcessCloseError({
+                processExited: false,
+                exitCode: null,
+                signal: null,
+                closeAcknowledged: false,
+                stderr: "close-ack-sentinel",
+              });
             },
           };
         },
-      })).rejects.toThrow(/close was not confirmed/u);
+      })).rejects.toThrow(/close was not acknowledged/u);
 
       expect(overlayHome).toBeTruthy();
       const overlayStats = await fs.stat(overlayHome!);
@@ -896,6 +996,7 @@ describe("Hermes Product Gateway RPC", () => {
     );
     const controller = new AbortController();
     const startedAt = Date.now();
+    const timeoutMs = mode === "timeout" ? 6_000 : 5_000;
     const preparation = prepareHermesProductRpcMcpOverlay({
       profile: { ...fixture.profile, hermesPythonCommand: helperPath },
       mcp: {
@@ -908,7 +1009,7 @@ describe("Hermes Product Gateway RPC", () => {
           RUDDER_RUN_ID: "run-helper",
         },
       },
-      timeoutMs: mode === "timeout" ? 500 : 5_000,
+      timeoutMs,
       ...(mode === "abort" ? { signal: controller.signal } : {}),
     });
     const settledPreparation = preparation.then(
@@ -917,7 +1018,24 @@ describe("Hermes Product Gateway RPC", () => {
     );
 
     try {
-      await vi.waitFor(async () => expect(await fs.readFile(markerPath, "utf8")).toContain("config.yaml"));
+      let targetPath: string | null = null;
+      // Overlay setup and process scheduling happen before the helper timeout starts.
+      const markerDeadline = Date.now() + timeoutMs + 1_500;
+      while (!targetPath && Date.now() < markerDeadline) {
+        targetPath = await fs.readFile(markerPath, "utf8").catch(() => null);
+        if (targetPath) break;
+        const earlyOutcome = await Promise.race([
+          settledPreparation,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 25)),
+        ]);
+        if (earlyOutcome) {
+          const detail = earlyOutcome.status === "rejected"
+            ? earlyOutcome.error instanceof Error ? earlyOutcome.error.message : String(earlyOutcome.error)
+            : "resolved before the helper startup marker";
+          throw new Error(`MCP config helper settled before writing its startup marker: ${detail}`);
+        }
+      }
+      expect(targetPath, "MCP config helper did not write its startup marker before the timeout window").toContain("config.yaml");
       if (mode === "abort") {
         controller.abort();
       }
@@ -927,14 +1045,14 @@ describe("Hermes Product Gateway RPC", () => {
         expect(outcome.error).toBeInstanceOf(Error);
         expect((outcome.error as Error).message).toMatch(mode === "timeout" ? /timed out/u : /cancelled/u);
       }
-      const targetPath = await fs.readFile(markerPath, "utf8");
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(800);
+      targetPath = await fs.readFile(markerPath, "utf8");
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(mode === "timeout" ? timeoutMs + 800 : 800);
       await expect(fs.stat(path.dirname(targetPath))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       controller.abort();
       await fixture.cleanup();
     }
-  });
+  }, 12_000);
 
   it("submits through a native session and round-trips the correlated approval choice", async () => {
     const fixture = await makeProfile();
@@ -2271,4 +2389,220 @@ describe("Hermes Product Gateway RPC", () => {
       await fixture.cleanup();
     }
   });
+});
+
+installedHermes021ProductRpcDescribe("installed Hermes 0.21 Product Gateway bootstrap", () => {
+  it("keeps gateway.ready responsive during cold MCP discovery and withholds the prompt until typed tools register", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-hermes-021-ready-probe-"));
+    const home = path.join(root, "home");
+    const stubPath = path.join(root, "stdio-mcp-stub.cjs");
+    const pidPath = path.join(root, "stdio-mcp-stub-pid.json");
+    const startedPath = path.join(root, "discovery-started.json");
+    const releasePath = path.join(root, "release-discovery");
+    const stopPath = path.join(root, "stop-stub");
+    const nonce = `${process.pid}-${Date.now()}`;
+    await fs.mkdir(home, { mode: 0o700 });
+    await fs.writeFile(stubPath, String.raw`
+const fs = require("node:fs");
+const pidPath = process.argv[2];
+const startedPath = process.argv[3];
+const releasePath = process.argv[4];
+const stopPath = process.argv[5];
+const nonce = process.argv[6];
+let buffer = "";
+fs.writeFileSync(pidPath, JSON.stringify({ pid: process.pid, nonce }), { mode: 0o600 });
+function send(message) { process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n"); }
+function exitWhenStopped() { if (fs.existsSync(stopPath)) process.exit(0); }
+setInterval(exitWhenStopped, 25).unref();
+process.on("SIGTERM", () => process.exit(0));
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  const lines = buffer.split(/\r?\n/);
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const request = JSON.parse(line);
+    if (request.method === "initialize") {
+      send({ id: request.id, result: {
+        protocolVersion: request.params.protocolVersion || "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "rudder-stdio-ready-probe", version: "1" }
+      }});
+    } else if (request.method === "tools/list") {
+      fs.writeFileSync(startedPath, JSON.stringify({ pid: process.pid, startedAt: Date.now(), nonce }), { mode: 0o600 });
+      const poll = setInterval(() => {
+        if (fs.existsSync(releasePath)) {
+          clearInterval(poll);
+          send({ id: request.id, result: { tools: [
+            { name: "rudder_agent_me", description: "Probe only", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+            { name: "rudder_probe", description: "Probe only", inputSchema: { type: "object", properties: {}, additionalProperties: false } }
+          ] }});
+        } else {
+          exitWhenStopped();
+        }
+      }, 25);
+    } else if (request.method === "ping") {
+      send({ id: request.id, result: {} });
+    }
+  }
+});
+`, { mode: 0o600 });
+
+    const profile: HermesProductRpcProfile = {
+      binding: { hostId: "host-hermes-021-ready-probe", profileId: "profile-hermes-021-ready-probe" },
+      command: installedHermes021PythonCommand!,
+      args: [],
+      cwd: root,
+      hermesPythonCommand: installedHermes021PythonCommand!,
+      hermesSourcePath: installedHermes021SourcePath!,
+      hermesHome: home,
+      providerVersion: "0.21.0",
+    };
+    const controller = new AbortController();
+    const requestMethods: string[] = [];
+    const wireMethods: string[] = [];
+    let readyReceiptPath: string | null = null;
+    let launchHermesHome: string | null = null;
+    let gatewayReadyObserved = false;
+    let promptWasInterceptedAfterReady = false;
+    const probeState: {
+      nativeClient: Awaited<ReturnType<typeof createHermesNativeRpcClient>> | null;
+      executionOutcome: { status: "resolved" | "rejected"; message: string } | null;
+    } = { nativeClient: null, executionOutcome: null };
+    let execution: ReturnType<typeof executeHermesProductRpcChat> | null = null;
+    const createClient: HermesProductRpcClientFactory = async (input) => {
+      readyReceiptPath = input.profile.env?.[HERMES_PRODUCT_RPC_MCP_READY_PATH_ENV] ?? null;
+      launchHermesHome = input.profile.env?.HERMES_HOME ?? null;
+      const activeNativeClient = await createHermesNativeRpcClient(
+        input.profile,
+        (method, params) => {
+          if (method === "event" && params.type === "gateway.ready") gatewayReadyObserved = true;
+          input.onNotification(method, params);
+        },
+        async () => ({}),
+        input.onSpawn,
+      );
+      probeState.nativeClient = activeNativeClient;
+      return {
+        processExit: activeNativeClient.processExit,
+        getProcessDiagnostics: () => activeNativeClient.getProcessDiagnostics(),
+        close: () => activeNativeClient.close(),
+        async request(method, params, timeoutMs) {
+          requestMethods.push(method);
+          if (method === "session.create") {
+            return { session_id: "installed-ready-probe-session", stored_session_id: "installed-ready-probe-native-session" };
+          }
+          if (method === "prompt.submit") {
+            const receipt = readyReceiptPath ? JSON.parse(await fs.readFile(readyReceiptPath, "utf8")) as Record<string, unknown> : null;
+            const names = Array.isArray(receipt?.toolNames) ? receipt.toolNames : [];
+            promptWasInterceptedAfterReady = receipt?.status === "ready"
+              && names.includes("mcp__rudder_tools__rudder_agent_me");
+            throw new Error("Installed Hermes probe blocked prompt.submit before native transport; model call count remains zero.");
+          }
+          wireMethods.push(method);
+          return activeNativeClient.request(method, params, timeoutMs);
+        },
+      };
+    };
+
+    try {
+      execution = executeHermesProductRpcChat({
+        ...runInput(profile, createClient, async () => ({
+          availability: "missing",
+          tailRowId: null,
+          relation: "unknown",
+          successorSessionId: null,
+        }), { waitForSessionLease: async () => false }),
+        timeoutMs: 45_000,
+        signal: controller.signal,
+        rudderMcp: {
+          command: {
+            command: process.execPath,
+            args: [stubPath, pidPath, startedPath, releasePath, stopPath, nonce],
+            provenance: "repo",
+          },
+          identity: {
+            RUDDER_API_URL: "http://127.0.0.1:1",
+            RUDDER_API_KEY: "installed-hermes-probe-only-token",
+            RUDDER_ORG_ID: "org-installed-ready-probe",
+            RUDDER_AGENT_ID: "agent-installed-ready-probe",
+            RUDDER_RUN_ID: "run-installed-ready-probe",
+          },
+        },
+      });
+      void execution.then(
+        (result) => { probeState.executionOutcome = { status: "resolved", message: result.errorMessage ?? `exitCode=${result.exitCode}` }; },
+        (error: unknown) => { probeState.executionOutcome = { status: "rejected", message: error instanceof Error ? error.message : String(error) }; },
+      );
+
+      const markerDeadline = Date.now() + 20_000;
+      let marker: { pid: number; startedAt: number; nonce: string } | null = null;
+      while (Date.now() < markerDeadline) {
+        const contents = await fs.readFile(startedPath, "utf8").catch(() => null);
+        if (contents) {
+          marker = JSON.parse(contents) as { pid: number; startedAt: number; nonce: string };
+          break;
+        }
+        if (probeState.executionOutcome) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (!marker) {
+        const child = await fs.readFile(pidPath, "utf8").catch(() => "");
+        const diagnostics = probeState.nativeClient?.getProcessDiagnostics();
+        throw new Error([
+          "Installed Hermes MCP discovery did not reach tools/list.",
+          `gateway_ready=${gatewayReadyObserved}`,
+          `wire_methods=${wireMethods.join(",") || "none"}`,
+          `stub_pid=${child ? String((JSON.parse(child) as { pid?: number }).pid ?? "unknown") : "not_started"}`,
+          `execution=${probeState.executionOutcome?.status ?? "pending"}${probeState.executionOutcome ? `:${probeState.executionOutcome.message}` : ""}`,
+          `exit=${diagnostics?.exitCode ?? "pending"}`,
+          `close_ack=${diagnostics?.closeAcknowledged ? "confirmed" : "unknown"}`,
+          `stderr=${diagnostics?.stderr ?? ""}`,
+        ].join("; "));
+      }
+      expect(marker.nonce).toBe(nonce);
+      await new Promise((resolve) => setTimeout(resolve, 10_100));
+      expect(Date.now() - marker.startedAt).toBeGreaterThanOrEqual(10_000);
+      expect(gatewayReadyObserved).toBe(true);
+      expect(wireMethods).toEqual(["ping", "gateway.capabilities"]);
+      expect(requestMethods).toEqual(["ping", "gateway.capabilities"]);
+
+      await fs.writeFile(releasePath, "release");
+      const receipt = await vi.waitFor(async () => {
+        if (!readyReceiptPath) throw new Error("Rudder MCP readiness receipt path was not provided to the child.");
+        const value = JSON.parse(await fs.readFile(readyReceiptPath, "utf8")) as Record<string, unknown>;
+        if (value.status !== "ready") throw new Error("typed Rudder MCP tools have not reached ready state");
+        return value;
+      }, { timeout: 20_000 });
+      expect(receipt.toolNames).toEqual([
+        "mcp__rudder_tools__rudder_agent_me",
+        "mcp__rudder_tools__rudder_probe",
+      ]);
+
+      const result = await execution;
+      expect(result).toMatchObject({ exitCode: 1, submissionPhase: "indeterminate" });
+      expect(result.errorMessage).toContain("model call count remains zero");
+      expect(requestMethods).toEqual(["ping", "gateway.capabilities", "session.create", "prompt.submit"]);
+      expect(wireMethods).toEqual(["ping", "gateway.capabilities"]);
+      expect(promptWasInterceptedAfterReady).toBe(true);
+      expect(probeState.nativeClient?.getProcessDiagnostics().closeAcknowledged).toBe(true);
+      expect(launchHermesHome).toBeTruthy();
+      await expect(fs.access(launchHermesHome!)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      controller.abort();
+      await fs.writeFile(releasePath, "release").catch(() => {});
+      await fs.writeFile(stopPath, "stop").catch(() => {});
+      await probeState.nativeClient?.close().catch(() => {});
+      await execution?.catch(() => undefined);
+      const markerContents = await fs.readFile(pidPath, "utf8").catch(() => "");
+      if (markerContents) {
+        const marker = JSON.parse(markerContents) as { pid: number; nonce: string };
+        expect(marker.nonce).toBe(nonce);
+        const pid = Number(marker.pid);
+        await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 5_000 });
+      }
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 70_000);
 });

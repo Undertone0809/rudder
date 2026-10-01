@@ -31,6 +31,35 @@ const MAX_RPC_LINE_BYTES = 8 * 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 type RpcId = number;
+
+export type HermesNativeProcessDiagnostics = {
+  processExited: boolean;
+  exitCode: number | null;
+  signal: string | null;
+  closeAcknowledged: boolean;
+  stderr: string;
+  spawnError?: string;
+};
+
+export class HermesNativeProcessCloseError extends Error {
+  override readonly name = "HermesNativeProcessCloseError";
+  readonly closeAcknowledged = false;
+
+  constructor(readonly diagnostics: HermesNativeProcessDiagnostics) {
+    const exit = diagnostics.exitCode !== null
+      ? `exit=${diagnostics.exitCode}`
+      : diagnostics.signal
+        ? `signal=${diagnostics.signal}`
+        : diagnostics.spawnError
+          ? `spawn=${diagnostics.spawnError}`
+          : "exit=unknown";
+    super(`Hermes ACP process close was not acknowledged after SIGKILL (${exit})${diagnostics.stderr ? `; stderr: ${diagnostics.stderr}` : ""}.`);
+  }
+}
+
+export function isHermesNativeProcessCloseError(error: unknown): error is HermesNativeProcessCloseError {
+  return error instanceof HermesNativeProcessCloseError;
+}
 type HermesAcpApprovalRequest = AgentRuntimeApprovalRequest;
 type HermesAcpApprovalDecision = AgentRuntimeApprovalDecision;
 
@@ -592,6 +621,8 @@ class HermesAcpRpcClient {
   private readonly stderrDecoder = new StringDecoder("utf8");
   private readonly pending = new Map<RpcId, PendingRequest>();
   private readonly childClosePromise: Promise<void>;
+  private readonly processExitPromise: Promise<HermesNativeProcessDiagnostics>;
+  private readonly processSecrets: string[];
   private buffer = "";
   private bufferBytes = 0;
   private nextId = 1;
@@ -599,14 +630,30 @@ class HermesAcpRpcClient {
   private transportFailed = false;
   private shutdownPromise: Promise<void> | null = null;
   private stderr = "";
+  private stderrPendingLine = "";
+  private stderrPendingLineOverflow = false;
+  private processExited = false;
+  private exitCode: number | null = null;
+  private exitSignal: string | null = null;
+  private closeAcknowledged = false;
+  private spawnError: string | undefined;
+  private resolveProcessExit!: (value: HermesNativeProcessDiagnostics) => void;
 
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly onNotification: (method: string, params: JsonRecord) => void,
     private readonly onServerRequest: (request: AcpServerRequest) => Promise<unknown>,
+    profile: HermesAcpProfile,
   ) {
+    this.processSecrets = secretValues(profile);
+    this.processExitPromise = new Promise((resolve) => { this.resolveProcessExit = resolve; });
     this.childClosePromise = new Promise((resolve) => {
-      child.once("close", () => resolve());
+      child.once("close", (code, signal) => {
+        this.appendStderrText(this.stderrDecoder.end(), true);
+        this.closeAcknowledged = true;
+        this.markProcessExit(code, signal);
+        resolve();
+      });
     });
     const finish = (error?: Error) => {
       if (this.closed) return;
@@ -619,16 +666,96 @@ class HermesAcpRpcClient {
       }
       this.pending.clear();
     };
-    child.once("error", (error) => finish(new Error(`Hermes ACP process failed: ${boundedDiagnostic(error)}`)));
-    child.once("exit", (code, signal) => finish(new Error(`Hermes ACP process exited (${code ?? signal ?? "unknown"}).`)));
+    child.once("error", (error) => {
+      this.spawnError = redactText(boundedDiagnostic(error), this.processSecrets);
+      this.markProcessExit(null, null);
+      finish(new Error(this.processFailureMessage("failed to start")));
+    });
+    child.once("exit", (code, signal) => {
+      this.markProcessExit(code, signal);
+      finish(new Error(this.processFailureMessage("exited")));
+    });
     child.stdout.on("data", (chunk: Buffer) => this.consume(this.stdoutDecoder.write(chunk)));
     child.stderr.on("data", (chunk: Buffer) => {
-      this.stderr = `${this.stderr}${this.stderrDecoder.write(chunk)}`.slice(-MAX_DIAGNOSTIC);
+      this.appendStderrText(this.stderrDecoder.write(chunk));
     });
   }
 
+  private appendStderrText(value: string, flush = false): void {
+    let offset = 0;
+    while (offset < value.length) {
+      const newline = value.indexOf("\n", offset);
+      const completeLine = newline >= 0;
+      const lineEnd = completeLine ? newline + 1 : value.length;
+
+      if (this.stderrPendingLineOverflow) {
+        if (!completeLine) return;
+        this.stderrPendingLineOverflow = false;
+        this.stderrPendingLine = "";
+        offset = lineEnd;
+        continue;
+      }
+
+      if (this.stderrPendingLine.length + lineEnd - offset > MAX_DIAGNOSTIC) {
+        this.stderrPendingLine = "";
+        this.stderrPendingLineOverflow = !completeLine;
+      } else if (completeLine) {
+        const safeLine = redactText(`${this.stderrPendingLine}${value.slice(offset, lineEnd)}`, this.processSecrets);
+        this.stderr = `${this.stderr}${safeLine}`.slice(-MAX_DIAGNOSTIC);
+        this.stderrPendingLine = "";
+      } else {
+        this.stderrPendingLine += value.slice(offset, lineEnd);
+      }
+      offset = lineEnd;
+    }
+
+    if (flush) {
+      if (!this.stderrPendingLineOverflow && this.stderrPendingLine) {
+        const safeLine = redactText(this.stderrPendingLine, this.processSecrets);
+        this.stderr = `${this.stderr}${safeLine}`.slice(-MAX_DIAGNOSTIC);
+      }
+      this.stderrPendingLine = "";
+      this.stderrPendingLineOverflow = false;
+    }
+  }
+
   get stderrDiagnostic(): string {
-    return boundedDiagnostic(this.stderr);
+    return boundedDiagnostic(redactText(this.stderr, this.processSecrets));
+  }
+
+  get processExit(): Promise<HermesNativeProcessDiagnostics> {
+    return this.processExitPromise;
+  }
+
+  getProcessDiagnostics(): HermesNativeProcessDiagnostics {
+    return {
+      processExited: this.processExited,
+      exitCode: this.exitCode,
+      signal: this.exitSignal,
+      closeAcknowledged: this.closeAcknowledged,
+      stderr: this.stderrDiagnostic,
+      ...(this.spawnError ? { spawnError: this.spawnError } : {}),
+    };
+  }
+
+  private markProcessExit(code: number | null, signal: NodeJS.Signals | null): void {
+    if (this.processExited) return;
+    this.processExited = true;
+    this.exitCode = code;
+    this.exitSignal = signal;
+    this.resolveProcessExit(this.getProcessDiagnostics());
+  }
+
+  private processFailureMessage(verb: string): string {
+    const diagnostics = this.getProcessDiagnostics();
+    const exit = diagnostics.exitCode !== null
+      ? `exit=${diagnostics.exitCode}`
+      : diagnostics.signal
+        ? `signal=${diagnostics.signal}`
+        : diagnostics.spawnError
+          ? `spawn=${diagnostics.spawnError}`
+          : "exit=unknown";
+    return `Hermes ACP process ${verb} (${exit})${diagnostics.stderr ? `; stderr: ${diagnostics.stderr}` : ""}.`;
   }
 
   private consume(chunk: string): void {
@@ -709,7 +836,9 @@ class HermesAcpRpcClient {
   }
 
   async request(method: string, params: JsonRecord, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<unknown> {
-    if (this.closed || this.transportFailed) throw new Error("Hermes ACP process is closed.");
+    if (this.closed || this.transportFailed) throw new Error(this.processExited
+      ? this.processFailureMessage("is not running")
+      : "Hermes ACP process is closed.");
     const id = this.nextId++;
     const boundedTimeoutMs = Math.max(1, timeoutMs);
     const response = new Promise<unknown>((resolve, reject) => {
@@ -767,7 +896,7 @@ class HermesAcpRpcClient {
       new Promise<boolean>((resolve) => { closeTimer = setTimeout(() => resolve(false), SIGKILL_CLOSE_TIMEOUT_MS); }),
     ]);
     if (closeTimer) clearTimeout(closeTimer);
-    if (!forcedClose) throw new Error("Hermes ACP process did not close after SIGKILL.");
+    if (!forcedClose) throw new HermesNativeProcessCloseError(this.getProcessDiagnostics());
   }
 }
 
@@ -1015,12 +1144,17 @@ async function createClient(
 ): Promise<HermesAcpRpcClient> {
   validateProfile(profile);
   const child = spawnAcp(profile);
-  const client = new HermesAcpRpcClient(child, onNotification, onServerRequest);
+  const client = new HermesAcpRpcClient(child, onNotification, onServerRequest, profile);
   try {
     if (typeof child.pid === "number") await onSpawn?.({ pid: child.pid, startedAt: new Date().toISOString() });
     return client;
   } catch (error) {
-    await client.close();
+    try {
+      await client.close();
+    } catch (closeError) {
+      if (closeError instanceof HermesNativeProcessCloseError) throw closeError;
+      throw new HermesNativeProcessCloseError(client.getProcessDiagnostics());
+    }
     throw error;
   }
 }

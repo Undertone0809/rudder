@@ -515,6 +515,35 @@ describe("Hermes ACP native protocol", () => {
     finally { await client.close(); }
   });
 
+  it("captures bounded redacted stderr and confirms close after an early child exit", async () => {
+    const leakedTail = "suffix-1234567890123456789012345";
+    const truncatedSecret = `${"x".repeat(2_078)}${leakedTail}`;
+    const crossChunkSecret = "cross-chunk-hermes-diagnostic-secret";
+    const splitAt = Math.floor(crossChunkSecret.length / 2);
+    const firstChunk = `${truncatedSecret}\nchunked=${crossChunkSecret.slice(0, splitAt)}`;
+    const secondChunk = `${crossChunkSecret.slice(splitAt)}\n`;
+    const code = `process.stderr.write(${JSON.stringify(firstChunk)}, () => {
+      setTimeout(() => process.stderr.write(${JSON.stringify(secondChunk)}, () => process.exit(17)), 10);
+    });`;
+    const client = await createHermesNativeRpcClient({
+      ...profile(),
+      args: ["-e", code],
+      env: { RUDDER_API_KEY: truncatedSecret, ANTHROPIC_API_KEY: crossChunkSecret },
+    }, () => {}, async () => null);
+
+    const exit = await client.processExit;
+    expect(exit).toMatchObject({ processExited: true, exitCode: 17 });
+    await client.close();
+    const diagnostics = client.getProcessDiagnostics();
+
+    expect(diagnostics.closeAcknowledged).toBe(true);
+    expect(diagnostics.stderr).toContain("chunked=[REDACTED]");
+    expect(diagnostics.stderr).not.toContain(truncatedSecret);
+    expect(diagnostics.stderr).not.toContain(leakedTail);
+    expect(diagnostics.stderr).not.toContain(crossChunkSecret);
+    expect(diagnostics.stderr.length).toBeLessThanOrEqual(2_000);
+  });
+
   it("kills a gateway that ignores SIGTERM after the bounded grace period", async () => {
     let pid = 0;
     const code = String.raw`
