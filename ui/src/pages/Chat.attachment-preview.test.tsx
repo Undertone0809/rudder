@@ -7849,6 +7849,8 @@ describe("Chat attachment previews", () => {
     const shell = container.querySelector(".chat-shell");
     expect(shell?.className).not.toContain("md:-mx-3.5");
     expect(shell?.className).not.toContain("lg:-mx-5");
+    expect(shell?.className).toContain("h-[calc(100dvh-9rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))]");
+    expect(shell?.className).not.toContain("min-h-[calc(100dvh");
     expect(container.querySelector("main.workspace-main-card")).not.toBeNull();
   });
 

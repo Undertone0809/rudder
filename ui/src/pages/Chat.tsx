@@ -3516,7 +3516,7 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     );
   };
   return (
-    <div className="chat-shell relative flex min-h-[calc(100dvh-8rem)] flex-col overflow-hidden text-foreground md:h-full md:min-h-0">
+    <div className="chat-shell relative flex h-[calc(100dvh-9rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden text-foreground md:h-full">
       <input ref={fileInputRef} type="file" className="hidden"
         multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); void appendPendingFiles(files); event.currentTarget.value = "";
         }} />

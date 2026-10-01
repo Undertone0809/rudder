@@ -81,6 +81,34 @@ test("native Chat and Side Chat retain sessions and exact Run history across rel
     expect(transcript.rows.filter((row: { kind: string }) => row.kind === "assistant")).toHaveLength(1);
   }
   await composer.fill("Preserve the parent draft");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const agentSelector = page.getByRole("button", { name: /^Chat agent:/ });
+  const mobileNavigation = page.getByRole("navigation", { name: "Mobile navigation" });
+  await expect.poll(async () => {
+    const button = await agentSelector.boundingBox();
+    const navigation = await mobileNavigation.boundingBox();
+    return Boolean(button && navigation && button.y + button.height <= navigation.y);
+  }).toBe(true);
+  await agentSelector.click();
+  await page.getByRole("menuitem", { name: /Configure model and thinking/ }).click();
+  await page.getByRole("button", { name: /^Thinking for this conversation/ }).click();
+  const thinkingList = page.getByRole("listbox", { name: /thinking$/ });
+  await expect(thinkingList).toBeVisible();
+  await expect.poll(async () => {
+    const parent = await page.locator("[data-runtime-profile-panel]").boundingBox();
+    const child = await thinkingList.boundingBox();
+    if (!parent || !child) return false;
+    const disjoint = child.x + child.width <= parent.x || parent.x + parent.width <= child.x
+      || child.y + child.height <= parent.y || parent.y + parent.height <= child.y;
+    return disjoint && child.x >= 0 && child.y >= 0
+      && child.x + child.width <= 390 && child.y + child.height <= 844;
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("thinking-menu-narrow.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(composer).toHaveText("Preserve the parent draft");
+  await page.setViewportSize({ width: 1500, height: 940 });
   await assistantMessages.last().click({ button: "right" });
   await page.getByTestId("chat-message-context-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const panel = page.getByTestId("chat-side-panel");

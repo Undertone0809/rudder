@@ -112,11 +112,14 @@ describe("chat conversation model options", () => {
     expect(html).toContain("lucide-chevron-right");
   });
 
-  it("aligns composer runtime options with their panel and keeps them inside the viewport", () => {
+  it.each([
+    { width: 1633, height: 1031, left: 949, top: 659, optionsLeft: 1261, optionsTop: 659, narrow: false },
+    { width: 390, height: 844, left: 16, top: 500, optionsLeft: 23, optionsTop: 172, narrow: true },
+  ])("keeps runtime options aligned or separate from their panel at width $width", (viewport) => {
     const previousWidth = window.innerWidth;
     const previousHeight = window.innerHeight;
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1633 });
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1031 });
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: viewport.width });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: viewport.height });
 
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -137,23 +140,23 @@ describe("chat conversation model options", () => {
       if (!panel) throw new Error("Runtime profile panel was not rendered");
       if (!trigger) throw new Error("Thinking trigger was not rendered");
       vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({
-        x: 949,
-        y: 659,
-        left: 949,
-        top: 659,
-        right: 1253,
-        bottom: 802,
+        x: viewport.left,
+        y: viewport.top,
+        left: viewport.left,
+        top: viewport.top,
+        right: viewport.left + 304,
+        bottom: viewport.top + 143,
         width: 304,
         height: 143,
         toJSON: () => ({}),
       } as DOMRect);
       vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
-        x: 956,
-        y: 755,
-        left: 956,
-        top: 755,
-        right: 1246,
-        bottom: 795,
+        x: viewport.left + 7,
+        y: viewport.top + 96,
+        left: viewport.left + 7,
+        top: viewport.top + 96,
+        right: viewport.left + 297,
+        bottom: viewport.top + 136,
         width: 290,
         height: 40,
         toJSON: () => ({}),
@@ -167,10 +170,13 @@ describe("chat conversation model options", () => {
         320,
         options.querySelectorAll('[role="option"]').length * 40 + 12,
       );
-      expect(options.style.left).toBe("1261px");
-      expect(options.style.top).toBe("659px");
-      expect(options.style.maxHeight).toBe(`${expectedHeight}px`);
-      expect(Number.parseFloat(options.style.top) + expectedHeight).toBeLessThanOrEqual(1019);
+      expect(options.style.left).toBe(`${viewport.optionsLeft}px`);
+      expect(options.style.top).toBe(`${viewport.optionsTop}px`);
+      expect(options.style.maxHeight).toBe(`${viewport.narrow ? 320 : expectedHeight}px`);
+      expect(Number.parseFloat(options.style.top) + expectedHeight).toBeLessThanOrEqual(viewport.height - 12);
+      if (viewport.narrow) {
+        expect(Number.parseFloat(options.style.top) + Number.parseFloat(options.style.maxHeight)).toBeLessThan(viewport.top);
+      }
     } finally {
       act(() => root.unmount());
       container.remove();

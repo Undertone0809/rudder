@@ -100,7 +100,16 @@ export function RuntimeProfileControls(props: {
       : Math.max(viewportPadding, rect.left - width - 8);
     const profilePanel = trigger.closest<HTMLElement>("[data-runtime-profile-panel]");
     const profileRect = profilePanel?.getBoundingClientRect();
-    if (props.alignSubmenuWithPanel && profileRect) {
+    const panelSubmenuLeft = profileRect
+      ? profileRect.right + 8 + width <= window.innerWidth - viewportPadding
+        ? profileRect.right + 8
+        : profileRect.left - width - 8 >= viewportPadding
+          ? profileRect.left - width - 8
+          : null
+      : null;
+    // When neither side fits, use the existing above/below fallback instead
+    // of clamping a side submenu across its parent controls.
+    if (props.alignSubmenuWithPanel && profileRect && panelSubmenuLeft !== null) {
       const control = kind === "model" ? props.model : props.effort;
       const expectedHeight = Math.min(
         320,
@@ -109,10 +118,7 @@ export function RuntimeProfileControls(props: {
       const availableHeight = Math.max(0, viewportBottom - viewportPadding);
       const maxHeight = Math.min(expectedHeight, availableHeight);
       setSubmenuPosition({
-        left: Math.min(
-          Math.max(viewportPadding, profileRect.right + 8),
-          Math.max(viewportPadding, window.innerWidth - viewportPadding - width),
-        ),
+        left: panelSubmenuLeft,
         top: Math.min(
           Math.max(viewportPadding, profileRect.top),
           Math.max(viewportPadding, viewportBottom - maxHeight),
