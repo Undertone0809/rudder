@@ -1,4 +1,4 @@
-import { agentConfigRevisions, heartbeatRunEvents, heartbeatRuns } from "@rudderhq/db";
+import { agentConfigRevisions, agents, heartbeatRunEvents, heartbeatRuns } from "@rudderhq/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getObservedRunDetail } from "./run-intelligence.js";
 
@@ -181,6 +181,10 @@ describe("run intelligence detail transcript reader", () => {
       readRun: expect.any(Function),
     });
     expect(mocks.assertAccess).toHaveBeenCalledWith(db, expect.objectContaining({ orgId }), { orgIds: [orgId] });
+    expect(db.select).toHaveBeenCalledWith(expect.objectContaining({
+      agentWorkspaceKey: agents.workspaceKey,
+      agentRuntimeConfig: agents.agentRuntimeConfig,
+    }));
   });
 
   it.each([
