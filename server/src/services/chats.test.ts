@@ -41,7 +41,11 @@ vi.mock("./runtime-kernel/historical-transcript-reader.js", async (importOrigina
     const reader = actual.createHistoricalTranscriptReader(...args);
     return { ...reader, readRun: (input: Parameters<typeof reader.readRun>[0]) => {
       nativeReadCalls(input);
-      return nativeReads.has(input.runId) ? Promise.resolve(nativeReads.get(input.runId)) : reader.readRun(input);
+      const override = nativeReads.get(input.runId);
+      if (typeof override === "function") {
+        return Promise.resolve((override as (input: unknown) => unknown)(input));
+      }
+      return nativeReads.has(input.runId) ? Promise.resolve(override) : reader.readRun(input);
     } };
   } };
 });
@@ -161,7 +165,7 @@ describe("chatService transcript persistence", () => {
     await db.insert(runRuntimeSpans).values({ orgId, runId, bindingId: binding.id, segmentId: session.segment.id, attemptRef: "native-fork-test", ownerToken: randomUUID(),
       state: "sealed", completeness: "complete", nativeExecutionRef: "turn-fork", openedAt: new Date(Date.now() - 1000), closedAt: new Date(), writerLeaseReleasedAt: new Date(),
       selectorJson: { kind: "codex_turn", threadId: "thread-fork", turnId: "turn-fork" } });
-    nativeReads.set(runId, { source: "native", availability: "available", items: [
+    nativeReads.set(runId, { source: "native", availability: "available", completeness: "complete", items: [
       { id: "reason-1", kind: "thinking", text: "Private process".repeat(32768), ts: "2026-10-01T00:00:00Z" },
     ], nextCursor: null });
     const message = await chats.addMessage(conversationId, { orgId, role: "assistant", kind: "message", body: "Answer", runId });
@@ -172,6 +176,17 @@ describe("chatService transcript persistence", () => {
     await db.update(runRuntimeSpans).set({ completeness: "complete" }).where(eq(runRuntimeSpans.runId, runId));
     const readablePage = nativeReads.get(runId);
     nativeReads.set(runId, { source: "native", availability: "missing", items: [], nextCursor: null });
+    await expect(chats.forkConversation(forkInput)).rejects.toThrow("unavailable");
+    nativeReads.set(runId, readablePage);
+    const partialPage = { ...(readablePage as Record<string, unknown>), completeness: "partial", nextCursor: "page-2" };
+    const terminalPage = { ...(readablePage as Record<string, unknown>), items: [], completeness: "terminal_only", nextCursor: null };
+    nativeReads.set(runId, { ...partialPage, nextCursor: null });
+    await expect(chats.forkConversation(forkInput)).rejects.toThrow("unavailable");
+    nativeReads.set(runId, (input: { cursor: string | null }) => input.cursor ? terminalPage : partialPage);
+    await expect(chats.forkConversation(forkInput)).rejects.toThrow("unavailable");
+    nativeReads.set(runId, (input: { cursor: string | null }) => input.cursor
+      ? { ...terminalPage, completeness: "complete" }
+      : partialPage);
     await expect(chats.forkConversation(forkInput)).rejects.toThrow("unavailable");
     nativeReads.set(runId, readablePage);
     const fork = await chats.forkConversation(forkInput);

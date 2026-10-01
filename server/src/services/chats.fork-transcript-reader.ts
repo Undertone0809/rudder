@@ -37,6 +37,7 @@ export function createChatForkTranscriptReader(db: Db, readConversationMessageTr
     let bytes = 2;
     let source: TranscriptSource = "legacy";
     let availability: TranscriptAvailability = "missing";
+    let complete = true;
     for (let pageCount = 0; pageCount < CHAT_TRANSCRIPT_READER_MAX_PAGES; pageCount += 1) {
       const page = await transcriptReader.readRun({
         orgId: run.orgId,
@@ -47,6 +48,7 @@ export function createChatForkTranscriptReader(db: Db, readConversationMessageTr
       });
       source = page.source;
       availability = page.availability;
+      complete = complete && page.completeness === "complete";
       for (const item of page.items) {
         const content = nativeForkReaderContent(item);
         sourceBytes += Buffer.byteLength(JSON.stringify(content), "utf8") + 1;
@@ -69,7 +71,15 @@ export function createChatForkTranscriptReader(db: Db, readConversationMessageTr
         entries.push(entry);
         bytes += entryBytes + (entries.length > 1 ? 1 : 0);
       }
-      if (!page.nextCursor) return { entries, source, availability, complete: true, contentSha256: nativeForkContentHash(sourceContent) };
+      if (!page.nextCursor) {
+        return {
+          entries,
+          source,
+          availability,
+          complete,
+          ...(complete ? { contentSha256: nativeForkContentHash(sourceContent) } : {}),
+        };
+      }
       if (page.nextCursor === cursor) throw new Error("Transcript reader cursor made no progress");
       cursor = page.nextCursor;
     }
