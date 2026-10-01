@@ -67,7 +67,7 @@ import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
 } from "./runtime-kernel/model-fallback.js";
-import { executeNativeForkIntent, markNativeForkIntentUnknown } from "./runtime-kernel/native-fork-intent.js";
+import { executeNativeForkIntent, markNativeForkIntentUnknown, transferReservedNativeForkIntentRunFence, type NativeForkIntentNoChildProof, type NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
 import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
@@ -511,8 +511,14 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     const runId = chatRun.id;
     await input.onRunCreated?.(runId);
     const ownedExecution = chatRunsSvc.beginOwnedRunExecution(chatRun);
-    const claudeForkRunFence = claudeForkFenceForRun(runtimeAgentType, chatRun);
+    let claudeForkRunFence = claudeForkFenceForRun(runtimeAgentType, chatRun);
     let claudeDeferredForkReference: Awaited<ReturnType<typeof reserveClaudeDeferredFork>> | null = null;
+    const claudeDeferredForkOutcome: { result: AgentRuntimeExecutionResult | null } = { result: null };
+    let pendingClaudeForkTransfer: {
+      oldAttemptId: string;
+      oldFence: NativeForkIntentRunFence;
+      noChildProof: NativeForkIntentNoChildProof;
+    } | null = null;
     const executionSignal = input.abortSignal
       ? AbortSignal.any([input.abortSignal, ownedExecution.signal])
       : ownedExecution.signal;
@@ -931,9 +937,44 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           attemptEpoch: chatRun.runtimeSpanAttemptEpoch,
         }),
         markAcceptanceUnknown: (value) => chatRunsSvc.markAcceptanceUnknown(chatRun, value),
-        recordNativeExecutionResult: (attemptResult, fence) => guardActiveRun(
-          () => chatRunsSvc.recordNativeExecutionResult(runId, attemptResult, fence),
-        ),
+        prepareNativeFallback: async (attemptResult, fence, lifecycle) => {
+          if (!claudeDeferredForkReference || !claudeDeferredFork?.adapterIntent) return true;
+          // Prompt rejection alone cannot prove the CLI did not already create
+          // a child. Only internal, non-dispatched execution may transfer intent.
+          if (lifecycle.providerDispatched || attemptResult.submissionPhase !== "pre_submission"
+            || attemptResult.nativeWriterQuiescence?.status !== "confirmed"
+            || attemptResult.nativeWriterQuiescence.source !== "not_started"
+            || attemptResult.sessionId || attemptResult.providerThreadId || attemptResult.providerTurnId
+            || !claudeForkRunFence || !fence?.attemptId) return false;
+          pendingClaudeForkTransfer = {
+            oldAttemptId: fence.attemptId,
+            oldFence: claudeForkRunFence,
+            noChildProof: {
+              version: 1, kind: "driver_not_dispatched", providerDispatched: false,
+              writerQuiescence: { status: "confirmed", source: "not_started" },
+            },
+          };
+          return true;
+        },
+        beforeTerminalNativeResult: (attemptResult) => guardActiveRun(async () => {
+          let nativeResult = attemptResult;
+          if (claudeDeferredForkReference && claudeDeferredFork?.adapterIntent && claudeForkRunFence) {
+            // Acceptance must use the still-open owned Span. Recording the
+            // native terminal result seals it and invalidates that fork fence.
+            nativeResult = await recordClaudeDeferredForkOutcome({
+              db,
+              reference: claudeDeferredForkReference,
+              runFence: claudeForkRunFence,
+              intent: claudeDeferredFork.adapterIntent,
+              result: attemptResult,
+              providerTurnId: chatProviderResultIds(attemptResult).providerTurnId,
+            });
+            claudeDeferredForkOutcome.result = nativeResult;
+          }
+          return nativeResult;
+        }),
+        recordNativeExecutionResult: (attemptResult, fence) => guardActiveRun(() =>
+          chatRunsSvc.recordNativeExecutionResult(runId, attemptResult, fence)),
         onAttemptResult: attemptPorts.onAttemptResult,
       });
 
@@ -1056,6 +1097,18 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
               resumeSource: resumeSession.sessionId ? "same_session" : "fresh",
             });
             chatRun.runtimeAttemptRef = attemptRef;
+            if (pendingClaudeForkTransfer && claudeDeferredForkReference) {
+              const newFence = claudeForkFenceForRun(runtimeAgentType, chatRun);
+              if (!newFence || isExecutionInactive()) throw ownerLostError;
+              const transferred = await guardActiveRun(() => transferReservedNativeForkIntentRunFence(db, {
+                reference: claudeDeferredForkReference!,
+                idempotencyKey: `side-chat:${input.conversation.id}`,
+                ...pendingClaudeForkTransfer!,
+                newFence,
+              }));
+              claudeForkRunFence = transferred.runFence;
+              pendingClaudeForkTransfer = null;
+            }
           },
           ...nativeAttemptCallbacks,
           onAttemptFailure: attemptPorts.onAttemptFailure,
@@ -1075,6 +1128,17 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         }
         throw error;
       }
+      const claudeDeferredForkRecordedResult = claudeDeferredForkOutcome.result;
+      if (claudeDeferredForkRecordedResult) {
+        // Keep the executor's aggregate attempt metadata; fork acceptance
+        // normalizes only the returned native session identity.
+        result = {
+          ...result,
+          sessionId: claudeDeferredForkRecordedResult.sessionId,
+          sessionParams: claudeDeferredForkRecordedResult.sessionParams,
+          sessionDisplayId: claudeDeferredForkRecordedResult.sessionDisplayId,
+        };
+      }
       const networkSuspension = isAgentRuntimeNetworkSuspension(result.networkSuspension)
         ? result.networkSuspension
         : isAgentRuntimeNetworkSuspension(result.suspension)
@@ -1082,18 +1146,6 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
           : null;
       const submissionPhase = resolveExecutionSubmissionPhase(result);
       const { providerThreadId, providerTurnId } = chatProviderResultIds(result);
-      if (claudeDeferredForkReference && claudeDeferredFork?.adapterIntent && claudeForkRunFence) {
-        const reference = claudeDeferredForkReference;
-        const intent = claudeDeferredFork.adapterIntent;
-        result = await guardActiveRun(() => recordClaudeDeferredForkOutcome({
-          db,
-          reference,
-          runFence: claudeForkRunFence,
-          intent,
-          result,
-          providerTurnId,
-        }));
-      }
       await guardActiveRun(() => chatRunsSvc.recordNativeExecutionResult(runId, result, {
         orgId: chatRun.orgId,
         spanId: chatRun.runtimeSpanId ?? null,

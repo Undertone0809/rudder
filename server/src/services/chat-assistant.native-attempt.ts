@@ -1,7 +1,6 @@
 import {
   hasConfirmedNativeWriterQuiescence,
   isAgentRuntimeNetworkSuspension,
-  isSuccessfulRuntimeResult,
   type AgentRuntimeExecutionResult,
   type AgentRuntimeNetworkSubmissionPhase,
   type ModelAttemptSpec,
@@ -15,6 +14,7 @@ type NativeSpanResult = Pick<
   "id" | "attemptRef"
 > | null;
 type NativeAttemptRef = { id: string; attemptIndex: number };
+export type ChatNativeAttemptLifecycle = { providerDispatched: boolean; willFallback: boolean };
 
 export function createChatNativeAttemptCallbacks(input: {
   orgId: string;
@@ -29,6 +29,17 @@ export function createChatNativeAttemptCallbacks(input: {
     spanId: string | null;
   };
   markAcceptanceUnknown: (value: { phase: "indeterminate"; reason: string }) => Promise<unknown>;
+  /** Finalize provider-specific state while the terminal attempt span is still open. */
+  beforeTerminalNativeResult?: (
+    result: AgentRuntimeExecutionResult,
+    fence: NativeSpanFence,
+  ) => Promise<AgentRuntimeExecutionResult>;
+  /** Provider-specific proof may refuse an otherwise eligible model fallback. */
+  prepareNativeFallback?: (
+    result: AgentRuntimeExecutionResult,
+    fence: NativeSpanFence,
+    lifecycle: ChatNativeAttemptLifecycle,
+  ) => Promise<boolean>;
   recordNativeExecutionResult: (
     result: AgentRuntimeExecutionResult,
     fence: NativeSpanFence,
@@ -70,6 +81,7 @@ export function createChatNativeAttemptCallbacks(input: {
       attempt: ModelAttemptSpec,
       result: AgentRuntimeExecutionResult,
       phase: AgentRuntimeNetworkSubmissionPhase,
+      lifecycle?: ChatNativeAttemptLifecycle,
     ) => {
       // Stop freezes visible output, but the current owner must still record
       // the returning provider's writer-exit proof before finalizing the Run.
@@ -78,7 +90,10 @@ export function createChatNativeAttemptCallbacks(input: {
       if (!identity) {
         throw new Error("Chat provider result has no matching durable attempt and native span");
       }
-      const recordedSpan = await input.recordNativeExecutionResult(result, {
+      // Only the executor knows whether an eligible next attempt exists after
+      // auth-scope filtering. Remaining model count is not retry authority.
+      const willFallback = lifecycle?.willFallback === true && !input.signal.aborted;
+      const fence: NativeSpanFence = {
         ...identity.span,
         orgId: input.orgId,
         spanId: identity.spanId,
@@ -87,7 +102,15 @@ export function createChatNativeAttemptCallbacks(input: {
           isAgentRuntimeNetworkSuspension(result.networkSuspension)
           || isAgentRuntimeNetworkSuspension(result.suspension),
         ),
-      });
+      };
+      // A failed attempt that will fall back is not the terminal Fork outcome.
+      // Finalize only the terminal attempt, before recording seals its span.
+      const fallbackAllowed = !willFallback || !input.prepareNativeFallback
+        || await input.prepareNativeFallback(result, fence, lifecycle!);
+      const nativeResult = (!willFallback || !fallbackAllowed) && input.beforeTerminalNativeResult
+        ? await input.beforeTerminalNativeResult(result, fence)
+        : result;
+      const recordedSpan = await input.recordNativeExecutionResult(nativeResult, fence);
       if (
         !recordedSpan
         || recordedSpan.id !== identity.spanId
@@ -95,19 +118,13 @@ export function createChatNativeAttemptCallbacks(input: {
       ) {
         throw new Error("Chat provider result could not be recorded against its native attempt span");
       }
-      const willFallback = input.nativeDriverRequired
-        && attempt.index < attempt.totalFallbacks
-        && phase === "pre_submission"
-        && !isSuccessfulRuntimeResult(result)
-        && result.errorCode !== "runtime_driver_required"
-        && result.errorCode !== "runtime_session_resume_rejected"
-        && !isAgentRuntimeNetworkSuspension(result.networkSuspension)
-        && !isAgentRuntimeNetworkSuspension(result.suspension)
-        && !input.signal.aborted;
       if (willFallback && !hasConfirmedNativeWriterQuiescence(result)) {
         throw new Error("Chat cannot start a fallback before the previous native writer is confirmed quiescent");
       }
       await input.onAttemptResult(attempt, result, phase);
+      if (!fallbackAllowed) {
+        throw new Error("Chat cannot retry a native fork without proof that no child was created");
+      }
     },
   };
 }
