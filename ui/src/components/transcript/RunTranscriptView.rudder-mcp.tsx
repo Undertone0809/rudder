@@ -29,7 +29,7 @@ import {
   type ReactNode,
   type UIEvent,
 } from "react";
-import type { RunTranscriptViewProps, TranscriptAgentDirectoryEntry, TranscriptToolCardEntry } from "./RunTranscriptView.common";
+import { UNVERIFIED_RUDDER_AGENT_ME_RESULT, type RunTranscriptViewProps, type TranscriptAgentDirectoryEntry, type TranscriptToolCardEntry } from "./RunTranscriptView.common";
 import { extractMcpToolDetails } from "./RunTranscriptView.semantic";
 
 export type RudderMcpPresenterKind = "rail" | "summary" | "receipt";
@@ -849,6 +849,10 @@ export function RudderMcpSemanticPresenter({ block }: { block: TranscriptToolCar
   const resolved = getRudderMcpPresenterDefinition(block.name, block.input);
   const store = useContext(RudderMcpPresenterContext);
   if (!resolved || block.status === "running") return null;
+
+  if (resolved.toolName === "rudder_agent_me" && block.result === UNVERIFIED_RUDDER_AGENT_ME_RESULT) {
+    return <div role="status" className="rounded-md border border-border/65 bg-muted/10 px-3 py-2.5 text-xs text-muted-foreground">{UNVERIFIED_RUDDER_AGENT_ME_RESULT}</div>;
+  }
 
   const parsed = parseRudderMcpResult(block.result);
   const parsedEnvelope = asRecord(parseJson(block.result));
