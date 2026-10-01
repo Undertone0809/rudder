@@ -301,11 +301,13 @@ describe("AgentDetail skills tab", () => {
       expect(container.textContent).not.toContain("No recent skill usage.");
     };
     assertError();
+    expect(vi.mocked(agentsApi.skillsAnalytics)).toHaveBeenCalledTimes(1);
     const oneDay = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "1D");
     expect(oneDay).toBeDefined();
     await act(async () => oneDay!.click());
     await flushQueries();
     assertError();
+    expect(vi.mocked(agentsApi.skillsAnalytics)).toHaveBeenCalledTimes(2);
   });
 
   it("opens scoped page find from Command+F and highlights loaded tab content", async () => {

@@ -128,7 +128,7 @@ test.describe("Agent dashboard skills analytics", () => {
     expect(await uiAnalyticsResponse.json()).toEqual(expectedBody);
     const mainContent = page.locator("#main-content");
     const error = mainContent.getByTestId("agent-skills-analytics-error");
-    await expect(error).toHaveText(message);
+    await expect(error).toHaveText(message, { timeout: 20_000 });
     await expect(error).toHaveAttribute("role", "alert");
     await expect(mainContent.getByText("0 skill uses", { exact: true })).toHaveCount(0);
     await expect(mainContent.getByText("0 runs with skill usage", { exact: true })).toHaveCount(0);

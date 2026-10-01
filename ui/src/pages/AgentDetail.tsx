@@ -82,8 +82,6 @@ import {
   PriorityPieChart,
   RunActivityChart,
   RunActivityPieChart,
-  SkillsUsageChart,
-  SkillsUsagePieChart,
   TokenUsageChart,
   TokenUsagePieChart,
 } from "../components/ActivityCharts";
@@ -157,6 +155,7 @@ import {
   appendRunSearchParams
 } from "./AgentDetail.run-filters";
 import { RunsTab } from "./AgentDetail.runs";
+import { AgentSkillAnalyticsSection } from "./AgentDetail.skills-analytics";
 
 export function AgentDetail() {
   const { orgPrefix, agentId, tab: urlTab, runId: urlRunId } = useParams<{
@@ -270,6 +269,9 @@ export function AgentDetail() {
         : { windowDays: datePreset === "7d" ? 7 : datePreset === "15d" ? 15 : 30 }),
     }),
     enabled: Boolean(resolvedAgentId) && needsDashboardData && (datePreset !== "custom" || customReady),
+    retry: (failureCount, queryError) => queryError instanceof ApiError && queryError.status === 409
+      ? false
+      : failureCount < 3,
     ...skillAnalyticsQueryOptions,
   });
 
@@ -1176,11 +1178,6 @@ function AgentOverview({
   isOneDay: boolean;
   dateFilterControl?: React.ReactNode;
 }) {
-  const visibleSkillAnalytics = !skillAnalyticsError && skillAnalytics && skillAnalytics.totalRunsWithSkills > 0
-    ? skillAnalytics
-    : null;
-  const shouldShowSkills = isOneDay || visibleSkillAnalytics !== null;
-
   return (
     <div className="space-y-8">
       {dateFilterControl}
@@ -1232,65 +1229,14 @@ function AgentOverview({
         </ChartCard>
       </div>
 
-      {showDashboardFilters && (shouldShowSkills || isSkillAnalyticsLoading || skillAnalyticsError) ? (
-        <div className="space-y-3">
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-medium">Skills</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {isOneDay
-                  ? `Skill usage distribution for ${rangeLabel.toLowerCase()}.`
-                  : `Skill usage per run for ${rangeLabel}. Hover a day to inspect the breakdown.`}
-              </p>
-            </div>
-            {skillAnalyticsError ? null : visibleSkillAnalytics ? (
-              <div className="text-right text-[11px] text-muted-foreground tabular-nums">
-                <div>{visibleSkillAnalytics.totalCount} skill uses</div>
-                <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill usage</div>
-              </div>
-            ) : isSkillAnalyticsLoading ? (
-              <div className="space-y-1.5">
-                <Skeleton className="ml-auto h-3 w-20" />
-                <Skeleton className="ml-auto h-3 w-28" />
-              </div>
-            ) : (
-              <div className="text-right text-[11px] text-muted-foreground tabular-nums">
-                <div>0 skill uses</div>
-                <div>0 runs with skill usage</div>
-              </div>
-            )}
-          </div>
-          {skillAnalyticsError ? (
-            <p role="alert" className="text-sm text-destructive" data-testid="agent-skills-analytics-error">
-              {skillAnalyticsError.message || "Skill analytics could not be loaded."}
-            </p>
-          ) : visibleSkillAnalytics ? (
-            isOneDay
-              ? <SkillsUsagePieChart analytics={visibleSkillAnalytics} />
-              : <SkillsUsageChart analytics={visibleSkillAnalytics} />
-          ) : isSkillAnalyticsLoading ? (
-            <div
-              aria-busy="true"
-              aria-label="Loading skill usage"
-              className="space-y-3 rounded-lg border border-border p-4"
-              data-testid="agent-skills-analytics-skeleton"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-3 w-16" />
-              </div>
-              <Skeleton className="h-36 w-full rounded-md" />
-              <div className="flex gap-2">
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-3 w-20" />
-                <Skeleton className="h-3 w-28" />
-              </div>
-            </div>
-          ) : (
-            <SkillsUsagePieChart analytics={null} />
-          )}
-        </div>
-      ) : null}
+      <AgentSkillAnalyticsSection
+        analytics={skillAnalytics}
+        isLoading={isSkillAnalyticsLoading}
+        error={skillAnalyticsError}
+        showDashboardFilters={showDashboardFilters}
+        isOneDay={isOneDay}
+        rangeLabel={rangeLabel}
+      />
 
       {/* Recent Issues */}
       <div className="space-y-3">
