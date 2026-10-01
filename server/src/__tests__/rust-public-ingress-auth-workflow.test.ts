@@ -369,14 +369,14 @@ async function stopRustChild() {
   rustChild = undefined;
 }
 
-function getPublicIngress(path: string, headers: Record<string, string> = {}) {
+function getPublicIngress(path: string, headers: Record<string, string> = {}, method = "GET") {
   if (publicPort === undefined) throw new Error("Public Actix listener is not started");
   return new Promise<{ status: number; body: string }>((resolveResponse, rejectResponse) => {
     const req = httpRequest({
       hostname: "127.0.0.1",
       port: publicPort,
       path,
-      method: "GET",
+      method,
       headers: { connection: "close", ...headers },
     }, (res) => {
       let body = "";
@@ -509,6 +509,36 @@ describe("source-binary public Actix to private Node auth workflow", () => {
       expect(observation.headers.cookie).toBe(scenario.headers.cookie);
     }
   }, 20_000);
+
+  it.each([
+    ["board-key", { authorization: `Bearer ${boardToken}` }, "board", "board_key"],
+    ["session", { cookie: sessionCookie }, "board", "session"],
+    ["agent", { authorization: `Bearer ${agentToken}` }, "agent", "agent_key"],
+  ] as const)("preserves public GET semantics for %s with a different CLI agent context", async (fixture, credentials, type, source) => {
+    credentialFixture.current = fixture;
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      ...credentials,
+      "x-rudder-agent-id": "different-cli-agent",
+    });
+    expect(response.status).toBe(503);
+    expect(response.body).toContain("database_disabled");
+    expect(lastObservation().actor).toMatchObject({ type, source });
+    expect(lastObservation().responseStatus).toBe(200);
+    expect(lastObservation().headers.agentId).toBe("different-cli-agent");
+  }, 10_000);
+
+  it.each([
+    [boardToken, 401],
+    [agentToken, 403],
+  ] as const)("retains mutation-only agent-context fences for token %s", async (token, status) => {
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      authorization: `Bearer ${token}`,
+      "x-rudder-agent-id": "different-cli-agent",
+    }, "POST");
+    expect(response.status).toBe(status);
+    expect(response.body).toContain(token === boardToken ? "agent_auth_required" : "agent_context_mismatch");
+    expect(authorizationObservations).toHaveLength(0);
+  });
 
   it("resolves a predicate-checked same-organization agent and preserves its CLI context", async () => {
     credentialFixture.current = "agent";

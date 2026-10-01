@@ -133,8 +133,15 @@ export function publicIngressAuthRoutes(options: PublicIngressAuthRouteOptions) 
   }
 
   const router = Router();
-  router.post(PUBLIC_INGRESS_AUTH_ROUTE, (req, res) => {
+  // This fixed-loopback JSON transport authorizes only a public GET. Preserve
+  // that method through actor middleware rather than applying mutation fences.
+  router.get(PUBLIC_INGRESS_AUTH_ROUTE, (req, res) => {
     if (req.originalUrl !== PUBLIC_INGRESS_AUTH_ENDPOINT) throw notFound();
+    // Express also matches HEAD to GET handlers; HEAD must never mint a grant.
+    if (req.method !== "GET") {
+      res.setHeader("Allow", "GET");
+      return res.status(405).json({ error: "Method not allowed" });
+    }
     if (!isLoopbackSocketPeer(req.socket.remoteAddress)) {
       throw forbidden("Private ingress authorization requires a loopback peer");
     }
@@ -170,7 +177,7 @@ export function publicIngressAuthRoutes(options: PublicIngressAuthRouteOptions) 
       res.status(404).json({ error: "Not found" });
       return;
     }
-    res.setHeader("Allow", "POST");
+    res.setHeader("Allow", "GET");
     res.status(405).json({ error: "Method not allowed" });
   });
 

@@ -159,12 +159,15 @@ async fn member_directory(
         .timeout(Duration::from_secs(3))
         .finish();
     let mut auth = client
-        .post(format!("{}{}", state.config.node_upstream, AUTH_PATH))
+        .get(format!("{}{}", state.config.node_upstream, AUTH_PATH))
         .insert_header((
             "x-rudder-ingress-auth",
             state.config.authorization_key.as_str(),
         ));
-    // Existing middleware must still reject mismatched agent/run context.
+    // Keep the public read method: POST would activate write-only CLI agent
+    // fences in Node auth and reject credentials accepted by the original GET.
+    // The bounded JSON body is a private fixed-loopback transport contract.
+    // Signed run context validation and organization scope still apply.
     // Never forward a client signed envelope, forwarding assertion or key.
     for name in [
         "host",
@@ -362,7 +365,7 @@ mod tests {
             App::new()
                 .route(
                     AUTH_PATH,
-                    web::post().to(
+                    web::get().to(
                         |request: HttpRequest, body: web::Json<serde_json::Value>| async move {
                             assert_eq!(
                                 request.headers().get("x-rudder-ingress-auth").unwrap(),
