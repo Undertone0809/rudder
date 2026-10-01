@@ -124,6 +124,38 @@ describe("Windows Local App process-instance authority", () => {
     stderr.end();
   });
 
+  it("distinguishes JSON conversion from request ID binding in timeout traces", async () => {
+    const { child, controller, stderr, stdout, getSpawnArguments } = createHelperFixture();
+    const request = controller.request("capture", { pid: 76543 });
+    await nextImmediate();
+
+    const helperScript = getSpawnArguments()[1][3];
+    expect(helperScript).toContain("$request = ConvertFrom-Json -InputObject $line");
+    const parseStart = helperScript.indexOf('Write-RudderHelperPhase 0 "request_parse_start"');
+    const jsonParsed = helperScript.indexOf('Write-RudderHelperPhase 0 "request_json_parse_done"');
+    const requestIdAssignment = helperScript.indexOf("$requestId = [int]$request.id");
+    const requestIdBound = helperScript.indexOf('Write-RudderHelperPhase $requestId "request_id_bound"');
+    expect(parseStart).toBeGreaterThanOrEqual(0);
+    expect(jsonParsed).toBeGreaterThan(parseStart);
+    expect(requestIdAssignment).toBeGreaterThan(jsonParsed);
+    expect(requestIdBound).toBeGreaterThan(requestIdAssignment);
+
+    stderr.write([
+      "RUDDER_WINPROC|0|request_parse_start|110",
+      "RUDDER_WINPROC|0|request_json_parse_done|120",
+    ].join("\n") + "\n");
+    const error = await request.then(() => null, (reason) => reason);
+
+    expect(error.message).toContain("0:powershell:request_json_parse_done@120");
+    expect(error.message).not.toContain("request_id_bound@");
+    expect(error.message).not.toContain("76543");
+
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    stdout.end();
+    stderr.end();
+  });
+
   it("records response JSON parse and request correlation phases", async () => {
     const { child, controller, stdout, stderr, phases } = createHelperFixture();
     const request = controller.request("capture", { pid: 76543 });

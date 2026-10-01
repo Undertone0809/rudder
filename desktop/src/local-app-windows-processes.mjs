@@ -41,8 +41,10 @@ while ($true) {
   $requestId = 0
   try {
     Write-RudderHelperPhase 0 "request_parse_start"
-    $request = $line | ConvertFrom-Json
+    $request = ConvertFrom-Json -InputObject $line
+    Write-RudderHelperPhase 0 "request_json_parse_done"
     $requestId = [int]$request.id
+    Write-RudderHelperPhase $requestId "request_id_bound"
     Write-RudderHelperPhase $requestId "request_parse_done"
     if ($request.type -eq 'capture') {
       Write-RudderHelperPhase $requestId "get_process_start"
