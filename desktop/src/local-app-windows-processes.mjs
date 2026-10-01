@@ -9,8 +9,17 @@ import { isSafeLocalAppProcessId } from "./local-app-process-identity.mjs";
 const defaultExecFile = promisify(execFile);
 const WINDOWS_HELPER_START_TIMEOUT_MS = 60_000;
 const WINDOWS_HELPER_REQUEST_TIMEOUT_MS = 60_000;
+const WINDOWS_CAPTURE_DIAGNOSTICS_ENV = "RUDDER_WINDOWS_PROCESS_HELPER_CAPTURE_DIAGNOSTICS";
+const WINDOWS_CAPTURE_PHASE_PATTERN = /^RUDDER_WINDOWS_CAPTURE_PHASE id=1 phase=(handler_enter|process_enumeration_start|process_enumeration_end|response_write_start|response_write_end)$/;
 
 const WINDOWS_HELPER_SCRIPT = `
+$captureDiagnosticsEnabled = $env:${WINDOWS_CAPTURE_DIAGNOSTICS_ENV} -eq '1'
+function Write-RudderCapturePhase($phase) {
+  if ($captureDiagnosticsEnabled) {
+    [Console]::Error.WriteLine("RUDDER_WINDOWS_CAPTURE_PHASE id=1 phase=$phase")
+    [Console]::Error.Flush()
+  }
+}
 $nativeType = [Diagnostics.Process].Assembly.GetType('Microsoft.Win32.NativeMethods')
 $nativeFlags = [Reflection.BindingFlags]'Public,NonPublic,Static'
 $getProcessTimes = $nativeType.GetMethod('GetProcessTimes', $nativeFlags)
@@ -24,11 +33,16 @@ function Get-RudderCreationTime($handle) {
 [Console]::Out.Flush()
 while (($line = [Console]::In.ReadLine()) -ne $null) {
   $request = $null
+  $captureDiagnosticRequest = $false
   try {
     $request = $line | ConvertFrom-Json
+    $captureDiagnosticRequest = $request.type -eq 'capture' -and $request.id -eq 1
+    if ($captureDiagnosticRequest) { Write-RudderCapturePhase 'handler_enter' }
     if ($request.type -eq 'capture') {
+      if ($captureDiagnosticRequest) { Write-RudderCapturePhase 'process_enumeration_start' }
       $candidate = Get-Process -Id ([int]$request.pid) -ErrorAction Stop
       $result = @{ pid = [int]$request.pid; createdAt = Get-RudderCreationTime($candidate.SafeHandle) }
+      if ($captureDiagnosticRequest) { Write-RudderCapturePhase 'process_enumeration_end' }
     } elseif ($request.type -eq 'snapshot') {
       $all = @(Get-WmiObject -Class Win32_Process -Property ProcessId,ParentProcessId -ErrorAction Stop)
       $owned = [System.Collections.Generic.HashSet[int]]::new()
@@ -80,8 +94,10 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
   } catch {
     $response = @{ id = [int]$request.id; ok = $false; error = 'Windows process helper request failed' }
   }
+  if ($captureDiagnosticRequest) { Write-RudderCapturePhase 'response_write_start' }
   [Console]::Out.WriteLine(($response | ConvertTo-Json -Compress -Depth 6))
   [Console]::Out.Flush()
+  if ($captureDiagnosticRequest) { Write-RudderCapturePhase 'response_write_end' }
 }
 `;
 
@@ -134,6 +150,9 @@ export function createWindowsProcessController(options = {}) {
   const pending = new Map();
   let nextId = 1;
   let stderr = "";
+  let stderrLineRemainder = "";
+  let lastCapturePhase = null;
+  const captureDiagnosticsEnabled = process.env[WINDOWS_CAPTURE_DIAGNOSTICS_ENV] === "1";
   let readyResolve;
   let readyReject;
   const ready = new Promise((resolve, reject) => {
@@ -145,7 +164,16 @@ export function createWindowsProcessController(options = {}) {
     WINDOWS_HELPER_START_TIMEOUT_MS,
   );
   child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-8_192); });
+  child.stderr.on("data", (chunk) => {
+    stderr = `${stderr}${chunk}`.slice(-8_192);
+    if (!captureDiagnosticsEnabled) return;
+    const lines = `${stderrLineRemainder}${chunk}`.split(/\r?\n/);
+    stderrLineRemainder = (lines.pop() ?? "").slice(-128);
+    for (const line of lines) {
+      const match = WINDOWS_CAPTURE_PHASE_PATTERN.exec(line);
+      if (match) lastCapturePhase = match[1];
+    }
+  });
   const lines = createInterface({ input: child.stdout });
   lines.on("line", (line) => {
     let message;
@@ -185,8 +213,11 @@ export function createWindowsProcessController(options = {}) {
         const timeout = setTimeout(() => {
           pending.delete(id);
           const helperState = describeWindowsHelperState(child, isProcessAlive);
+          const capturePhase = captureDiagnosticsEnabled && type === "capture" && id === 1
+            ? `, capturePhase=${lastCapturePhase ?? "none"}`
+            : "";
           reject(new Error(
-            `Windows process helper request timed out (type=${type}, id=${id}, helperPid=${child.pid ?? "unknown"}, helperState=${helperState}, stderr=${describeWindowsHelperStderr(stderr)})`,
+            `Windows process helper request timed out (type=${type}, id=${id}, helperPid=${child.pid ?? "unknown"}, helperState=${helperState}${capturePhase}, stderr=${describeWindowsHelperStderr(stderr)})`,
           ));
         }, options.requestTimeoutMs ?? WINDOWS_HELPER_REQUEST_TIMEOUT_MS);
         pending.set(id, { resolve, reject, timeout });
