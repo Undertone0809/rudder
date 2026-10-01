@@ -135,3 +135,106 @@ test("keeps ImageView transcript evidence available after temporary runtime file
   ))).toEqual([]);
   await page.screenshot({ path: "/tmp/rudder-image-view-expanded.png", fullPage: true });
 });
+
+test("chooses a browser-local image in Chat, switches recorded entries, and releases it on close", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.addInitScript(() => {
+    const revoked: string[] = [];
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.revokeObjectURL = (url) => { revoked.push(url); revoke(url); };
+    Object.defineProperty(window, "__rudderRevokedImageUrls", { value: revoked });
+  });
+  const orgRes = await page.request.post("/api/orgs", {
+    data: { name: `Chat-Browser-Local-Image-${Date.now()}` },
+  });
+  expect(orgRes.ok()).toBe(true);
+  const organization = await orgRes.json() as { id: string; issuePrefix: string };
+  const agent = await createE2EChatAgent(page.request, organization.id, {
+    name: "Browser Local Image Agent",
+    command: E2E_CODEX_STUB,
+  });
+  const chatRes = await page.request.post(`/api/orgs/${organization.id}/chats`, {
+    data: {
+      title: "Browser local transcript images",
+      preferredAgentId: agent.id,
+      issueCreationMode: "manual_approval",
+      planMode: false,
+      initialMessage: { body: "Inspect recorded images." },
+    },
+  });
+  expect(chatRes.ok()).toBe(true);
+  const chat = await chatRes.json() as { id: string };
+  const images = ["first.png", "second.png"].map((name, index) => ({
+    id: `image-${index}`,
+    status: "completed",
+    path: `/tmp/${name}`,
+    displayName: name,
+  }));
+  await e2eDb.insert(chatMessages).values({
+    id: randomUUID(),
+    orgId: organization.id,
+    conversationId: chat.id,
+    role: "assistant",
+    kind: "message",
+    status: "completed",
+    body: "Both images were inspected.",
+    structuredPayload: {
+      __chatTranscript: images.flatMap((image, index) => [
+        { kind: "tool_call", ts: `2026-07-25T00:00:0${index * 2}.000Z`, name: "image_view", toolUseId: image.id, input: image },
+        { kind: "tool_result", ts: `2026-07-25T00:00:0${index * 2 + 1}.000Z`, toolUseId: image.id, toolName: "image_view", content: JSON.stringify(image), isError: false },
+      ]),
+    },
+    replyingAgentId: agent.id,
+    chatTurnId: randomUUID(),
+    turnVariant: 0,
+  });
+  await page.goto("/");
+  await page.evaluate((orgId) => window.localStorage.setItem("rudder.selectedOrganizationId", orgId), organization.id);
+  await page.goto(`/${organization.issuePrefix}/messenger/chat/${chat.id}`);
+  const transcript = page.getByTestId("chat-transcript-item");
+  await transcript.getByRole("button", { name: /Worked for/i }).click();
+  await transcript.getByRole("button", { name: "Expand tool activity" }).click();
+  const first = transcript.getByRole("button", { name: "Preview image first.png" });
+  const second = transcript.getByRole("button", { name: "Preview image second.png" });
+  await first.click();
+  const picker = transcript.getByTestId("transcript-browser-image-picker");
+  await expect(picker).toContainText("original workspace path cannot be verified");
+  await picker.locator('input[type="file"]').setInputFiles({
+    name: "first.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(IMAGE_BASE64, "base64"),
+  });
+  const thumbnail = transcript.getByAltText("Preview of first.png");
+  await expect(thumbnail).toHaveAttribute("src", /^blob:/u);
+  const firstBlob = await thumbnail.getAttribute("src");
+  const previewTrigger = transcript.getByRole("button", { name: "Open image preview: first.png" });
+  await previewTrigger.click();
+  const fullscreen = page.getByTestId("transcript-image-preview-dialog");
+  await expect(fullscreen).toBeVisible();
+  await expect(fullscreen.getByRole("button", { name: "Copy Image" })).toBeVisible();
+  await expect(fullscreen.getByRole("button", { name: "Download Image" })).toBeVisible();
+  await page.screenshot({ path: "/tmp/rudder-browser-local-chat-preview-fullscreen.png", fullPage: true });
+  await fullscreen.getByRole("button", { name: "Close image preview" }).click();
+  await expect(fullscreen).toHaveCount(0);
+  await expect(previewTrigger).toBeFocused();
+
+  await previewTrigger.click();
+  await expect(fullscreen).toBeVisible();
+  // A transcript update can collapse the underlying entry while the modal owns its blob.
+  // The modal makes the background inaccessible to role selectors, but the entry remains in the DOM.
+  await transcript.locator('button[data-transcript-image-target="/tmp/first.png"][aria-expanded="true"]')
+    .evaluate((button: HTMLButtonElement) => button.click());
+  await expect(fullscreen).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copy Image" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download Image" })).toHaveCount(0);
+  await expect(transcript.getByAltText("Preview of first.png")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as typeof window & { __rudderRevokedImageUrls?: string[] }).__rudderRevokedImageUrls ?? [])).toContain(firstBlob);
+
+  await second.click();
+  await expect(transcript.getByTestId("transcript-browser-image-picker")).toContainText("second.png");
+  await page.screenshot({ path: "/tmp/rudder-browser-local-chat-preview-open.png", fullPage: true });
+  await transcript.getByRole("button", { name: "Collapse image second.png" }).click();
+  await expect(transcript.getByTestId("transcript-browser-image-picker")).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/rudder-browser-local-chat-preview-closed.png", fullPage: true });
+});
