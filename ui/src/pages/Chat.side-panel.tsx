@@ -39,12 +39,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { BrowserLiveSurface } from "@/components/workbench/BrowserLiveSurface";
-import {
-  WorkspaceTabbedSurface,
-  WorkspaceTabbedSurfaceContent,
-  WorkspaceTabbedSurfaceHeader,
-  WorkspaceTabbedSurfaceStrip,
-} from "@/components/workbench/WorkspaceTabbedSurface";
+import * as WorkspaceTabs from "@/components/workbench/WorkspaceTabbedSurface";
 import { WorkspaceCodeEditor } from "@/components/WorkspaceCodeEditor";
 import {
   isWorkspaceCsvPreviewFile,
@@ -2447,7 +2442,7 @@ export function ChatSidePanel({
           onClick={onClose ?? sidePanel.hidePanel}
         />
       ) : null}
-      <WorkspaceTabbedSurface
+      <WorkspaceTabs.WorkspaceTabbedSurface
         as="aside"
         ref={panelRef}
         onKeyDownCapture={handleSidePanelKeyDown}
@@ -2466,10 +2461,8 @@ export function ChatSidePanel({
         aria-label="Side Panel"
         aria-hidden={!contextReady || undefined}
       >
-      <WorkspaceTabbedSurfaceHeader className={cn(
-        isMobile && "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
-      )}>
-        <WorkspaceTabbedSurfaceStrip
+      <WorkspaceTabs.WorkspaceTabbedSurfaceHeader className={isMobile ? "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]" : undefined}>
+        <WorkspaceTabs.WorkspaceTabbedSurfaceStrip
           role="tablist"
           aria-label="Side Panel targets"
           data-testid="chat-side-panel-tabs"
@@ -2644,9 +2637,9 @@ export function ChatSidePanel({
               <PanelRight className="h-3.5 w-3.5" />
             </button>
           </div>
-        </WorkspaceTabbedSurfaceStrip>
-      </WorkspaceTabbedSurfaceHeader>
-      <WorkspaceTabbedSurfaceContent className={cn(
+        </WorkspaceTabs.WorkspaceTabbedSurfaceStrip>
+      </WorkspaceTabs.WorkspaceTabbedSurfaceHeader>
+      <WorkspaceTabs.WorkspaceTabbedSurfaceContent className={cn(
         "min-w-0 max-w-full",
         isMobile && "!bg-[color:var(--surface-page)]",
       )}>
@@ -2894,8 +2887,8 @@ export function ChatSidePanel({
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
           )}
         </div>
-      </WorkspaceTabbedSurfaceContent>
-      </WorkspaceTabbedSurface>
+      </WorkspaceTabs.WorkspaceTabbedSurfaceContent>
+      </WorkspaceTabs.WorkspaceTabbedSurface>
     </>
   );
 

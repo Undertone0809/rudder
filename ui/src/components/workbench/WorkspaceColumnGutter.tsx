@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { ComponentPropsWithRef } from "react";
+import type { ComponentPropsWithRef, PointerEventHandler } from "react";
 
 type WorkspaceColumnGutterProps = ComponentPropsWithRef<"div"> & {
   visible: boolean;
@@ -16,5 +16,43 @@ export function WorkspaceColumnGutter({ visible, className, ...props }: Workspac
         className,
       )}
     />
+  );
+}
+
+
+type WorkspaceContextColumnGutterProps = {
+  library: boolean;
+  visible: boolean;
+  resizing: boolean;
+  onResizeStart: PointerEventHandler<HTMLDivElement>;
+};
+
+/** The Library gutter is inert; other context columns retain resize controls. */
+export function WorkspaceContextColumnGutter({
+  library,
+  visible,
+  resizing,
+  onResizeStart,
+}: WorkspaceContextColumnGutterProps) {
+  if (library) {
+    return <WorkspaceColumnGutter data-testid="workspace-column-gutter" aria-hidden visible={visible} className="motion-resize" />;
+  }
+  return (
+    <WorkspaceColumnGutter
+      data-testid="workspace-column-resizer"
+      aria-hidden={!visible}
+      visible={visible}
+      className={cn(
+        "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
+        !resizing && "motion-resize",
+        resizing && "is-resizing",
+      )}
+      onPointerDown={onResizeStart}
+      role={visible ? "separator" : undefined}
+      aria-orientation="vertical"
+      aria-label="Resize workspace columns"
+    >
+      <div className="workspace-column-resizer-line" />
+    </WorkspaceColumnGutter>
   );
 }

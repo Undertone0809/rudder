@@ -812,10 +812,10 @@ describe("index.css motion rules", () => {
 
     expect(organizationWorkspacesSource).toContain("rudder-doc-editor-surface min-h-[420px]");
     for (const caller of [organizationWorkspacesSource, chatSidePanelSource]) {
-      expect(caller).toContain("<WorkspaceTabbedSurface");
-      expect(caller).toContain("<WorkspaceTabbedSurfaceHeader");
-      expect(caller).toContain("<WorkspaceTabbedSurfaceStrip");
-      expect(caller).toContain("<WorkspaceTabbedSurfaceContent");
+      expect(caller).toContain("<WorkspaceTabs.WorkspaceTabbedSurface");
+      expect(caller).toContain("<WorkspaceTabs.WorkspaceTabbedSurfaceHeader");
+      expect(caller).toContain("<WorkspaceTabs.WorkspaceTabbedSurfaceStrip");
+      expect(caller).toContain("<WorkspaceTabs.WorkspaceTabbedSurfaceContent");
     }
     expect(workspaceTabbedSurfaceSource).toContain("workspace-tab-header-card workspace-main-card");
     expect(workspaceTabbedSurfaceSource).toContain("workspace-tab-content-card workspace-main-card");

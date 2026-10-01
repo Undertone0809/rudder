@@ -51,12 +51,7 @@ import { IssueDetailFind } from "../components/IssueDetailFind";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { MarkdownEditor, type InlineTokenClickEvent, type MarkdownEditorRef, type MentionOption } from "../components/MarkdownEditor";
 import { PageSkeleton } from "../components/PageSkeleton";
-import {
-  WorkspaceTabbedSurface,
-  WorkspaceTabbedSurfaceContent,
-  WorkspaceTabbedSurfaceHeader,
-  WorkspaceTabbedSurfaceStrip,
-} from "../components/workbench/WorkspaceTabbedSurface";
+import * as WorkspaceTabs from "../components/workbench/WorkspaceTabbedSurface";
 import { getWorkspaceCodeLanguageLabel, isWorkspaceCodeFilePath, WorkspaceCodeEditor } from "../components/WorkspaceCodeEditor";
 import { WorkspaceHtmlPreview, WorkspaceHtmlPreviewToolbar } from "../components/WorkspaceHtmlPreview";
 import { WorkspaceLibraryBinaryPreview } from "../components/WorkspaceMediaPreview";
@@ -2333,7 +2328,7 @@ function OrganizationWorkspaceBrowserForOrganization({
             </section>
           ) : null}
 
-          <WorkspaceTabbedSurface
+          <WorkspaceTabs.WorkspaceTabbedSurface
             as="section"
             data-testid="org-workspaces-editor-card"
             data-active-surface={selectedWorkspaceSavePending || uploadWorkspaceImage.isPending ? "workspace-document" : undefined}
@@ -2343,12 +2338,12 @@ function OrganizationWorkspaceBrowserForOrganization({
             )}
           >
             {showWorkspaceFileTabs ? (
-              <WorkspaceTabbedSurfaceHeader
+              <WorkspaceTabs.WorkspaceTabbedSurfaceHeader
                 data-testid="org-workspaces-editor-tabs"
                 role="tablist"
                 aria-label="Open files"
               >
-                <WorkspaceTabbedSurfaceStrip
+                <WorkspaceTabs.WorkspaceTabbedSurfaceStrip
                   ref={setOpenFileTabsScrollerRef}
                   data-testid="org-workspaces-editor-tab-scroller"
                   className="rudder-doc-editor-tab-scroller scrollbar-auto-hide min-w-0 overflow-x-auto"
@@ -2417,10 +2412,10 @@ function OrganizationWorkspaceBrowserForOrganization({
                     })}
                     <div aria-hidden="true" className="rudder-doc-editor-tab-drag-spacer h-7 min-w-6 flex-1" />
                   </>
-                </WorkspaceTabbedSurfaceStrip>
-              </WorkspaceTabbedSurfaceHeader>
+                </WorkspaceTabs.WorkspaceTabbedSurfaceStrip>
+              </WorkspaceTabs.WorkspaceTabbedSurfaceHeader>
             ) : null}
-            <WorkspaceTabbedSurfaceContent>
+            <WorkspaceTabs.WorkspaceTabbedSurfaceContent>
               {visibleWorkspaceBreadcrumbPath !== null ? (
                 <div
                   data-testid="org-workspaces-path-breadcrumb"
@@ -2897,8 +2892,8 @@ function OrganizationWorkspaceBrowserForOrganization({
                 </div>
               )}
               </div>
-            </WorkspaceTabbedSurfaceContent>
-          </WorkspaceTabbedSurface>
+            </WorkspaceTabs.WorkspaceTabbedSurfaceContent>
+          </WorkspaceTabs.WorkspaceTabbedSurface>
 
         </div>
       )}

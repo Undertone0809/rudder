@@ -84,7 +84,7 @@ import { ThreeColumnContextSidebar } from "./ThreeColumnContextSidebar";
 import { WorkspaceBackupFilesSidebar } from "./WorkspaceBackupFilesSidebar";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { startSidePanelResizeLifecycle, type SidePanelResizeMoveEvent } from "./side-panel-resize-lifecycle";
-import { WorkspaceColumnGutter } from "./workbench/WorkspaceColumnGutter";
+import { WorkspaceContextColumnGutter } from "./workbench/WorkspaceColumnGutter";
 
 export {
   preserveRememberedSidePanelWidth,
@@ -1642,31 +1642,12 @@ export function Layout() {
                             <ThreeColumnContextSidebar />
                           )}
                         </div>
-                        {isLibraryRoute ? (
-                          <WorkspaceColumnGutter
-                            data-testid="workspace-column-gutter"
-                            aria-hidden
-                            visible={contextSidebarVisible}
-                            className="motion-resize"
-                          />
-                        ) : (
-                          <WorkspaceColumnGutter
-                            data-testid="workspace-column-resizer"
-                            aria-hidden={!contextSidebarVisible}
-                            visible={contextSidebarVisible}
-                            className={cn(
-                              "workspace-column-resizer group flex shrink-0 cursor-col-resize items-stretch justify-center",
-                              !resizingColumn && "motion-resize",
-                              resizingColumn && "is-resizing",
-                            )}
-                            onPointerDown={startContextColumnResize}
-                            role={contextSidebarVisible ? "separator" : undefined}
-                            aria-orientation="vertical"
-                            aria-label="Resize workspace columns"
-                          >
-                            <div className="workspace-column-resizer-line" />
-                          </WorkspaceColumnGutter>
-                        )}
+                        <WorkspaceContextColumnGutter
+                          library={isLibraryRoute}
+                          visible={contextSidebarVisible}
+                          resizing={resizingColumn}
+                          onResizeStart={startContextColumnResize}
+                        />
                       </>
                     ) : null}
                     {showIntegratedShellSidebar
