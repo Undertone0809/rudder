@@ -429,6 +429,69 @@ export function runCursorPayload(input: {
   } as CursorPayload;
 }
 
+/** Validate the public window before passing its nested cursor to a provider. */
+export function assertRunCursorWindow(
+  cursor: CursorPayload | null,
+  input: {
+    id: string;
+    orgId: string;
+    principal: TranscriptPrincipal;
+    spanId?: string | null;
+    range?: TranscriptRange | null;
+    visibilityCutoffRef?: string | null;
+    windowRevision: string;
+  },
+): void {
+  if (!cursor) return;
+  if (cursor.scope !== "run"
+    || cursor.orgId !== input.orgId
+    || cursor.principalScopeRef !== selectedPrincipalScope(input.principal, input.orgId)
+    || (cursor.principalType !== undefined && cursor.principalType !== (input.principal.type ?? undefined))
+    || (cursor.principalId !== undefined && cursor.principalId !== (input.principal.id ?? undefined))
+    || cursor.runId !== input.id
+    || (cursor.spanId ?? null) !== (input.spanId ?? null)) {
+    throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor does not belong to this scope");
+  }
+  if (cursor.range !== undefined && compatibilityValueKey(cursor.range) !== compatibilityValueKey(input.range ?? null)) {
+    throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor does not belong to this range");
+  }
+  if (cursor.visibilityCutoffRef !== undefined && (cursor.visibilityCutoffRef ?? null) !== (input.visibilityCutoffRef ?? null)) {
+    throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor does not belong to this visibility cutoff");
+  }
+  const runItemIdRangeState = (cursor as CursorPayload & { runItemIdRangeState?: RunItemIdRangeState }).runItemIdRangeState;
+  if (typeof cursor.windowRevision !== "string" || !/^[a-f0-9]{64}$/u.test(cursor.windowRevision)
+    || typeof cursor.revision !== "string" || !/^[a-f0-9]{64}$/u.test(cursor.revision)
+    || !["native", "native_plus_objects", "legacy"].includes(cursor.source ?? "")
+    || !(cursor.providerRevision === null || typeof cursor.providerRevision === "string")
+    || !(cursor.activeSpanId === null || typeof cursor.activeSpanId === "string")
+    || typeof cursor.providerOffset !== "number" || !Number.isSafeInteger(cursor.providerOffset) || cursor.providerOffset < 0
+    || !(cursor.providerPageCursor === null || typeof cursor.providerPageCursor === "string")
+    || !(cursor.providerNextCursor === null || typeof cursor.providerNextCursor === "string")
+    || (cursor.supplementRevision !== undefined && typeof cursor.supplementRevision !== "string")
+    || (cursor.sourceTransition !== undefined && cursor.sourceTransition !== true)
+    || (runItemIdRangeState !== undefined && (!runItemIdRangeState || typeof runItemIdRangeState !== "object"
+      || !Array.isArray(runItemIdRangeState.resolvedBoundaryKeys)
+      || runItemIdRangeState.resolvedBoundaryKeys.length > itemIdBoundaryKeys.length
+      || !runItemIdRangeState.resolvedBoundaryKeys.every((key) => itemIdBoundaryKeys.includes(key as typeof itemIdBoundaryKeys[number]))))) {
+    throw transcriptReaderError("cursor_invalid", "Invalid run transcript cursor");
+  }
+  const expectedRevision = stableHash({
+    windowRevision: cursor.windowRevision,
+    providerRevision: cursor.providerRevision,
+    activeSpanId: cursor.activeSpanId,
+    providerOffset: cursor.providerOffset,
+    ...(cursor.providerPageLimit === undefined ? {} : { providerPageLimit: cursor.providerPageLimit }),
+    ...(cursor.supplementRevision === undefined ? {} : { supplementRevision: cursor.supplementRevision }),
+    ...(runItemIdRangeState === undefined ? {} : { runItemIdRangeState }),
+  });
+  if (cursor.revision !== expectedRevision) {
+    throw transcriptReaderError("cursor_invalid", "Invalid run transcript cursor revision");
+  }
+  if (cursor.windowRevision !== input.windowRevision) {
+    throw transcriptReaderError("cursor_revision_mismatch", "Transcript cursor window revision is no longer current", 409);
+  }
+}
+
 export function pageFromRunSource(
   source: ResolvedSource & {
     runItemIdRangeState?: RunItemIdRangeState;
@@ -456,25 +519,8 @@ export function pageFromRunSource(
   });
   let position = 0;
   let sourceTransition = false;
+  assertRunCursorWindow(cursor, { ...input, windowRevision });
   if (cursor) {
-    if (cursor.scope !== "run"
-      || cursor.orgId !== input.orgId
-      || cursor.principalScopeRef !== selectedPrincipalScope(input.principal, input.orgId)
-      || (cursor.principalType !== undefined && cursor.principalType !== (input.principal.type ?? undefined))
-      || (cursor.principalId !== undefined && cursor.principalId !== (input.principal.id ?? undefined))
-      || cursor.runId !== input.id
-      || (cursor.spanId ?? null) !== (input.spanId ?? null)) {
-      throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor does not belong to this scope");
-    }
-    if (cursor.range !== undefined && compatibilityValueKey(cursor.range) !== compatibilityValueKey(range)) {
-      throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor does not belong to this range");
-    }
-    if (cursor.visibilityCutoffRef !== undefined && (cursor.visibilityCutoffRef ?? null) !== cutoff) {
-      throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor does not belong to this visibility cutoff");
-    }
-    if (cursor.windowRevision && cursor.windowRevision !== windowRevision) {
-      throw transcriptReaderError("cursor_revision_mismatch", "Transcript cursor window revision is no longer current");
-    }
     if (cursor.activeSpanId && cursor.activeSpanId !== source.spanId) {
       throw transcriptReaderError("cursor_scope_mismatch", "Transcript cursor does not belong to this span");
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTranscriptReader, type NativeTranscriptReadInput, type TranscriptItem, type TranscriptPage } from "./transcript-reader.js";
+import { readManifestTranscriptSnapshot } from "../chat-work-manifest.transcript-snapshot.js";
+import { createTranscriptReader, decodeTranscriptCursor, encodeTranscriptCursor, type NativeTranscriptReadInput, type TranscriptItem, type TranscriptPage } from "./transcript-reader.js";
 import { databaseBinding, databaseRun, databaseSegment, databaseSpan, mockDatabase } from "./transcript-reader.test-support.js";
 
 const scope = { orgId: "org-1", runId: "run-1", principal: { type: "board" as const, orgId: "org-1", authorized: true } };
@@ -19,12 +20,13 @@ function fixture(nativeRows: ReturnType<typeof row>[], objectRows: ReturnType<ty
     return { items: objectRows.slice(start, end), nextCursor: end < objectRows.length ? String(end) : null,
       revision: objectRevision, availability: "available" as const, completeness: "complete" as const };
   });
+  const span = databaseSpan("span-1", { supplementalObjectRef: "object-1" });
   const db = mockDatabase({ run: databaseRun({ chatConversationId: "chat-1", contextSnapshot: { transcriptSource: "native" } }),
     conversations: [{ id: "chat-1", orgId: "org-1", updatedAt: new Date("2026-09-22") }],
-    spans: [databaseSpan("span-1", { supplementalObjectRef: "object-1" })],
+    spans: [span],
     bindings: [databaseBinding("span-1", { continuity: "native", conversationId: "chat-1" })], segments: [databaseSegment("span-1")] });
   const reader = createTranscriptReader(db as never, { nativeReader: { read: native }, objectReader: { read: object }, ...budgets });
-  return { reader, native, object, changeNative: () => { nativeRevision = "native-r2"; }, changeObject: () => { objectRevision = "object-r2"; } };
+  return { reader, native, object, span, changeNative: () => { nativeRevision = "native-r2"; }, changeObject: () => { objectRevision = "object-r2"; } };
 }
 async function collect(read: (cursor: string | null, index: number) => Promise<TranscriptPage>) {
   const items: TranscriptItem[] = [], pages: TranscriptPage[] = [];
@@ -38,6 +40,76 @@ async function collect(read: (cursor: string | null, index: number) => Promise<T
 }
 
 describe("native pagination with retained supplements", () => {
+  it.each(["supplement attached", "supplement replaced", "selector sealed"] as const)("reports retryable source drift before decoding a stale provider cursor when %s", async (change) => {
+    const f = fixture([row("n0", 0), row("n1", 1)], [row("o2", 2)]);
+    if (change === "supplement attached") f.span.supplementalObjectRef = null;
+    const first = await f.reader.readRun({ ...scope, limit: 1 });
+    expect(first.nextCursor).not.toBeNull();
+    if (change === "selector sealed") {
+      f.span.selectorJson = { kind: "native_execution", executionRef: "sealed-execution" };
+    } else {
+      f.span.supplementalObjectRef = change === "supplement attached" ? "object-1" : "object-2";
+    }
+
+    await expect(f.reader.readRun({ ...scope, cursor: first.nextCursor, limit: 1 })).rejects.toMatchObject({
+      code: "cursor_revision_mismatch", status: 409,
+    });
+    expect(f.native).toHaveBeenCalledOnce();
+    expect(f.object).not.toHaveBeenCalled();
+    const fresh = await collect(cursor => f.reader.readRun({ ...scope, cursor, limit: 1 }));
+    expect(fresh.items.map(item => item.id)).toEqual(["n0", "n1", "o2"]);
+  });
+
+  it("restarts the whole manifest snapshot when a supplement attaches between native pages", async () => {
+    const nativeRows = [row("stale0", 0), row("stale1", 1)];
+    const f = fixture(nativeRows, [row("o2", 2)]);
+    f.span.supplementalObjectRef = null;
+    let switched = false;
+    const snapshot = await readManifestTranscriptSnapshot(() => collect(async cursor => {
+      const page = await f.reader.readRun({ ...scope, cursor, limit: 1 });
+      if (!switched) {
+        switched = true;
+        f.span.supplementalObjectRef = "object-1";
+        nativeRows.splice(0, nativeRows.length, row("current0", 0), row("current1", 1));
+      }
+      return page;
+    }));
+    expect(snapshot.items.map(item => item.id)).toEqual(["current0", "current1", "o2"]);
+    expect(f.native.mock.calls.filter(([input]) => input.cursor === null)).toHaveLength(2);
+  });
+
+  it("keeps forged supplement payloads and caller scope changes as bad cursors", async () => {
+    const f = fixture([row("n0", 0), row("n1", 1)], [row("o2", 2)]);
+    const first = await f.reader.readRun({ ...scope, limit: 1 });
+    const cursor = decodeTranscriptCursor(first.nextCursor)!;
+    for (const providerPageCursor of ["forged", "rudder-supplement-v1:invalid-json"]) {
+      await expect(f.reader.readRun({ ...scope, cursor: encodeTranscriptCursor({ ...cursor, providerPageCursor }), limit: 1 }))
+        .rejects.toMatchObject({ code: "cursor_invalid", status: 400 });
+    }
+    await expect(f.reader.readRun({ ...scope, cursor: encodeTranscriptCursor({ ...cursor, orgId: "other-org" }), limit: 1 }))
+      .rejects.toMatchObject({ code: "cursor_scope_mismatch", status: 400 });
+    expect(f.native).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a forged current window revision before classifying a stale source as retryable", async () => {
+    const f = fixture([row("n0", 0), row("n1", 1)], [row("o2", 2)]);
+    const first = await f.reader.readRun({ ...scope, limit: 1 });
+    f.span.selectorJson = { kind: "native_execution", executionRef: "sealed-execution" };
+    const current = await f.reader.readRun({ ...scope, limit: 1 });
+    const oldCursor = decodeTranscriptCursor(first.nextCursor)!;
+    const currentWindow = decodeTranscriptCursor(current.nextCursor)!.windowRevision!;
+    expect(currentWindow).not.toBe(oldCursor.windowRevision);
+    const callsBefore = f.native.mock.calls.length;
+
+    await expect(f.reader.readRun({ ...scope, cursor: first.nextCursor, limit: 1 }))
+      .rejects.toMatchObject({ code: "cursor_revision_mismatch", status: 409 });
+    await expect(f.reader.readRun({ ...scope, cursor: encodeTranscriptCursor({ ...oldCursor, windowRevision: currentWindow }), limit: 1 }))
+      .rejects.toMatchObject({ code: "cursor_invalid", status: 400 });
+    await expect(f.reader.readRun({ ...scope, cursor: encodeTranscriptCursor({ ...oldCursor, windowRevision: 17 as never }), limit: 1 }))
+      .rejects.toMatchObject({ code: "cursor_invalid", status: 400 });
+    expect(f.native).toHaveBeenCalledTimes(callsBefore);
+  });
+
   it("uses native-then-supplement order independent of page size, including ordinal holes", async () => {
     for (const limit of [1, 2, 20]) {
       const f = fixture([row("n0", 0), row("n2", 2), row("n4", 4)], [row("o1", 1), row("o3", 3)]);

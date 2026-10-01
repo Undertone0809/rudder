@@ -84,6 +84,7 @@ import {
 import {
   applyRange,
   applyVisibilityCutoff,
+  assertRunCursorWindow,
   decodeCursor,
   normalizeLimit,
   numericRangeEndReached,
@@ -1412,6 +1413,9 @@ export async function readRunItems(
     range: input.range ?? null,
     visibilityCutoffRef: input.visibilityCutoffRef ?? null,
   });
+  // Span finalization or supplement attachment can change the provider cursor
+  // format. Reject the stale window before interpreting that nested cursor.
+  assertRunCursorWindow(cursor, { ...input, id: input.runId, windowRevision });
   const binding = resolved.run.chatConversationId
     ? [...resolved.bindingById.values()].find((candidate) => candidate.conversationId === resolved.run.chatConversationId) ?? null
     : null;
