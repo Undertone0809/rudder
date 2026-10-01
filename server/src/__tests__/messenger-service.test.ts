@@ -43,6 +43,7 @@ import {
   projects,
   runRuntimeSpans,
   runtimeBindings,
+  runtimeSourceAliases,
 } from "@rudderhq/db";
 import {
   chatInlineAnnotationsFromStructuredPayload,
@@ -8724,6 +8725,8 @@ describe("messengerService and issue follows", () => {
     const conversationId = randomUUID();
     const agentId = randomUUID();
     const runId = randomUUID();
+    const nativeSessionId = "native-reader-session";
+    const nativeExecutionRef = "native-reader-execution";
     const userId = "board-user-run-transcript-reader";
     const entry = {
       kind: "assistant" as const,
@@ -8757,7 +8760,7 @@ describe("messengerService and issue follows", () => {
         provider: "cursor_agent",
         transport: "cursor-agent-acp-stdio",
         method: "session/update",
-        sessionId: "native-reader-session",
+        sessionId: nativeSessionId,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
       },
     }));
@@ -8780,7 +8783,7 @@ describe("messengerService and issue follows", () => {
       id: agentId,
       orgId,
       name: "Reader Agent",
-      agentRuntimeType: "process",
+      agentRuntimeType: "cursor",
     });
     await db.insert(chatConversations).values({
       id: conversationId,
@@ -8794,8 +8797,14 @@ describe("messengerService and issue follows", () => {
       id: runId,
       orgId,
       agentId,
-      status: "completed",
+      status: "succeeded",
       chatConversationId: conversationId,
+      sessionIdAfter: nativeSessionId,
+      contextSnapshot: {
+        agentRuntimeType: "cursor",
+        transcriptSource: "native",
+        runtimeProviderProfile: { runtimeType: "cursor" },
+      },
       resultJson: {},
     });
     const bindingId = randomUUID();
@@ -8810,7 +8819,7 @@ describe("messengerService and issue follows", () => {
       conversationId,
       principalScopeRef: `user:${userId}`,
       agentId,
-      runtimeType: "process",
+      runtimeType: "cursor",
       continuity: "native",
       status: "active",
     });
@@ -8818,10 +8827,10 @@ describe("messengerService and issue follows", () => {
       id: segmentId,
       orgId,
       bindingId,
-      runtimeType: "process",
+      runtimeType: "cursor",
       segmentOrdinal: 0,
-      nativeSessionId: "native-reader-session",
-      rootSessionId: "native-reader-session",
+      nativeSessionId,
+      rootSessionId: nativeSessionId,
       state: "sealed",
       createdAt: openedAt,
       sealedAt: closedAt,
@@ -8838,7 +8847,8 @@ describe("messengerService and issue follows", () => {
       ownerToken,
       ordinal: 0,
       relation: "primary",
-      selectorJson: { kind: "native_execution", runtimeType: "process", runId },
+      nativeExecutionRef,
+      selectorJson: { kind: "cursor_execution", sessionId: nativeSessionId, executionRef: nativeExecutionRef },
       state: "sealed",
       completeness: "complete",
       openedAt,
@@ -8890,14 +8900,16 @@ describe("messengerService and issue follows", () => {
       title: "Forked Run transcript",
       createdByUserId: userId,
     });
-    const forkedAssistant = (await chatSvc.listMessages(fork.id, { includeTranscript: true }))
-      .find((message) => message.role === "assistant");
-    expect(forkedAssistant?.transcript).toEqual(
-      [expectedEntry, ...expectedCursorChunks].map((item, index) => ({
-        ...item,
-        sourceEntryId: `message:${forkedAssistant?.id}:${index}`,
-      })),
-    );
+    try {
+      const forkedAssistant = (await chatSvc.listMessages(fork.id, { includeTranscript: true }))
+        .find((message) => message.role === "assistant");
+      expect(forkedAssistant?.transcript).toEqual([expectedEntry, ...expectedCursorChunks]);
+    } finally {
+      await db.delete(runtimeSourceAliases).where(and(
+        eq(runtimeSourceAliases.orgId, orgId),
+        eq(runtimeSourceAliases.conversationId, fork.id),
+      ));
+    }
   });
 
   it("lists only the latest five eligible user messages for title generation", async () => {
