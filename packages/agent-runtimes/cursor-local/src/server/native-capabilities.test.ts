@@ -853,6 +853,15 @@ describe("Cursor ACP native capabilities", () => {
       prompt: `Remember this exact marker: ${marker}`, model: "", onLog: async () => {},
     });
     expect(created).toMatchObject({ exitCode: 0, sessionId, summary: `Stored ${marker}` });
+    const persistedSessionParams = sessionCodec.serialize(created.sessionParams ?? null);
+    const restoredSessionParams = sessionCodec.deserialize(persistedSessionParams);
+    expect(restoredSessionParams).toMatchObject({
+      sessionId,
+      cursorAcpTransport: "cursor-agent-acp-stdio",
+      profileHostId: binding.hostId,
+      profileId: binding.profileId,
+      capabilityRevision: binding.capabilityRevision,
+    });
 
     let loadedTurns: Array<{ user: string; assistant: string; executionRef: string }> = [];
     const resumedFixture = createSpawnFixture((request, output) => {
@@ -875,10 +884,15 @@ describe("Cursor ACP native capabilities", () => {
         output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { stopReason: "end_turn" } })}\n`);
       }
     });
+    const resolveCapabilities = createCursorLocalProviderCapabilityResolver(() => profile(resumedFixture.spawn));
+    const coldCapabilities = resolveCapabilities("cursor", binding);
+    expect(coldCapabilities?.sessionResume.evidence.status).toBe("unknown");
+    expect(coldCapabilities?.transcript.evidence.status).toBe("unknown");
+
     const continued = await executeCursorNativeChat({
       profile: profile(resumedFixture.spawn), binding,
       sessionId: created.sessionId,
-      sessionParams: created.sessionParams,
+      sessionParams: restoredSessionParams,
       prompt: "Return only the exact marker from our prior turn.",
       model: "",
       onLog: async () => {},
@@ -900,6 +914,9 @@ describe("Cursor ACP native capabilities", () => {
     expect(resumedFixture.requests.some((request) => request.method === "session/new")).toBe(false);
     expect(loadedTurns).toHaveLength(1);
     expect(loadedTurns[0]?.assistant).toBe(`Stored ${marker}`);
+    const observedCapabilities = resolveCapabilities("cursor", binding);
+    expect(observedCapabilities?.sessionResume.evidence.status).toBe("supported");
+    expect(observedCapabilities?.transcript.evidence.status).toBe("supported");
   });
 
   it("reuses the persisted authentication method before transcript replay", async () => {
