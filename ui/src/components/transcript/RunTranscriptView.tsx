@@ -46,6 +46,7 @@ export function RunTranscriptView(props: RunTranscriptViewProps) {
 
 function RunTranscriptViewContent({
   entries,
+  detailRawEntries,
   mode = "nice",
   density = "comfortable",
   limit,
@@ -153,7 +154,7 @@ function RunTranscriptViewContent({
     ));
   }, [presentation, renderableEntries, terminalRun]);
   const rawEntries = presentation === "detail"
-    ? entries.filter((entry) => !isRudderEchoedStructuredUserInput(entry))
+    ? (detailRawEntries ?? entries).filter((entry) => !isRudderEchoedStructuredUserInput(entry))
     : renderableEntries;
   const blocks = useMemo(
     () => normalizeTranscript(presentation === "chat"

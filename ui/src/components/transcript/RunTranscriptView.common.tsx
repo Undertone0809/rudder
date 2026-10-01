@@ -135,6 +135,8 @@ export type TranscriptTodoListItem = Extract<TranscriptEntry, { kind: "todo_list
 
 export interface RunTranscriptViewProps {
   entries: TranscriptEntry[];
+  /** Run Detail can show a safe Nice projection while retaining Reader rows in Raw. */
+  detailRawEntries?: TranscriptEntry[];
   mode?: TranscriptMode;
   density?: TranscriptDensity;
   limit?: number;

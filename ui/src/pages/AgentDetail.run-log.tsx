@@ -40,6 +40,7 @@ import { queryKeys } from "../lib/queryKeys";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
 import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForCopy, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readInvocationContentSummary, readInvocationInstructionSnapshotStatus, readScrollMetrics, redactPathValue, RunEventsList, ScrollContainer, scrollToContainerBottom, WorkspaceOperationsSection } from "./AgentDetail.helpers";
+import { projectHermesSupplementEntries, projectNativeRunDetailEntries } from "./AgentDetail.run-log.native";
 
 export function mergeRunEvents(
   currentEvents: HeartbeatRunEvent[],
@@ -411,6 +412,13 @@ export function LogViewer({
 
   const transcript = liveTranscriptByRun.get(run.id) ?? [];
   const transcriptState = transcriptStateByRun.get(run.id);
+  const isHermesTranscript = agentRuntimeType === "hermes_gateway";
+  const nativeTranscript = isHermesTranscript && transcriptState?.source === "native";
+  const niceTranscript = useMemo(
+    () => nativeTranscript ? projectNativeRunDetailEntries(transcript, { orgId: run.orgId, agentId: run.agentId })
+      : isHermesTranscript ? projectHermesSupplementEntries(transcript) : transcript,
+    [isHermesTranscript, nativeTranscript, run.agentId, run.orgId, transcript],
+  );
   const transcriptNavigation = transcriptNavigationByRun.get(run.id);
   const terminalTranscriptPage = run.status === "succeeded"
     && transcriptState?.hasData === true
@@ -611,13 +619,14 @@ export function LogViewer({
         {transcriptVisible ? (
           <div className="max-h-[38rem] overflow-y-auto p-3 sm:p-4">
             <RunTranscriptView
-              entries={transcript}
+              entries={niceTranscript}
+              detailRawEntries={isHermesTranscript ? transcript : undefined}
               mode={transcriptMode}
               streaming={isLive}
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
-              terminalRun={terminalTranscriptPage}
+              terminalRun={terminalTranscriptPage && !isHermesTranscript}
               agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,
@@ -794,13 +803,14 @@ export function LogViewer({
           </DialogHeader>
           <div className="transcript-modal-body min-h-0 overflow-y-auto p-3 sm:p-4">
             <RunTranscriptView
-              entries={transcript}
+              entries={niceTranscript}
+              detailRawEntries={isHermesTranscript ? transcript : undefined}
               mode={transcriptMode}
               streaming={isLive}
               collapseStdout
               emptyMessage={transcriptEmptyMessage}
               presentation="detail"
-              terminalRun={terminalTranscriptPage}
+              terminalRun={terminalTranscriptPage && !isHermesTranscript}
               agentDirectory={agentDirectory}
               runAnnotationContext={onAnnotate && canPersistTranscriptAnnotations ? {
                 sourceRunId: run.id,

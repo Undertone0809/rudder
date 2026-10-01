@@ -247,6 +247,7 @@ export function RawTranscriptView({
       {displayEntries.map((entry, idx) => (
         <div
           key={`${entry.kind}-${entry.ts}-${idx}`}
+          data-source-entry-id={entry.sourceEntryId}
           className={cn(
             "grid gap-x-3",
             "grid-cols-[auto_1fr]",
@@ -254,9 +255,12 @@ export function RawTranscriptView({
         >
           <span className="text-[10px] tracking-[0.06em] text-muted-foreground">
             {formatRawTranscriptLabel(entry)}
+            {entry.sourceEntryId ? ` · ${entry.sourceEntryId}` : ""}
           </span>
           <pre className="min-w-0 whitespace-pre-wrap break-words text-foreground/80">
-            {entry.kind === "tool_call"
+            {entry.kind === "assistant" && typeof entry.text !== "string"
+              ? JSON.stringify(entry, null, 2)
+              : entry.kind === "tool_call"
               ? `${entry.name}\n${formatToolPayload(entry.input)}`
               : entry.kind === "tool_result"
                 ? formatToolPayload(entry.content)
