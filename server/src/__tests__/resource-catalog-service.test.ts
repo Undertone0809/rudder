@@ -443,7 +443,6 @@ describe("resource catalog mutation authority", () => {
     const corruptOrg = "44444444-4444-4444-8444-444444444444";
     const resourceId = "55555555-5555-4555-8555-555555555555";
     const execute = vi.fn()
-      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{
         resource_id: resourceId,
         org_id: corruptOrg,
@@ -462,7 +461,7 @@ describe("resource catalog mutation authority", () => {
       status: 409,
       message: "Organization resource mutation authority has an invalid scope",
     });
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("reuses a Rust-owned Library resource without changing its resource fence", async () => {

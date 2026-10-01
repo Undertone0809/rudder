@@ -41,17 +41,7 @@ export async function lockNodeOrganizationResourceMutationAuthority(
   options: { initializeFromCanonical?: boolean } = {},
 ): Promise<OrganizationResourceMutationStateRow | null> {
   const initializeFromCanonical = options.initializeFromCanonical ?? false;
-  if (initializeFromCanonical) {
-    await tx.execute(sql`
-      INSERT INTO organization_resource_mutation_state (resource_id, org_id)
-      SELECT id, org_id
-      FROM organization_resources
-      WHERE id = ${resourceId}::uuid AND org_id = ${organizationId}::uuid
-      ON CONFLICT (resource_id) DO NOTHING
-    `);
-  }
-
-  const row = firstRow(await tx.execute(sql`
+  const readLockedState = async () => firstRow(await tx.execute(sql`
     SELECT resource_id::text AS resource_id,
       org_id::text AS org_id,
       owner,
@@ -63,6 +53,19 @@ export async function lockNodeOrganizationResourceMutationAuthority(
       ${initializeFromCanonical ? sql`` : sql`AND org_id = ${organizationId}::uuid`}
     FOR UPDATE
   `));
+  // Reject an existing Rust owner (including a tombstone) without issuing DML.
+  // The caller holds the organization lock throughout lookup/provisioning.
+  let row = await readLockedState();
+  if (!row && initializeFromCanonical) {
+    await tx.execute(sql`
+      INSERT INTO organization_resource_mutation_state (resource_id, org_id)
+      SELECT id, org_id
+      FROM organization_resources
+      WHERE id = ${resourceId}::uuid AND org_id = ${organizationId}::uuid
+      ON CONFLICT (resource_id) DO NOTHING
+    `);
+    row = await readLockedState();
+  }
   if (!row) {
     if (initializeFromCanonical) {
       throw conflict("Organization resource mutation authority is not provisioned");
