@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const tempRoots: string[] = [];
 const initialNativeMode = process.env.RUDDER_NATIVE_MODE;
+// Native CI runs this file alongside other child-process suites on macOS x86_64.
+const NATIVE_CI_LOAD_TIMEOUT_MS = 15_000;
 
 type EvidenceReadFixture = {
   source: string;
@@ -211,7 +213,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     }
 
     expect(pages.join("")).toBe(full.content);
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("terminates an over-deadline native read before applying required-mode failure", async () => {
     const root = await makeTempRoot("rudder-run-log-native-read-timeout-");
@@ -277,7 +279,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
       content: "node-fallback",
       eof: true,
     });
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("keeps oversized non-surface readers on Node authority in required mode", async () => {
     const root = await makeTempRoot("rudder-run-log-node-large-read-");
@@ -295,7 +297,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
       content: "node-owned",
       eof: true,
     });
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("reports workspace operation log offsets as bytes for UTF-8 content", async () => {
     const root = await makeTempRoot("rudder-workspace-operation-log-offsets-");
