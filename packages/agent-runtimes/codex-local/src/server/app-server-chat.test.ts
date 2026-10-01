@@ -148,6 +148,16 @@ rl.on("line", (line) => {
   }
   if (message.method === "thread/start" || message.method === "thread/resume") {
     if (
+      process.env.RUDDER_TEST_MALFORMED_DEVELOPER_INSTRUCTIONS_ERROR === "1"
+      && Object.hasOwn(message.params || {}, "developerInstructions")
+    ) {
+      send({ id: message.id, error: {
+        code: "-32602",
+        message: "Invalid params: unknown field \`developerInstructions\`",
+      } });
+      return;
+    }
+    if (
       process.env.RUDDER_TEST_REJECT_DEVELOPER_INSTRUCTIONS === "1"
       && Object.hasOwn(message.params || {}, "developerInstructions")
     ) {
@@ -958,6 +968,7 @@ describe("executeCodexAppServerChat", () => {
       onLog,
     });
 
+    expect(result.errorMessage).toBeNull();
     expect(result).toMatchObject({
       exitCode: 0,
       resumed: true,
@@ -982,6 +993,33 @@ describe("executeCodexAppServerChat", () => {
       "stderr",
       expect.stringContaining("stable chat instructions are included in turn input"),
     );
+  });
+
+  it("does not resend thread/start after a malformed field-error response", async () => {
+    const capturePath = path.join(root, "malformed-thread-start.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_MALFORMED_DEVELOPER_INSTRUCTIONS_ERROR: "1",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Do not duplicate this turn",
+      chatDeveloperInstructions: "Stable Rudder instructions",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async () => undefined),
+    });
+
+    expect((await readProtocolRequests(capturePath)).map((request) => request.method)).toEqual(["thread/start"]);
+    expect(result).toMatchObject({ exitCode: 1, submissionPhase: "indeterminate", providerTurnId: null });
   });
 
   it("does not silently start a new thread when resume reports a missing rollout", async () => {
