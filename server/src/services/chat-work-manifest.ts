@@ -40,11 +40,9 @@ import {
   type ChatGenerationSelectionCandidate,
 } from "./chat-transcript-persistence.js";
 import { chatTranscriptEntryFromReaderItem } from "./chat-transcript-reader-item.js";
+import { readManifestTranscriptSnapshot } from "./chat-work-manifest.transcript-snapshot.js";
 import { createHistoricalTranscriptReader } from "./runtime-kernel/historical-transcript-reader.js";
-import type {
-  TranscriptAvailability,
-  TranscriptSource
-} from "./runtime-kernel/transcript-reader.js";
+import type { TranscriptAvailability, TranscriptSource } from "./runtime-kernel/transcript-reader.js";
 
 type ManifestCandidate = {
   orgId: string;
@@ -247,10 +245,10 @@ export function chatWorkManifestService(db: Db) {
     const runTranscriptByRunId = new Map<string, ManifestRunTranscriptRead>();
     const runIds = [...new Set(messages.map((message) => message.runId).filter((runId): runId is string => Boolean(runId)))];
     await Promise.all(runIds.map(async (runId) => {
-      runTranscriptByRunId.set(runId, await readRunTranscriptThroughReader(transcriptReader, {
+      runTranscriptByRunId.set(runId, await readManifestTranscriptSnapshot(() => readRunTranscriptThroughReader(transcriptReader, {
         orgId: conversation.orgId,
         runId,
-      }));
+      })));
     }));
     const legacyFallbackMessageIds = new Set(messages
       .filter((message) => message.runId)
@@ -262,11 +260,11 @@ export function chatWorkManifestService(db: Db) {
     const legacyMessages = messages.filter((message) => !message.runId || legacyFallbackMessageIds.has(message.id));
     const messageIds = legacyMessages.map((message) => message.id);
     const conversationTranscriptByMessageId = legacyMessages.length > 0
-      ? await readConversationMessageTranscripts(transcriptReader, {
+      ? await readManifestTranscriptSnapshot(() => readConversationMessageTranscripts(transcriptReader, {
         orgId: conversation.orgId,
         conversationId: conversation.id,
         messageIds,
-      })
+      }))
       : new Map<string, ChatStreamTranscriptEntry[]>();
     const eventRows = legacyMessages.length > 0
       ? await db
