@@ -44,7 +44,8 @@ test("Chat refresh presents Hermes native tool-only rows without leaking the ass
   await expect(page.getByTestId("chat-transcript-item")).toBeVisible();
   await page.getByTestId("chat-transcript-item").getByRole("button").first().click();
   await expect(page.getByText("Checking the requested tool", { exact: true })).toBeVisible();
-  await expect(page.getByText("tool_describe", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Expand tool details: Tool Describe", exact: true }).click();
+  await expect(page.getByText("Tool description returned", { exact: false })).toBeVisible();
   await expect(page.getByText("STRUCTURED-PROMPT-MUST-NOT-RENDER", { exact: false })).toHaveCount(0);
   expect(errors).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("hermes-native-process.png"), fullPage: true });
