@@ -178,7 +178,7 @@ const readline = require("node:readline");
 const capturePath = process.env.RUDDER_TEST_CAPTURE_PATH;
 const capture = fs.existsSync(capturePath) ? JSON.parse(fs.readFileSync(capturePath, "utf8")) : { calls: [] };
 const callIndex = capture.calls.length + 1;
-const call = { argv: process.argv.slice(2), prompt: null };
+const call = { argv: process.argv.slice(2), prompt: null, anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL };
 capture.calls.push(call);
 const writeCapture = () => fs.writeFileSync(capturePath, JSON.stringify(capture));
 const writeEvent = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
@@ -266,6 +266,89 @@ async function runClaudeContinuations() {
     await fs.rm(root, { recursive: true, force: true });
   }
 }
+
+describe("Claude managed settings endpoint precedence", () => {
+  it("keeps an explicit agent endpoint over the operator setting without dropping other auth settings", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-endpoint-"));
+    const cwd = path.join(root, "workspace");
+    const command = path.join(root, "fake-claude");
+    const capturePath = path.join(root, "capture.json");
+    const rudderHome = path.join(root, ".rudder");
+    const previousHome = process.env.HOME;
+    const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
+    await fs.mkdir(path.join(root, ".claude"), { recursive: true });
+    await fs.mkdir(cwd, { recursive: true });
+    await fs.writeFile(command, fakeContinuationCliScript(), "utf8");
+    await fs.chmod(command, 0o755);
+    await fs.writeFile(path.join(root, ".claude", "settings.json"), JSON.stringify({
+      env: {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:15721",
+        ANTHROPIC_AUTH_TOKEN: "fixture-credential",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-fixture",
+      },
+    }), "utf8");
+    process.env.HOME = root;
+    process.env.RUDDER_OPERATOR_HOME = root;
+
+    try {
+      const run = (runId: string, baseUrl?: string) => execute({
+        runId,
+        agent: {
+          id: "claude-endpoint-agent",
+          orgId,
+          name: "Claude Endpoint Test",
+          agentRuntimeType: "claude_local",
+          agentRuntimeConfig: {},
+        },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command,
+          cwd,
+          providerBindingId: "endpoint-binding-1",
+          providerOrgId: orgId,
+          env: {
+            RUDDER_HOME: rudderHome,
+            RUDDER_TEST_CAPTURE_PATH: capturePath,
+            ...(baseUrl ? { ANTHROPIC_BASE_URL: baseUrl } : {}),
+          },
+        },
+        context: { chatMode: true, chatPrompt: "Check managed settings precedence." },
+        onLog: async () => {},
+      });
+      const settingsPath = path.join(rudderHome, "instances", "default", "organizations", orgId, "claude-home", ".claude", "settings.json");
+
+      const explicit = await run("claude-endpoint-explicit", "http://127.0.0.1:10100");
+      expect(explicit.exitCode).toBe(0);
+      const explicitSettings = JSON.parse(await fs.readFile(settingsPath, "utf8")) as { env: Record<string, string> };
+      const explicitCapture = JSON.parse(await fs.readFile(capturePath, "utf8")) as {
+        calls: Array<{ argv: string[]; anthropicBaseUrl?: string }>;
+      };
+      const firstCall = explicitCapture.calls[0]!;
+      expect(firstCall.anthropicBaseUrl).toBe("http://127.0.0.1:10100");
+      expect(firstCall.argv[firstCall.argv.indexOf("--settings") + 1]).toBe(settingsPath);
+      expect(firstCall.argv[firstCall.argv.indexOf("--setting-sources") + 1]).toBe("user");
+      expect(explicitSettings.env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+      expect(explicitSettings.env).toMatchObject({
+        ANTHROPIC_AUTH_TOKEN: "fixture-credential",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-fixture",
+      });
+
+      const inherited = await run("claude-endpoint-inherited");
+      expect(inherited.exitCode).toBe(0);
+      const inheritedSettings = JSON.parse(await fs.readFile(settingsPath, "utf8")) as { env: Record<string, string> };
+      expect(inheritedSettings.env).toMatchObject({
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:15721",
+        ANTHROPIC_AUTH_TOKEN: "fixture-credential",
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousOperatorHome === undefined) delete process.env.RUDDER_OPERATOR_HOME;
+      else process.env.RUDDER_OPERATOR_HOME = previousOperatorHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Claude deferred native fork", () => {
   it("submits the real first prompt with resume and fork flags, then returns the provider child", async () => {

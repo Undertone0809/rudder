@@ -407,7 +407,11 @@ export async function resolveManagedExternalClaudeMcpConfigs(
   );
 }
 
-async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: string): Promise<string> {
+async function writeSanitizedClaudeSettings(
+  sourceHome: string,
+  targetHome: string,
+  hasAgentAnthropicBaseUrl: boolean,
+): Promise<string> {
   const sourceSettings = await readJsonObject(path.join(sourceHome, ".claude", "settings.json"));
   const targetSettingsPath = path.join(targetHome, ".claude", "settings.json");
   const sourceEnv = parseObject(sourceSettings?.env);
@@ -415,6 +419,9 @@ async function writeSanitizedClaudeSettings(sourceHome: string, targetHome: stri
 
   for (const [key, value] of Object.entries(sourceEnv)) {
     if (!CLAUDE_SETTINGS_AUTH_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
+    // Claude applies settings.env after the child process env. Keep an agent's explicit endpoint
+    // in its process env rather than letting the operator's endpoint override it.
+    if (key === "ANTHROPIC_BASE_URL" && hasAgentAnthropicBaseUrl) continue;
     if (typeof value === "string" && value.trim().length > 0) authEnv[key] = value;
   }
 
@@ -485,6 +492,7 @@ async function prepareManagedClaudeHome(
   operatorHome: string,
   onLog: AgentRuntimeExecutionContext["onLog"],
   orgId: string,
+  hasAgentAnthropicBaseUrl: boolean,
 ): Promise<{ home: string; configDir: string; settingsPath: string; mcpConfigPath: string }> {
   const sourceHome = path.resolve(operatorHome);
   const targetHome = resolveManagedClaudeHomeDir(env, orgId);
@@ -504,7 +512,7 @@ async function prepareManagedClaudeHome(
   await fs.rm(path.join(configDir, "plugins"), { recursive: true, force: true });
   await fs.rm(path.join(targetHome, ".claude.json"), { force: true });
   await fs.mkdir(path.join(configDir, "skills"), { recursive: true });
-  const settingsPath = await writeSanitizedClaudeSettings(sourceHome, targetHome);
+  const settingsPath = await writeSanitizedClaudeSettings(sourceHome, targetHome, hasAgentAnthropicBaseUrl);
   const mcpConfigPath = await writeManagedClaudeMcpConfig(targetHome);
 
   for (const relativeEntry of SHARED_CLAUDE_HOME_ENTRIES) {
@@ -736,6 +744,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     operatorHome,
     input.onLog ?? (async () => {}),
     agent.orgId,
+    nonEmpty(asString(envConfig.ANTHROPIC_BASE_URL, "")) !== null,
   );
   const managedHome = managedClaudeHome.home;
   const runtimeTmpDir = path.join(managedHome, "runtime-tmp", runId);
