@@ -1,14 +1,15 @@
 import { expect, test } from "@playwright/test";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_CODEX_APP_SERVER_STUB, E2E_CODEX_ERROR_STUB, E2E_CODEX_STUB } from "./support/e2e-env";
+import { E2E_BASE_URL, E2E_CODEX_APP_SERVER_STUB, E2E_CODEX_ERROR_STUB, E2E_CODEX_STUB, E2E_DB_PORT, E2E_INSTANCE_ROOT } from "./support/e2e-env";
 
 const ORG_NAME = `Err-Chat-${Date.now()}`;
 
-async function createRetryableFailureStub() {
-  const dir = await mkdtemp(join(tmpdir(), "rudder-chat-retry-"));
+async function createRetryableFailureStub(outputDir: string) {
+  const dir = join(outputDir, "codex-retry-wrapper");
+  await mkdir(dir, { recursive: true });
   const scriptPath = join(dir, "codex-retry-once.sh");
   const counterPath = join(dir, "attempts");
   const invocationPath = join(dir, "invocations");
@@ -31,7 +32,7 @@ fi
 exec "${E2E_CODEX_APP_SERVER_STUB}" "$@"
 `);
   await chmod(scriptPath, 0o755);
-  return scriptPath;
+  return { scriptPath, counterPath, invocationPath };
 }
 
 async function createAskUserWithoutPayloadStub() {
@@ -154,9 +155,9 @@ test.describe("Chat error recovery", () => {
     await expect(page.getByText("file:///stub/codex.js:100")).toHaveCount(0);
   });
 
-  test("lets the operator retry a failed assistant reply", async ({ page }) => {
+  test("lets the operator retry a failed assistant reply", async ({ page }, testInfo) => {
     test.setTimeout(120_000);
-    const retryableFailureStub = await createRetryableFailureStub();
+    const retryableFailureStub = await createRetryableFailureStub(testInfo.outputDir);
     const orgRes = await page.request.post("/api/orgs", {
       data: {
         name: `Retry-Chat-${Date.now()}`,
@@ -168,7 +169,7 @@ test.describe("Chat error recovery", () => {
       name: "Retry Agent",
       agentRuntimeConfig: {
         model: "gpt-5.4",
-        command: retryableFailureStub,
+        command: retryableFailureStub.scriptPath,
         chatAppServerEnabled: true,
       },
     });
@@ -196,6 +197,9 @@ test.describe("Chat error recovery", () => {
     await expect(failedMessage.getByRole("button", { name: "Copy message" })).toHaveCount(0);
     await expect(failedMessage.getByRole("button", { name: "Fork from here" })).toHaveCount(0);
     await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect((await readFile(retryableFailureStub.invocationPath, "utf8"))
+      .split("\n").filter((line) => line === "app-server --stdio")).toHaveLength(1);
+    expect(await readFile(retryableFailureStub.counterPath, "utf8")).toBe("1");
 
     await page.setViewportSize({ width: 390, height: 844 });
     const failureDetailBox = await failedMessage.getByRole("alert").boundingBox();
@@ -210,6 +214,11 @@ test.describe("Chat error recovery", () => {
     const failedMessagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
     expect(failedMessagesRes.ok()).toBe(true);
     const failedMessages = await failedMessagesRes.json() as Array<{
+      id: string;
+      body: string;
+      chatTurnId: string | null;
+      turnVariant: number;
+      supersededAt: string | null;
       runId: string | null;
       replyingAgentId: string | null;
       role: string;
@@ -256,7 +265,7 @@ test.describe("Chat error recovery", () => {
     );
     await expect(failedMessage.getByRole("button", { name: "Retry" })).toBeVisible();
     await page.screenshot({
-      path: join(tmpdir(), `rudder-chat-error-after-refresh-${Date.now()}.png`),
+      path: testInfo.outputPath("chat-error-after-refresh.png"),
       fullPage: true,
     });
 
@@ -272,14 +281,56 @@ test.describe("Chat error recovery", () => {
     await expect(failedMessage).toHaveCount(0);
     await expect(recoveredMessage.getByRole("button", { name: "Copy message" })).toBeVisible({ timeout: 15_000 });
     await expect(recoveredMessage.getByRole("button", { name: "Fork from here" })).toBeVisible({ timeout: 15_000 });
+    expect((await readFile(retryableFailureStub.invocationPath, "utf8"))
+      .split("\n").filter((line) => line === "app-server --stdio")).toHaveLength(2);
+    expect(await readFile(retryableFailureStub.counterPath, "utf8")).toBe("2");
     await expect(page.getByTestId("chat-user-message-bubble").filter({
       hasText: "Please retry this failed request",
     })).toHaveCount(1);
     const originalRun = await page.request.get(`/api/agent-runs/${failedRunId}`);
     expect(originalRun.ok()).toBe(true);
     expect(await originalRun.json()).toMatchObject({ id: failedRunId, status: "failed" });
+    const recoveredMessagesRes = await page.request.get(`/api/chats/${chatId}/messages`);
+    expect(recoveredMessagesRes.ok()).toBe(true);
+    const recoveredMessages = await recoveredMessagesRes.json() as typeof failedMessages;
+    const userVariants = recoveredMessages.filter((message) =>
+      message.role === "user" && message.body === "Please retry this failed request");
+    expect(userVariants).toHaveLength(2);
+    expect(userVariants.map((message) => message.turnVariant)).toEqual([0, 1]);
+    expect(new Set(userVariants.map((message) => message.chatTurnId)).size).toBe(1);
+    expect(userVariants[0]?.chatTurnId).toBeTruthy();
+    expect(userVariants[0]?.supersededAt).toBeTruthy();
+    expect(userVariants[1]?.supersededAt).toBeNull();
+    const recoveredAssistant = recoveredMessages.find((message) =>
+      message.role === "assistant" && message.status === "completed");
+    expect(recoveredAssistant?.runId).toBeTruthy();
+    expect(recoveredAssistant?.runId).not.toBe(failedRunId);
+    expect(recoveredAssistant?.chatTurnId).toBe(userVariants[0]?.chatTurnId);
+    expect(recoveredAssistant?.turnVariant).toBe(1);
+    const databaseUrl = process.env.RUDDER_E2E_DATABASE_URL;
+    const database = databaseUrl
+      ? { mode: "external", host: new URL(databaseUrl).host, name: new URL(databaseUrl).pathname.slice(1) }
+      : { mode: "embedded", host: `127.0.0.1:${E2E_DB_PORT}`, name: join(E2E_INSTANCE_ROOT, "db") };
+    await testInfo.attach("retry-evidence.json", {
+      body: Buffer.from(JSON.stringify({
+        api: E2E_BASE_URL, database, instanceRoot: E2E_INSTANCE_ROOT,
+        organizationId: organization.id, chatId, agentId: chatAgent.id,
+        chatTurnId: userVariants[0]?.chatTurnId,
+        attempts: [
+          { variant: 0, runId: failedRunId, status: "failed" },
+          { variant: 1, runId: recoveredAssistant?.runId, status: "completed" },
+        ],
+        activeUserMessageCount: userVariants.filter((message) => message.supersededAt === null).length,
+        invocationPath: retryableFailureStub.invocationPath,
+      }, null, 2)),
+      contentType: "application/json",
+    });
+    await testInfo.attach("codex-retry-wrapper-invocations", {
+      path: retryableFailureStub.invocationPath,
+      contentType: "text/plain",
+    });
     await page.screenshot({
-      path: join(tmpdir(), `rudder-chat-retry-completed-${Date.now()}.png`),
+      path: testInfo.outputPath("chat-retry-completed.png"),
       fullPage: true,
     });
   });
