@@ -1321,7 +1321,7 @@ describe("assistant chat message rendering", () => {
     expect(streaming.querySelector("[data-chat-annotation-source]")).toBeNull();
   });
 
-  it("opens Side Chat from the selected completed assistant reply", () => {
+  it("opens Side Chat from the completed assistant reply context menu", () => {
     const sourceMessage = message({
       id: "assistant-side-chat-source",
       role: "assistant",
@@ -1334,18 +1334,36 @@ describe("assistant chat message rendering", () => {
 
     expect(container.querySelector('button[aria-label="Fork from here"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Copy message"]')).not.toBeNull();
-    const openSideChatButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Open Side Chat"]',
+    const actionTriggers = Array.from(container.querySelectorAll<HTMLButtonElement>(
+      'button[data-testid="chat-message-actions-trigger"]',
+    ));
+    expect(actionTriggers).toHaveLength(2);
+    expect(actionTriggers.every((trigger) => trigger.getAttribute("aria-label") === "More message actions")).toBe(true);
+    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+
+    act(() => actionTriggers[1]?.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      ctrlKey: false,
+    })));
+    const moreMenuAction = document.body.querySelector<HTMLElement>(
+      '[data-testid="chat-open-side-chat-more-action"]',
     );
-    expect(openSideChatButton).not.toBeNull();
-    expect(openSideChatButton?.title).toBe("Open Side Chat");
-    expect(openSideChatButton?.hasAttribute("data-slot")).toBe(false);
-    openSideChatButton?.click();
-    const touchAction = container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-open-side-chat-touch-action"]',
+    expect(moreMenuAction?.textContent).toContain("Open Side Chat");
+    act(() => moreMenuAction?.click());
+
+    cleanupFn?.();
+    cleanupFn = null;
+    const contextMenuContainer = renderChatMessageItem(sourceMessage, [], {}, undefined, onOpenSideChat);
+    act(() => contextMenuContainer.querySelector('[data-testid="chat-assistant-message"]')?.dispatchEvent(
+      new MouseEvent("contextmenu", { button: 2, bubbles: true, cancelable: true }),
+    ));
+    const contextAction = document.body.querySelector<HTMLElement>(
+      '[data-testid="chat-open-side-chat-context-action"]',
     );
-    expect(touchAction).not.toBeNull();
-    touchAction?.click();
+    expect(contextAction?.textContent).toContain("Open Side Chat");
+    act(() => contextAction?.click());
+
     expect(onOpenSideChat).toHaveBeenNthCalledWith(1, sourceMessage);
     expect(onOpenSideChat).toHaveBeenNthCalledWith(2, sourceMessage);
   });
@@ -1358,7 +1376,7 @@ describe("assistant chat message rendering", () => {
       body: "Partial answer",
     }));
 
-    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chat-message-actions-trigger"]')).toBeNull();
   });
 
   it("does not expose Side Chat for superseded assistant replies", () => {
@@ -1370,7 +1388,7 @@ describe("assistant chat message rendering", () => {
       supersededAt: new Date("2026-08-01T00:00:00.000Z"),
     }));
 
-    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chat-message-actions-trigger"]')).toBeNull();
   });
 
   it("hides interrupted recovery chrome while preserving partial assistant content", () => {
@@ -1743,7 +1761,7 @@ describe("steer fallback chat rendering", () => {
     expect(container.textContent).toContain("Useful partial answer.");
     expect(container.textContent).not.toContain("Stopped");
     expect(container.textContent).not.toContain("Response failed");
-    expect(container.querySelector('button[aria-label="Open Side Chat"]')).toBeNull();
+    expect(container.querySelector('[data-testid="chat-message-actions-trigger"]')).toBeNull();
   });
 
   it("suppresses a stopped placeholder assistant bubble", () => {

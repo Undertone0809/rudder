@@ -253,7 +253,8 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   const mainDraft = "Keep the main Chat draft through Side Chat.";
   await mainComposer.fill(mainDraft);
   await assistantMessages.last().hover();
-  await assistantMessages.last().getByRole("button", { name: "Open Side Chat" }).click();
+  await assistantMessages.last().locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  await page.getByTestId("chat-message-actions-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
   await expect(mainComposer).toContainText(mainDraft);
@@ -343,7 +344,8 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   );
   await expect(staleAssistant).toBeVisible();
   await staleAssistant.hover();
-  await staleAssistant.getByRole("button", { name: "Open Side Chat" }).click();
+  await staleAssistant.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  await page.getByTestId("chat-message-actions-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const stalePanel = page.getByTestId("chat-side-panel");
   await expect(stalePanel.getByTestId("side-chat-panel-view")).toBeVisible();
   const stalePrompt = "Continue from this older Claude answer with an explicit handoff.";
@@ -397,7 +399,8 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     `[data-testid="chat-assistant-message"][data-message-id="${latestAssistantMessageId}"]`,
   ).first();
   await processLossAnchor.hover();
-  await processLossAnchor.getByRole("button", { name: "Open Side Chat" }).click();
+  await processLossAnchor.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  await page.getByTestId("chat-message-actions-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const recoveryPanel = page.getByTestId("chat-side-panel");
   const recoveryTabs = recoveryPanel.locator('[data-side-panel-tab-key^="side-chat:"]');
   await expect(recoveryTabs.last().getByRole("tab")).toHaveAttribute("aria-selected", "true");
@@ -493,7 +496,8 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     `[data-testid="chat-assistant-message"][data-message-id="${latestAssistantMessageId}"]`,
   ).first();
   await driftAnchor.hover();
-  await driftAnchor.getByRole("button", { name: "Open Side Chat" }).click();
+  await driftAnchor.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  await page.getByTestId("chat-message-actions-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const driftPanel = page.getByTestId("chat-side-panel");
   await expect(driftPanel.getByTestId("side-chat-panel-view")).toBeVisible();
   const driftLossPrompt = "RUDDER_E2E_PROCESS_LOSS: source changes before the next Claude prompt";

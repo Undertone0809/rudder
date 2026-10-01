@@ -40,6 +40,7 @@ export function RuntimeProfileControls(props: {
   ariaContext: string;
   model: RuntimeProfileControl;
   effort?: RuntimeProfileControl;
+  alignSubmenuWithPanel?: boolean;
   disabled?: boolean;
   pending?: boolean;
   errorMessage?: string | null;
@@ -99,6 +100,33 @@ export function RuntimeProfileControls(props: {
       : Math.max(viewportPadding, rect.left - width - 8);
     const profilePanel = trigger.closest<HTMLElement>("[data-runtime-profile-panel]");
     const profileRect = profilePanel?.getBoundingClientRect();
+    if (props.alignSubmenuWithPanel && profileRect) {
+      const control = kind === "model" ? props.model : props.effort;
+      const expectedHeight = Math.min(
+        320,
+        ((control?.options.length ?? 0) + 1) * 40 + 12,
+      );
+      const availableHeight = Math.max(0, viewportBottom - viewportPadding);
+      const maxHeight = Math.min(expectedHeight, availableHeight);
+      setSubmenuPosition({
+        left: Math.min(
+          Math.max(viewportPadding, profileRect.right + 8),
+          Math.max(viewportPadding, window.innerWidth - viewportPadding - width),
+        ),
+        top: Math.min(
+          Math.max(viewportPadding, profileRect.top),
+          Math.max(viewportPadding, viewportBottom - maxHeight),
+        ),
+        maxHeight: `${maxHeight}px`,
+      });
+      setActiveSubmenu(kind);
+      if (focusFirstOption) {
+        requestAnimationFrame(() => {
+          (kind === "model" ? firstModelOptionRef : firstEffortOptionRef).current?.focus();
+        });
+      }
+      return;
+    }
     const overlapsProfileHorizontally = profileRect
       ? left < profileRect.right && left + width > profileRect.left
       : false;
@@ -265,7 +293,10 @@ export function RuntimeProfileControls(props: {
     : null;
 
   return (
-    <div className="relative min-w-0">
+    <div
+      className="relative min-w-0"
+      data-align-submenu-with-panel={props.alignSubmenuWithPanel ? "true" : undefined}
+    >
       <button
         ref={setModelTriggerRefs}
         type="button"

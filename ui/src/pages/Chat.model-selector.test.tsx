@@ -1,6 +1,10 @@
+// @vitest-environment jsdom
+
 import type { Agent } from "@rudderhq/shared";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ChatAgentRuntimeSelector,
   ChatConversationRuntimeControls,
@@ -8,6 +12,8 @@ import {
   chatRuntimeSelectionLabel,
   normalizedChatRuntimeOverridesForModel,
 } from "./Chat.model-selector";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
@@ -104,6 +110,73 @@ describe("chat conversation model options", () => {
     expect(html).toContain(">High<");
     expect(html).toContain('aria-haspopup="listbox"');
     expect(html).toContain("lucide-chevron-right");
+  });
+
+  it("aligns composer runtime options with their panel and keeps them inside the viewport", () => {
+    const previousWidth = window.innerWidth;
+    const previousHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1633 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 1031 });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      act(() => root.render(
+        <div data-runtime-profile-panel>
+          <ChatConversationRuntimeControls
+            agent={makeAgent()}
+            adapterModels={[]}
+            overrides={{ modelOverride: null, effortOverride: null }}
+            onChange={() => undefined}
+          />
+        </div>,
+      ));
+      const panel = container.querySelector<HTMLElement>("[data-runtime-profile-panel]");
+      const trigger = container.querySelector<HTMLButtonElement>('[data-testid="chat-effort-selector"]');
+      if (!panel) throw new Error("Runtime profile panel was not rendered");
+      if (!trigger) throw new Error("Thinking trigger was not rendered");
+      vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({
+        x: 949,
+        y: 659,
+        left: 949,
+        top: 659,
+        right: 1253,
+        bottom: 802,
+        width: 304,
+        height: 143,
+        toJSON: () => ({}),
+      } as DOMRect);
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+        x: 956,
+        y: 755,
+        left: 956,
+        top: 755,
+        right: 1246,
+        bottom: 795,
+        width: 290,
+        height: 40,
+        toJSON: () => ({}),
+      } as DOMRect);
+
+      act(() => trigger.click());
+
+      const options = document.body.querySelector<HTMLElement>('[data-testid="chat-effort-options"]');
+      if (!options) throw new Error("Thinking options were not rendered");
+      const expectedHeight = Math.min(
+        320,
+        options.querySelectorAll('[role="option"]').length * 40 + 12,
+      );
+      expect(options.style.left).toBe("1261px");
+      expect(options.style.top).toBe("659px");
+      expect(options.style.maxHeight).toBe(`${expectedHeight}px`);
+      expect(Number.parseFloat(options.style.top) + expectedHeight).toBeLessThanOrEqual(1019);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: previousWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: previousHeight });
+    }
   });
 
   it("renders the compact current-Agent runtime entry", () => {

@@ -171,16 +171,14 @@ async function openSideChatFromPanelTarget(page: Page) {
 
 async function openFromAssistantAction(page: Page, assistantMessageId: string) {
   const assistant = page.locator(`[data-testid="chat-assistant-message"][data-message-id="${assistantMessageId}"]`);
-  const openButton = assistant.getByRole("button", { name: "Open Side Chat" });
-  if ((page.viewportSize()?.width ?? 1280) < 768) {
-    const touchAction = assistant.getByTestId("chat-open-side-chat-touch-action");
-    await expect(touchAction).toBeVisible();
-    await expect(touchAction).toHaveCSS("opacity", "1");
-    await touchAction.click();
-  } else {
-    await assistant.hover();
-    await openButton.click();
-  }
+  await assistant.hover();
+  const moreActions = assistant.locator('[data-testid="chat-message-actions-trigger"]:visible');
+  await expect(moreActions).toBeVisible();
+  await moreActions.click();
+  const menu = page.getByTestId("chat-message-actions-menu");
+  const openSideChat = menu.getByRole("menuitem", { name: "Open Side Chat", exact: true });
+  await expect(openSideChat).toBeVisible();
+  await openSideChat.click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel).toBeVisible();
   await expect(panel.locator('[data-testid="side-chat-panel-view"]:visible')).toBeVisible();
@@ -188,6 +186,37 @@ async function openFromAssistantAction(page: Page, assistantMessageId: string) {
   await expect(panel).not.toContainText("From the main chat");
   return panel;
 }
+
+test("opens Side Chat from More, keyboard context-menu, and pointer context-menu", async ({ page }) => {
+  const source = await seedSideChatSource(page, `Side-Chat-Context-Menu-${Date.now()}`);
+  const assistant = page.locator(
+    `[data-testid="chat-assistant-message"][data-message-id="${source.assistantMessageId}"]`,
+  );
+  const moreActions = assistant.locator('[data-testid="chat-message-actions-trigger"]:visible');
+  await moreActions.focus();
+  await moreActions.press("Shift+F10");
+  const menu = page.getByTestId("chat-message-context-menu");
+  await expect(menu.getByRole("menuitem", { name: "Open Side Chat", exact: true })).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Open Side Chat", exact: true }).click();
+  const panel = page.getByTestId("chat-side-panel");
+  await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
+  await panel.getByTestId("chat-side-panel-collapse").click();
+  await expect(panel).toBeHidden();
+
+  await assistant.click({ button: "right" });
+  await expect(menu.getByRole("menuitem", { name: "Open Side Chat", exact: true })).toBeVisible();
+  await menu.getByRole("menuitem", { name: "Open Side Chat", exact: true }).click();
+  await expect(page.getByTestId("chat-side-panel").getByTestId("side-chat-panel-view")).toBeVisible();
+
+  await page.getByTestId("chat-side-panel-collapse").click();
+  await expect(page.getByTestId("chat-side-panel")).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await assistant.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
+  const moreMenu = page.getByTestId("chat-message-actions-menu");
+  await expect(moreMenu.getByRole("menuitem", { name: "Open Side Chat", exact: true })).toBeVisible();
+  await moreMenu.getByRole("menuitem", { name: "Open Side Chat", exact: true }).click();
+  await expect(page.getByTestId("chat-side-panel").getByTestId("side-chat-panel-view")).toBeVisible();
+});
 
 function sideComposerEditor(panel: Locator) {
   return panel.locator('[data-testid="side-chat-composer"]:visible .rudder-mdxeditor-content').first();
@@ -1324,11 +1353,11 @@ test("starts Side Chat from a completed historical turn variant after its replac
   await page.goto(`/${organization.issuePrefix}/messenger/chat/${conversationId}`);
   await expect(page.getByText("2/2")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(`[data-testid="chat-assistant-message"][data-message-id="${sourceAssistantId}"]`)
-    .getByRole("button", { name: "Open Side Chat" })).toHaveCount(0);
+    .locator('[data-testid="chat-message-actions-trigger"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Previous branch" }).click();
   await expect(page.getByText("1/2")).toBeVisible();
   await expect(page.locator(`[data-testid="chat-assistant-message"][data-message-id="${sourceAssistantId}"]`)
-    .getByRole("button", { name: "Open Side Chat" })).toBeVisible();
+    .locator('[data-testid="chat-message-actions-trigger"]:visible')).toBeVisible();
 
   const panel = await openFromAssistantAction(page, sourceAssistantId);
   const createResponsePromise = page.waitForResponse((response) => (

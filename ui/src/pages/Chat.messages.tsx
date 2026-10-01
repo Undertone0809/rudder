@@ -17,6 +17,12 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { TextDots } from "@/components/TextDots";
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -87,13 +93,13 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  CirclePlus,
   Copy,
   GitFork,
   Lightbulb,
   Loader2,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   Paperclip,
   Pencil,
   RefreshCcw,
@@ -2653,8 +2659,12 @@ export function ChatMessageItem({
 
   if (!isUser) {
     return (
-      <div data-testid="chat-assistant-message" data-message-id={message.id} className="flex justify-start transition-all duration-200">
-        <div data-message-highlight-target="true" className="group w-full max-w-3xl px-1 py-1">
+      <AssistantMessageContextMenu
+        enabled={canOpenSideChat}
+        onOpenSideChat={() => onOpenSideChat?.(message)}
+      >
+        <div data-testid="chat-assistant-message" data-message-id={message.id} className="flex justify-start transition-all duration-200">
+            <div data-message-highlight-target="true" className="group w-full max-w-3xl px-1 py-1">
           <ChatAssistantAttributionRow
             replyingAgentId={message.replyingAgentId ?? null}
             conversation={conversation}
@@ -2773,15 +2783,10 @@ export function ChatMessageItem({
                 </button>
               ) : null}
               {canOpenSideChat ? (
-                <button
-                  type="button"
+                <AssistantMessageMoreMenu
+                  onOpenSideChat={() => onOpenSideChat?.(message)}
                   className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[color:var(--surface-active)] hover:text-foreground md:inline-flex"
-                  aria-label="Open Side Chat"
-                  title="Open Side Chat"
-                  onClick={() => onOpenSideChat?.(message)}
-                >
-                  <CirclePlus className="h-4 w-4" />
-                </button>
+                />
               ) : null}
               {canShowAssistantMessageActions && onForkMessage && message.status !== "streaming" ? (
                 <button
@@ -2798,20 +2803,15 @@ export function ChatMessageItem({
           ) : null}
           {canOpenSideChat ? (
             <div className="mt-1 flex justify-end md:hidden">
-              <button
-                type="button"
-                data-testid="chat-open-side-chat-touch-action"
+              <AssistantMessageMoreMenu
+                onOpenSideChat={() => onOpenSideChat?.(message)}
                 className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[color:var(--surface-active)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                aria-label="Open Side Chat"
-                title="Open Side Chat"
-                onClick={() => onOpenSideChat?.(message)}
-              >
-                <CirclePlus className="h-4 w-4" />
-              </button>
+              />
             </div>
           ) : null}
-        </div>
-      </div>
+            </div>
+          </div>
+      </AssistantMessageContextMenu>
     );
   }
 
@@ -2945,6 +2945,59 @@ export function ChatMessageItem({
         </div>
       </div>
     </div>
+  );
+}
+
+function AssistantMessageContextMenu(props: {
+  enabled: boolean;
+  onOpenSideChat: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild disabled={!props.enabled}>
+        {props.children}
+      </ContextMenuTrigger>
+      {props.enabled ? (
+        <ContextMenuContent data-testid="chat-message-context-menu">
+          <ContextMenuItem
+            data-testid="chat-open-side-chat-context-action"
+            onSelect={props.onOpenSideChat}
+          >
+            Open Side Chat
+          </ContextMenuItem>
+        </ContextMenuContent>
+      ) : null}
+    </ContextMenu>
+  );
+}
+
+function AssistantMessageMoreMenu(props: {
+  className: string;
+  onOpenSideChat: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-testid="chat-message-actions-trigger"
+          className={props.className}
+          aria-label="More message actions"
+          title="More message actions"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" data-testid="chat-message-actions-menu">
+        <DropdownMenuItem
+          data-testid="chat-open-side-chat-more-action"
+          onSelect={props.onOpenSideChat}
+        >
+          Open Side Chat
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

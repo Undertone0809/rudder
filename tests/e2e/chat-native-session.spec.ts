@@ -81,8 +81,8 @@ test("native Chat and Side Chat retain sessions and exact Run history across rel
     expect(transcript.rows.filter((row: { kind: string }) => row.kind === "assistant")).toHaveLength(1);
   }
   await composer.fill("Preserve the parent draft");
-  await assistantMessages.last().hover();
-  await assistantMessages.last().getByRole("button", { name: "Open Side Chat" }).click();
+  await assistantMessages.last().click({ button: "right" });
+  await page.getByTestId("chat-message-context-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const panel = page.getByTestId("chat-side-panel");
   await expect(panel.getByTestId("side-chat-panel-view")).toBeVisible();
   expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.orgId, org.id))).toHaveLength(2);
