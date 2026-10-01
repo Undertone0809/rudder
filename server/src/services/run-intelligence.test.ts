@@ -271,6 +271,10 @@ describe("run intelligence historical transcript profiles", () => {
     const resolved = resolver("hermes_gateway", providerBinding, context);
     expect(resolved).toMatchObject({ profileResolved: true,
       adapter: { transcript: { evidence: { status: "supported", profileBound: true } } } });
+    expect(resolver("hermes_gateway", providerBinding, {
+      ...context, readerInput: { ...readerInput,
+        binding: { ...bindingRecord, workspaceBindingId: null } } as unknown as NonNullable<RuntimeProviderCapabilityResolverContext["readerInput"]>,
+    })).toMatchObject({ profileResolved: true });
     const readRange = resolved && "adapter" in resolved ? resolved.adapter.transcript?.readRange : null;
     expect((await readRange!({ runtimeType: "hermes_gateway", binding: providerBinding,
       session: { ...session, sessionParams: { ...session.sessionParams, cwd: "/forged/cwd" } } })))
