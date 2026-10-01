@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { asc, eq, inArray } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import {
@@ -11,7 +12,7 @@ import {
   runRuntimeSpans,
 } from "../../packages/db/src/index.ts";
 import { createE2EChatAgent } from "./support/chat-agent";
-import { E2E_DATABASE_URL, E2E_ROOT } from "./support/e2e-env";
+import { E2E_DATABASE_URL, E2E_INSTANCE_ROOT, E2E_ROOT } from "./support/e2e-env";
 
 const e2eDb = createDb(E2E_DATABASE_URL);
 
@@ -51,6 +52,92 @@ function visibleSkillDayIndex(dateKey: string): number {
 }
 
 test.describe("Agent dashboard skills analytics", () => {
+  test("shows an explicit history error for missing native skill history despite a stale local Skill log", async ({ page, request }, testInfo) => {
+    const orgResponse = await request.post("/api/orgs", {
+      data: { name: `Native Skills Missing History ${randomUUID()}` },
+    });
+    expect(orgResponse.ok()).toBe(true);
+    const org = await orgResponse.json() as { id: string; urlKey: string };
+    const agent = await createE2EChatAgent(request, org.id, {
+      name: "Native Skills Missing History",
+      command: path.join(E2E_ROOT, "fixtures/codex-native-session.mjs"),
+    });
+    const runId = randomUUID();
+    const now = new Date();
+    const logRef = path.join(org.id, agent.id, `${runId}.ndjson`);
+    const staleSkillLog = `${JSON.stringify({
+      ts: now.toISOString(),
+      stream: "stdout",
+      chunk: `${JSON.stringify({
+        type: "item.started",
+        item: {
+          id: "stale-skill-load",
+          type: "command_execution",
+          command: "cat .agents/skills/stale-only/SKILL.md",
+          status: "in_progress",
+        },
+      })}\n`,
+    })}\n`;
+    const logPath = path.join(
+      process.env.RUN_LOG_BASE_PATH ?? path.join(E2E_INSTANCE_ROOT, "data", "run-logs"),
+      logRef,
+    );
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    await fs.writeFile(logPath, staleSkillLog, "utf8");
+    // Persist only Run metadata. Native history is absent; the obsolete local
+    // log is deliberately tempting, but must never supply analytics evidence.
+    await e2eDb.insert(heartbeatRuns).values({
+      id: runId,
+      orgId: org.id,
+      agentId: agent.id,
+      invocationSource: "on_demand",
+      status: "succeeded",
+      createdAt: now,
+      updatedAt: now,
+      startedAt: now,
+      finishedAt: now,
+      contextSnapshot: { agentRuntimeType: "codex_local", transcriptSource: "native" },
+      logStore: "local_file",
+      logRef,
+      logBytes: Buffer.byteLength(staleSkillLog, "utf8"),
+    });
+    expect(await fs.readFile(logPath, "utf8")).toBe(staleSkillLog);
+    expect(await e2eDb.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, runId))).toHaveLength(0);
+    expect(await e2eDb.select().from(chatMessageTranscriptEntries)
+      .where(eq(chatMessageTranscriptEntries.orgId, org.id))).toHaveLength(0);
+    expect(await e2eDb.select().from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, runId))).toHaveLength(0);
+
+    const message = "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.";
+    const expectedBody = {
+      error: message,
+      details: { code: "native_transcript_incomplete", runId },
+    };
+    const analyticsResponse = await request.get(`/api/agents/${agent.id}/skills/analytics?windowDays=7`);
+    expect(analyticsResponse.status()).toBe(409);
+    expect(await analyticsResponse.json()).toEqual(expectedBody);
+
+    await page.goto("/");
+    await page.evaluate((orgId) => localStorage.setItem("rudder.selectedOrganizationId", orgId), org.id);
+    const dashboardResponse = page.waitForResponse((response) =>
+      response.request().method() === "GET"
+      && response.url().includes(`/api/agents/${agent.id}/skills/analytics?`));
+    await page.goto(`/${org.urlKey}/agents/${agent.urlKey}/dashboard`);
+    const uiAnalyticsResponse = await dashboardResponse;
+    expect(uiAnalyticsResponse.status()).toBe(409);
+    expect(await uiAnalyticsResponse.json()).toEqual(expectedBody);
+    const mainContent = page.locator("#main-content");
+    const error = mainContent.getByTestId("agent-skills-analytics-error");
+    await expect(error).toHaveText(message);
+    await expect(error).toHaveAttribute("role", "alert");
+    await expect(mainContent.getByText("0 skill uses", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("0 runs with skill usage", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByText("No recent skill usage.", { exact: true })).toHaveCount(0);
+    await expect(mainContent.getByTestId("skills-usage-area-chart")).toHaveCount(0);
+    await expect(mainContent.getByText("stale-only", { exact: true })).toHaveCount(0);
+    await mainContent.screenshot({ path: testInfo.outputPath("native-skills-missing-history-error.png") });
+  });
+
   test("shows native-only skill usage from persisted Run transcripts without legacy log data", async ({ page, request }, testInfo) => {
     const createNativeAgent = async (name: string) => {
       const orgRes = await request.post("/api/orgs", { data: { name: `${name}-${Date.now()}` } });

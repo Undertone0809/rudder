@@ -248,7 +248,7 @@ export function AgentDetail() {
     [customFrom, customTo, datePreset],
   );
 
-  const { data: skillAnalytics, isLoading: isSkillAnalyticsLoading } = useQuery({
+  const { data: skillAnalytics, isLoading: isSkillAnalyticsLoading, error: skillAnalyticsError } = useQuery({
     queryKey: [
       ...queryKeys.agents.skillsAnalytics(resolvedAgentId ?? routeAgentRef),
       datePreset,
@@ -884,6 +884,7 @@ export function AgentDetail() {
           chartIssues={filteredAssignedIssues}
           skillAnalytics={skillAnalytics}
           isSkillAnalyticsLoading={isSkillAnalyticsLoading}
+          skillAnalyticsError={skillAnalyticsError}
           costTrendRows={agentCostTrend ?? []}
           agentId={agent.id}
           agentRouteId={canonicalAgentRef}
@@ -1147,6 +1148,7 @@ function AgentOverview({
   chartIssues,
   skillAnalytics,
   isSkillAnalyticsLoading,
+  skillAnalyticsError,
   costTrendRows,
   agentId,
   agentRouteId,
@@ -1164,6 +1166,7 @@ function AgentOverview({
   chartIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
   skillAnalytics?: AgentSkillAnalytics;
   isSkillAnalyticsLoading?: boolean;
+  skillAnalyticsError?: Error | null;
   costTrendRows: CostTrendPoint[];
   agentId: string;
   agentRouteId: string;
@@ -1173,7 +1176,7 @@ function AgentOverview({
   isOneDay: boolean;
   dateFilterControl?: React.ReactNode;
 }) {
-  const visibleSkillAnalytics = skillAnalytics && skillAnalytics.totalRunsWithSkills > 0
+  const visibleSkillAnalytics = !skillAnalyticsError && skillAnalytics && skillAnalytics.totalRunsWithSkills > 0
     ? skillAnalytics
     : null;
   const shouldShowSkills = isOneDay || visibleSkillAnalytics !== null;
@@ -1229,7 +1232,7 @@ function AgentOverview({
         </ChartCard>
       </div>
 
-      {showDashboardFilters && (shouldShowSkills || isSkillAnalyticsLoading) ? (
+      {showDashboardFilters && (shouldShowSkills || isSkillAnalyticsLoading || skillAnalyticsError) ? (
         <div className="space-y-3">
           <div className="flex items-end justify-between gap-3">
             <div>
@@ -1240,7 +1243,7 @@ function AgentOverview({
                   : `Skill usage per run for ${rangeLabel}. Hover a day to inspect the breakdown.`}
               </p>
             </div>
-            {visibleSkillAnalytics ? (
+            {skillAnalyticsError ? null : visibleSkillAnalytics ? (
               <div className="text-right text-[11px] text-muted-foreground tabular-nums">
                 <div>{visibleSkillAnalytics.totalCount} skill uses</div>
                 <div>{visibleSkillAnalytics.totalRunsWithSkills} runs with skill usage</div>
@@ -1257,7 +1260,11 @@ function AgentOverview({
               </div>
             )}
           </div>
-          {visibleSkillAnalytics ? (
+          {skillAnalyticsError ? (
+            <p role="alert" className="text-sm text-destructive" data-testid="agent-skills-analytics-error">
+              {skillAnalyticsError.message || "Skill analytics could not be loaded."}
+            </p>
+          ) : visibleSkillAnalytics ? (
             isOneDay
               ? <SkillsUsagePieChart analytics={visibleSkillAnalytics} />
               : <SkillsUsageChart analytics={visibleSkillAnalytics} />
