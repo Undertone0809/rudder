@@ -10,6 +10,16 @@ function nonEmpty(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function presentationTimestamp(value: string): string {
+  // Hermes SessionDB stores Unix seconds, including fractional seconds. Keep
+  // the original value in Raw, but give date-based UI consumers an ISO date.
+  if (!/^\d+(?:\.\d+)?$/u.test(value)) return value;
+  const numeric = Number(value);
+  const milliseconds = numeric < 1_000_000_000_000 ? numeric * 1_000 : numeric;
+  const date = new Date(milliseconds);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : value;
+}
+
 // These are the three spinner-only emissions observed in the old Hermes Run.
 // thinking.delta is also used for explanatory wait notices, so an ellipsis or
 // the event name alone is not evidence that a line is safe to hide.
@@ -94,7 +104,7 @@ export function projectNativeRunDetailEntries(
     const source = record(entry);
     if (!source || typeof source.ts !== "string") continue;
     const anchor = nonEmpty(source.sourceEntryId) ?? undefined;
-    const ts = source.ts;
+    const ts = presentationTimestamp(source.ts);
     if (source.kind === "assistant") {
       const reasoning = nonEmpty(source.reasoningContent);
       if (reasoning) projected.push({ kind: "thinking", ts, text: reasoning, sourceEntryId: anchor });

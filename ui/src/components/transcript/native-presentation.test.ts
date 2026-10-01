@@ -7,6 +7,14 @@ const ts = "2026-10-02T03:11:56.000Z";
 const native = (entry: Record<string, unknown>) => entry as TranscriptEntry;
 
 describe("shared native Reader presentation", () => {
+  it("normalizes fractional Unix seconds for stable completed duration without mutating Raw", () => {
+    const raw = [native({ kind: "assistant", role: "assistant", rowId: 8, sessionId: "session",
+      ts: "1790881951.846957", text: "Done", sourceEntryId: "final" })];
+    const projected = projectReaderTranscriptEntries(raw);
+    expect(projected[0]?.ts).toBe("2026-10-01T19:12:31.846Z");
+    expect(raw[0]?.ts).toBe("1790881951.846957");
+  });
+
   it("projects tool-only Hermes assistant rows without requiring text or changing Raw", () => {
     const raw = [
       native({ kind: "user", role: "user", rowId: 1, sessionId: "session", ts,
