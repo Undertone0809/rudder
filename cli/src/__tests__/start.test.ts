@@ -3663,7 +3663,8 @@ describe("runtime install helpers", () => {
       await expect(readFile(path.join(latestCacheDir, "payload.txt"), "utf8")).resolves.toBe("latest-preserved");
       await expect(readFile(path.join(liveCacheDir, "payload.txt"), "utf8")).resolves.toBe("live-preserved");
       await vi.waitFor(async () => {
-        await expect(access(targetCacheDir)).rejects.toThrow();
+        await expect(access(targetCacheDir)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(access(`${targetCacheDir}.install.lock`)).rejects.toMatchObject({ code: "ENOENT" });
       });
     } finally {
       await rm(root, { recursive: true, force: true });
