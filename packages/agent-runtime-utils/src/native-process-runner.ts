@@ -55,6 +55,8 @@ export class NativeProcessUnavailableError extends Error {
   readonly fallbackCode: string;
   readonly accepted: boolean;
   readonly diagnostic: RudderNativeDiagnostic;
+  /** Actual child outcome and drained output; never a replacement success result. */
+  processResult?: RunProcessResult;
 
   constructor(message: string, fallbackCode: string, accepted = false, options?: ErrorOptions) {
     super(message, options);
@@ -395,8 +397,7 @@ export async function runNativeChildProcess(
       if (timeout) clearTimeout(timeout);
       abortCleanup?.();
       void Promise.all([waitForLogDelivery(), waitForRawOutput()]).finally(() => {
-        if (fatalError) reject(fatalError);
-        else resolve({
+        const processResult: RunProcessResult = {
           exitCode: appExitCode,
           signal: aborted || timedOut ? "SIGTERM" : appSignal,
           timedOut,
@@ -412,7 +413,14 @@ export async function runNativeChildProcess(
             effectiveEngine: "rust",
             fallbackCode: null,
           }),
-        });
+        };
+        if (fatalError) {
+          if (fatalError instanceof NativeProcessUnavailableError) {
+            Object.assign(fatalError.diagnostic, nativeIdentity);
+            fatalError.processResult = { ...processResult, signal: appSignal, diagnostic: fatalError.diagnostic };
+          }
+          reject(fatalError);
+        } else resolve(processResult);
       });
     };
     const drainOutput = async () => {
@@ -628,6 +636,23 @@ export async function runNativeChildProcess(
           return;
         }
         cleanupReceiptTrusted = true;
+        // Cleanup/receipt durability proves ownership was released, not that
+        // execution succeeded. Only these two statuses exist in protocol v1.
+        if (frame.status === "failed") {
+          fatalError ??= new NativeProcessUnavailableError(
+            typeof frame.errorCode === "string"
+              ? `Rust process host failed execution: ${frame.errorCode}`
+              : "Rust process host failed execution",
+            typeof frame.errorCode === "string" ? frame.errorCode : "terminal_failed",
+            true,
+          );
+        } else if (frame.status !== "succeeded") {
+          fatalError ??= new NativeProcessUnavailableError(
+            "Rust process host emitted an unsupported terminal status",
+            "terminal_status_invalid",
+            true,
+          );
+        }
         terminalSeen = true;
         return;
       }
