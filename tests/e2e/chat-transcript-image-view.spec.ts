@@ -139,6 +139,7 @@ test("keeps ImageView transcript evidence available after temporary runtime file
 test("chooses a browser-local image in Chat, switches recorded entries, and releases it on close", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1600, height: 1000 });
+  const screenshotBase = `/tmp/rudder-browser-local-chat-preview-${randomUUID()}`;
   await page.addInitScript(() => {
     const revoked: string[] = [];
     const revoke = URL.revokeObjectURL.bind(URL);
@@ -165,11 +166,11 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
   });
   expect(chatRes.ok()).toBe(true);
   const chat = await chatRes.json() as { id: string };
-  const images = ["first.png", "second.png"].map((name, index) => ({
+  const images = ["first", "second"].map((entry, index) => ({
     id: `image-${index}`,
     status: "completed",
-    path: `/tmp/${name}`,
-    displayName: name,
+    path: `/tmp/${entry}/screenshot.png`,
+    displayName: "screenshot.png",
   }));
   await e2eDb.insert(chatMessages).values({
     id: randomUUID(),
@@ -195,26 +196,31 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
   const transcript = page.getByTestId("chat-transcript-item");
   await transcript.getByRole("button", { name: /Worked for/i }).click();
   await transcript.getByRole("button", { name: "Expand tool activity" }).click();
-  const first = transcript.getByRole("button", { name: "Preview image first.png" });
-  const second = transcript.getByRole("button", { name: "Preview image second.png" });
+  const first = transcript.locator('button[data-transcript-image-target="/tmp/first/screenshot.png"]');
+  const second = transcript.locator('button[data-transcript-image-target="/tmp/second/screenshot.png"]');
+  await expect(first).toHaveAccessibleName("Preview image screenshot.png");
+  await expect(second).toHaveAccessibleName("Preview image screenshot.png");
   await first.click();
   const picker = transcript.getByTestId("transcript-browser-image-picker");
   await expect(picker).toContainText("original workspace path cannot be verified");
-  await picker.locator('input[type="file"]').setInputFiles({
-    name: "first.png",
+  const firstFileChooserPromise = page.waitForEvent("filechooser");
+  await picker.getByRole("button", { name: "Choose local image" }).click();
+  const firstFileChooser = await firstFileChooserPromise;
+  await firstFileChooser.setFiles({
+    name: "screenshot.png",
     mimeType: "image/png",
     buffer: Buffer.from(IMAGE_BASE64, "base64"),
   });
-  const thumbnail = transcript.getByAltText("Preview of first.png");
+  const thumbnail = transcript.getByAltText("Preview of screenshot.png");
   await expect(thumbnail).toHaveAttribute("src", /^blob:/u);
   const firstBlob = await thumbnail.getAttribute("src");
-  const previewTrigger = transcript.getByRole("button", { name: "Open image preview: first.png" });
+  const previewTrigger = transcript.getByRole("button", { name: "Open image preview: screenshot.png" });
   await previewTrigger.click();
   const fullscreen = page.getByTestId("transcript-image-preview-dialog");
   await expect(fullscreen).toBeVisible();
   await expect(fullscreen.getByRole("button", { name: "Copy Image" })).toBeVisible();
   await expect(fullscreen.getByRole("button", { name: "Download Image" })).toBeVisible();
-  await page.screenshot({ path: "/tmp/rudder-browser-local-chat-preview-fullscreen.png", fullPage: true });
+  await page.screenshot({ path: `${screenshotBase}-fullscreen.png`, fullPage: true });
   await fullscreen.getByRole("button", { name: "Close image preview" }).click();
   await expect(fullscreen).toHaveCount(0);
   await expect(previewTrigger).toBeFocused();
@@ -223,18 +229,27 @@ test("chooses a browser-local image in Chat, switches recorded entries, and rele
   await expect(fullscreen).toBeVisible();
   // A transcript update can collapse the underlying entry while the modal owns its blob.
   // The modal makes the background inaccessible to role selectors, but the entry remains in the DOM.
-  await transcript.locator('button[data-transcript-image-target="/tmp/first.png"][aria-expanded="true"]')
-    .evaluate((button: HTMLButtonElement) => button.click());
+  await first.evaluate((button: HTMLButtonElement) => button.click());
   await expect(fullscreen).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Copy Image" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Download Image" })).toHaveCount(0);
-  await expect(transcript.getByAltText("Preview of first.png")).toHaveCount(0);
+  await expect(transcript.getByAltText("Preview of screenshot.png")).toHaveCount(0);
   expect(await page.evaluate(() => (window as typeof window & { __rudderRevokedImageUrls?: string[] }).__rudderRevokedImageUrls ?? [])).toContain(firstBlob);
 
   await second.click();
-  await expect(transcript.getByTestId("transcript-browser-image-picker")).toContainText("second.png");
-  await page.screenshot({ path: "/tmp/rudder-browser-local-chat-preview-open.png", fullPage: true });
-  await transcript.getByRole("button", { name: "Collapse image second.png" }).click();
+  const secondPicker = transcript.getByTestId("transcript-browser-image-picker");
+  await expect(secondPicker).toContainText("Choose a local image named screenshot.png");
+  const secondFileChooserPromise = page.waitForEvent("filechooser");
+  await secondPicker.getByRole("button", { name: "Choose local image" }).click();
+  const secondFileChooser = await secondFileChooserPromise;
+  await secondFileChooser.setFiles({
+    name: "screenshot.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(IMAGE_BASE64, "base64"),
+  });
+  await expect(transcript.getByAltText("Preview of screenshot.png")).toHaveAttribute("src", /^blob:/u);
+  await page.screenshot({ path: `${screenshotBase}-open.png`, fullPage: true });
+  await transcript.getByRole("button", { name: "Collapse image screenshot.png" }).click();
   await expect(transcript.getByTestId("transcript-browser-image-picker")).toHaveCount(0);
-  await page.screenshot({ path: "/tmp/rudder-browser-local-chat-preview-closed.png", fullPage: true });
+  await page.screenshot({ path: `${screenshotBase}-closed.png`, fullPage: true });
 });
