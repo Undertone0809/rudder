@@ -538,11 +538,19 @@ export function LogViewer({
                   { value: "transcript", label: "Transcript" },
                   {
                     value: "invocation",
-                    label: locale === "zh-CN" ? "元数据" : "Metadata",
-                    mobileLabel: locale === "zh-CN" ? "元数据" : "Metadata",
-                    tooltip: locale === "zh-CN"
-                      ? "运行时元数据和 Agent 指令堆栈"
-                      : "Runtime metadata and Agent Instruction stack",
+                    label: instructionSnapshotStatus === "available"
+                      ? locale === "zh-CN" ? "指令" : "Instructions"
+                      : locale === "zh-CN" ? "元数据" : "Metadata",
+                    mobileLabel: instructionSnapshotStatus === "available"
+                      ? locale === "zh-CN" ? "指令" : "Instructions"
+                      : locale === "zh-CN" ? "元数据" : "Metadata",
+                    tooltip: instructionSnapshotStatus === "available"
+                      ? locale === "zh-CN"
+                        ? "本次运行的注入指令快照与运行时元数据"
+                        : "Injected instruction snapshot and runtime metadata for this Run"
+                      : locale === "zh-CN"
+                        ? "本次运行的运行时元数据及可用的指令详情"
+                        : "Runtime metadata and any available instruction details for this Run",
                   },
                 ]}
                 value={activeDetailTab}

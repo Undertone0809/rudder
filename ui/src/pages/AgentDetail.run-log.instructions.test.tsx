@@ -57,7 +57,7 @@ async function flushQueries() {
 }
 
 describe("Run Detail retained instruction snapshot", () => {
-  it("fetches and renders the full stored snapshot after opening Metadata", async () => {
+  it("fetches and renders the full stored snapshot after opening Instructions", async () => {
     const runId = "run-snapshot-1";
     const eventId = 17;
     const snapshotText = [
@@ -131,23 +131,58 @@ describe("Run Detail retained instruction snapshot", () => {
     });
     await flushQueries();
 
-    const metadataTab = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"))
-      .find((tab) => tab.textContent?.includes("Metadata"));
-    expect(metadataTab).toBeDefined();
+    const instructionsTab = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"))
+      .find((tab) => tab.textContent?.includes("Instructions"));
+    expect(instructionsTab).toBeDefined();
     expect(fetchSnapshot).not.toHaveBeenCalled();
     await act(async () => {
-      metadataTab!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
-      metadataTab!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+      instructionsTab!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      instructionsTab!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
       await Promise.resolve();
     });
     await flushQueries();
 
-    expect(metadataTab!.getAttribute("data-state")).toBe("active");
+    expect(instructionsTab!.getAttribute("data-state")).toBe("active");
     expect(fetchSnapshot).toHaveBeenCalledWith(runId, eventId);
     const renderedSnapshot = container.querySelector<HTMLElement>("[data-testid='invocation-prompt']");
     expect(renderedSnapshot).not.toBeNull();
     expect(renderedSnapshot!.textContent).toBe(snapshotText);
     expect(container.textContent).not.toContain("Stale inline stack must not be displayed.");
     expect(container.textContent).not.toContain("Stale legacy prompt must not be displayed.");
+  });
+
+  it("keeps Metadata and avoids promising a snapshot when none was retained", async () => {
+    const event = {
+      id: 18, orgId: "org-1", runId: "run-without-snapshot", agentId: "agent-1", seq: 1,
+      eventType: "adapter.invoke", stream: "system", level: "info", color: null,
+      message: "Agent invoked", payload: { agentInstructionStack: "Inline legacy details" },
+      createdAt: new Date("2026-09-29T00:00:00.000Z"),
+    } as HeartbeatRunEvent;
+    const run = {
+      id: event.runId, orgId: event.orgId, agentId: event.agentId,
+      status: "succeeded", invocationSource: "test", triggerDetail: null,
+      startedAt: event.createdAt, finishedAt: event.createdAt,
+      createdAt: event.createdAt, contextSnapshot: null,
+    } as unknown as HeartbeatRun;
+    vi.spyOn(agentRunsApi, "events").mockResolvedValue([event]);
+    vi.spyOn(agentRunsApi, "allEvents").mockResolvedValue([event]);
+    vi.spyOn(agentRunsApi, "workspaceOperations").mockResolvedValue([]);
+    vi.spyOn(agentsApi, "list").mockResolvedValue([]);
+    vi.spyOn(instanceSettingsApi, "getGeneral").mockResolvedValue({} as Awaited<ReturnType<typeof instanceSettingsApi.getGeneral>>);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(<QueryClientProvider client={queryClient}><LogViewer run={run} agentRuntimeType="codex_local" /></QueryClientProvider>);
+    });
+    await flushQueries();
+
+    const metadataTab = Array.from(container.querySelectorAll<HTMLButtonElement>("[role='tab']"))
+      .find((tab) => tab.textContent?.includes("Metadata"));
+    expect(metadataTab).toBeDefined();
+    expect(metadataTab?.querySelector('[role="tooltip"]')?.textContent)
+      .toBe("Runtime metadata and any available instruction details for this Run");
+    expect(container.textContent).not.toContain("Injected instruction snapshot and runtime metadata for this Run");
   });
 });
