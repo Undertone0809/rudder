@@ -13,6 +13,7 @@ import path from "node:path";
 import {
   CodexAppServerClient,
   CodexAppServerClosedError,
+  CodexAppServerRpcError,
   createCodexAppServerStdioTransport,
   type CodexAppServerNotification,
 } from "./app-server-client.js";
@@ -201,8 +202,8 @@ function rememberNativeDeveloperInstructionsSupport(
 }
 
 function isDeveloperInstructionsFieldRejection(error: unknown): boolean {
-  if (!error || typeof error !== "object" || !("message" in error)) return false;
-  const message = asString(error.message);
+  if (!(error instanceof CodexAppServerRpcError) || error.code !== -32602) return false;
+  const message = error.message;
   return /developerInstructions/i.test(message)
     && /(?:unknown|unexpected|unrecognized|unsupported|not allowed|additional).{0,40}(?:field|property|param|argument|key)|(?:field|property|param|argument|key).{0,40}(?:unknown|unexpected|unrecognized|unsupported|not allowed|additional)/i.test(message);
 }
@@ -846,7 +847,8 @@ export async function executeCodexAppServerChat(
         )) ?? {};
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (options.sessionId && /unknown|not found|no rollout|missing rollout/i.test(message)) {
+        if (options.sessionId && error instanceof CodexAppServerRpcError
+          && /no rollout|missing rollout|(?:thread|rollout).*(?:unknown|not found|missing)/i.test(message)) {
           throw new Error(
             `Codex App Server could not resume thread "${options.sessionId}": ${message}`,
           );
