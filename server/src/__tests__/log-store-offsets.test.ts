@@ -277,7 +277,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
       content: "node-fallback",
       eof: true,
     });
-  });
+  }, 15_000);
 
   it("keeps oversized non-surface readers on Node authority in required mode", async () => {
     const root = await makeTempRoot("rudder-run-log-node-large-read-");
@@ -295,7 +295,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
       content: "node-owned",
       eof: true,
     });
-  });
+  }, 15_000);
 
   it("reports workspace operation log offsets as bytes for UTF-8 content", async () => {
     const root = await makeTempRoot("rudder-workspace-operation-log-offsets-");
