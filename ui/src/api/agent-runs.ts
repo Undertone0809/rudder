@@ -54,6 +54,7 @@ export interface AgentRunTranscriptEntry {
 }
 
 export interface AgentRunTranscriptPage {
+  run?: Pick<AgentRun, "orgId" | "agentId">;
   entries?: AgentRunTranscriptEntry[];
   page: {
     cursor?: string | null;

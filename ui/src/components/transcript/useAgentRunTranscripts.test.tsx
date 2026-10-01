@@ -41,8 +41,8 @@ function ReaderProbe({ targets }: { targets: readonly AgentRunTranscriptTarget[]
   );
 }
 
-function NavigationProbe({ runId }: { runId: string }) {
-  const { transcriptByRun, transcriptStateByRun, transcriptNavigationByRun } = useAgentRunTranscripts([{ runId }]);
+function NavigationProbe({ runId, raw = false }: { runId: string; raw?: boolean }) {
+  const { transcriptByRun, transcriptStateByRun, transcriptNavigationByRun } = useAgentRunTranscripts([{ runId }], { raw });
   const navigation = transcriptNavigationByRun.get(runId);
   const state = transcriptStateByRun.get(runId);
   const entries = transcriptByRun.get(runId) ?? [];
@@ -91,7 +91,7 @@ function renderProbe(targets: readonly AgentRunTranscriptTarget[]) {
   return { host, root };
 }
 
-function renderNavigationProbe(runId: string) {
+function renderNavigationProbe(runId: string, raw = false) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -101,7 +101,7 @@ function renderNavigationProbe(runId: string) {
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <NavigationProbe runId={runId} />
+        <NavigationProbe runId={runId} raw={raw} />
       </QueryClientProvider>,
     );
   });
@@ -132,6 +132,31 @@ afterEach(() => {
 });
 
 describe("useAgentRunTranscripts", () => {
+  it("presents Hermes tool-only native rows to Chat consumers while Raw retains the original row", async () => {
+    const nativePage = {
+      entries: [{ id: "tool-only", entry: { kind: "assistant", role: "assistant", rowId: 2,
+        sessionId: "hermes-session", ts: "2026-10-02T03:11:56.000Z",
+        toolCalls: [{ id: "call", function: { name: "tool_describe", arguments: "{}" } }] } },
+      { id: "final", entry: { kind: "assistant", role: "assistant", rowId: 3,
+        sessionId: "hermes-session", ts: "2026-10-02T03:11:57.000Z", text: "Hermes completed" } }],
+      source: "native", revision: "hermes-revision", availability: "available", completeness: "complete",
+      page: { cursor: null, hasMore: false, nextCursor: null, order: "oldest" },
+    };
+    transcriptMock.mockResolvedValue(nativePage);
+    const presentation = renderNavigationProbe("hermes");
+    const raw = renderNavigationProbe("hermes", true);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(presentation.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("tool_call|Hermes completed");
+        expect(raw.host.querySelector("[data-testid='navigation-entries']")?.textContent)
+          .toBe("assistant|Hermes completed");
+      });
+    });
+    expect(nativePage.entries[0]?.entry).not.toHaveProperty("text");
+    act(() => { presentation.root.unmount(); raw.root.unmount(); });
+  });
+
   it.each(["queued", "running", "starting", "streaming", "tool_busy", "finalizing", "stopping", "stop_requested", "closing"])(
     "keeps %s message states polling the Reader",
     (status) => {

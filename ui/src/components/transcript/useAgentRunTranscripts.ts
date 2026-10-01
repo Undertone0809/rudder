@@ -8,6 +8,7 @@ import { chatsApi } from "@/api/chats";
 import type { ChatMessage } from "@rudderhq/shared";
 import { useQueries } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { projectReaderTranscriptEntries } from "./native-presentation";
 
 const TRANSCRIPT_POLL_INTERVAL_MS = 2_000;
 const TRANSCRIPT_PAGE_LIMIT = 50;
@@ -108,7 +109,11 @@ const INITIAL_CURSOR_NAVIGATION: CursorNavigationState = {
   resetGeneration: 0,
 };
 
-function normalizeTranscriptPage(page: AgentRunTranscriptPage): AgentRunTranscriptResult {
+interface NormalizedTranscriptPage extends AgentRunTranscriptResult {
+  presentationEntries: TranscriptEntry[];
+}
+
+function normalizeTranscriptPage(page: AgentRunTranscriptPage): NormalizedTranscriptPage {
   const entries: TranscriptEntry[] = [];
   for (const [index, row] of (page.entries ?? []).entries()) {
     const directEntry = row as unknown as TranscriptEntry;
@@ -125,6 +130,7 @@ function normalizeTranscriptPage(page: AgentRunTranscriptPage): AgentRunTranscri
   }
   return {
     entries,
+    presentationEntries: projectReaderTranscriptEntries(entries, page.run),
     source: page.source ?? null,
     revision: page.revision ?? null,
     availability: page.availability ?? null,
@@ -137,7 +143,7 @@ async function readAgentRunTranscriptPage(
   runId: string,
   cursor: string | null,
   signal?: AbortSignal,
-): Promise<AgentRunTranscriptResult> {
+): Promise<NormalizedTranscriptPage> {
   const page = await agentRunsApi.transcript(runId, {
     cursor,
     includeOutput: false,
@@ -191,7 +197,10 @@ export function useLegacyChatTranscripts(
   }, [queries, targets]);
 }
 
-export function useAgentRunTranscripts(targets: readonly AgentRunTranscriptTarget[]) {
+export function useAgentRunTranscripts(
+  targets: readonly AgentRunTranscriptTarget[],
+  options: { raw?: boolean } = {},
+) {
   const targetKey = targets
     .map((target) => `${target.runId}:${target.active ? "active" : "idle"}`)
     .sort()
@@ -283,11 +292,12 @@ export function useAgentRunTranscripts(targets: readonly AgentRunTranscriptTarge
   const transcriptByRun = useMemo(() => {
     const result = new Map<string, TranscriptEntry[]>();
     normalizedTargets.forEach((target, index) => {
-      const transcript = queries[index]?.data?.entries;
+      const data = queries[index]?.data;
+      const transcript = options.raw ? data?.entries : data?.presentationEntries;
       if (transcript && !revisionMismatchByRun.get(target.runId)) result.set(target.runId, transcript);
     });
     return result;
-  }, [normalizedTargets, queries, revisionMismatchByRun]);
+  }, [normalizedTargets, options.raw, queries, revisionMismatchByRun]);
 
   const transcriptStateByRun = useMemo(() => {
     const result = new Map<string, AgentRunTranscriptState>();
@@ -380,8 +390,9 @@ export function useAgentRunTranscripts(targets: readonly AgentRunTranscriptTarge
     const query = queryByRun.get(runId);
     if (!query) return null;
     const result = await query.refetch();
-    return result.data ?? null;
-  }, [queryByRun]);
+    if (!result.data) return null;
+    return { ...result.data, entries: options.raw ? result.data.entries : result.data.presentationEntries };
+  }, [options.raw, queryByRun]);
 
   return {
     transcriptByRun,

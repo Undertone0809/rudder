@@ -181,7 +181,7 @@ export function LogViewer({
   } = useAgentRunTranscripts(liveTranscriptRuns.map((liveRun) => ({
     runId: liveRun.id,
     active: isAgentRunTranscriptActiveStatus(liveRun.status),
-  })));
+  })), { raw: true });
   const liveTranscriptSize = liveTranscriptByRun.get(run.id)?.length ?? 0;
   const { data: workspaceOperations = [] } = useQuery({
     queryKey: queryKeys.runWorkspaceOperations(run.id),
