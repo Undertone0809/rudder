@@ -270,44 +270,70 @@ async fn member_directory(
 mod tests {
     use super::*;
     use actix_web::test;
+    use std::sync::atomic::{AtomicBool, Ordering};
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";
 
     #[actix_web::test]
-    async fn actual_public_router_relays_same_origin_event_websocket_and_closes() {
+    async fn active_authenticated_public_websocket_closes_when_ingress_stops() {
         use futures_util::{SinkExt, StreamExt};
+        let authenticated = Arc::new(AtomicBool::new(false));
+        let upstream_closed = Arc::new(AtomicBool::new(false));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let upstream = format!("http://{}", listener.local_addr().unwrap());
-        let mock = HttpServer::new(|| {
-            App::new().route(
-                "/api/orgs/{org_id}/events/ws",
-                web::get().to(|request: HttpRequest, payload: web::Payload| async move {
-                    assert_eq!(request.headers().get("cookie").unwrap(), "session=test");
-                    assert_eq!(
-                        request.headers().get("host").unwrap(),
-                        "public.example:3100"
-                    );
-                    assert_eq!(request.uri().query(), Some("resume=a%2Bb"));
-                    assert!(request.headers().get(ACTOR_ENVELOPE_HEADER).is_none());
-                    let (response, mut session, mut stream) =
-                        actix_ws::handle(&request, payload).unwrap();
-                    actix_web::rt::spawn(async move {
-                        while let Some(message) = stream.recv().await {
-                            match message.unwrap() {
-                                actix_ws::Message::Text(text) => {
-                                    session.text(text).await.unwrap();
+        let mock = HttpServer::new({
+            let authenticated = authenticated.clone();
+            let upstream_closed = upstream_closed.clone();
+            move || {
+                let authenticated = authenticated.clone();
+                let upstream_closed = upstream_closed.clone();
+                App::new().route(
+                    "/api/orgs/{org_id}/events/ws",
+                    web::get().to(move |request: HttpRequest, payload: web::Payload| {
+                        let authenticated = authenticated.clone();
+                        let upstream_closed = upstream_closed.clone();
+                        async move {
+                            assert_eq!(request.headers().get("cookie").unwrap(), "session=test");
+                            assert_eq!(
+                                request.headers().get("authorization").unwrap(),
+                                "Bearer authenticated-test-agent"
+                            );
+                            assert_eq!(
+                                request.headers().get("host").unwrap(),
+                                "public.example:3100"
+                            );
+                            assert_eq!(request.uri().query(), Some("resume=a%2Bb"));
+                            assert!(request.headers().get(ACTOR_ENVELOPE_HEADER).is_none());
+                            authenticated.store(true, Ordering::SeqCst);
+                            let (response, mut session, mut stream) =
+                                actix_ws::handle(&request, payload).unwrap();
+                            actix_web::rt::spawn(async move {
+                                while let Some(message) = stream.recv().await {
+                                    match message {
+                                        Ok(actix_ws::Message::Close(reason)) => {
+                                            upstream_closed.store(true, Ordering::SeqCst);
+                                            let _ = session.close(reason).await;
+                                            break;
+                                        }
+                                        Ok(actix_ws::Message::Text(text)) => {
+                                            session.text(text).await.unwrap();
+                                        }
+                                        Ok(_) => {}
+                                        Err(_) => {
+                                            upstream_closed.store(true, Ordering::SeqCst);
+                                            break;
+                                        }
+                                    }
                                 }
-                                actix_ws::Message::Close(reason) => {
-                                    let _ = session.close(reason).await;
-                                    break;
+                                if !upstream_closed.load(Ordering::SeqCst) {
+                                    upstream_closed.store(true, Ordering::SeqCst);
                                 }
-                                _ => {}
-                            }
+                            });
+                            response
                         }
-                    });
-                    response
-                }),
-            )
+                    }),
+                )
+            }
         })
         .workers(1)
         .disable_signals()
@@ -321,6 +347,7 @@ mod tests {
             Arc::new(
                 AppState::new(ServerConfig {
                     actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                    shutdown_grace: Duration::from_secs(1),
                     ..ServerConfig::default()
                 })
                 .unwrap(),
@@ -330,12 +357,17 @@ mod tests {
         let address = runtime.bound_addr();
         let control = runtime.control();
         let task = actix_web::rt::spawn(runtime.run());
-        let (_, mut socket) = awc::Client::default()
+        let (response, mut socket) = awc::Client::default()
             .ws(format!("ws://{address}/api/orgs/10000000-0000-0000-0000-000000000001/events/ws?resume=a%2Bb"))
             .set_header("host", "public.example:3100")
             .set_header("cookie", "session=test")
+            .set_header("authorization", "Bearer authenticated-test-agent")
             .set_header(ACTOR_ENVELOPE_HEADER, "untrusted-client-assertion")
             .connect().await.unwrap();
+        assert_eq!(
+            response.status(),
+            actix_web::http::StatusCode::SWITCHING_PROTOCOLS
+        );
         socket
             .send(awc::ws::Message::Text("resume-event".into()))
             .await
@@ -348,10 +380,30 @@ mod tests {
         assert!(
             matches!(frame, awc::ws::Frame::Text(ref bytes) if bytes.as_ref() == b"resume-event")
         );
-        socket.send(awc::ws::Message::Close(None)).await.unwrap();
+        assert!(authenticated.load(Ordering::SeqCst));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let stop = control.stop(true);
+            let observe_close = async {
+                loop {
+                    match socket.next().await {
+                        Some(Ok(awc::ws::Frame::Close(_))) | Some(Err(_)) | None => break,
+                        Some(Ok(_)) => {}
+                    }
+                }
+            };
+            tokio::join!(stop, observe_close);
+        })
+        .await
+        .expect("stopping ingress must close an active authenticated websocket");
         drop(socket);
-        control.stop(true).await;
         task.await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !upstream_closed.load(Ordering::SeqCst) {
+                actix_web::rt::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("stopping ingress must release the authenticated upstream socket");
         mock_handle.stop(true).await;
         mock_task.await.unwrap().unwrap();
     }
