@@ -306,6 +306,15 @@ test.describe("@smoke real work loop", () => {
       await page.reload({ waitUntil: "domcontentloaded" });
       await expect(failedMessage).toBeVisible({ timeout: 15_000 });
       await expect(failedMessage.getByRole("button", { name: "Retry" })).toHaveCount(0);
+      const refreshedMessages = await readMessages(page, chatId);
+      expect(refreshedMessages.filter((message) => message.role === "user")).toHaveLength(1);
+      expect(refreshedMessages.filter((message) => message.role === "assistant")).toMatchObject([{
+        id: failedAssistant!.id,
+        runId: failedAssistant!.runId,
+        status: "failed",
+      }]);
+      // This counts CLI invocations, not provider protocol submissions. The
+      // App Server lost-ack test covers protocol-level dispatch separately.
       expect(await readFile(retryStub.counterPath, "utf8")).toBe("1");
     } finally {
       await rm(dirname(retryStub.scriptPath), { recursive: true, force: true });
