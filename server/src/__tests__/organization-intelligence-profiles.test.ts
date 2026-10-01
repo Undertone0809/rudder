@@ -5,7 +5,7 @@ import {
 } from "../services/organization-intelligence-profiles.js";
 
 describe("organization intelligence profiles", () => {
-  it("filters agent-only fields and defaults Codex product intelligence to Luna Medium", () => {
+  it("filters agent-only fields and defaults Codex product intelligence to GPT-6 Luna Medium", () => {
     expect(buildIntelligenceProfileConfigWithPurposeDefaults("default", "codex_local", {
       command: "codex",
       model: "gpt-5.5",
@@ -16,7 +16,7 @@ describe("organization intelligence profiles", () => {
       env: { OPENAI_API_KEY: { type: "secret_ref", secretId: "secret-1" } },
     })).toEqual({
       command: "codex",
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       modelReasoningEffort: "medium",
       env: { OPENAI_API_KEY: { type: "secret_ref", secretId: "secret-1" } },
     });
@@ -49,7 +49,7 @@ describe("organization intelligence profiles", () => {
       purpose: "default",
       status: "disabled",
       agentRuntimeConfig: {
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         modelReasoningEffort: "medium",
       },
     });

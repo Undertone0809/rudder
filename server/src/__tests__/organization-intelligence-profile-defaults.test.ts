@@ -22,24 +22,31 @@ function profile(
 }
 
 describe("default organization intelligence profile resolution", () => {
-  it("always prefers a persisted canonical default", () => {
+  it("migrates a persisted canonical Codex default while preserving its identity", () => {
     const canonical = profile("default", {
-      status: "disabled",
-      agentRuntimeConfig: { model: "gpt-5.6-terra", modelReasoningEffort: "high" },
+      status: "configured",
+      agentRuntimeConfig: { model: "gpt-5.6-luna", modelReasoningEffort: "high" },
     });
     expect(resolveDefaultIntelligenceProfile("org-1", [
       profile("lightweight"),
       profile("reasoning"),
       canonical,
-    ])).toEqual(canonical);
+    ])).toMatchObject({
+      id: canonical.id,
+      purpose: "default",
+      status: "disabled",
+      agentRuntimeConfig: { model: "gpt-6-luna", modelReasoningEffort: "high" },
+      lastVerifiedAt: null,
+      lastError: "Model defaults changed. Test the runtime chain before enabling.",
+    });
   });
 
-  it("projects a legacy default model to Luna Medium and requires a fresh test", () => {
+  it("projects a legacy default model to GPT-6 Luna Medium and requires a fresh test", () => {
     expect(resolveDefaultIntelligenceProfile("org-1", [profile("lightweight")])).toMatchObject({
       purpose: "default",
       status: "disabled",
       agentRuntimeConfig: {
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         modelReasoningEffort: "medium",
       },
       lastVerifiedAt: null,
