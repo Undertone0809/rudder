@@ -23,6 +23,7 @@ test("Chat refresh presents Hermes native tool-only rows without leaking the ass
     const original = await route.fetch();
     const body = await original.json();
     const ts = "2026-10-02T03:11:56.000Z";
+    body.source = "native_plus_objects";
     body.entries = [
       { id: "native-user", entry: { kind: "user", role: "user", rowId: 1, sessionId: "hermes", ts,
         text: "Conversation input: STRUCTURED-PROMPT-MUST-NOT-RENDER" } },
@@ -34,6 +35,8 @@ test("Chat refresh presents Hermes native tool-only rows without leaking the ass
         toolName: "tool_describe", text: "Tool description returned" } },
       { id: "native-final", entry: { kind: "assistant", role: "assistant", rowId: 4, sessionId: "hermes", ts,
         text: "Native reply 1" } },
+      { id: "supplement-todo", entry: { kind: "todo_list", ts, todoListId: "supplement",
+        items: [{ text: "Preserved supplemental task", status: "completed" }] } },
     ];
     await route.fulfill({ response: original, json: body });
   });
@@ -44,6 +47,7 @@ test("Chat refresh presents Hermes native tool-only rows without leaking the ass
   await expect(page.getByTestId("chat-transcript-item")).toBeVisible();
   await page.getByTestId("chat-transcript-item").getByRole("button").first().click();
   await expect(page.getByText("Checking the requested tool", { exact: true })).toBeVisible();
+  await expect(page.getByText("Preserved supplemental task", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Expand tool details: Tool Describe", exact: true }).click();
   await expect(page.getByText("Tool description returned", { exact: false })).toBeVisible();
   await expect(page.getByText("STRUCTURED-PROMPT-MUST-NOT-RENDER", { exact: false })).toHaveCount(0);

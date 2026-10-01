@@ -40,7 +40,7 @@ import { queryKeys } from "../lib/queryKeys";
 import type { SidePanelTarget } from "../lib/side-panel-targets";
 import { cn } from "../lib/utils";
 import { asNonEmptyString, asRecord, findScrollContainer, formatEnvForDisplay, formatInvocationValueForCopy, formatInvocationValueForDisplay, InvocationMcpEvidence, InvocationSkillEvidence, LIVE_SCROLL_BOTTOM_TOLERANCE_PX, readInvocationAgentInstructionStack, readInvocationContentSummary, readInvocationInstructionSnapshotStatus, readScrollMetrics, redactPathValue, RunEventsList, ScrollContainer, scrollToContainerBottom, WorkspaceOperationsSection } from "./AgentDetail.helpers";
-import { projectHermesSupplementEntries, projectNativeRunDetailEntries } from "./AgentDetail.run-log.native";
+import { projectHermesSupplementEntries, projectReaderTranscriptEntries } from "./AgentDetail.run-log.native";
 
 export function mergeRunEvents(
   currentEvents: HeartbeatRunEvent[],
@@ -413,9 +413,10 @@ export function LogViewer({
   const transcript = liveTranscriptByRun.get(run.id) ?? [];
   const transcriptState = transcriptStateByRun.get(run.id);
   const isHermesTranscript = agentRuntimeType === "hermes_gateway";
-  const nativeTranscript = isHermesTranscript && transcriptState?.source === "native";
+  const nativeTranscript = isHermesTranscript && (transcriptState?.source === "native"
+    || transcriptState?.source === "native_plus_objects");
   const niceTranscript = useMemo(
-    () => nativeTranscript ? projectNativeRunDetailEntries(transcript, { orgId: run.orgId, agentId: run.agentId })
+    () => nativeTranscript ? projectReaderTranscriptEntries(transcript, { orgId: run.orgId, agentId: run.agentId })
       : isHermesTranscript ? projectHermesSupplementEntries(transcript) : transcript,
     [isHermesTranscript, nativeTranscript, run.agentId, run.orgId, transcript],
   );

@@ -60,4 +60,23 @@ describe("shared native Reader presentation", () => {
     ];
     expect(projectReaderTranscriptEntries(canonical)).toBe(canonical);
   });
+
+  it("preserves every canonical sibling and its source anchor on a mixed native/object page", () => {
+    const siblings: TranscriptEntry[] = [
+      { kind: "init", ts, model: "existing-model", sessionId: "existing-session", sourceEntryId: "init" },
+      { kind: "todo_list", ts, items: [], todoListId: "todos", sourceEntryId: "todo" },
+      { kind: "result", ts, text: "Runtime summary", inputTokens: 1, outputTokens: 2, cachedTokens: 0,
+        costUsd: 0, subtype: "success", isError: false, errors: [], sourceEntryId: "result" },
+      { kind: "assistant", ts, text: "Streaming supplement", delta: true, segmentId: "segment", sourceEntryId: "delta" },
+    ];
+    const hermes = native({ kind: "assistant", role: "assistant", rowId: 8, sessionId: "hermes", ts,
+      sourceEntryId: "native", toolCalls: [{ id: "call", function: { name: "tool_describe", arguments: "{}" } }] });
+    const raw = [hermes, ...siblings];
+    const before = JSON.stringify(raw);
+    const projected = projectReaderTranscriptEntries(raw);
+    expect(projected[0]).toMatchObject({ kind: "tool_call", sourceEntryId: "native" });
+    expect(projected.slice(1)).toEqual(siblings);
+    siblings.forEach((entry, index) => expect(projected[index + 1]).toBe(entry));
+    expect(JSON.stringify(raw)).toBe(before);
+  });
 });

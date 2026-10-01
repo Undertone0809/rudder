@@ -93,14 +93,26 @@ function toolName(call: Record<string, unknown>): string | null {
   }
 }
 
+function isNativeHermesEntry(entry: TranscriptEntry): boolean {
+  const source = record(entry);
+  return typeof source?.kind === "string" && (source.kind.startsWith("hermes:db:")
+    || (typeof source.rowId === "number" && typeof source.sessionId === "string"
+      && source.role === source.kind));
+}
+
 /** Read-only native presentation. Reader entries and source IDs remain untouched for Raw. */
 export function projectNativeRunDetailEntries(
   entries: readonly TranscriptEntry[],
   identity?: { orgId: string; agentId: string },
+  preserveCanonicalSiblings = false,
 ): TranscriptEntry[] {
   const projected: TranscriptEntry[] = [];
   const pendingCalls = new Map<string, string>();
   for (const entry of entries) {
+    if (preserveCanonicalSiblings && !isNativeHermesEntry(entry)) {
+      projected.push(entry);
+      continue;
+    }
     const source = record(entry);
     if (!source || typeof source.ts !== "string") continue;
     const anchor = nonEmpty(source.sourceEntryId) ?? undefined;
@@ -187,11 +199,7 @@ export function projectReaderTranscriptEntries(
   entries: readonly TranscriptEntry[],
   identity?: { orgId: string; agentId: string },
 ): TranscriptEntry[] {
-  const hasNativeHermesRows = entries.some((entry) => {
-    const source = record(entry);
-    return typeof source?.kind === "string" && (source.kind.startsWith("hermes:db:")
-      || (typeof source.rowId === "number" && typeof source.sessionId === "string"
-        && source.role === source.kind));
-  });
-  return hasNativeHermesRows ? projectNativeRunDetailEntries(entries, identity) : entries as TranscriptEntry[];
+  return entries.some(isNativeHermesEntry)
+    ? projectNativeRunDetailEntries(entries, identity, true)
+    : entries as TranscriptEntry[];
 }
