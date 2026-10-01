@@ -123,7 +123,6 @@ import { queryKeys } from "../lib/queryKeys";
 import { getRunFailureDisplay } from "../lib/run-detail-display";
 import { formatRunDurationLabel, formatRunTimingTitle } from "../lib/run-duration-label";
 import { describeRunReason, runReasonBadgeClassName } from "../lib/run-reason";
-import { skillAnalyticsQueryOptions } from "../lib/skill-analytics-cache";
 import { buildLibrarySkillHref } from "../lib/skill-library-routes";
 import { agentIssuesUrl, agentRouteRef, cn, formatCents, formatDate, formatDateTime, formatTokens, relativeTime } from "../lib/utils";
 import {
@@ -247,7 +246,11 @@ export function AgentDetail() {
     [customFrom, customTo, datePreset],
   );
 
-  const { data: skillAnalytics, isLoading: isSkillAnalyticsLoading, error: skillAnalyticsError } = useQuery({
+  const {
+    data: skillAnalytics,
+    isFetching: isSkillAnalyticsFetching,
+    error: skillAnalyticsError,
+  } = useQuery({
     queryKey: [
       ...queryKeys.agents.skillsAnalytics(resolvedAgentId ?? routeAgentRef),
       datePreset,
@@ -272,7 +275,9 @@ export function AgentDetail() {
     retry: (failureCount, queryError) => queryError instanceof ApiError && queryError.status === 409
       ? false
       : failureCount < 3,
-    ...skillAnalyticsQueryOptions,
+    // Native history may become incomplete after a previous successful read.
+    // Revalidate every date-window visit instead of trusting its cached counts.
+    staleTime: 0,
   });
 
   const { data: agentCostTrend, isLoading: isAgentCostTrendLoading } = useQuery({
@@ -884,8 +889,8 @@ export function AgentDetail() {
           costRuns={filteredRuns}
           assignedIssues={assignedIssues}
           chartIssues={filteredAssignedIssues}
-          skillAnalytics={skillAnalytics}
-          isSkillAnalyticsLoading={isSkillAnalyticsLoading}
+          skillAnalytics={isSkillAnalyticsFetching ? undefined : skillAnalytics}
+          isSkillAnalyticsLoading={isSkillAnalyticsFetching}
           skillAnalyticsError={skillAnalyticsError}
           costTrendRows={agentCostTrend ?? []}
           agentId={agent.id}

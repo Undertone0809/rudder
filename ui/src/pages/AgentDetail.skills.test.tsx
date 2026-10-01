@@ -259,6 +259,54 @@ async function flushQueries() {
 }
 
 describe("AgentDetail skills tab", () => {
+  it("revalidates a previously successful window after another window exposes incomplete history", async () => {
+    const message = "Native transcript history is unavailable or incomplete; skill analytics cannot be computed.";
+    const incompleteHistory = new ApiError(message, 409, {
+      error: message, details: { code: "native_transcript_incomplete", runId: "run-1" },
+    });
+    let rejectRevisitedSevenDays!: (error: Error) => void;
+    const revisitedSevenDays = new Promise<never>((_resolve, reject) => {
+      rejectRevisitedSevenDays = reject;
+    });
+    let sevenDayCalls = 0;
+    vi.mocked(agentsApi.skillsAnalytics).mockImplementation(async (_agentId, options) => {
+      if (options?.windowDays === 7) {
+        sevenDayCalls += 1;
+        if (sevenDayCalls === 2) return revisitedSevenDays;
+        return {
+          agentId: "agent-1", orgId: "org-1", windowDays: 7,
+          startDate: "2026-09-25", endDate: "2026-10-01",
+          totalCount: 1, totalRunsWithSkills: 1,
+          evidenceCounts: { used: 1, requested: 0, loaded: 0 },
+          skills: [], days: [],
+        };
+      }
+      throw incompleteHistory;
+    });
+
+    const container = renderAgentDetail("/OUTA/agents/proof-agent/dashboard");
+    await flushQueries();
+    expect(container.textContent).toContain("1 skill use");
+
+    const windowButton = (label: string) => Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === label);
+    await act(async () => windowButton("1D")!.click());
+    await flushQueries();
+    expect(container.querySelector('[data-testid="agent-skills-analytics-error"]')?.textContent).toBe(message);
+
+    await act(async () => windowButton("7D")!.click());
+    await flushQueries();
+    expect(sevenDayCalls).toBe(2);
+    expect(container.textContent).not.toContain("1 skill use");
+    expect(container.textContent).not.toContain("0 skill uses");
+
+    await act(async () => rejectRevisitedSevenDays(incompleteHistory));
+    await flushQueries();
+    expect(container.querySelector('[data-testid="agent-skills-analytics-error"]')?.textContent).toBe(message);
+    expect(container.textContent).not.toContain("1 skill use");
+    expect(container.textContent).not.toContain("0 skill uses");
+  });
+
   it("hides previously cached skill counts when refreshing native history fails", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     vi.mocked(agentsApi.skillsAnalytics).mockResolvedValue({
