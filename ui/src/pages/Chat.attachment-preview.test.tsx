@@ -1586,6 +1586,11 @@ async function startControlledChatStream() {
         });
       });
     },
+    emitEvent: async (event: ChatStreamEvent) => {
+      await act(async () => {
+        await onStreamEvent(event);
+      });
+    },
     emitFinal: async (messages: ChatMessage[] = [message({ id: "late-final", body: "Late final body" })]) => {
       await act(async () => {
         await onStreamEvent({
@@ -5506,6 +5511,85 @@ describe("Chat streaming controls", () => {
     await stream.emitFinal();
 
     expect(mockState.setChatSendInFlight).toHaveBeenCalledWith("chat-1", false);
+    await stream.finishStream();
+  });
+
+  it("reconciles a finalizing active stream into its persisted assistant without a refresh", async () => {
+    mockState.agents = [agent({ agentRuntimeConfig: { chatAppServerEnabled: false } })];
+    const stream = await startControlledChatStream();
+    mockState.setStreamDraftForChat.mockImplementation((chatId, nextDraft) => {
+      const current = mockState.streamDrafts[chatId] ?? null;
+      const next = typeof nextDraft === "function" ? nextDraft(current) : nextDraft;
+      if (next) mockState.streamDrafts[chatId] = next;
+      else delete mockState.streamDrafts[chatId];
+    });
+    mockState.setChatSendInFlight.mockImplementation((chatId, inFlight) => {
+      if (inFlight) mockState.sendInFlightByChatId[chatId] = true;
+      else delete mockState.sendInFlightByChatId[chatId];
+    });
+
+    await stream.emitAck(new Date("2026-10-01T00:00:01.000Z"));
+    mockState.queueSnapshot = queueSnapshot({
+      activeGenerationId: "persisted-generation",
+      activeAttemptEpoch: 1,
+      activeControlVersion: 1,
+      activeGenerationStatus: "running",
+    });
+    stream.rerender();
+
+    await stream.emitEvent({
+      type: "assistant_delta",
+      delta: "A stable final response.",
+      generationId: "persisted-generation",
+      attemptEpoch: 1,
+      generationSeq: 1,
+    });
+    stream.rerender();
+    mockState.invalidateQueries.mockClear();
+    await stream.emitEvent({
+      type: "assistant_state",
+      state: "finalizing",
+      generationId: "persisted-generation",
+      attemptEpoch: 1,
+      generationSeq: 1,
+    });
+    stream.rerender();
+
+    expect(mockState.queueSnapshot.activeGenerationId).toBe("persisted-generation");
+    expect(mockState.messagesByChatId["chat-1"]?.some((candidate) => (
+      candidate.role === "assistant" && candidate.generationId === "persisted-generation"
+    ))).toBe(false);
+    expect(stream.container.querySelector('[data-testid="chat-assistant-message"]')?.textContent)
+      .toContain("A stable final response.");
+    expect(stream.container.querySelector('button[aria-label="Stop streaming"]')).not.toBeNull();
+    await vi.waitFor(() => expect(mockState.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["chats", "org-1", "messages", "chat-1"],
+      exact: true,
+    }));
+
+    const persistedFinal = message({
+      id: "persisted-final",
+      role: "assistant",
+      status: "completed",
+      body: "A stable final response.",
+      generationId: "persisted-generation",
+    });
+    mockState.messagesByChatId["chat-1"] = [
+      ...(mockState.messagesByChatId["chat-1"] ?? []),
+      persistedFinal,
+    ];
+    mockState.queueSnapshot = queueSnapshot({ activeGenerationStatus: "completed" });
+    stream.rerender();
+    stream.rerender();
+
+    const assistantMessages = Array.from(
+      stream.container.querySelectorAll('[data-testid="chat-assistant-message"]'),
+    );
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0]?.textContent).toContain("A stable final response.");
+    expect(mockState.streamDrafts["chat-1"]).toBeUndefined();
+    expect(mockState.sendInFlightByChatId["chat-1"]).toBeUndefined();
+    expect(stream.container.querySelector('button[aria-label="Stop streaming"]')).toBeNull();
     await stream.finishStream();
   });
 

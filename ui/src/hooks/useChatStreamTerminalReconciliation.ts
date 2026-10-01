@@ -43,7 +43,7 @@ export function useChatStreamTerminalReconciliation({
     && message.status !== "streaming"
   )));
   const hasQueueSnapshot = queueSnapshot !== undefined;
-  const awaitingFinalProjection = stream?.state === "waiting_for_network";
+  const awaitingFinalProjection = stream?.state === "waiting_for_network" || stream?.state === "finalizing";
 
   useEffect(() => {
     if (!orgId || !chatId || !scopeKey || !streamKey || !generationId) return;
