@@ -1,5 +1,6 @@
 // @ts-nocheck
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { parseRemovedGeminiLocalHistoryLine } from "@rudderhq/agent-runtime-utils/gemini-cli-history";
 import {
   agents,
   agentWakeupRequests,
@@ -566,20 +567,24 @@ export function createHeartbeatMiscHandlers(context: any) {
     async function inferUsedSkillsFromStoredRunLog(row: {
       id: string;
       agentRuntimeType: string;
+      contextSnapshot: Record<string, unknown> | null;
       logStore: string | null;
       logRef: string | null;
       logBytes: number | null;
     }) {
       if (row.logStore !== "local_file" || !row.logRef) return [];
+      const historicalRuntimeType = readNonEmptyString(parseObject(row.contextSnapshot).agentRuntimeType)
+        ?? row.agentRuntimeType;
       const adapter = (() => {
         try {
-          return getServerAdapter(row.agentRuntimeType);
+          return getServerAdapter(historicalRuntimeType);
         } catch {
           return null;
         }
       })();
-      if (!adapter) return [];
-      const parser = adapter.parseStdoutLine ?? null;
+      const parser = historicalRuntimeType === "gemini_local"
+        ? parseRemovedGeminiLocalHistoryLine
+        : adapter?.parseStdoutLine ?? null;
       if (!parser) return [];
 
       const limitBytes = Math.min(Math.max(row.logBytes ?? 0, 256_000), 2_000_000);
@@ -648,6 +653,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       .select({
         id: heartbeatRuns.id,
         agentRuntimeType: agents.agentRuntimeType,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
         createdAt: heartbeatRuns.createdAt,
         logStore: heartbeatRuns.logStore,
         logRef: heartbeatRuns.logRef,

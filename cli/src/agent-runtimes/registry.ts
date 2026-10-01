@@ -8,7 +8,6 @@ const localRuntimeTypes = [
   "opencode_local",
   "pi_local",
   "cursor",
-  "gemini_local",
   "openclaw_gateway",
 ];
 
@@ -22,5 +21,8 @@ const adaptersByType = new Map<string, CLIAgentRuntimeModule>([
 ]);
 
 export function getCLIAdapter(type: string): CLIAgentRuntimeModule {
+  if (type === "gemini_local") {
+    throw new Error("Gemini CLI runtime has been removed; reconfigure this agent with a supported runtime.");
+  }
   return adaptersByType.get(type) ?? processCLIAdapter;
 }

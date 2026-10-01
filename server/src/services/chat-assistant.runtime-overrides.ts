@@ -62,7 +62,6 @@ export function applyChatPrimaryModel(
 }
 
 export function chatEffortKeyForRuntime(agentRuntimeType: AgentRuntimeType): string | null {
-  if (agentRuntimeType === "gemini_local") return null;
   if (agentRuntimeType === "codex_local") return "modelReasoningEffort";
   if (agentRuntimeType === "cursor") return "effort";
   if (agentRuntimeType === "opencode_local") return "variant";

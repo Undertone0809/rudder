@@ -15,7 +15,6 @@ related_code:
   - packages/agent-runtimes/codex-local/src/server/codex-home.ts
   - packages/agent-runtimes/codex-local/src/server/execute.ts
   - packages/agent-runtimes/cursor-local/src/server/execute.ts
-  - packages/agent-runtimes/gemini-local/src/server/execute.ts
   - packages/agent-runtimes/opencode-local/src/server/execute.ts
   - packages/agent-runtimes/pi-local/src/server/execute.ts
   - server/src/services/agent-run-context.ts
@@ -39,7 +38,6 @@ related_tests:
   - server/src/__tests__/codex-local-execute.test.ts
   - server/src/__tests__/claude-local-execute.test.ts
   - server/src/__tests__/cursor-local-execute.test.ts
-  - server/src/__tests__/gemini-local-execute.test.ts
   - server/src/__tests__/opencode-local-execute.test.ts
   - server/src/__tests__/pi-local-execute.test.ts
   - server/src/__tests__/managed-workspace-preflight.test.ts
@@ -98,8 +96,7 @@ Rudder local runtimes cross two boundaries at the same time:
 
 The current design favors operator-home process execution for local trusted
 runtimes, with provider-owned state split into explicit adapter variables such
-as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GEMINI_CLI_HOME`, or
-`PI_CODING_AGENT_*`. That lets local commands see the same package managers,
+as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `PI_CODING_AGENT_*`. That lets local commands see the same package managers,
 editor state, shell config, and authenticated host CLIs the operator normally
 uses, without copying broad credential and tooling directories into a Rudder
 managed home. The tradeoff is that skills, provider config, sessions, and
@@ -158,7 +155,7 @@ because it represents the same user.
 - Runtime agent: the adapter-invoked process running as the selected Rudder
   agent.
 - Adapter-managed runtime state: Rudder-created adapter state for an adapter,
-  such as managed Codex, Claude, Cursor, Gemini, OpenCode, or Pi config,
+  such as managed Codex, Claude, Cursor, OpenCode, or Pi config,
   selected skills, narrow provider-native auth/session materialization,
   isolated Git policy files, sessions, and temporary runtime files.
 - Operator home: the host user's real home. Local trusted runtime child
@@ -195,7 +192,7 @@ because it represents the same user.
 
 ## Entry Points / Inputs
 
-- Local adapter execution for Claude, Codex, Cursor, Gemini, OpenCode, and Pi.
+- Local adapter execution for Claude, Codex, Cursor, OpenCode, and Pi.
 - Adapter environment tests and model/listing probes.
 - Runtime skill sync, skill listing, or temporary provider skill-home creation.
 - Managed workspace preflight for agent home, instructions, memory, life, and
@@ -270,8 +267,8 @@ because it represents the same user.
 
 9. Narrow provider-native auth/session materialization remains allowed when an
    adapter needs provider-specific state outside child `HOME`, such as
-   Claude/Anthropic auth directories, Gemini auth files, OpenCode cache/session
-   state, or Pi profile files. This must stay adapter-specific and must not
+   Claude/Anthropic auth directories, OpenCode cache/session state, or Pi
+   profile files. This must stay adapter-specific and must not
    become a broad local CLI/tooling bridge.
 
 10. If a platform limitation is recoverable, Rudder records the substitution or
@@ -366,8 +363,8 @@ because it represents the same user.
 | Windows symlink privilege unavailable | `fs.symlink` returns `EPERM` for a recoverable directory materialization | Fallback strategy should preserve selected skill availability or report the skill as unavailable with actionable error text | Error must not be exposed as an unexplained provider failure or require admin as the only product path | Adapter error code/message and command notes |
 | Stale previously selected skill | A prior run materialized a skill that is now disabled or absent from the selected set | Provider execution starts with that skill removed, disabled, isolated, or ignored | Previously enabled skills must not remain provider-visible because they were left in a managed skill home | Execute-level adapter tests, skill sync metadata, loaded-skill metadata |
 | Managed workspace missing or unwritable | Agent home/instructions/memory/life/skills path cannot be created or write-probed | Workspace preflight fails with a repair-needed error before provider execution | Provider must not start with a broken managed workspace and produce opaque downstream errors | `workspace_permission_repair_needed`, managed workspace preflight tests |
-| Local trusted runtime child home | Adapter invokes Codex, Claude, Cursor, Gemini, OpenCode, or Pi locally | `HOME` and `USERPROFILE` default to the operator home, with `RUDDER_OPERATOR_HOME` matching that value | Adapter must not use adapter-managed runtime state as child `HOME` by default | Execute-level adapter env tests and command metadata |
-| Adapter-managed runtime state isolation | Adapter needs provider config, selected skills, narrow provider-native auth/session state, isolated Git policy, sessions, or temp files | Use explicit provider variables or adapter-owned paths such as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GEMINI_CLI_HOME`, `OPENCODE_CONFIG`, OpenCode XDG state, `PI_CODING_AGENT_*`, or managed prompt sidecars | Adapter-managed state must not require copying broad operator-home dotfiles into managed state | Adapter tests for provider variables and managed skill/config dirs |
+| Local trusted runtime child home | Adapter invokes Codex, Claude, Cursor, OpenCode, or Pi locally | `HOME` and `USERPROFILE` default to the operator home, with `RUDDER_OPERATOR_HOME` matching that value | Adapter must not use adapter-managed runtime state as child `HOME` by default | Execute-level adapter env tests and command metadata |
+| Adapter-managed runtime state isolation | Adapter needs provider config, selected skills, narrow provider-native auth/session state, isolated Git policy, sessions, or temp files | Use explicit provider variables or adapter-owned paths such as `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, OpenCode XDG state, `PI_CODING_AGENT_*`, or managed prompt sidecars | Adapter-managed state must not require copying broad operator-home dotfiles into managed state | Adapter tests for provider variables and managed skill/config dirs |
 | Operator credential or tooling entry exists | `.npmrc`, `.npm`, `.ssh`, `.config/gh`, `.git-credentials`, `.vscode`, or similar exists in operator home | Leave it in operator home; local commands see it through child `HOME`; prune legacy generic bridge symlinks from adapter-managed runtime state | Default runtime setup must not copy, symlink, or recreate broad operator-home entries in adapter-managed runtime state | Negative execute tests for adapter-managed runtime state |
 | Explicit non-default credential bridge | A legacy or non-default mode cannot use operator `HOME` as child home | Bridge only selected entries or use command shims; preserve managed-state boundaries and logs | Bridge must not become the default for local trusted adapters | Credential bridge utility tests and adapter-specific opt-in evidence |
 | Windows home environment | Runtime sets child process home on Windows | `HOME`, `USERPROFILE`, and provider-specific home variables match the selected managed/operator-home semantics | Child process must not read credentials from a different home because only one variable was updated | Adapter env construction tests and command metadata |
@@ -634,7 +631,6 @@ Related code:
 - `packages/agent-runtimes/codex-local/src/server/codex-home.ts`
 - `packages/agent-runtimes/codex-local/src/server/execute.ts`
 - `packages/agent-runtimes/cursor-local/src/server/execute.ts`
-- `packages/agent-runtimes/gemini-local/src/server/execute.ts`
 - `packages/agent-runtimes/opencode-local/src/server/execute.ts`
 - `packages/agent-runtimes/pi-local/src/server/execute.ts`
 - `server/src/services/managed-workspace-preflight.ts`
@@ -653,7 +649,6 @@ Related tests:
 - `server/src/__tests__/codex-local-execute.test.ts`
 - `server/src/__tests__/claude-local-execute.test.ts`
 - `server/src/__tests__/cursor-local-execute.test.ts`
-- `server/src/__tests__/gemini-local-execute.test.ts`
 - `server/src/__tests__/opencode-local-execute.test.ts`
 - `server/src/__tests__/pi-local-execute.test.ts`
 - `server/src/__tests__/managed-workspace-preflight.test.ts`

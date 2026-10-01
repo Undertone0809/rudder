@@ -72,7 +72,6 @@ export const AGENT_RUNTIME_TYPES = [
   "http",
   "claude_local",
   "codex_local",
-  "gemini_local",
   "opencode_local",
   "pi_local",
   "cursor",

@@ -278,7 +278,7 @@ describe.sequential("Browser routes", () => {
 
   it("rejects Browser calls from a runtime without managed Browser tools", async () => {
     const unsupported = await sendRequest(
-      createApp(runtimeActor({ adapterType: "gemini_local" })),
+      createApp(runtimeActor({ adapterType: "openclaw_gateway" })),
       "post",
       "/api/browser/tabs",
       {},

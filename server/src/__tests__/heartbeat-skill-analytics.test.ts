@@ -8,6 +8,7 @@ import {
   organizations,
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -823,6 +824,7 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
     ]);
   });
 
+
   it("infers used skills from Gemini activate_skill tool calls in stored local runtime logs", async () => {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -890,7 +892,10 @@ describe("heartbeatService.getAgentSkillAnalytics", () => {
       logStore: "local_file",
       logRef,
       logBytes: Buffer.byteLength(logContent, "utf8"),
+      contextSnapshot: { agentRuntimeType: "gemini_local" },
     });
+
+    await db.update(agents).set({ agentRuntimeType: "codex_local" }).where(eq(agents.id, agentId));
 
     const analytics = await svc.getAgentSkillAnalytics(agentId, {
       startDate: "2026-04-21",

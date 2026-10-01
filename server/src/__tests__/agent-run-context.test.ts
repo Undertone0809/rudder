@@ -384,7 +384,7 @@ describe("agentRunContextService prepareRuntimeConfig", () => {
 
   it.each([
     ["authenticated deployments", "authenticated", "codex_local", false],
-    ["unsupported local runtimes", "local_trusted", "gemini_local", true],
+    ["gateway runtimes", "local_trusted", "hermes_gateway", true],
   ] as const)("does not project Browser skill or tools for %s", async (
     _label,
     deploymentMode,

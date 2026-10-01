@@ -82,7 +82,7 @@ agent-comment, CLI, or run-analytics contract work, build a provider matrix.
 
 Name:
 
-- runtimes in scope: Codex, Claude, Gemini, OpenCode, Pi, Cursor, or any
+- runtimes in scope: Codex, Claude Code, Hermes, OpenCode, Pi, Cursor, or any
   user-named adapter
 - actor path: command, heartbeat, CLI invocation, chat action, or runtime wakeup
 - transcript/parser evidence: raw log or parsed steps showing the relevant

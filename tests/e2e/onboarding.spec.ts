@@ -297,9 +297,7 @@ test.describe("Onboarding wizard", () => {
     await selectRuntime("Cursor");
     await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toHaveCount(0);
     await expect(onboardingDialog.getByText("Execution mode", { exact: true })).toBeVisible();
-    await selectRuntime("Gemini CLI");
-    await expect(onboardingDialog.getByText("Thinking effort", { exact: true })).toHaveCount(0);
-    await expect(onboardingDialog.getByText("Execution mode", { exact: true })).toHaveCount(0);
+    await expect(onboardingDialog.getByRole("button", { name: "Gemini CLI", exact: true })).toHaveCount(0);
   });
 
   test("explains each slow setup stage while creating a starter organization", async ({

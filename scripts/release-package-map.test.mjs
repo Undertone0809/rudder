@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { EXPECTED_NPM_ARTIFACT_COUNT } from "./release-candidate-manifest.mjs";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = dirname(scriptsDir);
 const tempRoots = [];
 
 function writeJson(filePath, value) {
@@ -98,6 +100,18 @@ afterEach(() => {
 });
 
 describe("release package map", () => {
+  it("matches the npm candidate manifest artifact count", () => {
+    const result = spawnSync("node", ["scripts/release-package-map.mjs", "list"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    const packageCount = result.stdout.trim().split(/\r?\n/u).filter(Boolean).length;
+
+    expect(result.status).toBe(0);
+    expect(EXPECTED_NPM_ARTIFACT_COUNT).toBe(14);
+    expect(packageCount).toBe(EXPECTED_NPM_ARTIFACT_COUNT);
+  });
+
   it("rejects public packages that depend on private workspace packages", () => {
     const { repo, packagePath } = createPackageMapRepo();
     addPrivateWorkspaceDependency(repo, packagePath);

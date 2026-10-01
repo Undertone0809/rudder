@@ -1842,7 +1842,6 @@ describe("RunTranscriptView", () => {
           + "[rudder] Codex session \"019dfc\" was saved for cwd \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces/agents/vera\" and will not be resumed in \"/Users/zeeland/.rudder/instances/default/organizations/org/workspaces\".\n"
           + "[rudder] Using Rudder-managed Claude home \"/tmp/claude-home\" (seeded from \"/Users/zeeland/.claude\").\n"
           + "[rudder] Using Rudder-managed Cursor home \"/tmp/cursor-home\" (seeded from \"/Users/zeeland/.cursor\").\n"
-          + "[rudder] Using Rudder-managed Gemini home \"/tmp/gemini-home\" (seeded from \"/Users/zeeland/.gemini\").\n"
           + "[rudder] Using Rudder-managed OpenCode home \"/tmp/opencode-home\" (seeded from \"/Users/zeeland/.opencode\").\n"
           + "[rudder] Using Rudder-managed Pi home \"/tmp/pi-home\" (seeded from \"/Users/zeeland/.pi\").\n"
           + "Checked the repository status",
@@ -1877,7 +1876,6 @@ describe("RunTranscriptView", () => {
     expect(hiddenHtml).not.toContain("will not be resumed");
     expect(hiddenHtml).not.toContain("Rudder-managed Claude home");
     expect(hiddenHtml).not.toContain("Rudder-managed Cursor home");
-    expect(hiddenHtml).not.toContain("Rudder-managed Gemini home");
     expect(hiddenHtml).not.toContain("Rudder-managed OpenCode home");
     expect(hiddenHtml).not.toContain("Rudder-managed Pi home");
     expect(hiddenHtml).not.toContain("Failed to post workspace-ready comment");
@@ -1892,7 +1890,6 @@ describe("RunTranscriptView", () => {
     expect(visibleHtml).toContain("will not be resumed");
     expect(visibleHtml).toContain("Rudder-managed Claude home");
     expect(visibleHtml).toContain("Rudder-managed Cursor home");
-    expect(visibleHtml).toContain("Rudder-managed Gemini home");
     expect(visibleHtml).toContain("Rudder-managed OpenCode home");
     expect(visibleHtml).toContain("Rudder-managed Pi home");
     expect(visibleHtml).toContain("Failed to post workspace-ready comment");
@@ -3491,7 +3488,7 @@ describe("RunTranscriptView", () => {
         expected: "Edited RunTranscriptView.semantic.tsx",
       },
       {
-        runtime: "Gemini",
+        runtime: "Legacy",
         name: "SearchToolCall",
         input: { query: "ReadToolCall", path: "ui/src" },
         expected: "Searched &quot;ReadToolCall&quot; in ui/src",

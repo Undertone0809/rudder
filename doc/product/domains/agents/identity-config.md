@@ -202,8 +202,8 @@ Evidence:
 
 Why:
 
-- Runtime type is a product capability boundary. Codex, Claude, Gemini,
-  OpenCode, Pi, Cursor, process, and HTTP-style adapters do not all support the
+- Runtime type is a product capability boundary. Codex, Claude, OpenCode, Pi,
+  Cursor, process, and HTTP-style adapters do not all support the
   same session, skill sync, model discovery, local JWT, transcript, or quota
   behaviors.
 

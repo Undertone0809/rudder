@@ -6,7 +6,6 @@ export type Step = 1 | 2;
 export type AdapterType =
   | "claude_local"
   | "codex_local"
-  | "gemini_local"
   | "opencode_local"
   | "pi_local"
   | "cursor"

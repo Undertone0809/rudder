@@ -11,7 +11,6 @@ import {
   DEFAULT_CODEX_LOCAL_SEARCH,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import type { CreateConfigValues, ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
 import { normalizeModelFallbacks } from "@rudderhq/agent-runtime-utils";
 import type {
@@ -145,7 +144,6 @@ const RUNTIME_THINKING_EFFORT_DEFINITIONS = {
 export const LOCAL_MODEL_RUNTIME_TYPES = [
   "claude_local",
   "codex_local",
-  "gemini_local",
   "opencode_local",
   "pi_local",
   "cursor",
@@ -159,7 +157,6 @@ export function defaultModelForRuntime(agentRuntimeType: string) {
       ?? "";
   }
   if (agentRuntimeType === "codex_local") return DEFAULT_CODEX_LOCAL_MODEL;
-  if (agentRuntimeType === "gemini_local") return DEFAULT_GEMINI_LOCAL_MODEL;
   if (agentRuntimeType === "cursor") return DEFAULT_CURSOR_LOCAL_MODEL;
   if (agentRuntimeType === "opencode_local") return "opencode/deepseek-v4-flash-free";
   if (agentRuntimeType === "pi_local") return "kimi-coding/kimi-for-coding";
@@ -168,7 +165,6 @@ export function defaultModelForRuntime(agentRuntimeType: string) {
 
 export function defaultCommandForRuntime(agentRuntimeType: string) {
   if (agentRuntimeType === "codex_local") return "codex";
-  if (agentRuntimeType === "gemini_local") return "gemini";
   if (agentRuntimeType === "pi_local") return "pi";
   if (agentRuntimeType === "cursor") return "cursor-agent";
   if (agentRuntimeType === "opencode_local") return "opencode";
@@ -227,7 +223,6 @@ export function defaultFallbackItemForChain(
   );
   const preferredRuntimeTypes = [
     defaultFallbackRuntime(primaryRuntimeType),
-    "gemini_local",
     "opencode_local",
     "pi_local",
     "cursor",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -175,6 +175,33 @@ test("rejects a Desktop candidate with an unexpected platform identity", () => {
         now,
       }),
       /identities do not match the expected set/,
+    );
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects an npm candidate manifest with the wrong artifact count", () => {
+  const fixture = makeFixture();
+  try {
+    const manifestPath = join(fixture.npmDir, "manifest.tsv");
+    const rows = readFileSync(manifestPath, "utf8").trimEnd().split(/\r?\n/u);
+    writeFileSync(manifestPath, `${rows.slice(0, -1).join("\n")}\n`);
+
+    assert.throws(
+      () => createCandidateManifest({
+        sourceSha,
+        sourceTreeSha,
+        workflowSourceSha,
+        version: "0.7.17",
+        qualificationRunId: "100",
+        candidateRunId: "200",
+        runtime,
+        npmDir: fixture.npmDir,
+        desktopDir: fixture.desktopDir,
+        now,
+      }),
+      new RegExp(`Expected ${EXPECTED_NPM_ARTIFACT_COUNT} npm artifacts, found ${EXPECTED_NPM_ARTIFACT_COUNT - 1}`),
     );
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });

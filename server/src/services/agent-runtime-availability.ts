@@ -5,7 +5,6 @@ import { AGENT_RUNTIME_TYPES } from "@rudderhq/shared";
 const LOCAL_RUNTIME_COMMANDS: Record<string, string> = {
   claude_local: "claude",
   codex_local: "codex",
-  gemini_local: "gemini",
   opencode_local: "opencode",
   pi_local: "pi",
   cursor: "cursor-agent",
@@ -19,8 +18,6 @@ function localRuntimeLabel(agentRuntimeType: string) {
       return "Claude Code CLI";
     case "codex_local":
       return "Codex CLI";
-    case "gemini_local":
-      return "Gemini CLI";
     case "opencode_local":
       return "OpenCode CLI";
     case "pi_local":

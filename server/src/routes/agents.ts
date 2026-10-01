@@ -12,7 +12,6 @@ import {
   withCodexLocalModelDefaults,
 } from "@rudderhq/agent-runtime-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@rudderhq/agent-runtime-cursor-local";
-import { DEFAULT_GEMINI_LOCAL_MODEL } from "@rudderhq/agent-runtime-gemini-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-opencode-local/server";
 import { ensurePiModelConfiguredAndAvailable } from "@rudderhq/agent-runtime-pi-local/server";
 import type { Db } from "@rudderhq/db";
@@ -276,7 +275,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
     claude_local: "instructionsFilePath",
     codex_local: "instructionsFilePath",
-    gemini_local: "instructionsFilePath",
     opencode_local: "instructionsFilePath",
     cursor: "instructionsFilePath",
     pi_local: "instructionsFilePath",
@@ -864,10 +862,6 @@ export function agentRoutes(db: Db, storage?: StorageService) {
       if (typeof next.search !== "boolean") {
         next.search = DEFAULT_CODEX_LOCAL_SEARCH;
       }
-      return ensureGatewayDeviceKey(agentRuntimeType, next);
-    }
-    if (agentRuntimeType === "gemini_local" && !asNonEmptyString(next.model)) {
-      next.model = DEFAULT_GEMINI_LOCAL_MODEL;
       return ensureGatewayDeviceKey(agentRuntimeType, next);
     }
     // OpenCode requires explicit model selection — no default

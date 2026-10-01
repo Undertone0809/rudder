@@ -20,7 +20,6 @@ COPY packages/agent-runtime-utils/package.json packages/agent-runtime-utils/
 COPY packages/agent-runtimes/claude-local/package.json packages/agent-runtimes/claude-local/
 COPY packages/agent-runtimes/codex-local/package.json packages/agent-runtimes/codex-local/
 COPY packages/agent-runtimes/cursor-local/package.json packages/agent-runtimes/cursor-local/
-COPY packages/agent-runtimes/gemini-local/package.json packages/agent-runtimes/gemini-local/
 COPY packages/agent-runtimes/openclaw-gateway/package.json packages/agent-runtimes/openclaw-gateway/
 COPY packages/agent-runtimes/opencode-local/package.json packages/agent-runtimes/opencode-local/
 COPY packages/agent-runtimes/pi-local/package.json packages/agent-runtimes/pi-local/
