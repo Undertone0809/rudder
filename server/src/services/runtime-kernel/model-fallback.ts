@@ -48,6 +48,7 @@ export interface ModelFallbackExecutionOptions {
     attempt: ModelAttemptSpec,
     result: AgentRuntimeExecutionResult,
     submissionPhase: AgentRuntimeNetworkSubmissionPhase,
+    lifecycle: { providerDispatched: boolean },
   ) => Promise<void> | void;
   /** Persist acceptance uncertainty before the native provider call is dispatched. */
   onAttemptSubmissionStart?: (attempt: ModelAttemptSpec) => Promise<void> | void;
@@ -412,6 +413,13 @@ export async function executeAdapterWithModelFallbacks(
     let controlAttempt: Awaited<ReturnType<NonNullable<typeof ctx.controlCoordinator>["beginAttempt"]>> | null = null;
     let networkSuspended = false;
     let nativeSubmissionCheckpointStarted = false;
+    let providerDispatched = false;
+    const markProviderDispatch = () => {
+      // Internal executor evidence, independent of provider-declared prompt
+      // acceptance. Once set it cannot be cleared by a returned result.
+      providerDispatched = true;
+      options.onProviderDispatch?.(attempt);
+    };
     try {
       const attemptConfig = buildAttemptConfig(
         ctx.config,
@@ -467,7 +475,7 @@ export async function executeAdapterWithModelFallbacks(
             `No profile-bound Runtime Driver is available for ${attemptRuntimeType}.`,
           );
         } else if (!driver) {
-          options.onProviderDispatch?.(attempt);
+          markProviderDispatch();
           result = await attemptAdapter.execute({
             ...attemptContext,
             controlAttempt: controlAttempt ?? undefined,
@@ -535,7 +543,7 @@ export async function executeAdapterWithModelFallbacks(
             } else {
               nativeSubmissionCheckpointStarted = Boolean(options.onAttemptSubmissionStart);
               await options.onAttemptSubmissionStart?.(attempt);
-              options.onProviderDispatch?.(attempt);
+              markProviderDispatch();
               result = await driver.execute(driverContext);
             }
           } else {
@@ -550,7 +558,7 @@ export async function executeAdapterWithModelFallbacks(
               const prompt = typeof attemptContext.context.chatPrompt === "string"
                 ? attemptContext.context.chatPrompt
                 : "";
-              options.onProviderDispatch?.(attempt);
+              markProviderDispatch();
               result = await driver.submitInput({
                 context: driverContext,
                 session: sessionInput?.status === "supported" ? sessionInput.value : null,
@@ -563,7 +571,7 @@ export async function executeAdapterWithModelFallbacks(
           }
         }
       } else {
-        options.onProviderDispatch?.(attempt);
+        markProviderDispatch();
         result = await attemptAdapter.execute({
           ...attemptContext,
           controlAttempt: controlAttempt ?? undefined,
@@ -576,7 +584,7 @@ export async function executeAdapterWithModelFallbacks(
       }
 
       const submissionPhase = resolveExecutionSubmissionPhase(result);
-      await options.onAttemptResult?.(attempt, result, submissionPhase);
+      await options.onAttemptResult?.(attempt, result, submissionPhase, { providerDispatched });
 
       if (result.errorCode === "runtime_driver_required") {
         await options.onAttemptFailure?.(attempt, result);

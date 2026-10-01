@@ -680,12 +680,14 @@ describe("executeAdapterWithModelFallbacks", () => {
     ctx.context.chatPrompt = "continue the conversation";
     const resolveDriver = vi.fn(() => null);
     const onProviderDispatch = vi.fn();
+    const onAttemptResult = vi.fn();
 
     const executed = await executeAdapterWithModelFallbacks(adapter, ctx, {
       resolveDriver,
       submitInputThroughDriver: true,
       nativeDriverRequired: true,
       onProviderDispatch,
+      onAttemptResult,
     });
 
     expect(executed).toMatchObject({
@@ -698,6 +700,30 @@ describe("executeAdapterWithModelFallbacks", () => {
     expect(resolveDriver).toHaveBeenCalledTimes(1);
     expect(adapter.execute).not.toHaveBeenCalled();
     expect(onProviderDispatch).not.toHaveBeenCalled();
+    expect(onAttemptResult).toHaveBeenCalledWith(expect.any(Object), executed, "pre_submission",
+      { providerDispatched: false });
+  });
+
+  it("does not infer unstarted execution from a driver's pre-submission result", async () => {
+    const adapter: ServerAgentRuntimeModule = {
+      type: "codex_local", testEnvironment: vi.fn(), execute: vi.fn(),
+    };
+    const driver = {
+      resume: vi.fn(() => ({ status: "supported", value: baseContext({}).runtime })),
+      submitInput: vi.fn(async () => result({
+        exitCode: 1, submissionPhase: "pre_submission", errorCode: "provider_unavailable",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+        resultJson: { providerDispatched: false },
+      })),
+    } as any;
+    const onAttemptResult = vi.fn();
+    await executeAdapterWithModelFallbacks(adapter, baseContext({ model: "primary" }), {
+      resolveDriver: () => driver, submitInputThroughDriver: true, nativeDriverRequired: true,
+      onAttemptSubmissionStart: vi.fn(), onAttemptResult,
+    });
+    expect(driver.submitInput).toHaveBeenCalledOnce();
+    expect(onAttemptResult).toHaveBeenCalledWith(expect.any(Object), expect.any(Object),
+      "pre_submission", { providerDispatched: true });
   });
 
   it("distinguishes admission cancellation from an actual provider dispatch", async () => {
