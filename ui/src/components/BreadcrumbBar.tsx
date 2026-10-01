@@ -479,7 +479,7 @@ export function BreadcrumbBar({
         {isProjectsRoute && (!isProjectsIndex || (visibleProjects?.length ?? 0) > 0) ? (
           <Button
             size="sm"
-            className={cn("hidden px-4 md:inline-flex", desktopChrome && "desktop-window-no-drag")}
+            className={cn("ml-auto hidden px-4 md:inline-flex", desktopChrome && "desktop-window-no-drag")}
             onClick={() => openNewProject()}
           >
             <Plus className="mr-1.5 h-3.5 w-3.5" />

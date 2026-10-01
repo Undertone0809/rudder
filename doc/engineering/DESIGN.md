@@ -351,8 +351,53 @@ Rules:
   navigation in `ThreeColumnContextSidebar` (or a dedicated sidebar selected
   there), and use the shared `workspace-context-card` /
   `workspace-main-card` surfaces.
+- Compose shared sidebar chrome with `WorkspaceContextSidebar` as the outer
+  semantic flex region, `WorkspaceContextHeader` for the non-scrolling header surface,
+  and `WorkspaceSidebarCollapseButton` only when the caller owns a collapse
+  action. The caller owns the header's title and action wrappers and the body
+  structure. The surrounding layout owns the sidebar column width. Each
+  workspace owns its overflow containers, scroll refs, and virtualization.
+  Keep `Sources` and other work details inside the main work region instead of
+  extending the navigation column. Import these primitives from
+  `ui/src/components/workbench/WorkspaceContextSidebar.tsx`. Window dragging is
+  opt-in through `desktop-window-drag` on the header; interactive controls stay
+  `desktop-window-no-drag`. Library may retain its editor-specific header.
+  For example, with `scrollRef` provided by `useScrollbarActivityRef`:
+
+  ```tsx
+  <WorkspaceContextSidebar>
+    <WorkspaceContextHeader>
+      <div className="min-w-0 flex-1">
+        <h2>Workspace</h2>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <WorkspaceSidebarCollapseButton onClick={onCollapse} />
+      </div>
+    </WorkspaceContextHeader>
+    <nav ref={scrollRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto">...</nav>
+  </WorkspaceContextSidebar>
+  ```
 - A workspace that needs document-style tabs should follow the Messenger
   workbench composition: a separate compact tab card above the main work card.
+  Library and Side Panel share `WorkspaceTabbedSurface`,
+  `WorkspaceTabbedSurfaceHeader`, `WorkspaceTabbedSurfaceStrip`, and
+  `WorkspaceTabbedSurfaceContent` from
+  `ui/src/components/workbench/WorkspaceTabbedSurface.tsx`. The root keeps the
+  header and content cards 6px apart. Choose the root's semantic element with
+  `as="section"` for a main workspace or `as="aside"` for a side panel; pass
+  native attributes and refs directly. Keep tab selection, close actions,
+  menus, dragging, scroll containers, and live surface ownership in the caller.
+  Use the same composition in split and expanded Side Panel views:
+
+  ```tsx
+  <WorkspaceTabbedSurface as="section" className="min-h-0 min-w-0 flex-1">
+    <WorkspaceTabbedSurfaceHeader>
+      <WorkspaceTabbedSurfaceStrip className="overflow-x-auto">{tabs}</WorkspaceTabbedSurfaceStrip>
+    </WorkspaceTabbedSurfaceHeader>
+    <WorkspaceTabbedSurfaceContent>{content}</WorkspaceTabbedSurfaceContent>
+  </WorkspaceTabbedSurface>
+  ```
+
   Use `WorkspaceTab` for tab chrome and interaction rather than introducing a
   browser-tab silhouette, page-local active treatment, or page-local close
   affordance.
@@ -372,7 +417,11 @@ Rules:
   context column and tabs, the required references are `Layout`,
   `ThreeColumnContextSidebar`, `MessengerContextSidebar`, and
   `MessengerMainWorkbench`.
-- The gap between the middle card and main card should stay minimal, the top inset should stay tight, and both cards should use a small radius.
+- Use `WorkspaceColumnGutter` in `Layout` between the context card and main
+  region: 8px below the medium breakpoint, 9px above it, and zero when the
+  context column is collapsed. Interactive column dividers use this same
+  spacing with caller-owned resize handlers. Library uses an inert gutter
+  without a resize handle. Keep the top inset tight and both cards' radius small.
 - In light mode, pale or glass rails use dark neutral icon and text colors by default. Active emphasis should come from surface treatment, not white text on a pale background.
 - In dark mode, the primary rail may stay translucent, but it should still read as a quiet structural surface rather than a bright wallpaper reveal.
 - Desktop settings open as a compact modal tool window. In modal mode, do not render an org identity header, org selector, or a large “System settings” block above the nav.

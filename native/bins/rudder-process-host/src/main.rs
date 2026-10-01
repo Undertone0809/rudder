@@ -81,6 +81,7 @@ enum MonitorEvent {
         was_stopped: bool,
         cleanup_proven: bool,
         had_surviving_group: bool,
+        stdin_error: Option<&'static str>,
     },
 }
 
@@ -421,14 +422,9 @@ fn main() {
                     was_stopped,
                     cleanup_proven,
                     had_surviving_group,
+                    stdin_error,
                 }) => {
-                    let mut output_relay_proven = true;
-                    if let Some(child) = active.as_ref() {
-                        for output_done in &child.output_done {
-                            output_relay_proven &=
-                                matches!(output_done.recv_timeout(TERM_TIMEOUT), Ok(true));
-                        }
-                    }
+                    let output_relay_proven = drain_output(active.as_ref());
                     send(
                         &lifecycle,
                         json!({
@@ -440,23 +436,15 @@ fn main() {
                     if was_stopped && cleanup_proven {
                         send(&lifecycle, json!({"type":"stopped"}));
                     }
-                    let terminal_succeeded = !listener_mismatch
-                        && cleanup_proven
-                        && output_relay_proven
-                        && (was_stopped || (code == Some(0) && !had_surviving_group));
-                    let error_code = if listener_mismatch {
-                        Some("listener_owner_mismatch")
-                    } else if !cleanup_proven {
-                        Some("process_group_cleanup_unproven")
-                    } else if !output_relay_proven {
-                        Some("output_relay_failed")
-                    } else if had_surviving_group && !was_stopped {
-                        Some("descendant_cleanup")
-                    } else if was_stopped || code == Some(0) {
-                        None
-                    } else {
-                        Some("child_exit")
-                    };
+                    let (terminal_succeeded, error_code) = exit_outcome(
+                        code,
+                        was_stopped,
+                        cleanup_proven,
+                        had_surviving_group,
+                        listener_mismatch,
+                        output_relay_proven,
+                        stdin_error,
+                    );
                     let mut terminal = terminal_message(
                         if terminal_succeeded {
                             "succeeded"
@@ -468,21 +456,7 @@ fn main() {
                         started_at,
                         &counters,
                     );
-                    terminal["receiptWritten"] = Value::Bool(true);
-                    let receipt_written = active
-                        .as_ref()
-                        .and_then(|child| child.evidence.as_ref())
-                        .is_none_or(|evidence| evidence.write_terminal(&terminal).is_ok());
-                    if !receipt_written {
-                        terminal = terminal_message(
-                            "failed",
-                            Some("receipt_write_failed"),
-                            cleanup_proven,
-                            started_at,
-                            &counters,
-                        );
-                        terminal["receiptWritten"] = Value::Bool(false);
-                    }
+                    let receipt_written = persist_terminal(active.as_ref(), &mut terminal);
                     send(&lifecycle, terminal);
                     process_exit_code = if terminal_succeeded && receipt_written {
                         0
@@ -1108,17 +1082,6 @@ fn spawn_child(
             return Err(SpawnChildError::after_spawn(error, cleanup));
         }
     };
-    if let Some(input) = stdin {
-        let Some(mut child_stdin) = child.stdin.take() else {
-            let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
-            return Err(SpawnChildError::after_spawn("stdin_unavailable", cleanup));
-        };
-        if child_stdin.write_all(input.as_bytes()).is_err() {
-            let cleanup = terminate_owned_process(&mut child, pgid, grace, &boundary);
-            return Err(SpawnChildError::after_spawn("stdin_write_failed", cleanup));
-        }
-        drop(child_stdin);
-    }
     let child_stdout = match child.stdout.take() {
         Some(output) => output,
         None => {
@@ -1155,9 +1118,25 @@ fn spawn_child(
 
     let (control_tx, control_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
+    // Never block command handling on a child that does not consume stdin.
+    // Both output relays are already running before input delivery starts.
+    let input_done = stdin.map(|input| {
+        let (tx, rx) = mpsc::channel();
+        let child_stdin = child.stdin.take();
+        thread::spawn(move || {
+            let result = match child_stdin {
+                Some(mut pipe) => pipe
+                    .write_all(input.as_bytes())
+                    .map_err(|_| "stdin_write_failed"),
+                None => Err("stdin_unavailable"),
+            };
+            let _ = tx.send(result);
+        });
+        rx
+    });
     thread::spawn(move || {
         monitor_child(
-            &mut child, control_rx, event_tx, pgid, port, grace, boundary,
+            &mut child, control_rx, event_tx, pgid, port, grace, boundary, input_done,
         )
     });
     Ok((
@@ -1308,6 +1287,7 @@ fn spawn_terminal(
                         was_stopped: stopping,
                         cleanup_proven: cleanup.proven,
                         had_surviving_group: cleanup.had_surviving_group,
+                        stdin_error: None,
                     });
                     return;
                 }
@@ -1319,6 +1299,7 @@ fn spawn_terminal(
                         was_stopped: stopping,
                         cleanup_proven: false,
                         had_surviving_group: false,
+                        stdin_error: None,
                     });
                     return;
                 }
@@ -1547,6 +1528,7 @@ fn relay<R: Read + Send + 'static>(
     done_rx
 }
 
+#[allow(clippy::too_many_arguments)]
 fn monitor_child(
     child: &mut Child,
     control: mpsc::Receiver<MonitorCommand>,
@@ -1555,12 +1537,27 @@ fn monitor_child(
     port: Option<u16>,
     grace: Duration,
     boundary: OwnedProcessBoundary,
+    mut input_done: Option<mpsc::Receiver<Result<(), &'static str>>>,
 ) {
     let mut stopping = false;
     let mut cleanup = None;
     let mut listener_verified = false;
     let mut listener_owner_mismatch = false;
+    let mut stdin_error = None;
+    let mut input_failed_at = None;
     loop {
+        if let Some(done) = input_done.as_ref() {
+            let result = match done.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err("stdin_writer_lost")),
+                Err(mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                stdin_error = result.err();
+                input_failed_at = stdin_error.map(|_| Instant::now());
+                input_done = None;
+            }
+        }
         match control.try_recv() {
             Ok(MonitorCommand::Stop {
                 grace: requested_grace,
@@ -1596,24 +1593,39 @@ fn monitor_child(
         match child.try_wait() {
             Ok(Some(status)) => {
                 let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid, &boundary));
+                if let Some(done) = input_done.take() {
+                    stdin_error = match done.recv_timeout(TERM_TIMEOUT) {
+                        Ok(result) => result.err(),
+                        Err(_) => Some("stdin_writer_lost"),
+                    };
+                }
                 let _ = events.send(MonitorEvent::Exited {
                     code: status.code(),
                     signal: signal_name(&status),
                     was_stopped: stopping,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group || listener_owner_mismatch,
+                    stdin_error,
                 });
                 return;
             }
-            Ok(None) => thread::sleep(POLL_INTERVAL),
+            Ok(None) => {
+                // Allow a startup failure to finish and retain its real exit code,
+                // but do not leave a live child behind after failed input delivery.
+                if cleanup.is_none() && input_failed_at.is_some_and(|at| at.elapsed() >= grace) {
+                    cleanup = Some(terminate_owned_process(child, pgid, grace, &boundary));
+                }
+                thread::sleep(POLL_INTERVAL);
+            }
             Err(_) => {
                 let cleanup = cleanup.unwrap_or_else(|| cleanup_after_child_exit(pgid, &boundary));
                 let _ = events.send(MonitorEvent::Exited {
-                    code: Some(1),
+                    code: None,
                     signal: None,
                     was_stopped: stopping,
                     cleanup_proven: cleanup.proven,
                     had_surviving_group: cleanup.had_surviving_group,
+                    stdin_error: Some(stdin_error.unwrap_or("child_wait_failed")),
                 });
                 return;
             }
@@ -1900,6 +1912,57 @@ fn terminal_message(
     message
 }
 
+fn drain_output(child: Option<&ActiveChild>) -> bool {
+    let mut proven = true;
+    if let Some(child) = child {
+        for done in &child.output_done {
+            proven &= matches!(done.recv_timeout(TERM_TIMEOUT), Ok(true));
+        }
+    }
+    proven
+}
+
+fn exit_outcome(
+    code: Option<i32>,
+    stopped: bool,
+    cleanup: bool,
+    surviving_group: bool,
+    listener_mismatch: bool,
+    relay_proven: bool,
+    stdin_error: Option<&'static str>,
+) -> (bool, Option<&'static str>) {
+    let error = if listener_mismatch {
+        Some("listener_owner_mismatch")
+    } else if !cleanup {
+        Some("process_group_cleanup_unproven")
+    } else if !relay_proven {
+        Some("output_relay_failed")
+    } else if stdin_error.is_some() {
+        stdin_error
+    } else if surviving_group && !stopped {
+        Some("descendant_cleanup")
+    } else if stopped || code == Some(0) {
+        None
+    } else {
+        Some("child_exit")
+    };
+    (error.is_none(), error)
+}
+
+fn persist_terminal(child: Option<&ActiveChild>, terminal: &mut Value) -> bool {
+    terminal["receiptWritten"] = Value::Bool(true);
+    let written = child
+        .and_then(|child| child.evidence.as_ref())
+        .is_none_or(|evidence| evidence.write_terminal(terminal).is_ok());
+    if !written {
+        terminal["status"] = json!("failed");
+        terminal["errorCode"] = json!("receipt_write_failed");
+        terminal["message"] = json!("receipt_write_failed");
+        terminal["receiptWritten"] = Value::Bool(false);
+    }
+    written
+}
+
 fn signal_name(status: &ExitStatus) -> Option<&'static str> {
     #[cfg(unix)]
     {
@@ -1915,5 +1978,207 @@ fn signal_name(status: &ExitStatus) -> Option<&'static str> {
     {
         let _ = status;
         None
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct Fixture {
+        child: ActiveChild,
+        pid: u32,
+        root: PathBuf,
+        stdout: Captured,
+        stderr: Captured,
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = self.child.control.send(MonitorCommand::Stop {
+                grace: Some(Duration::from_millis(50)),
+            });
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn launch(script: &str) -> Fixture {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "rudder-host-stdin-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir(&root).unwrap();
+        let stdout = Captured::default();
+        let stderr = Captured::default();
+        let lifecycle = Arc::new(LifecycleWriter {
+            writer: Mutex::new(BufWriter::new(Box::new(io::sink()))),
+            request_id: Mutex::new("test".into()),
+            owner_token: Mutex::new(Some("operation".into())),
+        });
+        let counters = Arc::new(Counters {
+            bytes_read: AtomicU64::new(0),
+            bytes_written: AtomicU64::new(0),
+        });
+        let started = Instant::now();
+        let (child, pid, _) = spawn_child(
+            "/bin/sh".into(),
+            vec!["-c".into(), script.into()],
+            root.to_str().unwrap().into(),
+            BTreeMap::new(),
+            Some("x".repeat(4 * 1024 * 1024)),
+            Arc::new(Mutex::new(BufWriter::new(Box::new(stdout.clone())))),
+            Arc::new(Mutex::new(BufWriter::new(Box::new(stderr.clone())))),
+            lifecycle,
+            counters,
+            root.to_str().unwrap().into(),
+            "operation".into(),
+            None,
+            "process",
+            Duration::from_millis(100),
+            false,
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        Fixture {
+            child,
+            pid,
+            root,
+            stdout,
+            stderr,
+        }
+    }
+
+    fn finish(fixture: &Fixture, expected_exit: Option<i32>, stopped: bool) {
+        let event = fixture
+            .child
+            .events
+            .recv_timeout(Duration::from_secs(4))
+            .unwrap();
+        let MonitorEvent::Exited {
+            code,
+            was_stopped,
+            cleanup_proven,
+            stdin_error,
+            had_surviving_group,
+            ..
+        } = event
+        else {
+            panic!("unexpected monitor event");
+        };
+        if let Some(expected) = expected_exit {
+            assert_eq!(code, Some(expected));
+        }
+        assert_eq!(was_stopped, stopped);
+        assert!(cleanup_proven);
+        assert_eq!(stdin_error, Some("stdin_write_failed"));
+        assert!(drain_output(Some(&fixture.child)));
+        let counters = Counters {
+            bytes_read: AtomicU64::new(0),
+            bytes_written: AtomicU64::new(0),
+        };
+        let (succeeded, error) = exit_outcome(
+            code,
+            was_stopped,
+            cleanup_proven,
+            had_surviving_group,
+            false,
+            true,
+            stdin_error,
+        );
+        assert!(!succeeded);
+        let mut terminal = terminal_message(
+            if succeeded { "succeeded" } else { "failed" },
+            error,
+            cleanup_proven,
+            Instant::now(),
+            &counters,
+        );
+        assert!(persist_terminal(Some(&fixture.child), &mut terminal));
+        let receipt: Value = serde_json::from_slice(
+            &fs::read(fixture.root.join("operation/terminal-receipt.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["childPid"], fixture.pid);
+        assert_eq!(receipt["terminal"], terminal);
+        assert_eq!(receipt["terminal"]["receiptWritten"], true);
+        assert_eq!(unsafe { libc::kill(-(fixture.pid as i32), 0) }, -1);
+    }
+
+    #[test]
+    fn externally_reaped_child_reports_unknown_exit_and_wait_failure() {
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]).process_group(0);
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+        let boundary = OwnedProcessBoundary::attach(&child).unwrap();
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid as i32, &mut status, 0) },
+            pid as i32
+        );
+        assert!(child.try_wait().is_err());
+        let (_control_tx, control_rx) = mpsc::channel();
+        let (events_tx, events_rx) = mpsc::channel();
+        monitor_child(
+            &mut child,
+            control_rx,
+            events_tx,
+            pid,
+            None,
+            Duration::from_millis(50),
+            boundary,
+            None,
+        );
+        assert!(matches!(
+            events_rx.recv().unwrap(),
+            MonitorEvent::Exited {
+                code: None,
+                stdin_error: Some("child_wait_failed"),
+                cleanup_proven: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn closed_stdin_preserves_diagnostics_real_exit_and_receipt() {
+        let fixture =
+            launch("exec 0<&-; printf 'startup-out'; printf 'startup-diagnostic' >&2; exit 23");
+        finish(&fixture, Some(23), false);
+        assert_eq!(&*fixture.stdout.0.lock().unwrap(), b"startup-out");
+        assert_eq!(&*fixture.stderr.0.lock().unwrap(), b"startup-diagnostic");
+        let index = fs::read_to_string(fixture.root.join("operation/output-index.jsonl")).unwrap();
+        assert!(index.contains("stdout"));
+        assert!(index.contains("stderr"));
+    }
+
+    #[test]
+    fn blocked_stdin_remains_cancellable_and_drains_receipt() {
+        let fixture = launch("printf 'waiting' >&2; exec /bin/sleep 30");
+        // Input exceeds the pipe capacity. Stop must work without waiting for it.
+        fixture
+            .child
+            .control
+            .send(MonitorCommand::Stop {
+                grace: Some(Duration::from_millis(50)),
+            })
+            .unwrap();
+        finish(&fixture, None, true);
     }
 }

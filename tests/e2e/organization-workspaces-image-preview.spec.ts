@@ -53,7 +53,7 @@ async function selectOrganization(page: Page, orgId: string) {
 }
 
 test.describe("Organization workspaces image preview", () => {
-  test("aligns the Library sidebar and active editor tab top edges", async ({ page, request }) => {
+  test("aligns the Library sidebar and editor header with a shared column gutter", async ({ page, request }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
 
     const organizationRes = await request.post("/api/orgs", {
@@ -83,7 +83,7 @@ test.describe("Organization workspaces image preview", () => {
       page.getByTestId("workspace-main-card").boundingBox(),
       page.getByTestId("workspace-context-header").boundingBox(),
       page.getByTestId("org-workspaces-editor-tabs").boundingBox(),
-      page.getByTestId("org-workspaces-editor-tabs").locator(".rudder-doc-editor-tab--active").boundingBox(),
+      page.getByTestId("org-workspaces-editor-tabs").locator(".workspace-tab-pill:has([role='tab'][aria-selected='true'])").boundingBox(),
     ]);
 
     expect(contextCardBox).not.toBeNull();
@@ -94,9 +94,24 @@ test.describe("Organization workspaces image preview", () => {
 
     expect(Math.abs(contextCardBox!.y - mainCardBox!.y)).toBeLessThanOrEqual(0.5);
     expect(Math.abs(contextCardBox!.y - tabStripBox!.y)).toBeLessThanOrEqual(0.5);
-    expect(Math.abs(contextCardBox!.y - activeTabBox!.y)).toBeLessThanOrEqual(0.5);
     expect(Math.abs(headerBox!.height - tabStripBox!.height)).toBeLessThanOrEqual(0.5);
-    expect(activeTabBox!.height - tabStripBox!.height).toBeCloseTo(1, 0);
+    expect(activeTabBox!.height).toBe(28);
+    expect(activeTabBox!.y - tabStripBox!.y).toBeCloseTo((tabStripBox!.height - activeTabBox!.height) / 2, 1);
+    const gutter = page.getByTestId("workspace-column-gutter");
+    const gutterBox = await gutter.boundingBox();
+    expect(gutterBox).not.toBeNull();
+    expect(gutterBox!.width).toBeCloseTo(9, 1);
+    expect(mainCardBox!.x - (contextCardBox!.x + contextCardBox!.width)).toBeCloseTo(9, 1);
+    await expect(page.getByTestId("workspace-column-resizer")).toHaveCount(0);
+    await expect(gutter).not.toHaveAttribute("role", "separator");
+
+    await page.getByRole("button", { name: "Hide Library sidebar" }).click();
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "true");
+    await expect.poll(async () => (await gutter.boundingBox())?.width).toBe(0);
+    await page.getByTestId("workspace-sidebar-reopen-zone").hover();
+    await page.getByRole("button", { name: "Open workspace sidebar" }).click();
+    await expect(page.getByTestId("workspace-context-card")).toHaveAttribute("aria-hidden", "false");
+    await expect.poll(async () => (await gutter.boundingBox())?.width).toBe(9);
   });
 
   test("renders image files inline in the workspace browser", async ({ page, request }) => {

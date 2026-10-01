@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const tempRoots: string[] = [];
 const initialNativeMode = process.env.RUDDER_NATIVE_MODE;
+// Native CI runs this file alongside other child-process suites on macOS x86_64.
+const NATIVE_CI_LOAD_TIMEOUT_MS = 15_000;
 
 type EvidenceReadFixture = {
   source: string;
@@ -214,7 +216,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     }
 
     expect(pages.join("")).toBe(full.content);
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("terminates an over-deadline native read before applying required-mode failure", async () => {
     const root = await makeTempRoot("rudder-run-log-native-read-timeout-");
@@ -262,7 +264,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     const handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-missing" });
     await fs.rm(path.join(process.env.RUN_LOG_BASE_PATH, handle.logRef));
     await expect(store.read(handle, { offset: 0, limitBytes: 4 })).rejects.toMatchObject({ status: 404 });
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("preserves structured native invalid-UTF-8 errors in required mode", async () => {
     const root = await makeTempRoot("rudder-run-log-native-read-invalid-utf8-");
@@ -275,7 +277,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     const store = module.getRunLogStore();
     const handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-invalid" });
     await expect(store.read(handle, { offset: 0, limitBytes: 4 })).rejects.toThrow("evidence_read_invalid_utf8");
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("falls back to Node after the intended structured native error in auto mode", async () => {
     const root = await makeTempRoot("rudder-run-log-native-read-auto-fallback-");
@@ -299,7 +301,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
       args: ["evidence", "read", path.join(process.env.RUN_LOG_BASE_PATH, handle.logRef), "0", "64"],
       errorCode: "evidence_read_invalid_utf8",
     });
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("keeps oversized non-surface readers on Node authority in required mode", async () => {
     const root = await makeTempRoot("rudder-run-log-node-large-read-");
@@ -317,7 +319,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
       content: "node-owned",
       eof: true,
     });
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("reports workspace operation log offsets as bytes for UTF-8 content", async () => {
     const root = await makeTempRoot("rudder-workspace-operation-log-offsets-");
