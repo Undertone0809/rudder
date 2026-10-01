@@ -31,6 +31,7 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { createProfileBoundRuntimeProviderCapabilityResolverFromConfig } from "../agent-runtimes/index.js";
 import {
   runtimeConfigFromProviderProfileSnapshot,
@@ -41,6 +42,7 @@ import { notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
 import { heartbeatService } from "./heartbeat.js";
+import { historicalHermesManagedCwd } from "./run-intelligence-hermes-workspace.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "./operator-event-visibility.js";
 import {
@@ -222,6 +224,7 @@ function buildSkillExistsCondition(evidenceType: RunSkillEvidenceType, skillQuer
 
 type RunRow = typeof heartbeatRuns.$inferSelect & {
   agentName: string | null;
+  agentWorkspaceKey?: string | null;
   agentRuntimeType: string;
   agentRuntimeConfig: Record<string, unknown>;
   runtimeConfig: Record<string, unknown>;
@@ -304,7 +307,7 @@ function finiteNonNegativeNumber(value: string | null) {
 
 export type HistoricalRunProfileRun = Pick<
   RunRow,
-  "id" | "orgId" | "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
+  "id" | "orgId" | "agentId" | "agentWorkspaceKey" | "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
 > & {
   sessionParamsBeforeJson?: Record<string, unknown> | null;
   sessionParamsAfterJson?: Record<string, unknown> | null;
@@ -344,6 +347,26 @@ function dynamicNativeRuntimeConfig(runtimeType: string, profile: Record<string,
   } catch {
     return {};
   }
+}
+
+function hermesManagedAgentWorkspaceCwd(
+  run: HistoricalRunProfileRun,
+  workspace: Record<string, unknown>,
+): string | null {
+  const cwd = readString(workspace.executionWorkspaceCwd);
+  if (readString(workspace.source) !== "agent_home"
+    || readString(workspace.executionWorkspaceSource) !== "agent_home"
+    || !cwd
+    || !path.isAbsolute(cwd)
+    || path.resolve(cwd) !== cwd
+    || readString(workspace.cwd) !== cwd
+    || readString(workspace.agentHome) !== cwd) return null;
+
+  // Session state may corroborate the server-created workspace, but cannot
+  // introduce a transport path of its own or override a different workspace.
+  const persistedCwd = readString(asRecord(run.sessionParamsAfterJson).cwd)
+    ?? readString(asRecord(run.sessionParamsBeforeJson).cwd);
+  return persistedCwd === cwd ? cwd : null;
 }
 
 export function resolveHistoricalRunRuntimeProfile(
@@ -387,7 +410,11 @@ export function resolveHistoricalRunRuntimeProfile(
     Object.assign(mergedRuntimeConfig, dynamicNativeRuntimeConfig(runtimeType, rawPreparedProfile ?? {}));
   }
   const workspace = asRecord(runContext.rudderWorkspace);
+  const hermesWorkspaceCwd = runtimeType === "hermes_gateway"
+    ? hermesManagedAgentWorkspaceCwd(run, workspace)
+    : null;
   const cwd = [
+    hermesWorkspaceCwd,
     preparedProfile?.runtimeType === runtimeType ? preparedProfile.cwd : null,
     workspace.executionWorkspaceCwd,
     workspace.cwd,
@@ -429,6 +456,25 @@ export function createHistoricalRunRuntimeProviderCapabilityResolver(
       || readerInput.run.id !== run.id
       || readerInput.run.orgId !== run.orgId
     )) return null;
+    let effectiveResolver = resolveProfile;
+    if (readerInput && profile.agentRuntimeType === "hermes_gateway"
+      && !asRecord(run.contextSnapshot).rudderWorkspace
+      && readerInput.binding?.workspaceBindingId) {
+      const managedCwd = historicalHermesManagedCwd({
+        runId: run.id, orgId: run.orgId, agentId: run.agentId,
+        agentWorkspaceKey: run.agentWorkspaceKey,
+        runtimeBindingId: readString(asRecord(run.contextSnapshot).runtimeBindingId),
+        persistedRunCwd: readString(asRecord(run.sessionParamsAfterJson).cwd),
+        binding, readerInput,
+      });
+      if (!managedCwd) return null;
+      effectiveResolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+        runtimeType: profile.agentRuntimeType,
+        runtimeConfig: profile.runtimeConfig,
+        cwd: managedCwd,
+        resolutionMode: "historical",
+      });
+    }
     const persistedSessionParams = {
       ...asRecord(readerInput?.run.sessionParamsBeforeJson),
       ...asRecord(readerInput?.run.sessionParamsAfterJson),
@@ -446,7 +492,7 @@ export function createHistoricalRunRuntimeProviderCapabilityResolver(
         },
       }
       : context;
-    return resolveProfile(runtimeType, binding, enrichedContext);
+    return effectiveResolver(runtimeType, binding, enrichedContext);
   };
 }
 
@@ -633,6 +679,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
+      agentWorkspaceKey: agents.workspaceKey,
       agentRuntimeType: agents.agentRuntimeType,
       agentRuntimeConfig: agents.agentRuntimeConfig,
       runtimeConfig: agents.runtimeConfig,
@@ -874,6 +921,7 @@ async function loadRunRowById(
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
+      agentWorkspaceKey: agents.workspaceKey,
       agentRuntimeType: agents.agentRuntimeType,
       agentRuntimeConfig: agents.agentRuntimeConfig,
       runtimeConfig: agents.runtimeConfig,
