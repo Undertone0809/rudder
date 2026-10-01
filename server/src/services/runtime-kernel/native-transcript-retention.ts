@@ -412,6 +412,7 @@ export async function selectAndVerifyNativeTranscriptCleanupState(tx: any, proof
       || span.ownerToken !== expected.ownerToken || span.attemptEpoch !== expected.attemptEpoch
       || span.attemptId !== expected.attemptId || span.state !== "sealed" || span.completeness !== "complete"
       || !span.writerLeaseReleasedAt
+      || (span.sourceRevision !== null && span.sourceRevision !== expected.sourceRevision)
       || stableJson(span.selectorJson) !== stableJson(expected.selectorJson)
       || span.supplementalObjectRef !== expected.supplementalObjectRef
       || attempt.ownerToken !== expected.ownerToken || attempt.attemptEpoch !== expected.attemptEpoch
@@ -565,6 +566,7 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
 
       for (const span of input.proof.spans) {
         const [cleared] = await tx.update(runRuntimeSpans).set({
+          sourceRevision: span.sourceRevision,
           supplementalObjectRef: null,
           updatedAt: new Date(),
         }).where(and(
