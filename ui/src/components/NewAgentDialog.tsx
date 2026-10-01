@@ -29,7 +29,6 @@ type AdvancedAdapterType =
   | "cursor"
   | "openclaw_gateway"
   | "hermes_gateway";
-
 const ADVANCED_ADAPTER_OPTIONS: Array<{
   value: AdvancedAdapterType;
   label: string;
@@ -77,9 +76,9 @@ const ADVANCED_ADAPTER_OPTIONS: Array<{
   },
   {
     value: "hermes_gateway",
-    label: "Hermes API Server",
+    label: "Hermes",
     icon: Bot,
-    desc: "Invoke Hermes over HTTP",
+    desc: "Use the Hermes installation and local provider setup on this machine",
   },
 ];
 
@@ -96,6 +95,14 @@ export function NewAgentDialog() {
   });
 
   const ceoAgent = (agents ?? []).find((a) => a.role === "ceo");
+  const { data: runtimeAvailability } = useQuery({
+    queryKey: selectedOrganizationId
+      ? queryKeys.agents.adapterAvailability(selectedOrganizationId)
+      : ["agents", "none", "adapter-availability"],
+    queryFn: () => agentsApi.adapterAvailability(selectedOrganizationId!),
+    enabled: !!selectedOrganizationId && newAgentOpen,
+  });
+  const hermesAvailability = runtimeAvailability?.find((item) => item.agentRuntimeType === "hermes_gateway");
 
   function handleAskCeo() {
     closeNewAgent();
@@ -113,7 +120,9 @@ export function NewAgentDialog() {
   function handleAdvancedAdapterPick(agentRuntimeType: AdvancedAdapterType) {
     closeNewAgent();
     setShowAdvancedCards(false);
-    navigate(`/agents/new?agentRuntimeType=${encodeURIComponent(agentRuntimeType)}`);
+    const params = new URLSearchParams({ agentRuntimeType });
+    if (agentRuntimeType === "hermes_gateway") params.set("hermesConnectionMode", "local");
+    navigate(`/agents/new?${params.toString()}`);
   }
 
   return (
@@ -191,12 +200,23 @@ export function NewAgentDialog() {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                {ADVANCED_ADAPTER_OPTIONS.map((opt) => (
+                {ADVANCED_ADAPTER_OPTIONS.map((opt) => {
+                  const hermesDescription = !hermesAvailability
+                    ? "Checking local Hermes setup…"
+                    : hermesAvailability.status !== "available"
+                      ? `${hermesAvailability.message} Custom server setup is available in the form.`
+                      : hermesAvailability.hermesLocalBackend === "acp"
+                        ? `Installed; local ACP check passed. Native Product RPC gap: ${hermesAvailability.hermesProductRpcCapabilityGap ?? "detected"}.`
+                        : "Installed; local setup passed. Native Product RPC prerequisites detected.";
+                  return (
                   <button
                     key={opt.value}
                     className={cn(
                       "flex flex-col items-center gap-1.5 rounded-md border border-border p-3 text-xs transition-colors hover:bg-accent/50 relative"
                     )}
+                    title={opt.value === "hermes_gateway" && hermesAvailability?.status === "unavailable"
+                      ? hermesAvailability.hint ?? hermesAvailability.message
+                      : undefined}
                     onClick={() => handleAdvancedAdapterPick(opt.value)}
                   >
                     {opt.recommended && (
@@ -207,10 +227,11 @@ export function NewAgentDialog() {
                     <opt.icon className="h-4 w-4" />
                     <span className="font-medium">{opt.label}</span>
                     <span className="text-muted-foreground text-[10px]">
-                      {opt.desc}
+                      {opt.value === "hermes_gateway" ? hermesDescription : opt.desc}
                     </span>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}

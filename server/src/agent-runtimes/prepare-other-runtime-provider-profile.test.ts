@@ -64,6 +64,7 @@ describe("other runtime provider profile preparation", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   async function hermesProfile(versionSource = '__version__ = "0.21.0"\n') {
@@ -107,6 +108,49 @@ describe("other runtime provider profile preparation", () => {
     const result = await prepareHermes({ ...config, hermesChatBackend: undefined });
     expect(result.hermesProviderVersion).toBe("0.21.0");
     expect(childProcessMock.calls[0].command).toBe(config.hermesPythonCommand);
+  });
+
+  it("auto-discovers the local Hermes home and its dot-venv Python for an explicit local RPC profile", async () => {
+    const hermesHome = path.join(root, "installed-hermes-home");
+    const sourcePath = path.join(hermesHome, "hermes-agent");
+    const pythonCommand = path.join(sourcePath, ".venv", "bin", "python3");
+    await mkdir(path.join(sourcePath, "hermes_cli"), { recursive: true });
+    await mkdir(path.dirname(pythonCommand), { recursive: true });
+    await writeFile(path.join(sourcePath, "hermes_state.py"), "");
+    await writeFile(path.join(sourcePath, "hermes_cli", "__init__.py"), '__version__ = "0.21.0"\n');
+    await writeFile(pythonCommand, "");
+    vi.stubEnv("HERMES_HOME", hermesHome);
+
+    const prepared = await prepareHermes({
+      hermesConnectionMode: "local",
+      hermesChatBackend: "native_product_rpc",
+    });
+
+    expect(prepared).toMatchObject({
+      hermesHome,
+      hermesPythonCommand: pythonCommand,
+      hermesSourcePath: sourcePath,
+      env: { HERMES_HOME: hermesHome },
+      hermesProviderVersion: "0.21.0",
+    });
+    expect(childProcessMock.calls).toHaveLength(2);
+    expect(childProcessMock.calls[0]).toMatchObject({ command: pythonCommand, args: ["-I", "-c", "import yaml"] });
+    expect(childProcessMock.calls[1]).toMatchObject({
+      command: pythonCommand,
+      args: expect.arrayContaining(["-I", "-S", "-B", "-c", sourcePath]),
+    });
+  });
+
+  it("does not reinterpret a legacy/custom HTTP Hermes config as a local profile", async () => {
+    const prepared = await prepareHermes({
+      url: "http://127.0.0.1:18642",
+      hermesChatBackend: "native_runs_http",
+      env: {},
+    });
+    expect(prepared.hermesHome).toBeUndefined();
+    expect(prepared.hermesPythonCommand).toBeUndefined();
+    expect(prepared.hermesChatBackend).toBe("native_runs_http");
+    expect(childProcessMock.calls).toEqual([expect.objectContaining({ args: ["--version"] })]);
   });
 
   it.each(["acp", "native_runs_http"])("preserves the executable version probe for explicit %s even with an unrelated source", async (backend) => {

@@ -114,6 +114,12 @@ export interface AgentConfigRevision {
 export type AgentRuntimeEnvironmentCheckLevel = "info" | "warn" | "error";
 export type AgentRuntimeEnvironmentTestStatus = "pass" | "warn" | "fail";
 export type AgentRuntimeAvailabilityStatus = "available" | "unavailable" | "unknown";
+export type HermesLocalBackend = "native_product_rpc" | "acp";
+export type HermesProductRpcCapabilityGap =
+  | "profile_missing"
+  | "entrypoint_missing"
+  | "python_missing"
+  | "yaml_missing";
 
 export interface AgentRuntimeEnvironmentCheck {
   code: string;
@@ -137,5 +143,8 @@ export interface AgentRuntimeAvailability {
   resolvedCommand: string | null;
   message: string;
   hint?: string | null;
+  /** Local Hermes-only capabilities; never includes profile paths or credentials. */
+  hermesLocalBackend?: HermesLocalBackend;
+  hermesProductRpcCapabilityGap?: HermesProductRpcCapabilityGap;
   checkedAt: string;
 }

@@ -43,6 +43,16 @@ const availability: AgentRuntimeAvailability[] = [
     message: "This runtime does not use a local CLI command probe.",
     checkedAt: "2026-07-07T00:00:00.000Z",
   },
+  {
+    agentRuntimeType: "hermes_gateway",
+    status: "available",
+    command: "hermes",
+    resolvedCommand: "/opt/hermes/bin/hermes",
+    hermesLocalBackend: "acp",
+    hermesProductRpcCapabilityGap: "yaml_missing",
+    message: "Hermes is installed and its local ACP setup check passed; Rudder will use ACP.",
+    checkedAt: "2026-07-07T00:00:00.000Z",
+  },
 ];
 
 let cleanupFn: (() => void) | null = null;
@@ -93,5 +103,31 @@ describe("AdapterTypeDropdown", () => {
     expect(document.body.textContent).toContain("Codex (local)");
     expect(document.body.textContent).toContain("Default CLI missing");
     expect(document.body.textContent).toContain("OpenClaw Gateway");
+    const hermesChoice = [...document.body.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Hermes"));
+    expect(hermesChoice?.textContent).toContain("Hermes");
+    expect(hermesChoice?.textContent).not.toContain("Coming soon");
+    expect(hermesChoice?.textContent).toContain("ACP selected");
+    expect(hermesChoice?.textContent).not.toContain("Ready");
+    expect(document.body.textContent).not.toContain("Hermes (legacy local)");
+  });
+
+  it("shows Hermes as install/setup unavailable when the local check fails", async () => {
+    const container = render(
+      <AdapterTypeDropdown
+        value="codex_local"
+        onChange={vi.fn()}
+        availability={availability.map((item) => item.agentRuntimeType === "hermes_gateway"
+          ? { ...item, status: "unavailable", hermesLocalBackend: undefined }
+          : item)}
+      />,
+    );
+    await act(async () => {
+      container.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const hermesChoice = [...document.body.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Hermes"));
+    expect((hermesChoice as HTMLButtonElement | undefined)?.disabled).toBe(true);
+    expect(hermesChoice?.textContent).toContain("Install/setup");
   });
 });

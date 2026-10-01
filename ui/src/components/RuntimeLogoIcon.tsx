@@ -1,3 +1,4 @@
+import { Bot } from "lucide-react";
 import { cn } from "../lib/utils";
 import { OpenCodeLogoIcon } from "./OpenCodeLogoIcon";
 
@@ -40,6 +41,9 @@ export const runtimeLogoSources: Record<string, RuntimeLogoSource> = {
 
 export function RuntimeLogoIcon({ runtimeType, className }: RuntimeLogoIconProps) {
   const baseClassName = cn("h-3.5 w-3.5 shrink-0", className);
+  if (runtimeType === "hermes_gateway" || runtimeType === "hermes_local") {
+    return <Bot aria-hidden="true" className={baseClassName} />;
+  }
   if (runtimeType === "opencode_local") {
     return (
       <span aria-hidden="true" className="inline-flex shrink-0 items-center justify-center">

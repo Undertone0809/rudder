@@ -192,6 +192,9 @@ export function createValuesForRuntime(agentRuntimeType: string): CreateConfigVa
   if (agentRuntimeType === "opencode_local") {
     values.dangerouslySkipPermissions = false;
   }
+  if (agentRuntimeType === "hermes_gateway") {
+    values.hermesConnectionMode = "local";
+  }
   return values;
 }
 

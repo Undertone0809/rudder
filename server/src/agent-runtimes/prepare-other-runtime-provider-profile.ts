@@ -9,6 +9,7 @@ import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { resolveHermesProfilePython } from "./hermes-profile-python.js";
 
 const execFileAsync = promisify(execFile);
 const VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)\b/u;
@@ -100,21 +101,38 @@ async function resolveHermesHistoryProfile(
   config: Record<string, unknown>,
   configuredEnv: Record<string, string>,
   hermesHome: string | null,
+  probeOptions: { cwd: string; env: NodeJS.ProcessEnv },
 ): Promise<{ pythonCommand: string | null; sourcePath: string | null }> {
   const configuredPython = absolutePath(
-    firstString(config.hermesPythonCommand, config.hermesHistoryPythonCommand, configuredEnv.HERMES_PYTHON),
+    firstString(
+      config.hermesPythonCommand,
+      config.hermesHistoryPythonCommand,
+      configuredEnv.HERMES_PYTHON,
+      config.hermesConnectionMode === "local" ? process.env.HERMES_PYTHON : null,
+    ),
   );
   const configuredSource = absolutePath(
-    firstString(config.hermesSourcePath, config.hermesHistorySourcePath, configuredEnv.HERMES_SOURCE),
+    firstString(
+      config.hermesSourcePath,
+      config.hermesHistorySourcePath,
+      configuredEnv.HERMES_SOURCE,
+      config.hermesConnectionMode === "local" ? process.env.HERMES_SOURCE : null,
+    ),
   );
-  const candidatePython = configuredPython ?? (hermesHome
-    ? absolutePath(path.join(hermesHome, "hermes-agent", "venv", "bin", "python3"))
-    : null);
+  const candidatePythonPaths = hermesHome
+    ? [
+      path.join(hermesHome, "hermes-agent", ".venv", "bin", "python3"),
+      path.join(hermesHome, "hermes-agent", "venv", "bin", "python3"),
+      path.join(hermesHome, "hermes-agent", ".venv", "bin", "python"),
+    ]
+    : [];
   const candidateSource = configuredSource ?? (hermesHome
     ? absolutePath(path.join(hermesHome, "hermes-agent"))
     : null);
+  const candidatePython = configuredPython
+    ?? (await resolveHermesProfilePython(candidatePythonPaths, probeOptions)).pythonCommand;
   const [pythonCommand, sourcePath] = await Promise.all([
-    existingPath(candidatePython, "file"),
+    configuredPython ? existingPath(configuredPython, "file") : candidatePython,
     existingPath(candidateSource, "directory"),
   ]);
   if (!pythonCommand || !sourcePath) return { pythonCommand: null, sourcePath: null };
@@ -356,8 +374,13 @@ export async function prepareOtherRuntimeProviderProfile(
       config.acpProtocolVersion,
       config.protocolVersion,
     ) ?? 1;
-    const hermesHome = absolutePath(firstString(config.hermesHome, configuredEnv.HERMES_HOME));
-    const historyProfile = await resolveHermesHistoryProfile(config, configuredEnv, hermesHome);
+    const localConnection = config.hermesConnectionMode === "local";
+    const hermesHome = absolutePath(firstString(
+      config.hermesHome,
+      configuredEnv.HERMES_HOME,
+      localConnection ? firstString(process.env.HERMES_HOME, path.join(os.homedir(), ".hermes")) : null,
+    ));
+    const historyProfile = await resolveHermesHistoryProfile(config, configuredEnv, hermesHome, { cwd, env: probeEnv });
     const backend = firstString(config.hermesChatBackend)?.toLowerCase();
     const hasProductProfile = Boolean(hermesHome && historyProfile.pythonCommand && historyProfile.sourcePath);
     const useProductVersion = backend === "native_product_rpc" || (!backend && hasProductProfile);

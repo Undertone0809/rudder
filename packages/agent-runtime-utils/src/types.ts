@@ -699,6 +699,8 @@ export interface CreateConfigValues {
   /** Optional credentials used by external gateway runtimes. */
   apiKey?: string;
   authToken?: string;
+  /** Hermes-only create path; local reuses the installed profile by default. */
+  hermesConnectionMode?: "local" | "custom";
   bootstrapPrompt: string;
   payloadTemplateJson?: string;
   workspaceStrategyType?: string;

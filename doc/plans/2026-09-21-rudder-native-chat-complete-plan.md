@@ -478,12 +478,14 @@ interface TranscriptPage {
   nextCursor: string | null;
   source: "native" | "native_plus_objects" | "legacy";
   revision: string;
-  availability: "available" | "offline" | "missing" | "expired" | "incompatible";
+  availability: "available" | "pending" | "offline" | "missing" | "expired" | "incompatible";
   completeness: "complete" | "partial" | "terminal_only" | "unknown";
 }
 ```
 
 The client state expresses “not loaded”; an empty list loaded successfully is distinct from offline/missing. For unauthorized access, use the existing safe error without revealing whether the target exists. An incompatible source version must not appear as empty history; an old Run must not silently read a new branch after a protocol upgrade.
+
+An open, running native span whose exact selector is not yet established is `pending`, not evidence of missing history. Terminal unresolved selectors remain missing. Publish the resolved retained/native source policy before dispatch so a common Run identity alone cannot hide retained live output; the policy does not authorize reading an unrelated native range.
 
 Bind pagination cursors to organization/principal, Run or Conversation scope, source revision, selector, and read policy; they cannot be reused for another history range. Do not use UI array indexes or timestamps as authoritative locators. The initial view, scrolling, opening an individual tool detail, and refreshing each load only their required scope.
 
@@ -562,6 +564,8 @@ Each adapter must deliver native continuation, complete history reading, Run spa
 **Preserve one Hermes Runtime that users can understand.** Continue using `hermes_gateway`, with two explicit backends selected internally according to configuration and capabilities. `native_product_rpc` provides complete local product interaction; the managed Host connects to or starts the installed Hermes product Gateway under an authorized Profile. `native_runs_http` is for remote native Session-backed Runs. These are not two unrelated Agent types, and the backend must never switch silently after a runtime error.
 
 **Local real acceptance.** Verify through the installed Hermes runtime and its configured AI provider under the authorized local Profile. Select `native_product_rpc` (or local ACP) for this verification; Hermes API Server authentication is required only for an explicitly selected remote `native_runs_http` backend and does not gate local-native product verification. A remote 401 is not a local-native verdict.
+
+**Default onboarding.** Present one Hermes option and automatically detect the installed local runtime, interpreter, native capabilities, and existing provider configuration. The ordinary create flow must not require an API URL, command, extra arguments, or environment variables. Expose an explicit custom-connection path only when requested. Remove the legacy-local option from new-agent selection while preserving historical configurations and identifiers. Distinguish detected installation from verified execution readiness; never label an unsupported or failed probe as ready.
 
 **Product RPC path.** Inspect the installed source's method registry/contracts and native UI call patterns. Reuse the actual methods it uses for create/resume, submit, session.branch/compress/interrupt, slash/command, and related operations. `python -m tui_gateway.entry` is a lead from previously inspected source; verify its availability before execution. For additional precise-history or boundary capabilities, write a small, versioned, testable native integration helper in the Rudder Host; do not invent an official RPC name.
 

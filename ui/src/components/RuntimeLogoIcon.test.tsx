@@ -45,7 +45,7 @@ function sha256ForPublicAsset(src: string) {
 }
 
 describe("RuntimeLogoIcon", () => {
-  it("renders original brand assets for every enabled local runtime shown in the adapter menu", () => {
+  it("covers every enabled runtime and preserves original CLI brand assets", () => {
     const expectedSources = {
       claude_local: "/brands/claude-logo.svg",
       codex_local: "/brands/openai-logo.svg",
@@ -53,7 +53,7 @@ describe("RuntimeLogoIcon", () => {
       cursor: "/brands/cursor-logo.svg",
     };
 
-    expect([...Object.keys(runtimeLogoSources), "opencode_local"].sort()).toEqual([...ENABLED_ADAPTER_TYPES].sort());
+    expect([...Object.keys(runtimeLogoSources), "opencode_local", "hermes_gateway"].sort()).toEqual([...ENABLED_ADAPTER_TYPES].sort());
 
     for (const [runtimeType, expectedSrc] of Object.entries(expectedSources)) {
       const container = render(<RuntimeLogoIcon runtimeType={runtimeType} />);
@@ -72,6 +72,12 @@ describe("RuntimeLogoIcon", () => {
       "/brands/opencode-logo-light-square.svg",
       "/brands/opencode-logo-dark-square.svg",
     ]);
+  });
+
+  it("renders a neutral Hermes icon for local and custom backends", () => {
+    const container = render(<RuntimeLogoIcon runtimeType="hermes_gateway" />);
+    expect(container.querySelector("svg.lucide-bot")).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("uses a display label for pi_local instead of the raw key", () => {

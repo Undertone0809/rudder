@@ -66,9 +66,11 @@ function organizationSkillSourceFallbackLabel(sourceBadge: string) {
 
 function createValuesForAdapterType(
   agentRuntimeType: CreateConfigValues["agentRuntimeType"],
+  hermesConnectionMode: "local" | "custom" = "local",
 ): CreateConfigValues {
   const { agentRuntimeType: _discard, ...defaults } = defaultCreateValues;
   const nextValues: CreateConfigValues = { ...defaults, agentRuntimeType };
+  if (agentRuntimeType === "hermes_gateway") nextValues.hermesConnectionMode = hermesConnectionMode;
   if (agentRuntimeType === "codex_local") {
     nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
     nextValues.thinkingEffort = DEFAULT_CODEX_LOCAL_REASONING_EFFORT;
@@ -90,6 +92,7 @@ export function NewAgent() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const presetAdapterType = searchParams.get("agentRuntimeType");
+  const presetHermesConnectionMode = searchParams.get("hermesConnectionMode") === "custom" ? "custom" : "local";
 
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
@@ -104,6 +107,16 @@ export function NewAgent() {
     queryFn: () => agentsApi.list(selectedOrganizationId!),
     enabled: !!selectedOrganizationId,
   });
+  const { data: runtimeAvailability, isPending: runtimeAvailabilityPending } = useQuery({
+    queryKey: selectedOrganizationId
+      ? queryKeys.agents.adapterAvailability(selectedOrganizationId)
+      : ["agents", "none", "adapter-availability"],
+    queryFn: () => agentsApi.adapterAvailability(selectedOrganizationId!),
+    enabled: Boolean(selectedOrganizationId),
+  });
+  const hermesAvailability = runtimeAvailability?.find((item) => item.agentRuntimeType === "hermes_gateway");
+  const isLocalHermes = configValues.agentRuntimeType === "hermes_gateway"
+    && configValues.hermesConnectionMode !== "custom";
 
   const {
     data: adapterModels,
@@ -176,9 +189,12 @@ export function NewAgent() {
     }
     setConfigValues((prev) => {
       if (prev.agentRuntimeType === requested) return prev;
-      return createValuesForAdapterType(requested as CreateConfigValues["agentRuntimeType"]);
+      return createValuesForAdapterType(
+        requested as CreateConfigValues["agentRuntimeType"],
+        requested === "hermes_gateway" ? presetHermesConnectionMode : "local",
+      );
     });
-  }, [presetAdapterType]);
+  }, [presetAdapterType, presetHermesConnectionMode]);
 
   useEffect(() => {
     const validSkillIds = new Set(selectableOrganizationSkillPickerItems.map((skill) => skill.id));
@@ -208,12 +224,34 @@ export function NewAgent() {
 
   function buildAdapterConfig() {
     const adapter = getUIAdapter(configValues.agentRuntimeType);
-    return adapter.buildAdapterConfig(configValues);
+    const config = adapter.buildAdapterConfig(configValues);
+    if (configValues.agentRuntimeType === "hermes_gateway" && configValues.hermesConnectionMode !== "custom") {
+      if (hermesAvailability?.hermesLocalBackend) {
+        config.hermesChatBackend = hermesAvailability.hermesLocalBackend;
+      }
+      if (hermesAvailability?.hermesProductRpcCapabilityGap) {
+        config.hermesProductRpcCapabilityGap = hermesAvailability.hermesProductRpcCapabilityGap;
+      }
+      if (hermesAvailability?.resolvedCommand) {
+        config.hermesAcpCommand = hermesAvailability.resolvedCommand;
+      }
+    }
+    return config;
   }
 
   function handleSubmit() {
     if (!selectedOrganizationId || !hasLoadedAgents) return;
     setFormError(null);
+    if (isLocalHermes && (runtimeAvailabilityPending || hermesAvailability?.status !== "available")) {
+      setFormError(hermesAvailability?.hint ?? hermesAvailability?.message ?? "Checking local Hermes availability. Try again once the check completes.");
+      return;
+    }
+    if (configValues.agentRuntimeType === "hermes_gateway"
+      && configValues.hermesConnectionMode === "custom"
+      && (!configValues.url.trim() || !configValues.apiKey?.trim())) {
+      setFormError("A custom Hermes API Server needs both its URL and API key. Choose local Hermes to reuse this machine's setup.");
+      return;
+    }
     const trimmedName = name.trim();
     if (!trimmedName) {
       setFormError("Agent name is required.");
@@ -267,6 +305,24 @@ export function NewAgent() {
           Advanced agent configuration
         </p>
       </div>
+
+      {isLocalHermes && (
+        <div
+          data-testid="hermes-local-availability"
+          role={hermesAvailability?.status === "unavailable" ? "alert" : "status"}
+          className={hermesAvailability?.status === "unavailable"
+            ? "rounded-md border border-amber-400/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-100"
+            : "rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"}
+        >
+          {runtimeAvailabilityPending || !hermesAvailability
+            ? "Checking local Hermes installation and setup…"
+            : hermesAvailability.status === "available"
+              ? hermesAvailability.hermesLocalBackend === "acp"
+                ? `Hermes is installed and its local ACP setup check passed. This agent will use ACP; native Product RPC is unavailable (${hermesAvailability.hermesProductRpcCapabilityGap ?? "capability gap"}).`
+                : "Hermes is installed and its local ACP setup check passed. Native Product RPC prerequisites were detected; this agent will use that backend."
+              : `${hermesAvailability.message} ${hermesAvailability.hint ?? ""}`}
+        </div>
+      )}
 
       <div
         data-testid="new-agent-form"
@@ -438,7 +494,8 @@ export function NewAgent() {
             </Button>
             <Button
               size="sm"
-              disabled={createAgent.isPending || !hasLoadedAgents}
+              disabled={createAgent.isPending || !hasLoadedAgents
+                || (isLocalHermes && (runtimeAvailabilityPending || hermesAvailability?.status !== "available"))}
               onClick={handleSubmit}
             >
               {createAgent.isPending ? "Creating…" : "Create agent"}
