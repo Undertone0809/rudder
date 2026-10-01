@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 function PreviewHarness() {
-  const { openImagePreview } = useImagePreview();
+  const { closeImagePreviewIfSource, openImagePreview } = useImagePreview();
   const navigate = useNavigate();
   return (
     <>
@@ -61,6 +61,10 @@ function PreviewHarness() {
         Second
       </button>
       <button type="button" onClick={() => navigate("/another-route")}>Change route</button>
+      <button type="button" onClick={() => openImagePreview({ alt: "First blob", name: "first.png", src: "blob:first", testId: "first-blob-preview" })}>Open first blob</button>
+      <button type="button" onClick={() => openImagePreview({ alt: "Second blob", name: "second.png", src: "blob:second", testId: "second-blob-preview" })}>Open second blob</button>
+      <button type="button" onClick={() => closeImagePreviewIfSource("blob:first")}>Release first blob</button>
+      <button type="button" onClick={() => closeImagePreviewIfSource("blob:second")}>Release second blob</button>
     </>
   );
 }
@@ -125,5 +129,32 @@ describe("ImagePreviewProvider", () => {
 
     act(() => routeButton?.click());
     expect(document.querySelector("[data-testid='first-preview']")).toBeNull();
+  });
+
+  it("closes only the preview whose source is being released", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanup = () => act(() => root.unmount());
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/chat/one"]}>
+          <ImagePreviewProvider>
+            <PreviewHarness />
+          </ImagePreviewProvider>
+        </MemoryRouter>,
+      );
+    });
+    const click = (label: string) => {
+      const button = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === label);
+      act(() => button?.click());
+    };
+    click("Open first blob");
+    expect(document.querySelector("[data-testid='first-blob-preview']")).toBeTruthy();
+    click("Open second blob");
+    click("Release first blob");
+    expect(document.querySelector("[data-testid='second-blob-preview']")).toBeTruthy();
+    click("Release second blob");
+    expect(document.querySelector("[data-testid='second-blob-preview']")).toBeNull();
   });
 });

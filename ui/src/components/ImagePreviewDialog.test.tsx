@@ -35,6 +35,29 @@ afterEach(() => {
 });
 
 describe("ImagePreviewDialog", () => {
+  it("removes Copy and Download actions when a released source closes the preview", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    cleanup = () => act(() => root.unmount());
+    const renderPreview = (src: string | null) => root.render(
+      <ImagePreviewDialog
+        preview={src ? { alt: "Local image", name: "local.png", src } : null}
+        onOpenChange={() => undefined}
+        testId="local-image-preview"
+        titleFallback="Image preview"
+      />,
+    );
+
+    await act(async () => { renderPreview("blob:local-image"); });
+    expect(container.querySelector('[title="Copy Image"]')).toBeTruthy();
+    expect(container.querySelector('[title="Download Image"]')).toBeTruthy();
+    await act(async () => { renderPreview(null); });
+    expect(container.querySelector('[title="Copy Image"]')).toBeNull();
+    expect(container.querySelector('[title="Download Image"]')).toBeNull();
+    expect(container.querySelector('[data-testid="local-image-preview"]')).toBeNull();
+  });
+
   it("keeps Desktop close and action controls separate when image loading fails", async () => {
     let failImageLoad: (() => void) | null = null;
     class FailingImage {
