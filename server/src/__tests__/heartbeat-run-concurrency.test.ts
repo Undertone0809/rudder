@@ -59,6 +59,9 @@ const mockRuntimeAdapter = vi.hoisted(() => {
     pendingExecutionCount() {
       return pendingExecutions.size;
     },
+    pendingExecutionIds() {
+      return [...pendingExecutions.keys()];
+    },
     adapter: {
       type: "codex_local",
       sessionCodec: {
@@ -2164,6 +2167,7 @@ describe("heartbeat run concurrency", () => {
       runtimeConfig: {},
       permissions: {},
     });
+    testAgentIds.add(newAgentId);
 
     const issueId = await seedIssueFixture({ orgId, agentId: oldAgentId });
     const activeRunId = await seedLiveIssueExecution({ orgId, agentId: oldAgentId, issueId });
@@ -2214,6 +2218,12 @@ describe("heartbeat run concurrency", () => {
       runId: null,
       payload: { issueId, mutation: "update" },
     });
+
+    // This fixture deliberately leaves an active old-owner run. Retire its
+    // deferred new-owner wake before later tests reap orphaned runs globally.
+    await db.update(agentWakeupRequests)
+      .set({ status: "cancelled" })
+      .where(eq(agentWakeupRequests.id, deferredWakeups[0]!.id));
   });
 
   it("keeps a deferred force-fresh wake fresh when issue execution is promoted", async () => {
@@ -2282,6 +2292,24 @@ describe("heartbeat run concurrency", () => {
       sessionId: null,
       sessionDisplayId: null,
       sessionParams: null,
+    });
+
+    mockRuntimeAdapter.completeRun(promoted.id);
+    await waitForCondition(async () => {
+      const [completed] = await db
+        .select({
+          status: heartbeatRuns.status,
+          executionOwnerToken: heartbeatRuns.executionOwnerToken,
+          terminalEffectsPending: heartbeatRuns.terminalEffectsPending,
+          processExitedAt: heartbeatRuns.processExitedAt,
+        })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, promoted.id));
+      return completed?.status === "succeeded"
+        && completed.executionOwnerToken === null
+        && completed.terminalEffectsPending === false
+        && completed.processExitedAt !== null
+        && !mockRuntimeAdapter.pendingExecutionIds().includes(promoted.id);
     });
   });
 
