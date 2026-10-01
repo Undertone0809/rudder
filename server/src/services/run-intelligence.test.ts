@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildRuntimeProviderProfileSnapshot } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
+import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import {
   createHistoricalRunRuntimeProviderCapabilityResolver,
   resolveHistoricalRunRuntimeProfile,
@@ -12,6 +13,8 @@ function profileRun(overrides: Partial<HistoricalRunProfileRun> = {}): Historica
   return {
     id: "run-1",
     orgId: "org-1",
+    agentId: "agent-1",
+    agentWorkspaceKey: null,
     agentRuntimeType: "process",
     agentRuntimeConfig: { command: "current-command" },
     runtimeConfig: { heartbeat: { wakeOnDemand: true } },
@@ -229,6 +232,58 @@ describe("run intelligence historical transcript profiles", () => {
     expect(rejected).toMatchObject({
       availability: "incompatible", revision: "session-profile-mismatch", items: [],
     });
+  });
+  it("recovers a Hermes managed workspace without rudderWorkspace only from matching server-owned binding and agent key", async () => {
+    const orgId = "1658fedb-12d3-42ed-acc5-402129cd8e22";
+    const agentId = "61775408-e020-4724-b2b3-6b1b9b3a792a";
+    const managedCwd = resolveDefaultAgentWorkspaceDir(orgId, "hermes-public-typed-mcp--61775408");
+    const run = profileRun({
+      id: "d04d1ad7-bda9-44e0-96d8-4cff4d46d964", orgId, agentId,
+      agentWorkspaceKey: "hermes-public-typed-mcp--61775408",
+      agentRuntimeType: "hermes_gateway",
+      agentRuntimeConfig: { hermesAcpCommand: "hermes", hermesPythonCommand: "/installed/python",
+        hermesSourcePath: "/installed/hermes", hermesHome: "/managed/hermes-home",
+        hermesProviderVersion: "0.21.0" },
+      contextSnapshot: { runtimeBindingId: "binding-1", runtimeProviderProfile:
+        buildRuntimeProviderProfileSnapshot("hermes_gateway", {
+          cwd: "/old/source-checkout", hermesAcpCommand: "hermes",
+          hermesPythonCommand: "/installed/python", hermesSourcePath: "/installed/hermes",
+          hermesHome: "/managed/hermes-home", hermesProviderVersion: "0.21.0",
+        }) },
+      sessionParamsAfterJson: { cwd: managedCwd, workspaceBindingId: managedCwd },
+    });
+    expect(resolveHistoricalRunRuntimeProfile(run, []).cwd).toBe("/old/source-checkout");
+    const bindingRecord = { id: "binding-1", orgId, agentId, runtimeType: "hermes_gateway",
+      workspaceBindingId: managedCwd };
+    const readerInput = { orgId, run: { id: run.id, orgId, sessionParamsAfterJson: run.sessionParamsAfterJson },
+      binding: bindingRecord, span: { runId: run.id, orgId, bindingId: bindingRecord.id,
+        segmentId: "segment-1" }, segment: { id: "segment-1", orgId, bindingId: bindingRecord.id } };
+    const providerBinding = { ...binding, id: bindingRecord.id, orgId, workspaceBindingId: managedCwd };
+    const session = { sessionId: "20261001_133837_0a2544", sessionDisplayId: "Hermes",
+      sessionParams: { sessionId: "20261001_133837_0a2544", hermesSessionId: "20261001_133837_0a2544",
+        transport: "hermes-tui-gateway-stdio", profileHostId: binding.hostId,
+        profileId: binding.profileId, profileOrgId: orgId,
+        capabilityRevision: binding.capabilityRevision, hermesProviderVersion: "0.21.0",
+        hermesPythonCommand: "/installed/python", hermesSourcePath: "/installed/hermes",
+        hermesHome: "/managed/hermes-home", cwd: managedCwd } };
+    const resolver = createHistoricalRunRuntimeProviderCapabilityResolver(run, []);
+    const context = { session, readerInput: readerInput as NonNullable<RuntimeProviderCapabilityResolverContext["readerInput"]> };
+    const resolved = resolver("hermes_gateway", providerBinding, context);
+    expect(resolved).toMatchObject({ profileResolved: true,
+      adapter: { transcript: { evidence: { status: "supported", profileBound: true } } } });
+    const readRange = resolved && "adapter" in resolved ? resolved.adapter.transcript?.readRange : null;
+    expect((await readRange!({ runtimeType: "hermes_gateway", binding: providerBinding,
+      session: { ...session, sessionParams: { ...session.sessionParams, cwd: "/forged/cwd" } } })))
+      .toMatchObject({ availability: "incompatible", revision: "session-profile-mismatch", items: [] });
+    for (const invalid of [
+      { ...context, readerInput: { ...readerInput, orgId: "other-org" } },
+      { ...context, readerInput: { ...readerInput, binding: { ...bindingRecord, agentId: "other-agent" } } },
+      { ...context, readerInput: { ...readerInput, binding: { ...bindingRecord, workspaceBindingId: "/forged/cwd" } } },
+      { ...context, readerInput: { ...readerInput, run: { ...readerInput.run,
+        sessionParamsAfterJson: { cwd: "/forged/cwd" } } } },
+    ]) {
+      expect(resolver("hermes_gateway", providerBinding, invalid as unknown as RuntimeProviderCapabilityResolverContext)).toBeNull();
+    }
   });
   it("ignores a prepared profile from a different runtime", () => {
     const profile = resolveHistoricalRunRuntimeProfile(profileRun({
