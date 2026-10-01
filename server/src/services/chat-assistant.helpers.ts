@@ -288,9 +288,9 @@ export function buildPrompt(
   const conversationContext = {
     conversation: {
         id: input.conversation.id,
-        title: input.conversation.title,
+        ...(!options.nativeContinuation ? { title: input.conversation.title } : {}),
         status: input.conversation.status,
-        summary: input.conversation.summary,
+        ...(!options.nativeContinuation ? { summary: input.conversation.summary } : {}),
         planMode: input.conversation.planMode,
         issueCreationMode: input.conversation.issueCreationMode,
         preferredAgentId: input.conversation.preferredAgentId,
