@@ -13,9 +13,10 @@ import {
   windowsTerminateInstancesCommand,
 } from "./local-app-windows-processes.mjs";
 
-function createHelperFixture() {
+function createHelperFixture({ requestTimeoutMs = 10 } = {}) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
+  let spawnArguments;
   const child = Object.assign(new EventEmitter(), {
     pid: 4321,
     exitCode: null,
@@ -26,16 +27,31 @@ function createHelperFixture() {
     unref() {},
   });
   const controller = createWindowsProcessController({
-    spawnProcess: () => child,
+    spawnProcess: (...args) => {
+      spawnArguments = args;
+      return child;
+    },
     isProcessAlive: () => true,
-    requestTimeoutMs: 10,
+    requestTimeoutMs,
   });
   stdout.write('{"id":0,"ok":true}\n');
-  return { child, controller, stdout, stderr };
+  return { child, controller, stdout, stderr, spawnArguments };
 }
 
 async function nextImmediate() {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function withCaptureDiagnostics(run) {
+  const name = "RUDDER_WINDOWS_PROCESS_HELPER_CAPTURE_DIAGNOSTICS";
+  const previous = process.env[name];
+  process.env[name] = "1";
+  try {
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+  }
 }
 
 describe("Windows Local App process-instance authority", () => {
@@ -57,6 +73,57 @@ describe("Windows Local App process-instance authority", () => {
     child.emit("exit", 0, null);
     stdout.end();
     stderr.end();
+  });
+
+  it("keeps opt-in capture phase markers off the JSONL response channel", async () => {
+    await withCaptureDiagnostics(async () => {
+      const { child, controller, stdout, stderr, spawnArguments } = createHelperFixture({ requestTimeoutMs: 500 });
+      const helperScript = spawnArguments[1][3];
+      expect(helperScript).toContain("$env:RUDDER_WINDOWS_PROCESS_HELPER_CAPTURE_DIAGNOSTICS -eq '1'");
+      expect(helperScript).toContain("[Console]::Error.WriteLine(");
+      expect(helperScript).not.toContain('[Console]::Out.WriteLine("RUDDER_WINDOWS_CAPTURE_PHASE');
+      for (const phase of [
+        "handler_enter",
+        "process_enumeration_start",
+        "process_enumeration_end",
+        "response_write_start",
+        "response_write_end",
+      ]) {
+        expect(helperScript).toContain(`Write-RudderCapturePhase '${phase}'`);
+      }
+
+      const request = controller.request("capture", { pid: 76543 });
+      await nextImmediate();
+      stderr.write("RUDDER_WINDOWS_CAPTURE_PHASE id=1 phase=handler_enter\r\n");
+      stdout.write('{"id":1,"ok":true,"result":{"pid":76543,"createdAt":"134309052500356063"}}\n');
+      await expect(request).resolves.toEqual({ pid: 76543, createdAt: "134309052500356063" });
+
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      stdout.end();
+      stderr.end();
+    });
+  });
+
+  it("reports the last allowlisted opt-in capture phase on timeout", async () => {
+    await withCaptureDiagnostics(async () => {
+      const { child, controller, stdout, stderr } = createHelperFixture({ requestTimeoutMs: 50 });
+      const request = controller.request("capture", { pid: 76543 });
+      await nextImmediate();
+      stderr.write("RUDDER_WINDOWS_CAPTURE_PHASE id=1 phase=handler_enter\r\n");
+      stderr.write("RUDDER_WINDOWS_CAPTURE_PHASE id=1 phase=process_enumeration_start\r\n");
+      stderr.write(`${"x".repeat(9_000)}PRIVATE_COMMAND_AND_PAYLOAD`);
+
+      const error = await request.then(() => null, (reason) => reason);
+      expect(error.message).toContain("capturePhase=process_enumeration_start");
+      expect(error.message).not.toContain("PRIVATE_COMMAND_AND_PAYLOAD");
+      expect(error.message).toMatch(/stderr=redacted:8192B:sha256=[a-f0-9]{12}/);
+
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      stdout.end();
+      stderr.end();
+    });
   });
 
   it("uses the same full-precision FILETIME token for capture and snapshots", () => {
