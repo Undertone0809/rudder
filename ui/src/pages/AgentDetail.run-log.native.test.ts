@@ -147,4 +147,14 @@ describe("Hermes native Run Detail projection", () => {
     expect(content?.kind === "tool_result" && JSON.parse(content.content)).toMatchObject({ name: "Safe name" });
     expect(content?.kind === "tool_result" && JSON.parse(content.content)).not.toHaveProperty("urlKey");
   });
+
+  it("redacts an agent identity wrapper even when the row and call metadata claim another tool", () => {
+    const wrapper = agentMeWrapper({ id: "agt_61775408", orgId: "1658fedb12d3", shortRef: "agt_61775408", name: "Hidden raw name" });
+    const projected = projectNativeRunDetailEntries([
+      native({ kind: "assistant", ts, toolCalls: [{ id: "call-3", function: { name: "tool_describe", arguments: "{}" } }] }),
+      native({ kind: "hermes:db:tool", ts, toolCallId: "call-3", toolName: "tool_describe", text: wrapper }),
+    ], identity);
+    expect(projected.find((entry) => entry.kind === "tool_result")).toHaveProperty("content", "Rudder agent identity could not be verified. Inspect the original result in Raw.");
+    expect(JSON.stringify(projected)).not.toContain("Hidden raw name");
+  });
 });
