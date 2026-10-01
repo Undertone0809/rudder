@@ -7,6 +7,7 @@ import {
   chatGenerations,
   chatMessageTranscriptEntries,
   createDb,
+  heartbeatRunAttempts,
   heartbeatRuns,
   nativeSegments,
   runRuntimeSpans,
@@ -32,7 +33,8 @@ async function runsForConversation(conversationId: string) {
 
 async function nativeForkIntentForConversation(conversationId: string) {
   const [binding] = await db.select().from(runtimeBindings)
-    .where(eq(runtimeBindings.conversationId, conversationId)).limit(1);
+    .where(eq(runtimeBindings.conversationId, conversationId))
+    .orderBy(desc(runtimeBindings.bindingEpoch)).limit(1);
   expect(binding?.currentSegmentId).toBeTruthy();
   const [segment] = await db.select().from(nativeSegments)
     .where(eq(nativeSegments.id, binding!.currentSegmentId!)).limit(1);
@@ -158,7 +160,36 @@ async function seedDescriptorOnlyTerminalGeneration(conversationId: string, runI
   expect(generation).toBeTruthy();
 
   const now = new Date();
-  await db.transaction(async (tx) => {
+  const submissionFixture = await db.transaction(async (tx) => {
+    const [attempt] = await tx.select().from(heartbeatRunAttempts)
+      .where(eq(heartbeatRunAttempts.runId, runId))
+      .orderBy(desc(heartbeatRunAttempts.attemptIndex)).limit(1);
+    expect(attempt).toBeTruthy();
+    const checkpoint = attempt!.checkpointJson ?? {};
+    const submission = checkpoint.unifiedSubmission as Record<string, unknown> | undefined;
+    expect(submission?.key).toEqual(expect.any(String));
+    // This seeds a known-unsubmitted migration fixture, not reconciliation
+    // evidence for the real process-loss Run. Its authoritative attempt must
+    // agree with the legacy Run/Generation fields seeded below.
+    await tx.update(heartbeatRunAttempts).set({
+      submissionPhase: "pre_submission",
+      providerThreadId: null,
+      providerTurnId: null,
+      sessionParamsJson: null,
+      sessionDisplayId: null,
+      checkpointJson: {
+        ...checkpoint,
+        unifiedSubmission: {
+          ...submission,
+          state: "rejected",
+          phase: "pre_submission",
+          retry: "allowed",
+          providerThreadId: null,
+          providerTurnId: null,
+          reason: "Explicit E2E fixture: provider submission did not occur",
+        },
+      },
+    }).where(eq(heartbeatRunAttempts.id, attempt!.id));
     await tx.update(nativeSegments).set({
       state: "pending",
       sealedAt: null,
@@ -187,9 +218,17 @@ async function seedDescriptorOnlyTerminalGeneration(conversationId: string, runI
       runtimeTerminalAt: now,
       updatedAt: now,
     }).where(eq(chatGenerations.id, generation!.id));
+    return {
+      synthetic: true,
+      observedSubmissionState: submission!.state,
+      seededSubmissionState: "rejected",
+      seededSubmissionPhase: "pre_submission",
+      seededRetry: "allowed",
+      realProviderReconciliation: false,
+    };
   });
 
-  return { bindingId: binding!.id, segmentId: segment!.id, generationId: generation!.id };
+  return { bindingId: binding!.id, segmentId: segment!.id, generationId: generation!.id, submissionFixture };
 }
 
 test("Claude Side Chat forks the latest completed assistant head on its first real prompt", async ({ page }) => {
@@ -661,7 +700,7 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   await driftAnchor.locator('[data-testid="chat-message-actions-trigger"]:visible').click();
   await page.getByTestId("chat-message-actions-menu").getByRole("menuitem", { name: "Open Side Chat" }).click();
   const driftPanel = page.getByTestId("chat-side-panel");
-  await expect(driftPanel.getByTestId("side-chat-panel-view")).toBeVisible();
+  await expect(driftPanel.locator('[data-testid="side-chat-panel-view"]:visible')).toBeVisible();
   const driftLossPrompt = "RUDDER_E2E_PROCESS_LOSS: source changes before the next Claude prompt";
   const driftCreatePromise = page.waitForResponse((response) => (
     response.request().method() === "POST" && response.url().includes(`/api/chats/${parentId}/side-chats`)
@@ -709,9 +748,9 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
     },
   ].map((record) => JSON.stringify(record)).join("\n")}\n`);
 
-  const driftHandoffPrompt = "Continue from the saved answer without forking a drifted Claude head.";
-  await sendSideChatPrompt(page, driftPanel, driftHandoffPrompt, "Claude native reply 1");
-  await expect(driftPanel.getByTestId("side-chat-context-handoff")).toBeVisible();
+  const driftRetryPrompt = "Continue exactly from the saved assistant boundary, excluding the external parent tail.";
+  await sendSideChatPrompt(page, driftPanel, driftRetryPrompt, "Claude native fork reply");
+  await expect(driftPanel.getByTestId("side-chat-context-handoff")).toHaveCount(0);
   const driftRuns = await runsForConversation(driftChild.id);
   expect(driftRuns).toHaveLength(2);
   expect(driftRuns[0]).toMatchObject({ status: "failed", errorCode: "claude_fork_unsubmitted" });
@@ -719,21 +758,30 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
   const [driftBinding] = await db.select().from(runtimeBindings)
     .where(eq(runtimeBindings.conversationId, driftChild.id))
     .orderBy(desc(runtimeBindings.bindingEpoch)).limit(1);
-  expect(driftBinding?.continuity).toBe("context_handoff");
+  expect(driftBinding?.continuity).toBe("native");
+  const driftIntent = await nativeForkIntentForConversation(driftChild.id);
+  expect(driftIntent).toMatchObject({
+    status: "accepted",
+    source: { sourceBoundaryRef: parentHeadUuid },
+  });
+  const driftChildPath = String(driftRuns[1]!.sessionParamsAfterJson?.sessionFilePath ?? "");
+  expect(driftChildPath).toBeTruthy();
+  const driftChildRecords = await readJsonl(driftChildPath);
+  expect(driftChildRecords.some((record) => record.forkedFrom?.messageUuid === driftAssistantUuid)).toBe(false);
+  expect(driftChildRecords.some((record) => messageText(record).includes("External Claude answer advanced"))).toBe(false);
   readerEvidence.push(await expectCompleteTranscript(
     page,
     driftRuns[1]!.id,
-    driftHandoffPrompt,
-    "Claude native reply 1",
-    "legacy",
+    driftRetryPrompt,
+    "Claude native fork reply",
   ));
   const finalInvocations = await readJsonl(invocationPath);
   expect(finalInvocations).toHaveLength(9);
   expect(finalInvocations[8]).toMatchObject({
-    resumedSessionId: null,
+    resumedSessionId: driftRuns[1]!.sessionIdAfter,
     fork: false,
   });
-  expect(finalInvocations[8]!.inputText).toContain(driftHandoffPrompt);
+  expect(finalInvocations[8]!.inputText).toContain(driftRetryPrompt);
   expect(finalInvocations[8]!.args).not.toContain("--fork-session");
 
   console.log("CLAUDE_NATIVE_FORK_E2E_EVIDENCE", JSON.stringify({
@@ -754,8 +802,8 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
         outcome: "historical_exact_fork_then_same_child_followup",
       },
       { id: headChild.id, sourceMessageId: latestAssistantMessageId, sourceSpanId: secondParentSpanId, outcome: "current_head_native_fork" },
-      { id: recoveryChild.id, sourceMessageId: latestAssistantMessageId, outcome: "process_loss_then_native_retry" },
-      { id: driftChild.id, sourceMessageId: latestAssistantMessageId, outcome: "process_loss_then_head_drift_handoff" },
+      { id: recoveryChild.id, sourceMessageId: latestAssistantMessageId, outcome: "fixture_seeded_unsubmitted_then_native_retry" },
+      { id: driftChild.id, sourceMessageId: latestAssistantMessageId, outcome: "fixture_seeded_unsubmitted_then_exact_historical_retry" },
     ],
     runs: [...parentRuns, ...childRuns, ...headRuns, ...recoveryRuns, ...driftRuns].map((run) => ({
       id: run.id,
@@ -763,7 +811,11 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
       status: run.status,
       sessionIdAfter: run.sessionIdAfter,
     })),
-    readers: readerEvidence,
+    readers: readerEvidence.map(({ userMessages, assistantMessages, ...metadata }) => ({
+      ...metadata,
+      userMessageCount: userMessages.length,
+      assistantMessageCount: assistantMessages.length,
+    })),
     keepReload: { messengerVisible: true, childReplyRestored: true, sourceLinkRestored: true },
     historicalHead: {
       selectedMessageId: firstAssistantMessageId,
@@ -779,18 +831,24 @@ test("Claude Side Chat forks the latest completed assistant head on its first re
       followupDidNotForkAgain: true,
       sourceSessionUnchanged: true,
     },
-    processLossRecovery: {
+    fixtureSeededUnsubmittedRetry: {
       failedRunId: lostRun.id,
+      observedPreSeedErrorCode: lostRun.errorCode,
+      submissionFixture: descriptorOnly.submissionFixture,
       terminalGenerationId: descriptorOnly.generationId,
       retriedRunId: recoveryRuns[1]!.id,
       retryContinuity: "native",
       descriptorOnlySegment: descriptorOnly.segmentId,
     },
-    sourceHeadDriftRecovery: {
+    fixtureSeededUnsubmittedHeadDrift: {
       failedRunId: driftLostRun.id,
+      observedPreSeedErrorCode: driftLostRun.errorCode,
+      submissionFixture: driftDescriptorOnly.submissionFixture,
       terminalGenerationId: driftDescriptorOnly.generationId,
       retriedRunId: driftRuns[1]!.id,
-      continuity: "context_handoff",
+      continuity: "native",
+      selectedBoundary: parentHeadUuid,
+      externalTailExcluded: true,
       driftAssistantUuid,
     },
   }));
