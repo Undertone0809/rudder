@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   readNativeWorkspaceManifest,
+  resolveNativeWorkspaceManifestBinary,
   stopNativeWorkspaceManifestWatchersForTests,
 } from "../services/workspace-manifest-native.js";
 
@@ -55,10 +56,7 @@ describe("native workspace manifest public command", () => {
     process.env.RUDDER_HOME = fixture;
     process.env.RUDDER_INSTANCE_ID = "manifest-test";
     process.env.RUDDER_NATIVE_MODE = "required";
-    process.env.RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH ??= path.resolve(
-      process.cwd(),
-      "native/target/debug/rudder-native",
-    );
+    process.env.RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH ??= resolveNativeWorkspaceManifestBinary();
 
     const initial = await readNativeWorkspaceManifest(workspace);
     expect(initial?.map((entry) => entry.path)).toContain("alpha.txt");
