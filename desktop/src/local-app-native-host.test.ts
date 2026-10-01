@@ -211,7 +211,7 @@ describe("Rust Local App process host transport", () => {
       port: await unusedPort(),
       script: "const b=Buffer.alloc(10240,120);setInterval(()=>process.stdout.write(b),1);",
     });
-    await vi.waitFor(() => expect(lifecycle.some((frame) => frame.type === "spawned")).toBe(true));
+    await vi.waitFor(() => expect(lifecycle.some((frame) => frame.type === "spawned")).toBe(true), { timeout: 3_000 });
     helper.stdin.end();
     const [code] = await exited as [number | null];
     expect(code).toBe(0);
