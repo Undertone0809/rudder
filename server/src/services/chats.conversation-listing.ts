@@ -9,7 +9,7 @@ import {
   runtimeBindings,
 } from "@rudderhq/db";
 import { shortRefFor, type ChatRuntimeContinuity } from "@rudderhq/shared";
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import {
   listActiveChatGenerationIds,
   listPendingChatProposalConversationIds,
@@ -26,6 +26,7 @@ import {
   visibleIncomingMessageSql,
 } from "./chats.helpers.js";
 import type { ConversationSourceMetadata, ConversationSummaryCursor } from "./chats.types.js";
+import { createConversationUserStateInitializer } from "./chats.user-state-initialization.js";
 
 type ConversationRow = typeof chatConversations.$inferSelect;
 type ConversationUserStateRow = typeof chatConversationUserStates.$inferSelect;
@@ -63,33 +64,7 @@ async function listRuntimeContinuityByConversationId(
 }
 
 export function createChatConversationListingService(db: Db) {
-  async function ensureConversationUserStates(rows: ConversationRow[], userId: string) {
-    if (rows.length === 0) return;
-    const now = new Date();
-    await db.transaction(async (tx) => {
-      // Listing snapshots may outlive a concurrent conversation deletion.
-      // Lock surviving parents through the insert, rather than catching FK
-      // errors or dropping state initialization for the rest of the batch.
-      const parents = await tx.select({ id: chatConversations.id, orgId: chatConversations.orgId }).from(chatConversations)
-        .where(or(...rows.map((row) => and(
-          eq(chatConversations.orgId, row.orgId), eq(chatConversations.id, row.id),
-        )))).orderBy(asc(chatConversations.id)).for("key share");
-      const parentIds = new Set(parents.map((row) => `${row.orgId}:${row.id}`));
-      const survivingRows = rows.filter((row) => parentIds.has(`${row.orgId}:${row.id}`));
-      if (!survivingRows.length) return;
-      await tx.insert(chatConversationUserStates)
-        .values(
-          survivingRows.map((row) => ({
-            orgId: row.orgId,
-            conversationId: row.id,
-            userId,
-            lastReadAt: row.lastMessageAt ?? row.updatedAt ?? row.createdAt,
-            updatedAt: now,
-          })),
-        )
-        .onConflictDoNothing();
-    });
-  }
+  const ensureConversationUserStates = createConversationUserStateInitializer(db);
 
   async function listConversationUserStates(orgId: string, userId: string, conversationIds: string[]) {
     if (conversationIds.length === 0) return new Map<string, ConversationUserStateRow>();

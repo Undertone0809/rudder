@@ -315,7 +315,7 @@ describe("messengerService and issue follows", () => {
     expect(await db.select().from(chatConversationUserStates)).toEqual([]);
   });
 
-  it("hydrates conversation listing safely when deletion commits while parent locking waits", async () => {
+  it("hydrates public conversation summaries when deletion commits while parent locking waits", async () => {
     const orgId = randomUUID();
     await db.insert(organizations).values({ id: orgId, name: "Listing lock race", urlKey: `listing-${orgId}`, issuePrefix: "LCK" });
     const rows = await db.insert(chatConversations).values([
@@ -332,7 +332,8 @@ describe("messengerService and issue follows", () => {
       await release;
     });
     const deletingPid = await deleted;
-    const hydration = createChatConversationListingService(db).hydrateConversations(rows, "race-user");
+    const listing = chatService(db);
+    const hydration = listing.listSummariesByIds(orgId, rows.map((row) => row.id), "race-user");
     try {
       // Observe a real DB lock wait instead of depending on a timer or ordering
       // two uncoordinated operations and hoping the race happened.
@@ -350,6 +351,23 @@ describe("messengerService and issue follows", () => {
     const states = await db.select().from(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId));
     expect(states).toHaveLength(1);
     expect(states[0]).toMatchObject({ conversationId: rows[1].id, userId: "race-user" });
+    const pinnedAt = new Date();
+    await db.update(chatConversationUserStates).set({ pinnedAt }).where(eq(chatConversationUserStates.id, states[0].id));
+    await listing.listSummariesByIds(orgId, [rows[1].id], "race-user");
+    expect((await db.select().from(chatConversationUserStates).where(eq(chatConversationUserStates.orgId, orgId)))[0])
+      .toMatchObject({ id: states[0].id, pinnedAt, lastReadAt: states[0].lastReadAt });
+  });
+
+  it("keeps public conversation listing initialization organization scoped", async () => {
+    const orgId = randomUUID();
+    const otherOrgId = randomUUID();
+    await db.insert(organizations).values([
+      { id: orgId, name: "Listing owner", urlKey: `listing-${orgId}`, issuePrefix: "LOW" },
+      { id: otherOrgId, name: "Other owner", urlKey: `listing-${otherOrgId}`, issuePrefix: "OTH" },
+    ]);
+    const [row] = await db.insert(chatConversations).values({ orgId, title: "Owned chat" }).returning();
+    await expect(chatService(db).listSummariesByIds(otherOrgId, [row.id], "listing-user")).resolves.toEqual([]);
+    expect(await db.select().from(chatConversationUserStates)).toEqual([]);
   });
 
   it("records human chat creation separately from the initial work start", async () => {

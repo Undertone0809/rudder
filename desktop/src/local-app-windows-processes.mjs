@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -86,8 +87,38 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 
 let defaultController;
 
-function createWindowsProcessController(options = {}) {
-  const child = spawn(powershellPath(options.systemRoot), [
+function isWindowsHelperProcessAlive(pid) {
+  if (!Number.isSafeInteger(pid)) return null;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    return null;
+  }
+}
+
+function describeWindowsHelperStderr(stderr) {
+  if (!stderr) return "empty";
+  const digest = createHash("sha256").update(stderr).digest("hex").slice(0, 12);
+  return `redacted:${Buffer.byteLength(stderr, "utf8")}B:sha256=${digest}`;
+}
+
+function describeWindowsHelperState(child, isProcessAlive) {
+  if (child.exitCode !== null || child.signalCode !== null) return "exited";
+  try {
+    const alive = isProcessAlive(child.pid);
+    return alive === true ? "alive" : alive === false ? "not-alive" : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+export function createWindowsProcessController(options = {}) {
+  const spawnProcess = options.spawnProcess ?? spawn;
+  const isProcessAlive = options.isProcessAlive ?? isWindowsHelperProcessAlive;
+  const child = spawnProcess(powershellPath(options.systemRoot), [
     "-NoProfile",
     "-NonInteractive",
     "-Command",
@@ -153,8 +184,11 @@ function createWindowsProcessController(options = {}) {
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
           pending.delete(id);
-          reject(new Error("Windows process helper request timed out"));
-        }, WINDOWS_HELPER_REQUEST_TIMEOUT_MS);
+          const helperState = describeWindowsHelperState(child, isProcessAlive);
+          reject(new Error(
+            `Windows process helper request timed out (type=${type}, id=${id}, helperPid=${child.pid ?? "unknown"}, helperState=${helperState}, stderr=${describeWindowsHelperStderr(stderr)})`,
+          ));
+        }, options.requestTimeoutMs ?? WINDOWS_HELPER_REQUEST_TIMEOUT_MS);
         pending.set(id, { resolve, reject, timeout });
         child.stdin.write(`${JSON.stringify({ id, type, ...payload })}\n`);
       });

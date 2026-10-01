@@ -572,7 +572,7 @@ jobs:
             server/src/__tests__/workspace-file-native.test.ts \
             server/src/__tests__/workspace-manifest-native.test.ts \
             server/src/__tests__/workspace-backups.test.ts
-          RUDDER_NATIVE_MODE=node pnpm exec vitest run desktop/src/local-apps-runtime.test.ts
+          RUDDER_NATIVE_MODE=node pnpm exec vitest run desktop/src/local-apps-runtime.test.ts desktop/src/local-app-windows-processes.test.mjs
 
   server-foundation-artifacts:
     name: Server foundation artifact ${{ matrix.target }} (${{ matrix.build_mode }})

@@ -347,7 +347,7 @@ test("forks a chat from a selected message and groups the fork family in Messeng
   await sourceMessageLink.click();
   await expect(page).toHaveURL(new RegExp(`/messenger/chat/${sourceConversationId}`));
   await expect(sourceAssistant).toContainText("Middle branch point");
-  await expect(sourceAssistant.locator('[data-message-highlight-target="true"]')).toHaveClass(/chat-message-jump-highlight/);
+  await expect(sourceAssistant.locator("[data-message-highlight-target='true']")).toHaveClass(/chat-message-jump-highlight/);
   await expectMessageInScrollViewport(page, sourceMessageIds[1]!);
   await expectMessageJumpHighlightStylesTargetBlock(page, sourceMessageIds[1]!);
   await expect(page).toHaveURL(new RegExp(`/${organization.urlKey}/messenger/chat/${sourceConversationId}$`));

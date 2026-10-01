@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
 import { agents, createDb, heartbeatRuns } from "../../packages/db/src/index.ts";
@@ -48,6 +48,44 @@ test("a stored Gemini CLI Agent Run fails without spawning and the Agent can be 
     agentRuntimeType: agents.agentRuntimeType,
   }).from(agents).where(eq(agents.id, agent.id));
   expect(storedAgent?.agentRuntimeType).toBe("gemini_local");
+
+  const historyRunId = randomUUID();
+  const historyLogRef = `${organization.id}/${agent.id}/${historyRunId}.ndjson`;
+  const historyLogPath = path.join(E2E_INSTANCE_ROOT, "data/run-logs", historyLogRef);
+  const historyLog = `${JSON.stringify({
+    ts: new Date().toISOString(),
+    stream: "stdout",
+    chunk: [
+      { type: "user", message: "HIDDEN_GEMINI_HISTORY_INPUT" },
+      { type: "thinking", text: "Historical reasoning" },
+      { type: "tool_use", tool_name: "activate_skill", tool_id: "history-tool", parameters: { name: "history-skill" } },
+      { type: "tool_result", tool_id: "history-tool", status: "success", output: "Historical tool output" },
+      { type: "message", role: "assistant", content: "Historical final reply" },
+    ].map((event) => JSON.stringify(event)).join("\n") + "\n",
+  })}\n`;
+  mkdirSync(path.dirname(historyLogPath), { recursive: true });
+  writeFileSync(historyLogPath, historyLog);
+  await e2eDb.insert(heartbeatRuns).values({
+    id: historyRunId,
+    orgId: organization.id,
+    agentId: agent.id,
+    invocationSource: "on_demand",
+    status: "succeeded",
+    contextSnapshot: { agentRuntimeType: "gemini_local" },
+    logStore: "local_file",
+    logRef: historyLogRef,
+    logBytes: Buffer.byteLength(historyLog),
+  });
+  const readHistory = async () => {
+    const response = await page.request.get(`/api/run-intelligence/runs/${historyRunId}/transcript?order=oldest&output=full`);
+    expect(response.ok()).toBe(true);
+    const history = await response.json();
+    expect(JSON.stringify(history)).not.toContain("HIDDEN_GEMINI_HISTORY_INPUT");
+    return history;
+  };
+  const historyBefore = await readHistory();
+  expect(historyBefore.rows.map((row: { kind: string }) => row.kind))
+    .toEqual(["thinking", "tool_call", "tool_result", "assistant"]);
 
   await page.addInitScript((orgId: string) => {
     window.localStorage.setItem("rudder.selectedOrganizationId", orgId);
@@ -119,6 +157,11 @@ test("a stored Gemini CLI Agent Run fails without spawning and the Agent can be 
   };
   expect(refreshed.agentRuntimeType).toBe("codex_local");
   expect(refreshed.agentRuntimeConfig).not.toHaveProperty("args");
+  const historyAfter = await readHistory();
+  expect(historyAfter.rows).toEqual(historyBefore.rows);
+  const historicalAnalytics = await page.request.get(`/api/agents/${agent.id}/skills/analytics?windowDays=7`);
+  expect(historicalAnalytics.ok()).toBe(true);
+  expect(await historicalAnalytics.json()).toMatchObject({ totalCount: 1, totalRunsWithSkills: 1 });
 
   const restoreGeminiRes = await page.request.patch(`/api/agents/${agent.id}`, {
     data: { agentRuntimeType: "gemini_local", agentRuntimeConfig: refreshed.agentRuntimeConfig },

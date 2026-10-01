@@ -4633,17 +4633,23 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
         await new Promise((resolve) => requestAnimationFrame(resolve));
         const panel = document.querySelector("[data-testid='chat-side-panel']");
         const resizer = document.querySelector("[data-testid='side-panel-resizer']");
-        if (!(panel instanceof HTMLElement) || !(resizer instanceof HTMLElement)) {
+        const stack = document.querySelector("[data-testid='workspace-main-panel-stack']");
+        const context = document.querySelector("[data-testid='workspace-context-card']");
+        if (!(panel instanceof HTMLElement) || !(resizer instanceof HTMLElement) || !(stack instanceof HTMLElement)) {
           stableFrames = 0;
           previous = null;
           continue;
         }
         const panelBox = panel.getBoundingClientRect();
         const resizerBox = resizer.getBoundingClientRect();
-        const current = [panelBox.width, resizerBox.x];
+        const stackBox = stack.getBoundingClientRect();
+        const contextBox = context?.getBoundingClientRect();
+        // The context sidebar can animate without moving the divider or
+        // changing the panel width. It still changes the 2:1 drag boundary.
+        const current = [panelBox.width, resizerBox.x, resizerBox.y, resizerBox.height,
+          resizerBox.width, stackBox.x, stackBox.width, contextBox?.x ?? 0, contextBox?.width ?? 0];
         if (previous
-          && Math.abs(current[0] - previous[0]) <= 0.25
-          && Math.abs(current[1] - previous[1]) <= 0.25) {
+          && current.every((value, index) => Math.abs(value - previous[index]) <= 0.25)) {
           stableFrames += 1;
           if (stableFrames >= 6) return;
         } else {
@@ -4767,17 +4773,22 @@ async function verifyNativeSidePanelResize(electronApp, page, sidePanel, expecte
         && hitTarget.offsetWidth >= 10
         && (edgeTarget === hitTarget || hitTarget.contains(edgeTarget));
     }, null, { timeout: 5_000 });
-    const [stackBox, initialPanelBox, initialResizerBox] = await Promise.all([
-      page.getByTestId("workspace-main-panel-stack").boundingBox(),
-      sidePanel.boundingBox(),
-      resizer.boundingBox(),
-    ]);
+    // Read visual and layout widths together; separate browser round trips
+    // can straddle the sidebar transition and produce an obsolete boundary.
+    const { stackBox, initialPanelBox, initialResizerBox, stackLayoutWidth, resizerLayoutWidth } = await page.evaluate(() => {
+      const stack = document.querySelector("[data-testid='workspace-main-panel-stack']");
+      const panel = document.querySelector("[data-testid='chat-side-panel']");
+      const divider = document.querySelector("[data-testid='side-panel-resizer']");
+      const box = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      return { stackBox: box(stack), initialPanelBox: box(panel), initialResizerBox: box(divider),
+        stackLayoutWidth: stack?.offsetWidth ?? 0, resizerLayoutWidth: divider?.offsetWidth ?? 0 };
+    });
     assert.ok(stackBox && initialPanelBox && initialResizerBox, `Side Panel should be docked at ${viewportWidth}px`);
 
-    const { stackLayoutWidth, resizerLayoutWidth } = await page.evaluate(() => ({
-      stackLayoutWidth: document.querySelector("[data-testid='workspace-main-panel-stack']")?.offsetWidth ?? 0,
-      resizerLayoutWidth: document.querySelector("[data-testid='side-panel-resizer']")?.offsetWidth ?? 0,
-    }));
     assert.ok(
       stackLayoutWidth > 0 && resizerLayoutWidth > 0,
       "Side Panel layout geometry should be measurable",

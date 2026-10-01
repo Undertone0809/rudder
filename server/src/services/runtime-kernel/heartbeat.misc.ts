@@ -630,6 +630,7 @@ export function createHeartbeatMiscHandlers(context: any) {
       .select({
         id: heartbeatRuns.id,
         agentRuntimeType: agents.agentRuntimeType,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
         createdAt: heartbeatRuns.createdAt,
         logStore: heartbeatRuns.logStore,
         logRef: heartbeatRuns.logRef,
@@ -646,7 +647,10 @@ export function createHeartbeatMiscHandlers(context: any) {
         ),
       );
 
-    const runtimeTypeByRunId = new Map(runRows.map((row) => [row.id, row.agentRuntimeType]));
+    const runtimeTypeByRunId = new Map(runRows.map((row) => [
+      row.id,
+      readNonEmptyString(parseObject(row.contextSnapshot).agentRuntimeType) ?? row.agentRuntimeType,
+    ]));
     const transcriptReader = createHistoricalTranscriptReader(db, {
       logStore: runLogStore,
       legacyReader: {
