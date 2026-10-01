@@ -125,9 +125,26 @@ describe("Hermes native Run Detail projection", () => {
     const crossOrg = native({ ...wrongSource, text: agentMeWrapper({ id: "agt_61775408", orgId: "otherorg", shortRef: "agt_61775408", name: "Fake" }) });
     for (const resultRow of [wrongSource, crossOrg]) {
       const projected = projectNativeRunDetailEntries([call, resultRow], identity);
-      expect(projected.some((entry) => entry.kind === "system" && entry.text.includes("could not be verified"))).toBe(true);
       expect(projected.find((entry) => entry.kind === "tool_result")).toHaveProperty("sourceEntryId", "11");
-      expect(projected.find((entry) => entry.kind === "tool_result")).toHaveProperty("content", (resultRow as { text: string }).text);
+      expect(projected.find((entry) => entry.kind === "tool_result")).toHaveProperty("content", "Rudder agent identity could not be verified. Inspect the original result in Raw.");
+      expect(JSON.stringify(projected)).not.toContain("Fake");
     }
+  });
+
+  it("redacts claimed agent identity when the tool call pairing or identity fields are unsafe", () => {
+    const raw = agentMeWrapper({ id: "agt_61775408", orgId: "1658fedb12d3", shortRef: "agt_61775408",
+      name: "Safe name", role: "general", status: "idle", urlKey: "bad\nsecret" });
+    const mismatchedCall = projectNativeRunDetailEntries([
+      native({ kind: "assistant", ts, toolCalls: [{ id: "call-1", function: { name: "tool_describe", arguments: "{}" } }] }),
+      native({ kind: "hermes:db:tool", ts, toolCallId: "call-1", toolName: "mcp__rudder_tools__rudder_agent_me", text: raw }),
+    ], identity);
+    expect(mismatchedCall.find((entry) => entry.kind === "tool_result")).toHaveProperty("content", "Rudder agent identity could not be verified. Inspect the original result in Raw.");
+    const verified = projectNativeRunDetailEntries([
+      native({ kind: "assistant", ts, toolCalls: [{ id: "call-2", function: { name: "mcp__rudder_tools__rudder_agent_me", arguments: "{}" } }] }),
+      native({ kind: "hermes:db:tool", ts, toolCallId: "call-2", toolName: "mcp__rudder_tools__rudder_agent_me", text: raw }),
+    ], identity);
+    const content = verified.find((entry) => entry.kind === "tool_result");
+    expect(content?.kind === "tool_result" && JSON.parse(content.content)).toMatchObject({ name: "Safe name" });
+    expect(content?.kind === "tool_result" && JSON.parse(content.content)).not.toHaveProperty("urlKey");
   });
 });
