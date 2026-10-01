@@ -43,10 +43,13 @@ const create = () => ({
 });
 let activeTurn = null;
 let pendingCompletion = null;
+let publicationPoll = null;
 
 function completeTurn(thread, turn, text, status = "completed") {
   if (pendingCompletion) clearTimeout(pendingCompletion);
   pendingCompletion = null;
+  if (publicationPoll) clearInterval(publicationPoll);
+  publicationPoll = null;
   if (status === "completed") {
     const item = { type: "agentMessage", id: randomUUID(), text };
     turn.items.push(item);
@@ -146,7 +149,23 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           aggregatedOutput: `${marker}${"x".repeat(outputBytes - marker.length)}`,
         });
       }
-      if (prompt.includes("Keep Steer message position stable")) {
+      const publicationNonce = [...prompt.matchAll(/\bNative transcript publication nonce:\s*([a-f0-9]{32})\b/gi)].at(-1)?.[1];
+      const publicationDirectory = process.env.RUDDER_E2E_NATIVE_TRANSCRIPT_GATE;
+      if (publicationNonce && publicationDirectory) {
+        if (!path.isAbsolute(publicationDirectory)) throw new Error("Native publication gate requires an absolute test directory");
+        activeTurn = { thread, turn };
+        const gate = path.join(publicationDirectory, publicationNonce);
+        // Native history already contains this input; the Run has not yet
+        // acquired a terminal selector. Reader must report pending, not missing.
+        fs.writeFileSync(`${gate}.ready.json`, JSON.stringify({ threadId: thread.id,
+          turnId: turn.id, userItemId: turn.items[0].id, historyPath: file(thread.id) }));
+        publicationPoll = setInterval(() => {
+          if (!fs.existsSync(`${gate}.release`)) return;
+          completeTurn(thread, turn, `NATIVE_LIVE_REPLY_${publicationNonce}`);
+        }, 100);
+        // Missing release must fail the test, never silently complete it.
+        pendingCompletion = setTimeout(() => completeTurn(thread, turn, "", "interrupted"), 90_000);
+      } else if (prompt.includes("Keep Steer message position stable")) {
         activeTurn = { thread, turn };
         setTimeout(() => send({
           method: "item/completed",
