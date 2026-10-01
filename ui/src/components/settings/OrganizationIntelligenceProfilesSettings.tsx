@@ -1,4 +1,4 @@
-import { agentsApi } from "@/api/agents";
+import { type AgentRuntimeModel, agentsApi } from "@/api/agents";
 import { organizationsApi } from "@/api/orgs";
 import { secretsApi } from "@/api/secrets";
 import { AdapterEnvironmentError, AdapterEnvironmentResult, SortableRuntimeProviderCard } from "@/components/AgentConfigForm.environment";
@@ -37,10 +37,11 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import type { ModelFallbackConfig } from "@rudderhq/agent-runtime-utils";
-import type {
-  OrganizationIntelligenceProfile,
-  OrganizationIntelligenceProfilePurpose,
-  OrganizationSecret,
+import {
+  type OrganizationIntelligenceProfile,
+  type OrganizationIntelligenceProfilePurpose,
+  type OrganizationSecret,
+  DEFAULT_ORGANIZATION_INTELLIGENCE_CODEX_MODEL,
 } from "@rudderhq/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleHelp, FlaskConical, LoaderCircle, Plus } from "lucide-react";
@@ -65,12 +66,21 @@ const profileCopy = {
 
 const purposes: OrganizationIntelligenceProfilePurpose[] = ["default"];
 const providerHint = "Provider used by this organization intelligence profile.";
+const organizationCodexModelOptions: AgentRuntimeModel[] = [
+  {
+    id: DEFAULT_ORGANIZATION_INTELLIGENCE_CODEX_MODEL,
+    label: "GPT-6-Luna",
+    variants: ["low", "medium", "high", "xhigh", "max"],
+  },
+];
 
 function defaultConfigForProfileRuntime(
   _purpose: OrganizationIntelligenceProfilePurpose,
   agentRuntimeType: string,
 ): Record<string, unknown> {
-  return defaultConfigForRuntime(agentRuntimeType);
+  const config = defaultConfigForRuntime(agentRuntimeType);
+  if (agentRuntimeType !== "codex_local") return config;
+  return { ...config, model: DEFAULT_ORGANIZATION_INTELLIGENCE_CODEX_MODEL };
 }
 
 function defaultDraft(purpose: OrganizationIntelligenceProfilePurpose): ProfileDraft {
@@ -557,6 +567,9 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                             model={model}
                             config={primaryConfig}
                             selectedOrganizationId={orgId}
+                            externalModels={
+                              draft.agentRuntimeType === "codex_local" ? organizationCodexModelOptions : undefined
+                            }
                             availableSecrets={availableSecrets as OrganizationSecret[]}
                             onCreateSecret={(name, value) => createSecret.mutateAsync({ name, value })}
                             hideInstructionsFile
@@ -630,6 +643,9 @@ export function OrganizationIntelligenceProfilesSettings({ orgId }: { orgId: str
                           model={fallback.model}
                           config={{ ...(fallback.config ?? {}), model: fallback.model }}
                           selectedOrganizationId={orgId}
+                          externalModels={
+                            fallback.agentRuntimeType === "codex_local" ? organizationCodexModelOptions : undefined
+                          }
                           availableSecrets={availableSecrets as OrganizationSecret[]}
                           onCreateSecret={(name, value) => createSecret.mutateAsync({ name, value })}
                           hideInstructionsFile
