@@ -38,11 +38,11 @@ import {
   sanitizeRuntimeProviderProfileSnapshot,
 } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
 import { createHistoricalCodexTranscriptReaderHook } from "../agent-runtimes/verify-codex-transcript-profile.js";
-import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import { notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
 import { heartbeatService } from "./heartbeat.js";
+import { historicalHermesManagedCwd } from "./run-intelligence-hermes-workspace.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "./operator-event-visibility.js";
 import {
@@ -460,27 +460,14 @@ export function createHistoricalRunRuntimeProviderCapabilityResolver(
     if (readerInput && profile.agentRuntimeType === "hermes_gateway"
       && !asRecord(run.contextSnapshot).rudderWorkspace
       && readerInput.binding?.workspaceBindingId) {
-      const bindingRecord = readerInput.binding;
-      const span = readerInput.span;
-      const segment = readerInput.segment;
-      const workspaceKey = readString(run.agentWorkspaceKey);
-      if (!workspaceKey || !run.agentId || bindingRecord.orgId !== run.orgId
-        || bindingRecord.agentId !== run.agentId
-        || bindingRecord.runtimeType !== "hermes_gateway"
-        || bindingRecord.id !== readString(asRecord(run.contextSnapshot).runtimeBindingId)
-        || bindingRecord.id !== span.bindingId || span.runId !== run.id || span.orgId !== run.orgId
-        || !segment || segment.id !== span.segmentId || segment.bindingId !== bindingRecord.id
-        || segment.orgId !== run.orgId || binding?.id !== bindingRecord.id
-        || binding.orgId !== run.orgId || binding.workspaceBindingId !== bindingRecord.workspaceBindingId) return null;
-      let managedCwd: string;
-      try {
-        managedCwd = resolveDefaultAgentWorkspaceDir(run.orgId, workspaceKey);
-      } catch {
-        return null;
-      }
-      if (bindingRecord.workspaceBindingId !== managedCwd
-        || readString(asRecord(run.sessionParamsAfterJson).cwd) !== managedCwd
-        || readString(asRecord(readerInput.run.sessionParamsAfterJson).cwd) !== managedCwd) return null;
+      const managedCwd = historicalHermesManagedCwd({
+        runId: run.id, orgId: run.orgId, agentId: run.agentId,
+        agentWorkspaceKey: run.agentWorkspaceKey,
+        runtimeBindingId: readString(asRecord(run.contextSnapshot).runtimeBindingId),
+        persistedRunCwd: readString(asRecord(run.sessionParamsAfterJson).cwd),
+        binding, readerInput,
+      });
+      if (!managedCwd) return null;
       effectiveResolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
         runtimeType: profile.agentRuntimeType,
         runtimeConfig: profile.runtimeConfig,
