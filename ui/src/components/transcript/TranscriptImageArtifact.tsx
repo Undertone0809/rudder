@@ -1,5 +1,6 @@
+import { useImagePreview } from "@/context/ImagePreviewContext";
 import { FolderOpen, ImageOff, Loader2 } from "lucide-react";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { createBrowserLocalFilePreview } from "../../api/browserLocalFiles";
 import { readDesktopShell, type DesktopLocalFilePreview } from "../../lib/desktop-shell";
 import { InspectableImage } from "../InspectableImage";
@@ -36,6 +37,7 @@ export function TranscriptImageArtifact({
 }) {
   const durableAssetPath = isRudderAssetPath(path);
   const desktopShell = readDesktopShell();
+  const { closeImagePreviewIfSource } = useImagePreview();
   const [preview, setPreview] = useState<DesktopLocalFilePreview | null>(null);
   const [browserImageSrc, setBrowserImageSrc] = useState<{ path: string; url: string } | null>(null);
   const browserUrlRef = useRef<string | null>(null);
@@ -49,15 +51,19 @@ export function TranscriptImageArtifact({
     path: string;
     promise: Promise<DesktopLocalFilePreview>;
   } | null>(null);
+  const releaseBrowserUrl = useCallback(() => {
+    const url = browserUrlRef.current;
+    if (!url) return;
+    browserUrlRef.current = null;
+    closeImagePreviewIfSource(url);
+    URL.revokeObjectURL(url);
+  }, [closeImagePreviewIfSource]);
 
   useEffect(() => {
     let cancelled = false;
     browserRequestRef.current += 1;
     setBrowserImageSrc(null);
-    if (browserUrlRef.current) {
-      URL.revokeObjectURL(browserUrlRef.current);
-      browserUrlRef.current = null;
-    }
+    releaseBrowserUrl();
     if (durableAssetPath) {
       setLoading(false);
       setError(null);
@@ -100,13 +106,12 @@ export function TranscriptImageArtifact({
     return () => {
       cancelled = true;
     };
-  }, [desktopShell, displayLabel, durableAssetPath, path]);
+  }, [desktopShell, displayLabel, durableAssetPath, path, releaseBrowserUrl]);
 
   useEffect(() => () => {
     browserRequestRef.current += 1;
-    if (browserUrlRef.current) URL.revokeObjectURL(browserUrlRef.current);
-    browserUrlRef.current = null;
-  }, [displayLabel, path]);
+    releaseBrowserUrl();
+  }, [displayLabel, path, releaseBrowserUrl]);
 
   const chooseBrowserImage = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
@@ -115,8 +120,7 @@ export function TranscriptImageArtifact({
     if (!selectedFile) return;
     const request = ++browserRequestRef.current;
     const selectedPath = path;
-    if (browserUrlRef.current) URL.revokeObjectURL(browserUrlRef.current);
-    browserUrlRef.current = null;
+    releaseBrowserUrl();
     setBrowserImageSrc(null);
     setLoading(true);
     setError(null);
@@ -130,7 +134,7 @@ export function TranscriptImageArtifact({
         if (selectedPreview.contentPath.startsWith("blob:")) URL.revokeObjectURL(selectedPreview.contentPath);
         return;
       }
-      if (browserUrlRef.current) URL.revokeObjectURL(browserUrlRef.current);
+      releaseBrowserUrl();
       browserUrlRef.current = selectedPreview.contentPath.startsWith("blob:") ? selectedPreview.contentPath : null;
       setBrowserImageSrc({ path: selectedPath, url: selectedPreview.contentPath });
     } catch (cause) {

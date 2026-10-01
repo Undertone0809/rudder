@@ -6,11 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as browserLocalFiles from "../../api/browserLocalFiles";
 import { TranscriptImageArtifact } from "./TranscriptImageArtifact";
 
-const { readDesktopShell, previewLocalFile } = vi.hoisted(() => ({
+const { closeImagePreviewIfSource, readDesktopShell, previewLocalFile } = vi.hoisted(() => ({
+  closeImagePreviewIfSource: vi.fn(),
   readDesktopShell: vi.fn(),
   previewLocalFile: vi.fn(),
 }));
 
+vi.mock("@/context/ImagePreviewContext", () => ({ useImagePreview: () => ({ closeImagePreviewIfSource }) }));
 vi.mock("../../lib/desktop-shell", () => ({ readDesktopShell }));
 vi.mock("../InspectableImage", () => ({
   InspectableImage: ({ src, alt }: { src: string; alt: string }) => <img src={src} alt={alt} />,
@@ -84,6 +86,8 @@ describe("TranscriptImageArtifact", () => {
       roots.pop()?.unmount();
     });
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:browser-image-preview");
+    expect(closeImagePreviewIfSource).toHaveBeenCalledWith("blob:browser-image-preview");
+    expect(closeImagePreviewIfSource.mock.invocationCallOrder[0]).toBeLessThan(revokeObjectURL.mock.invocationCallOrder[0]!);
   });
 
   it("rejects a different filename and a non-image file without reading a path", async () => {
@@ -112,6 +116,7 @@ describe("TranscriptImageArtifact", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("other.png");
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:browser-image-preview");
+    expect(closeImagePreviewIfSource).toHaveBeenCalledWith("blob:browser-image-preview");
   });
 
   it("releases the prior URL when a replacement selection fails", async () => {
@@ -122,6 +127,7 @@ describe("TranscriptImageArtifact", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:browser-image-preview");
+    expect(closeImagePreviewIfSource).toHaveBeenCalledWith("blob:browser-image-preview");
   });
 
   it("releases a created URL when the selected file is not an image", async () => {
