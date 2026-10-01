@@ -36,6 +36,7 @@ import {
   reconcileNativeForkIntent,
   reconcileNativeForkIntentById,
   reserveNativeForkIntent,
+  transferReservedNativeForkIntentRunFence,
   type NativeForkIntentInput,
   type NativeForkIntentRunFence,
 } from "./native-fork-intent.js";
@@ -484,6 +485,72 @@ describe("durable native fork intent", () => {
     return { adapter, admitted, runFence };
   }
 
+  async function prepareFenceTransfer(fixtureValue: ForkFixture) {
+    const admittedRun = await admitTargetRun(fixtureValue);
+    const reserved = await reserveNativeForkIntent(db, {
+      ...fixtureValue.input,
+      runFence: admittedRun.runFence,
+    });
+    if (reserved.status !== "reserved") throw new Error("expected a reserved fork intent");
+
+    const oldAttemptId = admittedRun.admitted.entry.attempt.ref.id;
+    const ownerFence = admittedRun.admitted.entry.ownerFence;
+    const rejected = await admittedRun.adapter.reconcileAcceptance(admittedRun.runFence.runId, ownerFence, {
+      state: "rejected",
+      reason: "provider call was never dispatched",
+    });
+    if (!rejected.ok) throw new Error(`expected pre-submission rejection, got ${rejected.reason}`);
+    const finished = await admittedRun.adapter.finishAttempt(
+      admittedRun.runFence.runId,
+      ownerFence,
+      "failed",
+      { submissionPhase: "pre_submission" },
+    );
+    if (!finished.ok) throw new Error(`expected old attempt terminal, got ${finished.reason}`);
+    const sealed = await admittedRun.adapter.recordExecutionResult(admittedRun.runFence.runId, ownerFence, {
+      spanId: admittedRun.runFence.spanId,
+      attemptId: oldAttemptId,
+      result: {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        submissionPhase: "pre_submission",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      },
+    });
+    if (!sealed.ok) throw new Error(`expected no-start old span seal, got ${sealed.reason}`);
+
+    const nextAttempt = await admittedRun.adapter.beginAttempt(admittedRun.runFence.runId, ownerFence, {
+      attemptIndex: 1,
+      fallbackIndex: 1,
+      runtimeType,
+      model: "fallback-model",
+      isFallback: true,
+      resumeSource: "same_session",
+    });
+    if (!nextAttempt.ok) throw new Error(`expected fallback attempt admission, got ${nextAttempt.reason}`);
+    const current = await admittedRun.adapter.get(admittedRun.runFence.runId);
+    if (!current) throw new Error("expected the current fallback Run entry");
+    const newFence: NativeForkIntentRunFence = {
+      runId: current.runId,
+      spanId: current.span.id,
+      ownerToken: current.ownerFence.ownerToken,
+      attemptEpoch: current.ownerFence.attemptEpoch,
+    };
+    return {
+      ...admittedRun,
+      reference: reserved.reference,
+      oldAttemptId,
+      newFence,
+      noChildProof: {
+        version: 1 as const,
+        kind: "driver_not_dispatched" as const,
+        providerDispatched: false as const,
+        writerQuiescence: { status: "confirmed" as const, source: "not_started" as const },
+      },
+    };
+  }
+
   function driverFor(result: RuntimeProviderForkResult | Error | "unsupported" | "unknown") {
     const fork = vi.fn(async () => {
       if (result instanceof Error) throw result;
@@ -642,6 +709,137 @@ describe("durable native fork intent", () => {
       sessionId: "child-session",
       [nativeForkIntentKey()]: { status: "accepted", runFence },
     });
+  });
+
+  it("transfers a reserved childless intent only to the next current span and preserves its identity", async () => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    const [beforeSegment] = await db.select().from(nativeSegments).where(eq(nativeSegments.id, value.input.targetSegment.id));
+    const before = readNativeForkIntent(beforeSegment?.providerStateJson);
+    if (!before) throw new Error("expected reserved native fork intent");
+
+    const transferred = await transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: prepared.runFence,
+      newFence: prepared.newFence,
+      noChildProof: prepared.noChildProof,
+    });
+
+    expect(transferred).toMatchObject({ reference: prepared.reference, runFence: prepared.newFence });
+    expect(transferred.intent).toMatchObject({
+      status: "reserved",
+      intentId: before.intentId,
+      idempotencyKey: before.idempotencyKey,
+      source: before.source,
+      target: before.target,
+      runFence: prepared.newFence,
+      runFenceTransfers: [{
+        version: 1,
+        oldAttemptId: prepared.oldAttemptId,
+        oldFence: prepared.runFence,
+        newFence: prepared.newFence,
+        noChildProof: prepared.noChildProof,
+      }],
+    });
+    const [afterSegment] = await db.select().from(nativeSegments).where(eq(nativeSegments.id, value.input.targetSegment.id));
+    expect(readNativeForkIntent(afterSegment?.providerStateJson)).toEqual(transferred.intent);
+  });
+
+  it.each([
+    { label: "provider dispatch", proof: { version: 1, kind: "driver_not_dispatched", providerDispatched: true, writerQuiescence: { status: "confirmed", source: "not_started" } } },
+    { label: "unknown proof kind", proof: { version: 1, kind: "rejected_before_child", providerDispatched: false, writerQuiescence: { status: "confirmed", source: "not_started" } } },
+    { label: "non-started quiescence", proof: { version: 1, kind: "driver_not_dispatched", providerDispatched: false, writerQuiescence: { status: "confirmed", source: "process_exit" } } },
+  ])("refuses transfer with $label evidence", async ({ proof }) => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    await expect(transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: prepared.runFence,
+      newFence: prepared.newFence,
+      noChildProof: proof as never,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+  });
+
+  it.each(["old", "new"] as const)("refuses transfer with a stale %s span fence", async (which) => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    const badFence = { ...(which === "old" ? prepared.runFence : prepared.newFence), spanId: randomUUID() };
+    await expect(transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: which === "old" ? badFence : prepared.runFence,
+      newFence: which === "new" ? badFence : prepared.newFence,
+      noChildProof: prepared.noChildProof,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+  });
+
+  it.each([
+    { label: "ownership is lost", patch: (token: string) => ({ executionOwnerToken: token }) },
+    { label: "the Run is stopped", patch: () => ({ status: "cancelled" }) },
+  ])("refuses transfer when $label", async ({ patch }) => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    await db.update(heartbeatRuns).set(patch(`stolen-${randomUUID()}`)).where(eq(heartbeatRuns.id, prepared.runFence.runId));
+    await expect(transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: prepared.runFence,
+      newFence: prepared.newFence,
+      noChildProof: prepared.noChildProof,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+  });
+
+  it("refuses transfer once the target has provider child session identity", async () => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    await db.update(nativeSegments).set({ nativeSessionId: "already-created-child" }).where(eq(nativeSegments.id, value.input.targetSegment.id));
+    await expect(transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: prepared.runFence,
+      newFence: prepared.newFence,
+      noChildProof: prepared.noChildProof,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+  });
+
+  it("refuses transfer when the old attempt checkpoint is not a retryable pre-submission rejection", async () => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    const [attempt] = await db.select().from(heartbeatRunAttempts).where(eq(heartbeatRunAttempts.id, prepared.oldAttemptId));
+    const checkpoint = attempt?.checkpointJson ?? {};
+    const submission = checkpoint.unifiedSubmission as Record<string, unknown>;
+    await db.update(heartbeatRunAttempts).set({
+      checkpointJson: { ...checkpoint, unifiedSubmission: { ...submission, state: "acceptance_unknown", retry: "blocked_until_reconciled" } },
+    }).where(eq(heartbeatRunAttempts.id, prepared.oldAttemptId));
+    await expect(transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: prepared.runFence,
+      newFence: prepared.newFence,
+      noChildProof: prepared.noChildProof,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+  });
+
+  it("refuses transfer unless the old span is sealed", async () => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    await db.update(runRuntimeSpans).set({ state: "unresolved" }).where(eq(runRuntimeSpans.id, prepared.runFence.spanId));
+    await expect(transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: prepared.runFence,
+      newFence: prepared.newFence,
+      noChildProof: prepared.noChildProof,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
   });
 
   it("serializes duplicate reservations and fails closed after a reservation-only crash", async () => {

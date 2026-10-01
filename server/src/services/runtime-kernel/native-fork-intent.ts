@@ -1,11 +1,12 @@
 import type { Db } from "@rudderhq/db";
 import {
+  heartbeatRunAttempts,
   heartbeatRuns,
   nativeSegments,
   runRuntimeSpans,
   runtimeBindings,
 } from "@rudderhq/db";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { hasRetainedNativeForkSource } from "./native-fork-retained-source.js";
 import type { NativeSegmentRecord, RuntimeBindingRecord } from "./native-session.js";
@@ -62,6 +63,21 @@ export type NativeForkIntentRunFence = {
   attemptEpoch: number;
 };
 
+export type NativeForkIntentNoChildProof = {
+  version: 1;
+  kind: "driver_not_dispatched";
+  providerDispatched: false;
+  writerQuiescence: { status: "confirmed"; source: "not_started" };
+};
+
+export type NativeForkIntentRunFenceTransfer = {
+  version: 1;
+  oldAttemptId: string;
+  oldFence: NativeForkIntentRunFence;
+  newFence: NativeForkIntentRunFence;
+  noChildProof: NativeForkIntentNoChildProof;
+};
+
 export type NativeForkIntentRecord = {
   version: typeof NATIVE_FORK_INTENT_VERSION;
   intentId: string;
@@ -70,6 +86,7 @@ export type NativeForkIntentRecord = {
   source: NativeForkIntentStoredSource;
   target: NativeForkIntentTarget;
   runFence?: NativeForkIntentRunFence;
+  runFenceTransfers?: NativeForkIntentRunFenceTransfer[];
   child?: NativeForkIntentChild;
   reason: string | null;
   reconciliation: NativeForkReconciliation;
@@ -108,6 +125,15 @@ export type NativeForkIntentInput = {
   targetSegment: NativeSegmentRecord;
   providerBinding?: RuntimeProviderBindingRef | null;
   runFence?: NativeForkIntentRunFence | null;
+};
+
+export type TransferReservedNativeForkIntentRunFenceInput = {
+  reference: NativeForkIntentReference;
+  idempotencyKey: string;
+  oldAttemptId: string;
+  oldFence: NativeForkIntentRunFence;
+  newFence: NativeForkIntentRunFence;
+  noChildProof: NativeForkIntentNoChildProof;
 };
 
 export type NativeForkIntentOutcome =
@@ -187,6 +213,72 @@ function sameRunFence(left: NativeForkIntentRunFence, right: NativeForkIntentRun
   return sameRunSpan(left, right)
     && left.ownerToken === right.ownerToken
     && left.attemptEpoch === right.attemptEpoch;
+}
+
+function normalizeNoChildProof(value: unknown): NativeForkIntentNoChildProof {
+  const proof = record(value);
+  const quiescence = record(proof?.writerQuiescence);
+  if (
+    proof?.version !== 1
+    || proof.kind !== "driver_not_dispatched"
+    || proof.providerDispatched !== false
+    || quiescence?.status !== "confirmed"
+    || quiescence.source !== "not_started"
+  ) {
+    throw new NativeForkIntentError(
+      "run_fence_stale",
+      "Native fork Run fence transfer requires confirmed driver-not-dispatched proof",
+    );
+  }
+  return {
+    version: 1,
+    kind: "driver_not_dispatched",
+    providerDispatched: false,
+    writerQuiescence: { status: "confirmed", source: "not_started" },
+  };
+}
+
+function normalizeStoredFence(value: unknown): NativeForkIntentRunFence | null {
+  const candidate = record(value);
+  if (
+    !candidate
+    || typeof candidate.runId !== "string"
+    || typeof candidate.spanId !== "string"
+    || typeof candidate.ownerToken !== "string"
+    || !Number.isInteger(candidate.attemptEpoch)
+    || (candidate.attemptEpoch as number) <= 0
+  ) return null;
+  return {
+    runId: candidate.runId,
+    spanId: candidate.spanId,
+    ownerToken: candidate.ownerToken,
+    attemptEpoch: candidate.attemptEpoch as number,
+  };
+}
+
+function normalizeStoredFenceTransfer(value: unknown): NativeForkIntentRunFenceTransfer | null {
+  const transfer = record(value);
+  const oldFence = normalizeStoredFence(transfer?.oldFence);
+  const newFence = normalizeStoredFence(transfer?.newFence);
+  const proof = record(transfer?.noChildProof);
+  if (
+    transfer?.version !== 1
+    || typeof transfer.oldAttemptId !== "string"
+    || !oldFence
+    || !newFence
+    || proof?.version !== 1
+    || proof.kind !== "driver_not_dispatched"
+    || proof.providerDispatched !== false
+    || record(proof.writerQuiescence)?.status !== "confirmed"
+    || record(proof.writerQuiescence)?.source !== "not_started"
+  ) return null;
+  return {
+    version: 1,
+    oldAttemptId: transfer.oldAttemptId,
+    oldFence,
+    newFence,
+    noChildProof: normalizeNoChildProof(proof),
+  };
 }
 
 function cloneRecord(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
@@ -391,6 +483,17 @@ function intentFromProviderState(value: unknown): NativeForkIntentRecord | null 
       attemptEpoch: rawFence.attemptEpoch as number,
     };
   }
+  let runFenceTransfers: NativeForkIntentRunFenceTransfer[] | undefined;
+  if (parsed.runFenceTransfers !== undefined) {
+    if (!Array.isArray(parsed.runFenceTransfers)) {
+      throw new NativeForkIntentError("intent_conflict", "The target segment contains invalid native fork Run fence transfer history");
+    }
+    const transfers = parsed.runFenceTransfers.map(normalizeStoredFenceTransfer);
+    if (transfers.some((transfer) => transfer === null)) {
+      throw new NativeForkIntentError("intent_conflict", "The target segment contains invalid native fork Run fence transfer proof");
+    }
+    runFenceTransfers = transfers.filter((transfer): transfer is NativeForkIntentRunFenceTransfer => transfer !== null);
+  }
   const child = parsed.child === undefined || parsed.child === null ? undefined : parsed.child as NativeForkIntentChild;
   if (parsed.status === "accepted" && !child) {
     throw new NativeForkIntentError("intent_conflict", "An accepted native fork intent has no persisted child");
@@ -409,6 +512,7 @@ function intentFromProviderState(value: unknown): NativeForkIntentRecord | null 
       ...(sourceSelector ? { selectorJson: { ...sourceSelector } } : {}),
     },
     ...(runFence ? { runFence } : {}),
+    ...(runFenceTransfers === undefined ? {} : { runFenceTransfers }),
     target: {
       bindingId: target.bindingId,
       segmentId: target.segmentId,
@@ -848,6 +952,176 @@ async function loadIntentReference(tx: Db, reference: NativeForkIntentReference)
     throw new NativeForkIntentError("intent_conflict", "Native fork intent reference does not match durable target state");
   }
   return { segment, intent };
+}
+
+/**
+ * Move only a still-reserved fork intent from a proven non-dispatched attempt
+ * to the next current span. The intent identity and source/target stay fixed;
+ * the run lock, retained-runtime lock, and JSONB CAS make the proof/fence move
+ * atomic with respect to attempt changes and other fork admission work.
+ */
+export async function transferReservedNativeForkIntentRunFence(
+  db: Db,
+  input: TransferReservedNativeForkIntentRunFenceInput,
+): Promise<{ reference: NativeForkIntentReference; intent: NativeForkIntentRecord; runFence: NativeForkIntentRunFence }> {
+  const reference: NativeForkIntentReference = {
+    intentId: requiredString(input.reference.intentId, "native fork intentId"),
+    orgId: requiredString(input.reference.orgId, "native fork organization"),
+    bindingId: requiredString(input.reference.bindingId, "native fork binding"),
+    segmentId: requiredString(input.reference.segmentId, "native fork segment"),
+  };
+  const idempotencyKey = normalizeIdempotencyKey(input.idempotencyKey);
+  const oldAttemptId = requiredString(input.oldAttemptId, "old native fork attemptId");
+  const oldFence = normalizeRunFence(input.oldFence)!;
+  const newFence = normalizeRunFence(input.newFence)!;
+  const noChildProof = normalizeNoChildProof(input.noChildProof);
+  if (
+    oldFence.runId !== newFence.runId
+    || oldFence.ownerToken !== newFence.ownerToken
+    || oldFence.attemptEpoch !== newFence.attemptEpoch
+    || oldFence.spanId === newFence.spanId
+  ) {
+    throw new NativeForkIntentError("run_fence_stale", "Native fork Run fence transfer must retain the same Run owner and move to a different span");
+  }
+
+  return db.transaction(async (tx) => {
+    const database = tx as unknown as Db;
+    await lockRuntimeRetentionScope(database, reference.orgId);
+    await lockIntentTarget(database, reference.bindingId, reference.segmentId, newFence);
+    const { segment, intent } = await loadIntentReference(database, reference);
+    if (
+      intent.status !== "reserved"
+      || intent.child
+      || intent.idempotencyKey !== idempotencyKey
+      || !intent.runFence
+      || !sameRunFence(intent.runFence, oldFence)
+    ) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork intent is no longer the same reserved, childless Run admission");
+    }
+    if (
+      segment.nativeSessionId !== null
+      || optionalString(record(segment.providerStateJson)?.sessionId) !== null
+    ) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork target already has provider session identity");
+    }
+
+    const newSpan = await assertCurrentRunFence(database, newFence, {
+      orgId: reference.orgId,
+      bindingId: reference.bindingId,
+      segmentId: reference.segmentId,
+    });
+    const [latestSpan] = await database.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.orgId, reference.orgId),
+      eq(runRuntimeSpans.runId, newFence.runId),
+    )).orderBy(desc(runRuntimeSpans.ordinal)).limit(1);
+    if (
+      latestSpan?.id !== newFence.spanId
+      || latestSpan.state !== "open"
+      || latestSpan.attemptId !== newSpan.attemptId
+      || latestSpan.nativeExecutionRef !== null
+    ) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork transfer target is not the latest open childless Run span");
+    }
+
+    const [oldSpan] = await database.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.id, oldFence.spanId),
+      eq(runRuntimeSpans.orgId, reference.orgId),
+      eq(runRuntimeSpans.runId, oldFence.runId),
+      eq(runRuntimeSpans.bindingId, reference.bindingId),
+      eq(runRuntimeSpans.segmentId, reference.segmentId),
+      eq(runRuntimeSpans.ownerToken, oldFence.ownerToken),
+      eq(runRuntimeSpans.attemptEpoch, oldFence.attemptEpoch),
+    )).limit(1);
+    if (
+      !oldSpan
+      || oldSpan.attemptId !== oldAttemptId
+      || oldSpan.state !== "sealed"
+      || !oldSpan.writerLeaseReleasedAt
+      || oldSpan.nativeExecutionRef !== null
+    ) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork transfer source span lacks sealed, released, childless writer evidence");
+    }
+
+    const attempts = await database.select().from(heartbeatRunAttempts).where(and(
+      eq(heartbeatRunAttempts.orgId, reference.orgId),
+      eq(heartbeatRunAttempts.runId, oldFence.runId),
+    )).orderBy(desc(heartbeatRunAttempts.attemptIndex));
+    const currentAttempt = attempts[0];
+    const oldAttempt = attempts.find((attempt) => attempt.id === oldAttemptId);
+    const previousAttempt = currentAttempt
+      ? attempts.find((attempt) => attempt.attemptIndex < currentAttempt.attemptIndex)
+      : undefined;
+    const currentCheckpoint = record(currentAttempt?.checkpointJson);
+    const currentSubmission = record(currentCheckpoint?.unifiedSubmission);
+    const oldCheckpoint = record(oldAttempt?.checkpointJson);
+    const oldSubmission = record(oldCheckpoint?.unifiedSubmission);
+    const noProviderIds = (attempt: typeof heartbeatRunAttempts.$inferSelect | undefined, submission: JsonRecord | null) => (
+      Boolean(attempt)
+      && (attempt!.providerThreadId === null || attempt!.providerThreadId === undefined)
+      && (attempt!.providerTurnId === null || attempt!.providerTurnId === undefined)
+      && (attempt!.sessionDisplayId === null || attempt!.sessionDisplayId === undefined)
+      && (submission?.providerThreadId === null || submission?.providerThreadId === undefined)
+      && (submission?.providerTurnId === null || submission?.providerTurnId === undefined)
+    );
+    if (
+      !currentAttempt
+      || currentAttempt.id !== newSpan.attemptId
+      || currentAttempt.status !== "started"
+      || currentAttempt.ownerToken !== newFence.ownerToken
+      || currentAttempt.attemptEpoch !== newFence.attemptEpoch
+      || currentAttempt.runtimeType !== intent.target.runtimeType
+      || !currentSubmission
+      || currentSubmission.state !== "pending"
+      || currentSubmission.phase !== "pre_submission"
+      || currentSubmission.retry !== "allowed"
+      || !noProviderIds(currentAttempt, currentSubmission)
+      || !oldAttempt
+      || previousAttempt?.id !== oldAttempt.id
+      || oldAttempt.status !== "failed"
+      || !oldAttempt.finishedAt
+      || oldAttempt.ownerToken !== oldFence.ownerToken
+      || oldAttempt.attemptEpoch !== oldFence.attemptEpoch
+      || oldAttempt.runtimeType !== intent.target.runtimeType
+      || !oldSubmission
+      || typeof oldSubmission.key !== "string"
+      || oldSubmission.state !== "rejected"
+      || oldSubmission.phase !== "pre_submission"
+      || oldSubmission.retry !== "allowed"
+      || !noProviderIds(oldAttempt, oldSubmission)
+    ) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork transfer requires the authoritative failed attempt's durable pre-submission rejection and no-child evidence");
+    }
+
+    const transfer: NativeForkIntentRunFenceTransfer = {
+      version: 1,
+      oldAttemptId,
+      oldFence,
+      newFence,
+      noChildProof,
+    };
+    const updatedIntent: NativeForkIntentRecord = {
+      ...intent,
+      runFence: newFence,
+      runFenceTransfers: [...(intent.runFenceTransfers ?? []), transfer],
+      updatedAt: new Date().toISOString(),
+    };
+    const [updated] = await tx.update(nativeSegments).set({
+      providerStateJson: withIntent(segment.providerStateJson, updatedIntent),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(nativeSegments.id, reference.segmentId),
+      eq(nativeSegments.orgId, reference.orgId),
+      eq(nativeSegments.bindingId, reference.bindingId),
+      eq(nativeSegments.state, segment.state),
+      segment.providerStateJson === null
+        ? isNull(nativeSegments.providerStateJson)
+        : eq(nativeSegments.providerStateJson, segment.providerStateJson),
+    )).returning({ id: nativeSegments.id });
+    if (!updated) {
+      throw new NativeForkIntentError("intent_conflict", "Native fork Run fence transfer lost its durable intent CAS");
+    }
+    return { reference, intent: updatedIntent, runFence: newFence };
+  });
 }
 
 function normalizeChild(child: NativeForkIntentChild, sourceBoundaryRef: string): NativeForkIntentChild {
