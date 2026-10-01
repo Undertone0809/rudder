@@ -42,7 +42,6 @@ import { notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
 import { heartbeatService } from "./heartbeat.js";
-import { historicalHermesManagedCwd } from "./run-intelligence-hermes-workspace.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { ISSUE_EXECUTION_RELEASED_EVENT_TYPE } from "./operator-event-visibility.js";
 import {
@@ -60,6 +59,7 @@ import {
   type RunDiagnosticProjection,
   type RunDiagnosticReaderPosition,
 } from "./run-intelligence-diagnostic-reader.js";
+import { historicalHermesManagedCwd } from "./run-intelligence-hermes-workspace.js";
 import { getRunLogStore } from "./run-log-store.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import {

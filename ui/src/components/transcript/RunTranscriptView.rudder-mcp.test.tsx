@@ -7,13 +7,13 @@ import { TranscriptToolCard } from "./RunTranscriptView.blocks";
 import { TranscriptChatToolActionRow } from "./RunTranscriptView.chat";
 import { UNVERIFIED_RUDDER_AGENT_ME_RESULT, type TranscriptAgentDirectoryEntry, type TranscriptToolCardEntry } from "./RunTranscriptView.common";
 import {
-  type CoveredRudderMcpToolName,
   collectRudderMcpTriggerAutomationParents,
   getRudderMcpPresenterDefinition,
   parseRudderMcpResult,
   RUDDER_MCP_PRESENTER_REGISTRY,
   RudderMcpPresenterProvider,
   RudderMcpSemanticPresenter,
+  type CoveredRudderMcpToolName,
 } from "./RunTranscriptView.rudder-mcp";
 
 const toolFixtures = {

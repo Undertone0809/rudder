@@ -1,6 +1,6 @@
 import type { TranscriptEntry } from "@/agent-runtimes";
-import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { RawTranscriptView } from "../components/transcript/RunTranscriptView.detail";
 import { normalizeTranscript } from "../components/transcript/RunTranscriptView.normalize";
