@@ -513,7 +513,7 @@ test.describe("Onboarding wizard", () => {
       const profile = profileByPurpose.get(purpose);
       expect(profile).toBeTruthy();
       expect(profile!.agentRuntimeType).toBe("codex_local");
-      expect(profile!.agentRuntimeConfig.model).toBe("gpt-5.6-luna");
+      expect(profile!.agentRuntimeConfig.model).toBe("gpt-6-luna");
       expect(profile!.agentRuntimeConfig.modelReasoningEffort).toBe("medium");
       expect(profile!.status).toBe("configured");
       expect(profile!.lastVerifiedAt).toBeTruthy();

@@ -6,6 +6,9 @@ export type OrganizationStatus = (typeof ORGANIZATION_STATUSES)[number];
 export const ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES = ["default", "lightweight", "reasoning"] as const;
 export type OrganizationIntelligenceProfilePurpose = (typeof ORGANIZATION_INTELLIGENCE_PROFILE_PURPOSES)[number];
 
+/** Default Codex model for organization intelligence profiles, independent of new-agent defaults. */
+export const DEFAULT_ORGANIZATION_INTELLIGENCE_CODEX_MODEL = "gpt-6-luna";
+
 export const ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES = ["configured", "disabled", "invalid"] as const;
 export type OrganizationIntelligenceProfileStatus = (typeof ORGANIZATION_INTELLIGENCE_PROFILE_STATUSES)[number];
 

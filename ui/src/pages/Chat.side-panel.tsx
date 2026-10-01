@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { BrowserLiveSurface } from "@/components/workbench/BrowserLiveSurface";
+import * as WorkspaceTabs from "@/components/workbench/WorkspaceTabbedSurface";
 import { WorkspaceCodeEditor } from "@/components/WorkspaceCodeEditor";
 import {
   isWorkspaceCsvPreviewFile,
@@ -2335,12 +2336,13 @@ export function ChatSidePanel({
           onClick={onClose ?? sidePanel.hidePanel}
         />
       ) : null}
-      <aside
+      <WorkspaceTabs.WorkspaceTabbedSurface
+        as="aside"
         ref={panelRef}
         onKeyDownCapture={handleSidePanelKeyDown}
         data-testid="chat-side-panel"
         className={cn(
-          "flex min-h-0 shrink-0 flex-col gap-1.5 bg-transparent",
+          "min-h-0 shrink-0",
           isMobile
             ? "motion-chat-side-panel motion-panel-reveal fixed inset-x-3 bottom-3 top-[4.75rem] z-[45] w-auto"
             : "h-full w-full",
@@ -2353,15 +2355,12 @@ export function ChatSidePanel({
         aria-label="Side Panel"
         aria-hidden={!contextReady || undefined}
       >
-      <div className={cn(
-        "workspace-tab-header-card workspace-main-card relative z-10 flex shrink-0 flex-col overflow-visible rounded-[var(--desktop-workspace-radius)]",
-        isMobile && "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]",
-      )}>
-        <div
+      <WorkspaceTabs.WorkspaceTabbedSurfaceHeader className={isMobile ? "!bg-[color:var(--surface-page)] shadow-[0_24px_90px_-36px_rgb(0_0_0/0.75)]" : undefined}>
+        <WorkspaceTabs.WorkspaceTabbedSurfaceStrip
           role="tablist"
           aria-label="Side Panel targets"
           data-testid="chat-side-panel-tabs"
-          className="workspace-tab-strip flex shrink-0 items-center gap-1 overflow-hidden px-2 py-1.5"
+          className="overflow-hidden"
         >
           <div
             ref={tabScrollerElementRef}
@@ -2532,10 +2531,10 @@ export function ChatSidePanel({
               <PanelRight className="h-3.5 w-3.5" />
             </button>
           </div>
-        </div>
-      </div>
-      <div className={cn(
-        "workspace-tab-content-card workspace-main-card flex min-h-0 min-w-0 max-w-full flex-1 flex-col overflow-hidden rounded-[var(--desktop-workspace-radius)]",
+        </WorkspaceTabs.WorkspaceTabbedSurfaceStrip>
+      </WorkspaceTabs.WorkspaceTabbedSurfaceHeader>
+      <WorkspaceTabs.WorkspaceTabbedSurfaceContent className={cn(
+        "min-w-0 max-w-full",
         isMobile && "!bg-[color:var(--surface-page)]",
       )}>
         <div className={cn(
@@ -2782,8 +2781,8 @@ export function ChatSidePanel({
             <p className="text-sm text-muted-foreground">Open this target in the full page for details.</p>
           )}
         </div>
-      </div>
-      </aside>
+      </WorkspaceTabs.WorkspaceTabbedSurfaceContent>
+      </WorkspaceTabs.WorkspaceTabbedSurface>
     </>
   );
 

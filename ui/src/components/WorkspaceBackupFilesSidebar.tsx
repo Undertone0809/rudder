@@ -1,4 +1,9 @@
 import { organizationsApi } from "@/api/orgs";
+import {
+  WorkspaceContextHeader,
+  WorkspaceContextSidebar,
+  WorkspaceSidebarCollapseButton,
+} from "@/components/workbench/WorkspaceContextSidebar";
 import { useSidebar } from "@/context/SidebarContext";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { queryKeys } from "@/lib/queryKeys";
@@ -11,7 +16,6 @@ import {
   ChevronRight,
   FileCode2,
   Folder,
-  PanelLeft,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -208,14 +212,8 @@ export function WorkspaceBackupFilesSidebar() {
   );
 
   return (
-    <aside
-      data-testid="workspace-sidebar"
-      className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
-    >
-      <header
-        data-testid="workspace-context-header"
-        className="workspace-card-header workspace-context-header desktop-chrome flex shrink-0 items-center justify-between gap-3 px-4 py-3"
-      >
+    <WorkspaceContextSidebar>
+      <WorkspaceContextHeader>
         <div className="min-w-0">
           <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">Files</h2>
           <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
@@ -225,17 +223,9 @@ export function WorkspaceBackupFilesSidebar() {
           </p>
         </div>
         {!isMobile ? (
-          <button
-            type="button"
-            aria-label="Collapse workspace sidebar"
-            title="Collapse workspace sidebar"
-            className="desktop-window-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <PanelLeft className="h-4 w-4" />
-          </button>
+          <WorkspaceSidebarCollapseButton onClick={() => setSidebarOpen(false)} />
         ) : null}
-      </header>
+      </WorkspaceContextHeader>
 
       <div className="scrollbar-auto-hide min-h-0 flex-1 overflow-auto px-1.5 py-2">
         {backupsQuery.isLoading ? (
@@ -270,6 +260,6 @@ export function WorkspaceBackupFilesSidebar() {
           </ul>
         )}
       </div>
-    </aside>
+    </WorkspaceContextSidebar>
   );
 }

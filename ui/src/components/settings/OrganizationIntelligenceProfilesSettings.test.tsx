@@ -82,7 +82,7 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
       orgId: "org-1",
       purpose: "default",
       agentRuntimeType: "codex_local",
-      agentRuntimeConfig: { model: "gpt-5.6-luna", modelReasoningEffort: "medium" },
+      agentRuntimeConfig: { model: "gpt-6-luna", modelReasoningEffort: "medium" },
       status: "configured",
       lastError: null,
       lastVerifiedAt: new Date("2026-09-22T00:00:00.000Z"),
@@ -103,17 +103,17 @@ describe("OrganizationIntelligenceProfilesSettings", () => {
     expect(rendered.host.querySelector('[data-testid="intelligence-profile-lightweight"]')).toBeNull();
     expect(rendered.host.querySelector('[data-testid="intelligence-profile-reasoning"]')).toBeNull();
     expect(rendered.host.textContent).toContain("Default model");
-    expect(rendered.host.textContent).toContain("gpt-5.6-luna");
+    expect(rendered.host.textContent).toContain("gpt-6-luna");
     expect(rendered.host.textContent).toContain("medium");
     rendered.cleanup();
   });
 
-  it("uses Luna Medium for a fresh organization profile", async () => {
+  it("uses GPT-6 Luna Medium for a fresh organization profile", async () => {
     profiles = [];
     const rendered = await renderComponent();
     await vi.waitFor(() => expect(rendered.host.querySelector('[data-testid="intelligence-profile-default"]')).not.toBeNull());
     const card = rendered.host.querySelector('[data-testid="intelligence-profile-default"]')!;
-    expect(card.textContent).toContain("gpt-5.6-luna");
+    expect(card.textContent).toContain("gpt-6-luna");
     expect(card.textContent).toContain("medium");
     rendered.cleanup();
   });
