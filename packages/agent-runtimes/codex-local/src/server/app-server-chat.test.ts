@@ -140,6 +140,7 @@ rl.on("line", (line) => {
       "utf8",
     );
   }
+  if (process.env.RUDDER_TEST_EXIT_AFTER_REQUEST === message.method) process.exit(0);
   if (message.method === "initialized") return;
   if (message.method === "initialize") {
     send({ id: message.id, result: { userAgent: "fake", platformFamily: "unix", platformOs: "macos" } });
@@ -578,6 +579,76 @@ describe("executeCodexAppServerChat", () => {
       exitCode: 1,
       errorMessage: "Codex App Server did not return a turn id",
       submissionPhase: "indeterminate",
+      providerTurnId: null,
+    });
+  });
+
+  it.each(["thread/start", "turn/start"] as const)(
+    "keeps %s indeterminate when the request was received but the response was lost",
+    async (method) => {
+      const capturePath = path.join(root, "protocol.ndjson");
+      const result = await executeCodexAppServerChat({
+        command: fakeCodex,
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: process.env.PATH ?? "",
+          RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+          RUDDER_TEST_EXIT_AFTER_REQUEST: method,
+        } as Record<string, string>,
+        prompt: "Inspect the timeline",
+        model: "gpt-test",
+        modelReasoningEffort: "high",
+        search: false,
+        bypassApprovalsAndSandbox: true,
+        imagePaths: [],
+        sessionId: null,
+        timeoutSec: 5,
+        onLog: vi.fn(async () => undefined),
+      });
+
+      const requests = await readProtocolRequests(capturePath);
+      expect(requests.map((request) => request.method)).toEqual(
+        method === "thread/start" ? ["thread/start"] : ["thread/start", "turn/start"],
+      );
+      expect(result).toMatchObject({
+        exitCode: 1,
+        submissionPhase: "indeterminate",
+        providerTurnId: null,
+      });
+    },
+  );
+
+  it("keeps a thread/start acknowledgement pre-submission until turn/start dispatch", async () => {
+    const capturePath = path.join(root, "protocol.ndjson");
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex,
+      cwd: root,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH ?? "",
+        RUDDER_TEST_PROTOCOL_CAPTURE_PATH: capturePath,
+      } as Record<string, string>,
+      prompt: "Inspect the timeline",
+      model: "gpt-test",
+      modelReasoningEffort: "high",
+      search: false,
+      bypassApprovalsAndSandbox: true,
+      imagePaths: [],
+      sessionId: null,
+      timeoutSec: 5,
+      onLog: vi.fn(async (stream, chunk) => {
+        if (stream === "stdout" && chunk.includes('"type":"thread.started"')) {
+          throw new Error("local transcript writer failed before turn/start");
+        }
+      }),
+    });
+
+    const requests = await readProtocolRequests(capturePath);
+    expect(requests.map((request) => request.method)).toEqual(["thread/start"]);
+    expect(result).toMatchObject({
+      exitCode: 1,
+      submissionPhase: "pre_submission",
       providerTurnId: null,
     });
   });

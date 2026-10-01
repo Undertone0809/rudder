@@ -837,7 +837,13 @@ export async function executeCodexAppServerChat(
         ...(!options.sessionId ? { ephemeral: false } : {}),
       };
       try {
-        return asRecord(await client.request(options.sessionId ? "thread/resume" : "thread/start", params)) ?? {};
+        return asRecord(await client.request(
+          options.sessionId ? "thread/resume" : "thread/start",
+          params,
+          !options.sessionId
+            ? { onDispatch: () => { submissionPhase = "indeterminate"; } }
+            : undefined,
+        )) ?? {};
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (options.sessionId && /unknown|not found|no rollout|missing rollout/i.test(message)) {
@@ -871,6 +877,9 @@ export async function executeCodexAppServerChat(
         `Codex App Server resumed thread ${threadId}, not the requested thread ${options.sessionId}`,
       );
     }
+    // Acknowledged thread creation alone has not submitted this user's turn.
+    // Only turn/start dispatch makes user-input acceptance indeterminate again.
+    submissionPhase = "pre_submission";
     sessionParams = sessionParamsFromThread(threadResponse, threadId, options.cwd);
     chatDeveloperInstructionsRevision = hasNativeDeveloperInstructions
       ? options.chatDeveloperInstructionsRevision ?? null
