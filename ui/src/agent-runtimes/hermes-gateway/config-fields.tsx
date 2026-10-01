@@ -76,7 +76,9 @@ export function HermesGatewayConfigFields({ isCreate, values, set, config, eff, 
           </Field>
         </>
       )}
-      <PayloadTemplateJsonField isCreate={isCreate} values={values} set={set} config={config} mark={mark} />
+      {connectionMode === "custom" && (
+        <PayloadTemplateJsonField isCreate={isCreate} values={values} set={set} config={config} mark={mark} />
+      )}
     </>
   );
 }

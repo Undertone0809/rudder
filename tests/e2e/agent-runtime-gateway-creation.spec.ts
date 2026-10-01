@@ -45,6 +45,13 @@ test.describe("gateway agent creation", () => {
     await expect(page.getByRole("button", { name: "Create agent", exact: true })).toBeEnabled();
     await page.getByPlaceholder("Agent name").fill("Hermes Local Operator");
     await page.getByPlaceholder("Title (e.g. VP of Engineering)").fill("Local Hermes Agent");
+    await page.getByRole("button", { name: "Advanced options", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Connect a custom Hermes API Server", exact: true })).toBeVisible();
+    await expect(page.getByText("Command", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Extra args (comma-separated)", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Environment variables", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Payload template JSON", { exact: true })).toHaveCount(0);
+    await expect(page.getByPlaceholder("http://127.0.0.1:8642")).toHaveCount(0);
 
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST" &&
@@ -101,6 +108,8 @@ test.describe("gateway agent creation", () => {
     await page.getByRole("button", { name: "Connect a custom Hermes API Server", exact: true }).click();
     await expect(page.getByText("Hermes API Server URL", { exact: true })).toBeVisible();
     await expect(page.getByText("API Server key", { exact: true })).toBeVisible();
+    await expect(page.getByText("Command", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Extra args (comma-separated)", { exact: true })).toHaveCount(0);
     await page.getByPlaceholder("Agent name").fill("Hermes Operator");
     await page.getByPlaceholder("Title (e.g. VP of Engineering)").fill("Hermes API Agent");
     await page.getByPlaceholder("http://127.0.0.1:8642").fill("http://127.0.0.1:18642");

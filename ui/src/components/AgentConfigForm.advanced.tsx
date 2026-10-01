@@ -54,59 +54,63 @@ export function RuntimeAdvancedOptions({
       {runtimeType === "claude_local" && (
         <ClaudeLocalAdvancedFields {...fieldProps} />
       )}
-      <Field label="Command" hint={help.localCommand}>
-        <DraftInput
-          value={
-            isCreate
-              ? values!.command
-              : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
-          }
-          onCommit={(value) =>
-            isCreate
-              ? set!({ command: value })
-              : mark("agentRuntimeConfig", "command", value || undefined)
-          }
-          immediate
-          className={inputClass}
-          placeholder={defaultCommandForRuntime(runtimeType)}
-          disabled={disabled}
-        />
-      </Field>
-      <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
-        <DraftInput
-          value={
-            isCreate
-              ? values!.extraArgs
-              : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
-          }
-          onCommit={(value) =>
-            isCreate
-              ? set!({ extraArgs: value })
-              : mark("agentRuntimeConfig", "extraArgs", value ? parseCommaArgs(value) : undefined)
-          }
-          immediate
-          className={inputClass}
-          placeholder="e.g. --verbose, --foo=bar"
-          disabled={disabled}
-        />
-      </Field>
-      <Field label="Environment variables" hint={help.envVars}>
-        <EnvVarEditor
-          value={
-            isCreate
-              ? ((values!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
-              : eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>)
-          }
-          secrets={availableSecrets}
-          onCreateSecret={onCreateSecret}
-          onChange={(env) =>
-            isCreate
-              ? set!({ envBindings: env ?? {}, envVars: "" })
-              : mark("agentRuntimeConfig", "env", env)
-          }
-          disabled={disabled}
-        />
-      </Field>
+      {runtimeType !== "hermes_gateway" && (
+        <>
+          <Field label="Command" hint={help.localCommand}>
+            <DraftInput
+              value={
+                isCreate
+                  ? values!.command
+                  : eff("agentRuntimeConfig", "command", String(config.command ?? ""))
+              }
+              onCommit={(value) =>
+                isCreate
+                  ? set!({ command: value })
+                  : mark("agentRuntimeConfig", "command", value || undefined)
+              }
+              immediate
+              className={inputClass}
+              placeholder={defaultCommandForRuntime(runtimeType)}
+              disabled={disabled}
+            />
+          </Field>
+          <Field label="Extra args (comma-separated)" hint={help.extraArgs}>
+            <DraftInput
+              value={
+                isCreate
+                  ? values!.extraArgs
+                  : eff("agentRuntimeConfig", "extraArgs", formatArgList(config.extraArgs))
+              }
+              onCommit={(value) =>
+                isCreate
+                  ? set!({ extraArgs: value })
+                  : mark("agentRuntimeConfig", "extraArgs", value ? parseCommaArgs(value) : undefined)
+              }
+              immediate
+              className={inputClass}
+              placeholder="e.g. --verbose, --foo=bar"
+              disabled={disabled}
+            />
+          </Field>
+          <Field label="Environment variables" hint={help.envVars}>
+            <EnvVarEditor
+              value={
+                isCreate
+                  ? ((values!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>)
+                  : eff("agentRuntimeConfig", "env", (config.env ?? EMPTY_ENV) as Record<string, EnvBinding>)
+              }
+              secrets={availableSecrets}
+              onCreateSecret={onCreateSecret}
+              onChange={(env) =>
+                isCreate
+                  ? set!({ envBindings: env ?? {}, envVars: "" })
+                  : mark("agentRuntimeConfig", "env", env)
+              }
+              disabled={disabled}
+            />
+          </Field>
+        </>
+      )}
       {!isCreate && (
         <>
           <Field label="Timeout (sec)" hint={help.timeoutSec}>
