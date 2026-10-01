@@ -217,6 +217,9 @@ type CursorAcpProviderResponse =
 const CURSOR_RPC_METHOD_NOT_FOUND = -32601;
 const CURSOR_RPC_INTERNAL_ERROR = -32603;
 const CURSOR_PROFILE_CAPABILITY_CACHE_SIZE = 128;
+const CURSOR_ACP_STDERR_DIAGNOSTIC_MAX_LINE_BYTES = 16 * 1024;
+const CURSOR_ACP_STDERR_DIAGNOSTIC_MAX_BYTES = 4 * 1024;
+const CURSOR_ACP_STDERR_DIAGNOSTIC_OMITTED_LINE = "[stderr line omitted: diagnostic line limit exceeded]";
 
 const CURSOR_ACP_PROTOCOL_VERSION = 1;
 const CURSOR_NATIVE_CLIENT_VERSION = "rudder-native-capabilities";
@@ -464,10 +467,13 @@ function redactProviderValue(value: unknown, secrets: readonly string[]): unknow
 }
 
 function diagnosticText(value: unknown, secrets: readonly string[] = []): string {
+  return redactedDiagnosticText(value, secrets).slice(0, 2_000);
+}
+
+function redactedDiagnosticText(value: unknown, secrets: readonly string[] = []): string {
   const text = value instanceof Error ? value.message : String(value);
   return String(redactProviderValue(text, secrets))
-    .replace(/https?:\/\/[^\s"'<>]+/giu, "[URL REDACTED]")
-    .slice(0, 2_000);
+    .replace(/https?:\/\/[^\s"'<>]+/giu, "[URL REDACTED]");
 }
 
 function safeAuthMethodDiagnostic(
@@ -935,6 +941,10 @@ type CursorAcpRequestDiagnostic = {
   errorDataMessage?: string;
   advertisedAuthMethodIds?: string[];
   chosenAuthMethodId?: string | null;
+  childProcess?: {
+    stderr?: { summary: string; truncated: boolean; retainedBytes: number };
+    exit?: { code: number | null; signal: NodeJS.Signals | null };
+  };
 };
 
 class CursorAcpClient {
@@ -946,6 +956,13 @@ class CursorAcpClient {
   private closed = false;
   private readonly providerRequests = new Map<CursorAcpRequestId, CursorAcpProviderRequestState>();
   private readonly requestDiagnostics: CursorAcpRequestDiagnostic[] = [];
+  private stderrTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  private stderrLine = Buffer.allocUnsafe(CURSOR_ACP_STDERR_DIAGNOSTIC_MAX_LINE_BYTES);
+  private stderrLineBytes = 0;
+  private stderrLineOverflow = false;
+  private stderrTruncated = false;
+  private childExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  private closeRequested = false;
   private frameBuffer: Buffer | null = null;
   private frameBytes = 0;
   private replayBytes: number | null = null;
@@ -957,6 +974,7 @@ class CursorAcpClient {
     signal?: AbortSignal,
     private readonly onRequest?: (method: string, params: JsonRecord, id: string | number) => Promise<unknown>,
     private readonly readBudget?: CursorReadBudget,
+    private readonly captureProcessDiagnostics = false,
   ) {
     this.timeoutMs = Math.max(250, profile.requestTimeoutMs ?? 15_000);
     const command = profile.command?.trim() || CURSOR_DEFAULT_COMMAND;
@@ -976,11 +994,15 @@ class CursorAcpClient {
       this.child.stdout.setEncoding("utf8");
       this.child.stdout.on("data", (chunk: Buffer | string) => this.consume(chunk.toString()));
     }
-    this.child.stderr.on("data", () => {
-      // Drain provider diagnostics without persisting credentials from stderr.
+    this.child.stderr.on("data", (chunk: Buffer | string) => {
+      if (this.captureProcessDiagnostics) {
+        this.captureStderr(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
     });
     this.child.on("error", (error) => this.failPending(normalizeRpcFailure(error, "process", profileSecrets(profile))));
-    this.child.on("close", () => {
+    this.child.on("exit", (code, signal) => this.captureChildExit(code, signal));
+    this.child.on("close", (code, signal) => {
+      this.captureChildExit(code, signal);
       this.closed = true;
       this.failPending(new CursorNativeCapabilityError(
         "unknown",
@@ -996,6 +1018,107 @@ class CursorAcpClient {
       if (signal.aborted) abort();
       else signal.addEventListener("abort", abort, { once: true });
     }
+  }
+
+  private captureStderr(chunk: Buffer): void {
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset);
+      const end = newline < 0 ? chunk.length : newline;
+      const segment = chunk.subarray(offset, end);
+
+      if (!this.stderrLineOverflow) {
+        const available = CURSOR_ACP_STDERR_DIAGNOSTIC_MAX_LINE_BYTES - this.stderrLineBytes;
+        const copied = Math.min(available, segment.length);
+        if (copied > 0) {
+          segment.copy(this.stderrLine, this.stderrLineBytes, 0, copied);
+          this.stderrLineBytes += copied;
+        }
+        if (copied < segment.length) this.discardOversizedStderrLine();
+      }
+
+      if (newline < 0) return;
+      this.finishStderrLine();
+      offset = newline + 1;
+    }
+  }
+
+  private discardOversizedStderrLine(): void {
+    this.stderrLine.fill(0);
+    this.stderrLineBytes = 0;
+    this.stderrLineOverflow = true;
+    this.stderrTruncated = true;
+  }
+
+  private finishStderrLine(): void {
+    if (this.stderrLineOverflow) {
+      this.appendStderrTail(`${CURSOR_ACP_STDERR_DIAGNOSTIC_OMITTED_LINE}\n`);
+      this.stderrLineOverflow = false;
+      return;
+    }
+
+    const line = this.stderrLine.subarray(0, this.stderrLineBytes).toString("utf8");
+    this.stderrLine.fill(0);
+    this.stderrLineBytes = 0;
+    this.appendStderrTail(`${redactedDiagnosticText(line, profileSecrets(this.profile))}\n`);
+  }
+
+  private rollStderrTail(value: string): { tail: Buffer; truncated: boolean } {
+    const incoming = Buffer.from(value, "utf8");
+    const keptIncoming = incoming.length > CURSOR_ACP_STDERR_DIAGNOSTIC_MAX_BYTES
+      ? incoming.subarray(incoming.length - CURSOR_ACP_STDERR_DIAGNOSTIC_MAX_BYTES)
+      : incoming;
+    const keepPrevious = Math.min(
+      this.stderrTail.length,
+      CURSOR_ACP_STDERR_DIAGNOSTIC_MAX_BYTES - keptIncoming.length,
+    );
+    const truncated = this.stderrTruncated
+      || keptIncoming.length < incoming.length
+      || keepPrevious < this.stderrTail.length;
+    return {
+      tail: Buffer.concat([
+        this.stderrTail.subarray(this.stderrTail.length - keepPrevious),
+        keptIncoming,
+      ], keepPrevious + keptIncoming.length),
+      truncated,
+    };
+  }
+
+  private appendStderrTail(value: string): void {
+    const rolled = this.rollStderrTail(value);
+    this.stderrTail = rolled.tail;
+    this.stderrTruncated = rolled.truncated;
+  }
+
+  private captureChildExit(code: number | null, signal: NodeJS.Signals | null): void {
+    if (!this.captureProcessDiagnostics || this.closeRequested || this.childExit || (code === null && signal === null)) return;
+    this.childExit = { code, signal };
+  }
+
+  private childProcessDiagnostic(): NonNullable<CursorAcpRequestDiagnostic["childProcess"]> | null {
+    let tail = this.stderrTail;
+    let truncated = this.stderrTruncated;
+    if (this.stderrLineOverflow) {
+      const preview = this.rollStderrTail(`${CURSOR_ACP_STDERR_DIAGNOSTIC_OMITTED_LINE}\n`);
+      tail = preview.tail;
+      truncated = preview.truncated;
+    } else if (this.stderrLineBytes > 0) {
+      const line = this.stderrLine.subarray(0, this.stderrLineBytes).toString("utf8");
+      const safeLine = redactedDiagnosticText(line, profileSecrets(this.profile));
+      const preview = this.rollStderrTail(safeLine);
+      tail = preview.tail;
+      truncated = preview.truncated;
+    }
+    const stderr = tail.length > 0
+      ? {
+          summary: diagnosticText(tail.toString("utf8"), profileSecrets(this.profile)),
+          truncated,
+          retainedBytes: tail.length,
+        }
+      : undefined;
+    const exit = this.childExit ? { ...this.childExit } : undefined;
+    if (!stderr && !exit) return null;
+    return { ...(stderr ? { stderr } : {}), ...(exit ? { exit } : {}) };
   }
 
   request(
@@ -1061,11 +1184,14 @@ class CursorAcpClient {
   }
 
   get requestTrace(): CursorAcpRequestDiagnostic[] {
-    return this.requestDiagnostics.map((diagnostic) => ({
+    const childProcess = this.childProcessDiagnostic();
+    const lastRequestIndex = this.requestDiagnostics.length - 1;
+    return this.requestDiagnostics.map((diagnostic, index) => ({
       ...diagnostic,
       ...(diagnostic.advertisedAuthMethodIds
         ? { advertisedAuthMethodIds: [...diagnostic.advertisedAuthMethodIds] }
         : {}),
+      ...(childProcess && index === lastRequestIndex ? { childProcess } : {}),
     }));
   }
 
@@ -1079,13 +1205,14 @@ class CursorAcpClient {
   }
 
   close(error: unknown = new Error("Cursor ACP connection was closed")): void {
+    this.closeRequested = true;
     if (error instanceof CursorReadLimitError) this.readLimit = error;
     this.closed = true;
     this.frameBuffer = null;
     this.frameBytes = 0;
     this.buffer = "";
     this.failPending(error);
-    if (this.child.exitCode === null && !this.child.killed) {
+    if (this.child.exitCode === null && this.child.signalCode === null && !this.child.killed) {
       this.child.stdin.end();
       this.child.kill("SIGTERM");
     }
@@ -1640,7 +1767,7 @@ export type CursorAcpAuthenticationProbeResult = CursorAcpAuthMethodDiagnostic &
 export async function probeCursorAcpAuthentication(
   profile: CursorLocalProfileTransport,
 ): Promise<CursorAcpAuthenticationProbeResult> {
-  const client = new CursorAcpClient(profile, () => {});
+  const client = new CursorAcpClient(profile, () => {}, undefined, undefined, undefined, true);
   let status: CursorAcpAuthenticationProbeResult["status"] = "failed";
   let authMethodDiagnostic: CursorAcpAuthMethodDiagnostic = {
     advertisedAuthMethodIds: [],

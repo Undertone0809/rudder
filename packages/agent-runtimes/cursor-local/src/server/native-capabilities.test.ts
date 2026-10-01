@@ -35,12 +35,21 @@ const binding: CursorProviderBindingRef = {
 
 function createSpawnFixture(
   respond: (request: JsonRecord, output: PassThrough) => void,
-): { spawn: SpawnFn; requests: JsonRecord[]; readonly kills: number } {
+): {
+  spawn: SpawnFn;
+  requests: JsonRecord[];
+  readonly kills: number;
+  writeStderr(chunk: string | Buffer): void;
+  exitProcess(code: number | null, signal: NodeJS.Signals | null): void;
+} {
   const requests: JsonRecord[] = [];
   let kills = 0;
+  let childProcess: (EventEmitter & Partial<ChildProcessWithoutNullStreams>) | null = null;
+  let stderrStream: PassThrough | null = null;
   const spawn = ((_command: string, _args: readonly string[], _options: unknown) => {
     const stdout = new PassThrough();
     const stderr = new PassThrough();
+    stderrStream = stderr;
     const child = new EventEmitter() as EventEmitter & Partial<ChildProcessWithoutNullStreams>;
     const stdin = new Writable({
       write(chunk, _encoding, callback) {
@@ -55,6 +64,7 @@ function createSpawnFixture(
       stdout,
       stderr,
       exitCode: null,
+      signalCode: null,
       killed: false,
       kill: () => {
         kills += 1;
@@ -64,9 +74,25 @@ function createSpawnFixture(
         return true;
       },
     });
+    childProcess = child;
     return child as ChildProcessWithoutNullStreams;
   }) as unknown as SpawnFn;
-  return { spawn, requests, get kills() { return kills; } };
+  return {
+    spawn,
+    requests,
+    get kills() { return kills; },
+    writeStderr(chunk) {
+      if (!stderrStream) throw new Error("Fixture child has not been spawned.");
+      stderrStream.write(chunk);
+    },
+    exitProcess(code, signal) {
+      if (!childProcess) throw new Error("Fixture child has not been spawned.");
+      Object.defineProperty(childProcess, "exitCode", { configurable: true, value: code, writable: true });
+      Object.defineProperty(childProcess, "signalCode", { configurable: true, value: signal, writable: true });
+      childProcess.emit("exit", code, signal);
+      childProcess.emit("close", code, signal);
+    },
+  };
 }
 
 function initializeResult(authMethods: JsonRecord[] = [], loadSession: boolean | null = true): JsonRecord {
@@ -936,6 +962,133 @@ describe("Cursor ACP native capabilities", () => {
     expect(JSON.stringify(result.resultJson)).not.toContain(secret);
     expect(fixture.requests.map((request) => request.method)).toEqual(["initialize", "initialized", "authenticate"]);
     expect(fixture.requests.find((request) => request.method === "authenticate")?.params).toEqual({ methodId: "cursor_login" });
+  });
+
+  it("redacts a chunk-split credential longer than the stderr tail before retaining diagnostics", async () => {
+    const secret = `cursor-stderr-test-${"credential-part-".repeat(75)}-SECRET-SUFFIX-LEAK-${"credential-tail-".repeat(240)}`;
+    const rawStderr = Buffer.from(`provider auth failed CURSOR_API_KEY=${secret}\nCURSOR_API_KEY=partial-secret`);
+    const oldTailStart = rawStderr.length - 4_096;
+    const oldSummaryWindow = rawStderr.subarray(oldTailStart).toString("utf8").slice(0, 2_000);
+    expect(oldTailStart).toBeGreaterThan(rawStderr.indexOf("CURSOR_API_KEY="));
+    expect(oldSummaryWindow).not.toContain("CURSOR_API_KEY=");
+    expect(oldSummaryWindow).toContain("SECRET-SUFFIX-LEAK");
+
+    let fixture: ReturnType<typeof createSpawnFixture>;
+    fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([
+          { id: "cursor_login", name: "Cursor Login" },
+        ]) })}\n`);
+      } else if (request.method === "authenticate") {
+        const credential = `CURSOR_API_KEY=${secret}`;
+        fixture.writeStderr(Buffer.from(`provider auth failed ${credential.slice(0, 900)}`));
+        fixture.writeStderr(Buffer.from(`${credential.slice(900)}\nCURSOR_API_KEY=partial-secret`));
+      }
+    });
+    const diagnostic = await probeCursorAcpAuthentication({
+      ...profile(fixture.spawn),
+      requestTimeoutMs: 250,
+      env: { CURSOR_API_KEY: secret },
+    });
+    const authenticate = diagnostic.requestTrace.find((request) => request.method === "authenticate");
+    const stderr = authenticate?.childProcess?.stderr;
+
+    expect(diagnostic.status).toBe("timed_out");
+    expect(Buffer.byteLength(secret, "utf8")).toBeGreaterThan(4_096);
+    expect(stderr?.retainedBytes).toBeLessThanOrEqual(4_096);
+    expect(stderr?.summary).toContain("[REDACTED]");
+    expect(stderr?.summary.match(/CURSOR_API_KEY=\[REDACTED\]/g) ?? []).toHaveLength(2);
+    expect(stderr?.summary).not.toContain(secret);
+    expect(stderr?.summary).not.toContain("SECRET-SUFFIX-LEAK");
+    expect(stderr?.summary).not.toContain("partial-secret");
+    expect(Buffer.byteLength(stderr?.summary ?? "", "utf8")).toBeLessThanOrEqual(2_000);
+    expect(authenticate?.childProcess?.exit).toBeUndefined();
+    expect(JSON.stringify(diagnostic)).not.toContain(secret);
+    expect(JSON.stringify(diagnostic)).not.toContain("SECRET-SUFFIX-LEAK");
+    expect(fixture.kills).toBe(1);
+  });
+
+  it("omits an over-limit stderr line without retaining its trailing credential bytes", async () => {
+    const leakedSuffix = "OVERSIZED-SECRET-SUFFIX-LEAK";
+    let fixture: ReturnType<typeof createSpawnFixture>;
+    fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([
+          { id: "cursor_login", name: "Cursor Login" },
+        ]) })}\n`);
+      } else if (request.method === "authenticate") {
+        const oversizedLine = `CURSOR_API_KEY=${"x".repeat(20 * 1024)}${leakedSuffix}`;
+        fixture.writeStderr(Buffer.from(oversizedLine.slice(0, 9_000)));
+        fixture.writeStderr(Buffer.from(`${oversizedLine.slice(9_000)}\npost-overflow diagnostic\n`));
+      }
+    });
+    const diagnostic = await probeCursorAcpAuthentication({
+      ...profile(fixture.spawn),
+      requestTimeoutMs: 250,
+    });
+    const stderr = diagnostic.requestTrace.find((request) => request.method === "authenticate")?.childProcess?.stderr;
+
+    expect(diagnostic.status).toBe("timed_out");
+    expect(stderr?.truncated).toBe(true);
+    expect(stderr?.summary).toContain("[stderr line omitted: diagnostic line limit exceeded]");
+    expect(stderr?.summary).not.toContain(leakedSuffix);
+    expect(stderr?.retainedBytes).toBeLessThanOrEqual(4_096);
+    expect(JSON.stringify(diagnostic)).not.toContain(leakedSuffix);
+    expect(fixture.kills).toBe(1);
+  });
+
+  it("keeps the sanitized stderr rolling tail within its byte limit across many lines", async () => {
+    let fixture: ReturnType<typeof createSpawnFixture>;
+    fixture = createSpawnFixture((request, output) => {
+      if (request.method === "initialize") {
+        output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([
+          { id: "cursor_login", name: "Cursor Login" },
+        ]) })}\n`);
+      } else if (request.method === "authenticate") {
+        fixture.writeStderr(Buffer.from(Array.from({ length: 600 }, (_, index) => `safe-line-${index.toString().padStart(3, "0")}\n`).join("")));
+      }
+    });
+    const diagnostic = await probeCursorAcpAuthentication({
+      ...profile(fixture.spawn),
+      requestTimeoutMs: 250,
+    });
+    const stderr = diagnostic.requestTrace.find((request) => request.method === "authenticate")?.childProcess?.stderr;
+
+    expect(diagnostic.status).toBe("timed_out");
+    expect(stderr).toMatchObject({ truncated: true, retainedBytes: 4_096 });
+    expect(Buffer.byteLength(stderr?.summary ?? "", "utf8")).toBeLessThanOrEqual(2_000);
+    expect(fixture.kills).toBe(1);
+  });
+
+  it("retains provider child exit codes and signals without reporting cleanup as an exit", async () => {
+    const cases: Array<{ code: number | null; signal: NodeJS.Signals | null }> = [
+      { code: 23, signal: null },
+      { code: null, signal: "SIGTERM" },
+    ];
+
+    for (const childExit of cases) {
+      let fixture: ReturnType<typeof createSpawnFixture>;
+      fixture = createSpawnFixture((request, output) => {
+        if (request.method === "initialize") {
+          output.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result: initializeResult([
+            { id: "cursor_login", name: "Cursor Login" },
+          ]) })}\n`);
+        } else if (request.method === "authenticate") {
+          fixture.exitProcess(childExit.code, childExit.signal);
+        }
+      });
+
+      const diagnostic = await probeCursorAcpAuthentication({
+        ...profile(fixture.spawn),
+        requestTimeoutMs: 1_000,
+      });
+      const authenticate = diagnostic.requestTrace.find((request) => request.method === "authenticate");
+
+      expect(diagnostic.status).toBe("failed");
+      expect(authenticate?.status).toBe("failed");
+      expect(authenticate?.childProcess?.exit).toEqual(childExit);
+      expect(fixture.kills).toBe(0);
+    }
   });
 
   it("classifies a missing provider session and refuses profile/cwd mismatches", async () => {
