@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request, type Response } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { eq } from "../../packages/db/node_modules/drizzle-orm/index.js";
@@ -401,10 +401,13 @@ test("ordinary Main native fork keeps exact alias history and its child session 
     const stream = page.waitForResponse((response) => response.request().method() === "POST"
       && response.url().endsWith("/messages/stream"));
     await page.getByRole("button", { name: "Send", exact: true }).click();
-    await (await stream).finished();
+    const streamResponse = await stream;
+    expect(streamResponse.status()).toBe(200);
+    await streamResponse.finished();
     await expect(page.getByTestId("chat-assistant-message").last()).toContainText(reply, { timeout: 30_000 });
   };
-  await send("Native parent input", "Native reply 1");
+  const sourceUrl = "https://native-fork-source.example/research";
+  await send(`Native parent input ${sourceUrl}`, "Native reply 1");
   const parentId = new URL(page.url()).pathname.split("/").at(-1)!;
   const [parentRun] = await e2eDb.select().from(heartbeatRuns).where(eq(heartbeatRuns.chatConversationId, parentId));
   const sourceMessageId = await page.getByTestId("chat-assistant-message").last().getAttribute("data-message-id");
@@ -423,8 +426,55 @@ test("ordinary Main native fork keeps exact alias history and its child session 
   // Exercise the retained-source admission edge, not only an already admitted child.
   const deletion = await page.request.delete(`/api/chats/${parentId}`);
   expect(deletion.ok()).toBe(true);
+  const manifestPath = `/api/chats/${child.id}/work-manifest`;
+  const initialManifest = page.waitForResponse((response) => response.request().method() === "GET"
+    && new URL(response.url()).pathname === manifestPath);
   await page.reload();
+  expect([200, 304]).toContain((await initialManifest).status());
+  const manifestResponses: Response[] = [];
+  const sendManifestRequests = new Set<Request>();
+  let childSendStarted = false;
+  const captureRequest = (request: Request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "POST" && pathname === `/api/chats/${child.id}/messages/stream`) childSendStarted = true;
+    if (childSendStarted && request.method() === "GET" && pathname === manifestPath) sendManifestRequests.add(request);
+  };
+  const captureManifest = (response: Response) => {
+    if (sendManifestRequests.has(response.request())) {
+      manifestResponses.push(response);
+    }
+  };
+  page.on("request", captureRequest);
+  page.on("response", captureManifest);
   await send("Native child first input", "Native reply 2");
+  await expect.poll(() => manifestResponses.length, { timeout: 5_000 }).toBeGreaterThan(0);
+  // Include the next query retry in the first-send observation window.
+  await page.waitForTimeout(1_250);
+  page.off("request", captureRequest);
+  page.off("response", captureManifest);
+  expect(manifestResponses.length).toBeGreaterThan(0);
+  for (const response of manifestResponses) {
+    // Browser revalidation may legitimately reuse a 304 cached manifest.
+    expect([200, 304, 409]).toContain(response.status());
+    if (response.status() === 409) {
+      expect(await response.json()).toMatchObject({ details: { code: "work_manifest_revision_changed" } });
+    }
+  }
+  let terminalManifest: { conversationId: string; sources: unknown[]; subagents: unknown } | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await page.request.get(manifestPath);
+    if (response.status() === 200) {
+      terminalManifest = await response.json();
+      break;
+    }
+    expect(response.status()).toBe(409);
+    expect(await response.json()).toMatchObject({ details: { code: "work_manifest_revision_changed" } });
+    if (attempt < 3) await page.waitForTimeout(200 * (attempt + 1));
+  }
+  expect(terminalManifest).toMatchObject({ conversationId: child.id, subagents: { active: [], done: [], totalCount: 0 } });
+  expect(terminalManifest?.sources).toContainEqual(expect.objectContaining({
+    targetKey: `url:${sourceUrl}`, targetType: "external_url", url: sourceUrl, sourceRole: "user",
+  }));
   const [childRun] = await e2eDb.select().from(heartbeatRuns).where(eq(heartbeatRuns.chatConversationId, child.id));
   expect(childRun.status).toBe("succeeded");
   expect(childRun.sessionIdAfter).toBeTruthy();
@@ -433,6 +483,12 @@ test("ordinary Main native fork keeps exact alias history and its child session 
   expect(childSpan).toMatchObject({ state: "sealed", completeness: "complete" });
   expect(childSpan.selectorJson).toMatchObject({ kind: "codex_turn", threadId: childRun.sessionIdAfter });
   await page.reload();
+  await expect(page.getByTestId("chat-assistant-message").filter({ hasText: "Native reply 2" }).last())
+    .toBeVisible({ timeout: 15_000 });
+  const persistedMessages = await e2eDb.select().from(chatMessages).where(eq(chatMessages.conversationId, child.id));
+  expect(persistedMessages).toContainEqual(expect.objectContaining({
+    role: "assistant", status: "completed", body: "Native reply 2", runId: childRun.id,
+  }));
   const historyAfter = await page.request.get(`/api/chats/${child.id}/messages/${copiedMessageId}/transcript`);
   expect(historyAfter.ok()).toBe(true);
   expect((await historyAfter.json()).transcript).toEqual(history.transcript);
