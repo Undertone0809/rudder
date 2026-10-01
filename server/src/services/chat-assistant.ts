@@ -67,7 +67,7 @@ import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
 } from "./runtime-kernel/model-fallback.js";
-import { executeNativeForkIntent, markNativeForkIntentUnknown, transferReservedNativeForkIntentRunFence, type NativeForkIntentNoChildProof, type NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
+import { abortReservedNativeForkIntentRunFence, executeNativeForkIntent, markNativeForkIntentUnknown, transferReservedNativeForkIntentRunFence, type NativeForkIntentNoChildProof, type NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
 import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
@@ -534,6 +534,30 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     >({
       ownerSignal: ownedExecution.signal,
       stopSignal: input.abortSignal,
+      beforeFinalize: async () => {
+        if (!claudeDeferredForkReference || !claudeDeferredFork?.adapterIntent || !claudeForkRunFence) return;
+        if (!pendingClaudeForkTransfer) {
+          if (!claudeDeferredForkOutcome.result) {
+            // A thrown first-input execution has no observed Fork outcome.
+            // Persist uncertainty before terminalizing its still-open Run.
+            await markNativeForkIntentUnknown(db, {
+              reference: claudeDeferredForkReference,
+              runFence: claudeForkRunFence,
+              reason: "Claude first-input execution ended without an observed native fork outcome",
+            });
+          }
+          return;
+        }
+        // Failure/Stop can occur after the old span seals but before transfer.
+        // Terminalize its reserved intent before releasing the live Run fence;
+        // never convert this cleanup into permission to retry provider input.
+        await abortReservedNativeForkIntentRunFence(db, {
+          reference: claudeDeferredForkReference,
+          runFence: pendingClaudeForkTransfer.oldFence,
+          reason: "Claude fork retry ended before the reserved intent was transferred to its next attempt",
+        });
+        pendingClaudeForkTransfer = null;
+      },
       finalize: (finalState) => chatRunsSvc.finalizeRun(runId, {
         ...finalState, resultJson: transcript.terminalResult(finalState.resultJson),
         transcriptDelivery: {
@@ -1115,19 +1139,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         });
       };
 
-      let result: Awaited<ReturnType<typeof executeChatAdapter>>;
-      try {
-        result = await guardActiveRun(() => executeChatAdapter(prompt));
-      } catch (error) {
-        if (claudeDeferredForkReference && claudeForkRunFence) {
-          await markNativeForkIntentUnknown(db, {
-            reference: claudeDeferredForkReference,
-            runFence: claudeForkRunFence,
-            reason: `Claude first-input fork outcome could not be observed: ${error instanceof Error ? error.message : String(error)}`,
-          }).catch(() => undefined);
-        }
-        throw error;
-      }
+      let result = await guardActiveRun(() => executeChatAdapter(prompt));
       const claudeDeferredForkRecordedResult = claudeDeferredForkOutcome.result;
       if (claudeDeferredForkRecordedResult) {
         // Keep the executor's aggregate attempt metadata; fork acceptance

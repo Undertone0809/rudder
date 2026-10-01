@@ -136,6 +136,18 @@ export type TransferReservedNativeForkIntentRunFenceInput = {
   noChildProof: NativeForkIntentNoChildProof;
 };
 
+export type AbortReservedNativeForkIntentRunFenceInput = {
+  reference: NativeForkIntentReference;
+  runFence: NativeForkIntentRunFence;
+  reason: string;
+};
+
+export type AbortReservedNativeForkIntentRunFenceOutcome = {
+  reference: NativeForkIntentReference;
+  intent: NativeForkIntentRecord;
+  disposition: "aborted" | "already_unknown";
+};
+
 export type NativeForkIntentOutcome =
   | { status: "reserved"; shouldFork: true; intent: NativeForkIntentRecord; reference: NativeForkIntentReference }
   | { status: "accepted"; shouldFork: false; intent: NativeForkIntentRecord; reference: NativeForkIntentReference; child: NativeForkIntentChild }
@@ -1121,6 +1133,150 @@ export async function transferReservedNativeForkIntentRunFence(
       throw new NativeForkIntentError("intent_conflict", "Native fork Run fence transfer lost its durable intent CAS");
     }
     return { reference, intent: updatedIntent, runFence: newFence };
+  });
+}
+
+/**
+ * Fail closed when a deferred-fork handoff cannot be completed before Run
+ * finalization. An exact current open span or a sealed/released bound span is
+ * sufficient; a same-owner open successor is allowed after failed transfer.
+ * This records reconciliation-required state only and never rotates a fence.
+ */
+export async function abortReservedNativeForkIntentRunFence(
+  db: Db,
+  input: AbortReservedNativeForkIntentRunFenceInput,
+): Promise<AbortReservedNativeForkIntentRunFenceOutcome> {
+  const reference: NativeForkIntentReference = {
+    intentId: requiredString(input.reference.intentId, "native fork intentId"),
+    orgId: requiredString(input.reference.orgId, "native fork organization"),
+    bindingId: requiredString(input.reference.bindingId, "native fork binding"),
+    segmentId: requiredString(input.reference.segmentId, "native fork segment"),
+  };
+  const runFence = normalizeRunFence(input.runFence)!;
+  const reason = requiredString(input.reason, "native fork abort reason").slice(0, 2_000);
+
+  return db.transaction(async (tx) => {
+    const database = tx as unknown as Db;
+    await lockRuntimeRetentionScope(database, reference.orgId);
+    await lockIntentTarget(database, reference.bindingId, reference.segmentId, runFence);
+    const { segment, intent } = await loadIntentReference(database, reference);
+    if (!intent.runFence || !sameRunFence(intent.runFence, runFence)) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork abort does not hold the intent's exact Run fence");
+    }
+
+    const now = new Date();
+    const [run] = await database.select({
+      id: heartbeatRuns.id,
+      agentId: heartbeatRuns.agentId,
+      chatConversationId: heartbeatRuns.chatConversationId,
+      status: heartbeatRuns.status,
+      executionOwnerToken: heartbeatRuns.executionOwnerToken,
+      executionLeaseExpiresAt: heartbeatRuns.executionLeaseExpiresAt,
+    }).from(heartbeatRuns).where(and(
+      eq(heartbeatRuns.id, runFence.runId),
+      eq(heartbeatRuns.orgId, reference.orgId),
+      eq(heartbeatRuns.status, "running"),
+      eq(heartbeatRuns.executionOwnerToken, runFence.ownerToken),
+    )).limit(1);
+    if (!run || !run.executionLeaseExpiresAt || run.executionLeaseExpiresAt.getTime() <= now.getTime()) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork abort requires the same live Run owner");
+    }
+
+    const [binding] = await database.select({
+      agentId: runtimeBindings.agentId,
+      conversationId: runtimeBindings.conversationId,
+      currentSegmentId: runtimeBindings.currentSegmentId,
+      status: runtimeBindings.status,
+    }).from(runtimeBindings).where(and(
+      eq(runtimeBindings.id, reference.bindingId),
+      eq(runtimeBindings.orgId, reference.orgId),
+    )).limit(1);
+    if (
+      !binding
+      || binding.status !== "active"
+      || binding.currentSegmentId !== reference.segmentId
+      || binding.agentId !== run.agentId
+      || binding.conversationId !== run.chatConversationId
+    ) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork abort Run no longer owns the target binding");
+    }
+
+    const [boundSpan] = await database.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.id, runFence.spanId),
+      eq(runRuntimeSpans.orgId, reference.orgId),
+      eq(runRuntimeSpans.runId, runFence.runId),
+      eq(runRuntimeSpans.bindingId, reference.bindingId),
+      eq(runRuntimeSpans.segmentId, reference.segmentId),
+      eq(runRuntimeSpans.ownerToken, runFence.ownerToken),
+      eq(runRuntimeSpans.attemptEpoch, runFence.attemptEpoch),
+    )).limit(1);
+    if (!boundSpan || boundSpan.nativeExecutionRef !== null) {
+      throw new NativeForkIntentError("run_fence_stale", "Native fork abort requires its exact childless intent span");
+    }
+    const [latestSpan] = await database.select().from(runRuntimeSpans).where(and(
+      eq(runRuntimeSpans.orgId, reference.orgId),
+      eq(runRuntimeSpans.runId, runFence.runId),
+    )).orderBy(desc(runRuntimeSpans.ordinal)).limit(1);
+    if (boundSpan.state === "open") {
+      if (boundSpan.writerLeaseReleasedAt || latestSpan?.id !== boundSpan.id) {
+        throw new NativeForkIntentError("run_fence_stale", "Open-span native fork abort requires the exact current writer fence");
+      }
+    } else if (boundSpan.state === "sealed") {
+      if (!boundSpan.writerLeaseReleasedAt) {
+        throw new NativeForkIntentError("run_fence_stale", "Sealed-span native fork abort requires its released writer lease");
+      }
+      if (
+        !latestSpan
+        || latestSpan.ordinal < boundSpan.ordinal
+        || (latestSpan.id !== boundSpan.id && (
+          latestSpan.state !== "open"
+          || latestSpan.bindingId !== reference.bindingId
+          || latestSpan.segmentId !== reference.segmentId
+          || latestSpan.ownerToken !== runFence.ownerToken
+          || latestSpan.attemptEpoch !== runFence.attemptEpoch
+          || latestSpan.nativeExecutionRef !== null
+        ))
+      ) {
+        throw new NativeForkIntentError("run_fence_stale", "A newer native fork abort span must remain open under the same Run owner");
+      }
+    } else {
+      throw new NativeForkIntentError("run_fence_stale", "Unresolved native fork intent spans cannot be aborted");
+    }
+
+    if (intent.child || segment.nativeSessionId !== null || optionalString(record(segment.providerStateJson)?.sessionId) !== null) {
+      throw new NativeForkIntentError("intent_conflict", "Native fork abort cannot change an intent with provider child identity");
+    }
+    if (intent.status === "unknown" && intent.reconciliation !== "resolved") {
+      return { reference, intent, disposition: "already_unknown" };
+    }
+    if (intent.status !== "reserved") {
+      throw new NativeForkIntentError("intent_conflict", "Only a still-reserved native fork intent can be aborted");
+    }
+
+    const updatedIntent: NativeForkIntentRecord = {
+      ...intent,
+      status: "unknown",
+      reason,
+      reconciliation: "provider_lookup_required",
+      reconciliationNote: "Deferred native fork fence handoff was aborted; reconcile provider state before any retry.",
+      updatedAt: now.toISOString(),
+    };
+    const [updated] = await tx.update(nativeSegments).set({
+      providerStateJson: withIntent(segment.providerStateJson, updatedIntent),
+      updatedAt: now,
+    }).where(and(
+      eq(nativeSegments.id, reference.segmentId),
+      eq(nativeSegments.orgId, reference.orgId),
+      eq(nativeSegments.bindingId, reference.bindingId),
+      eq(nativeSegments.state, segment.state),
+      segment.providerStateJson === null
+        ? isNull(nativeSegments.providerStateJson)
+        : eq(nativeSegments.providerStateJson, segment.providerStateJson),
+    )).returning({ id: nativeSegments.id });
+    if (!updated) {
+      throw new NativeForkIntentError("intent_conflict", "Native fork abort lost its durable intent CAS");
+    }
+    return { reference, intent: updatedIntent, disposition: "aborted" };
   });
 }
 

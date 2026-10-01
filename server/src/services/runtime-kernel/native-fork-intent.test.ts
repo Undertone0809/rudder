@@ -25,6 +25,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { chatAgentRunService } from "../chat-agent-runs.js";
 import { nativeForkContentHash } from "../chats.native-fork-aliases.js";
 import {
+  abortReservedNativeForkIntentRunFence,
   executeNativeForkIntent,
   markNativeForkIntentRejected,
   markNativeForkIntentUnknown,
@@ -485,7 +486,7 @@ describe("durable native fork intent", () => {
     return { adapter, admitted, runFence };
   }
 
-  async function prepareFenceTransfer(fixtureValue: ForkFixture) {
+  async function prepareSealedReservedIntent(fixtureValue: ForkFixture) {
     const admittedRun = await admitTargetRun(fixtureValue);
     const reserved = await reserveNativeForkIntent(db, {
       ...fixtureValue.input,
@@ -520,7 +521,23 @@ describe("durable native fork intent", () => {
     });
     if (!sealed.ok) throw new Error(`expected no-start old span seal, got ${sealed.reason}`);
 
-    const nextAttempt = await admittedRun.adapter.beginAttempt(admittedRun.runFence.runId, ownerFence, {
+    return {
+      ...admittedRun,
+      reference: reserved.reference,
+      oldAttemptId,
+      noChildProof: {
+        version: 1 as const,
+        kind: "driver_not_dispatched" as const,
+        providerDispatched: false as const,
+        writerQuiescence: { status: "confirmed" as const, source: "not_started" as const },
+      },
+    };
+  }
+
+  async function prepareFenceTransfer(fixtureValue: ForkFixture) {
+    const prepared = await prepareSealedReservedIntent(fixtureValue);
+    const ownerFence = prepared.admitted.entry.ownerFence;
+    const nextAttempt = await prepared.adapter.beginAttempt(prepared.runFence.runId, ownerFence, {
       attemptIndex: 1,
       fallbackIndex: 1,
       runtimeType,
@@ -529,7 +546,7 @@ describe("durable native fork intent", () => {
       resumeSource: "same_session",
     });
     if (!nextAttempt.ok) throw new Error(`expected fallback attempt admission, got ${nextAttempt.reason}`);
-    const current = await admittedRun.adapter.get(admittedRun.runFence.runId);
+    const current = await prepared.adapter.get(prepared.runFence.runId);
     if (!current) throw new Error("expected the current fallback Run entry");
     const newFence: NativeForkIntentRunFence = {
       runId: current.runId,
@@ -538,16 +555,8 @@ describe("durable native fork intent", () => {
       attemptEpoch: current.ownerFence.attemptEpoch,
     };
     return {
-      ...admittedRun,
-      reference: reserved.reference,
-      oldAttemptId,
+      ...prepared,
       newFence,
-      noChildProof: {
-        version: 1 as const,
-        kind: "driver_not_dispatched" as const,
-        providerDispatched: false as const,
-        writerQuiescence: { status: "confirmed" as const, source: "not_started" as const },
-      },
     };
   }
 
@@ -745,6 +754,143 @@ describe("durable native fork intent", () => {
     });
     const [afterSegment] = await db.select().from(nativeSegments).where(eq(nativeSegments.id, value.input.targetSegment.id));
     expect(readNativeForkIntent(afterSegment?.providerStateJson)).toEqual(transferred.intent);
+  });
+
+  it("aborts a reserved intent after sealed-span reconciliation fails, before a retry attempt begins", async () => {
+    const value = await fixture();
+    const prepared = await prepareSealedReservedIntent(value);
+    await expect(markNativeForkIntentUnknown(db, {
+      reference: prepared.reference,
+      reason: "observer reconciliation failed",
+      runFence: prepared.runFence,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+
+    const aborted = await abortReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      runFence: prepared.runFence,
+      reason: "observer reconciliation failed after sealing the no-start span",
+    });
+    expect(aborted).toMatchObject({
+      disposition: "aborted",
+      intent: {
+        status: "unknown",
+        runFence: prepared.runFence,
+        child: undefined,
+        reconciliation: "provider_lookup_required",
+        idempotencyKey: value.input.idempotencyKey,
+        source: value.input.source,
+      },
+    });
+    const [segment] = await db.select().from(nativeSegments).where(eq(nativeSegments.id, value.input.targetSegment.id));
+    expect(readNativeForkIntent(segment?.providerStateJson)).toEqual(aborted.intent);
+
+    const repeated = await abortReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      runFence: prepared.runFence,
+      reason: "repeat abort",
+    });
+    expect(repeated.disposition).toBe("already_unknown");
+    expect(repeated.intent).toEqual(aborted.intent);
+  });
+
+  it("aborts a reserved intent on its exact open span when result recording fails before sealing", async () => {
+    const value = await fixture();
+    const admittedRun = await admitTargetRun(value);
+    const reserved = await reserveNativeForkIntent(db, {
+      ...value.input,
+      runFence: admittedRun.runFence,
+    });
+    if (reserved.status !== "reserved") throw new Error("expected a reserved fork intent");
+
+    const aborted = await abortReservedNativeForkIntentRunFence(db, {
+      reference: reserved.reference,
+      runFence: admittedRun.runFence,
+      reason: "native execution result could not be recorded before span seal",
+    });
+    expect(aborted).toMatchObject({
+      disposition: "aborted",
+      intent: {
+        status: "unknown",
+        runFence: admittedRun.runFence,
+        child: undefined,
+        reconciliation: "provider_lookup_required",
+      },
+    });
+
+    const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, admittedRun.runFence.spanId));
+    expect(span).toMatchObject({ state: "open", writerLeaseReleasedAt: null, nativeExecutionRef: null });
+    const provider = driverFor(child(value));
+    const retry = await executeNativeForkIntent({
+      db,
+      intent: { ...value.input, runFence: admittedRun.runFence },
+      driver: provider.driver,
+      sourceSession: value.sourceSession,
+      boundary: value.sourceBoundaryRef,
+      providerBinding: value.input.providerBinding!,
+    });
+    expect(retry.status).toBe("unknown");
+    expect(retry.intent.runFence).toEqual(admittedRun.runFence);
+    expect(provider.fork).not.toHaveBeenCalled();
+  });
+
+  it("aborts through a same-owner newer open span and prevents intent transfer or provider fork", async () => {
+    const value = await fixture();
+    const prepared = await prepareFenceTransfer(value);
+    const aborted = await abortReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      runFence: prepared.runFence,
+      reason: "fallback fence handoff failed",
+    });
+    expect(aborted).toMatchObject({ disposition: "aborted", intent: { status: "unknown", runFence: prepared.runFence, child: undefined } });
+
+    await expect(transferReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      idempotencyKey: value.input.idempotencyKey,
+      oldAttemptId: prepared.oldAttemptId,
+      oldFence: prepared.runFence,
+      newFence: prepared.newFence,
+      noChildProof: prepared.noChildProof,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+
+    const provider = driverFor(child(value));
+    await expect(executeNativeForkIntent({
+      db,
+      intent: { ...value.input, runFence: prepared.newFence },
+      driver: provider.driver,
+      sourceSession: value.sourceSession,
+      boundary: value.sourceBoundaryRef,
+      providerBinding: value.input.providerBinding!,
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+    expect(provider.fork).not.toHaveBeenCalled();
+  });
+
+  it.each(["foreign fence", "lost owner", "stopped Run"] as const)("refuses abort with %s", async (fault) => {
+    const value = await fixture();
+    const prepared = await prepareSealedReservedIntent(value);
+    const runFence = fault === "foreign fence"
+      ? { ...prepared.runFence, ownerToken: `foreign-${randomUUID()}` }
+      : prepared.runFence;
+    if (fault === "lost owner") {
+      await db.update(heartbeatRuns).set({ executionOwnerToken: `stolen-${randomUUID()}` }).where(eq(heartbeatRuns.id, runFence.runId));
+    } else if (fault === "stopped Run") {
+      await db.update(heartbeatRuns).set({ status: "cancelled" }).where(eq(heartbeatRuns.id, runFence.runId));
+    }
+    await expect(abortReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      runFence,
+      reason: "unsafe abort attempt",
+    })).rejects.toMatchObject({ code: "run_fence_stale" });
+  });
+
+  it("refuses abort when provider child identity already exists", async () => {
+    const value = await fixture();
+    const prepared = await prepareSealedReservedIntent(value);
+    await db.update(nativeSegments).set({ nativeSessionId: "existing-provider-child" }).where(eq(nativeSegments.id, value.input.targetSegment.id));
+    await expect(abortReservedNativeForkIntentRunFence(db, {
+      reference: prepared.reference,
+      runFence: prepared.runFence,
+      reason: "must not overwrite child identity",
+    })).rejects.toMatchObject({ code: "intent_conflict" });
   });
 
   it.each([
