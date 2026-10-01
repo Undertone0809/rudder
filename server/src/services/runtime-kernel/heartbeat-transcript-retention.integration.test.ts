@@ -892,6 +892,14 @@ describe("heartbeat native transcript retention integration", () => {
     expect(cleanedSubagentSpan?.id).toEqual(expect.any(String));
     expect(cleanedNativeSpan?.supplementalObjectRef).toBeNull();
     expect(cleanedSubagentSpan?.supplementalObjectRef).toBeNull();
+    const nativeProofSpans = (cleanedNativeRun?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.spans;
+    expect(cleanedNativeSpan?.sourceRevision).toBe(nativeRevision);
+    expect(cleanedNativeSpan?.sourceRevision).toBe(
+      nativeProofSpans.find((candidate: { spanId: string }) => candidate.spanId === cleanedNativeSpan?.id)?.sourceRevision,
+    );
+    expect(cleanedSubagentSpan?.sourceRevision).toBe(
+      nativeProofSpans.find((candidate: { spanId: string }) => candidate.spanId === cleanedSubagentSpan?.id)?.sourceRevision,
+    );
     expect(cleanedNativeEvents.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
     expect(cleanedSqlEvidence).not.toContain(nativeRaw);
     expect(countOccurrences(cleanedSqlEvidence, nativeToken)).toBe(0);
@@ -959,6 +967,45 @@ describe("heartbeat native transcript retention integration", () => {
         writerLeaseReleasedAt: cleanedSubagentSpan!.writerLeaseReleasedAt,
       }).where(eq(runRuntimeSpans.id, cleanedSubagentSpan!.id));
     }
+
+    await db.update(runRuntimeSpans).set({ sourceRevision: "changed-after-proof" })
+      .where(eq(runRuntimeSpans.id, cleanedNativeSpan!.id));
+    await expect(cleanSealedNativeTranscriptMirrors({
+      db,
+      proof: verifiedProof.proof,
+      runLogStore: {} as any,
+      transcriptObjectStore: {} as any,
+      readerFactory: () => rereadAfterCleanup,
+      retainResultJson: (value) => value ?? {},
+    })).resolves.toMatchObject({ cleaned: false, reason: "cleanup_identity_mismatch" });
+    const [unchangedAfterDrift] = await db.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.id, cleanedNativeSpan!.id));
+    expect(unchangedAfterDrift.sourceRevision).toBe("changed-after-proof");
+
+    await db.update(runRuntimeSpans).set({ sourceRevision: null })
+      .where(eq(runRuntimeSpans.id, cleanedNativeSpan!.id));
+    await expect(cleanSealedNativeTranscriptMirrors({
+      db,
+      proof: verifiedProof.proof,
+      runLogStore: {} as any,
+      transcriptObjectStore: {} as any,
+      readerFactory: () => ({
+        ...rereadAfterCleanup,
+        readRun: async (request: Parameters<typeof rereadAfterCleanup.readRun>[0]) => ({
+          ...await rereadAfterCleanup.readRun(request),
+          availability: "incompatible" as const,
+        }),
+      }),
+      retainResultJson: (value) => value ?? {},
+    })).resolves.toMatchObject({
+      cleaned: false,
+      reason: expect.stringContaining("post_cleanup_native_read_incomplete_or_changed"),
+    });
+    const [unchangedAfterReadFailure] = await db.select().from(runRuntimeSpans)
+      .where(eq(runRuntimeSpans.id, cleanedNativeSpan!.id));
+    expect(unchangedAfterReadFailure.sourceRevision).toBeNull();
+    await db.update(runRuntimeSpans).set({ sourceRevision: nativeRevision })
+      .where(eq(runRuntimeSpans.id, cleanedNativeSpan!.id));
 
     const legacy = await queueRun(agentId);
     fakeNativeProvider.setProfileMode("unsupported");
@@ -1227,6 +1274,9 @@ describe("heartbeat native transcript retention integration", () => {
       .toMatchObject({ status: "reference_only", itemCount: 2 });
     const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
     expect(span.supplementalObjectRef).toBeNull();
+    expect(span.sourceRevision).toBe(
+      (run.contextSnapshot as Record<string, any>).nativeTranscriptRetention.spans[0].sourceRevision,
+    );
     const reader = createTranscriptReader(db, {
       nativeReader: { readRange: async (input) => fakeNativeProvider.readRange(input) },
     });
@@ -1297,6 +1347,7 @@ describe("heartbeat native transcript retention integration", () => {
       ]);
       const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
       const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
+      expect(span?.sourceRevision).toBeNull();
       expect(span?.supplementalObjectRef).toEqual(expect.any(String));
       expect(JSON.stringify({ persisted, events, span, recovery: retention })).not.toContain(nativeRaw);
       expect(events.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
