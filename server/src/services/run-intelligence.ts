@@ -38,6 +38,7 @@ import {
   sanitizeRuntimeProviderProfileSnapshot,
 } from "../agent-runtimes/runtime-provider-profile-snapshot.js";
 import { createHistoricalCodexTranscriptReaderHook } from "../agent-runtimes/verify-codex-transcript-profile.js";
+import { resolveDefaultAgentWorkspaceDir } from "../home-paths.js";
 import { notFound } from "../errors.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { redactEventPayload } from "../redaction.js";
@@ -223,6 +224,7 @@ function buildSkillExistsCondition(evidenceType: RunSkillEvidenceType, skillQuer
 
 type RunRow = typeof heartbeatRuns.$inferSelect & {
   agentName: string | null;
+  agentWorkspaceKey?: string | null;
   agentRuntimeType: string;
   agentRuntimeConfig: Record<string, unknown>;
   runtimeConfig: Record<string, unknown>;
@@ -305,7 +307,7 @@ function finiteNonNegativeNumber(value: string | null) {
 
 export type HistoricalRunProfileRun = Pick<
   RunRow,
-  "id" | "orgId" | "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
+  "id" | "orgId" | "agentId" | "agentWorkspaceKey" | "agentRuntimeType" | "agentRuntimeConfig" | "runtimeConfig" | "contextSnapshot" | "createdAt"
 > & {
   sessionParamsBeforeJson?: Record<string, unknown> | null;
   sessionParamsAfterJson?: Record<string, unknown> | null;
@@ -454,6 +456,38 @@ export function createHistoricalRunRuntimeProviderCapabilityResolver(
       || readerInput.run.id !== run.id
       || readerInput.run.orgId !== run.orgId
     )) return null;
+    let effectiveResolver = resolveProfile;
+    if (readerInput && profile.agentRuntimeType === "hermes_gateway"
+      && !asRecord(run.contextSnapshot).rudderWorkspace
+      && readerInput.binding?.workspaceBindingId) {
+      const bindingRecord = readerInput.binding;
+      const span = readerInput.span;
+      const segment = readerInput.segment;
+      const workspaceKey = readString(run.agentWorkspaceKey);
+      if (!workspaceKey || !run.agentId || bindingRecord.orgId !== run.orgId
+        || bindingRecord.agentId !== run.agentId
+        || bindingRecord.runtimeType !== "hermes_gateway"
+        || bindingRecord.id !== readString(asRecord(run.contextSnapshot).runtimeBindingId)
+        || bindingRecord.id !== span.bindingId || span.runId !== run.id || span.orgId !== run.orgId
+        || !segment || segment.id !== span.segmentId || segment.bindingId !== bindingRecord.id
+        || segment.orgId !== run.orgId || binding?.id !== bindingRecord.id
+        || binding.orgId !== run.orgId || binding.workspaceBindingId !== bindingRecord.workspaceBindingId) return null;
+      let managedCwd: string;
+      try {
+        managedCwd = resolveDefaultAgentWorkspaceDir(run.orgId, workspaceKey);
+      } catch {
+        return null;
+      }
+      if (bindingRecord.workspaceBindingId !== managedCwd
+        || readString(asRecord(run.sessionParamsAfterJson).cwd) !== managedCwd
+        || readString(asRecord(readerInput.run.sessionParamsAfterJson).cwd) !== managedCwd) return null;
+      effectiveResolver = createProfileBoundRuntimeProviderCapabilityResolverFromConfig({
+        runtimeType: profile.agentRuntimeType,
+        runtimeConfig: profile.runtimeConfig,
+        cwd: managedCwd,
+        resolutionMode: "historical",
+      });
+    }
     const persistedSessionParams = {
       ...asRecord(readerInput?.run.sessionParamsBeforeJson),
       ...asRecord(readerInput?.run.sessionParamsAfterJson),
@@ -471,7 +505,7 @@ export function createHistoricalRunRuntimeProviderCapabilityResolver(
         },
       }
       : context;
-    return resolveProfile(runtimeType, binding, enrichedContext);
+    return effectiveResolver(runtimeType, binding, enrichedContext);
   };
 }
 
@@ -658,6 +692,7 @@ async function loadRunRows(db: Db, input: ListObservedRunsInput): Promise<RunRow
       createdAt: heartbeatRuns.createdAt,
       updatedAt: heartbeatRuns.updatedAt,
       agentName: agents.name,
+      agentWorkspaceKey: agents.workspaceKey,
       agentRuntimeType: agents.agentRuntimeType,
       agentRuntimeConfig: agents.agentRuntimeConfig,
       runtimeConfig: agents.runtimeConfig,
