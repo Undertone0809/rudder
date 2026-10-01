@@ -88,6 +88,7 @@ for (const variant of [
       await page.goto(`/${org.urlKey}${legacyPath}`);
       await expect(page.getByTestId("org-workspaces-files-scroll")).toBeVisible();
       await expect(projectsEntry).toHaveAttribute("aria-current", "page");
+      await expect(page).toHaveURL(`/${org.urlKey}${documentPath}`);
       await projectsEntry.click();
       await expect(page).toHaveURL(`/${org.urlKey}${projectPath}`);
     }
