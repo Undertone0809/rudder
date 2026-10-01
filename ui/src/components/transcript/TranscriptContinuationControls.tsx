@@ -10,14 +10,16 @@ export function TranscriptContinuationControls({
   navigation,
   state,
   className,
+  emptyStateOwnedByTranscript = false,
 }: {
   navigation?: AgentRunTranscriptNavigation | null;
   state?: AgentRunTranscriptState | null;
   className?: string;
+  emptyStateOwnedByTranscript?: boolean;
 }) {
-  const errorText = state?.error
+  const errorText = emptyStateOwnedByTranscript ? null : state?.error
     ? `Transcript unavailable: ${state.error.message}`
-    : state?.availability && state.availability !== "available"
+    : state?.availability && state.availability !== "available" && state.availability !== "pending"
       ? `Transcript ${state.availability}.`
       : null;
   const partial = state?.completeness === "partial" || navigation?.hasMore === true;

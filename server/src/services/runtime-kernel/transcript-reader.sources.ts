@@ -791,7 +791,7 @@ async function readNativeSpan(
       source: "native",
       revision,
       providerRevision: revision,
-      availability: "missing",
+      availability: input.span.state === "open" && input.run.status === "running" ? "pending" : "missing",
       completeness: "unknown",
       providerCursor: input.cursor,
       providerNextCursor: null,
@@ -1111,7 +1111,8 @@ async function readNativeSources(
       || binding?.continuity === "context_handoff"
       || Boolean(segment?.nativeSessionId)
       || (hookInput.selector.kind !== "pending" && hookInput.selector.kind !== "unresolved");
-    const explicitLegacySource = !hasNativeSpanIdentity && isExplicitLegacyTranscriptSource(input.run, {
+    const explicitLegacySource = (!hasNativeSpanIdentity
+      || hookInput.selector.kind === "pending" || hookInput.selector.kind === "unresolved") && isExplicitLegacyTranscriptSource(input.run, {
       bindingContinuity: binding?.continuity,
     });
     const nativeSourceContract = isNativeTranscriptSource(input.run, {

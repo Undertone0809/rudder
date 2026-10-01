@@ -37,6 +37,7 @@ const fakeNativeProvider = vi.hoisted(() => {
     rawTranscript: string;
     decoy: string;
     readProofFault?: "partial" | "throw";
+    afterLiveLog?: () => Promise<void>;
   };
   const fixtures = new Map<string, Fixture>();
   const sessions = new Map<string, Array<{ runId: string; turnId: string; entry: Record<string, unknown> }>>();
@@ -84,6 +85,7 @@ const fakeNativeProvider = vi.hoisted(() => {
         },
       ]);
       await context.onLog?.("stdout", `${fixture.rawTranscript}\n`);
+      await fixture.afterLiveLog?.();
       return {
         exitCode: 0,
         signal: null,
@@ -571,6 +573,42 @@ describe("heartbeat native transcript retention integration", () => {
     });
   }
 
+  it("publishes the retained source and reads output while the provider is still running", async () => {
+    fakeNativeProvider.setProfileMode("unsupported");
+    const { orgId, agentId } = await seedAgent();
+    const queued = await queueRun(agentId);
+    let release!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const logged = new Promise<void>((resolve) => { entered = resolve; });
+    const text = `LIVE_RETAINED_${randomUUID()}`;
+    fakeNativeProvider.register(queued.run.id, {
+      sessionId: `live-session-${randomUUID()}`,
+      turnId: `turn-${queued.run.id}`,
+      rawTranscript: text,
+      decoy: "OUT_OF_SCOPE",
+      afterLiveLog: async () => { entered(); await blocked; },
+    });
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await logged;
+      const [running] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
+      expect(running?.status).toBe("running");
+      expect(running?.resultJson).toBeNull();
+      expect(running?.contextSnapshot).toMatchObject({ transcriptSource: "legacy" });
+      const page = await createTranscriptReader(db, { logStore: getRunLogStore() }).readRun({
+        orgId, runId: queued.run.id,
+        principal: { orgId, principalScopeRef: `org:${orgId}`, authorized: true },
+      });
+      expect(page).toMatchObject({ source: "legacy", availability: "available" });
+      expect(JSON.stringify(page.items)).toContain(text);
+      expect(JSON.stringify(page.items)).not.toContain("OUT_OF_SCOPE");
+    } finally {
+      release();
+      await waitForTerminalEffectsComplete(queued.run.id);
+    }
+  }, 60_000);
+
   it("releases only the current attempt span when its process-exit proof names that span", async () => {
     const { orgId, agentId } = await seedAgent();
     const queued = await queueRun(agentId);
@@ -904,7 +942,7 @@ describe("heartbeat native transcript retention integration", () => {
     expect(cleanedSqlEvidence).not.toContain(nativeRaw);
     expect(countOccurrences(cleanedSqlEvidence, nativeToken)).toBe(0);
     expect(JSON.stringify(cleanedNativeEvents)).not.toContain(subagentRaw);
-    expect(await filesBelow(runLogRoot)).toEqual([]);
+    expect((await filesBelow(runLogRoot)).filter((file) => path.basename(file).startsWith(`${native.run.id}.`))).toEqual([]);
     expect(await filesBelow(path.join(transcriptObjectRoot, "transcript-objects"))).toEqual([]);
 
     const rereadAfterCleanup = createTranscriptReader(db, {

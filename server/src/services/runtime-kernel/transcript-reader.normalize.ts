@@ -249,7 +249,7 @@ export function normalizeNativeResult(
 }
 
 export function availabilityRank(value: TranscriptAvailability): number {
-  return { available: 0, offline: 1, missing: 2, expired: 3, incompatible: 4 }[value];
+  return { available: 0, pending: 1, offline: 2, missing: 3, expired: 4, incompatible: 5 }[value];
 }
 
 export function completenessRank(value: TranscriptCompleteness): number {

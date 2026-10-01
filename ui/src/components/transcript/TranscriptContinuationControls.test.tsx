@@ -21,6 +21,7 @@ afterEach(() => {
 function renderControls(
   navigation: Partial<AgentRunTranscriptNavigation> = {},
   state: Partial<AgentRunTranscriptState> = {},
+  emptyStateOwnedByTranscript = false,
 ) {
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -54,6 +55,7 @@ function renderControls(
       <TranscriptContinuationControls
         navigation={resolvedNavigation}
         state={resolvedState}
+        emptyStateOwnedByTranscript={emptyStateOwnedByTranscript}
       />,
     );
   });
@@ -61,6 +63,16 @@ function renderControls(
 }
 
 describe("TranscriptContinuationControls", () => {
+  it("does not duplicate an unavailable empty state owned by the transcript view", () => {
+    renderControls({ canNext: false, hasMore: false }, { availability: "missing", completeness: "unknown" }, true);
+    expect(host?.querySelector("[role='alert']")).toBeNull();
+    expect(host?.textContent).not.toContain("Transcript missing");
+  });
+
+  it("does not report a pending execution as an error", () => {
+    renderControls({ canNext: false, hasMore: false }, { availability: "pending", completeness: "unknown" });
+    expect(host?.querySelector("[role='alert']")).toBeNull();
+  });
   it("shows bounded partial navigation and invokes the selected direction", () => {
     const { navigation } = renderControls({
       canPrevious: true,

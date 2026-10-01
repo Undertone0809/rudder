@@ -1008,8 +1008,9 @@ describe("transcript reader", () => {
 
   it("keeps an open pending span readable without querying a provider for an unbounded session", async () => {
     const nativeReader = vi.fn();
+    const legacyRead = vi.fn();
     const db = mockDatabase({
-      run: databaseRun(),
+      run: databaseRun({ status: "running", logStore: "local_file", logRef: "old-retained.ndjson" }),
       spans: [databaseSpan("span-1", {
         state: "open",
         completeness: "unknown",
@@ -1018,14 +1019,49 @@ describe("transcript reader", () => {
       bindings: [databaseBinding("span-1", { runtimeType: "codex_local" })],
       segments: [databaseSegment("span-1", { runtimeType: "codex_local" })],
     });
-    const reader = createTranscriptReader(db as never, { nativeReader: { readRange: nativeReader } });
+    const reader = createTranscriptReader(db as never, {
+      nativeReader: { readRange: nativeReader }, logStore: { read: legacyRead } as never,
+    });
 
     await expect(reader.readRun({
       orgId: "org-1",
       runId: "run-1",
       principal: { type: "board", orgId: "org-1", authorized: true },
-    })).resolves.toMatchObject({ source: "native", availability: "missing", completeness: "unknown", items: [] });
+    })).resolves.toMatchObject({ source: "native", availability: "pending", completeness: "unknown", items: [] });
     expect(nativeReader).not.toHaveBeenCalled();
+    expect(legacyRead).not.toHaveBeenCalled();
+  });
+
+  it("does not describe an unresolved terminal native span as still pending", async () => {
+    const db = mockDatabase({
+      run: databaseRun({ status: "failed" }),
+      spans: [databaseSpan("span-1", { state: "open", completeness: "unknown", selectorJson: { kind: "pending", runtimeType: "codex_local" } })],
+      bindings: [databaseBinding("span-1", { runtimeType: "codex_local" })],
+      segments: [databaseSegment("span-1", { runtimeType: "codex_local" })],
+    });
+    const page = await createTranscriptReader(db as never).readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+    });
+    expect(page.availability).toBe("missing");
+  });
+
+  it("reads retained live output before a common Run has acquired its exact native selector", async () => {
+    const bytes = Buffer.from(`${JSON.stringify({ ts: "2026-09-22T00:00:01.000Z", stream: "stdout", chunk: "live output\\n" })}\n`);
+    const log = makeUtf8LogStore(bytes);
+    const nativeReader = vi.fn();
+    const db = mockDatabase({
+      run: databaseRun({ status: "running", logStore: "local_file", logRef: "live.ndjson", contextSnapshot: { transcriptSource: "legacy", runtimeBindingId: "binding-span-1" } }),
+      spans: [databaseSpan("span-1", { state: "open", completeness: "unknown", selectorJson: { kind: "pending", runtimeType: "codex_local" } })],
+      bindings: [databaseBinding("span-1", { runtimeType: "codex_local", continuity: "native" })],
+      segments: [databaseSegment("span-1", { runtimeType: "codex_local" })],
+    });
+    const page = await createTranscriptReader(db as never, { logStore: log.store, nativeReader: { readRange: nativeReader } }).readRun({
+      orgId: "org-1", runId: "run-1", principal: { type: "board", orgId: "org-1", authorized: true },
+    });
+    expect(page).toMatchObject({ source: "legacy", availability: "available" });
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(nativeReader).not.toHaveBeenCalled();
+    expect(log.read).toHaveBeenCalled();
   });
 
   it("applies an exact legacy item boundary after native fallback", async () => {

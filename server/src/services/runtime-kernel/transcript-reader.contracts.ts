@@ -16,7 +16,7 @@ export type RunRuntimeSpanRecord = typeof runRuntimeSpans.$inferSelect;
 export type HeartbeatRunRecord = typeof heartbeatRuns.$inferSelect;
 
 export type TranscriptSource = "native" | "native_plus_objects" | "legacy";
-export type TranscriptAvailability = "available" | "offline" | "missing" | "expired" | "incompatible";
+export type TranscriptAvailability = "available" | "pending" | "offline" | "missing" | "expired" | "incompatible";
 export type TranscriptCompleteness = "complete" | "partial" | "terminal_only" | "unknown";
 
 /** The stable selector stored by the runtime kernel for one Run span. */

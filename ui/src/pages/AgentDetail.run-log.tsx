@@ -429,6 +429,8 @@ export function LogViewer({
   const transcriptError = transcriptState?.error ?? null;
   const transcriptEmptyMessage = transcriptError
     ? `Transcript unavailable: ${transcriptError.message}`
+    : transcriptState?.availability === "pending"
+      ? "Waiting for transcript..."
     : transcriptState?.availability && transcriptState.availability !== "available"
       ? `Transcript ${transcriptState.availability}.`
       : transcriptState?.loading || isLive
@@ -640,6 +642,7 @@ export function LogViewer({
             <TranscriptContinuationControls
               navigation={transcriptNavigation}
               state={transcriptState}
+              emptyStateOwnedByTranscript={niceTranscript.length === 0}
             />
             <div ref={logEndRef} />
           </div>
@@ -824,6 +827,7 @@ export function LogViewer({
             <TranscriptContinuationControls
               navigation={transcriptNavigation}
               state={transcriptState}
+              emptyStateOwnedByTranscript={niceTranscript.length === 0}
             />
           </div>
         </DialogContent>

@@ -29,6 +29,7 @@ export async function acknowledgeUnstartedWriter(input: {
 }
 
 export const EXECUTOR_OWNED_CONTEXT_KEYS = [
+  "transcriptSource",
   "executionWorkspaceId",
   "rudderGitIdentity",
   "rudderScene",

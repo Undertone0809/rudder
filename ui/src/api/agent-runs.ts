@@ -43,7 +43,7 @@ export const AGENT_RUN_EVENTS_PAGE_LIMIT = 1000;
 export const AGENT_RUN_TRANSCRIPT_TURN_LIMIT = 50;
 
 export type AgentRunTranscriptSource = "native" | "native_plus_objects" | "legacy";
-export type AgentRunTranscriptAvailability = "available" | "offline" | "missing" | "expired" | "incompatible";
+export type AgentRunTranscriptAvailability = "available" | "pending" | "offline" | "missing" | "expired" | "incompatible";
 export type AgentRunTranscriptCompleteness = "complete" | "partial" | "terminal_only" | "unknown";
 
 export interface AgentRunTranscriptEntry {

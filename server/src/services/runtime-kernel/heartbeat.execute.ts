@@ -104,6 +104,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
     runId: string,
     desiredContext: Record<string, unknown>,
     patch: Partial<typeof heartbeatRuns.$inferInsert> = {},
+    expectedExecutionOwnerToken?: string | null,
   ) {
     return db.transaction(async (tx) => {
       await tx.execute(sql`select id from heartbeat_runs where id = ${runId} for update`);
@@ -113,6 +114,8 @@ export function createHeartbeatExecuteHandlers(context: any) {
         .where(eq(heartbeatRuns.id, runId))
         .then((rows) => rows[0] ?? null);
       if (!currentRun || currentRun.status !== "running") return null;
+      if (expectedExecutionOwnerToken !== undefined
+        && currentRun.executionOwnerToken !== expectedExecutionOwnerToken) return null;
 
       const persistableContext = buildPersistableHeartbeatContext(desiredContext);
       const mergedContext = mergeCoalescedContextSnapshot(
@@ -582,6 +585,13 @@ export function createHeartbeatExecuteHandlers(context: any) {
       } catch (error) {
         logger.warn({ err: error, runId: run.id }, "native transcript retention identity could not be resolved");
       }
+      // Admission identity alone does not select the transcript source. Publish
+      // the resolved retention policy before dispatch so live readers can use
+      // retained logs without waiting for the terminal result marker.
+      context.transcriptSource = transcriptRetention.mode;
+      const runningWithTranscriptSource = await persistRunningExecutionContext(run.id, context, {}, executionOwnerToken);
+      if (!runningWithTranscriptSource) return;
+      run = runningWithTranscriptSource;
       // Unified Run identity spans all runtimes; the native chat Driver does not.
       const executeThroughRuntimeDriver = Boolean(
         nativeResources
