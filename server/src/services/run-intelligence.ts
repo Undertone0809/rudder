@@ -31,6 +31,7 @@ import {
 } from "@rudderhq/shared";
 import { and, asc, desc, eq, gt, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { createProfileBoundRuntimeProviderCapabilityResolverFromConfig } from "../agent-runtimes/index.js";
 import {
   runtimeConfigFromProviderProfileSnapshot,
@@ -346,6 +347,26 @@ function dynamicNativeRuntimeConfig(runtimeType: string, profile: Record<string,
   }
 }
 
+function hermesManagedAgentWorkspaceCwd(
+  run: HistoricalRunProfileRun,
+  workspace: Record<string, unknown>,
+): string | null {
+  const cwd = readString(workspace.executionWorkspaceCwd);
+  if (readString(workspace.source) !== "agent_home"
+    || readString(workspace.executionWorkspaceSource) !== "agent_home"
+    || !cwd
+    || !path.isAbsolute(cwd)
+    || path.resolve(cwd) !== cwd
+    || readString(workspace.cwd) !== cwd
+    || readString(workspace.agentHome) !== cwd) return null;
+
+  // Session state may corroborate the server-created workspace, but cannot
+  // introduce a transport path of its own or override a different workspace.
+  const persistedCwd = readString(asRecord(run.sessionParamsAfterJson).cwd)
+    ?? readString(asRecord(run.sessionParamsBeforeJson).cwd);
+  return persistedCwd === cwd ? cwd : null;
+}
+
 export function resolveHistoricalRunRuntimeProfile(
   run: HistoricalRunProfileRun,
   revisions: readonly HistoricalRunConfigRevision[],
@@ -387,7 +408,11 @@ export function resolveHistoricalRunRuntimeProfile(
     Object.assign(mergedRuntimeConfig, dynamicNativeRuntimeConfig(runtimeType, rawPreparedProfile ?? {}));
   }
   const workspace = asRecord(runContext.rudderWorkspace);
+  const hermesWorkspaceCwd = runtimeType === "hermes_gateway"
+    ? hermesManagedAgentWorkspaceCwd(run, workspace)
+    : null;
   const cwd = [
+    hermesWorkspaceCwd,
     preparedProfile?.runtimeType === runtimeType ? preparedProfile.cwd : null,
     workspace.executionWorkspaceCwd,
     workspace.cwd,
