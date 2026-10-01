@@ -64,6 +64,7 @@ import { useOrganization } from "@/context/OrganizationContext";
 import { useSidePanel } from "@/context/SidePanelContext";
 import { useToast } from "@/context/ToastContext";
 import { useChatRuntimeSensitiveInput } from "@/hooks/useChatRuntimeSensitiveInput";
+import { useChatStreamTerminalReconciliation } from "@/hooks/useChatStreamTerminalReconciliation";
 import { useScrollbarActivityRef } from "@/hooks/useScrollbarActivityRef";
 import { useViewedOrganization } from "@/hooks/useViewedOrganization";
 import { useMessengerChatSidebarOpener } from "@/hooks/useWorkspaceSidebarLayout";
@@ -2381,6 +2382,17 @@ function ChatWorkspace() { const { conversationId } = useParams<{ conversationId
     ? activeStream.editedFromCreatedAt.getTime()
     : null;
   const activeAssistantMessageId = activeChatStreamAssistantMessageId(rawMessages, activeStream);
+  useChatStreamTerminalReconciliation({
+    orgId: selectedOrganizationId,
+    chatId: selectedConversation?.id ?? null,
+    scopeKey: selectedConversationStreamScopeKey,
+    queueSnapshot: queueQuery.data,
+    messages: rawMessages,
+    stream: activeStream,
+    queryClient,
+    setChatSendInFlight,
+    setStreamDraftForChat,
+  });
   useEffect(() => {
     if (!activeStream) return;
     const rowKey = chatAssistantStableStreamRowKey(activeStream);
