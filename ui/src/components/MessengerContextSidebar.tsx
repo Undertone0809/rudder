@@ -57,6 +57,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { VirtualizedActivityTimeline } from "@/components/VirtualizedActivityTimeline";
+import {
+  WorkspaceContextHeader,
+  WorkspaceContextSidebar,
+  WorkspaceSidebarCollapseButton,
+} from "@/components/workbench/WorkspaceContextSidebar";
 import { useChatGenerationActions, useChatGenerations } from "@/context/ChatGenerationContext";
 import { useDialog } from "@/context/DialogContext";
 import { useMainWorkbench } from "@/context/MainWorkbenchContext";
@@ -186,7 +191,6 @@ import {
   Loader2,
   MoreHorizontal,
   Palette,
-  PanelLeft,
   PencilLine,
   Pin,
   PinOff,
@@ -469,10 +473,7 @@ function ContextColumnHeader({
   const { isMobile, setSidebarOpen } = useSidebar();
 
   return (
-    <header
-      data-testid="workspace-context-header"
-      className="workspace-card-header workspace-context-header desktop-chrome desktop-window-drag flex shrink-0 items-center justify-between gap-3 px-4 py-3"
-    >
+    <WorkspaceContextHeader className="desktop-window-drag">
       <div className="min-w-0">
         <h2 className="truncate text-[14px] font-semibold tracking-[-0.01em] text-foreground">{title}</h2>
         {description ? (
@@ -480,17 +481,9 @@ function ContextColumnHeader({
         ) : null}
       </div>
       {!isMobile ? (
-        <button
-          type="button"
-          aria-label="Collapse workspace sidebar"
-          title="Collapse workspace sidebar"
-          className="desktop-window-no-drag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[calc(var(--radius-sm)-1px)] text-muted-foreground transition-[background-color,color] hover:bg-[color:color-mix(in_oklab,var(--surface-elevated)_68%,transparent)] hover:text-foreground"
-          onClick={() => setSidebarOpen(false)}
-        >
-          <PanelLeft className="h-4 w-4" />
-        </button>
+        <WorkspaceSidebarCollapseButton onClick={() => setSidebarOpen(false)} />
       ) : null}
-    </header>
+    </WorkspaceContextHeader>
   );
 }
 
@@ -4080,10 +4073,7 @@ export function MessengerContextSidebar() {
   if (!model.selectedOrganizationId) return null;
 
   return (
-    <aside
-      data-testid="workspace-sidebar"
-      className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
-    >
+    <WorkspaceContextSidebar>
       <ContextColumnHeader
         title="Messenger"
         description={effectiveThreadOrganizationRule === "custom"
@@ -4326,6 +4316,6 @@ export function MessengerContextSidebar() {
         ) : null}
       </nav>
       <MessengerDiscordCta />
-    </aside>
+    </WorkspaceContextSidebar>
   );
 }

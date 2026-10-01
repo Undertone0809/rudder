@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { WorkspaceContextSidebar } from "@/components/workbench/WorkspaceContextSidebar";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import type { OrganizationWorkspaceFileEntry, Project, ProjectResourceAttachment } from "@rudderhq/shared";
@@ -764,10 +765,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
 
   return (
     <>
-      <aside
-        data-testid="workspace-sidebar"
-        className="workspace-context-sidebar flex min-h-0 w-full min-w-0 shrink-0 flex-col"
-      >
+      <WorkspaceContextSidebar>
         <header
           data-testid="workspace-context-header"
           aria-label={libraryCopy("library", locale)}
@@ -931,7 +929,7 @@ export function OrganizationWorkspaceFilesSidebar({ onCollapseSidebar }: { onCol
             </div>
           </div>
         </section>
-      </aside>
+      </WorkspaceContextSidebar>
 
       <Dialog open={createTarget !== null} onOpenChange={(open) => {
         if (!open && !createWorkspaceEntry.isPending) {
