@@ -88,12 +88,12 @@ function authorizationBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function postAuthorization(
+function getAuthorization(
   server: Server,
   body: unknown,
   key: string | null = ingressAuthKey,
 ) {
-  let pending = request(server).post(PUBLIC_INGRESS_AUTH_ENDPOINT);
+  let pending = request(server).get(PUBLIC_INGRESS_AUTH_ENDPOINT);
   if (key !== null) pending = pending.set("x-rudder-ingress-auth", key);
   return pending.send(body);
 }
@@ -112,7 +112,7 @@ describe("private public-ingress auth adapter", () => {
     ["same-organization agent", sameOrganizationAgent],
   ] as Array<[string, Request["actor"]]>)("signs a fixed member-directory GET for %s", async (_label, actor) => {
     const server = await createApp({ actor });
-    const response = await postAuthorization(server, authorizationBody());
+    const response = await getAuthorization(server, authorizationBody());
 
     expect(response.status).toBe(200);
     expect(response.headers["cache-control"]).toBe("no-store");
@@ -136,7 +136,7 @@ describe("private public-ingress auth adapter", () => {
     ["missing actor", {}],
   ])("rejects an unauthenticated %s", async (_label, options) => {
     const server = await createApp(options);
-    const response = await postAuthorization(server, authorizationBody());
+    const response = await getAuthorization(server, authorizationBody());
     expect(response.status).toBe(401);
     expect(response.body.signature).toBeUndefined();
   });
@@ -158,7 +158,7 @@ describe("private public-ingress auth adapter", () => {
     } as Request["actor"]],
   ])("denies %s", async (_label, actor) => {
     const server = await createApp({ actor });
-    const response = await postAuthorization(server, authorizationBody());
+    const response = await getAuthorization(server, authorizationBody());
     expect(response.status).toBe(403);
     expect(response.body.signature).toBeUndefined();
   });
@@ -166,7 +166,7 @@ describe("private public-ingress auth adapter", () => {
   it("requires the independent internal key even when client cookie and bearer credentials are present", async () => {
     const server = await createApp({ actor: scopedUserActor });
     const response = await request(server)
-      .post(PUBLIC_INGRESS_AUTH_ENDPOINT)
+      .get(PUBLIC_INGRESS_AUTH_ENDPOINT)
       .set("authorization", "Bearer client-agent-token")
       .set("cookie", "session=client-session")
       .set("x-rudder-ingress-auth", "wrong-internal-key")
@@ -178,7 +178,7 @@ describe("private public-ingress auth adapter", () => {
 
   it("requires the socket peer itself to be loopback", async () => {
     const server = await createApp({ actor: localBoardActor, remoteAddress: "203.0.113.10" });
-    const response = await postAuthorization(server, authorizationBody());
+    const response = await getAuthorization(server, authorizationBody());
     expect(response.status).toBe(403);
     expect(response.body.signature).toBeUndefined();
   });
@@ -189,7 +189,7 @@ describe("private public-ingress auth adapter", () => {
     const publicPath =
       `${memberPath}?type=agent&limit=25&query=R%26D+team&fullIds=1`
       + `&unused=${unusedQueryValue}&unused=again`;
-    const response = await postAuthorization(server, authorizationBody({ publicPath }));
+    const response = await getAuthorization(server, authorizationBody({ publicPath }));
     const envelope = response.body;
     const fixedNow = envelope.expiresAt - 60;
     const signedInput = {
@@ -225,7 +225,7 @@ describe("private public-ingress auth adapter", () => {
     ["split raw query field", authorizationBody({ rawQuery: "type=agent" })],
   ])("rejects %s without signing", async (_label, body) => {
     const server = await createApp({ actor: localBoardActor });
-    const response = await postAuthorization(server, body);
+    const response = await getAuthorization(server, body);
     expect(response.status).toBe(400);
     expect(response.body.signature).toBeUndefined();
   });
@@ -236,7 +236,7 @@ describe("private public-ingress auth adapter", () => {
       authorizationBody({ body: { orgId: otherOrganizationId } }),
       authorizationBody({ method: "DELETE", action: "project.delete", audience: "other-service" }),
     ]) {
-      const response = await postAuthorization(server, body);
+      const response = await getAuthorization(server, body);
       expect(response.status).toBe(400);
       expect(response.body.signature).toBeUndefined();
     }
@@ -244,7 +244,7 @@ describe("private public-ingress auth adapter", () => {
 
   it("rejects oversized request bodies before signing", async () => {
     const server = await createApp({ actor: localBoardActor });
-    const response = await postAuthorization(server, authorizationBody({ padding: "x".repeat(13_000) }));
+    const response = await getAuthorization(server, authorizationBody({ padding: "x".repeat(13_000) }));
     expect(response.status).toBe(413);
     expect(response.body.signature).toBeUndefined();
   });
@@ -256,15 +256,26 @@ describe("private public-ingress auth adapter", () => {
       .set("x-rudder-ingress-auth", ingressAuthKey)
       .send(authorizationBody());
     const unsupportedPath = await request(server)
-      .post(`${PUBLIC_INGRESS_AUTH_ENDPOINT}/other`)
+      .get(`${PUBLIC_INGRESS_AUTH_ENDPOINT}/other`)
       .set("x-rudder-ingress-auth", ingressAuthKey)
       .send(authorizationBody());
 
     expect(unsupportedMethod.status).toBe(405);
-    expect(unsupportedMethod.headers.allow).toBe("POST");
+    expect(unsupportedMethod.headers.allow).toBe("GET");
     expect(unsupportedMethod.body.signature).toBeUndefined();
     expect(unsupportedPath.status).toBe(404);
     expect(unsupportedPath.body.signature).toBeUndefined();
+  });
+
+  it.each(["post", "head"] as const)("rejects private %s requests without issuing a grant", async (method) => {
+    const server = await createApp({ actor: localBoardActor });
+    const response = await request(server)[method](PUBLIC_INGRESS_AUTH_ENDPOINT)
+      .set("x-rudder-ingress-auth", ingressAuthKey)
+      .set("content-type", "application/json")
+      .send(JSON.stringify(authorizationBody()));
+    expect(response.status).toBe(405);
+    expect(response.headers.allow).toBe("GET");
+    expect(response.body.signature).toBeUndefined();
   });
 
   it("requires distinct strong keys for internal auth and actor envelopes", () => {
