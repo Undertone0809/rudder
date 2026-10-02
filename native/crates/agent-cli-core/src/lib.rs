@@ -462,6 +462,16 @@ fn api_response_error(status: u16, body: &[u8], api_key: &str) -> CliError {
     let parsed = serde_json::from_slice::<Value>(body)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(body).into_owned()));
     let object = parsed.as_object();
+    // Actix foundation errors use a versioned reason envelope rather than the
+    // legacy public API's error/code fields. Decode only that explicit schema.
+    let native_reason = object
+        .filter(|value| {
+            value.get("schema").and_then(Value::as_str) == Some("rudder.native.server.error.v1")
+        })
+        .and_then(|value| value.get("reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let message = object
         .and_then(|value| {
             ["error", "message"].into_iter().find_map(|key| {
@@ -472,6 +482,7 @@ fn api_response_error(status: u16, body: &[u8], api_key: &str) -> CliError {
                     .filter(|value| !value.is_empty())
             })
         })
+        .or(native_reason)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Request failed with status {status}"));
     let code = object
@@ -479,6 +490,7 @@ fn api_response_error(status: u16, body: &[u8], api_key: &str) -> CliError {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .or(native_reason)
         .unwrap_or("api_request_error");
     let code = redact_text(code, api_key);
     let mut details = object

@@ -320,6 +320,50 @@ fn executable_reports_foreign_organization_api_error_without_echoing_credentials
 }
 
 #[test]
+fn executable_decodes_versioned_native_api_errors_without_weakening_legacy_errors() {
+    for (status, reason) in [
+        (403, "native_bearer_forbidden"),
+        (401, "native_bearer_unauthorized"),
+        (400, "member_directory_invalid_cursor"),
+    ] {
+        let body = serde_json::json!({
+            "schema": "rudder.native.server.error.v1",
+            "status": "error",
+            "reason": reason
+        });
+        let (base, server) = start_server(ResponseSpec::json(status, body.clone()));
+        let output = run_cli(&base, &["--org-id", "org-1", "--json"], None);
+        let _ = server.join().expect("fixture server completes");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let error: serde_json::Value = serde_json::from_str(&text(&output.stderr)).unwrap();
+        assert_eq!(error["status"], status);
+        assert_eq!(error["code"], reason);
+        assert_eq!(error["error"], reason);
+
+        let (base, server) = start_server(ResponseSpec::json(status, body));
+        let output = run_cli(&base, &["--org-id", "org-1"], None);
+        let _ = server.join().expect("fixture server completes");
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            text(&output.stderr),
+            format!("API error {status}: {reason}\n")
+        );
+    }
+
+    // A random or future response must not acquire the native schema's meaning.
+    let (base, server) = start_server(ResponseSpec::json(
+        403,
+        serde_json::json!({"schema": "unknown", "reason": "untrusted_reason"}),
+    ));
+    let output = run_cli(&base, &["--org-id", "org-1", "--json"], None);
+    let _ = server.join().expect("fixture server completes");
+    let error: serde_json::Value = serde_json::from_str(&text(&output.stderr)).unwrap();
+    assert_eq!(error["code"], "api_request_error");
+    assert_eq!(error["error"], "Request failed with status 403");
+}
+
+#[test]
 fn executable_times_out_and_emits_a_bounded_json_error() {
     let mut spec = ResponseSpec::json(
         200,
