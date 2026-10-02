@@ -194,7 +194,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
         ...(testCase.nextOffset === null ? {} : { nextOffset: testCase.nextOffset }),
       });
     }
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("keeps UTF-8 code points intact across small run log pages", async () => {
     const root = await makeTempRoot("rudder-run-log-utf8-pages-");
