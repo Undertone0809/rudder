@@ -9,6 +9,67 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+/** Consistency check for the persisted producer projection, NOT a new physical
+ * readback or authorization proof. Invalid metadata never licenses deletion. */
+export function readConsistentStoredInstructionSummary(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const locator = record(payload.invocationInstructionSnapshot);
+  const reference = record(payload.invocationInstructionTextReference);
+  const summary = record(payload.invocationContent);
+  const stack = record(summary?.agentInstructionStack);
+  const prompt = record(summary?.prompt);
+  const keys = (value: Record<string, unknown>, allowed: string[]) => Object.keys(value).every(key => allowed.includes(key));
+  const hash = (value: unknown) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+  const size = (value: unknown, allowZero = false) => Number.isSafeInteger(value) && (value as number) >= (allowZero ? 0 : 1);
+  const inline = typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string";
+  const sameObject = (ref: Record<string, unknown>) => ref.present === true && ref.source === "stored_snapshot"
+    && ref.via === "invocation-instructions" && ref.sha256 === locator?.sha256 && ref.byteSize === locator?.byteSize;
+  const metrics = (value: Record<string, unknown>, digest: unknown, bytes: unknown, allowZero = false) => value.present === true
+    && value.sanitizedSha256 === digest && value.sanitizedUtf8ByteLength === bytes
+    && size(value.sanitizedCharacterLength, allowZero) && (value.sanitizedCharacterLength as number) <= (bytes as number);
+  if (!locator || !reference || !summary || !stack || !prompt || locator.status !== "available"
+    || !hash(locator.sha256) || !size(locator.byteSize) || (locator.byteSize as number) > MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES
+    || typeof locator.objectKey !== "string"
+    || !new RegExp(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/${RUN_INSTRUCTION_SNAPSHOT_NAMESPACE}/${locator.sha256}$`, "u").test(locator.objectKey)
+    || ![payload.invocationAttemptId, payload.invocationSpanId].every(id => typeof id === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(id))
+    || !sameObject(reference) || reference.field !== "agentInstructionStack" || Object.hasOwn(payload, "agentInstructionStack")
+    || !keys(reference, ["present", "source", "via", "field", "sha256", "byteSize"])
+    || summary.textSource !== "stored_snapshot" || summary.snapshotTextStored !== true || summary.textStored !== inline
+    || !keys(summary, ["textSource", "snapshotTextStored", "textStored", "prompt", "agentInstructionStack"])
+    || !metrics(stack, locator.sha256, locator.byteSize)
+    || !keys(stack, ["present", "sanitizedSha256", "sanitizedUtf8ByteLength", "sanitizedCharacterLength", "sameAsPrompt",
+      "sourceCharacterLength", "sourceUtf8ByteLength", "sanitizedForPersistence", "textSource", "equality"])
+    || prompt.inline !== Object.hasOwn(payload, "prompt")
+    || !keys(prompt, ["present", "inline", "sanitizedSha256", "sanitizedUtf8ByteLength", "sanitizedCharacterLength"])) return null;
+  if (Object.hasOwn(payload, "agentInstructionStackAlias") !== (stack.textSource !== undefined)) return null;
+  if (stack.textSource !== undefined) {
+    const alias = record(payload.agentInstructionStackAlias);
+    if (!alias || stack.textSource !== "persisted_prompt" || stack.equality !== "nonempty_sanitized_exact"
+      || stack.sameAsPrompt !== true || typeof stack.sanitizedForPersistence !== "boolean"
+      || !size(stack.sourceCharacterLength) || !size(stack.sourceUtf8ByteLength)
+      || Object.keys(stack).some(key => stack[key] !== alias[key])) return null;
+  } else if ([stack.sourceCharacterLength, stack.sourceUtf8ByteLength, stack.sanitizedForPersistence, stack.equality].some(value => value !== undefined)) return null;
+  if (Object.hasOwn(payload, "invocationPromptReference")) {
+    const ref = record(payload.invocationPromptReference);
+    if (!ref || !sameObject(ref) || ref.field !== "prompt" || Object.hasOwn(payload, "prompt")) return null;
+    if (ref.sameAsInstructions === true) {
+      if (!keys(ref, ["present", "source", "via", "field", "sha256", "byteSize", "sameAsInstructions"])
+        || stack.sameAsPrompt !== true || !metrics(prompt, locator.sha256, locator.byteSize)
+        || prompt.sanitizedCharacterLength !== stack.sanitizedCharacterLength) return null;
+    } else if (ref.sameAsInstructions !== undefined || stack.sameAsPrompt !== undefined
+      || !keys(ref, ["present", "source", "via", "field", "sha256", "byteSize", "byteStart", "byteLength", "rangeSha256"])
+      || !size(ref.byteStart, true) || !size(ref.byteLength) || !hash(ref.rangeSha256)
+      || (ref.byteStart as number) + (ref.byteLength as number) > (locator.byteSize as number)
+      || !metrics(prompt, ref.rangeSha256, ref.byteLength)) return null;
+  } else {
+    if (stack.sameAsPrompt !== undefined) return null;
+    if (typeof payload.prompt === "string") {
+      if (!metrics(prompt, createHash("sha256").update(payload.prompt, "utf8").digest("hex"), Buffer.byteLength(payload.prompt, "utf8"), true)
+        || prompt.sanitizedCharacterLength !== payload.prompt.length) return null;
+    } else if (prompt.present !== false || !keys(prompt, ["present", "inline"])) return null;
+  }
+  return summary;
+}
+
 /** New-event projection only. Never updates an event or removes any object.
  * Caller passes the final redacted inline payload, and retains its fenced append.
  * A snapshot proves only equal invocation text, not transcript supplements/logs. */
@@ -123,9 +184,33 @@ export async function compactReadableInstructionSnapshot(input: {
         projected.invocationInstructionTextReference = reference;
         if (typeof original.prompt === "string" && original.prompt === text) {
           delete projected.prompt;
-          projected.invocationPromptReference = { ...reference, sameAsInstructions: true };
+          projected.invocationPromptReference = { ...reference, field: "prompt", sameAsInstructions: true };
+        } else if (typeof original.prompt === "string" && original.prompt.length > 0) {
+          const body = Buffer.concat(chunks);
+          const promptBytes = Buffer.from(original.prompt, "utf8");
+          const start = body.indexOf(promptBytes);
+          // Only one complete byte occurrence can stand for the debug input.
+          // No substring normalization or text-hash identity; ambiguous matches
+          // retain their original inline field.
+          if (start >= 0 && body.indexOf(promptBytes, start + 1) === -1
+            && new TextDecoder("utf-8", { fatal: true }).decode(promptBytes) === original.prompt) {
+            new TextDecoder("utf-8", { fatal: true }).decode(body.subarray(0, start));
+            new TextDecoder("utf-8", { fatal: true }).decode(body.subarray(start + promptBytes.length));
+            delete projected.prompt;
+            projected.invocationPromptReference = { ...reference, field: "prompt", byteStart: start,
+              byteLength: promptBytes.length, rangeSha256: createHash("sha256").update(promptBytes).digest("hex") };
+          }
         }
-        return projected;
+        const summarize = (value: unknown) => typeof value === "string" ? {
+          present: true, sanitizedCharacterLength: value.length, sanitizedUtf8ByteLength: Buffer.byteLength(value, "utf8"),
+          sanitizedSha256: createHash("sha256").update(value, "utf8").digest("hex"),
+        } : { present: false };
+        projected.invocationContent = { textStored: typeof projected.prompt === "string" || typeof projected.agentInstructionStack === "string",
+          textSource: "stored_snapshot", snapshotTextStored: true,
+          prompt: { ...summarize(original.prompt), inline: Object.hasOwn(projected, "prompt") },
+          agentInstructionStack: { ...(aliased ? alias : {}), ...summarize(text),
+            ...(original.prompt === text ? { sameAsPrompt: true } : {}) } };
+        return isExpired() ? fallback("snapshot_readback_unavailable") : projected;
       } finally {
         // A late-acquired stream was never iterated, so it needs its own error
         // observer while closing; asynchronous close errors cannot escape.

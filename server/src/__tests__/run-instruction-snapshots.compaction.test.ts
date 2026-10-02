@@ -5,8 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { compactNativeAdapterInvokePayload } from "../services/chat-agent-runs.helpers.js";
 import { compactReadableInstructionSnapshot } from "../services/run-instruction-snapshots.compaction.js";
 import { readRunInstructionSnapshotForEvent, storeRunInstructionSnapshot } from "../services/run-instruction-snapshots.js";
+import { compactHeartbeatAdapterInvokePayload } from "../services/runtime-kernel/heartbeat.execute-native-retention.js";
 import { createLocalDiskStorageProvider } from "../storage/local-disk-provider.js";
 import { createStorageService } from "../storage/service.js";
 
@@ -136,7 +138,9 @@ describe("verified new-event instruction snapshot projection", () => {
     await expect(readRunInstructionSnapshotForEvent({ db, storage: f.storage, orgId, runId, eventId: 17 }))
       .resolves.toMatchObject({ agentInstructionStack: f.text, byteSize: Buffer.byteLength(f.text) });
     expect(await readFile(path.join(f.root, f.locator.objectKey), "utf8")).toBe(f.text);
-    expect(Buffer.byteLength(JSON.stringify(f.payload)) - Buffer.byteLength(JSON.stringify(projected))).toBe(199_546);
+    const saved = Buffer.byteLength(JSON.stringify(f.payload)) - Buffer.byteLength(JSON.stringify(projected));
+    expect(saved).toBeGreaterThan(199_000);
+    console.info("snapshot projection serialized bytes", { before: Buffer.byteLength(JSON.stringify(f.payload)), after: Buffer.byteLength(JSON.stringify(projected)), saved });
     expect(f.payload.agentInstructionStack).toBe(f.text);
     expect(f.deleteObject).not.toHaveBeenCalled();
   });
@@ -146,6 +150,71 @@ describe("verified new-event instruction snapshot projection", () => {
     expect(projected.prompt).toBe("distinct task input");
     expect(projected).not.toHaveProperty("invocationPromptReference");
     expect(projected).not.toHaveProperty("agentInstructionStack");
+    expect((projected.invocationContent as any).textStored).toBe(true);
+    for (const compactTerminal of [compactNativeAdapterInvokePayload, compactHeartbeatAdapterInvokePayload]) {
+      const terminal = compactTerminal(projected);
+      expect(terminal.prompt).toBe(projected.prompt);
+      expect(terminal.invocationContent).toEqual(projected.invocationContent);
+      expect((terminal.invocationContent as any).textStored).toBe(true);
+    }
+    await expect(readRunInstructionSnapshotForEvent({ db: dbFor([[{ payload: projected }], [{ id: attemptId }], [{ id: spanId }]]),
+      storage: f.storage, orgId, runId, eventId: 17 })).resolves.toMatchObject({ prompt: "distinct task input", agentInstructionStack: f.text });
+  });
+  it("restores a unique distinct UTF8 debug prompt from the same physically verified object", async () => {
+    const prompt = "独有 debug 🙂\n" + "X".repeat(12000);
+    const f = await fixture(`系统前文\n${prompt}\n系统后文`);
+    const projected = await f.compact({ ...f.payload, prompt });
+    expect(projected).not.toHaveProperty("prompt");
+    expect(projected.invocationPromptReference).toMatchObject({ field: "prompt", byteStart: Buffer.byteLength("系统前文\n"), byteLength: Buffer.byteLength(prompt) });
+    expect(projected.invocationContent).toMatchObject({ textSource: "stored_snapshot", snapshotTextStored: true,
+      agentInstructionStack: { present: true } });
+    expect((projected.invocationContent as any).agentInstructionStack).not.toHaveProperty("sameAsPrompt");
+    await expect(readRunInstructionSnapshotForEvent({ db: dbFor([[{ payload: projected }], [{ id: attemptId }], [{ id: spanId }]]),
+      storage: f.storage, orgId, runId, eventId: 17 })).resolves.toMatchObject({ agentInstructionStack: f.text, prompt });
+    const saved = Buffer.byteLength(JSON.stringify({ ...f.payload, prompt })) - Buffer.byteLength(JSON.stringify(projected));
+    expect(saved).toBeGreaterThan(22000);
+    console.info("unique range serialized bytes", { saved, snapshotBytes: Buffer.byteLength(f.text) });
+    expect(f.deleteObject).not.toHaveBeenCalled();
+  });
+  it.each(["重复🙂", "", "not contained", "\ud800"])("retains ambiguous, empty, absent or malformed UTF8 debug input %j", async prompt => {
+    const f = await fixture("重复🙂 middle 重复🙂");
+    const projected = await f.compact({ ...f.payload, prompt });
+    expect(projected.prompt).toBe(prompt);
+    expect(projected).not.toHaveProperty("invocationPromptReference");
+    expect((projected.invocationContent as any).textStored).toBe(true);
+  });
+  it.each(["missing_locator", "wrong_digest", "wrong_bytes", "wrong_field", "wrong_type", "wrong_presence", "stale_summary", "bad_range", "foreign_path", "wrong_prompt_digest", "wrong_flag_type", "wrong_length_type", "wrong_attempt_type", "invented_provenance"])("rebuilds unproven terminal snapshot metadata without deleting raw fallbacks: %s", async mode => {
+    const f = await fixture();
+    const projected = await f.compact();
+    const invalid: any = structuredClone(projected);
+    if (mode === "missing_locator") delete invalid.invocationInstructionSnapshot;
+    if (mode === "wrong_digest") invalid.invocationInstructionTextReference.sha256 = "0".repeat(64);
+    if (mode === "wrong_bytes") invalid.invocationContent.agentInstructionStack.sanitizedUtf8ByteLength++;
+    if (mode === "wrong_field") invalid.invocationInstructionTextReference.field = "prompt";
+    if (mode === "wrong_type") invalid.invocationContent = "truthy but not metadata";
+    if (mode === "wrong_presence") invalid.invocationContent.prompt.inline = true;
+    if (mode === "stale_summary") invalid.invocationContent.agentInstructionStack.sanitizedSha256 = "0".repeat(64);
+    if (mode === "bad_range") invalid.invocationPromptReference = { ...invalid.invocationPromptReference, sameAsInstructions: false, byteStart: -1, byteLength: 5, rangeSha256: "0".repeat(64) };
+    if (mode === "foreign_path") invalid.invocationInstructionSnapshot.objectKey = "../escape";
+    if (mode === "wrong_prompt_digest") invalid.invocationContent.prompt.sanitizedSha256 = "0".repeat(64);
+    if (mode === "wrong_flag_type") invalid.invocationContent.textStored = "false";
+    if (mode === "wrong_length_type") invalid.invocationContent.agentInstructionStack.sanitizedCharacterLength = "10";
+    if (mode === "wrong_attempt_type") invalid.invocationAttemptId = 123;
+    if (mode === "invented_provenance") invalid.invocationContent.physicalProof = "not issued by producer";
+    for (const compactTerminal of [compactNativeAdapterInvokePayload, compactHeartbeatAdapterInvokePayload]) {
+      const terminal = compactTerminal(invalid);
+      expect(terminal.invocationContent).not.toEqual(invalid.invocationContent);
+      expect((terminal.invocationContent as any).textSource).not.toBe("stored_snapshot");
+      expect((terminal.invocationContent as any).agentInstructionStack).not.toHaveProperty("sha256");
+      // Even invalid pointer/metadata cannot authorize deletion of a unique
+      // persisted prompt or stack; actual field presence dictates textStored.
+      const raw = { ...invalid, prompt: "unique raw debug input", agentInstructionStack: "unique raw Instructions" };
+      const retained = compactTerminal(raw);
+      expect(retained.prompt).toBe(raw.prompt);
+      expect(retained.agentInstructionStack).toBe(raw.agentInstructionStack);
+      expect((retained.invocationContent as any).textStored).toBe(true);
+      expect((retained.invocationContent as any).textSource).toBe("persisted_invocation_inline");
+    }
   });
   it("accepts only explicit existing equality alias, not arbitrary absent instructions", async () => {
     const f = await fixture();

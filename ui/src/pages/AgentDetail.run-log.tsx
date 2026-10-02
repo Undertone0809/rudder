@@ -458,14 +458,18 @@ export function LogViewer({
   });
   const recoveredInstructions = invocationInstructionSnapshotQuery.data?.source === "codex_native_rollout"
     ? invocationInstructionSnapshotQuery.data : null;
-  const retainedInstructionStack = invocationInstructionSnapshotQuery.data?.source === "stored_snapshot"
-    ? invocationInstructionSnapshotQuery.data.agentInstructionStack
+  const completeInstructions = invocationInstructionSnapshotQuery.data?.completeness === "complete"
+    ? invocationInstructionSnapshotQuery.data : null;
+  const retainedInstructionStack = completeInstructions
+    ? completeInstructions.agentInstructionStack
     : undefined;
   const invocationAgentInstructionStack = retainedInstructionStack
     ?? (instructionSnapshotStatus === "available"
       ? undefined
       : readInvocationAgentInstructionStack(adapterInvokePayload));
   const invocationContentSummary = readInvocationContentSummary(adapterInvokePayload);
+  const debugInput = completeInstructions?.prompt
+    ?? (instructionSnapshotStatus !== "available" && typeof adapterInvokePayload?.prompt === "string" ? adapterInvokePayload.prompt : undefined);
   const invocationPromptText =
     invocationAgentInstructionStack !== undefined
       ? formatInvocationValueForDisplay(invocationAgentInstructionStack, censorUsernameInLogs)
@@ -754,6 +758,14 @@ export function LogViewer({
               )}
               {invocationPromptText === null && recoveredInstructions && (
                 <RecoveredDeveloperInstructions recovery={recoveredInstructions} censorUsernameInLogs={censorUsernameInLogs} />
+              )}
+              {debugInput !== undefined && debugInput !== invocationAgentInstructionStack && (
+                <div>
+                  <div className="mb-1 text-xs text-muted-foreground">Debug Input</div>
+                  <pre data-testid="invocation-debug-input" className="rounded-md bg-neutral-100 p-2 text-xs whitespace-pre-wrap overflow-x-auto dark:bg-neutral-950">
+                    {formatInvocationValueForDisplay(debugInput, censorUsernameInLogs)}
+                  </pre>
+                </div>
               )}
               {adapterInvokePayload?.context !== undefined && (
                 <div>

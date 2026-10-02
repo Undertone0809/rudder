@@ -157,7 +157,7 @@ export async function readRunInstructionSnapshotForEvent(input: {
   orgId: string;
   runId: string;
   eventId: number;
-}): Promise<{ agentInstructionStack: string; sha256: string; byteSize: number } | null> {
+}): Promise<{ source?: "persisted_invocation_inline"; agentInstructionStack: string; prompt?: string; sha256: string; byteSize: number } | null> {
   const [event] = await input.db
     .select({ payload: heartbeatRunEvents.payload })
     .from(heartbeatRunEvents)
@@ -175,11 +175,28 @@ export async function readRunInstructionSnapshotForEvent(input: {
   const objectKey = typeof locator?.objectKey === "string" ? locator.objectKey : null;
   const sha256 = typeof locator?.sha256 === "string" ? locator.sha256 : null;
   const byteSize = locator?.byteSize;
+  const alias = asRecord(payload?.agentInstructionStackAlias);
+  const prompt = payload?.prompt;
+  // Historical aliases are evidence about final persisted bytes, not a guess
+  // that every absent stack is equal to its prompt. Broken available snapshots
+  // must never be replaced with a different source.
+  const inline = locator?.status !== "available" && payload && !Object.hasOwn(payload, "agentInstructionStack")
+    && typeof prompt === "string" && prompt.length > 0
+    && alias?.present === true && alias.sameAsPrompt === true
+    && alias.textSource === "persisted_prompt" && alias.equality === "nonempty_sanitized_exact"
+    && typeof alias.sanitizedForPersistence === "boolean"
+    && [alias.sourceCharacterLength, alias.sourceUtf8ByteLength, alias.sanitizedCharacterLength, alias.sanitizedUtf8ByteLength]
+      .every(length => Number.isSafeInteger(length) && (length as number) > 0)
+    && alias.sanitizedCharacterLength === prompt.length
+    && alias.sanitizedUtf8ByteLength === Buffer.byteLength(prompt, "utf8")
+    && alias.sanitizedUtf8ByteLength <= MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES
+    && Buffer.from(prompt, "utf8").toString("utf8") === prompt
+    && alias.sanitizedSha256 === createHash("sha256").update(prompt, "utf8").digest("hex");
 
-  if (locator?.status !== "available" || !attemptId || !spanId || !objectKey || !sha256 || !/^[a-f0-9]{64}$/u.test(sha256)
+  if (!attemptId || !spanId || (!inline && (locator?.status !== "available" || !objectKey || !sha256 || !/^[a-f0-9]{64}$/u.test(sha256)
     || !Number.isSafeInteger(byteSize) || (byteSize as number) <= 0
     || (byteSize as number) > MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES
-    || objectKey !== `${input.orgId}/${RUN_INSTRUCTION_SNAPSHOT_NAMESPACE}/${sha256}`) {
+    || objectKey !== `${input.orgId}/${RUN_INSTRUCTION_SNAPSHOT_NAMESPACE}/${sha256}`))) {
     return null;
   }
 
@@ -205,8 +222,10 @@ export async function readRunInstructionSnapshotForEvent(input: {
     ))
     .limit(1);
   if (!span) return null;
+  if (inline) return { source: "persisted_invocation_inline", agentInstructionStack: prompt as string,
+    prompt: prompt as string, sha256: alias!.sanitizedSha256 as string, byteSize: alias!.sanitizedUtf8ByteLength as number };
 
-  const stored = await input.storage.getObject(input.orgId, objectKey);
+  const stored = await input.storage.getObject(input.orgId, objectKey!);
   const chunks: Buffer[] = [];
   let totalBytes = 0;
   for await (const chunk of stored.stream) {
@@ -221,8 +240,32 @@ export async function readRunInstructionSnapshotForEvent(input: {
   const actualSha256 = createHash("sha256").update(body).digest("hex");
   if (actualSha256 !== sha256) return null;
   try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+    const reference = asRecord(payload?.invocationPromptReference);
+    // A non-contained/ambiguous prompt is deliberately retained in this same
+    // authorized event. Expose its exact text too; a range reference never
+    // substitutes for an unverified or missing field.
+    let restoredPrompt = typeof payload?.prompt === "string" ? payload.prompt : undefined;
+    if (reference) {
+      if (reference.source !== "stored_snapshot" || reference.sha256 !== sha256 || reference.byteSize !== byteSize) return null;
+      if (reference.sameAsInstructions === true) restoredPrompt = text;
+      else {
+        const start = reference.byteStart;
+        const length = reference.byteLength;
+        if (reference.field !== "prompt" || !Number.isSafeInteger(start) || !Number.isSafeInteger(length)
+          || (start as number) < 0 || (length as number) <= 0 || (start as number) + (length as number) > body.length) return null;
+        const range = body.subarray(start as number, (start as number) + (length as number));
+        if (createHash("sha256").update(range).digest("hex") !== reference.rangeSha256) return null;
+        // Decode both surrounding regions too: a byte slice must not start or
+        // end inside a UTF-8 codepoint, even if its digest was copied correctly.
+        new TextDecoder("utf-8", { fatal: true }).decode(body.subarray(0, start as number));
+        new TextDecoder("utf-8", { fatal: true }).decode(body.subarray((start as number) + (length as number)));
+        restoredPrompt = new TextDecoder("utf-8", { fatal: true }).decode(range);
+      }
+    }
     return {
-      agentInstructionStack: new TextDecoder("utf-8", { fatal: true }).decode(body),
+      agentInstructionStack: text,
+      ...(restoredPrompt === undefined ? {} : { prompt: restoredPrompt }),
       sha256,
       byteSize: byteSize as number,
     };

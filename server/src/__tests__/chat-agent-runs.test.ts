@@ -29,6 +29,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../middleware/error-handler.ts";
 import { registerAgentInvocationInstructionsRoute } from "../routes/agents.management-invocation-instructions.ts";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
@@ -244,6 +245,7 @@ describe("chatAgentRunService", () => {
     runService = svc,
     runtimeType: "codex_local" | "claude_local" | "hermes_local" | "hermes_gateway" | "cursor" | "pi_local" | "opencode_local" = "codex_local",
     runContext?: Record<string, unknown>,
+    issuePrefix = "SUB",
   ) {
     const orgId = randomUUID();
     const agentId = randomUUID();
@@ -253,7 +255,7 @@ describe("chatAgentRunService", () => {
       id: orgId,
       name,
       urlKey: deriveOrganizationUrlKey(name),
-      issuePrefix: "SUB",
+      issuePrefix,
       requireBoardApprovalForNewAgents: false,
     });
     await db.insert(agents).values({
@@ -351,16 +353,18 @@ describe("chatAgentRunService", () => {
     )).toBe(false);
   });
 
-  it("persists equal invoke text once while SQL events and Instructions snapshot retain actual text", async () => {
+  it.each(["equal", "distinct_range"] as const)("persists equal invoke text once while SQL events and Instructions snapshot retain actual text: %s", async mode => {
     const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-snapshot-"))));
     const invokeSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: storage });
     const run = await createChatRunFixture("Equal invoke snapshot", undefined, invokeSvc, "hermes_gateway");
     const prompt = "Instruction and debug input 原文🙂 " + "X".repeat(82_000);
-    const meta = { agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt };
+    const instructions = mode === "distinct_range" ? `系统前文\n${prompt}\n系统后文` : prompt;
+    const meta = { agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: instructions };
     await invokeSvc.appendAdapterInvoke(run, meta, []);
     const events = await heartbeatService(db).listEvents(run.id);
     const invoke = events.find(event => event.eventType === "adapter.invoke")!;
-    expect(invoke.payload).toMatchObject({ invocationPromptReference: { sameAsInstructions: true }, invocationInstructionSnapshot: { status: "available" } });
+    expect(invoke.payload).toMatchObject({ invocationPromptReference: mode === "equal" ? { sameAsInstructions: true } : {
+      field: "prompt", byteStart: Buffer.byteLength("系统前文\n"), byteLength: Buffer.byteLength(prompt) }, invocationInstructionSnapshot: { status: "available" } });
     expect(invoke.payload).not.toHaveProperty("prompt");
     expect(invoke.payload).not.toHaveProperty("agentInstructionStack");
     const payload = invoke.payload as Record<string, unknown>;
@@ -368,7 +372,7 @@ describe("chatAgentRunService", () => {
     expect(Buffer.byteLength(JSON.stringify({ ...payload, prompt })) - Buffer.byteLength(serialized)).toBeGreaterThan(82_000);
     await expect(readRunInstructionSnapshotForEvent({ db, storage,
       orgId: run.orgId, runId: run.id, eventId: invoke.id })).resolves.toMatchObject({
-      agentInstructionStack: prompt, sha256: createHash("sha256").update(prompt).digest("hex"), byteSize: Buffer.byteLength(prompt),
+      agentInstructionStack: instructions, prompt, sha256: createHash("sha256").update(instructions).digest("hex"), byteSize: Buffer.byteLength(instructions),
     });
     const app = express();
     app.use((req, _res, next) => { req.actor = { type: "board", source: "session", orgIds: [run.orgId] }; next(); });
@@ -376,16 +380,32 @@ describe("chatAgentRunService", () => {
     registerAgentInvocationInstructionsRoute({ router, db, storage, heartbeat: heartbeatService(db),
       resolveScope: () => ({ orgIds: [run.orgId] }), getCurrentUserRedactionOptions: async () => ({ enabled: false }) });
     app.use("/api", router);
+    app.use(errorHandler);
     const response = await request(app).get(`/api/agent-runs/${run.id}/events/${invoke.id}/invocation-instructions`);
     expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ source: "stored_snapshot", completeness: "complete", agentInstructionStack: prompt });
+    expect(response.body).toMatchObject({ source: "stored_snapshot", completeness: "complete", agentInstructionStack: instructions, prompt });
     expect(response.headers["cache-control"]).toContain("no-store");
     const baseline = { ...payload, prompt };
     delete baseline.invocationInstructionTextReference;
     delete baseline.invocationPromptReference;
     console.info("snapshot-only new Chat SQL invoke bytes", { beforeBytes: Buffer.byteLength(JSON.stringify(baseline)),
       afterBytes: Buffer.byteLength(serialized), netSavedBytes: Buffer.byteLength(JSON.stringify(baseline)) - Buffer.byteLength(serialized) });
-    expect(meta).toEqual({ agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt });
+    expect(meta).toEqual({ agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: instructions });
+    await expect(readRunInstructionSnapshotForEvent({ db, storage, orgId: randomUUID(), runId: run.id, eventId: invoke.id })).resolves.toBeNull();
+    await expect(readRunInstructionSnapshotForEvent({ db, storage, orgId: run.orgId, runId: randomUUID(), eventId: invoke.id })).resolves.toBeNull();
+    // A separate own Run cannot borrow this event's Attempt/Span, even when the
+    // physical snapshot is readable in the same organization.
+    const foreign = await createChatRunFixture(`Foreign snapshot identity ${randomUUID()}`, undefined, invokeSvc, "hermes_gateway", undefined, `F${randomUUID().slice(0, 6).toUpperCase()}`);
+    const [seeded] = await db.insert(heartbeatRunEvents).values({ orgId: foreign.orgId, runId: foreign.id,
+      agentId: foreign.agentId, seq: 1, eventType: "adapter.invoke", payload }).returning();
+    await expect(readRunInstructionSnapshotForEvent({ db, storage, orgId: foreign.orgId, runId: foreign.id, eventId: seeded!.id })).resolves.toBeNull();
+    const crossRunResponse = await request(app).get(`/api/agent-runs/${run.id}/events/${seeded!.id}/invocation-instructions`);
+    expect(crossRunResponse.status).toBe(404);
+    const crossOrgResponse = await request(app).get(`/api/agent-runs/${foreign.id}/events/${seeded!.id}/invocation-instructions`);
+    expect([403, 404]).toContain(crossOrgResponse.status);
+    expect(crossOrgResponse.body).not.toHaveProperty("agentInstructionStack");
+    await invokeSvc.sealSpan(foreign, { completeness: "unknown" });
+    await invokeSvc.finalizeRun(foreign.id, { status: "failed" });
     await invokeSvc.sealSpan(run, { completeness: "unknown" });
     await invokeSvc.finalizeRun(run.id, { status: "failed", resultJson: { outcome: "test finished" } });
     const terminalResponse = await request(app).get(`/api/agent-runs/${run.id}/events/${invoke.id}/invocation-instructions`);
@@ -559,6 +579,7 @@ describe("chatAgentRunService", () => {
     { prompt: "task", agentInstructionStack: "", aliased: false, present: true },
     { prompt: "", agentInstructionStack: "", aliased: false, present: true },
     { prompt: "task", agentInstructionStack: "distinct Instructions", aliased: false, present: true },
+    { prompt: "重复🙂", agentInstructionStack: "前文 重复🙂 中间 重复🙂 后文", aliased: false, present: true },
     { prompt: "offline Instructions", agentInstructionStack: "offline Instructions", aliased: true, present: true, readbackUnavailable: true },
     { prompt: "distinct task", agentInstructionStack: "offline distinct Instructions", aliased: false, present: true, readbackUnavailable: true },
   ])("roundtrips persisted dedup metadata through the actual Chat compactor: %j", async ({ aliased, present, readbackUnavailable, ...fields }) => {
@@ -576,6 +597,9 @@ describe("chatAgentRunService", () => {
     await aliasSvc.appendAdapterInvoke(run, meta as never, []);
     const before = (await heartbeatService(db).listEvents(run.id)).find(event => event.eventType === "adapter.invoke")!;
     const beforePayload = before.payload as Record<string, unknown>;
+    if (typeof fields.agentInstructionStack === "string" && fields.agentInstructionStack.length > 0 && !readbackUnavailable) {
+      expect((beforePayload.invocationContent as any).textStored).toBe(typeof beforePayload.prompt === "string" || typeof beforePayload.agentInstructionStack === "string");
+    }
     if (aliased) expect(beforePayload.agentInstructionStackAlias).toMatchObject({ present: true, sameAsPrompt: true });
     else expect(beforePayload).not.toHaveProperty("agentInstructionStackAlias");
     // No stdout/transcript mirror is produced in this dedicated path. Existing
@@ -591,6 +615,10 @@ describe("chatAgentRunService", () => {
     expect(final.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "reference_only" } });
     const after = (await heartbeatService(db).listEvents(run.id)).find(event => event.eventType === "adapter.invoke")!;
     const payload = after.payload as Record<string, unknown>;
+    if (typeof fields.agentInstructionStack === "string" && fields.agentInstructionStack.length > 0 && !readbackUnavailable) {
+      expect(payload.invocationContent).toEqual(beforePayload.invocationContent);
+      expect((payload.invocationContent as any).textStored).toBe(typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string");
+    }
     expect(after.id).toBe(before.id);
     if (aliased && !readbackUnavailable) expect(payload).not.toHaveProperty("prompt");
     else expect(payload.prompt).toBe(fields.prompt);

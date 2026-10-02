@@ -46,6 +46,38 @@ function storageFor(text: string): StorageService {
 }
 
 describe("Run instruction snapshots", () => {
+  function inlinePayload() {
+    return { invocationAttemptId: attemptId, invocationSpanId: spanId, prompt: instructionText,
+      agentInstructionStackAlias: { present: true, sameAsPrompt: true, textSource: "persisted_prompt",
+        equality: "nonempty_sanitized_exact", sanitizedSha256: sha256,
+        sanitizedCharacterLength: instructionText.length, sanitizedUtf8ByteLength: Buffer.byteLength(instructionText),
+        sourceCharacterLength: instructionText.length, sourceUtf8ByteLength: Buffer.byteLength(instructionText),
+        sanitizedForPersistence: false } };
+  }
+  it("restores historical typed persisted inline only through its own Attempt and Span", async () => {
+    const storage = storageFor("not used");
+    const db = fakeDb([[{ payload: inlinePayload() }], [{ id: attemptId }], [{ id: spanId }]]);
+    await expect(readRunInstructionSnapshotForEvent({ db, storage, orgId, runId, eventId: 17 })).resolves.toMatchObject({
+      source: "persisted_invocation_inline", agentInstructionStack: instructionText, prompt: instructionText, sha256,
+    });
+    expect(storage.getObject).not.toHaveBeenCalled();
+  });
+  it.each(["digest", "length", "own_stack", "missing_attempt", "missing_span", "broken_snapshot", "provenance", "equality", "malformed_utf8"])("denies invalid inline alias: %s", async mode => {
+    const payload: Record<string, unknown> = inlinePayload();
+    if (mode === "digest") payload.prompt = "changed instructions";
+    if (mode === "length") (payload.agentInstructionStackAlias as any).sanitizedUtf8ByteLength++;
+    if (mode === "own_stack") payload.agentInstructionStack = null;
+    if (mode === "broken_snapshot") payload.invocationInstructionSnapshot = { status: "available", objectKey: "wrong" };
+    if (mode === "provenance") delete (payload.agentInstructionStackAlias as any).sanitizedForPersistence;
+    if (mode === "equality") (payload.agentInstructionStackAlias as any).equality = "guessed";
+    if (mode === "malformed_utf8") {
+      payload.prompt = "\ud800";
+      Object.assign(payload.agentInstructionStackAlias as any, { sanitizedCharacterLength: 1, sanitizedUtf8ByteLength: 3,
+        sanitizedSha256: createHash("sha256").update("\ud800").digest("hex") });
+    }
+    const db = fakeDb([[{ payload }], mode === "missing_attempt" ? [] : [{ id: attemptId }], mode === "missing_span" ? [] : [{ id: spanId }]]);
+    await expect(readRunInstructionSnapshotForEvent({ db, storage: storageFor("unused"), orgId, runId, eventId: 17 })).resolves.toBeNull();
+  });
   it("reads only a snapshot linked through the Run's adapter event, Attempt, and Span", async () => {
     const storage = storageFor(instructionText);
     const db = fakeDb([
@@ -109,5 +141,21 @@ describe("Run instruction snapshots", () => {
 
     await expect(readRunInstructionSnapshotForEvent({ db, storage, orgId, runId, eventId: 17 }))
       .resolves.toBeNull();
+  });
+  it.each(["valid", "digest", "bounds", "utf8_boundary"])("validates public prompt range after the entire snapshot: %s", async mode => {
+    const text = "前🙂 debug 后";
+    const bytes = Buffer.from(text);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const start = mode === "utf8_boundary" ? 4 : Buffer.byteLength("前🙂 ");
+    const range = bytes.subarray(start, start + 5);
+    const payload = { ...eventPayload(), invocationInstructionSnapshot: { status: "available", sha256: digest,
+      byteSize: bytes.length, objectKey: `${orgId}/run-instruction-snapshots/${digest}` },
+      invocationPromptReference: { source: "stored_snapshot", field: "prompt", sha256: digest, byteSize: bytes.length,
+        byteStart: start, byteLength: mode === "bounds" ? 1000 : 5,
+        rangeSha256: mode === "digest" ? "0".repeat(64) : createHash("sha256").update(range).digest("hex") } };
+    const result = await readRunInstructionSnapshotForEvent({ db: fakeDb([[{ payload }], [{ id: attemptId }], [{ id: spanId }]]),
+      storage: storageFor(text), orgId, runId, eventId: 17 });
+    if (mode === "valid") expect(result).toMatchObject({ agentInstructionStack: text, prompt: "debug" });
+    else expect(result).toBeNull();
   });
 });

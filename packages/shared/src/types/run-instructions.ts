@@ -12,9 +12,11 @@ export interface RecoveredRunDeveloperInstructions {
 }
 
 export type AgentRunInvocationInstructions = {
-  source: "stored_snapshot";
+  source: "stored_snapshot" | "persisted_invocation_inline";
   completeness: "complete";
   agentInstructionStack: string;
+  /** Exact debug input restored from the same verified source, when referenced. */
+  prompt?: string;
   sha256: string;
   byteSize: number;
 } | RecoveredRunDeveloperInstructions;

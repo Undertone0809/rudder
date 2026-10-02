@@ -57,7 +57,7 @@ async function flushQueries() {
 }
 
 describe("Run Detail retained instruction snapshot", () => {
-  it("fetches and renders the full stored snapshot after opening Instructions", async () => {
+  it.each(["stored_snapshot", "persisted_invocation_inline"] as const)("fetches and renders full typed Instructions and distinct restored debug input: %s", async source => {
     const runId = "run-snapshot-1";
     const eventId = 17;
     const snapshotText = [
@@ -105,9 +105,10 @@ describe("Run Detail retained instruction snapshot", () => {
     vi.spyOn(agentRunsApi, "events").mockResolvedValue([event]);
     vi.spyOn(agentRunsApi, "allEvents").mockResolvedValue([event]);
     const fetchSnapshot = vi.spyOn(agentRunsApi, "invocationInstructions").mockResolvedValue({
-      source: "stored_snapshot",
+      source,
       completeness: "complete",
       agentInstructionStack: snapshotText,
+      prompt: "exact unique debug input 原文🙂",
       sha256: "a".repeat(64),
       byteSize: 1024,
     });
@@ -147,6 +148,7 @@ describe("Run Detail retained instruction snapshot", () => {
     const renderedSnapshot = container.querySelector<HTMLElement>("[data-testid='invocation-prompt']");
     expect(renderedSnapshot).not.toBeNull();
     expect(renderedSnapshot!.textContent).toBe(snapshotText);
+    expect(container.querySelector('[data-testid="invocation-debug-input"]')?.textContent?.trim()).toBe("exact unique debug input 原文🙂");
     expect(container.textContent).not.toContain("Stale inline stack must not be displayed.");
     expect(container.textContent).not.toContain("Stale legacy prompt must not be displayed.");
   });

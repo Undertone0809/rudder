@@ -3,6 +3,7 @@ import type { Db } from "@rudderhq/db";
 import type { AgentRuntimeInvocationMeta } from "../../agent-runtimes/index.js";
 import { logger } from "../../middleware/logger.js";
 import { summarizeHeartbeatRunResultJson } from "../heartbeat-run-summary.js";
+import { readConsistentStoredInstructionSummary } from "../run-instruction-snapshots.compaction.js";
 import type { RunLogStore } from "../run-log-store.js";
 import { retainNativeHeartbeatResultJson } from "./heartbeat-transcript-retention.js";
 import { buildHeartbeatAdapterInvokePayload, readNonEmptyString } from "./heartbeat.core.js";
@@ -74,11 +75,12 @@ export function compactHeartbeatAdapterInvokePayload(payload: Record<string, unk
   // range proof cannot justify deleting unique invocation text or context.
   const retained = { ...summary, ...payload };
   if (!summary.agentInstructionStackAlias) delete retained.agentInstructionStackAlias;
-  retained.invocationContent = { ...(summary.invocationContent as Record<string, unknown>),
-    ...(payload.invocationInstructionTextReference && !retained.agentInstructionStackAlias
-      ? { agentInstructionStack: payload.invocationInstructionTextReference } : {}),
+  // The async new-event proof describes actual stored text. Rebuilding from
+  // absent inline fields cannot reconstruct that summary at terminalization.
+  retained.invocationContent = readConsistentStoredInstructionSummary(payload) ?? { ...(summary.invocationContent as Record<string, unknown>),
     textStored: typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string",
-    textSource: payload.invocationInstructionTextReference ? "stored_snapshot" : "persisted_invocation_inline",
+    textSource: typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string"
+      ? "persisted_invocation_inline" : payload.invocationInstructionTextReference ? "unverified_snapshot_reference" : "persisted_invocation_inline",
   };
   return retained;
 }

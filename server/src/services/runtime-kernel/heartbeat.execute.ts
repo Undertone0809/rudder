@@ -714,7 +714,9 @@ export function createHeartbeatExecuteHandlers(context: any) {
           invocationSpanId: commonSpanId,
         };
         const snapshotDeadlineAt = performance.now() + 5_000;
-        if (transcriptRetention.mode === "native" && !transcriptRetention.persistRawTranscript) {
+        {
+          // Instruction snapshots prove invocation text independently of
+          // native transcript/supplement retention eligibility.
           const instructionStack = sanitizeAgentInstructionStackForPersistence(meta);
           const instructionBytes = typeof instructionStack === "string"
             ? Buffer.byteLength(instructionStack, "utf8")
@@ -738,7 +740,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
               eventMeta.invocationInstructionSnapshot = { status: "unavailable", reason: "storage_unavailable" };
               logger.warn(
                 { orgId: currentRun.orgId, agentId: currentRun.agentId, runId: currentRun.id },
-                "could not persist native invocation instruction snapshot",
+                "could not persist invocation instruction snapshot",
               );
             }
           }
@@ -750,12 +752,11 @@ export function createHeartbeatExecuteHandlers(context: any) {
         for (const field of ["prompt", "agentInstructionStack"]) {
           if (typeof payload[field] === "string") payload[field] = redactSensitiveText(payload[field]);
         }
-        const projected = transcriptRetention.mode === "native" && !transcriptRetention.persistRawTranscript
-          ? await compactReadableInstructionSnapshot({
+        const projected = await compactReadableInstructionSnapshot({
             db, storage: { getObject: (orgId, key) => getStorageService().getObject(orgId, key) }, orgId: currentRun.orgId, runId: currentRun.id,
             attemptId: activeAttemptRef?.id ?? null, spanId: commonSpanId, payload: sanitizePostgresJsonValue(payload),
             deadlineAt: snapshotDeadlineAt,
-          }) : payload;
+          });
         // Snapshot IO may outlive this executor's ownership. Reuse the current
         // Run identity and existing lease CAS before publishing metadata.
         const metadataRun = await getRun(currentRun.id);

@@ -67,9 +67,10 @@ export function registerAgentInvocationInstructionsRoute(input: {
     const currentUserRedactionOptions = await input.getCurrentUserRedactionOptions();
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.json({
-      source: "stored_snapshot",
+      source: snapshot.source ?? "stored_snapshot",
       completeness: "complete",
       agentInstructionStack: redactCurrentUserText(snapshot.agentInstructionStack, currentUserRedactionOptions),
+      ...(snapshot.prompt === undefined ? {} : { prompt: redactCurrentUserText(snapshot.prompt, currentUserRedactionOptions) }),
       sha256: snapshot.sha256,
       byteSize: snapshot.byteSize,
     });

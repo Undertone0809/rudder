@@ -1,5 +1,6 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
+import { readConsistentStoredInstructionSummary } from "./run-instruction-snapshots.compaction.js";
 import { buildHeartbeatAdapterInvokePayload } from "./runtime-kernel/heartbeat.core.js";
 
 const MAX_EVENT_TEXT_CHARS = 2_000;
@@ -49,12 +50,11 @@ export function compactNativeAdapterInvokePayload(payload: Record<string, unknow
   });
   // Native transcript completeness is not invocation-text equivalence. Only
   // the new-event snapshot readback may remove text; keep every raw fallback.
-  return { ...summary, ...payload, invocationContent: {
+  return { ...summary, ...payload, invocationContent: readConsistentStoredInstructionSummary(payload) ?? {
     ...(summary.invocationContent as Record<string, unknown>),
-    ...(payload.invocationInstructionTextReference && !payload.agentInstructionStackAlias
-      ? { agentInstructionStack: payload.invocationInstructionTextReference } : {}),
     textStored: typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string",
-    textSource: payload.invocationInstructionTextReference ? "stored_snapshot" : "persisted_invocation_inline",
+    textSource: typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string"
+      ? "persisted_invocation_inline" : payload.invocationInstructionTextReference ? "unverified_snapshot_reference" : "persisted_invocation_inline",
   } };
 }
 
