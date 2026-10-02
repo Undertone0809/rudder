@@ -1050,9 +1050,12 @@ async function readCodexNativeTranscriptWithEvidence(
   const maxBytes = readBudget(budget?.maxBytes, 2 * 1024 * 1024, 8 * 1024 * 1024);
   const maxItemBytes = readBudget(budget?.maxItemBytes, 1024 * 1024, 8 * 1024 * 1024);
   const frameLimit = Math.min(maxBytes, maxItemBytes);
+  // Executable/env verification identifies a protocol/cache observation, not
+  // transcript content. Keep authorized transport identity in the cursor scope,
+  // while fresh attestation still controls discovery and protocol validation.
   const scope = createHash("sha256").update(JSON.stringify({ binding: profile.binding, threadId, selector: input.selector,
     command: profile.command, args: profile.args, cwd: profile.cwd, home: profile.env.CODEX_HOME,
-    version: profile.providerVersion, verification: profile.transcriptVerificationFingerprint })).digest("hex");
+    version: profile.providerVersion })).digest("hex");
   const cursor = decodeReadCursor(input.cursor, scope);
   try {
     if (requireTurn && selectedId && (onPaginationVerified || (profile.methods?.threadTurnsList === true && profile.methods.threadItemsList === true))) {

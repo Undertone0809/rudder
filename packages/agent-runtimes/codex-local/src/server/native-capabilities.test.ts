@@ -1,4 +1,5 @@
 import type { AgentRuntimeControlHandle } from "@rudderhq/agent-runtime-utils";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -245,6 +246,66 @@ describe("Codex native history and fork capabilities", () => {
     });
     const changed = await read(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
     expect(changed.revision).not.toBe(first.revision);
+  });
+
+  it.each(["unrelated_env", "binary_attestation"] as const)("fixed-range revision and cursor survive irrelevant verified-profile changes: %s", async change => {
+    const { statePath, transport } = await fixedRangeFixture(true);
+    const rawBefore = await fs.readFile(statePath);
+    // Model the historical verifier's ephemeral full-env/binary-stat proof.
+    // It remains a protocol/cache identity, not an identity of transcript text.
+    const attest = (env: typeof transport.env, binary: string) => createHash("sha256")
+      .update(JSON.stringify({ env: Object.entries(env).sort(), binary })).digest("hex");
+    const original = { ...transport, transcriptVerificationFingerprint: attest(transport.env, "inode/ctime-1") };
+    const first = await createCodexLocalProviderCapabilities(original).transcript!.readRange!(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(first.availability).toBe("available");
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const env = change === "unrelated_env" ? { ...transport.env, UNRELATED_FIXTURE_ENV: "new-process" } : transport.env;
+    const changed = { ...transport, env, transcriptVerificationFingerprint: attest(env,
+      change === "binary_attestation" ? "inode/ctime-2" : "inode/ctime-1") };
+    expect(changed.transcriptVerificationFingerprint).not.toBe(original.transcriptVerificationFingerprint);
+    const read = createCodexLocalProviderCapabilities(changed).transcript!.readRange!;
+    const current = await read(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(await fs.readFile(statePath)).toEqual(rawBefore);
+    expect(current.items).toEqual(first.items);
+    const continuation = await read({ ...pageInput, cursor: first.nextCursor }).then(
+      value => ({ value: value as import("./app-server-native.js").CodexNativeTranscriptReadResult, error: null }),
+      error => ({ value: null, error: String(error) }),
+    );
+    console.info("Codex unchanged native revision probe", { change, rawBytesStable: true, projectedItemsStable: true,
+      revisionStable: current.revision === first.revision, cursorStable: current.nextCursor === first.nextCursor,
+      continuationError: continuation.error });
+    expect(current.revision).toBe(first.revision);
+    expect(current.nextCursor).toBe(first.nextCursor);
+    expect(continuation.error).toBeNull();
+    expect(continuation.value).toMatchObject({ availability: "available", revision: first.revision });
+    expect(continuation.value?.items?.[0]?.id).toBe("tool-1");
+  });
+
+  it.each(["home", "version", "command", "args", "cwd", "profile", "org"] as const)("stable transcript cursor still rejects changed authorized scope before provider IO: %s", async change => {
+    const { transport, read } = await fixedRangeFixture(true);
+    const first = await read(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const changed = { ...transport };
+    let authorizedSession = session;
+    if (change === "home") changed.env = { ...transport.env, CODEX_HOME: path.join(root, "other-home") };
+    if (change === "version") changed.providerVersion = "0.155.0-alpha.9.3";
+    if (change === "command") changed.command = path.join(root, "other-codex");
+    if (change === "args") changed.args = [...transport.args!, "other-profile-arg"];
+    if (change === "cwd") changed.cwd = path.join(root, "other-workspace");
+    if (change === "profile") {
+      changed.binding = { ...binding, profileId: "profile-other" };
+      authorizedSession = { ...session, sessionParams: { ...session.sessionParams, profileId: "profile-other" } };
+    }
+    if (change === "org") {
+      changed.binding = { ...binding, orgId: "org-other", id: "binding-other" };
+      authorizedSession = { ...session, sessionParams: { ...session.sessionParams,
+        profileOrgId: "org-other", profileBindingId: "binding-other" } };
+    }
+    const before = await capturedRequests();
+    await expect(createCodexLocalProviderCapabilities(changed).transcript!.readRange!({
+      ...pageInput, binding: changed.binding, session: authorizedSession, cursor: first.nextCursor,
+    })).rejects.toThrow("scoped");
+    expect(await capturedRequests()).toEqual(before);
   });
 
   it("fixed-range control keeps whole-session revision sensitive to later native turns", async () => {
