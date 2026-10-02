@@ -34,11 +34,11 @@ const otherOrganizationId = "20000000-0000-0000-0000-000000000002";
 const boardUserId = "board-user-1";
 const sessionUserId = "session-user-1";
 const agentId = "agent-1";
-const boardToken = "pcp_board_test_public_ingress_token";
-const revokedBoardToken = "pcp_board_revoked_public_ingress_token";
-const expiredBoardToken = "pcp_board_expired_public_ingress_token";
-const revokedAgentToken = "pcp_agent_revoked_public_ingress_token";
-const agentToken = "pcp_agent_test_public_ingress_token";
+const boardToken = "legacy_board_test_public_ingress_token";
+const revokedBoardToken = "legacy_board_revoked_public_ingress_token";
+const expiredBoardToken = "legacy_board_expired_public_ingress_token";
+const revokedAgentToken = "legacy_agent_revoked_public_ingress_token";
+const agentToken = "legacy_agent_test_public_ingress_token";
 const sessionCookie = "rudder-session=test-session-token";
 const sessionId = "better-auth-session-1";
 const ingressAuthKey = "11".repeat(32);
@@ -575,8 +575,21 @@ describe("source-binary public Actix to private Node auth workflow", () => {
   }, 10_000);
 
   it.each([
-    ["wrong Board token", "pcp_board_wrong_token"],
-    ["wrong agent token", "pcp_agent_wrong_token"],
+    ["Board-style", "pcp_board_unknown_public_ingress_token"],
+    ["agent-style", "pcp_agent_unknown_public_ingress_token"],
+  ])("fails closed for an unknown native %s key without a Node grant request", async (_label, token) => {
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      authorization: `Bearer ${token}`,
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toContain("database_disabled");
+    expect(authorizationObservations).toHaveLength(0);
+  });
+
+  it.each([
+    ["wrong Board token", "legacy_board_wrong_token"],
+    ["wrong agent token", "legacy_agent_wrong_token"],
     ["revoked Board key", revokedBoardToken],
     ["expired Board key", expiredBoardToken],
     ["revoked agent key", revokedAgentToken],
