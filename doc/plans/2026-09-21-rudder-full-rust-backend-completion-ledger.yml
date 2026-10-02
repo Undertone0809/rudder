@@ -4,10 +4,25 @@ updated_at: 2026-10-02
 source:
   candidate_sha: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
   candidate_tree: faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0
-  main_last_observed: 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce
-  publication: PR236_DRAFT_not_merged_runtime646_records_successor_pending_review
+  main_last_observed: 8eedffad752c6065803cc880c7f48e92052c62c7
+  publication: PR236_DRAFT_docs_b572_pushed_runtime646_aggregate_pending
   receipt_packet: doc/plans/2026-10-02-rudder-project-create-delivery-packet-v46-cli-reconciled.json
-  row_refresh_scope: current646_CLI_MCP_bounded_evidence_only_full22authority_Main56_audit_pending
+  row_refresh_scope: current646_CLI_MCP_bounded_evidence_plus_independent22row_Main56_source_audit_no_runtime_upgrade
+  source_authority_audit:
+    source_sha: 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce
+    source_tree: 8c2a129478a52eedd00e3e0250381511237d313e
+    row_count: 22
+    artifact: artifacts/2026-10-02-rudder-authority-main56-source-audit-v2.json
+    sha256: a5cb3eed8f06e13eddfbfdd3935348c1d25c5719268f6f20d836212f11b9a71d
+    reviewer: artifacts/2026-10-02-rudder-authority-main56-source-audit-v2-stage-accept.json
+    reviewer_sha256: c869e0ec3595f255875cb5af9979a503ddb79ad12a67a6231bc8e96c870c0876
+    verdict: source_only_stage_accept_no_tests_or_runtime
+    dimensions: implementation_private_evidence_public_entry_default_path_legacy_exit_kept_separate
+    historical_evidence: member_v25_2_PASS_final_accept_PR233_e147_identical_accepted_tree_preserved_not_rebound_to_Main56
+    predecessor: artifacts/2026-10-02-rudder-authority-main56-source-audit-v1.json
+    prior_reject: artifacts/2026-10-02-rudder-authority-main56-source-audit-v1-stage-reject.json
+    correction: converge_existing_PR236_no_listener_redesign_prerequisite
+  main_drift: one_commit_8eed_changes_only_projects_library_navigation_E2E_five_wait_lines_no_backend_contract_change_no_new_runtime_claim
   CLI: {stage: accept, verifier: PASS_historical_three_criteria_only, final_review: accept, installed_artifact: 14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49}
   CLI_verifier: artifacts/2026-10-02-rudder-cli646-preserved-independent-pass.json
   CLI_final_review: artifacts/2026-10-02-rudder-cli646-preserved-final-accept.json
