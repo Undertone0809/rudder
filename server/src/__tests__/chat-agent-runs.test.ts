@@ -2363,6 +2363,10 @@ describe("chatAgentRunService", () => {
   });
 
   it("holds capacity for a live Chat provider through expiry and owner loss until execution settles", async () => {
+    // Keep the reaper-only expiry check separate from the renewal callback:
+    // renewing an expired lease correctly aborts the execution even before
+    // owner takeover. Leave Date, timeouts, and PostgreSQL on their real clocks.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const ownedSvc = chatAgentRunService(db, {
       transcriptObjectStore: objectStore,
       leaseRenewIntervalMs: 20,
@@ -2396,7 +2400,10 @@ describe("chatAgentRunService", () => {
         executionOwnerToken: randomUUID(),
         executionLeaseExpiresAt: new Date(Date.now() - 1),
       }).where(eq(heartbeatRuns.id, run.id));
+      // Now let the real owner-renewal implementation observe the lost fence.
+      await vi.advanceTimersByTimeAsync(20);
       await vi.waitFor(() => expect(execution.signal.aborted).toBe(true), { timeout: 5_000 });
+      vi.useRealTimers();
       expect(await recovery.reapOrphanedRuns({ now: new Date(), recoveryCutoff: new Date() }))
         .toMatchObject({ reaped: 0 });
       expect((await db.select({ status: heartbeatRuns.status }).from(heartbeatRuns)
@@ -2430,6 +2437,7 @@ describe("chatAgentRunService", () => {
       settleProvider();
       await providerWork;
       execution.release();
+      vi.useRealTimers();
     }
   });
 
