@@ -39,6 +39,7 @@ import { validate } from "../middleware/validate.js";
 import { assertTimeZone } from "../services/automations.scheduler.js";
 import { chatAgentRunService } from "../services/chat-agent-runs.js";
 import { buildChatNativeSteerFeedback } from "../services/chat-assistant.annotations.js";
+import { recoverableFailureMessage } from "../services/chat-assistant.contracts.js";
 import {
   CHAT_ASSISTANT_USER_ERROR_MESSAGE,
   chatAssistantService,
@@ -58,8 +59,8 @@ import {
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
-import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import { hasChatPreGenerationNotStartedEvidence } from "../services/chat-pre-generation-failure.js";
+import { chatSteerMessageService } from "../services/chat-steer-messages.js";
 import {
   buildChatTitlePromptFromMessages,
   chatTitleGenerationService,
@@ -87,9 +88,8 @@ import {
   NETWORK_WAIT_EXHAUSTED_ERROR_CODE,
   NETWORK_WAIT_UNSAFE_ERROR_CODE,
 } from "../services/runtime-kernel/heartbeat.core.js";
-import { retrySideChatTerminalEvidence } from "../services/side-chat-runtime-admission.js";
 import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
-import { recoverableFailureMessage } from "../services/chat-assistant.contracts.js";
+import { retrySideChatTerminalEvidence } from "../services/side-chat-runtime-admission.js";
 import {
   runtimeResultText,
   sanitizeGeneratedTitle,

@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NATIVE_CHAT_RUNTIME_TYPES } from "../services/runtime-kernel/runtime-driver.js";
 import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
+import { NATIVE_CHAT_RUNTIME_TYPES } from "../services/runtime-kernel/runtime-driver.js";
 
 const mockPrepareRuntimeProviderProfile = vi.hoisted(() =>
   vi.fn(async ({ config }: { config: Record<string, unknown> }) => config),

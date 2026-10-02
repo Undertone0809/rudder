@@ -22,6 +22,7 @@ import { MAX_ATTACHMENT_BYTES } from "../attachment-types.js";
 import { conflict } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
+import { recoverableFailureMessage } from "../services/chat-assistant.contracts.js";
 import {
   chatAssistantErrorForLog,
   type ChatTranscriptDelivery,
@@ -38,14 +39,13 @@ import {
   setActiveChatGenerationId,
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
-import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
-import { recoverableFailureMessage } from "../services/chat-assistant.contracts.js";
-import {
-  chatPreGenerationFailurePayload,
-  CHAT_PRE_GENERATION_FAILURE_MESSAGE,
-} from "../services/chat-pre-generation-failure.js";
 import { replayChatStreamMessage } from "../services/chat-message-mutation-fingerprint.js";
+import {
+  CHAT_PRE_GENERATION_FAILURE_MESSAGE,
+  chatPreGenerationFailurePayload,
+} from "../services/chat-pre-generation-failure.js";
 import { logActivity } from "../services/index.js";
+import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
 import { getActorInfo } from "./authz.js";
 import { registerChatAttachmentRoute } from "./chats.attachment-route.js";
 import { registerChatContextActionRoutes } from "./chats.context-action-routes.js";
