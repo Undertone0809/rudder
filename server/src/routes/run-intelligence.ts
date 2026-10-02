@@ -766,7 +766,10 @@ export function runIntelligenceRoutes(db: Db) {
     const cursor = asString(req.query.cursor);
     const outputMode = req.query.output === "full" ? "full" : "compact";
     const includeOutputQuery = req.query.includeOutputs ?? req.query.includeOutput;
-    const includeOutputs = outputMode === "full" || asBoolean(includeOutputQuery);
+    // Preserve full-output defaults, but honor an explicit opt-out from the UI:
+    // canonical entries remain complete without duplicate derived output bodies.
+    const explicitlyExcludeOutput = includeOutputQuery === "false" || includeOutputQuery === "0";
+    const includeOutputs = !explicitlyExcludeOutput && (outputMode === "full" || asBoolean(includeOutputQuery));
     const order = req.query.order === "oldest" || req.query.order === "chronological"
       ? "oldest"
       : "newest";
@@ -900,7 +903,7 @@ export function runIntelligenceRoutes(db: Db) {
             turnIndex: step.turnIndex,
             entry,
             sourceEntryId: item.sourceEntryId ?? item.id,
-            output: fullText(step.detailText),
+            output: includeOutputs ? fullText(step.detailText) : null,
           })),
         }
         : {}),

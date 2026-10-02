@@ -882,6 +882,119 @@ describe("run intelligence routes", () => {
     });
   });
 
+  it.each(["native", "native_plus_objects", "legacy"])(
+    "honors includeOutput=false without losing a large Unicode failure tool payload from %s",
+    async (source) => {
+      const marker = "UNIQUE_W12_FAILURE_TOOL_6c5e7b8f";
+      // Keep the marker outside bounded previews/clipped row output. Only the
+      // canonical entry and full derived output should contain this occurrence.
+      const content = `${"故障🌊".repeat(16_000)}${marker}\n${"续行🚀".repeat(16_000)}`;
+      const result = { kind: "tool_result", ts: "2026-10-02T00:00:02.000Z", toolUseId: "call-1",
+        toolName: "exec_command", content, isError: true, sourceEntryId: "tool-failure-1" };
+      const entries = [
+        { kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text: "Run the check.", sourceEntryId: "assistant-1" },
+        { kind: "tool_call", ts: "2026-10-02T00:00:01.000Z", name: "exec_command", input: { cmd: "check" }, sourceEntryId: "call-1" },
+        result,
+        { kind: "result", ts: "2026-10-02T00:00:02.500Z", text: "failed", isError: true, sourceEntryId: "result-1",
+          inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, subtype: "error", errors: ["check failed"] },
+        { kind: "assistant", ts: "2026-10-02T00:00:03.000Z", text: "The check failed.", sourceEntryId: "assistant-2" },
+      ];
+      mockGetObservedRunTranscript.mockResolvedValue({
+        orgId: "org-1",
+        run: { run: { id: "run-1", orgId: "org-1", status: "failed" }, agentName: "Agent", orgName: "Org", issue: null },
+        page: {
+          items: entries.map((entry, index) => ({
+            id: entry.sourceEntryId, sourceEntryId: entry.sourceEntryId, runId: "run-1", spanId: "span-1",
+            sequence: index, ordinal: index, kind: entry.kind, ts: entry.ts, entry, payload: entry,
+            visibility: "visible", origin: source === "legacy" ? "legacy" : source === "native_plus_objects" ? "object" : "native",
+          })),
+          source, revision: "large-failure-revision", availability: "available", completeness: "complete", nextCursor: null,
+        },
+      });
+      const query = { output: "full", order: "oldest", turnLimit: "1", maxChars: "4000" };
+      const withoutOutput = await request(createApp()).get("/api/run-intelligence/runs/run-1/transcript")
+        .query({ ...query, includeOutput: "false" });
+      const withOutput = await request(createApp()).get("/api/run-intelligence/runs/run-1/transcript")
+        .query({ ...query, includeOutput: "true" });
+      const markerCount = (text: string) => text.split(marker).length - 1;
+      const withoutBytes = Buffer.byteLength(withoutOutput.text);
+      const withBytes = Buffer.byteLength(withOutput.text);
+      console.info("includeOutput payload bytes", { source, withoutBytes, withBytes,
+        withoutMarkers: markerCount(withoutOutput.text), withMarkers: markerCount(withOutput.text) });
+      expect(withoutOutput.status).toBe(200);
+      expect(withOutput.status).toBe(200);
+      expect(withoutOutput.body.entries.every((row: { output: unknown }) => row.output === null)).toBe(true);
+      expect(withoutOutput.body.rows.every((row: { output: unknown }) => row.output === null)).toBe(true);
+      expect(withoutBytes).toBeLessThan(withBytes - Buffer.byteLength(content));
+      expect(markerCount(withoutOutput.text)).toBe(1);
+      expect(markerCount(withOutput.text)).toBe(2);
+      const canonical = (body: typeof withoutOutput.body) => body.entries.map(({ output: _output, ...row }: { output: unknown }) => row);
+      expect(canonical(withoutOutput.body)).toEqual(canonical(withOutput.body));
+      expect(withoutOutput.body.entries.find((row: { sourceEntryId: string }) => row.sourceEntryId === result.sourceEntryId)?.entry).toEqual(result);
+      expect(withOutput.body.entries.find((row: { sourceEntryId: string }) => row.sourceEntryId === result.sourceEntryId)?.output.text).toBe(content);
+      expect(withoutOutput.body).toMatchObject({ source, revision: "large-failure-revision", availability: "available", completeness: "complete" });
+      expect(withoutOutput.body.page).toEqual(withOutput.body.page);
+      expect(withoutOutput.body.page.hasMore).toBe(true);
+      expect(withoutOutput.body.page.nextCursor).toEqual(expect.any(String));
+      const nextWithout = await request(createApp()).get("/api/run-intelligence/runs/run-1/transcript")
+        .query({ ...query, cursor: withoutOutput.body.page.nextCursor, includeOutput: "false" });
+      const nextWith = await request(createApp()).get("/api/run-intelligence/runs/run-1/transcript")
+        .query({ ...query, cursor: withOutput.body.page.nextCursor, includeOutput: "true" });
+      expect(nextWithout.status).toBe(200);
+      expect(nextWith.status).toBe(200);
+      expect(canonical(nextWithout.body)).toEqual(canonical(nextWith.body));
+      expect(nextWithout.body.page).toEqual(nextWith.body.page);
+      expect(nextWithout.body.page.hasMore).toBe(false);
+    },
+  );
+
+  it.each([
+    { output: "full", query: {}, included: true },
+    { output: "full", query: { includeOutput: "true" }, included: true },
+    { output: "full", query: { includeOutput: "false" }, included: false },
+    { output: "full", query: { includeOutputs: "false" }, included: false },
+    { output: "full", query: { includeOutputs: "0" }, included: false },
+    { output: "full", query: { includeOutputs: "1" }, included: true },
+    { output: "full", query: { includeOutput: "unknown" }, included: true },
+    { output: "full", query: { includeOutputs: "false", includeOutput: "true" }, included: false },
+    { output: "compact", query: {}, included: false },
+    { output: "compact", query: { includeOutput: "true" }, included: true },
+    { output: "compact", query: { includeOutput: "false" }, included: false },
+  ])("preserves output defaults and alias precedence: $output $query", async ({ output, query, included }) => {
+    const res = await request(createApp()).get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ output, order: "oldest", maxChars: "20", ...query });
+    expect(res.status).toBe(200);
+    expect(res.body.rows.every((row: { output: unknown }) => (row.output !== null) === included)).toBe(true);
+    if (output === "full") {
+      expect(res.body.entries.every((row: { output: unknown }) => (row.output !== null) === included)).toBe(true);
+      expect(res.body.entries[2].entry).toMatchObject({ kind: "tool_result", content: "ERR".repeat(1000), isError: true });
+      if (included) expect(res.body.entries[2].output).toMatchObject({ text: "ERR".repeat(1000), clipped: false });
+    } else expect(res.body.entries).toBeUndefined();
+  });
+
+  it.each([
+    { source: "native", availability: "offline", completeness: "partial" },
+    { source: "native_plus_objects", availability: "available", completeness: "partial" },
+    { source: "legacy", availability: "available", completeness: "complete" },
+  ])("does not change fallback evidence for $source/$availability/$completeness", async (evidence) => {
+    const read = mockGetObservedRunTranscript.getMockImplementation()!;
+    mockGetObservedRunTranscript.mockImplementation(async (...args: unknown[]) => {
+      const result = await read(...args);
+      return { ...result, page: { ...result.page, ...evidence } };
+    });
+    const baseQuery = { output: "full", order: "oldest" };
+    const withoutOutput = await request(createApp()).get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ ...baseQuery, includeOutput: "false" });
+    const withOutput = await request(createApp()).get("/api/run-intelligence/runs/run-1/transcript")
+      .query({ ...baseQuery, includeOutput: "true" });
+    expect(withoutOutput.status).toBe(200);
+    expect(withOutput.status).toBe(200);
+    expect(withoutOutput.body).toMatchObject({ ...evidence, revision: withOutput.body.revision, run: { status: "failed" } });
+    expect(withoutOutput.body.entries.map((row: { entry: unknown }) => row.entry))
+      .toEqual(withOutput.body.entries.map((row: { entry: unknown }) => row.entry));
+    expect(withoutOutput.body.page).toEqual(withOutput.body.page);
+  });
+
   it("applies stable transcript cursors before rendering rows", async () => {
     const res = await request(createApp())
       .get("/api/run-intelligence/runs/run-1/transcript")
