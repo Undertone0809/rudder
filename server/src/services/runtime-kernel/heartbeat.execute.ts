@@ -752,6 +752,26 @@ export function createHeartbeatExecuteHandlers(context: any) {
             db, storage: { getObject: (orgId, key) => getStorageService().getObject(orgId, key) }, orgId: currentRun.orgId, runId: currentRun.id,
             attemptId: activeAttemptRef?.id ?? null, spanId: commonSpanId, payload: sanitizePostgresJsonValue(payload),
           }) : payload;
+        // Snapshot IO may outlive this executor's ownership. Reuse the current
+        // Run identity and existing lease CAS before publishing metadata.
+        const metadataRun = await getRun(currentRun.id);
+        if (executionAbortController.signal.aborted || !metadataRun
+          || metadataRun.orgId !== currentRun.orgId || metadataRun.agentId !== currentRun.agentId
+          || metadataRun.status !== "running" || metadataRun.executionOwnerToken !== executionOwnerToken) {
+          abortRunExecution(run.id);
+          return;
+        }
+        if (executionOwnerToken) {
+          const entry = commonSpanId ? await currentUnifiedEntry() : null;
+          const renewed = commonSpanId
+            ? entry && await unifiedRunAdapter.renewOwner(run.id, entry.ownerFence)
+            : await renewRunExecutionLease(run.id, executionOwnerToken);
+          if (!renewed || (commonSpanId && !renewed.ok)) {
+            abortRunExecution(run.id);
+            return;
+          }
+          if (commonSpanId) commonOwnerFence = renewed.value;
+        }
         await appendRunEvent(currentRun, {
           eventType: "adapter.invoke",
           stream: "system",

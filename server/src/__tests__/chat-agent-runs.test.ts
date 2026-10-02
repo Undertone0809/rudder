@@ -196,6 +196,7 @@ describe("chatAgentRunService", () => {
 
   beforeAll(async () => {
     const started = await startTempDatabase();
+    console.info("W12 Chat caller isolated lease", { pgPort: new URL(started.connectionString).port, root: started.dataDir, pid: process.pid });
     db = createDb(started.connectionString);
     snapshotTestDb = db;
     objectDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-transcript-objects-"));
@@ -385,7 +386,57 @@ describe("chatAgentRunService", () => {
     expect(meta).toEqual({ agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt });
     await invokeSvc.sealSpan(run, { completeness: "unknown" });
     await invokeSvc.finalizeRun(run.id, { status: "failed", resultJson: { outcome: "test finished" } });
+    const terminalResponse = await request(app).get(`/api/agent-runs/${run.id}/events/${invoke.id}/invocation-instructions`);
+    expect(terminalResponse.status).toBe(200);
+    expect(terminalResponse.body).toEqual(response.body);
+    expect((await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke")).toHaveLength(1);
   });
+
+  it.each(["offline", "timeout", "owner_loss"] as const)("bounded snapshot caller keeps inline or rejects lost owner: %s", async mode => {
+    const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-caller-proof-"))));
+    const realGet = storage.getObject.bind(storage);
+    let acquired!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { acquired = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const read = vi.spyOn(storage, "getObject").mockImplementation(async (org, key) => {
+      acquired();
+      if (mode === "offline") throw new Error("isolated offline storage");
+      await held;
+      return realGet(org, key);
+    });
+    const caller = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: storage });
+    const run = await createChatRunFixture("Bounded snapshot caller", undefined, caller);
+    const prompt = "unique debug task";
+    const stack = "Final sanitized Instructions 原文🙂";
+    const pending = caller.appendAdapterInvoke(run, { agentRuntimeType: "codex_local", command: "codex",
+      prompt, agentInstructionStack: stack }, []).then(() => null, error => error);
+    await entered;
+    try {
+      if (mode === "owner_loss") {
+        await db.update(heartbeatRuns).set({ executionOwnerToken: randomUUID() }).where(eq(heartbeatRuns.id, run.id));
+        release();
+        expect(await pending).toBeInstanceOf(Error);
+        expect((await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke")).toHaveLength(0);
+        console.info("W12 Chat owner-loss no-append", { orgId: run.orgId, runId: run.id });
+        return;
+      }
+      expect(await pending).toBeNull();
+      const before = (await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke");
+      expect(before).toHaveLength(1);
+      expect(before[0]!.payload).toMatchObject({ prompt, agentInstructionStack: stack,
+        invocationInstructionSnapshot: { status: "unavailable", reason: "snapshot_readback_unavailable" } });
+      expect(before[0]!.payload).not.toHaveProperty("invocationInstructionTextReference");
+      release();
+      await caller.sealSpan(run, { completeness: "unknown" });
+      await caller.finalizeRun(run.id, { status: "failed", resultJson: { outcome: "isolated proof finished" } });
+      const after = (await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke");
+      expect(after).toHaveLength(1);
+      expect(after[0]!.payload).toEqual(before[0]!.payload);
+      expect(read).toHaveBeenCalledTimes(1);
+      console.info("W12 Chat caller fallback terminal", { mode, orgId: run.orgId, runId: run.id, eventId: after[0]!.id });
+    } finally { release(); read.mockRestore(); }
+  }, 20_000);
 
   it.each([
     { prompt: "Instructions 原文🙂", agentInstructionStack: "Instructions 原文🙂", aliased: true, present: true },
