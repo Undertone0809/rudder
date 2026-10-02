@@ -697,8 +697,7 @@ fn infer_api_base(options: &Options, environment: &BTreeMap<String, String>) -> 
     let host = env_value(environment, "RUDDER_SERVER_HOST")
         .map(str::to_owned)
         .unwrap_or_else(|| "localhost".to_owned());
-    let env_port =
-        env_value(environment, "RUDDER_SERVER_PORT").and_then(positive_port);
+    let env_port = env_value(environment, "RUDDER_SERVER_PORT").and_then(positive_port);
     let config_port = env_port.or_else(|| read_config_port(options, environment));
     let port = config_port.unwrap_or(3100);
     format!("http://{host}:{port}")
