@@ -210,7 +210,7 @@ afterEach(async () => {
 describe("rust foundation bridge lifecycle", () => {
   it("owns an explicitly requested public listener and clears its identity on shutdown", async () => {
     const fixture = await createFixture("public-ready");
-    const publicIngress = {
+    const publicIngress: RustPublicIngressOptions = {
       listenAddr: "127.0.0.1:0",
       nodeUpstream: "http://127.0.0.1:3101",
       authorizationKey: "0123456789abcdef0123456789abcdef",
