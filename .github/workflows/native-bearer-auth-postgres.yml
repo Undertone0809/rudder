@@ -1,0 +1,99 @@
+name: Native bearer PostgreSQL contracts
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/native-bearer-auth-postgres.yml"
+      - "native/**"
+      - "packages/db/**"
+      - "server/src/bootstrap/public-ingress-startup.ts"
+      - "server/src/services/rust-foundation-bridge.ts"
+      - "server/src/index.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-bearer-postgres-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  postgres-contracts:
+    name: Native bearer SQLx and Actix contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: rudder
+          POSTGRES_DB: rudder_native_auth_ci_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rudder -d rudder_native_auth_ci_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CI: "true"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      DATABASE_URL: postgresql://rudder@127.0.0.1:5432/rudder_native_auth_ci_test
+      RUDDER_NATIVE_AUTH_TEST_DATABASE_URL: postgresql://rudder@127.0.0.1:5432/rudder_native_auth_ci_test
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Enable repository pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+      - name: Record exact source and evidence boundary
+        run: |
+          git rev-parse HEAD 'HEAD^{tree}' | tee "$RUNNER_TEMP/native-bearer-postgres.log"
+          echo "Dedicated disposable service database; private SQLx/in-process Actix tests, not installed or external-TCP acceptance." | tee -a "$RUNNER_TEMP/native-bearer-postgres.log"
+      - name: Install fixture migration prerequisites
+        run: |
+          set -o pipefail
+          pnpm install --frozen-lockfile 2>&1 | tee -a "$RUNNER_TEMP/native-bearer-postgres.log"
+      - name: Apply existing schema only to the disposable fixture
+        run: |
+          set -o pipefail
+          pnpm --filter '@rudderhq/db...' build 2>&1 | tee -a "$RUNNER_TEMP/native-bearer-postgres.log"
+          pnpm db:migrate 2>&1 | tee -a "$RUNNER_TEMP/native-bearer-postgres.log"
+          docker exec "${{ job.services.postgres.id }}" psql -U rudder -d rudder_native_auth_ci_test -c 'SELECT current_database(), version();' | tee -a "$RUNNER_TEMP/native-bearer-postgres.log"
+      - name: Execute native bearer cases including real PostgreSQL and transport failures
+        run: |
+          set -o pipefail
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib native_bearer \
+            -- --include-ignored --test-threads=1 --nocapture \
+            2>&1 | tee -a "$RUNNER_TEMP/native-bearer-postgres.log"
+          cargo test --locked --manifest-path native/Cargo.toml \
+            --package rudder-server-foundation-core --lib \
+            public_ingress::tests::postgres_public_member_route_uses_native_board_key_without_node_grant \
+            -- --include-ignored --exact --test-threads=1 --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/native-bearer-public-postgres.log" | tee -a "$RUNNER_TEMP/native-bearer-postgres.log"
+          node -e 'const fs=require("node:fs"),assert=require("node:assert/strict");const log=fs.readFileSync(process.env.RUNNER_TEMP+"/native-bearer-public-postgres.log","utf8");assert.ok(log.includes("running 1 test") && log.includes("test result: ok. 1 passed;"), "exact real-DB public-route case must execute, not pass with zero selected tests");'
+      - name: Preserve test and fixture identity evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-bearer-postgres-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-bearer-postgres.log
+          if-no-files-found: ignore
+          retention-days: 7
