@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/agent-request-planner",
   "crates/agent-contract-core",
+  "crates/agent-cli-core",
   "crates/archive-core",
   "crates/authority-core",
   "crates/auth-core",
@@ -24,6 +25,7 @@ members = [
   "crates/server-foundation",
   "crates/workspace-manifest-core",
   "bins/rudder-native",
+  "bins/rudder-cli",
   "bins/rudder-process-host",
   "bins/rudder-process-tree-sampler",
   "bins/rudder-server-foundation",
