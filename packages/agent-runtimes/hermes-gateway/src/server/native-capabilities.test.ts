@@ -12,17 +12,105 @@ import {
   type HermesGatewayProfileTransport,
   type HermesNativeTranscriptReadRequest,
 } from "./native-capabilities.js";
+import * as nativeProtocol from "./native-protocol.js";
+import * as productRpc from "./product-rpc.js";
 import {
   buildHermesProductRpcSessionParams,
   HERMES_PRODUCT_RPC_TRANSPORT,
   type HermesProductRpcProfile,
 } from "./product-rpc.js";
 
+// Exercise the server consumer without pulling server sources into this package's tsc rootDir.
+const driverModulePath = "../../../../../server/src/services/runtime-kernel/runtime-driver.js";
+const capabilityModulePath = "../../../../../server/src/services/runtime-kernel/provider-capabilities.js";
+
 const binding = {
   hostId: "host-hermes-1",
   profileId: "profile-hermes-1",
   capabilityRevision: "hermes-api-v1",
 };
+
+describe("Hermes profile resolver to public Runtime Driver fork", () => {
+  async function driverFor(profile: Parameters<typeof createHermesAcpProviderCapabilities>[0], unknownFork = false) {
+    const { createRuntimeDriver } = await import(driverModulePath);
+    const { createProfileBoundRuntimeProviderCapabilityResolver } = await import(capabilityModulePath);
+    return createRuntimeDriver("hermes_gateway", {
+      providerBinding: binding,
+      providerCapabilityResolver: createProfileBoundRuntimeProviderCapabilityResolver({
+        hermes_gateway: (runtimeType: string, requestedBinding: typeof binding) => {
+          const adapter = createHermesAcpProviderCapabilityResolver(() => profile)(runtimeType, requestedBinding);
+          // Isolate the driver's UNKNOWN gate while retaining actual profile resolution and helper wiring.
+          if (adapter && unknownFork) adapter.fork.evidence = { ...adapter.fork.evidence, status: "unknown" };
+          return adapter;
+        },
+      }),
+    });
+  }
+
+  const profile = {
+    binding,
+    command: process.execPath,
+    args: ["-e", ""],
+    cwd: "/fixture/hermes-workspace",
+    providerVersion: "0.21.0",
+    protocolVersion: 1,
+    hermesPythonCommand: "/fixture/python",
+    hermesSourcePath: "/fixture/hermes-source",
+    hermesHome: "/fixture/hermes-home",
+  };
+  const session = {
+    sessionId: "historical-parent",
+    sessionDisplayId: "historical-parent",
+    sessionParams: { transport: HERMES_PRODUCT_RPC_TRANSPORT },
+  };
+
+  it("forwards exact historical boundary, parent binding and signal to the Product fork helper", async () => {
+    const child = {
+      session: { ...session, sessionId: "independent-child", sessionDisplayId: "independent-child" },
+      boundary: "hermes:db:independent-child:7",
+      sourceBoundary: "hermes:db:historical-parent:7",
+      identityMap: { "hermes:db:historical-parent:7": "hermes:db:independent-child:7" },
+      continuity: "native" as const,
+    };
+    const helper = vi.spyOn(productRpc, "forkHermesProductRpcNativeSession").mockResolvedValue(child);
+    try {
+      const driver = await driverFor(profile);
+      const signal = new AbortController().signal;
+      expect(driver.capabilities.fork.status).toBe("supported");
+      await expect(driver.fork({ session, boundary: child.sourceBoundary, binding, signal }))
+        .resolves.toEqual({ status: "supported", value: child });
+      expect(helper).toHaveBeenCalledTimes(1);
+      expect(helper).toHaveBeenCalledWith({
+        runtimeType: "hermes_gateway", profile, session,
+        boundary: child.sourceBoundary, binding, signal, workspace: null,
+      });
+      expect(helper.mock.calls[0]?.[0].signal).toBe(signal);
+      expect(helper.mock.calls[0]?.[0].session).toBe(session);
+    } finally {
+      helper.mockRestore();
+    }
+  });
+
+  it.each(["unsupported", "unknown"] as const)("does not invoke a helper for %s fork evidence", async (status) => {
+    const helper = vi.spyOn(productRpc, "forkHermesProductRpcNativeSession")
+      .mockRejectedValue(new Error("unexpected Product helper dispatch"));
+    const acpHelper = vi.spyOn(nativeProtocol, "forkHermesAcpNativeSession")
+      .mockRejectedValue(new Error("unexpected ACP helper dispatch"));
+    try {
+      const driver = await driverFor(status === "unsupported"
+        ? { ...profile, hermesPythonCommand: undefined, hermesSourcePath: undefined, hermesHome: undefined }
+        : profile, status === "unknown");
+      expect(driver.capabilities.fork.status).toBe(status);
+      await expect(driver.fork({ session, boundary: "hermes:db:historical-parent:7", binding }))
+        .resolves.toMatchObject({ status, capability: "fork" });
+      expect(helper).not.toHaveBeenCalled();
+      expect(acpHelper).not.toHaveBeenCalled();
+    } finally {
+      helper.mockRestore();
+      acpHelper.mockRestore();
+    }
+  });
+});
 
 function request(overrides: Partial<HermesNativeTranscriptReadRequest> = {}): HermesNativeTranscriptReadRequest {
   return {
@@ -877,7 +965,7 @@ describe("Hermes ACP profile-bound native capabilities", () => {
 
     expect(adapter.sessionResume.evidence).toMatchObject({ status: "supported", transport: "hermes-acp-stdio", profileBound: true });
     expect(adapter.fork.evidence.reason).toContain("session/fork");
-    expect(adapter.fork.execute).toBeTypeOf("function");
+    expect(adapter.fork.fork).toBeTypeOf("function");
     expect(adapter.control.steer).toMatchObject({ mode: "native", requiresHandle: true, evidence: { status: "unsupported" } });
     expect(adapter.control.steer.evidence.reason).toContain("queued as a follow-up");
     expect(adapter.fork.evidence.status).toBe("unsupported");
@@ -897,7 +985,7 @@ describe("Hermes ACP profile-bound native capabilities", () => {
     };
     const adapter = createHermesAcpProviderCapabilities(acpProfile);
 
-    await expect(adapter.fork.execute({
+    await expect(adapter.fork.fork({
       runtimeType: "hermes_gateway",
       binding,
       session: {

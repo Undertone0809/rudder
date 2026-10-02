@@ -1422,7 +1422,7 @@ export type HermesAcpRuntimeProviderCapabilityAdapter = {
   };
   fork: {
     evidence: HermesCapabilityEvidence;
-    execute: (input: {
+    fork: (input: {
       runtimeType: string;
       session: HermesProviderSessionRef;
       boundary: string;
@@ -1551,7 +1551,7 @@ function acpUnavailable(reason: string): HermesAcpRuntimeProviderCapabilityAdapt
     },
     fork: {
       evidence,
-      execute: async () => { throw new Error(reason); },
+      fork: async () => { throw new Error(reason); },
     },
     control: {
       steer: { evidence },
@@ -1687,7 +1687,7 @@ function boundAcpCapabilities(
             ? "Hermes ACP session/fork copies the current head and cannot honor a selected historical message boundary."
             : `${evidence.reason} Historical Fork remains unclassified for this ACP profile.`,
       },
-      execute: (input) => {
+      fork: (input) => {
         if (productProfile) {
           return forkHermesProductRpcNativeSession({
             runtimeType: input.runtimeType,
