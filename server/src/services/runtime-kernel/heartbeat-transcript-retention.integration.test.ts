@@ -204,6 +204,20 @@ const mockBudgetService = vi.hoisted(() => ({
   getInvocationBlock: vi.fn(),
 }));
 
+const metadataAppendGate = vi.hoisted(() => ({ wait: null as null | (() => Promise<void>) }));
+vi.mock("../instance-settings.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../instance-settings.js")>();
+  return { ...actual, instanceSettingsService: (...args: Parameters<typeof actual.instanceSettingsService>) => {
+    const service = actual.instanceSettingsService(...args);
+    return { ...service, getGeneral: async () => {
+      const wait = metadataAppendGate.wait;
+      metadataAppendGate.wait = null;
+      await wait?.();
+      return service.getGeneral();
+    } };
+  } };
+});
+
 vi.mock("../automation-chat-output.js", () => ({
   publishAutomationRunOutputToChat: (..._args: unknown[]) => fakeTerminalEffect.publish(),
 }));
@@ -587,7 +601,7 @@ describe("heartbeat native transcript retention integration", () => {
     });
   }
 
-  it.each(["equal", "distinct", "readback_unavailable", "readback_timeout", "owner_loss"] as const)("writes and finalizes snapshot-safe native invocation through actual heartbeat caller: %s", async mode => {
+  it.each(["equal", "distinct", "readback_unavailable", "readback_timeout", "owner_loss", "owner_loss_append"] as const)("writes and finalizes snapshot-safe native invocation through actual heartbeat caller: %s", async mode => {
     const { orgId, agentId } = await seedAgent();
     const queued = await queueRun(agentId);
     const text = ("界🙂\n\"".repeat(9_000) + "D".repeat(1_187));
@@ -602,6 +616,10 @@ describe("heartbeat native transcript retention integration", () => {
     const read = mode === "readback_unavailable" ? vi.spyOn(storage, "getObject").mockRejectedValue(new Error("isolated readback unavailable"))
       : mode === "readback_timeout" || mode === "owner_loss" ? vi.spyOn(storage, "getObject").mockImplementation(async (org, key) => {
         readEntered(); await heldRead; return realGet(org, key);
+      }) : mode === "owner_loss_append" ? vi.spyOn(storage, "getObject").mockImplementation(async (org, key) => {
+        const object = await realGet(org, key);
+        object.stream.once("end", () => { metadataAppendGate.wait = async () => { readEntered(); await heldRead; }; });
+        return object;
       }) : null;
     let release!: () => void;
     let entered!: () => void;
@@ -615,7 +633,7 @@ describe("heartbeat native transcript retention integration", () => {
         context: { unique: "retain context" } }, afterMeta: metaReturned, afterLiveLog: async () => { entered(); await blocked; } });
     try {
       await heartbeatService(db).startNextQueuedRunForAgent(agentId);
-      if (mode === "owner_loss") {
+      if (mode === "owner_loss" || mode === "owner_loss_append") {
         await acquiring;
         const successorOwner = randomUUID();
         await db.transaction(async tx => {
@@ -625,12 +643,15 @@ describe("heartbeat native transcript retention integration", () => {
         });
         readRelease();
       }
-      if (mode === "owner_loss") await metaDone;
+      if (mode === "owner_loss" || mode === "owner_loss_append") await metaDone;
       else await invoked;
-      if (mode === "owner_loss") {
+      if (mode === "owner_loss" || mode === "owner_loss_append") {
         const invokes = (await heartbeatService(db).listEvents(queued.run.id)).filter(event => event.eventType === "adapter.invoke");
         console.info("W12 heartbeat owner-loss observed", { orgId, runId: queued.run.id, invokeCount: invokes.length });
         expect(invokes).toHaveLength(0);
+        const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
+        expect(successor.status).toBe("running");
+        expect(successor.processExitedAt).toBeNull();
         return;
       }
       const before = (await heartbeatService(db).listEvents(queued.run.id)).find(event => event.eventType === "adapter.invoke")!;
@@ -687,11 +708,11 @@ describe("heartbeat native transcript retention integration", () => {
       // The successor-owned Run is deliberately still running. Cancel this
       // disposable Run through the real control path before letting the held
       // fixture adapter return; do not invent persisted process-exit evidence.
-      if (mode === "owner_loss") await heartbeatService(db).cancelRun(queued.run.id);
+      if (mode === "owner_loss" || mode === "owner_loss_append") await heartbeatService(db).cancelRun(queued.run.id);
       release();
       // Wait for the real executor's quiescence acknowledgement, including a
       // failed assertion. Never forge process/attempt proof to satisfy cleanup.
-      if (mode === "owner_loss") await waitForCondition(async () => {
+      if (mode === "owner_loss" || mode === "owner_loss_append") await waitForCondition(async () => {
         const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
         return Boolean(run?.processExitedAt);
       });

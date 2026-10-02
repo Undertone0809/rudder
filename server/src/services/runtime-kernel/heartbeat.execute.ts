@@ -772,13 +772,14 @@ export function createHeartbeatExecuteHandlers(context: any) {
           }
           if (commonSpanId) commonOwnerFence = renewed.value;
         }
-        await appendRunEvent(currentRun, {
+        const metadataAppended = await appendRunEvent(currentRun, {
           eventType: "adapter.invoke",
           stream: "system",
           level: "info",
           message: "adapter invocation",
           payload: projected,
-        });
+        }, { executionOwnerToken });
+        if (!metadataAppended) abortRunExecution(run.id);
       };
 
       const authToken = adapter.supportsLocalAgentJwt
