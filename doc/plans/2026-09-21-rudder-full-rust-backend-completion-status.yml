@@ -1,8 +1,32 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-29
+updated_at: 2026-10-02
 status: in_progress
 current_candidate:
+  source_sha: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
+  source_tree: faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0
+  worktree: /Users/zeeland/.codex/worktrees/project-create-main-integration/rudder-oss
+  branch: codex/project-create-main56-20261002
+  pr: https://github.com/Undertone0809/rudder/pull/236
+  origin_main_last_observed: 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce
+  publication: DRAFT_unmerged_runtime646_documentation_successor_in_preparation
+  state: aggregate_acceptance_pending
+  packet: doc/plans/2026-10-02-rudder-project-create-delivery-packet-v46-cli-reconciled.json
+  installed_artifact_sha256: 14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49
+  CLI: historical_three_criteria_stage_accept_verifier_PASS_final_accept_exact646_only
+  CLI_verifier: artifacts/2026-10-02-rudder-cli646-preserved-independent-pass.json
+  CLI_final_review: artifacts/2026-10-02-rudder-cli646-preserved-final-accept.json
+  CLI_evidence_limits: parsed_public_responses_no_raw_child_streams_or_separate_exit_codes_null_requestId_temporal_operation_window_correlation
+  MCP: separate_residual_v4_verifier_PASS_final_accept_exact646_only
+  MCP_verifier: artifacts/2026-10-02-rudder-mcp646-residual-v4-independent-pass.json
+  MCP_final_review: artifacts/2026-10-02-rudder-mcp646-residual-v4-final-accept.json
+  combined_CLI_MCP_v2: QUESTION_preserved_not_relabelled
+  current_CI: source646_20_SUCCESS_1_SKIPPED_0_FAILURE_0_PENDING_observed2026_10_02_not_product_acceptance
+  Board_UI: original_TaskSpace26_absent_replacement_authorization_pending_only_UI_blocked
+  remaining: aggregate_stage_and_verifier_and_final_review_other_leaf_rebinds_and_current_UI_acceptance
+  next_executable: documentation_checkpoint_independent_artifact_review_then_same_PR_update_continue_remaining_exact646_acceptance
+  terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
+historical_candidate_2026_09_29:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   branch: codex/project-create-pilot-20260929
   source_sha: 719619b3006de870adf4430a1a845efff3c9ffab

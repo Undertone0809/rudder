@@ -1,7 +1,25 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-29
+updated_at: 2026-10-02
 source:
+  candidate_sha: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
+  candidate_tree: faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0
+  main_last_observed: 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce
+  publication: PR236_DRAFT_not_merged_runtime646_records_successor_pending_review
+  receipt_packet: doc/plans/2026-10-02-rudder-project-create-delivery-packet-v46-cli-reconciled.json
+  row_refresh_scope: current646_CLI_MCP_bounded_evidence_only_full22authority_Main56_audit_pending
+  CLI: {stage: accept, verifier: PASS_historical_three_criteria_only, final_review: accept, installed_artifact: 14e39e736df68300dcecc8a0f2f063ba2ce941966f98ac1999a8eebcdf922f49}
+  CLI_verifier: artifacts/2026-10-02-rudder-cli646-preserved-independent-pass.json
+  CLI_final_review: artifacts/2026-10-02-rudder-cli646-preserved-final-accept.json
+  CLI_evidence_limits: structured_parsed_public_results_not_raw_child_transcript_null_requestId_temporal_correlation
+  MCP: {verifier: PASS_residual_v4_only, final_review: accept, aggregate: pending}
+  MCP_verifier: artifacts/2026-10-02-rudder-mcp646-residual-v4-independent-pass.json
+  MCP_final_review: artifacts/2026-10-02-rudder-mcp646-residual-v4-final-accept.json
+  combined_CLI_MCP_v2: QUESTION_unchanged
+  aggregate: pending_not_accepted_from_leaf_results
+  remaining_Node_authority: public_HTTP_WebSocket_auth_session_migration_apply_scheduler_workers_Chat_SideChat_identity_analytics_managedMCP_and_other_business_writers
+  terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
+historical_source_2026_09_29:
   candidate_sha: 719619b3006de870adf4430a1a845efff3c9ffab
   candidate_tree: cc91713959cd716ff783103b4dbccbf9a16effed
   source_fingerprint: 0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba
