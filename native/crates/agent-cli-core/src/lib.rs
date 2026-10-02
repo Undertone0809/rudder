@@ -216,17 +216,20 @@ fn write_error(error: &CliError, json_output: bool, stderr: &mut dyn Write) {
             .unwrap_or_else(|_| "{\"error\":\"CLI error\"}".to_owned());
         let _ = writeln!(stderr, "{payload}");
     } else if let Some(status) = error.status {
+        let code = escape_terminal_controls(&error.code);
+        let message = escape_terminal_controls(&error.message);
         if let Some(details) = error.details.as_ref().filter(|value| !value.is_null()) {
+            let details = escape_terminal_controls(&details.to_string());
             let _ = writeln!(
                 stderr,
-                "API error {status}: {} details={details}",
-                error.message
+                "API error {status} [{code}]: {message} details={details}"
             );
         } else {
-            let _ = writeln!(stderr, "API error {status}: {}", error.message);
+            let _ = writeln!(stderr, "API error {status} [{code}]: {message}");
         }
     } else {
-        let _ = writeln!(stderr, "{}", error.message);
+        let message = escape_terminal_controls(&error.message);
+        let _ = writeln!(stderr, "{message}");
     }
 }
 
@@ -546,13 +549,17 @@ fn format_member_page(page: &Value) -> String {
                 {
                     continue;
                 }
-                fields.push(format!("{key}={}", render_value(value)));
+                fields.push(format!(
+                    "{}={}",
+                    escape_terminal_controls(key),
+                    render_value(value)
+                ));
             }
             lines.push(fields.join(" "));
         }
     }
     if let Some(cursor) = page["nextCursor"].as_str() {
-        lines.push(format!("nextCursor={cursor}"));
+        lines.push(format!("nextCursor={}", escape_terminal_controls(cursor)));
     }
     lines.join("\n")
 }
@@ -561,7 +568,8 @@ fn render_value(value: &Value) -> String {
     match value {
         Value::Null => "-".to_owned(),
         Value::String(value) => {
-            let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+            let escaped = escape_terminal_controls(value);
+            let compact = escaped.split_whitespace().collect::<Vec<_>>().join(" ");
             let characters = compact.chars().collect::<Vec<_>>();
             if characters.len() > 90 {
                 format!("{}...", characters[..87].iter().collect::<String>())
@@ -573,6 +581,18 @@ fn render_value(value: &Value) -> String {
         Value::Bool(value) => value.to_string(),
         Value::Array(_) | Value::Object(_) => "[object]".to_owned(),
     }
+}
+
+fn escape_terminal_controls(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            escaped.push_str(&format!("\\u{{{:x}}}", character as u32));
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
 }
 
 fn redact_json(value: &mut Value, secret: &str) {
