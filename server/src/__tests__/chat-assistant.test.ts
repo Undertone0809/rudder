@@ -7,6 +7,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NATIVE_CHAT_RUNTIME_TYPES } from "../services/runtime-kernel/runtime-driver.js";
+import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
 
 const mockPrepareRuntimeProviderProfile = vi.hoisted(() =>
   vi.fn(async ({ config }: { config: Record<string, unknown> }) => config),
@@ -1251,6 +1252,70 @@ describe("chatAssistantService operator profile prompt injection", () => {
       sourceSpanId: "parent-span", sourceSelectorJson: selector, nativeSessionId: "child-thread",
       sessionIntent: expect.objectContaining({ kind: "fork", sessionId: "child-thread" }) }));
     expect(mockAdapter.execute.mock.calls.at(-1)?.[0].runtime?.sessionId).toBe("child-thread");
+  });
+
+  it("preserves an existing unknown native-fork intent without dispatching another fork", async () => {
+    const selector = { kind: "codex_turn", threadId: "parent-thread", turnId: "selected-turn" };
+    const sourceBinding = { ...mockRuntimeBinding, id: "parent-binding", conversationId: "parent-chat", workspaceBindingId: process.cwd() };
+    mockForkSource.mockResolvedValue({ sourceConversationId: "parent-chat", sourceMessageId: "parent-answer",
+      sourceRunId: "parent-run", sourceSpanId: "parent-span", sourceBoundaryRef: "selected-turn", selectorJson: selector,
+      sourceBinding, sourceProviderProfile: { runtimeType: "codex_local" },
+      session: { sessionId: "parent-thread", sessionParams: { threadId: "parent-thread" }, sessionDisplayId: "parent-thread" } });
+    const fork = vi.fn();
+    mockGetRuntimeDriver.mockImplementation(((_runtimeType: string, options: any) => {
+      const driver = createChatTestRuntimeDriver(options);
+      return { ...driver, capabilities: { ...driver.capabilities, fork: { status: "supported", reason: "profile-bound fixture" } }, fork };
+    }) as any);
+    const reference = { intentId: "unknown-intent", orgId: "org-1", bindingId: "target-binding", segmentId: "target-segment" };
+    mockForkIntentExecution.mockResolvedValueOnce({
+      status: "unknown",
+      shouldFork: false,
+      retryAllowed: false,
+      intent: {} as never,
+      reference,
+      reason: "Provider fork acceptance is unknown; reconciliation is required before retry.",
+    });
+
+    await expect(chatAssistantService({} as any).generateChatAssistantReply({
+      conversation: makeConversation({ conversationKind: "main", forkedFromConversationId: "parent-chat", forkedFromMessageId: "parent-answer" }),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    })).rejects.toBeInstanceOf(NativeForkAcceptanceUnknownError);
+
+    expect(mockForkIntentExecution).toHaveBeenCalledOnce();
+    expect(fork).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it("classifies a NativeForkAcceptanceUnknownError caught during runtime execution as non-retryable", async () => {
+    const svc = chatAssistantService({} as any);
+    mockAdapter.execute.mockRejectedValueOnce(new NativeForkAcceptanceUnknownError(
+      {} as never,
+      "Provider fork acceptance is unknown; automatic retry is disabled.",
+    ));
+
+    await expect(svc.streamChatAssistantReply({
+      conversation: makeConversation({ conversationKind: "side_chat" }),
+      messages: makeMessages(),
+      contextLinks: [],
+    })).rejects.toMatchObject({
+      errorCode: "native_fork_acceptance_unknown",
+      userMessage: "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.",
+      retryable: false,
+      action: "inspect_run",
+      partialBodyUserVisible: false,
+    });
+    expect(mockChatAgentRuns.finalizeRun).toHaveBeenLastCalledWith("chat-run-1", expect.objectContaining({
+      status: "failed",
+      errorCode: "native_fork_acceptance_unknown",
+      resultJson: expect.objectContaining({
+        recoverable: false,
+        retryable: false,
+        action: "inspect_run",
+      }),
+    }));
+    expect(mockAdapter.execute).toHaveBeenCalledOnce();
   });
 
   it("resumes an admitted Main fork without reading or forking its deleted parent again", async () => {

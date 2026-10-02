@@ -131,6 +131,7 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
       await assertChatEditSourceSubmissionResolved(
         conversation as ChatConversation,
         req.body.editUserMessageId ?? null,
+        req.actor.type === "board" ? req.actor.userId ?? null : null,
       );
 
       const preparedAnnotations = inlineAnnotationsProvided && !deferAcceptedSideChatFirstInputReplay
@@ -332,9 +333,9 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
             });
             return created;
           } catch (error) {
-            if (error instanceof ChatAssistantStreamError) {
+            const failurePayload = recoverableFailurePayload(error, activeChatRunId);
+            if (error instanceof ChatAssistantStreamError || failurePayload) {
               fallbackOutput = userVisiblePartialBodyFromError(error);
-              const failurePayload = recoverableFailurePayload(error, activeChatRunId);
               const failureBody = fallbackOutput || recoverableFailureBody(failurePayload) || CHAT_ASSISTANT_USER_ERROR_MESSAGE;
               const failedMessage = await persistPartialAssistantMessage(
                 assistantInput.conversation,

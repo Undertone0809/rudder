@@ -11,6 +11,7 @@ export type ChatRecoverableFailureCode =
   | "chat_runtime_exception"
   | "codex_provider_auth_required"
   | "chat_submission_acceptance_unknown"
+  | "native_fork_acceptance_unknown"
   | "claude_fork_acceptance_unknown"
   | "claude_fork_completion_unresolved"
   | "claude_fork_unsubmitted"
@@ -118,7 +119,7 @@ export class ChatAssistantStreamError extends Error {
   }
 }
 
-export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
+export function recoverableFailureMessage(code: ChatRecoverableFailureCode, runId?: string | null) {
   if (code === "chat_result_missing_sentinel") {
     return "The assistant reply could not be completed. Rudder saved the attempt for diagnostics; retry when ready.";
   }
@@ -142,6 +143,11 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "chat_submission_acceptance_unknown") {
     return "The provider may have received this input. Inspect the Run and reconcile its acceptance before retrying.";
+  }
+  if (code === "native_fork_acceptance_unknown") {
+    return runId
+      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
+      : "This Side Chat fork has an unknown outcome. Do not retry this fork. Ask an operator to reconcile the fork status before sending more input.";
   }
   if (code === "claude_fork_acceptance_unknown") {
     return "Claude may have received this Side Chat input. Inspect this Run before sending another message; do not retry the same input.";

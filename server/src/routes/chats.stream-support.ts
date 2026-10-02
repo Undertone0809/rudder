@@ -190,7 +190,6 @@ export async function persistChatStreamUserMessageBeforeGeneration(input: {
   const abortBeforeGeneration = async () => {
     input.startupGate.resolveGeneration(null);
     startingChatGenerationGates.delete(input.conversation.id);
-    input.releaseGeneration();
     await input.stagedMessageFiles.cleanup();
   };
   if (input.queuedMessageId) {

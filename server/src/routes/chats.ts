@@ -59,6 +59,7 @@ import {
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
 import { chatSteerMessageService } from "../services/chat-steer-messages.js";
+import { hasChatPreGenerationNotStartedEvidence } from "../services/chat-pre-generation-failure.js";
 import {
   buildChatTitlePromptFromMessages,
   chatTitleGenerationService,
@@ -87,6 +88,8 @@ import {
   NETWORK_WAIT_UNSAFE_ERROR_CODE,
 } from "../services/runtime-kernel/heartbeat.core.js";
 import { retrySideChatTerminalEvidence } from "../services/side-chat-runtime-admission.js";
+import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
+import { recoverableFailureMessage } from "../services/chat-assistant.contracts.js";
 import {
   runtimeResultText,
   sanitizeGeneratedTitle,
@@ -403,17 +406,35 @@ export function chatRoutes(
   async function assertChatEditSourceSubmissionResolved(
     conversation: ChatConversation,
     editUserMessageId: string | null | undefined,
+    expectedUserId?: string | null,
   ) {
     if (!editUserMessageId) return;
     const messages = await svc.listMessages(conversation.id, { includeTranscript: false }) as ChatMessage[];
     const source = messages.find((message) =>
       message.id === editUserMessageId
       && message.role === "user"
-      && message.kind === "message",
+      && message.kind === "message"
+      && message.orgId === conversation.orgId
+      && message.conversationId === conversation.id,
     );
     if (!source?.chatTurnId) return;
 
+    const currentUserVariants = messages.filter((message) => (
+      message.role === "user"
+      && message.kind === "message"
+      && message.orgId === conversation.orgId
+      && message.conversationId === conversation.id
+      && message.chatTurnId === source.chatTurnId
+      && !message.supersededAt
+    ));
+    if (source.supersededAt || currentUserVariants.length !== 1 || currentUserVariants[0]?.id !== source.id) {
+      throw conflict("This chat turn has already moved to a newer message variant", {
+        code: "chat_retry_source_not_current",
+      });
+    }
+
     const runIds = new Set<string>();
+    let hasRetryCandidate = false;
     for (const message of messages) {
       if (
         message.role !== "assistant"
@@ -422,6 +443,7 @@ export function chatRoutes(
         || message.chatTurnId !== source.chatTurnId
         || message.turnVariant !== source.turnVariant
       ) continue;
+      hasRetryCandidate = true;
       const payload = message.structuredPayload;
       const failure = payload && typeof payload === "object" && !Array.isArray(payload)
         ? payload.recoverableFailure
@@ -434,7 +456,20 @@ export function chatRoutes(
         : typeof failureRunId === "string" && failureRunId.trim()
           ? failureRunId.trim()
           : null;
-      if (runId) runIds.add(runId);
+      if (runId) {
+        runIds.add(runId);
+      } else if (!hasChatPreGenerationNotStartedEvidence(message, source, expectedUserId)) {
+        throw conflict(
+          "Provider dispatch for this failed chat response could not be verified. Inspect it before retrying this input.",
+          { code: "chat_retry_dispatch_unverified" },
+        );
+      }
+    }
+
+    if (hasRetryCandidate && await svc.getLatestActiveGeneration(conversation.id)) {
+      throw conflict("A chat response is already active. Wait for it to finish before retrying this input.", {
+        code: "chat_retry_generation_active",
+      });
     }
 
     for (const runId of runIds) {
@@ -1181,10 +1216,26 @@ export function chatRoutes(
   }
 
   function recoverableFailurePayload(error: unknown, runId: string | null | undefined) {
+    if (error instanceof NativeForkAcceptanceUnknownError) {
+      const code = "native_fork_acceptance_unknown";
+      return {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code,
+          message: recoverableFailureMessage(code, runId),
+          runId: runId ?? null,
+          ...(runId ? { action: "inspect_run" } : {}),
+        },
+      };
+    }
     if (!(error instanceof ChatAssistantStreamError)) return null;
     const code = error.errorCode ?? "chat_runtime_exception";
-    const message = error.userMessage ?? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
-    const retryable = error.retryable !== false;
+    const unknownForkAcceptance = code === "native_fork_acceptance_unknown";
+    const message = unknownForkAcceptance
+      ? recoverableFailureMessage(code, runId)
+      : error.userMessage ?? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
+    const retryable = !unknownForkAcceptance && error.retryable !== false;
     const failure: Record<string, unknown> = {
       recoverable: retryable,
       code,
@@ -1194,7 +1245,11 @@ export function chatRoutes(
     if (!retryable) failure.retryable = false;
     if (error.partialBodyUserVisible) failure.partialBodyUserVisible = true;
     if (error.failurePhase) failure.phase = error.failurePhase;
-    if (error.action) failure.action = error.action;
+    if (unknownForkAcceptance) {
+      if (runId) failure.action = "inspect_run";
+    } else if (error.action) {
+      failure.action = error.action;
+    }
     if (error.providerFailure) failure.providerFailure = error.providerFailure;
     return {
       recoverableFailure: failure,
