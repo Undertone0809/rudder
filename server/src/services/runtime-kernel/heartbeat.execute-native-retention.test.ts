@@ -16,7 +16,7 @@ describe("heartbeat native retention projections", () => {
     expect(compacted).toMatchObject({ invocationContent: { agentInstructionStack: {
       present: true, sameAsPrompt: true, sourceCharacterLength: prompt.length, sourceUtf8ByteLength: Buffer.byteLength(prompt),
     } } });
-    expect(compacted).not.toHaveProperty("prompt");
+    expect(compacted.prompt).toBe(prompt);
     expect(compacted).not.toHaveProperty("agentInstructionStack");
     expect(compactHeartbeatAdapterInvokePayload(compacted)).toMatchObject({ invocationContent: {
       agentInstructionStack: compacted.invocationContent && (compacted.invocationContent as Record<string, unknown>).agentInstructionStack,
@@ -70,11 +70,11 @@ describe("heartbeat native retention projections", () => {
     const compacted = compactHeartbeatAdapterInvokePayload({ ...recorded, prompt: "[later user redaction]" });
     expect((compacted.invocationContent as Record<string, unknown>).agentInstructionStack).toEqual(alias);
     expect(JSON.stringify(compacted)).not.toContain("PRIVATE_");
-    expect(compacted).not.toHaveProperty("prompt");
+    expect(compacted.prompt).toBe("[later user redaction]");
     expect(compacted).not.toHaveProperty("agentInstructionStack");
   });
 
-  it("compacts invocation payloads and keeps native raw prompt content out", () => {
+  it("keeps unproven raw invocation fallback through terminal compaction", () => {
     const compacted = compactHeartbeatAdapterInvokePayload({
       agentRuntimeType: "claude",
       command: "claude",
@@ -86,14 +86,14 @@ describe("heartbeat native retention projections", () => {
       ],
     });
 
-    expect(compacted).not.toHaveProperty("prompt");
+    expect(compacted.prompt).toBe("private prompt content");
     expect(compacted).toMatchObject({
       desiredSkillCount: 1,
       desiredSkillKeys: ["docs"],
-      desiredSkills: [{ key: "docs", runtimeName: " docs-runtime ", name: "Docs", description: "Reference docs" }],
+      desiredSkills: [{ key: "  docs  ", runtimeName: " docs-runtime ", name: "Docs", description: "Reference docs" }, { key: "  " }, null],
       invocationContent: {
-        textStored: false,
-        textSource: "agent_run_transcript_reader",
+        textStored: true,
+        textSource: "persisted_invocation_inline",
         transcriptRetentionMode: "native",
       },
     });
@@ -132,9 +132,9 @@ describe("heartbeat native retention projections", () => {
       invocationAttemptId: "attempt-1",
       invocationSpanId: "span-1",
     });
-    expect(compacted).not.toHaveProperty("prompt");
-    expect(compacted).not.toHaveProperty("agentInstructionStack");
-    expect(JSON.stringify(compacted)).not.toContain(instructionStack);
+    expect(compacted.prompt).toBe("private task prompt");
+    expect(compacted.agentInstructionStack).toBe(instructionStack);
+    expect(JSON.stringify(compacted)).toContain(instructionStack);
   });
 
   it("projects native adapter results without raw transcript fields while preserving summary fallback", () => {

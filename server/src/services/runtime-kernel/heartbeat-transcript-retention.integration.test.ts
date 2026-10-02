@@ -39,6 +39,7 @@ const fakeNativeProvider = vi.hoisted(() => {
     readProofFault?: "partial" | "throw";
     afterLiveLog?: () => Promise<void>;
     emitLog?: boolean;
+    invocationMeta?: Record<string, unknown>;
   };
   const fixtures = new Map<string, Fixture>();
   const sessions = new Map<string, Array<{ runId: string; turnId: string; entry: Record<string, unknown> }>>();
@@ -63,6 +64,7 @@ const fakeNativeProvider = vi.hoisted(() => {
       const fixture = fixtures.get(context.runId);
       if (!fixture) throw new Error(`No fake native fixture for Run ${context.runId}`);
       executedRunIds.push(context.runId);
+      if (fixture.invocationMeta) await context.onMeta?.(fixture.invocationMeta);
       const history = sessions.get(fixture.sessionId) ?? [];
       sessions.set(fixture.sessionId, [
         ...history,
@@ -255,7 +257,9 @@ vi.mock("../run-intelligence.js", async (importOriginal) => {
   };
 });
 
+import { getStorageService } from "../../storage/index.js";
 import { heartbeatService } from "../heartbeat.js";
+import { readRunInstructionSnapshotForEvent } from "../run-instruction-snapshots.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { runRuntimeRetentionMaintenance } from "./runtime-retention.js";
 import { getTranscriptObjectStore } from "./transcript-object-store.js";
@@ -574,6 +578,60 @@ describe("heartbeat native transcript retention integration", () => {
       return retention?.status === "reference_only" || retention?.status === "incomplete" || retention?.status === "cleanup_failed";
     });
   }
+
+  it.each(["equal", "distinct", "readback_unavailable"] as const)("writes and finalizes snapshot-safe native invocation through actual heartbeat caller: %s", async mode => {
+    const { orgId, agentId } = await seedAgent();
+    const queued = await queueRun(agentId);
+    const text = ("界🙂\n\"".repeat(9_000) + "D".repeat(1_187));
+    const prompt = mode === "distinct" ? "unique task prompt" : text;
+    const storage = getStorageService();
+    expect(storage.provider).toBe("local_disk");
+    const read = mode === "readback_unavailable"
+      ? vi.spyOn(storage, "getObject").mockRejectedValue(new Error("isolated readback unavailable")) : null;
+    let release!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const invoked = new Promise<void>(resolve => { entered = resolve; });
+    fakeNativeProvider.register(queued.run.id, { sessionId: `snapshot-${randomUUID()}`, turnId: `turn-${queued.run.id}`,
+      rawTranscript: "bounded native result", decoy: "OUT_OF_SCOPE", emitLog: false,
+      invocationMeta: { agentRuntimeType: "codex_local", command: "codex", prompt, agentInstructionStack: text,
+        context: { unique: "retain context" } }, afterLiveLog: async () => { entered(); await blocked; } });
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await invoked;
+      const before = (await heartbeatService(db).listEvents(queued.run.id)).find(event => event.eventType === "adapter.invoke")!;
+      const payload = before.payload as Record<string, unknown>;
+      expect(payload.context).toEqual({ unique: "retain context" });
+      if (mode === "readback_unavailable") {
+        expect(payload).toMatchObject({ prompt: text, invocationInstructionSnapshot: {
+          status: "unavailable", reason: "snapshot_readback_unavailable" } });
+        expect(payload.agentInstructionStackAlias).toMatchObject({ present: true, sameAsPrompt: true });
+        expect(payload).not.toHaveProperty("invocationInstructionTextReference");
+      } else {
+        expect(payload).not.toHaveProperty("agentInstructionStack");
+        expect(payload.invocationInstructionSnapshot).toMatchObject({ status: "available" });
+        if (mode === "distinct") expect(payload.prompt).toBe(prompt);
+        else expect(payload).not.toHaveProperty("prompt");
+        await expect(readRunInstructionSnapshotForEvent({ db, storage, orgId, runId: queued.run.id, eventId: before.id }))
+          .resolves.toMatchObject({ agentInstructionStack: text, byteSize: 82_187 });
+        const baseline: Record<string, unknown> = { ...payload, prompt, ...(mode === "distinct" ? { agentInstructionStack: text } : {}) };
+        delete baseline.invocationInstructionTextReference;
+        delete baseline.invocationPromptReference;
+        const delta = Buffer.byteLength(JSON.stringify(baseline)) - Buffer.byteLength(JSON.stringify(payload));
+        expect(delta).toBeGreaterThan(82_000);
+        console.info("snapshot-only new heartbeat invoke bytes", { mode, beforeBytes: Buffer.byteLength(JSON.stringify(baseline)),
+          afterBytes: Buffer.byteLength(JSON.stringify(payload)), netSavedBytes: delta, snapshotBytes: 82_187 });
+      }
+      release();
+      await waitForTerminalEffectsComplete(queued.run.id);
+      await waitForNativeRetentionComplete(queued.run.id);
+      const after = (await heartbeatService(db).listEvents(queued.run.id)).find(event => event.id === before.id)!;
+      expect(after.payload).toMatchObject(payload);
+      if (mode !== "readback_unavailable") await expect(readRunInstructionSnapshotForEvent({
+        db, storage, orgId, runId: queued.run.id, eventId: after.id,
+      })).resolves.toMatchObject({ agentInstructionStack: text });
+    } finally { release(); read?.mockRestore(); }
+  }, 60_000);
 
   it("publishes the retained source and reads output while the provider is still running", async () => {
     fakeNativeProvider.setProfileMode("unsupported");

@@ -95,7 +95,7 @@ describe("heartbeat adapter invocation persistence", () => {
     expect(meta).toEqual(before);
   });
 
-  it("compacts prompt, instruction stack, and nested context only for native transcript retention", () => {
+  it("does not delete invocation text on native mode without asynchronous readback proof", () => {
     const prompt = `# Agent instruction stack\n${"keep this auditable\n".repeat(2_000)}`;
     const privateContext = "PRIVATE_NATIVE_CONTEXT_" + "C".repeat(2_000);
     const meta = {
@@ -129,12 +129,12 @@ describe("heartbeat adapter invocation persistence", () => {
     const stackSummary = invocationContent.agentInstructionStack as Record<string, unknown>;
     const contextSummary = invocationContent.context as Record<string, unknown>;
 
-    expect(persisted).not.toHaveProperty("prompt");
-    expect(persisted).not.toHaveProperty("agentInstructionStack");
-    expect(persisted).not.toHaveProperty("context");
+    expect(persisted.prompt).toBe(legacyPayload.prompt);
+    expect(persisted.agentInstructionStack).toBe(legacyPayload.prompt);
+    expect(persisted.context).toEqual({ chatMode: true, runtimeMetadata: { body: privateContext } });
     expect(invocationContent).toMatchObject({
-      textStored: false,
-      textSource: "agent_run_transcript_reader",
+      textStored: true,
+      textSource: "persisted_invocation_inline",
       transcriptRetentionMode: "native",
       transcriptRetentionReason: "native_transcript_capability",
     });
@@ -156,14 +156,13 @@ describe("heartbeat adapter invocation persistence", () => {
     expect(persisted.skillEvidenceKeys).toEqual(["rudder/build-advisor"]);
     expect(serialized).not.toContain("PRIVATE_CHAT_PROMPT");
     expect(serialized).not.toContain("PRIVATE_CONTEXT_BODY");
-    expect(serialized).not.toContain("PRIVATE_NATIVE_CONTEXT_");
+    expect(serialized).toContain("PRIVATE_NATIVE_CONTEXT_");
 
     const legacySerialized = JSON.stringify(redactCurrentUserValue(legacyPayload));
-    expect(Buffer.byteLength(legacySerialized, "utf8") - Buffer.byteLength(serialized, "utf8"))
-      .toBeGreaterThan(Buffer.byteLength(prompt, "utf8"));
+    expect(Buffer.byteLength(serialized)).toBeGreaterThan(Buffer.byteLength(legacySerialized));
   });
 
-  it("keeps distinct native prompt and instruction digests without persisting either text", () => {
+  it("retains distinct native text until snapshot equivalence is actually proven", () => {
     const prompt = "task prompt 内容";
     const instructionStack = "runtime instruction stack 规则";
     const payload = buildHeartbeatAdapterInvokePayload({
@@ -186,13 +185,13 @@ describe("heartbeat adapter invocation persistence", () => {
     const promptSummary = invocationContent.prompt as Record<string, unknown>;
     const stackSummary = invocationContent.agentInstructionStack as Record<string, unknown>;
 
-    expect(persisted).not.toHaveProperty("prompt");
-    expect(persisted).not.toHaveProperty("agentInstructionStack");
+    expect(persisted.prompt).toBe(prompt);
+    expect(persisted.agentInstructionStack).toBe(instructionStack);
     expect(promptSummary.sanitizedSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(stackSummary.sanitizedSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(stackSummary).not.toHaveProperty("sameAsPrompt");
-    expect(serialized).not.toContain(prompt);
-    expect(serialized).not.toContain(instructionStack);
+    expect(serialized).toContain(prompt);
+    expect(serialized).toContain(instructionStack);
   });
 
   it("preserves invocation text when native transcript retention is not active", () => {

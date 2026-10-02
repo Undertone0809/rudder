@@ -60,7 +60,7 @@ export function compactHeartbeatAdapterInvokePayload(payload: Record<string, unk
       description: typeof skill.description === "string" ? skill.description : null,
     }];
   });
-  return buildHeartbeatAdapterInvokePayload({
+  const summary = buildHeartbeatAdapterInvokePayload({
     meta: payload as unknown as AgentRuntimeInvocationMeta,
     preservePersistedInstructionAlias: true,
     runtimeSkills,
@@ -70,6 +70,17 @@ export function compactHeartbeatAdapterInvokePayload(payload: Record<string, unk
       reason: "native_transcript_capability",
     },
   });
+  // Preserve verified references and unproven inline fallbacks alike. Native
+  // range proof cannot justify deleting unique invocation text or context.
+  const retained = { ...summary, ...payload };
+  if (!summary.agentInstructionStackAlias) delete retained.agentInstructionStackAlias;
+  retained.invocationContent = { ...(summary.invocationContent as Record<string, unknown>),
+    ...(payload.invocationInstructionTextReference && !retained.agentInstructionStackAlias
+      ? { agentInstructionStack: payload.invocationInstructionTextReference } : {}),
+    textStored: typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string",
+    textSource: payload.invocationInstructionTextReference ? "stored_snapshot" : "persisted_invocation_inline",
+  };
+  return retained;
 }
 
 export function projectHeartbeatAdapterResult(input: {

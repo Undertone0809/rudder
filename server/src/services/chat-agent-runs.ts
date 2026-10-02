@@ -5,14 +5,16 @@ import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudde
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { AgentRuntimeInvocationMeta } from "../agent-runtimes/index.js";
-import { redactCurrentUserText } from "../log-redaction.js";
+import { redactCurrentUserText, redactCurrentUserValue } from "../log-redaction.js";
 import { logger } from "../middleware/logger.js";
 import { redactSensitiveText } from "../redaction.js";
 import { getStorageService, type ContentAddressedStorageService } from "../storage/index.js";
 import { retainNativeChatRunResultJson } from "./chat-run-result-retention.js";
 import { summarizeHeartbeatRunResultJson } from "./heartbeat-run-summary.js";
 import { publishLiveEvent } from "./live-events.js";
+import { sanitizePostgresJsonValue } from "./postgres-json.js";
 import { appendHeartbeatRunEvent } from "./run-events.js";
+import { compactReadableInstructionSnapshot } from "./run-instruction-snapshots.compaction.js";
 import {
   MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES,
   storeRunInstructionSnapshot,
@@ -163,12 +165,21 @@ function runtimeSkillsFromInvocationPayload(payload: Record<string, unknown>) {
 }
 
 function compactNativeAdapterInvokePayload(payload: Record<string, unknown>) {
-  return buildHeartbeatAdapterInvokePayload({
+  const summary = buildHeartbeatAdapterInvokePayload({
     meta: payload as unknown as AgentRuntimeInvocationMeta,
     preservePersistedInstructionAlias: true,
     runtimeSkills: runtimeSkillsFromInvocationPayload(payload),
     transcriptRetention: NATIVE_CHAT_TRANSCRIPT_RETENTION,
   });
+  // Native transcript completeness is not invocation-text equivalence. Only
+  // the new-event snapshot readback may remove text; keep every raw fallback.
+  return { ...summary, ...payload, invocationContent: {
+    ...(summary.invocationContent as Record<string, unknown>),
+    ...(payload.invocationInstructionTextReference && !payload.agentInstructionStackAlias
+      ? { agentInstructionStack: payload.invocationInstructionTextReference } : {}),
+    textStored: typeof payload.prompt === "string" || typeof payload.agentInstructionStack === "string",
+    textSource: payload.invocationInstructionTextReference ? "stored_snapshot" : "persisted_invocation_inline",
+  } };
 }
 
 function transcriptEventPayload(entry: TranscriptEntry): Record<string, unknown> {
@@ -821,8 +832,7 @@ export function chatAgentRunService(db: Db, options: {
     meta: AgentRuntimeInvocationMeta,
     runtimeSkills: RuntimeSkillSummary,
   ) {
-    // Persist the full audit row before execution can suspend or lose its process.
-    // Successful native finalization rewrites this same event after source proof.
+    // Build conservatively: native mode alone cannot prove Instructions storage.
     const payload = buildHeartbeatAdapterInvokePayload({
       meta,
       runtimeSkills: runtimeSkills.map((entry) => ({
@@ -864,12 +874,22 @@ export function chatAgentRunService(db: Db, options: {
       }
     }
 
+    const sanitizedPayload = redactCurrentUserValue(payload);
+    for (const field of ["prompt", "agentInstructionStack"] as const) {
+      if (typeof sanitizedPayload[field] === "string") sanitizedPayload[field] = redactSensitiveText(sanitizedPayload[field]);
+    }
+    const projected = await compactReadableInstructionSnapshot({
+      db, storage: { getObject: (orgId, key) => (options.instructionSnapshotStorage ?? getStorageService()).getObject(orgId, key) },
+      orgId: run.orgId, runId: run.id, attemptId: invocationAttemptId, spanId: invocationSpanId,
+      payload: sanitizePostgresJsonValue(sanitizedPayload),
+    });
+    // appendEvent renews the owned fence again after asynchronous storage IO.
     await appendEvent(run, {
       eventType: "adapter.invoke",
       stream: "system",
       level: "info",
       message: "adapter invocation",
-      payload,
+      payload: projected,
     });
   }
 

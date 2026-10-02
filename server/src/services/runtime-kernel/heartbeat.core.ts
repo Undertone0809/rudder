@@ -441,10 +441,9 @@ export function buildHeartbeatAdapterInvokePayload(input: {
   if (instructionAlias) persistentMeta.agentInstructionStackAlias = instructionAlias;
 
   if (compactForNativeTranscript) {
-    delete persistentMeta.prompt;
-    delete persistentMeta.agentInstructionStack;
-    delete persistentMeta.context;
-    persistentMeta.invocationContent = buildNativeInvocationContentSummary({
+    // Synchronous construction cannot prove an asynchronously stored snapshot.
+    // Native transcript capability is not evidence that invocation text survives.
+    persistentMeta.invocationContent = { ...buildNativeInvocationContentSummary({
       prompt: input.meta.prompt,
       sanitizedPrompt: persistentPrompt,
       agentInstructionStack: input.meta.agentInstructionStack,
@@ -452,7 +451,7 @@ export function buildHeartbeatAdapterInvokePayload(input: {
       context: sanitizedContext,
       retention: input.transcriptRetention!,
       instructionAlias,
-    });
+    }), textStored: true, textSource: "persisted_invocation_inline" };
   } else if (typeof persistentPrompt === "string" && persistentPrompt.length > 0
     && typeof persistentAgentInstructionStack === "string"
     && persistentAgentInstructionStack === persistentPrompt) {

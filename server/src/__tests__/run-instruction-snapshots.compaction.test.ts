@@ -48,7 +48,7 @@ describe("verified new-event instruction snapshot projection", () => {
     await expect(readRunInstructionSnapshotForEvent({ db, storage: f.storage, orgId, runId, eventId: 17 }))
       .resolves.toMatchObject({ agentInstructionStack: f.text, byteSize: Buffer.byteLength(f.text) });
     expect(await readFile(path.join(f.root, f.locator.objectKey), "utf8")).toBe(f.text);
-    expect(Buffer.byteLength(JSON.stringify(f.payload)) - Buffer.byteLength(JSON.stringify(projected))).toBe(199_576);
+    expect(Buffer.byteLength(JSON.stringify(f.payload)) - Buffer.byteLength(JSON.stringify(projected))).toBe(199_546);
     expect(f.payload.agentInstructionStack).toBe(f.text);
     expect(f.deleteObject).not.toHaveBeenCalled();
   });
@@ -122,5 +122,26 @@ describe("verified new-event instruction snapshot projection", () => {
     const projected = await f.compact();
     expect(projected).toMatchObject({ prompt: f.text, agentInstructionStack: f.text,
       invocationInstructionSnapshot: { status: "unavailable", reason: "snapshot_readback_unavailable" } });
+  });
+  it("does not trust pre-existing field references when storage is unavailable", async () => {
+    const f = await fixture();
+    const projected = await f.compact({ ...f.payload, invocationInstructionSnapshot: { status: "unavailable" },
+      invocationInstructionTextReference: { source: "stored_snapshot" }, invocationPromptReference: { sameAsInstructions: true } });
+    expect(projected.prompt).toBe(f.text);
+    expect(projected).not.toHaveProperty("invocationInstructionTextReference");
+    expect(projected).not.toHaveProperty("invocationPromptReference");
+  });
+  it("bounds a stalled read stream and destroys it without deleting the snapshot", async () => {
+    const f = await fixture();
+    const stream = new Readable({ read() {} });
+    vi.spyOn(f.storage, "getObject").mockResolvedValue({ stream });
+    vi.useFakeTimers();
+    try {
+      const pending = f.compact();
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect((await pending).invocationInstructionSnapshot).toMatchObject({ status: "unavailable", reason: "snapshot_readback_unavailable" });
+      expect(stream.destroyed).toBe(true);
+      expect(f.deleteObject).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });

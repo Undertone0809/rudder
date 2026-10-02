@@ -19,6 +19,7 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { and, eq, isNull } from "drizzle-orm";
+import express from "express";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -26,7 +27,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { registerAgentInvocationInstructionsRoute } from "../routes/agents.management-invocation-instructions.ts";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
 import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.ts";
@@ -43,7 +46,19 @@ import { persistNativeTransportProfile } from "../services/runtime-kernel/native
 import { createTranscriptObjectReader, createTranscriptObjectStore, type TranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
 import { createTranscriptReader, type NativeTranscriptReadInput } from "../services/runtime-kernel/transcript-reader.ts";
 import { createHeartbeatUnifiedAgentRunAdapter } from "../services/runtime-kernel/unified-agent-run.integration.ts";
+import { getStorageService } from "../storage/index.ts";
+import { createLocalDiskStorageProvider } from "../storage/local-disk-provider.ts";
+import { createStorageService } from "../storage/service.ts";
 import type { ContentAddressedStorageService, PutFileInput, PutFileResult } from "../storage/types.ts";
+
+async function expectSnapshotInstructions(event: any, text: string, storage = getStorageService()) {
+  expect(event.payload).toMatchObject({ invocationInstructionSnapshot: { status: "available" },
+    invocationInstructionTextReference: { source: "stored_snapshot" } });
+  expect(event.payload).not.toHaveProperty("agentInstructionStack");
+  await expect(readRunInstructionSnapshotForEvent({ db: snapshotTestDb, storage,
+    orgId: event.orgId, runId: event.runId, eventId: event.id })).resolves.toMatchObject({ agentInstructionStack: text });
+}
+let snapshotTestDb: ReturnType<typeof createDb>;
 
 type EmbeddedPostgresInstance = {
   initialise(): Promise<void>;
@@ -182,6 +197,7 @@ describe("chatAgentRunService", () => {
   beforeAll(async () => {
     const started = await startTempDatabase();
     db = createDb(started.connectionString);
+    snapshotTestDb = db;
     objectDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-transcript-objects-"));
     objectStore = createTranscriptObjectStore(objectDir);
     svc = chatAgentRunService(db, { transcriptObjectStore: objectStore });
@@ -333,27 +349,39 @@ describe("chatAgentRunService", () => {
   });
 
   it("persists equal invoke text once while SQL events and Instructions snapshot retain actual text", async () => {
-    const snapshots = createInstructionSnapshotStorage();
-    const invokeSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: snapshots.storage });
+    const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-snapshot-"))));
+    const invokeSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: storage });
     const run = await createChatRunFixture("Equal invoke snapshot", undefined, invokeSvc, "hermes_gateway");
     const prompt = "Instruction and debug input 原文🙂 " + "X".repeat(82_000);
     const meta = { agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt };
     await invokeSvc.appendAdapterInvoke(run, meta, []);
     const events = await heartbeatService(db).listEvents(run.id);
     const invoke = events.find(event => event.eventType === "adapter.invoke")!;
-    expect(invoke.payload).toMatchObject({ prompt, invocationInstructionSnapshot: { status: "available" } });
+    expect(invoke.payload).toMatchObject({ invocationPromptReference: { sameAsInstructions: true }, invocationInstructionSnapshot: { status: "available" } });
+    expect(invoke.payload).not.toHaveProperty("prompt");
     expect(invoke.payload).not.toHaveProperty("agentInstructionStack");
     const payload = invoke.payload as Record<string, unknown>;
     const serialized = JSON.stringify(payload);
-    const withoutAlias = { ...payload };
-    delete withoutAlias.agentInstructionStackAlias;
-    const aliasBytes = Buffer.byteLength(serialized) - Buffer.byteLength(JSON.stringify(withoutAlias));
-    expect(Buffer.byteLength(JSON.stringify({ ...withoutAlias, agentInstructionStack: prompt })) - Buffer.byteLength(serialized))
-      .toBe(Buffer.byteLength(JSON.stringify(prompt)) + Buffer.byteLength(',"agentInstructionStack":') - aliasBytes);
-    await expect(readRunInstructionSnapshotForEvent({ db, storage: snapshots.storage,
+    expect(Buffer.byteLength(JSON.stringify({ ...payload, prompt })) - Buffer.byteLength(serialized)).toBeGreaterThan(82_000);
+    await expect(readRunInstructionSnapshotForEvent({ db, storage,
       orgId: run.orgId, runId: run.id, eventId: invoke.id })).resolves.toMatchObject({
       agentInstructionStack: prompt, sha256: createHash("sha256").update(prompt).digest("hex"), byteSize: Buffer.byteLength(prompt),
     });
+    const app = express();
+    app.use((req, _res, next) => { req.actor = { type: "board", source: "session", orgIds: [run.orgId] }; next(); });
+    const router = express.Router();
+    registerAgentInvocationInstructionsRoute({ router, db, storage, heartbeat: heartbeatService(db),
+      resolveScope: () => ({ orgIds: [run.orgId] }), getCurrentUserRedactionOptions: async () => ({ enabled: false }) });
+    app.use("/api", router);
+    const response = await request(app).get(`/api/agent-runs/${run.id}/events/${invoke.id}/invocation-instructions`);
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ source: "stored_snapshot", completeness: "complete", agentInstructionStack: prompt });
+    expect(response.headers["cache-control"]).toContain("no-store");
+    const baseline = { ...payload, prompt };
+    delete baseline.invocationInstructionTextReference;
+    delete baseline.invocationPromptReference;
+    console.info("snapshot-only new Chat SQL invoke bytes", { beforeBytes: Buffer.byteLength(JSON.stringify(baseline)),
+      afterBytes: Buffer.byteLength(serialized), netSavedBytes: Buffer.byteLength(JSON.stringify(baseline)) - Buffer.byteLength(serialized) });
     expect(meta).toEqual({ agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt });
     await invokeSvc.sealSpan(run, { completeness: "unknown" });
     await invokeSvc.finalizeRun(run.id, { status: "failed", resultJson: { outcome: "test finished" } });
@@ -366,8 +394,11 @@ describe("chatAgentRunService", () => {
     { prompt: "task", agentInstructionStack: "", aliased: false, present: true },
     { prompt: "", agentInstructionStack: "", aliased: false, present: true },
     { prompt: "task", agentInstructionStack: "distinct Instructions", aliased: false, present: true },
-  ])("roundtrips persisted dedup metadata through the actual Chat compactor: %j", async ({ aliased, present, ...fields }) => {
+    { prompt: "offline Instructions", agentInstructionStack: "offline Instructions", aliased: true, present: true, readbackUnavailable: true },
+    { prompt: "distinct task", agentInstructionStack: "offline distinct Instructions", aliased: false, present: true, readbackUnavailable: true },
+  ])("roundtrips persisted dedup metadata through the actual Chat compactor: %j", async ({ aliased, present, readbackUnavailable, ...fields }) => {
     const snapshots = createInstructionSnapshotStorage();
+    if (readbackUnavailable) vi.spyOn(snapshots.storage, "getObject").mockRejectedValue(new Error("isolated readback unavailable"));
     const aliasSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: snapshots.storage,
       transcriptReaderFactory: database => createTranscriptReader(database as any, { nativeReader: { readRange: async () => ({
         items: [{ kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text: "native-only final" }],
@@ -396,13 +427,20 @@ describe("chatAgentRunService", () => {
     const after = (await heartbeatService(db).listEvents(run.id)).find(event => event.eventType === "adapter.invoke")!;
     const payload = after.payload as Record<string, unknown>;
     expect(after.id).toBe(before.id);
-    expect(payload).not.toHaveProperty("prompt");
-    expect(payload).not.toHaveProperty("agentInstructionStack");
+    if (aliased && !readbackUnavailable) expect(payload).not.toHaveProperty("prompt");
+    else expect(payload.prompt).toBe(fields.prompt);
+    if (typeof fields.agentInstructionStack === "string" && fields.agentInstructionStack.length > 0) {
+      if (readbackUnavailable && !aliased) expect(payload.agentInstructionStack).toBe(fields.agentInstructionStack);
+      else expect(payload).not.toHaveProperty("agentInstructionStack");
+    } else if (Object.hasOwn(fields, "agentInstructionStack")) expect(payload.agentInstructionStack).toBe(fields.agentInstructionStack);
     const summary = (payload.invocationContent as Record<string, unknown>).agentInstructionStack;
     expect(summary).toMatchObject({ present });
     if (aliased) expect(summary).toEqual(beforePayload.agentInstructionStackAlias);
     else { expect(summary).not.toHaveProperty("sameAsPrompt"); expect(payload).not.toHaveProperty("agentInstructionStackAlias"); }
-    if (typeof fields.agentInstructionStack === "string" && fields.agentInstructionStack.length > 0) {
+    if (readbackUnavailable) {
+      expect(payload.invocationInstructionSnapshot).toMatchObject({ status: "unavailable", reason: "snapshot_readback_unavailable" });
+      expect(payload).not.toHaveProperty("invocationInstructionTextReference");
+    } else if (typeof fields.agentInstructionStack === "string" && fields.agentInstructionStack.length > 0) {
       await expect(readRunInstructionSnapshotForEvent({ db, storage: snapshots.storage, orgId: run.orgId,
         runId: run.id, eventId: after.id })).resolves.toMatchObject({ agentInstructionStack: fields.agentInstructionStack });
     }
@@ -437,7 +475,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, run.id),
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
-    expect(invoke?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(invoke, prompt);
     expect(await svc.markLegacyTranscriptSource(run)).toBe(false);
   });
 
@@ -503,7 +541,8 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
     const stagedEvent = stagedEvents.find((event) => event.payload?.invocationAttemptId === run.runtimeAttemptRef!.id);
-    expect(stagedEvent?.payload).toMatchObject({ prompt, agentInstructionStack: instructionStack });
+    expect(stagedEvent?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(stagedEvent, instructionStack);
     expect(stagedEvent?.seq).toBeTruthy();
 
     await attestPiNativeTranscriptSource(run);
@@ -533,7 +572,8 @@ describe("chatAgentRunService", () => {
     expect(earlierInvoke?.payload).toMatchObject({
       prompt: earlierAttemptPrompt,
     });
-    expect(payload).toMatchObject({ prompt, agentInstructionStack: instructionStack });
+    expect(payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(retainedEvent, instructionStack);
     expect(payload.context).toMatchObject({ chatMode: true, privatePromptContext: "private context marker" });
     expect(payload.desiredSkillKeys).toEqual(["run-skill"]);
     expect(payload.usedSkillKeys).toEqual(["proof-skill"]);
@@ -864,7 +904,8 @@ describe("chatAgentRunService", () => {
       invocationSpanId: run.runtimeSpanId,
       invocationInstructionSnapshot: { status: "available" },
     });
-    expect(invokes[0]?.payload).toMatchObject({ prompt, agentInstructionStack: instructionStack });
+    expect(invokes[0]?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(invokes[0], instructionStack, instructionSnapshots.storage);
     expect(instructionSnapshots.putContentAddressedFile).toHaveBeenCalledTimes(1);
     await expect(readRunInstructionSnapshotForEvent({
       db,
@@ -990,7 +1031,7 @@ describe("chatAgentRunService", () => {
     expect(requestedSpans.length).toBeGreaterThan(1);
     expect(new Set(requestedSpans)).toEqual(new Set([`${run.id}:${recoveredRun.runtimeSpanId}`]));
     expect(transcriptEvents).toHaveLength(1);
-    expect(invokes[0]?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(invokes[0], prompt);
     expect(finalized?.contextSnapshot).toMatchObject({
       transcriptSource: "legacy",
       nativeTranscriptRetention: { status: "cleanup_failed", reason: "transcript_events_native_coverage_unproven" },
@@ -1060,7 +1101,7 @@ describe("chatAgentRunService", () => {
     expect(persisted?.resultJson).toEqual(rawResult);
     expect(persisted?.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "incomplete" } });
     expect(span?.supplementalObjectRef).toBe(objectRef);
-    expect(invoke?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(invoke, prompt);
     expect(rawTranscriptEvents).toHaveLength(1);
     expect(rawTranscriptEvents[0]?.payload).toMatchObject({ text: entry.text, spanId: run.runtimeSpanId });
     await expect(objectStore.readRange({
@@ -1188,7 +1229,7 @@ describe("chatAgentRunService", () => {
     expect(persisted?.resultJson).toEqual(rawResult);
     expect(persisted?.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "incomplete" } });
     expect(span?.supplementalObjectRef).toBe(before?.supplementalObjectRef);
-    expect(invoke?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(invoke, prompt);
   });
 
   it("rejects a sealed native proof bound to another owner and Attempt", async () => {
@@ -1304,7 +1345,7 @@ describe("chatAgentRunService", () => {
     });
     expect(stageRemoval).not.toHaveBeenCalled();
     expect(span?.supplementalObjectRef).toBe(before?.supplementalObjectRef);
-    expect(invoke?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(invoke, prompt);
     await expect(objectStore.readRange({
       objectRef: before!.supplementalObjectRef!,
       orgId: run.orgId,
@@ -1499,8 +1540,8 @@ describe("chatAgentRunService", () => {
         eq(heartbeatRunEvents.runId, run.id),
         eq(heartbeatRunEvents.eventType, "adapter.invoke"),
       ));
-      expect(invoke?.payload).toMatchObject({ prompt });
-      expect(JSON.stringify(invoke?.payload)).toContain(prompt);
+      await expectSnapshotInstructions(invoke, prompt);
+      expect(invoke?.payload).not.toHaveProperty("prompt");
     },
   );
 
@@ -1569,7 +1610,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
     expect(finalizedRun?.resultJson).toEqual({ outcome: "completed" });
-    expect(invoke?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(invoke, prompt);
   });
 
   it("does not trust a preflight native hint or compact failure evidence", async () => {
@@ -1596,7 +1637,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, run.id),
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
-    expect(event?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(event, prompt);
     let [savedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
     expect(savedRun?.resultJson).toMatchObject({ body: "unattested result stays full" });
   });
@@ -1619,7 +1660,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, failedRun.id),
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
-    expect(event?.payload).toMatchObject({ prompt: failurePrompt });
+    await expectSnapshotInstructions(event, failurePrompt);
     const [savedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, failedRun.id));
     expect(savedRun?.resultJson).toMatchObject({ partialBody: "failure body remains complete" });
   });
@@ -1650,7 +1691,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
     const [waitingRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
-    expect(event?.payload).toMatchObject({ prompt });
+    await expectSnapshotInstructions(event, prompt);
     expect(waitingRun).toMatchObject({ status: "running", runningSubstate: "waiting_for_network" });
     expect(waitingRun?.resultJson).toBeNull();
     svc.releaseOwnedRun(run.id, run.runtimeSpanOwnerToken);

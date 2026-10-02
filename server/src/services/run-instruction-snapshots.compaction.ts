@@ -20,7 +20,10 @@ export async function compactReadableInstructionSnapshot(input: {
   spanId: string | null;
   payload: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
-  const original = input.payload;
+  const original = { ...input.payload };
+  // Only this owned readback can issue field references on a new event.
+  delete original.invocationInstructionTextReference;
+  delete original.invocationPromptReference;
   const locator = record(original.invocationInstructionSnapshot);
   // No available snapshot means the caller must retain its inline fallback.
   if (locator?.status !== "available") return original;
@@ -29,7 +32,8 @@ export async function compactReadableInstructionSnapshot(input: {
   });
   const sha256 = locator.sha256;
   const bytes = locator.byteSize;
-  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(input.orgId)
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
+  if (![input.orgId, input.runId, input.attemptId, input.spanId].every(id => typeof id === "string" && uuid.test(id))
     || !input.attemptId || !input.spanId || !input.runId
     || original.invocationAttemptId !== input.attemptId || original.invocationSpanId !== input.spanId
     || typeof sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(sha256)
@@ -53,43 +57,43 @@ export async function compactReadableInstructionSnapshot(input: {
     const timeout = setTimeout(() => stored.stream.destroy(new Error("snapshot read timeout")), 5_000);
     timeout.unref();
     try {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    const hash = createHash("sha256");
-    for await (const chunk of stored.stream) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      total += buffer.length;
-      if (total > (bytes as number)) return fallback("snapshot_size_mismatch");
-      hash.update(buffer);
-      chunks.push(buffer);
-    }
-    if (total !== bytes) return fallback("snapshot_size_mismatch");
-    if (hash.digest("hex") !== sha256) return fallback("snapshot_digest_mismatch");
-    let text: string;
-    try { text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)); }
-    catch { return fallback("snapshot_utf8_invalid"); }
+      const chunks: Buffer[] = [];
+      let total = 0;
+      const hash = createHash("sha256");
+      for await (const chunk of stored.stream) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buffer.length;
+        if (total > (bytes as number)) return fallback("snapshot_size_mismatch");
+        hash.update(buffer);
+        chunks.push(buffer);
+      }
+      if (total !== bytes) return fallback("snapshot_size_mismatch");
+      if (hash.digest("hex") !== sha256) return fallback("snapshot_digest_mismatch");
+      let text: string;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)); }
+      catch { return fallback("snapshot_utf8_invalid"); }
 
-    const stack = original.agentInstructionStack;
-    const alias = record(original.agentInstructionStackAlias);
-    const aliased = !Object.hasOwn(original, "agentInstructionStack")
-      && alias?.present === true && alias.sameAsPrompt === true
-      && alias.textSource === "persisted_prompt" && alias.equality === "nonempty_sanitized_exact";
-    const inlineInstructions = typeof stack === "string" ? stack : aliased ? original.prompt : undefined;
-    // Strict string equality also preserves newlines/Unicode; no normalization,
-    // substring matching, digest-only equivalence, or guessed absent Instructions.
-    if (typeof inlineInstructions !== "string" || inlineInstructions.length === 0 || inlineInstructions !== text) {
-      return fallback("snapshot_inline_not_equivalent");
-    }
-    const projected = { ...original };
-    const reference = { source: "stored_snapshot", via: "invocation-instructions",
-      field: "agentInstructionStack", sha256, byteSize: bytes };
-    delete projected.agentInstructionStack;
-    projected.invocationInstructionTextReference = reference;
-    if (typeof original.prompt === "string" && original.prompt === text) {
-      delete projected.prompt;
-      projected.invocationPromptReference = { ...reference, sameAsInstructions: true };
-    }
-    return projected;
+      const stack = original.agentInstructionStack;
+      const alias = record(original.agentInstructionStackAlias);
+      const aliased = !Object.hasOwn(original, "agentInstructionStack")
+        && alias?.present === true && alias.sameAsPrompt === true
+        && alias.textSource === "persisted_prompt" && alias.equality === "nonempty_sanitized_exact";
+      const inlineInstructions = typeof stack === "string" ? stack : aliased ? original.prompt : undefined;
+      // Strict string equality also preserves newlines/Unicode; no normalization,
+      // substring matching, digest-only equivalence, or guessed absent Instructions.
+      if (typeof inlineInstructions !== "string" || inlineInstructions.length === 0 || inlineInstructions !== text) {
+        return fallback("snapshot_inline_not_equivalent");
+      }
+      const projected = { ...original };
+      const reference = { present: true, source: "stored_snapshot", via: "invocation-instructions",
+        field: "agentInstructionStack", sha256, byteSize: bytes };
+      delete projected.agentInstructionStack;
+      projected.invocationInstructionTextReference = reference;
+      if (typeof original.prompt === "string" && original.prompt === text) {
+        delete projected.prompt;
+        projected.invocationPromptReference = { ...reference, sameAsInstructions: true };
+      }
+      return projected;
     } finally {
       clearTimeout(timeout);
       stored.stream.destroy();
