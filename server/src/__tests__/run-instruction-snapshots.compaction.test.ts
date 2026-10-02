@@ -21,6 +21,18 @@ function dbFor(rows = [[{ id: attemptId, orgId, runId }], [{ id: spanId, orgId, 
   query.limit = vi.fn(async () => pending.shift() ?? []);
   return { select: vi.fn(() => query) } as unknown as Db;
 }
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function expectInlineUnavailable(payload: Record<string, unknown>, text: string) {
+  expect(payload).toMatchObject({ prompt: text, agentInstructionStack: text,
+    invocationInstructionSnapshot: { status: "unavailable", reason: "snapshot_readback_unavailable" } });
+  expect(payload).not.toHaveProperty("invocationInstructionTextReference");
+  expect(payload).not.toHaveProperty("invocationPromptReference");
+}
 async function fixture(text = "真实 Instructions🙂\n".repeat(4000)) {
   const root = await mkdtemp(path.join(os.tmpdir(), "rudder-snapshot-readback-"));
   const provider = createLocalDiskStorageProvider(root);
@@ -143,5 +155,98 @@ describe("verified new-event instruction snapshot projection", () => {
       expect(stream.destroyed).toBe(true);
       expect(f.deleteObject).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
+  });
+  it.each([1, 2])("bounds unresolved linkage select %i and never starts subsequent IO after late settlement", async stage => {
+    const f = await fixture();
+    const db = dbFor();
+    const query = (db.select as any)();
+    vi.mocked(db.select).mockClear();
+    const gate = deferred<any[]>();
+    let calls = 0;
+    query.limit.mockImplementation(() => ++calls === stage ? gate.promise
+      : Promise.resolve([{ id: attemptId, orgId, runId }]));
+    const get = vi.spyOn(f.storage, "getObject");
+    const append = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const pending = f.compact(f.payload, db).then(payload => { append(payload); return payload; });
+      await vi.advanceTimersByTimeAsync(5_001);
+      const result = await pending;
+      expectInlineUnavailable(result, f.text);
+      expect(append).toHaveBeenCalledTimes(1);
+      gate.resolve([{ id: stage === 1 ? attemptId : spanId, orgId, runId, attemptId }]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(query.limit).toHaveBeenCalledTimes(stage);
+      expect(get).not.toHaveBeenCalled();
+      expect(append).toHaveBeenCalledTimes(1);
+      expectInlineUnavailable(result, f.text);
+    } finally { vi.useRealTimers(); }
+  });
+  it.each([1, 2])("observes late rejection from linkage select %i without a second append", async stage => {
+    const f = await fixture();
+    const db = dbFor();
+    const query = (db.select as any)();
+    const gate = deferred<any[]>();
+    let calls = 0;
+    query.limit.mockImplementation(() => ++calls === stage ? gate.promise
+      : Promise.resolve([{ id: attemptId, orgId, runId }]));
+    const get = vi.spyOn(f.storage, "getObject");
+    const append = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const pending = f.compact(f.payload, db).then(payload => { append(payload); return payload; });
+      await vi.advanceTimersByTimeAsync(5_001);
+      expectInlineUnavailable(await pending, f.text);
+      gate.reject(new Error("late DB failure"));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(append).toHaveBeenCalledTimes(1);
+      expect(get).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it.each(["resolve", "reject", "resolve_destroy_error"] as const)("bounds unresolved object acquisition; safely handles late %s", async settlement => {
+    const f = await fixture();
+    const gate = deferred<{ stream: Readable }>();
+    const get = vi.spyOn(f.storage, "getObject").mockReturnValue(gate.promise);
+    const append = vi.fn();
+    const stream = settlement === "resolve_destroy_error"
+      ? new Readable({ read() {}, destroy(_error, callback) { callback(new Error("late stream close failure")); } })
+      : Readable.from([Buffer.from(f.text)]);
+    vi.useFakeTimers();
+    try {
+      const pending = f.compact().then(payload => { append(payload); return payload; });
+      await vi.advanceTimersByTimeAsync(5_001);
+      const result = await pending;
+      expectInlineUnavailable(result, f.text);
+      expect(get).toHaveBeenCalledTimes(1);
+      if (settlement !== "reject") gate.resolve({ stream });
+      else gate.reject(new Error("late object failure"));
+      await vi.advanceTimersByTimeAsync(10_000);
+      if (settlement !== "reject") expect(stream.destroyed).toBe(true);
+      expectInlineUnavailable(result, f.text);
+      expect(append).toHaveBeenCalledTimes(1);
+      expect(f.deleteObject).not.toHaveBeenCalled();
+    } finally { stream.destroy(); vi.useRealTimers(); }
+  });
+  it("uses the same deadline across DB, acquisition and a stalled stream, not a fresh stream budget", async () => {
+    const f = await fixture();
+    const db = dbFor();
+    const query = (db.select as any)();
+    query.limit.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve([{ id: attemptId, orgId, runId }]), 2_000)));
+    query.limit.mockResolvedValueOnce([{ id: spanId, orgId, runId, attemptId }]);
+    const stream = new Readable({ read() {} });
+    vi.spyOn(f.storage, "getObject").mockImplementation(() => new Promise(resolve => setTimeout(() => resolve({ stream }), 2_000)));
+    const append = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const pending = f.compact(f.payload, db).then(payload => { append(payload); return payload; });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(append).not.toHaveBeenCalled();
+      expect(stream.destroyed).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expectInlineUnavailable(await pending, f.text);
+      expect(stream.destroyed).toBe(true);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(append).toHaveBeenCalledTimes(1);
+    } finally { stream.destroy(); vi.useRealTimers(); }
   });
 });
