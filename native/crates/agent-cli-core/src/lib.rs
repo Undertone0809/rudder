@@ -216,16 +216,12 @@ fn write_error(error: &CliError, json_output: bool, stderr: &mut dyn Write) {
             .unwrap_or_else(|_| "{\"error\":\"CLI error\"}".to_owned());
         let _ = writeln!(stderr, "{payload}");
     } else if let Some(status) = error.status {
-        let code = escape_terminal_controls(&error.code);
         let message = escape_terminal_controls(&error.message);
         if let Some(details) = error.details.as_ref().filter(|value| !value.is_null()) {
             let details = escape_terminal_controls(&details.to_string());
-            let _ = writeln!(
-                stderr,
-                "API error {status} [{code}]: {message} details={details}"
-            );
+            let _ = writeln!(stderr, "API error {status}: {message} details={details}");
         } else {
-            let _ = writeln!(stderr, "API error {status} [{code}]: {message}");
+            let _ = writeln!(stderr, "API error {status}: {message}");
         }
     } else {
         let message = escape_terminal_controls(&error.message);
