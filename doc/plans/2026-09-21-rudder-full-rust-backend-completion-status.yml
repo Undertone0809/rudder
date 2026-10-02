@@ -38,7 +38,8 @@ current_candidate:
     postgres_runtime_grant: v5_lease_released_after_verifier_PASS_owned_cleanup_verified_no_current_grant
     historical_c89_installed_assets: absent_do_not_reuse_as_current_ready
     historical_donor_node_modules: absent_do_not_reuse_saved_READY_preflight
-    native_TCP_successor: v5_stage_accept_independent_verifier_PASS_source_built_only_final_review_pending
+    native_TCP_successor: v5_stage_accept_independent_verifier_PASS_final_review_accept_source_built_TCP_only
+    native_TCP_final_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-final-review.json
     native_TCP_verifier_sha256: 29d6baa24a88b6e26ef371171a9229b82ad38d19e3a203cc0d7ae7b5e4f2eec2
     native_TCP_migration_limit: journal179_tool_reports181_pending_no_applied_ledger_count_readback_not_migration_authority_acceptance
     native_TCP_root: /private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3
@@ -50,17 +51,18 @@ current_candidate:
     installed_preparation: independent_Euler_accept14_tarballs6_binaries_real_postinstall_not_runtime_PASS
     installed_preparation_receipt: artifacts/2026-10-02-rudder-native-auth-installed-artifact-preparation-review.json
     installed_binding_sha256: fa9c211a2a8e5a5e79ea78f3522bd9f8b42a8cdfd4e91844950235ff949e61b1
-    native_CLI: checkpoint6e0fece67_terminal_control_fix10_author_tests_PASS_changed_risk_review_pending_Node_defaults_retained
+    native_CLI: checkpoint1652650a1_compatible_terminal_control_fix10_author_tests_PASS_source_stage_accept_Node_defaults_retained
+    native_CLI_stage_receipt: artifacts/2026-10-02-rudder-native-member-cli-1652650-stage-review.json
     current_remote_records_head: 99aa299c0e139c0b8a485f2d24cd692fbfd9968a
     current_remote_CI: 20_SUCCESS_1_SKIPPED_1_GitGuardian_FAILURE_no_pending_observed
     board_UI: replacement_isolated_browser_TaskSpace_approval_pending
   gates:
     public_TCP_verifier: PASS_v5_11criteria15requests0Nodegrants_owned_cleanup_donor_preservation_source_built_only
     installed_auth_verifier: pending_current_assets_preparation_review_accept_runtime_packet_preparing
-    final_reviewer: pending
+    final_reviewer: accept_source_built_TCP_only_installed_and_aggregate_pending
     security_check: historical_commit_alert_unresolved_not_waived
     aggregate_PR236_acceptance: pending
-  next_executable: collect_v5_final_review_and_CLI6e0_changed_risk_stage_then_freeze_installed_and_CLI_real_service_candidates_new_exclusive_PG_lease_required
+  next_executable: finish_corrected_installed_packet_and_CLI_real_service_harness_stage_review_then_distinct_verifier_under_new_exclusive_PG_lease_security_still_blocks_merge
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 historical_candidate_2026_09_29:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss

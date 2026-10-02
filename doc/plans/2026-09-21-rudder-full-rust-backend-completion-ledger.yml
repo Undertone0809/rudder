@@ -11,12 +11,14 @@ source:
   ci_receipt: artifacts/2026-10-02-rudder-native-auth-ci-evidence-audit.json
   acceptance: pending_public_TCP_installed_auth_and_final_review_security_unresolved
   current_records_remote_sha: 99aa299c0e139c0b8a485f2d24cd692fbfd9968a
-  tcp_v5: {stage: accept, verifier: PASS, final_review: pending, public_observations: 15, criteria: 11, Node_grant_calls: 0, installed: false, full_identity_retired: false}
+  tcp_v5: {stage: accept, verifier: PASS, final_review: accept_source_built_TCP_only, public_observations: 15, criteria: 11, Node_grant_calls: 0, installed: false, full_identity_retired: false}
+  tcp_v5_final_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-final-review.json
   tcp_v5_verifier_sha256: 29d6baa24a88b6e26ef371171a9229b82ad38d19e3a203cc0d7ae7b5e4f2eec2
   tcp_v5_migration_limit: journal179_tool_reports181_pending_no_applied_ledger_count_readback_not_migration_authority_acceptance
   tcp_v5_packet_sha256: f4d259368540351646b6cc0a19eb68ce231ab6f393848ac630eedd6da4284bc9
   installed_artifact: {preparation_review: accept, tarballs: 14, native_targets: 6, real_postinstall: PASS, runtime_acceptance: pending}
-  explicit_native_member_CLI: {checkpoint: 6e0fece670be0c066024a652a583df6ee5be53e0, author_HTTP_fixture_tests: 10, stage: pending_changed_risk_review, prior_stage: needs_more_evidence, terminal_control_fix: checkpointed, real_service: pending, default_Node_retired: false, MCP_retired: false}
+  explicit_native_member_CLI: {checkpoint: 1652650a1aabc4f12a9ca61482f716763e51302d, author_HTTP_fixture_tests: 10, stage: accept_source_only, prior_stage: reject6e0_human_error_format, terminal_control_fix: checkpointed_compatible_format, real_service: pending, default_Node_retired: false, MCP_retired: false}
+  native_CLI_stage_receipt: artifacts/2026-10-02-rudder-native-member-cli-1652650-stage-review.json
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 historical_source_2026_09_29:
   candidate_sha: 719619b3006de870adf4430a1a845efff3c9ffab

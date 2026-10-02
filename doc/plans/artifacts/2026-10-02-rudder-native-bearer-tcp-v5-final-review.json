@@ -1,0 +1,90 @@
+{
+  "schema": "rudder.native-bearer-auth-tcp.independent-final-review/v1",
+  "verdict": "accept",
+  "level": "final handoff verdict for the exact acceptance slice only; not a PR or merge handoff",
+  "scope": "Source-built native server public-TCP pcp_ bearer authentication for GET /api/orgs/{orgId}/members/directory on the named synthetic fixture.",
+  "candidate": {
+    "branch": "codex/native-auth-security-fixture-20261002",
+    "commit": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "tree": "9345a28f7b4d87c081399617bf439c3464b2eddb",
+    "repoRoot": "/private/tmp/rudder-native-auth-security-fixture.Ky7IBH",
+    "trackedState": "clean"
+  },
+  "packetSha256": "f4d259368540351646b6cc0a19eb68ce231ab6f393848ac630eedd6da4284bc9",
+  "runnerSha256": "b82c045e4e93830e8b6a4343f613bb7d24458e5ee19cfb448c08c32d425cc3af",
+  "verifierSha256": "29d6baa24a88b6e26ef371171a9229b82ad38d19e3a203cc0d7ae7b5e4f2eec2",
+  "verifierEvidenceSha256": "e16098de31dfc0a20c8dffc932f24c97b4690a40dda29a16f40c758d11ee8e41",
+  "verificationBindings": {
+    "leaseSha256": "8c0c6603ebddc62311084eeeb12d5ed6fbccebb1680ca4fd2db44d65cdcfc452",
+    "stageReviewSha256": "9a2b791d35168771473e9a41e9987297e02953734c9ecb3d5de94bddea261cb0",
+    "noDatabasePreflightSha256": "011f432f711b4524edf3716aa6d233378cc6dc3b6e5a60c2b70af5e0cb93f5f1"
+  },
+  "sourceReview": {
+    "sourcePinsVerified": 8,
+    "reviewedFileSha256": {
+      "native/crates/server-foundation/src/native_bearer_auth.rs": "239571e8571369000b6b657662b95fc6da5c9b6ae93f0b5cde30a63df5d939c6",
+      "native/crates/server-foundation/src/public_ingress.rs": "9963248c70c51f187054382c7ec1c7e3046fef19e87726507744c0a3f4ee8532",
+      "native/crates/server-foundation/src/public_ingress_config.rs": "89f37aeeec90da21f2547129c2077d0ba7c40115aef169519ceea1848e6d30b4",
+      "native/crates/server-foundation/src/lib.rs": "9c90b7ea36754cd22e6888995500762b28083bb567a1dcf7e43f71d09c694432",
+      "native/bins/rudder-server-foundation/src/main.rs": "b17683ca338e7a6758c134a88dc074a771e24a65d57daf4e3b9b19b72acff48d"
+    },
+    "judgment": "The pcp_ branch hashes credentials and resolves Board keys with revocation/expiry and organization admin-or-active-membership checks; Agent keys are checked against revocation, owning agent/org, and the existing terminated/pending_approval auth policy. Recognized unknown/revoked keys do not fall through to Node; optional unauthorized keys retain the local-Board policy. Public ingress binds a short-lived signed actor envelope to request method/path/org/action/request-id/nonce, and the member-directory query filters active memberships by the requested organization. No blocking code defect was found for the packet's declared criteria."
+  },
+  "verifierEvidence": {
+    "verdict": "PASS",
+    "executionExitCode": 0,
+    "sourceBuiltBinarySha256": "e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0",
+    "publicHttpObservations": 15,
+    "packetCriteria": 11,
+    "allExpectedStatusesMatched": true,
+    "nodeGrantCalls": 0,
+    "unexpectedNodeUpstreamCalls": 0,
+    "rawEvidenceFiles": 48,
+    "rawEvidenceManifestHashesAndByteCountsVerified": true,
+    "sourcePinsMatchCandidate": true,
+    "candidateAndPacketBindingsRechecked": true,
+    "serverProcesses": {
+      "count": 3,
+      "allStoppedBySigtermWithExitCode0": true,
+      "allPrivateAndPublicPortsReleased": true
+    },
+    "fixtureCleanup": {
+      "postgresPidGone": true,
+      "port55492Released": true,
+      "ownedRuntimeDirectoryRemoved": true,
+      "cleanupVerified": true
+    },
+    "donorPreservation": {
+      "binarySha256BeforeAndAfter": "e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0",
+      "binaryInodeBeforeAndAfter": 980065303,
+      "dirtyDiffSha256BeforeAndAfter": "6c150fce2d3f5cf03628e8a48bd6a9386604633c01bc3da2e28d1cf7a8fa2496",
+      "preserved": true
+    }
+  },
+  "migrationQualification": {
+    "journalEntryCount": 179,
+    "migrationToolOutput": "Applying 181 pending migration(s)... Migrations complete",
+    "databaseAppliedMigrationRowCountReadBack": false,
+    "claimLimit": "179 is the pinned journal-entry count only. No claim is made that 179 migration rows were applied or read back. This does not change the 11 HTTP criteria results; this review grants no migration-count authority."
+  },
+  "scopeLimits": [
+    "Not installed-artifact acceptance.",
+    "Not full identity/auth retirement, cookie/JWT retirement, or Node-auth acceptance.",
+    "Not default CLI, MCP, full-product, or goal completion acceptance.",
+    "No aggregate PR handoff or merge readiness is asserted."
+  ],
+  "blockers": [
+    {
+      "scope": "aggregate PR merge readiness",
+      "status": "blocked",
+      "reason": "GitGuardian remains FAILURE and unresolved/unwaived per the current CI record; this slice verdict does not clear that gate."
+    }
+  ],
+  "reviewerActions": {
+    "sourceEdits": false,
+    "buildOrTestRun": false,
+    "databaseOrRuntimeAction": false,
+    "publicRequests": false,
+    "verifierLeaseUse": false
+  }
+}
