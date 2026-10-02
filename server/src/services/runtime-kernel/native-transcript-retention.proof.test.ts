@@ -4,7 +4,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { proveSealedNativeRunTranscript } from "./native-transcript-retention.js";
+import { cleanSealedNativeTranscriptMirrors, proveSealedNativeRunTranscript } from "./native-transcript-retention.js";
+import { createTranscriptObjectStore } from "./transcript-object-store.js";
 import { createTranscriptReader, type NativeTranscriptReadInput, type TranscriptPage, type TranscriptReader } from "./transcript-reader.js";
 import { databaseBinding, databaseRun, databaseSegment, databaseSpan, mockDatabase } from "./transcript-reader.test-support.js";
 
@@ -63,10 +64,63 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   const scope = { orgId: "org-1", runId: "run-1", spanId: "span-1", principal: { type: "board", orgId: "org-1", authorized: true } };
   const prove = (override: TranscriptReader = reader) => proveSealedNativeRunTranscript({ db: db as never,
     reader: override, orgId: scope.orgId, runId: scope.runId });
-  return { reader, scope, prove, native, span, sessionFile, original, requests };
+  return { reader, scope, prove, native, span, sessionFile, original, requests, attempt };
 }
 
 describe("sealed native retention exact-range proof", () => {
+  it.each(["tool_call", "assistant", "events_only", "log_only", "excerpt_only"] as const)("retains unproven %s despite two complete native traversals", async (kind) => {
+    const f = await fixture(201);
+    const store = createTranscriptObjectStore(path.join(path.dirname(f.sessionFile), "objects"));
+    const binding = { orgId: "org-1", runId: "run-1", spanId: "span-1", ownerToken: "owner-1" };
+    const entry = kind === "tool_call"
+      ? { kind: "tool_call" as const, ts: new Date(0).toISOString(), name: "supplement-only-tool", input: { missingFromNative: true } }
+      : { kind: "assistant" as const, ts: new Date(0).toISOString(), text: "supplement-only assistant fragment" };
+    const hasSupplement = kind === "tool_call" || kind === "assistant";
+    const objectRef = await store.write({ ...binding, entries: [entry] });
+    f.span.supplementalObjectRef = hasSupplement ? objectRef : null;
+    f.span.sourceRevision = null;
+    const result = await f.prove();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    expect(f.native).toHaveBeenCalledTimes(6);
+    const readInput = { ...binding, objectRef };
+    const before = await store.readRange(readInput);
+    const stage = vi.spyOn(store, "stageSealedRemoval");
+    const purge = vi.spyOn(store, "purgeStagedRemoval");
+    const run = databaseRun({ status: "succeeded", executionOwnerToken: null, terminalEffectsPending: false,
+      processExitedAt: new Date(0), ...(kind === "excerpt_only" ? { stdoutExcerpt: "retained fragment" }
+        : { logStore: "local_file", logRef: "retained.log", logSha256: "a".repeat(64) }) });
+    const events = kind === "log_only" || kind === "excerpt_only" ? []
+      : [{ id: 1, payload: { spanId: "span-1", attemptId: "attempt-1", entry } }];
+    const rows = [[run], [f.span], [{ ...f.attempt, orgId: "org-1", runId: "run-1" }], events, []];
+    const select = vi.fn(() => {
+      const values = rows.shift()!;
+      const query: any = { then: (resolve: (value: unknown) => unknown) => Promise.resolve(values).then(resolve) };
+      for (const method of ["from", "where", "for", "orderBy", "limit"]) query[method] = () => query;
+      return query;
+    });
+    const tx = { select, execute: vi.fn(), update: vi.fn(() => { throw new Error("unexpected SQL update"); }),
+      delete: vi.fn(() => { throw new Error("unexpected SQL delete"); }) };
+    const logStore = { stageRunRemoval: vi.fn(), purgeStagedRunRemoval: vi.fn(), restoreStagedRunRemoval: vi.fn() };
+    const compact = vi.fn();
+    await expect(cleanSealedNativeTranscriptMirrors({
+      db: { transaction: async (callback: (value: unknown) => unknown) => callback(tx) } as never,
+      proof: result.proof, transcriptObjectStore: store, runLogStore: logStore as never,
+      readerFactory: () => f.reader, retainResultJson: vi.fn(), compactAdapterInvokePayload: compact,
+    })).resolves.toEqual({ cleaned: false, reason: hasSupplement ? "supplement_native_coverage_unproven"
+      : kind === "events_only" ? "transcript_events_native_coverage_unproven" : "run_log_native_coverage_unproven" });
+    expect(stage).not.toHaveBeenCalled();
+    expect(purge).not.toHaveBeenCalled();
+    expect(logStore.stageRunRemoval).not.toHaveBeenCalled();
+    expect(logStore.purgeStagedRunRemoval).not.toHaveBeenCalled();
+    expect(tx.update).not.toHaveBeenCalled();
+    expect(tx.delete).not.toHaveBeenCalled();
+    expect(compact).not.toHaveBeenCalled();
+    expect(f.span.supplementalObjectRef).toBe(hasSupplement ? readInput.objectRef : null);
+    expect(await store.readRange(readInput)).toEqual(before);
+    expect(await fs.readFile(f.sessionFile, "utf8")).toBe(f.original);
+  });
+
   it("proves the actual Pi small range despite an intentionally limited one-item probe", async () => {
     const f = await fixture(8);
     const full = await f.reader.readRun({ ...f.scope, limit: 200 });

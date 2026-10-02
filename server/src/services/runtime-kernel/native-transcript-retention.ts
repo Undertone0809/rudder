@@ -475,6 +475,21 @@ export async function cleanSealedNativeTranscriptMirrors(input: {
       const prepared = await selectAndVerifyNativeTranscriptCleanupState(tx, input.proof);
       if (!prepared) throw new Error("cleanup_identity_mismatch");
 
+      // The proof covers only the selected native range, not the retained
+      // supplements, events or raw log. Until an independently verifiable
+      // coverage/equivalence contract exists, preserve every such mirror.
+      // Keep this gate before staging, compaction and all SQL mutations.
+      if (input.proof.spans.some((span) => span.supplementalObjectRef)) {
+        throw new Error("supplement_native_coverage_unproven");
+      }
+      if (prepared.transcriptEvents.length > 0) {
+        throw new Error("transcript_events_native_coverage_unproven");
+      }
+      if (prepared.run.logRef || prepared.run.logStore
+        || prepared.run.stdoutExcerpt || prepared.run.stderrExcerpt) {
+        throw new Error("run_log_native_coverage_unproven");
+      }
+
       if (input.proof.spans.some((span) => span.supplementalObjectRef)
         && (!input.transcriptObjectStore.stageSealedRemoval
           || !input.transcriptObjectStore.restoreStagedRemoval
