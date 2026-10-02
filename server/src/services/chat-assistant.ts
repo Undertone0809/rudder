@@ -26,6 +26,7 @@ import { buildRuntimeProviderProfileSnapshot, runtimeConfigFromProviderProfileSn
 import type { StorageService } from "../storage/types.js";
 import { approvalService } from "./approvals.js";
 import { chatAgentRunService } from "./chat-agent-runs.js";
+import { sideChatRuntimeAdmissionSnapshot } from "./chat-assistant.admission-snapshot.js";
 import { chatBindingInstructionsRevision } from "./chat-assistant.binding-revision.js";
 import { assertClaudeSideChatInputSafe, canRestartPristineClaudeFork, claudeForkFenceForRun, recoverClaudeDeferredForkRun } from "./chat-assistant.claude-fork-recovery.js";
 import { cursorAcpTimeoutEvidence } from "./chat-assistant.cursor-diagnostics.js";
@@ -72,40 +73,13 @@ import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
 import { createRuntimeApprovalBridge } from "./runtime-kernel/runtime-approval.js";
-import { sha256JsonDigest } from "./runtime-kernel/unified-agent-run.persistence-support.js";
 import { admitSideChatRuntimeFork, type SideChatRuntimeAdmission } from "./side-chat-runtime-admission.js";
 
 export type { ChatAssistantStaleOutcome } from "./chat-assistant.execution-owner.js";
 export * from "./chat-assistant.helpers.js";
 export * from "./chat-assistant.runtime-overrides.js";
 
-export function sideChatRuntimeAdmissionSnapshot(input: {
-  admission: SideChatRuntimeAdmission;
-  sourceSelectorJson: NativeSpanSelector | null;
-  deferredForkDescriptor?: unknown;
-}) {
-  const { admission } = input;
-  return {
-    continuity: admission.continuity,
-    sourceConversationId: admission.sourceConversationId,
-    sourceMessageId: admission.sourceMessageId,
-    sourceRunId: admission.sourceRunId,
-    sourceBoundaryRef: admission.sourceBoundaryRef,
-    sourceSpanId: admission.sourceSpanId,
-    sourceSelectorJson: input.sourceSelectorJson,
-    span: {
-      id: admission.sourceSpanId,
-      runId: admission.sourceRunId,
-      selectorJson: input.sourceSelectorJson,
-    },
-    providerCapability: admission.providerCapability,
-    downgradeReason: admission.downgradeReason,
-    sessionIntentDigest: sha256JsonDigest(admission.sessionIntent),
-    ...(input.deferredForkDescriptor
-      ? { deferredForkDescriptor: input.deferredForkDescriptor }
-      : {}),
-  };
-}
+export { sideChatRuntimeAdmissionSnapshot } from "./chat-assistant.admission-snapshot.js";
 
 function adapterSupportsLocalAgentJwt(
   adapter: ReturnType<typeof findServerAdapter>,

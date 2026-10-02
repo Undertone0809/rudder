@@ -79,7 +79,8 @@ import {
   createHeartbeatExecutionTranscriptSupplement,
   resolveHeartbeatExecutionTranscriptRetention,
 } from "./heartbeat.execute-transcript-retention.js";
-import { acknowledgeUnstartedWriter, createPersistRunningExecutionContext, providerIdentityFromResult } from "./heartbeat.execution-state.js";
+import { cleanupHeartbeatExecution } from "./heartbeat.execution-cleanup.js";
+import { createPersistRunningExecutionContext, providerIdentityFromResult } from "./heartbeat.execution-state.js";
 import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
@@ -1799,15 +1800,11 @@ export function createHeartbeatExecuteHandlers(context: any) {
             await completeTerminalControlEffects(terminalRun).catch(() => undefined);
           }
         } finally {
-          if (executionLeaseTimer) clearInterval(executionLeaseTimer);
-          await acknowledgeUnstartedWriter({
-            runId: run.id, spanId: commonSpanId, runWasRunningAtEntry,
-            providerDispatchStarted, acknowledge: acknowledgeRunProcessExit,
+          await cleanupHeartbeatExecution({
+            run, executionLeaseTimer, commonSpanId, runWasRunningAtEntry,
+            providerDispatchStarted, acknowledgeRunProcessExit, releaseRuntimeServicesForRun,
+            runAbortControllers, activeRunExecutions, networkSuspended, startNextQueuedRunForAgent,
           });
-          await releaseRuntimeServicesForRun(run.id).catch(() => undefined);
-          runAbortControllers.delete(run.id);
-          activeRunExecutions.delete(run.id);
-          if (!networkSuspended) await startNextQueuedRunForAgent(run.agentId);
         }
   }
 
