@@ -680,17 +680,52 @@ describe("chatAgentRunService", () => {
     const instructionStack = `Instruction stack ${"i".repeat(12_000)}`;
     const productReply = "Useful bounded product reply ".repeat(120);
     const earlierAttemptPrompt = "earlier fallback attempt remains fully auditable";
-    await svc.appendAdapterInvoke({
+    // Distinct Instructions keep this case about raw-prompt retention, not
+    // the separately tested equal-prompt snapshot alias optimization.
+    const earlierInstructionStack = "earlier instructions remain independently auditable";
+    const earlierRun = {
       ...run,
-      runtimeSpanId: "earlier-attempt-span",
-      runtimeAttemptRef: { id: "earlier-attempt-id", attemptIndex: 0 },
-    }, {
-      agentRuntimeType: "claude_local",
-      command: "claude",
+      runtimeAttemptRef: { ...run.runtimeAttemptRef! },
+    };
+    await svc.appendAdapterInvoke(earlierRun, {
+      agentRuntimeType: "pi_local",
+      command: "pi",
       prompt: earlierAttemptPrompt,
-      agentInstructionStack: earlierAttemptPrompt,
+      agentInstructionStack: earlierInstructionStack,
       context: { fallbackAttempt: true },
     }, []);
+    await svc.finishRuntimeAttempt(run, {
+      status: "failed",
+      submissionPhase: "pre_submission",
+      error: "fixture provider call was never made",
+    });
+    await svc.recordNativeExecutionResult(run.id, {
+      exitCode: 1, signal: null, timedOut: false,
+      nativeWriterQuiescence: { status: "confirmed", source: "process_exit" },
+    }, {
+      orgId: run.orgId,
+      spanId: run.runtimeSpanId,
+      ownerToken: run.runtimeSpanOwnerToken!,
+      attemptEpoch: run.runtimeSpanAttemptEpoch,
+      error: true,
+    });
+    await svc.beginRuntimeAttempt(run, {
+      attemptIndex: 1, fallbackIndex: 1, runtimeType: "pi_local",
+      model: null, isFallback: true, resumeSource: "pristine_replay",
+    });
+    expect(run.runtimeSpanId).not.toBe(earlierRun.runtimeSpanId);
+    expect(run.runtimeAttemptRef!.id).not.toBe(earlierRun.runtimeAttemptRef.id);
+    // A current Attempt cannot legitimize a foreign span; a real prior
+    // Attempt/span also cannot append after the owned fence advances.
+    for (const rejectedRun of [
+      { ...run, runtimeSpanId: "foreign-attempt-span" },
+      earlierRun,
+    ]) {
+      await expect(svc.appendAdapterInvoke(rejectedRun, {
+        agentRuntimeType: "pi_local", command: "pi",
+        prompt: "rejected stale invocation", agentInstructionStack: "rejected stale invocation",
+      }, [])).rejects.toThrow("Chat invocation has no original local owner");
+    }
     await svc.appendAdapterInvoke(run, {
       agentRuntimeType: "pi_local",
       command: "pi",
@@ -706,7 +741,14 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
     const stagedEvent = stagedEvents.find((event) => event.payload?.invocationAttemptId === run.runtimeAttemptRef!.id);
+    const stagedEarlierEvent = stagedEvents.find((event) => event.payload?.invocationAttemptId === earlierRun.runtimeAttemptRef.id);
+    expect(stagedEvents).toHaveLength(2);
+    expect(stagedEvents.map((event) => event.payload?.invocationAttemptId).sort()).toEqual([
+      earlierRun.runtimeAttemptRef.id, run.runtimeAttemptRef!.id,
+    ].sort());
     expect(stagedEvent?.payload).toMatchObject({ prompt });
+    expect(stagedEarlierEvent?.payload).toMatchObject({ prompt: earlierAttemptPrompt });
+    await expectSnapshotInstructions(stagedEarlierEvent, earlierInstructionStack);
     await expectSnapshotInstructions(stagedEvent, instructionStack);
     expect(stagedEvent?.seq).toBeTruthy();
 
@@ -728,7 +770,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
     const retainedEvent = compactedEvents.find((event) => event.payload?.invocationAttemptId === run.runtimeAttemptRef!.id);
-    const earlierInvoke = compactedEvents.find((event) => event.payload?.invocationAttemptId === "earlier-attempt-id");
+    const earlierInvoke = compactedEvents.find((event) => event.payload?.invocationAttemptId === earlierRun.runtimeAttemptRef.id);
     const payload = retainedEvent?.payload as Record<string, unknown>;
     const [finalizedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
     const retainedResult = finalizedRun?.resultJson as Record<string, unknown>;
@@ -737,6 +779,9 @@ describe("chatAgentRunService", () => {
     expect(earlierInvoke?.payload).toMatchObject({
       prompt: earlierAttemptPrompt,
     });
+    expect(earlierInvoke?.id).toBe(stagedEarlierEvent?.id);
+    expect(earlierInvoke?.seq).toBe(stagedEarlierEvent?.seq);
+    await expectSnapshotInstructions(earlierInvoke, earlierInstructionStack);
     expect(payload).toMatchObject({ prompt });
     await expectSnapshotInstructions(retainedEvent, instructionStack);
     expect(payload.context).toMatchObject({ chatMode: true, privatePromptContext: "private context marker" });
