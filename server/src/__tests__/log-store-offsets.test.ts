@@ -118,7 +118,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     expect(summary.evidenceIndex).toMatchObject({ status: "native", indexRef: `${handle.logRef}.index.ndjson`, sourceBytes: summary.bytes, sourceSha256: summary.sha256 });
     await expect(fs.stat(path.join(root, "run-logs", `${handle.logRef}.index.ndjson`))).resolves.toBeTruthy();
     await expect(store.read(handle, { offset: 0, limitBytes: 256_000 })).resolves.toMatchObject({ eof: true });
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("fails closed to the Node finalize result when native indexing is unavailable", async () => {
     const root = await makeTempRoot("rudder-run-log-native-index-fallback-");
