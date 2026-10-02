@@ -1,6 +1,41 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+execution_checkpoint_2026_10_03_xhigh:
+  supersedes: live_execution_and_preparation_fields_below_only_historical_receipts_preserved
+  configuration: actual_subagents_gpt6luna_xhigh_no_new_threads
+  published_head: 1ef6db8594e7d7e778730d16657f1462730d054e
+  installed_source: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
+  current_CI: exact1ef_observed2345Z_18_SUCCESS_1_IN_PROGRESS_Ubuntu_1_SKIPPED_0_FAIL_not_allgreen
+  CI_observation: /private/tmp/rudder-pr236-ci1ef-observation-20261003.json
+  Main: 8eedffad752c6065803cc880c7f48e92052c62c7
+  MCP_v11:
+    state: actual_Hooke_13_PASS_parent_terminal_FULLread_final_Newton_pending
+    source: 04624877aacc2d5d834f7f1bea14cff1a1d6aa18
+    stage_sha256: 6a65757b869ffdd427d0e6eadc1a9c97442e085e593f0a617a43c01c777dfc9a
+    raw_sha256: bda33e17910554f512abb7d7371c00def1ac4f3f2d82d9146a376621aad9be30
+    PG: CLOSED_c982bc_exact_original_OPENc7e30_archived_parent_cleanup_reconciled
+    verifier_sha256: 0a130b0b24fa74fd434ee30d4d1ffcc4852cf7ffd3dfc091aa4338e30304752f
+    terminal_sha256: 8f95ac4da0eac72ce3426d059cd868c0338bc756ebdea7e7d09a1f59468cfd99
+    receipt_clarification: owner_label_transcription_typo_issuer_addendum_pending_original_bytes_preserved
+    parent_cleanup: all106_checkpoint_hashes_match_44PIDs38groups_absent_fourports_closed_runtime_absent
+    durable_root: /Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy/mcp-v11-hooke-attempt1
+    next: issuer_addendum_then_Newton_final_review_exact_local_tuple_no_default_or_retirement_claim
+  attachment_v4:
+    stage: ACCEPT_Huygens_parent_FULLread_not_product_acceptance
+    stage_sha256: 3ffba93e345fd98ea2842b0fb0485a36a7af725a163b79a65c5b30ae7fa8006c
+    verifier: Halley_READY_actual01a0fef8_distinct_host_identity_unchanged
+    PG: exclusive_OPEN_v4_Halley_attempt1_after_MCP_CLOSED_and_parent_empty_profile_attestation
+    lease_sha256: e3ff41c29b010a08da74b1f2fd12cdd242a94e0556c552a8b4492d01b0579bdf
+    lease: /private/tmp/rudder-resource-attachment-current646-preparation-20261003/parent-open-v4-halley-attempt1.json
+    next: same_actual_Halley_run_terminal_and_owned_cleanup_parent_archive_CLOSE_then_Huygens_final_if_PASS
+    scope: seven_API_attachment_hydration_criteria_no_Board_editor_or_whole_criterion8
+  C07_v3:
+    stage: ACCEPT_Jason_parent_FULLread_not_product_acceptance
+    stage_sha256: ab23fc8b26e36ffb1c0e13dcaa0442e09e4b004920574faf84a91806ab468f5c
+    PG: NO_OPEN
+    scope: bounded_fullseed_importroot_interactive_merge_PATCH_leaf_not_aggregateC07
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 status: in_progress
 current_candidate:
   source_sha: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
