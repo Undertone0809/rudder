@@ -5,8 +5,12 @@ source:
   candidate_sha: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
   candidate_tree: faf5f2b8d4d62a34b8cb9be8da3a16ef7bb8a8e0
   main_last_observed: 8eedffad752c6065803cc880c7f48e92052c62c7
-  publication: PR236_DRAFT_docsdc9_remote_verified_runtime646_aggregate_pending
-  publication_snapshot: dc9bc0199aab2168aaac02a13627d7482c07d2de
+  publication: PR236_DRAFT_docsae27_remote_verified_runtime646_aggregate_pending
+  publication_snapshot: ae27b11d3dd40cafa238e4f82349de5de8e6a7c5
+  current_CI: exact_ae27_20_SUCCESS_1_SKIPPED_0_FAIL_0_PENDING_not_product_acceptance
+  native_MCP_checkpoint: {candidate: 234f1ca0af6078977a662d7cd325fd9824159ed5, tree: 3e188c82983753878b8a4c49152af4f06865450e, binary_sha256: 8e1f9d11a0222d50fb4acd147438f451a3632976e480e183f0ca2da8a6e4f455, parent_checks: contract12_frame_local2_ID2_stdio12_fmt_Clippy_build_PASS, predecessor: 87eb_stage_REJECT_coalesced_parse_errors_preserved, source_stage: pending, independent_real_entry: pending, default_path_verified: false, old_authority_retired: false, publication: local_only}
+  C01_standalone646: {scope: bounded_standalone_predecessor180_pending0178_to_current181_diagnostic_only, verifier: PASS_attempt2, verifier_sha256: c02dc9e570b119fc2645a4ea64424b7920a00cb7baa93d820367684d8a54bf3d, final: accept, final_sha256: 32320278ab20223fd94321f5f5195ac9a511d4149e2df6dc763fc77e35c5fd0c, cleanup: parent_verified_CLOSED_PASS, whole_C01: pending, installed_default_preflight: false, SQLx_apply: false}
+  C06_current646: {attempt1: QUESTION_evidence_basename_rejected_before_runtime, receipt_sha256: d98cc670c564eca11b3c35d676e9751e070fb9c729fbea27d92d568577656ef4, attempt1_closed: true, attempt2: independent_verifier_running_same_frozen_code_corrected_invocation, aggregate: pending}
   aggregate_stage: Raman_ACCEPT_packet_and_nextsteps_only_current646_C10outage_C03C05_leafPASSfinalACCEPT_other_leaf_aggregate_and_UI_pending
   C03_C05_installed646: {verifier: PASS_bounded_create_rollback_retry_committed_restart_only, receipt_sha256: e059daba4c003dbdf9c511748715c3c7e2a5b463124a8ce9dda0cfbe0fd4b623, final: accept, final_sha256: 1662c6b7e30ba533c17b768e8796667b337de9e3253dbdc63e44b65da597b162, pending_failed_intent_restart: separate_current646_PASS_final_ACCEPT_leaf_only, aggregate: pending}
   separate_native_CLI: PR264_remote7ee_tests_only_source_equivalent_to_historical2cdd_PASS_finalACCEPT_artifact_finalACCEPT_platform_CI_running_not_default_or_retired
@@ -564,7 +568,7 @@ authority_rows:
     domain: agent_tooling
     authority_kind: rust_product_runtime
     current_authority: node_cli_and_mcp
-    rust_asset: native/crates/cli-mcp-contract-core and future Rust dispatch binaries
+    rust_asset: native/crates/cli-mcp-contract-core_native/bins/rudder-cli_and_native/bins/rudder-mcp_bounded_member_directory_entries
     public_entrypoint: installed CLI and managed MCP transport
     auth_scope: runtime-injected actor, organization, audience, command/tool allowlist
     transaction_boundary: shared Rust application service and mutation receipt
@@ -575,8 +579,8 @@ authority_rows:
     status: partially_implemented
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
     partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: true, default_path_verified: false, old_authority_retired: false}
-    partial_scope: selected_D1_operations_via_Node_clients_not_Rust_CLI_or_MCP_runtime
-    evidence_status: audited_at_948_equivalent_merged_e2_partial_scope_only_existing_tests_and_D1_v24_receipt_not_new_acceptance
+    partial_scope: selected_D1_operations_via_Node_clients_plus_explicit_native_CLI_member_directory_historical_independent_PASS_and_native_MCP_member_directory_local_checkpoint_only
+    evidence_status: native_CLI_historical2c_PASS_finalACCEPT_and_tests_only7ee_platform_CI_separate_from_native_MCP_234f_parent_socket_checks_after87eb_stage_reject_source_restage_and_real_Actix_verifier_pending_no_default_or_retirement_claim
     retirement_gate: installed CLI/MCP workflow and missing-Rust-binary negative proof
     next_action: phase_0 capability and fallback inventory
   - id: runtime.first_party_node_fallback_guards

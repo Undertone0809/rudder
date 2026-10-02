@@ -9,10 +9,10 @@ current_candidate:
   branch: codex/project-create-main56-20261002
   pr: https://github.com/Undertone0809/rudder/pull/236
   origin_main_last_observed: 8eedffad752c6065803cc880c7f48e92052c62c7
-  publication: DRAFT_unmerged_runtime646_docsdc9_remote_verified_independent_artifact_final_accept
-  documentation_head: dc9bc0199aab2168aaac02a13627d7482c07d2de
-  documentation_tree: c685b087d04d7b7ad984d474ea53c67bd3f7365e
-  documentation_review_sha256: a839b65ba07237bad775e2143e2af28383a70a621f80cffe0d835a1a57f305b4
+  publication: DRAFT_unmerged_runtime646_docsae27_remote_verified_independent_artifact_final_accept
+  documentation_head: ae27b11d3dd40cafa238e4f82349de5de8e6a7c5
+  documentation_tree: c6e83faf3440a1756f5f6daeec2318fc872c951f
+  documentation_review_sha256: 24a4595b85279d7c6f5581e0848c4ab3866d6891d52df3aa35a6ce9949dd0b81
   documentation_identity_scope: last_published_snapshot_not_self_referential_next_docs_commit
   source_authority_audit: artifacts/2026-10-02-rudder-authority-main56-source-audit-v2.json
   source_authority_audit_stage: artifacts/2026-10-02-rudder-authority-main56-source-audit-v2-stage-accept.json
@@ -29,7 +29,7 @@ current_candidate:
   MCP_verifier: artifacts/2026-10-02-rudder-mcp646-residual-v4-independent-pass.json
   MCP_final_review: artifacts/2026-10-02-rudder-mcp646-residual-v4-final-accept.json
   combined_CLI_MCP_v2: QUESTION_preserved_not_relabelled
-  current_CI: docsdc9_18_49Z_D1_six_artifacts_macOSpackaged_macOSVerify_SUCCESS_Ubuntu_WindowsVerify_IntelNative_WindowsNative_running_no_wholegreen
+  current_CI: exact_ae27_20_SUCCESS_1_SKIPPED_0_FAIL_0_PENDING_D1_six_artifacts_native_platform_Verify_and_macOS_packaged_smoke_complete_not_product_acceptance
   historical_641_CI: exact_head17_52Z_18_SUCCESS_1_IN_PROGRESS_Ubuntu_1_SKIPPED_0_FAIL_no_wholegreen
   historical_6d65_CI: 20_SUCCESS_1_SKIPPED_attempt2_matrix37033333507_SUCCESS_prior_attempt1_Intel_native_log_store_fixture5000ms_timeout_preserved_not_current641_CI
   historical_18a_CI: 20_SUCCESS_1_SKIPPED_0_FAIL_head_reverified2026_10_02T16_07Z_not_current6d65_CI
@@ -74,7 +74,34 @@ current_candidate:
     final_review_sha256: 85fed3895b6471ac186d47b20af6382691c7bcd566fd509ba6953680513cb58d
     limits: individual_PG_PID_not_separately_serialized_no_startup_auto_recovery_or_powerloss_claim
     contract: failed_precommit_intent_restart_before_caller_same_key_retry_not_startup_autocreate
-  remaining: C01_C06_C07_C14_finite_evidence_closure_attachment_proof_map_aggregate_verifier_final_current_UI
+  C01_standalone646:
+    scope: bounded_standalone_diagnostic_predecessor180_exact0178_pending_to_current181_only
+    verifier: PASS_distinct_Nash_attempt2
+    verifier_sha256: c02dc9e570b119fc2645a4ea64424b7920a00cb7baa93d820367684d8a54bf3d
+    raw_evidence_sha256: fbf03d0753f5370b7c39d4eb42a02a731edcd346a077b07e15a6aa1c55603974
+    final_reviewer: accept_Arendt_exact_subject
+    final_review_sha256: 32320278ab20223fd94321f5f5195ac9a511d4149e2df6dc763fc77e35c5fd0c
+    durable_evidence: /Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy/c01-current646
+    cleanup: parent_verified_PIDs_absent_port58089_closed_fixture_retained_lock_absent_exact_OPEN_archived_CLOSED_PASS
+    attempt1: QUESTION_missing_runs_directory_preserved_not_promoted
+    limits: no_whole_C01_installed_default_SQLx_apply_business_payload_or_aggregate_acceptance
+  C06_current646:
+    scope: one_existing_target_import_lost_Rust_hydration_response_recovery_only
+    attempt1: QUESTION_invalid_evidence_basename_before_scratch_or_runtime
+    attempt1_receipt_sha256: d98cc670c564eca11b3c35d676e9751e070fb9c729fbea27d92d568577656ef4
+    attempt1_closure: exact_OPEN530ac_archived_CLOSED_QUESTION_parent_empty_profiles_evidence_no_owned_runtime
+    attempt2: independent_Nash_running_corrected_basename_same_frozen_runner218ac_packet5a84_stagefb1b
+    lease_sha256: 4cc947622f596b7e348860b7aaeee9d45e43c9268d31f38107abb438aef24a04
+    lease_expires_utc: '2026-10-02T20:42:50.000Z'
+    PG_lane: exclusive_C06_until_parent_reconciles_terminal_cleanup
+  C14_current646:
+    stage_v2: REJECT_canonical_UUID_structure_missing_preserved
+    stage_v2_sha256: 19b8d8f69fd2790ee30ad044e6fe392c72c3133155ede2f802016e037551e3eb
+    successor_runner_sha256: 33fde80106d277cd091d2a9d712730f7ad9304bf0777dc5043c90bfd9a13cbb9
+    successor_packet_sha256: b41c9a36780b6b1debb2d5895810556d5c352e3d19b0259f494b456d5fa8205d
+    focused_checks: seven_pure_groups_and_artifact_preflight_PASS_no_PG_runtime
+    fresh_stage: pending_Russell_no_execution_lease
+  remaining: whole_C01_default_apply_C06_C07_C14_attachment_proof_map_aggregate_verifier_final_current_UI
   C03_C05_installed646:
     scope: public_create_transaction_rollback_two_injections_retry_and_committed_receipt_restart_replay_only
     verifier: PASS_one_attempt_parent_reconciled
@@ -111,6 +138,27 @@ current_candidate:
   CI_snapshot: /private/tmp/rudder-rust-current-ci-20261003-readonly.json
   CI_snapshot_sha256: 0f7b279c1cc2acee5898697986f142aac66e8c5aec37d0a971e05dc1df8e875a
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
+native_member_mcp_lane:
+  scope: explicit_read_only_Rust_stdio_member_directory_not_default_or_managed_MCP_retirement
+  worktree: /private/tmp/rudder-native-mcp-member-entry-20261003
+  branch: codex/native-mcp-member-entry-20261003
+  candidate: 234f1ca0af6078977a662d7cd325fd9824159ed5
+  tree: 3e188c82983753878b8a4c49152af4f06865450e
+  base: 94addf55ee2b99a9e9785fd2accd13e21b2dd96e
+  diff_sha256: 1523526c60e179e34d1cc6b331c7713334aae9a92d6af03a55904e1460428563
+  binary: /private/tmp/rudder-native-mcp-frame-fix.9ZydWz/debug/rudder-mcp
+  binary_sha256: 8e1f9d11a0222d50fb4acd147438f451a3632976e480e183f0ca2da8a6e4f455
+  predecessor: 87eb8483f9442e4aaedc4125be2adc74be85f439_source_stage_REJECT_coalesced_frame_drop_stranding_preserved_original_binary_17a_unchanged
+  implementation: checkpoint_committed_clean_shared_async_HTTP_transport_and_native_stdio_entry
+  author_checks: parent_contract_core12_frame_local2_request_ID_bounds2_stdio12_PASS_fmt_Clippy_warnings_denied_build_PASS_predecessor_CLI_member_directory12_PASS_not_repeated
+  author_checks_limit: socket_fixture_cases_not_independent_real_Actix_or_installed_acceptance
+  source_stage: independent_Ptolemy_ACCEPT_exact_234f_source_only_no_product_or_binary_execution_claim
+  source_stage_sha256: d267c14b3b5987c5002e56d3dde374e709708fb8331e0c8edcffb66d7fc08138
+  real_entry_preparation: Ohm_actual_runner_preparation_Actix_exact_7a_target_and_installed646_DB_fixture_helper_no_Node_API_grants
+  verifier: pending_no_product_PASS
+  default_path_verified: false
+  old_authority_retired: false
+  publication: LOCAL_ONLY_no_PR_or_CI_for_234f_auth262_CLI264_history_adaptation_unresolved
 native_member_cli_lane:
   scope: explicit_read_only_native_entry_not_default_CLI_or_MCP_retirement
   candidate: 7ee5601699699d78bf56d0e1ef5426d6828fd253
