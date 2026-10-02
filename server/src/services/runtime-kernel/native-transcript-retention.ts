@@ -172,13 +172,15 @@ function selectorBoundaryIsExact(value: unknown): boolean {
   }
 }
 
-async function readExactSpan(
+async function readExactSpanPass(
   reader: TranscriptReader,
   input: { orgId: string; runId: string; spanId: string },
-): Promise<{ sourceRevision: string; itemCount: number } | null> {
+): Promise<{ sourceRevision: string; itemCount: number; itemDigest: string } | null> {
+  const pageLimit = 200;
   let cursor: string | null = null;
   let revision: string | null = null;
   let itemCount = 0;
+  const digest = createHash("sha256");
   const seenCursors = new Set<string>();
 
   for (let pageCount = 0; pageCount < 100_000; pageCount += 1) {
@@ -188,18 +190,31 @@ async function readExactSpan(
       spanId: input.spanId,
       principal: { type: "board", orgId: input.orgId, authorized: true },
       cursor,
-      limit: 200,
+      limit: pageLimit,
     });
+    // Pi uses total_items=its effective page limit for a resumable stop as
+    // well as for hard index limits. Never erase the flag: only traverse a
+    // full page with an advancing cursor, then require a complete, unflagged
+    // exhausted tail. Byte/parse/index loss cannot become proof this way.
+    const pageSizeStop = page.limitReached?.reason === "total_items"
+      && Number.isSafeInteger(page.limitReached.maximum)
+      && page.limitReached.maximum > 0 && page.limitReached.maximum <= pageLimit
+      && page.items.length === page.limitReached.maximum
+      && page.completeness === "partial"
+      && nonEmpty(page.nextCursor);
     if (page.source !== "native"
       || page.availability !== "available"
-      || page.completeness !== "complete"
-      || page.limitReached
+      || (page.completeness !== "complete"
+        && !(page.completeness === "partial" && nonEmpty(page.nextCursor)))
+      || (page.limitReached && !pageSizeStop)
+      || page.truncated
       || !nonEmpty(page.revision)
       || (revision !== null && page.revision !== revision)
       || page.items.some((item) => item.runId !== input.runId || item.spanId !== input.spanId)) {
       return null;
     }
     revision ??= page.revision;
+    for (const item of page.items) digest.update(stableJson(item)).update("\n");
     itemCount += page.items.length;
     if (!page.nextCursor) break;
     if (page.nextCursor === cursor || seenCursors.has(page.nextCursor) || page.items.length === 0) return null;
@@ -209,26 +224,22 @@ async function readExactSpan(
   }
 
   if (!revision || itemCount === 0) return null;
-  const confirmation = await reader.readRun({
-    orgId: input.orgId,
-    runId: input.runId,
-    spanId: input.spanId,
-    principal: { type: "board", orgId: input.orgId, authorized: true },
-    cursor: null,
-    limit: 1,
-  });
-  if (confirmation.source !== "native"
-    || confirmation.availability !== "available"
-    // This one-item probe confirms the revision of the fully read range above.
-    // A pagination cursor makes the probe partial without making that range
-    // incomplete. Missing data or a byte/item budget cutoff still denies proof.
-    || (confirmation.completeness !== "complete"
-      && !(confirmation.completeness === "partial" && nonEmpty(confirmation.nextCursor)))
-    || confirmation.limitReached
-    || confirmation.items.length !== 1
-    || confirmation.revision !== revision
-    || confirmation.items.some((item) => item.runId !== input.runId || item.spanId !== input.spanId)) return null;
-  return { sourceRevision: revision, itemCount };
+  return { sourceRevision: revision, itemCount, itemDigest: digest.digest("hex") };
+}
+
+async function readExactSpan(
+  reader: TranscriptReader,
+  input: { orgId: string; runId: string; spanId: string },
+): Promise<{ sourceRevision: string; itemCount: number } | null> {
+  const first = await readExactSpanPass(reader, input);
+  if (!first) return null;
+  // Confirm the same complete selected range, not a one-item page that can
+  // honestly hit its own item budget. Two bounded traversals also detect a
+  // pruned tail or changed projection even if a provider reuses its revision.
+  const confirmation = await readExactSpanPass(reader, input);
+  if (!confirmation || confirmation.sourceRevision !== first.sourceRevision
+    || confirmation.itemCount !== first.itemCount || confirmation.itemDigest !== first.itemDigest) return null;
+  return { sourceRevision: first.sourceRevision, itemCount: first.itemCount };
 }
 
 export async function proveSealedNativeRunTranscript(input: {

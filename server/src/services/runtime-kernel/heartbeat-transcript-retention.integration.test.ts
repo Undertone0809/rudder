@@ -1326,9 +1326,11 @@ describe("heartbeat native transcript retention integration", () => {
     expect(await proveSealedNativeRunTranscript({ db, reader, orgId, runId: native.run.id }))
       .toMatchObject({ ok: true, proof: { itemCount: 2 } });
     for (const fault of ["cutoff", "revision", "empty", "unknown"] as const) {
+      let traversals = 0;
       const faultReader = { readRun: async (request: Parameters<typeof reader.readRun>[0]) => {
+        if (!request.cursor) traversals += 1;
         const page = await reader.readRun(request);
-        if (request.limit !== 1) return page;
+        if (traversals !== 2) return page;
         return { ...page,
           ...(fault === "cutoff" ? { limitReached: { reason: "page_bytes" as const, maximum: 1 } } : {}),
           ...(fault === "revision" ? { revision: "changed-revision" } : {}),
