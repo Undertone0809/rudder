@@ -1,0 +1,16 @@
+[package]
+name = "rudder-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rudder-cli"
+path = "src/main.rs"
+
+[dependencies]
+rudder-agent-cli-core = { path = "../../crates/agent-cli-core" }
+
+[dev-dependencies]
+serde_json = "1.0"
+tempfile = "3.23"
