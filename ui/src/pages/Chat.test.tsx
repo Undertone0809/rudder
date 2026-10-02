@@ -1757,6 +1757,56 @@ describe("interrupted chat messages", () => {
 });
 
 describe("failed chat retry", () => {
+  it.each([
+    { label: "with a Run ID", runId: "run-native-fork-unknown" },
+    { label: "without a Run ID", runId: null },
+  ])("keeps persisted unknown native-fork failures non-retryable after refresh $label", ({ runId }) => {
+    const payload = {
+      recoverableFailure: {
+        recoverable: false,
+        retryable: false,
+        code: "native_fork_acceptance_unknown",
+        action: "inspect_run",
+        message: "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.",
+        runId,
+      },
+    };
+    const refreshedMessage = message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      body: payload.recoverableFailure.message,
+      chatTurnId: "turn-native-fork-unknown",
+      runId,
+      structuredPayload: JSON.parse(JSON.stringify(payload)),
+    });
+    const html = renderChatMessageItem(refreshedMessage);
+
+    expect(canRetryFailedChatMessage(refreshedMessage)).toBe(false);
+    expect(html).toContain("Inspect and reconcile the Run");
+    expect(html).toContain("Do not retry this fork");
+    expect(html).not.toContain("retry when ready");
+    expect(html).not.toContain(">Retry</button>");
+  });
+
+  it("fails closed by unknown-fork code even if stale payload says retryable", () => {
+    expect(canRetryFailedChatMessage(message({
+      role: "assistant",
+      kind: "message",
+      status: "failed",
+      chatTurnId: "turn-native-fork-unknown",
+      runId: "run-native-fork-unknown",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "native_fork_acceptance_unknown",
+          runId: "run-native-fork-unknown",
+        },
+      },
+    }))).toBe(false);
+  });
+
   it("requires a Run or explicit matching no-dispatch evidence before offering retry", () => {
     expect(canRetryFailedChatMessage(message({
       role: "assistant",

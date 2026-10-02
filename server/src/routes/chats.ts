@@ -88,6 +88,8 @@ import {
   NETWORK_WAIT_UNSAFE_ERROR_CODE,
 } from "../services/runtime-kernel/heartbeat.core.js";
 import { retrySideChatTerminalEvidence } from "../services/side-chat-runtime-admission.js";
+import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
+import { recoverableFailureMessage } from "../services/chat-assistant.contracts.js";
 import {
   runtimeResultText,
   sanitizeGeneratedTitle,
@@ -1214,10 +1216,26 @@ export function chatRoutes(
   }
 
   function recoverableFailurePayload(error: unknown, runId: string | null | undefined) {
+    if (error instanceof NativeForkAcceptanceUnknownError) {
+      const code = "native_fork_acceptance_unknown";
+      return {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code,
+          message: recoverableFailureMessage(code),
+          runId: runId ?? null,
+          action: "inspect_run",
+        },
+      };
+    }
     if (!(error instanceof ChatAssistantStreamError)) return null;
     const code = error.errorCode ?? "chat_runtime_exception";
-    const message = error.userMessage ?? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
-    const retryable = error.retryable !== false;
+    const unknownForkAcceptance = code === "native_fork_acceptance_unknown";
+    const message = unknownForkAcceptance
+      ? recoverableFailureMessage(code)
+      : error.userMessage ?? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
+    const retryable = !unknownForkAcceptance && error.retryable !== false;
     const failure: Record<string, unknown> = {
       recoverable: retryable,
       code,
@@ -1227,7 +1245,8 @@ export function chatRoutes(
     if (!retryable) failure.retryable = false;
     if (error.partialBodyUserVisible) failure.partialBodyUserVisible = true;
     if (error.failurePhase) failure.phase = error.failurePhase;
-    if (error.action) failure.action = error.action;
+    if (unknownForkAcceptance) failure.action = "inspect_run";
+    else if (error.action) failure.action = error.action;
     if (error.providerFailure) failure.providerFailure = error.providerFailure;
     return {
       recoverableFailure: failure,

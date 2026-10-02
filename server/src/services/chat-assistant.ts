@@ -67,7 +67,7 @@ import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
 } from "./runtime-kernel/model-fallback.js";
-import { abortReservedNativeForkIntentRunFence, executeNativeForkIntent, markNativeForkIntentUnknown, transferReservedNativeForkIntentRunFence, type NativeForkIntentNoChildProof, type NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
+import { abortReservedNativeForkIntentRunFence, executeNativeForkIntent, markNativeForkIntentUnknown, NativeForkAcceptanceUnknownError, transferReservedNativeForkIntentRunFence, type NativeForkIntentNoChildProof, type NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
 import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
@@ -567,6 +567,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         },
       }),
       failureState: (error) => {
+        const unknownForkAcceptance = error instanceof NativeForkAcceptanceUnknownError;
         const errorCode = (error as { errorCode?: unknown } | null)?.errorCode;
         const safeError = redactChatInlineVisualDiagnosticText(
           error instanceof Error ? error.message : String(error),
@@ -575,13 +576,16 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         return {
           status: "failed",
           error: safeError,
-          errorCode: typeof errorCode === "string"
+          errorCode: unknownForkAcceptance
+            ? "native_fork_acceptance_unknown"
+            : typeof errorCode === "string"
             ? redactChatInlineVisualDiagnosticText(errorCode, "chat_runtime_exception")
             : "chat_runtime_exception",
           resultJson: {
             outcome: "failed",
-            recoverable: true,
+            recoverable: !unknownForkAcceptance,
             fallbackEnvelope: true,
+            ...(unknownForkAcceptance ? { retryable: false, action: "inspect_run" } : {}),
           },
         };
       },
@@ -1464,13 +1468,15 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         error instanceof Error ? error.message : String(error),
         "Chat runtime failed while handling private presentation data",
       );
+      const unknownForkAcceptance = error instanceof NativeForkAcceptanceUnknownError;
       throw new ChatAssistantStreamError(
         safeErrorMessage,
         partialBody,
         [],
         {
-          errorCode: "chat_runtime_exception",
+          errorCode: unknownForkAcceptance ? "native_fork_acceptance_unknown" : "chat_runtime_exception",
           partialBodyUserVisible: false,
+          ...(unknownForkAcceptance ? { retryable: false, action: "inspect_run" } : {}),
         },
       );
     } finally {

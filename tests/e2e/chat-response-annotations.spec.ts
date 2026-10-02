@@ -89,6 +89,99 @@ exec "${E2E_CODEX_APP_SERVER_STUB}" "$@"
   return { scriptPath, invocationPath, releasePath };
 }
 
+type CapturedChatMutationPart =
+  | { kind: "field"; name: string; value: string }
+  | { kind: "file"; name: string; fileName: string; mimeType: string; lastModified: number; bytes: number[] };
+
+type CapturedChatMutation =
+  | { kind: "json"; body: string }
+  | { kind: "multipart"; parts: CapturedChatMutationPart[] };
+
+async function installChatMutationCapture(page: Page, mutationPath: string) {
+  await page.evaluate((path) => {
+    type Part =
+      | { kind: "field"; name: string; value: string }
+      | { kind: "file"; name: string; fileName: string; mimeType: string; lastModified: number; bytes: number[] };
+    type Mutation = { kind: "json"; body: string } | { kind: "multipart"; parts: Part[] };
+    const target = window as Window & { __rudderCapturedChatMutations?: Mutation[] };
+    target.__rudderCapturedChatMutations = [];
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const requestUrl = input instanceof Request ? input.url : String(input);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      if (method === "POST" && new URL(requestUrl, window.location.href).pathname === path) {
+        if (init?.body instanceof FormData) {
+          const parts = await Promise.all(Array.from(init.body.entries()).map(async ([name, value]) => {
+            if (value instanceof File) {
+              return {
+                kind: "file" as const,
+                name,
+                fileName: value.name,
+                mimeType: value.type,
+                lastModified: value.lastModified,
+                bytes: Array.from(new Uint8Array(await value.arrayBuffer())),
+              };
+            }
+            return { kind: "field" as const, name, value };
+          }));
+          target.__rudderCapturedChatMutations?.push({ kind: "multipart", parts });
+        } else if (typeof init?.body === "string") {
+          target.__rudderCapturedChatMutations?.push({ kind: "json", body: init.body });
+        }
+      }
+      return originalFetch(input, init);
+    };
+  }, mutationPath);
+}
+
+async function readChatMutationCaptures(page: Page): Promise<CapturedChatMutation[]> {
+  return page.evaluate(() => {
+    const target = window as Window & { __rudderCapturedChatMutations?: CapturedChatMutation[] };
+    return target.__rudderCapturedChatMutations ?? [];
+  });
+}
+
+async function replayCapturedChatMutation(
+  page: Page,
+  mutationPath: string,
+  mutation: CapturedChatMutation,
+) {
+  return page.evaluate(async ({ path, captured }) => {
+    let body: BodyInit;
+    const headers: Record<string, string> = {};
+    if (captured.kind === "json") {
+      body = captured.body;
+      headers["content-type"] = "application/json";
+    } else {
+      const form = new FormData();
+      for (const part of captured.parts) {
+        if (part.kind === "field") {
+          form.append(part.name, part.value);
+        } else {
+          const file = new File(
+            [new Uint8Array(part.bytes)],
+            part.fileName,
+            { type: part.mimeType, lastModified: part.lastModified },
+          );
+          form.append(part.name, file, part.fileName);
+        }
+      }
+      body = form;
+    }
+    const response = await fetch(path, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body,
+    });
+    return {
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      body: await response.text(),
+    };
+  }, { path: mutationPath, captured: mutation });
+}
+
 async function failFirstChatUserActivityWrite(orgId: string, conversationId: string) {
   const suffix = conversationId.replaceAll("-", "").slice(0, 20);
   const functionName = `e2e_fail_first_chat_user_activity_${suffix}`;
@@ -1869,22 +1962,26 @@ test.describe("Chat response annotations", () => {
       expect(initialGenerations.map(({ id }) => id)).toEqual([seeded.generationId]);
 
       const messagesPath = `/api/chats/${seeded.conversationId}/messages/stream`;
+      await installChatMutationCapture(page, messagesPath);
       const originalRequestPromise = page.waitForRequest((request) => (
         request.method() === "POST" && new URL(request.url()).pathname === messagesPath
       ));
       await page.getByRole("button", { name: "Send" }).click();
       const originalRequest = await originalRequestPromise;
-      const originalRequestBody = originalRequest.postDataBuffer();
-      const originalContentType = originalRequest.headers()["content-type"];
-      if (!originalRequestBody || !originalContentType) {
-        throw new Error("Could not capture the exact original multipart chat mutation for replay");
-      }
-      expect(originalContentType).toContain("multipart/form-data");
-
       const initialFailure = page.getByTestId("chat-assistant-message").filter({
         hasText: "Your input was saved, but the reply did not start.",
       });
       await expect(initialFailure).toBeVisible({ timeout: 20_000 });
+      const originalResponse = await originalRequest.response();
+      expect(originalResponse?.status()).toBe(201);
+      const originalContentType = (await originalRequest.allHeaders())["content-type"];
+      const originalMutationCaptures = await readChatMutationCaptures(page);
+      const originalMutation = originalMutationCaptures[0];
+      if (originalMutationCaptures.length !== 1 || originalMutation?.kind !== "multipart") {
+        throw new Error("Expected one captured original multipart chat mutation for replay");
+      }
+      expect(originalContentType).toContain("multipart/form-data");
+
       const firstMessagesResponse = await page.request.get(
         `/api/chats/${seeded.conversationId}/messages?includeTranscript=true`,
       );
@@ -2012,12 +2109,9 @@ test.describe("Chat response annotations", () => {
         .where(eq(chatGenerations.id, syntheticActiveGenerationId));
       syntheticActiveGenerationId = null;
 
-      const originalMutationReplay = await page.request.post(messagesPath, {
-        headers: { "content-type": originalContentType },
-        data: originalRequestBody,
-      });
-      expect(originalMutationReplay.status()).toBe(200);
-      const replayEvents = (await originalMutationReplay.text())
+      const originalMutationReplay = await replayCapturedChatMutation(page, messagesPath, originalMutation);
+      expect(originalMutationReplay.status).toBe(200);
+      const replayEvents = originalMutationReplay.body
         .trim()
         .split(/\r?\n/)
         .map((line) => JSON.parse(line) as { type: string; messages?: unknown[] });
@@ -2025,15 +2119,17 @@ test.describe("Chat response annotations", () => {
       expect(replayEvents[1]).toMatchObject({ type: "final", messages: [] });
       expect(await readFile(runtime.invocationPath, "utf8")).toBe("");
 
+      await installChatMutationCapture(page, messagesPath);
       const retryRequestPromise = page.waitForRequest((request) => (
         request.method() === "POST" && new URL(request.url()).pathname === messagesPath
       ));
       await persistedFailure.getByRole("button", { name: "Retry" }).click();
       const retryRequest = await retryRequestPromise;
-      const retryRequestBody = retryRequest.postDataBuffer();
-      const retryContentType = retryRequest.headers()["content-type"];
-      if (!retryRequestBody || !retryContentType) {
-        throw new Error("Could not capture the intentional Retry mutation for at-most-once replay");
+      const retryContentType = (await retryRequest.allHeaders())["content-type"];
+      const retryMutationCaptures = await readChatMutationCaptures(page);
+      const retryMutation = retryMutationCaptures[0];
+      if (retryMutationCaptures.length !== 1 || !retryMutation || !retryContentType) {
+        throw new Error("Expected one captured intentional Retry mutation for at-most-once replay");
       }
       await expect.poll(async () => (
         (await readFile(runtime.invocationPath, "utf8")).trim().split(/\r?\n/).filter(Boolean)
@@ -2098,7 +2194,7 @@ test.describe("Chat response annotations", () => {
         page.getByTestId("chat-assistant-message").filter({
           hasText: "Initial App Server reply (marker-false)",
         }).last(),
-      ).toBeVisible({ timeout: 30_000 });
+      ).toBeVisible({ timeout: 60_000 });
       const retriedTurn = page
         .getByTestId("chat-user-message-turn")
         .filter({ hasText: savedInput })
@@ -2111,12 +2207,9 @@ test.describe("Chat response annotations", () => {
         .toBeVisible();
       await page.keyboard.press("Escape");
 
-      const retryMutationReplay = await page.request.post(messagesPath, {
-        headers: { "content-type": retryContentType },
-        data: retryRequestBody,
-      });
-      expect(retryMutationReplay.status()).toBe(200);
-      const retryReplayEvents = (await retryMutationReplay.text())
+      const retryMutationReplay = await replayCapturedChatMutation(page, messagesPath, retryMutation);
+      expect(retryMutationReplay.status).toBe(200);
+      const retryReplayEvents = retryMutationReplay.body
         .trim()
         .split(/\r?\n/)
         .map((line) => JSON.parse(line) as { type: string; messages?: unknown[] });

@@ -1368,6 +1368,7 @@ export function latestContinuableInterruptedChatMessage(messages: ChatMessage[])
 
 export function canRetryFailedChatMessage(message: Pick<ChatMessage, "id" | "orgId" | "conversationId" | "role" | "kind" | "status" | "chatTurnId" | "turnVariant" | "structuredPayload" | "runId">) {
   const failure = recoverableFailureFromMessage(message);
+  if (failure?.code === "native_fork_acceptance_unknown") return false;
   const payload = message.structuredPayload;
   const isRecord = (value: unknown): value is Record<string, unknown> => (
     Boolean(value) && typeof value === "object" && !Array.isArray(value)
@@ -1440,7 +1441,9 @@ export function recoverableFailureFromMessage(
     : "chat_runtime_exception";
   const detailMessage = typeof candidate.message === "string" && candidate.message.trim()
     ? candidate.message.trim()
-    : "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
+    : code === "native_fork_acceptance_unknown"
+      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
+      : "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
   const runId = typeof candidate.runId === "string" && candidate.runId.trim()
     ? candidate.runId.trim()
     : message.runId ?? null;

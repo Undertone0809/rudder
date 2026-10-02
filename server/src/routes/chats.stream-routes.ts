@@ -38,6 +38,7 @@ import {
   setActiveChatGenerationId,
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
+import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
 import {
   chatPreGenerationFailurePayload,
   CHAT_PRE_GENERATION_FAILURE_MESSAGE,
@@ -1342,12 +1343,17 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       }, "chat assistant stream failed");
       if (!clientClosed) {
         const recoverableError = err instanceof ChatAssistantStreamError ? err : null;
+        const failureMessage = recoverableFailureBody(failurePayload);
         writeStreamEvent(res, {
           type: "error",
-          error: recoverableError?.userMessage ?? (
+          error: recoverableError?.userMessage ?? failureMessage ?? (
             recoverableError ? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE : CHAT_ASSISTANT_USER_ERROR_MESSAGE
           ),
-          errorCode: recoverableError?.errorCode ?? "chat_runtime_exception",
+          errorCode: recoverableError?.errorCode ?? (
+            err instanceof NativeForkAcceptanceUnknownError
+              ? "native_fork_acceptance_unknown"
+              : "chat_runtime_exception"
+          ),
           runId: activeChatRunId,
           messageId: failedMessage?.id ?? null,
         });

@@ -8988,6 +8988,68 @@ describe("chat routes", { retry: 2 }, () => {
     expect(mockChatService.updateMessage.mock.calls.at(-1)?.[2]).not.toHaveProperty("transcript");
   });
 
+  it.each([
+    { label: "with a Run ID", runId: "native-fork-unknown-run", wrapped: true },
+    { label: "without a Run ID", runId: null, wrapped: false },
+  ])("persists unknown native-fork failures as non-retryable $label", async ({ runId, wrapped }) => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Open a Side Chat");
+    const safeCopy = "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.";
+    const failedMessage = {
+      ...createMessage("message-assistant", "assistant", "message", safeCopy),
+      status: "failed",
+      runId,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code: "native_fork_acceptance_unknown",
+          message: safeCopy,
+          action: "inspect_run",
+          runId,
+        },
+      },
+    };
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      if (runId) await input.onRunCreated?.(runId);
+      if (wrapped) {
+        const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+        throw new ChatAssistantStreamError("provider acknowledgement timed out", "", [], {
+          errorCode: "native_fork_acceptance_unknown",
+          userMessage: "Unsafe retry when ready copy",
+          retryable: true,
+          action: "retry",
+        });
+      }
+      const { NativeForkAcceptanceUnknownError } = await import("../services/runtime-kernel/native-fork-intent.js");
+      throw new NativeForkAcceptanceUnknownError({} as never, "Provider fork acceptance is unknown; automatic retry is disabled.");
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages")
+      .send({ body: "Open a Side Chat" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.messages).toContainEqual(expect.objectContaining({
+      id: failedMessage.id,
+      status: "failed",
+      body: safeCopy,
+      runId,
+      structuredPayload: failedMessage.structuredPayload,
+    }));
+    expect(mockChatService.addMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({
+      status: "failed",
+      body: safeCopy,
+      runId,
+      structuredPayload: failedMessage.structuredPayload,
+    }));
+  });
+
   it("does not publish inline-visual backing HTML from a failed stream", async () => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Need a visual");

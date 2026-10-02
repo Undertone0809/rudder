@@ -11,6 +11,7 @@ export type ChatRecoverableFailureCode =
   | "chat_runtime_exception"
   | "codex_provider_auth_required"
   | "chat_submission_acceptance_unknown"
+  | "native_fork_acceptance_unknown"
   | "claude_fork_acceptance_unknown"
   | "claude_fork_completion_unresolved"
   | "claude_fork_unsubmitted"
@@ -142,6 +143,9 @@ export function recoverableFailureMessage(code: ChatRecoverableFailureCode) {
   }
   if (code === "chat_submission_acceptance_unknown") {
     return "The provider may have received this input. Inspect the Run and reconcile its acceptance before retrying.";
+  }
+  if (code === "native_fork_acceptance_unknown") {
+    return "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.";
   }
   if (code === "claude_fork_acceptance_unknown") {
     return "Claude may have received this Side Chat input. Inspect this Run before sending another message; do not retry the same input.";
