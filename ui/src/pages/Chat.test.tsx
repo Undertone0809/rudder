@@ -884,7 +884,7 @@ describe("ChatMessageItem", () => {
     expect(html).toContain("Final answer.");
   });
 
-  it("renders failed assistant messages with a visible failure callout and retry action", () => {
+  it("renders unverified failed assistant messages without a retry action", () => {
     const html = renderChatMessageItem(message({
       role: "assistant",
       kind: "message",
@@ -897,7 +897,7 @@ describe("ChatMessageItem", () => {
     expect(html).toContain("Response failed");
     expect(html).toContain("This assistant response failed before it completed.");
     expect(html).toContain(">Failed</span>");
-    expect(html).toContain("Retry");
+    expect(html).not.toContain("Retry");
   });
 
   it("renders recoverable chat failure diagnostics on failed assistant messages", () => {
