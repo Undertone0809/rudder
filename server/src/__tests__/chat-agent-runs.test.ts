@@ -332,6 +332,30 @@ describe("chatAgentRunService", () => {
     )).toBe(false);
   });
 
+  it("persists equal invoke text once while SQL events and Instructions snapshot retain actual text", async () => {
+    const snapshots = createInstructionSnapshotStorage();
+    const invokeSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: snapshots.storage });
+    const run = await createChatRunFixture("Equal invoke snapshot", undefined, invokeSvc, "hermes_gateway");
+    const prompt = "Instruction and debug input 原文🙂 " + "X".repeat(82_000);
+    const meta = { agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt };
+    await invokeSvc.appendAdapterInvoke(run, meta, []);
+    const events = await heartbeatService(db).listEvents(run.id);
+    const invoke = events.find(event => event.eventType === "adapter.invoke")!;
+    expect(invoke.payload).toMatchObject({ prompt, invocationInstructionSnapshot: { status: "available" } });
+    expect(invoke.payload).not.toHaveProperty("agentInstructionStack");
+    const payload = invoke.payload as Record<string, unknown>;
+    const serialized = JSON.stringify(payload);
+    expect(Buffer.byteLength(JSON.stringify({ ...payload, agentInstructionStack: prompt })) - Buffer.byteLength(serialized))
+      .toBe(Buffer.byteLength(JSON.stringify(prompt)) + Buffer.byteLength(',"agentInstructionStack":'));
+    await expect(readRunInstructionSnapshotForEvent({ db, storage: snapshots.storage,
+      orgId: run.orgId, runId: run.id, eventId: invoke.id })).resolves.toMatchObject({
+      agentInstructionStack: prompt, sha256: createHash("sha256").update(prompt).digest("hex"), byteSize: Buffer.byteLength(prompt),
+    });
+    expect(meta).toEqual({ agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt });
+    await invokeSvc.sealSpan(run, { completeness: "unknown" });
+    await invokeSvc.finalizeRun(run.id, { status: "failed", resultJson: { outcome: "test finished" } });
+  });
+
   it("switches a live Cursor Run transcript source only for its current span owner", async () => {
     const run = await createChatRunFixture("Cursor source switch", undefined, svc, "cursor");
     const prompt = "Cursor transcript fallback keeps complete invocation evidence";
@@ -360,7 +384,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, run.id),
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
-    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(invoke?.payload).toMatchObject({ prompt });
     expect(await svc.markLegacyTranscriptSource(run)).toBe(false);
   });
 
@@ -455,7 +479,6 @@ describe("chatAgentRunService", () => {
     expect(retainedEvent?.seq).toBe(stagedEvent?.seq);
     expect(earlierInvoke?.payload).toMatchObject({
       prompt: earlierAttemptPrompt,
-      agentInstructionStack: earlierAttemptPrompt,
     });
     expect(payload).toMatchObject({ prompt, agentInstructionStack: instructionStack });
     expect(payload.context).toMatchObject({ chatMode: true, privatePromptContext: "private context marker" });
@@ -556,7 +579,7 @@ describe("chatAgentRunService", () => {
         nativeReader: { readRange: async (input) => {
           readSpans.push(`${input.run.id}:${input.span.id}`);
           return {
-            items: [{ kind: "assistant", ts: new Date().toISOString(), text: `${runtimeType} native transcript` }],
+            items: [{ kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text: `${runtimeType} native transcript` }],
             revision: `${runtimeType}-reader-r1`,
             availability: "available",
             completeness: "complete",
@@ -642,10 +665,10 @@ describe("chatAgentRunService", () => {
     expect(new Set(readSpans)).toEqual(new Set([`${run.id}:${run.runtimeSpanId}`]));
     expect(finalized?.contextSnapshot).toMatchObject({
       transcriptSource: "legacy",
-      nativeTranscriptRetention: { status: "reference_only", proofRunId: run.id },
+      nativeTranscriptRetention: { status: "cleanup_failed", reason: "supplement_native_coverage_unproven" },
     });
-    expect(cleanedSpan?.supplementalObjectRef).toBeNull();
-    expect(fs.existsSync(path.join(objectDir, "transcript-objects", `${supplementSpan!.supplementalObjectRef}.ndjson`))).toBe(false);
+    expect(cleanedSpan?.supplementalObjectRef).toBe(supplementSpan!.supplementalObjectRef);
+    expect(fs.existsSync(path.join(objectDir, "transcript-objects", `${supplementSpan!.supplementalObjectRef}.ndjson`))).toBe(true);
     expect(transcriptEvents).toHaveLength(0);
     expect(JSON.stringify({ finalized, transcriptEvents, cleanedSpan })).not.toContain(entry.text);
   });
@@ -705,19 +728,21 @@ describe("chatAgentRunService", () => {
     })).resolves.toMatchObject({ completeness: "partial", entries: [entry] });
   });
 
-  it("cleans Chat duplicates only after complete stable Reader proof and verifies again after cleanup", async () => {
+  it("retains Chat supplements despite stable paginated native proof and keeps Instructions readable", async () => {
     let nativeRevision = "native-chat-proof-r1";
     const instructionSnapshots = createInstructionSnapshotStorage();
+    const readNativeEntries = async (input: NativeTranscriptReadInput) => {
+      const offset = input.cursor ? Number(String(input.cursor).replace("proof-offset:", "")) : 0;
+      const items = nativeEntries.slice(offset, offset + (input.limit ?? 200));
+      const nextCursor = offset + items.length < nativeEntries.length ? `proof-offset:${offset + items.length}` : null;
+      return { items, nextCursor, revision: nativeRevision, availability: "available" as const,
+        completeness: nextCursor ? "partial" as const : "complete" as const };
+    };
     const proofSvc = chatAgentRunService(db, {
       transcriptObjectStore: objectStore,
       instructionSnapshotStorage: instructionSnapshots.storage,
       transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
-        nativeReader: { readRange: async () => ({
-          items: nativeEntries,
-          revision: nativeRevision,
-          availability: "available",
-          completeness: "complete",
-        }) },
+        nativeReader: { readRange: readNativeEntries },
       }),
     });
     const run = await createChatRunFixture("Native Chat retention proof", undefined, proofSvc, "codex_local", {
@@ -774,23 +799,19 @@ describe("chatAgentRunService", () => {
     expect(finalized?.resultJson).toMatchObject({
       outcome: "completed",
       kind: "message",
-      body: reply.slice(0, 2_000),
-      retention: { transcriptSource: "native", rawResultPersisted: false },
+      body: reply,
     });
     expect(finalized?.contextSnapshot).toMatchObject({
-      nativeTranscriptRetention: { status: "reference_only", itemCount: 225 },
+      nativeTranscriptRetention: { status: "cleanup_failed", reason: "supplement_native_coverage_unproven" },
     });
-    expect(span?.supplementalObjectRef).toBeNull();
+    expect(span?.supplementalObjectRef).toBe(objectRef);
     expect(invokes).toHaveLength(1);
     expect(invokes[0]?.payload).toMatchObject({
       invocationAttemptId: run.runtimeAttemptRef!.id,
       invocationSpanId: run.runtimeSpanId,
       invocationInstructionSnapshot: { status: "available" },
     });
-    expect(invokes[0]?.payload).not.toHaveProperty("prompt");
-    expect(invokes[0]?.payload).not.toHaveProperty("agentInstructionStack");
-    expect(JSON.stringify(invokes[0]?.payload)).not.toContain(prompt);
-    expect(JSON.stringify(invokes[0]?.payload)).not.toContain(instructionStack);
+    expect(invokes[0]?.payload).toMatchObject({ prompt, agentInstructionStack: instructionStack });
     expect(instructionSnapshots.putContentAddressedFile).toHaveBeenCalledTimes(1);
     await expect(readRunInstructionSnapshotForEvent({
       db,
@@ -803,15 +824,10 @@ describe("chatAgentRunService", () => {
       sha256: createHash("sha256").update(instructionStack).digest("hex"),
       byteSize: Buffer.byteLength(instructionStack),
     });
-    expect(fs.existsSync(path.join(objectDir, "transcript-objects", `${objectRef}.ndjson`))).toBe(false);
+    expect(fs.existsSync(path.join(objectDir, "transcript-objects", `${objectRef}.ndjson`))).toBe(true);
 
     const reread = createTranscriptReader(db as any, {
-      nativeReader: { readRange: async () => ({
-        items: nativeEntries,
-        revision: nativeRevision,
-        availability: "available",
-        completeness: "complete",
-      }) },
+      nativeReader: { readRange: readNativeEntries },
     });
     const rereadPages: Array<Awaited<ReturnType<typeof reread.readRun>>> = [];
     let cursor: string | null = null;
@@ -833,12 +849,13 @@ describe("chatAgentRunService", () => {
     expect(rereadPages).toHaveLength(2);
     expect(rereadPages.every((page) => page.source === "native"
       && page.availability === "available"
-      && page.completeness === "complete")).toBe(true);
+      && (page.completeness === "complete" || (page.completeness === "partial" && page.nextCursor)))).toBe(true);
+    expect(rereadPages.at(-1)?.completeness).toBe("complete");
     expect(rereadItems).toHaveLength(225);
     expect(rereadItems[0]).toMatchObject({ runId: run.id, spanId: run.runtimeSpanId, text: reply });
   });
 
-  it("attempts exact Reader proof for a legacy recovered source and cleans only the matching Run span", async () => {
+  it("attempts exact Reader proof for a legacy recovered source but retains unproven raw events", async () => {
     const requestedSpans: string[] = [];
     const sourceSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore });
     const run = await createChatRunFixture("Legacy recovered Chat proof", undefined, sourceSvc, "codex_local", {
@@ -872,7 +889,7 @@ describe("chatAgentRunService", () => {
         nativeReader: { readRange: async (input) => {
           requestedSpans.push(`${input.run.id}:${input.span.id}`);
           return {
-            items: [{ kind: "assistant", ts: new Date().toISOString(), text: "reader-owned transcript" }],
+            items: [{ kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text: "reader-owned transcript" }],
             revision: "legacy-recovery-native-r1",
             availability: "available",
             completeness: "complete",
@@ -919,15 +936,11 @@ describe("chatAgentRunService", () => {
     ));
     expect(requestedSpans.length).toBeGreaterThan(1);
     expect(new Set(requestedSpans)).toEqual(new Set([`${run.id}:${recoveredRun.runtimeSpanId}`]));
-    expect(transcriptEvents).toHaveLength(0);
-    expect(invokes[0]?.payload).not.toHaveProperty("prompt");
+    expect(transcriptEvents).toHaveLength(1);
+    expect(invokes[0]?.payload).toMatchObject({ prompt });
     expect(finalized?.contextSnapshot).toMatchObject({
       transcriptSource: "legacy",
-      nativeTranscriptRetention: {
-        status: "reference_only",
-        proofRunId: run.id,
-        spans: [{ spanId: run.runtimeSpanId, sourceRevision: expect.stringMatching(/\S/) }],
-      },
+      nativeTranscriptRetention: { status: "cleanup_failed", reason: "transcript_events_native_coverage_unproven" },
     });
   });
 
@@ -994,7 +1007,7 @@ describe("chatAgentRunService", () => {
     expect(persisted?.resultJson).toEqual(rawResult);
     expect(persisted?.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "incomplete" } });
     expect(span?.supplementalObjectRef).toBe(objectRef);
-    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(invoke?.payload).toMatchObject({ prompt });
     expect(rawTranscriptEvents).toHaveLength(1);
     expect(rawTranscriptEvents[0]?.payload).toMatchObject({ text: entry.text, spanId: run.runtimeSpanId });
     await expect(objectStore.readRange({
@@ -1122,7 +1135,7 @@ describe("chatAgentRunService", () => {
     expect(persisted?.resultJson).toEqual(rawResult);
     expect(persisted?.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "incomplete" } });
     expect(span?.supplementalObjectRef).toBe(before?.supplementalObjectRef);
-    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(invoke?.payload).toMatchObject({ prompt });
   });
 
   it("rejects a sealed native proof bound to another owner and Attempt", async () => {
@@ -1172,16 +1185,17 @@ describe("chatAgentRunService", () => {
     expect(persisted?.resultJson).toEqual({ outcome: "completed", body: "keep full result" });
   });
 
-  it("keeps Chat fallback state when supplemental object deletion fails", async () => {
+  it("keeps Chat fallback state without attempting unproven supplemental deletion", async () => {
+    const stageRemoval = vi.fn(async () => { throw new Error("simulated object staging failure"); });
     const failingObjectStore: TranscriptObjectStore = {
       ...objectStore,
-      stageSealedRemoval: async () => { throw new Error("simulated object staging failure"); },
+      stageSealedRemoval: stageRemoval,
     };
     const deletionFailureSvc = chatAgentRunService(db, {
       transcriptObjectStore: failingObjectStore,
       transcriptReaderFactory: (database) => createTranscriptReader(database as any, {
         nativeReader: { readRange: async () => ({
-          items: [{ kind: "assistant", ts: new Date().toISOString(), text: "native complete" }],
+          items: [{ kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text: "native complete" }],
           revision: "native-chat-delete-failure-r1",
           availability: "available",
           completeness: "complete",
@@ -1233,10 +1247,11 @@ describe("chatAgentRunService", () => {
     ));
     expect(persisted?.resultJson).toEqual(rawResult);
     expect(persisted?.contextSnapshot).toMatchObject({
-      nativeTranscriptRetention: { status: "cleanup_failed", reason: expect.stringContaining("simulated object staging failure") },
+      nativeTranscriptRetention: { status: "cleanup_failed", reason: "supplement_native_coverage_unproven" },
     });
+    expect(stageRemoval).not.toHaveBeenCalled();
     expect(span?.supplementalObjectRef).toBe(before?.supplementalObjectRef);
-    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(invoke?.payload).toMatchObject({ prompt });
     await expect(objectStore.readRange({
       objectRef: before!.supplementalObjectRef!,
       orgId: run.orgId,
@@ -1247,7 +1262,7 @@ describe("chatAgentRunService", () => {
     })).resolves.toMatchObject({ completeness: "partial", entries: [entry] });
   });
 
-  it("keeps a sealed object copy recoverable when final object purge fails", async () => {
+  it("keeps a sealed supplement-only object without entering final purge", async () => {
     let staged: { objectRef: string; stageId: string } | null = null;
     const failingPurgeStore: TranscriptObjectStore = {
       ...objectStore,
@@ -1304,27 +1319,14 @@ describe("chatAgentRunService", () => {
 
     const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
     const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
-    expect(staged).toBeTruthy();
+    expect(staged).toBeNull();
     expect(persisted?.contextSnapshot).toMatchObject({
-      nativeTranscriptRetention: {
-        status: "cleanup_failed",
-        reason: expect.stringContaining("simulated final object purge failure"),
-        recovery: [{
-          kind: "transcript_object",
-          objectRef: staged!.objectRef,
-          spanId: run.runtimeSpanId,
-          stageId: staged!.stageId,
-        }],
-      },
+      nativeTranscriptRetention: { status: "cleanup_failed", reason: "supplement_native_coverage_unproven" },
     });
-    expect(span?.supplementalObjectRef).toBeNull();
-    const stagedPayload = path.join(
-      objectDir,
-      "transcript-objects",
-      `.retention-${staged!.objectRef}-${staged!.stageId}`,
-      `${staged!.objectRef}.ndjson`,
-    );
-    expect(fs.readFileSync(stagedPayload, "utf8")).toContain(recoveryText);
+    expect(span?.supplementalObjectRef).toEqual(expect.any(String));
+    const payload = path.join(objectDir, "transcript-objects", `${span!.supplementalObjectRef}.ndjson`);
+    expect(fs.readFileSync(payload, "utf8")).toContain(recoveryText);
+
   });
 
   it.each(["partial", "unknown", "missing", "terminal_only"] as const)(
@@ -1444,7 +1446,7 @@ describe("chatAgentRunService", () => {
         eq(heartbeatRunEvents.runId, run.id),
         eq(heartbeatRunEvents.eventType, "adapter.invoke"),
       ));
-      expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+      expect(invoke?.payload).toMatchObject({ prompt });
       expect(JSON.stringify(invoke?.payload)).toContain(prompt);
     },
   );
@@ -1514,7 +1516,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
     expect(finalizedRun?.resultJson).toEqual({ outcome: "completed" });
-    expect(invoke?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(invoke?.payload).toMatchObject({ prompt });
   });
 
   it("does not trust a preflight native hint or compact failure evidence", async () => {
@@ -1541,7 +1543,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, run.id),
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
-    expect(event?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(event?.payload).toMatchObject({ prompt });
     let [savedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
     expect(savedRun?.resultJson).toMatchObject({ body: "unattested result stays full" });
   });
@@ -1564,7 +1566,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.runId, failedRun.id),
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
-    expect(event?.payload).toMatchObject({ prompt: failurePrompt, agentInstructionStack: failurePrompt });
+    expect(event?.payload).toMatchObject({ prompt: failurePrompt });
     const [savedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, failedRun.id));
     expect(savedRun?.resultJson).toMatchObject({ partialBody: "failure body remains complete" });
   });
@@ -1595,7 +1597,7 @@ describe("chatAgentRunService", () => {
       eq(heartbeatRunEvents.eventType, "adapter.invoke"),
     ));
     const [waitingRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
-    expect(event?.payload).toMatchObject({ prompt, agentInstructionStack: prompt });
+    expect(event?.payload).toMatchObject({ prompt });
     expect(waitingRun).toMatchObject({ status: "running", runningSubstate: "waiting_for_network" });
     expect(waitingRun?.resultJson).toBeNull();
     svc.releaseOwnedRun(run.id, run.runtimeSpanOwnerToken);

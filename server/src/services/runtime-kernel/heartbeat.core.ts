@@ -445,6 +445,12 @@ export function buildHeartbeatAdapterInvokePayload(input: {
       context: sanitizedContext,
       retention: input.transcriptRetention!,
     });
+  } else if (typeof persistentPrompt === "string" && persistentPrompt.length > 0
+    && typeof persistentAgentInstructionStack === "string"
+    && persistentAgentInstructionStack === persistentPrompt) {
+    // Keep the full debug input as the canonical text. Instructions consumers
+    // already fall back to prompt; the runtime meta and snapshot are untouched.
+    delete persistentMeta.agentInstructionStack;
   }
 
   const payload: Record<string, unknown> = {
