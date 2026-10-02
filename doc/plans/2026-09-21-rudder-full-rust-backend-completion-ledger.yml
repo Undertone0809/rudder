@@ -1,7 +1,17 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-29
+updated_at: 2026-10-02
 source:
+  candidate_sha: 7a416d088771925cf291a862bd83f7b97f04e567
+  candidate_tree: 9345a28f7b4d87c081399617bf439c3464b2eddb
+  publication: PR262_DRAFT_not_merged_not_accepted
+  main_last_observed: 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce
+  row_refresh_scope: partial_native_bearer_auth_only_other_rows_keep_historical_provenance
+  stage_receipt: artifacts/2026-10-02-rudder-native-auth-synthetic-fixture-stage-review.json
+  ci_receipt: artifacts/2026-10-02-rudder-native-auth-ci-evidence-audit.json
+  acceptance: pending_public_TCP_installed_auth_and_final_review_security_unresolved
+  terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
+historical_source_2026_09_29:
   candidate_sha: 719619b3006de870adf4430a1a845efff3c9ffab
   candidate_tree: cc91713959cd716ff783103b4dbccbf9a16effed
   source_fingerprint: 0666b57a4957f68f48261ae515820328f5e0aaaa2caffd548f57adfec053c1ba
@@ -575,7 +585,7 @@ authority_rows:
     domain: identity
     authority_kind: rust_product_runtime
     current_authority: first_party_identity_Node_service_and_local_Node_bridge_with_external_root_IdP
-    rust_asset: native/crates/auth-core_signed_actor_protocol_only_not_identity_or_session_authority
+    rust_asset: native/crates/auth-core_and_server-foundation/native_bearer_auth_SQLx_native_Board_agent_key_resolution_not_full_identity_session_authority
     public_entrypoint: identity/api/index.ts_hosted_service_plus_local_exchange_offline_claim_signout_and_Desktop_device_flows
     auth_scope: audience, actor, organization, expiry, nonce, revocation
     transaction_boundary: session/device/credential mutation
@@ -583,12 +593,15 @@ authority_rows:
     recovery: rotation, replay rejection, offline/local recovery, restart
     cli_mcp: runtime-locked actor envelope and credential reference
     fence: auth epoch and session revocation epoch
-    status: not_started
+    status: partial_implementation
     capabilities: {implemented: false, private_verified: false, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
-    evidence_status: private_actor_protocol_tests_do_not_prove_identity_service_or_session_implementation
+    partial_capabilities: {implemented: true, private_verified: true, real_entry_connected: false, default_path_verified: false, old_authority_retired: false}
+    partial_scope: native_pcp_api_key_SQLx_resolution_revocation_expiry_touch_and_Actix_contract_tests_only
+    partial_receipt: artifacts/2026-10-02-rudder-native-auth-ci-evidence-audit.json
+    evidence_status: seven_exact_tree_CI_contract_tests_PASS_do_not_prove_installed_public_TCP_BetterAuth_cookie_or_whole_identity_authority
     inventory: artifacts/2026-09-23-rudder-identity-analytics-managed-mcp-authority-inventory.md
     retirement_gate: first_party_identity_DB_migrations_jobs_and_local_session_authority_migrated_with_real_credential_fixtures
-    next_action: inventory_complete_at_d328_sources_unchanged_at_ceb08_freeze_Rust_identity_service_transaction_and_provider_contracts
+    next_action: validate_owned_current_dependencies_then_fresh_native_bearer_TCP_stage_verifier_and_current_installed_session_revocation_gates_keep_external_IdP_and_Node_session_authority_explicit
   - id: runtime.analytics_collector
     domain: analytics
     authority_kind: rust_product_runtime

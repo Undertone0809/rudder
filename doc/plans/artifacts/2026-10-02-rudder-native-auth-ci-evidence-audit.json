@@ -1,0 +1,194 @@
+{
+  "schema": "rudder.ci-evidence-audit.v1",
+  "receipt_created_at_utc": "2026-10-02T05:04:52Z",
+  "scope": {
+    "read_only": true,
+    "used_existing_github_auth": true,
+    "secrets_printed_or_recorded": false,
+    "browser_db_runtime_test_build_repo_edit_merge_or_bypass_performed": false,
+    "check_matrix_polled_once": true,
+    "no_follow_up_status_poll": true
+  },
+  "candidate": {
+    "repository": "Undertone0809/rudder",
+    "pr": 262,
+    "pr_state": "open",
+    "draft": true,
+    "base_ref": "codex/actix-public-ingress-20261001",
+    "base_sha": "276299d15df2ec820d3537bd5efc9d4c3aefde25",
+    "head_ref": "codex/native-bearer-auth-20261002",
+    "head_sha": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "head_tree": "9345a28f7b4d87c081399617bf439c3464b2eddb",
+    "head_tree_source": "GitHub commit API; matches user-supplied identity"
+  },
+  "local_worktree": {
+    "branch": "codex/rudder-full-rust-backend-completion-20260923",
+    "head_sha": "c54001819ca38079b627994557db0a18ed278fc0",
+    "tree": "663b978687e09fd800c7b4fd1e311d0b8359e8a4",
+    "dirty": true,
+    "mutated": false,
+    "note": "Unrelated existing changes preserved; audit anchored to the remote PR candidate."
+  },
+  "actual_evidence": {
+    "postgresql_run": {
+      "run_id": 36965759981,
+      "run_name": "Native bearer PostgreSQL contracts",
+      "run_status": "completed",
+      "run_conclusion": "success",
+      "run_head_sha": "7a416d088771925cf291a862bd83f7b97f04e567",
+      "job_id": 110709043941,
+      "job_name": "Native bearer SQLx and Actix contracts",
+      "job_status": "completed",
+      "job_conclusion": "success",
+      "attempt": 1,
+      "checkout_sha_from_job_log": "b0f533903b81ba77232dda410095b1a99a69fdee",
+      "checkout_kind": "GitHub pull_request synthetic merge commit",
+      "checkout_tree_from_job_log": "9345a28f7b4d87c081399617bf439c3464b2eddb",
+      "checkout_tree_equals_pr_head_tree": true,
+      "checkout_and_source_evidence_steps": "success",
+      "rust_toolchain_observed": "stable; rustc 1.99.0 (b940084d7 2026-09-28)",
+      "fixture_steps": {
+        "install_migration_prerequisites": "success",
+        "apply_existing_schema_to_disposable_fixture": "success"
+      },
+      "selected_test_results": [
+        {
+          "suite": "native SQLx and Actix contract selection",
+          "tests": 6,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 52,
+          "result": "success",
+          "test_names": [
+            "native_bearer_auth::tests::committed_revocation_or_expiry_wins_a_concurrent_last_used_touch",
+            "native_bearer_auth::tests::only_rudder_native_api_key_prefixes_enter_the_fail_closed_path",
+            "native_bearer_auth::tests::postgres_bearer_resolution_preserves_scope_status_expiry_and_touch_contracts",
+            "native_bearer_auth::tests::sql_transport_error_is_unavailable_not_compatibility",
+            "public_ingress::tests::native_bearer_database_disabled_does_not_call_node_grant_adapter",
+            "public_ingress::tests::native_bearer_sql_error_does_not_call_node_grant_adapter"
+          ]
+        },
+        {
+          "suite": "exact real-PostgreSQL public-route case",
+          "test_name": "public_ingress::tests::postgres_public_member_route_uses_native_board_key_without_node_grant",
+          "tests": 1,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "filtered": 57,
+          "result": "success"
+        }
+      ],
+      "log_evidence": "Actual job log, not only run/check metadata; selected result lines and checkout hashes captured without printing secret values."
+    },
+    "d1_run": {
+      "run_id": 36965759950,
+      "run_name": "Rust D1 real-entry smoke",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "7a416d088771925cf291a862bd83f7b97f04e567"
+    },
+    "test_run": {
+      "run_id": 36965759966,
+      "run_name": "Test",
+      "status": "in_progress",
+      "conclusion": null,
+      "head_sha": "7a416d088771925cf291a862bd83f7b97f04e567"
+    },
+    "gitguardian_check": {
+      "check_run_id": 110709047154,
+      "name": "GitGuardian Security Checks",
+      "status": "completed",
+      "conclusion": "failure",
+      "head_sha": "7a416d088771925cf291a862bd83f7b97f04e567",
+      "output_summary": "1 secret uncovered from scan of 7 commits in the pull request",
+      "annotations_returned_by_github_api": 0,
+      "secret_value_accessed": false,
+      "waiver": "none"
+    }
+  },
+  "single_check_matrix_snapshot": {
+    "source": "GitHub check-runs API for exact PR head",
+    "observed_no_later_than_utc": "2026-10-02T05:04:52Z",
+    "check_run_count": 21,
+    "success": [
+      "Server foundation artifact x86_64-unknown-linux-gnu (native-build)",
+      "Server foundation artifact x86_64-apple-darwin (native-build)",
+      "Server foundation artifact aarch64-apple-darwin (native-build)",
+      "Server foundation artifact aarch64-pc-windows-msvc (cross-compile)",
+      "Server foundation artifact aarch64-unknown-linux-gnu (cross-compile)",
+      "Native foundations x86_64-pc-windows-msvc",
+      "Native foundations aarch64-apple-darwin",
+      "Desktop packaged smoke macOS arm64",
+      "Verify macos-latest",
+      "Server foundation artifact x86_64-pc-windows-msvc (native-build)",
+      "Native foundations x86_64-unknown-linux-gnu",
+      "Native foundations x86_64-apple-darwin",
+      "Architecture ratchet",
+      "Verify windows-latest",
+      "Docs qualification",
+      "Plan qualification profile",
+      "Native bearer SQLx and Actix contracts",
+      "Rust D1 real-entry smoke"
+    ],
+    "skipped": [
+      "Affected qualification"
+    ],
+    "pending_at_snapshot": [
+      {
+        "check_run_id": 110709096644,
+        "name": "Verify ubuntu-latest",
+        "status": "in_progress"
+      }
+    ],
+    "failures": [
+      {
+        "check_run_id": 110709047154,
+        "name": "GitGuardian Security Checks",
+        "conclusion": "failure"
+      }
+    ]
+  },
+  "main_branch_rules": {
+    "main_ref_sha": "56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce",
+    "branch_api_protected": true,
+    "active_repo_ruleset": {
+      "id": 22449828,
+      "name": "main-pr-only",
+      "enforcement": "active",
+      "include": [
+        "refs/heads/main"
+      ],
+      "visible_rules": [
+        "deletion",
+        "pull_request"
+      ],
+      "visible_required_status_checks": []
+    },
+    "effective_branch_rules_api_visible_rules": [
+      "deletion",
+      "pull_request"
+    ],
+    "classic_branch_protection_endpoint": "read failed with API EOF",
+    "gitguardian_required_on_main": "unknown",
+    "reason": "Accessible ruleset/effective-rules responses expose no required-status-check rule, but main is protected and the classic protection read failed; absence of a GitGuardian requirement is therefore not proven. PR 262 targets a codex/* base, so main rules do not establish requirements for this PR base."
+  },
+  "parent_report_metadata_not_independently_verified": {
+    "historical_gitguardian_incident": "37803389",
+    "historical_commit": "1fc718d1",
+    "reported_fixture_location": "test fixture line 250",
+    "reported_current_synthetic_label_not_flagged": true,
+    "treatment": "Retained as unverified parent/API-inspection metadata; it does not clear or waive the current failed GitGuardian check."
+  },
+  "review": {
+    "verdict": "needs more evidence",
+    "level": "stage verdict",
+    "blocking_evidence_gaps": [
+      "GitGuardian failed on the exact PR head; no waiver was supplied.",
+      "One Ubuntu verification check was pending in the sole matrix snapshot; no terminal status was re-polled by scope.",
+      "Whether GitGuardian is a required status on main remains unknown because the classic protection read failed."
+    ],
+    "independent_agent_review": "No agent-spawn capability was exposed; no new thread was created."
+  }
+}

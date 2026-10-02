@@ -1,0 +1,34 @@
+{
+  "schema": "rudder.independent-stage-review/v1",
+  "reviewerSkill": "agent-work-reviewer-maintainer",
+  "reviewedAtDate": "2026-10-02",
+  "level": "test-only source/artifact stage; earlyDraft CI",
+  "verdict": "accept",
+  "candidate": {
+    "branch": "codex/native-auth-security-fixture-20261002",
+    "baseCommit": "53e22b50534d7faca1d1dd6aa586272e8bf80df0",
+    "baseTree": "e95ac11c244e625c8346c6a164d66241f5593a69",
+    "commit": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "tree": "9345a28f7b4d87c081399617bf439c3464b2eddb",
+    "worktreeClean": true,
+    "changedPaths": [
+      "native/crates/server-foundation/src/native_bearer_auth.rs"
+    ],
+    "dirtyDiffSha256AgainstBase": "b55c9815dd27f73f02ccdb74c33b25d87052452b8bc3fad57ca5d7fa6e89983d",
+    "changedFileGitBlobObjectId": "3ac322cc3e1778b7e22b991ea52340dcfb4ccae5"
+  },
+  "reviewIntent": "Inspect only the single negative test-vector correction associated with GitGuardian incident 37803389. Confirm production behavior is unchanged and the non-native assertion remains. This receipt is not product acceptance and does not clear the external GitGuardian check.",
+  "evidence": [
+    "Read-only identity check confirms checkpoint 7a416d088771925cf291a862bd83f7b97f04e567, tree 9345a28f7b4d87c081399617bf439c3464b2eddb, with parent exactly 53e22b50534d7faca1d1dd6aa586272e8bf80df0 and a clean worktree.",
+    "The committed diff against 53e is one line changed in one file; the same binary-diff SHA-256 was observed before and after checkpointing. git diff --check passes.",
+    "The changed string is in the #[cfg(test)] module's only_rudder_native_api_key_prefixes_enter_the_fail_closed_path test. It replaces a JWT-header-shaped fixture with an unmistakably synthetic invalid label; the false assertion for non-native inputs and the positive pcp_ prefix assertions are preserved. No production code or behavior changed.",
+    "The supplied GitGuardian audit identifies incident 37803389 as a generic high-entropy finding in that negative-input test fixture. The check remains completed/failure with finding status Triggered, is not waived, and has not been rerun on this checkpoint.",
+    "Parent-reported focused test result: correct package rudder-server-foundation-core; 1 passed, 0 ignored, 58 total with filter 57; no database environment; 11 seconds. An initial wrong package selector failed before test execution and was corrected. This reviewer did not rerun the test."
+  ],
+  "nonBlockingFollowUp": "Rerun GitGuardian on the exact checkpoint and inspect any exact-head finding; this source-stage accept is not a pass or waiver for the still-failed prior check.",
+  "claimLimits": [
+    "No PostgreSQL, runtime, browser, or build operation was performed for this review.",
+    "No product-wide, authentication-flow, final-verifier, merge, or release claim is made.",
+    "The parent-reported focused unit result is recorded as attributed evidence, not independently verified execution."
+  ]
+}
