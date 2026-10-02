@@ -9,7 +9,7 @@ source:
   row_refresh_scope: partial_native_bearer_auth_only_other_rows_keep_historical_provenance
   stage_receipt: artifacts/2026-10-02-rudder-native-auth-synthetic-fixture-stage-review.json
   ci_receipt: artifacts/2026-10-02-rudder-native-auth-ci-evidence-audit.json
-  acceptance: pending_public_TCP_installed_auth_and_final_review_security_unresolved
+  acceptance: source_built_TCP_v5_verifier_PASS_final_review_accept_installed_and_aggregate_acceptance_pending_security_unresolved
   current_records_remote_sha: 99aa299c0e139c0b8a485f2d24cd692fbfd9968a
   tcp_v5: {stage: accept, verifier: PASS, final_review: accept_source_built_TCP_only, public_observations: 15, criteria: 11, Node_grant_calls: 0, installed: false, full_identity_retired: false}
   tcp_v5_final_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-final-review.json
