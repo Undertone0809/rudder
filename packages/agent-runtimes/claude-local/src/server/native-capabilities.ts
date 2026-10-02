@@ -8,7 +8,7 @@ import type {
 } from "@rudderhq/agent-runtime-utils";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, readFileSync } from "node:fs";
+import { createReadStream, readFileSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -265,11 +265,65 @@ function encodeClaudeProjectPath(cwd: string): string {
   return `${encoded.slice(0, 200)}-${Math.abs(hash).toString(36)}`;
 }
 
-export function resolveClaudeSessionFilePath(configDir: string, cwd: string, sessionId: string): string {
+function canonicalClaudePath(value: string): string {
+  const absolute = path.resolve(value);
+  try {
+    return realpathSync(absolute);
+  } catch (error) {
+    // Match the SDK's lexical fallback for paths not yet created. Permission,
+    // symlink-loop and other failures must not establish a profile alias.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return absolute;
+    throw error;
+  }
+}
+
+function lexicalClaudeSessionFilePath(configDir: string, cwd: string, sessionId: string): string {
   if (!/^[a-zA-Z0-9._-]+$/.test(sessionId)) {
     throw new Error("Claude session ID contains path separators or unsupported characters.");
   }
   return path.join(configDir, "projects", encodeClaudeProjectPath(path.resolve(cwd)), `${sessionId}.jsonl`);
+}
+
+export function resolveClaudeSessionFilePath(configDir: string, cwd: string, sessionId: string): string {
+  return lexicalClaudeSessionFilePath(configDir, canonicalClaudePath(cwd), sessionId);
+}
+
+export function claudeProfilePathsMatch(left: string, right: string): boolean {
+  try {
+    return canonicalClaudePath(left) === canonicalClaudePath(right);
+  } catch {
+    return false;
+  }
+}
+
+export function isClaudeSessionFilePathCompatible(input: {
+  configDir: string;
+  cwd: string;
+  sessionId: string;
+  storedPath: string;
+  storedCwd?: string | null;
+  storedConfigDir?: string | null;
+}): boolean {
+  try {
+    const canonicalCwd = canonicalClaudePath(input.cwd);
+    const canonicalConfig = canonicalClaudePath(input.configDir);
+    if (input.storedCwd && !claudeProfilePathsMatch(input.storedCwd, canonicalCwd)) return false;
+    if (input.storedConfigDir && !claudeProfilePathsMatch(input.storedConfigDir, canonicalConfig)) return false;
+    // Legacy metadata encodes lexical cwd. Only deterministic encodings of
+    // validated aliases are admissible; the stored path is never opened.
+    const allowedPaths = new Set<string>();
+    for (const config of [input.configDir, input.storedConfigDir ?? input.configDir, canonicalConfig]) {
+      for (const cwd of [input.cwd, input.storedCwd ?? input.cwd, canonicalCwd]) {
+        allowedPaths.add(path.resolve(lexicalClaudeSessionFilePath(config, cwd, input.sessionId)));
+      }
+    }
+    const expectedPath = resolveClaudeSessionFilePath(canonicalConfig, canonicalCwd, input.sessionId);
+    return (!input.storedPath || allowedPaths.has(path.resolve(input.storedPath)))
+      && canonicalClaudePath(expectedPath) === path.resolve(expectedPath);
+  } catch {
+    return false;
+  }
 }
 
 export function parseClaudeSessionJsonl(raw: string): {
@@ -990,19 +1044,23 @@ function resolveProfileSessionPath(
   if (!sessionId || !profileIdentityMatches(params, binding)) {
     return { status: "incompatible", revision: "session-profile-mismatch" };
   }
-  const storedCwd = stringValue(params.cwd);
-  if (storedCwd && path.resolve(storedCwd) !== path.resolve(profile.cwd)) {
-    return { status: "incompatible", revision: "cwd-mismatch" };
-  }
-  const storedConfigDir = stringValue(params.claudeConfigDir ?? params.configDir);
-  if (storedConfigDir && path.resolve(storedConfigDir) !== path.resolve(profile.configDir)) {
-    return { status: "incompatible", revision: "config-dir-mismatch" };
-  }
-
   try {
-    const expectedPath = resolveClaudeSessionFilePath(profile.configDir, profile.cwd, sessionId);
+    const canonicalCwd = canonicalClaudePath(profile.cwd);
+    const canonicalConfig = canonicalClaudePath(profile.configDir);
+    const storedCwd = stringValue(params.cwd);
+    if (storedCwd && canonicalClaudePath(storedCwd) !== canonicalCwd) {
+      return { status: "incompatible", revision: "cwd-mismatch" };
+    }
+    const storedConfigDir = stringValue(params.claudeConfigDir ?? params.configDir);
+    if (storedConfigDir && canonicalClaudePath(storedConfigDir) !== canonicalConfig) {
+      return { status: "incompatible", revision: "config-dir-mismatch" };
+    }
+    const expectedPath = resolveClaudeSessionFilePath(canonicalConfig, canonicalCwd, sessionId);
     const storedPath = stringValue(params.sessionFilePath ?? params.claudeSessionFilePath);
-    if (storedPath && path.resolve(storedPath) !== path.resolve(expectedPath)) {
+    if (!isClaudeSessionFilePathCompatible({
+      configDir: profile.configDir, cwd: profile.cwd, sessionId,
+      storedPath: storedPath ?? "", storedCwd, storedConfigDir,
+    })) {
       return { status: "incompatible", revision: "session-file-mismatch" };
     }
     return { filePath: expectedPath };
@@ -1204,19 +1262,11 @@ function verifyForkSource(
   if (persistedSessionId && persistedSessionId !== sessionId) {
     throw nativeForkError("Claude native fork session metadata contains a different provider session ID.");
   }
-  const storedCwd = stringValue(params.cwd);
-  if (storedCwd && path.resolve(storedCwd) !== path.resolve(profile.cwd)) {
-    throw nativeForkError("Claude native fork source session cwd does not match the authorized profile.");
-  }
-  const storedConfigDir = stringValue(params.claudeConfigDir ?? params.configDir);
-  if (storedConfigDir && path.resolve(storedConfigDir) !== path.resolve(profile.configDir)) {
-    throw nativeForkError("Claude native fork source session config directory does not match the authorized profile.");
-  }
-  const storedFilePath = stringValue(params.sessionFilePath ?? params.claudeSessionFilePath);
-  const parentPath = resolveClaudeSessionFilePath(profile.configDir, profile.cwd, sessionId);
-  if (storedFilePath && path.resolve(storedFilePath) !== path.resolve(parentPath)) {
-    throw nativeForkError("Claude native fork source session file does not match the authorized profile.");
-  }
+  const resolved = resolveProfileSessionPath(profile, {
+    runtimeType: input.runtimeType, binding: input.binding, session: input.session,
+  });
+  if (!("filePath" in resolved)) throw nativeForkError(`Claude native fork source session does not match the authorized profile (${resolved.revision}).`);
+  const parentPath = resolved.filePath;
   verifyForkSelector(input, boundary);
 
   const transcriptEvents = sdkTranscriptEvents(records);
@@ -1475,15 +1525,11 @@ async function forkClaudeNativeSession(
     }
   }
   const sdkProfile = { ...profile, cwd: canonicalCwd };
-  const sdkInput: ClaudeNativeForkRequest = {
-    ...input,
-    session: {
-      ...input.session,
-      sessionParams: { ...input.session.sessionParams, cwd: canonicalCwd },
-    },
-  };
+  // Retain the attested lexical metadata for validation of legacy project keys.
+  // SDK operations use sdkProfile.cwd, not a rewritten source session identity.
+  const sdkInput = input;
 
-  const loaded = await loadProfileSessionRecords(sdkProfile, {
+  const loaded = await loadProfileSessionRecords(profile, {
     runtimeType: sdkInput.runtimeType,
     binding: sdkInput.binding,
     session: sdkInput.session,
@@ -1491,7 +1537,7 @@ async function forkClaudeNativeSession(
   });
   if (loaded.status !== "available") throw nativeForkError(`Claude source session is not available in its authorized profile (${loaded.revision}).`);
   if (loaded.malformed) throw nativeForkError("Claude source session JSONL is malformed or incomplete.");
-  const source = verifyForkSource(sdkInput, sdkProfile, loaded.records);
+  const source = verifyForkSource(sdkInput, profile, loaded.records);
   const parentBytes = await fs.readFile(source.parentPath);
   if (stableHash(parentBytes.toString("utf8")) !== loaded.revision) {
     throw nativeForkError("Claude source session changed during boundary validation; retry from a fresh Run snapshot.");

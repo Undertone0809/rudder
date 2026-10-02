@@ -125,6 +125,53 @@ async function withSessionFile(
 }
 
 describe("Claude profile-bound native capabilities", () => {
+  it("reads canonical resources with legacy lexical metadata without changing exact chain identity", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-path-alias-"));
+    try {
+      const real = path.join(await fs.realpath(root), "real");
+      const alias = path.join(root, "alias");
+      await fs.mkdir(path.join(real, "project"), { recursive: true });
+      await fs.mkdir(path.join(real, "config"));
+      await fs.symlink(real, alias, "dir");
+      const transport = { binding, cwd: path.join(alias, "project"), configDir: path.join(alias, "config"), providerVersion: "2.1.216" };
+      const canonicalCwd = await fs.realpath(transport.cwd);
+      const canonicalConfig = await fs.realpath(transport.configDir);
+      const canonicalPath = resolveClaudeSessionFilePath(canonicalConfig, canonicalCwd, sessionId);
+      await fs.mkdir(path.dirname(canonicalPath), { recursive: true });
+      await fs.writeFile(canonicalPath, sessionJsonl);
+      const legacyPath = path.join(transport.configDir, "projects", path.resolve(transport.cwd).replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
+      await expect(fs.access(legacyPath)).rejects.toThrow();
+      expect(resolveClaudeSessionFilePath(transport.configDir, transport.cwd, sessionId))
+        .toBe(resolveClaudeSessionFilePath(transport.configDir, canonicalCwd, sessionId));
+      const input = request({ selector: { kind: "claude_chain", startExclusiveUuid: "assistant-1", throughInclusiveUuid: "assistant-2" } });
+      input.session.sessionParams = { ...input.session.sessionParams, cwd: transport.cwd, claudeConfigDir: transport.configDir, sessionFilePath: legacyPath };
+      const before = structuredClone(input);
+      const adapter = createClaudeLocalProviderCapabilities(transport);
+      const recovered = await adapter.transcript.readRange(input);
+      expect(recovered).toMatchObject({ availability: "available", completeness: "complete" });
+      expect(recovered.items.map(item => item.sourceEntryId)).toEqual(["user-2:block:0", "assistant-2:block:0"]);
+      const canonicalInput = { ...input, session: { ...input.session, sessionParams: { ...input.session.sessionParams, cwd: canonicalCwd, claudeConfigDir: canonicalConfig, sessionFilePath: canonicalPath } } };
+      expect(await adapter.transcript.readRange(canonicalInput)).toEqual(recovered);
+      expect(input).toEqual(before);
+      for (const params of [
+        { profileId: "other-profile" },
+        { cwd: root },
+        { claudeConfigDir: root },
+        { sessionFilePath: path.join(root, `${sessionId}.jsonl`) },
+      ]) {
+        expect(await adapter.transcript.readRange({ ...input, session: { ...input.session, sessionParams: { ...input.session.sessionParams, ...params } } }))
+          .toMatchObject({ availability: "incompatible", items: [] });
+      }
+      await fs.unlink(canonicalPath);
+      const foreignPath = path.join(root, "foreign.jsonl");
+      await fs.writeFile(foreignPath, sessionJsonl);
+      await fs.symlink(foreignPath, canonicalPath);
+      expect(await adapter.transcript.readRange(input)).toMatchObject({ availability: "incompatible", items: [] });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a fixed Run cursor valid after later turns but invalidates selected tool output changes", async () => {
     await withSessionFile(sessionJsonl, async (transport, input) => {
       const adapter = createClaudeLocalProviderCapabilities(transport);

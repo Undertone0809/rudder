@@ -68,6 +68,8 @@ import {
 } from "./cli-args.js";
 import { readClaudeLoadedMcpServers } from "./mcp-evidence.js";
 import {
+  claudeProfilePathsMatch,
+  isClaudeSessionFilePathCompatible,
   resolveClaudeSessionFilePath,
   verifyClaudeSessionAssistantHead,
   type ClaudeDeferredForkIntent,
@@ -225,11 +227,11 @@ export function validateClaudeResumeSession(input: {
     return "Claude persisted session identity does not match the requested session.";
   }
   const storedCwd = storedSessionString(params, ["cwd", "workdir", "folder"]);
-  if (storedCwd && path.resolve(storedCwd) !== path.resolve(input.cwd)) {
+  if (storedCwd && !claudeProfilePathsMatch(storedCwd, input.cwd)) {
     return `Claude session cwd "${storedCwd}" does not match the requested workspace cwd "${input.cwd}".`;
   }
   const storedConfigDir = storedSessionString(params, ["claudeConfigDir", "configDir"]);
-  if (storedConfigDir && path.resolve(storedConfigDir) !== path.resolve(input.configDir)) {
+  if (storedConfigDir && !claudeProfilePathsMatch(storedConfigDir, input.configDir)) {
     return "Claude session profile transport config directory does not match the requested profile.";
   }
   const identityFields: Array<[string, readonly string[], string]> = [
@@ -1094,29 +1096,21 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       ["provider profile", asString(sourceSessionParams.profileId, "").trim(), profileIdentity.profileId],
       ["provider transport", asString(sourceSessionParams.transport, "").trim(), "claude_cli"],
     ];
-    let expectedSourceSessionPath: string;
-    try {
-      expectedSourceSessionPath = resolveClaudeSessionFilePath(
-        asString(env.CLAUDE_CONFIG_DIR, ""),
-        cwd,
-        sourceSessionId!,
-      );
-    } catch {
-      return deferredForkFailure("the source session ID cannot resolve to a Claude session-store path");
-    }
-    requiredSourceIdentity.push([
-      "session file",
-      asString(sourceSessionParams.sessionFilePath, "").trim(),
-      expectedSourceSessionPath,
-    ]);
     const missingOrMismatchedIdentity = requiredSourceIdentity.find(([label, stored, expected]) => (
-      !stored || (label === "cwd" || label === "CLAUDE_CONFIG_DIR" || label === "session file"
-        ? path.resolve(stored) !== path.resolve(expected)
+      !stored || (label === "cwd" || label === "CLAUDE_CONFIG_DIR"
+        ? !claudeProfilePathsMatch(stored, expected)
         : stored !== expected)
     ));
     if (missingOrMismatchedIdentity) {
       return deferredForkFailure(`source session ${missingOrMismatchedIdentity[0]} identity is missing or does not match`);
     }
+    const storedSourcePath = asString(sourceSessionParams.sessionFilePath, "").trim();
+    if (!storedSourcePath || !isClaudeSessionFilePathCompatible({
+      configDir: asString(env.CLAUDE_CONFIG_DIR, ""), cwd, sessionId: sourceSessionId!,
+      storedPath: storedSourcePath,
+      storedCwd: asString(sourceSessionParams.cwd, "").trim(),
+      storedConfigDir: asString(sourceSessionParams.claudeConfigDir, "").trim(),
+    })) return deferredForkFailure("source session session file identity is missing or does not match");
   } else if (runtimeSessionId) {
     const resumeRejection = validateClaudeResumeSession({
       sessionId: runtimeSessionId,

@@ -215,6 +215,41 @@ afterEach(async () => {
 });
 
 describe("Claude exact assistant-boundary native fork", () => {
+  it("forks an exact historical chain from legacy alias metadata in the same canonical profile", async () => {
+    const fixture = await makeFixture();
+    const alias = path.join(fixture.root, "workspace-alias");
+    await fs.symlink(fixture.cwd, alias, "dir");
+    const legacyPath = path.join(fixture.configDir, "projects", path.resolve(alias).replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
+    const session = { ...fixture.session, sessionParams: { ...fixture.session.sessionParams, cwd: alias, sessionFilePath: legacyPath } };
+    const snapshot = structuredClone(session);
+    const result = await createClaudeLocalProviderCapabilities({ ...fixture.profile, cwd: alias }).fork.fork({
+      runtimeType: "claude_local", session, binding, boundary: assistantTwo,
+      selector: { kind: "claude_chain", sessionId, throughInclusiveUuid: assistantTwo, boundaryStatus: "exact" },
+    });
+    expect(result.continuity).toBe("native");
+    const resumeInput = {
+      sessionId: result.session.sessionId,
+      sessionParams: result.session.sessionParams,
+      cwd: alias,
+      configDir: fixture.configDir,
+      profile: {
+        hostId: binding.hostId, profileId: binding.profileId,
+        profileBindingId: binding.id, profileOrgId: binding.orgId,
+        capabilityRevision: binding.capabilityRevision,
+      },
+    };
+    expect(validateClaudeResumeSession(resumeInput)).toBeNull();
+    expect(validateClaudeResumeSession({ ...resumeInput, cwd: fixture.root })).not.toBeNull();
+    expect(validateClaudeResumeSession({ ...resumeInput, configDir: fixture.root })).not.toBeNull();
+    expect(validateClaudeResumeSession({ ...resumeInput, profile: { ...resumeInput.profile, profileId: "other-profile" } })).not.toBeNull();
+    expect(Object.keys(result.identityMap)).toEqual([userOne, assistantOne, userTwo, assistantTwo]);
+    const child = await fs.readFile(resolveClaudeSessionFilePath(fixture.configDir, fixture.cwd, result.session.sessionId), "utf8");
+    expect(child).not.toContain(userThree);
+    expect(child).not.toContain(assistantThree);
+    expect(await fs.readFile(fixture.parentPath)).toEqual(fixture.parentBytes);
+    expect(session).toEqual(snapshot);
+  });
+
   it("copies exactly through the completed assistant, remaps identities, and leaves the authorized parent unchanged", async () => {
     const fixture = await makeFixture();
     const adapter = createClaudeLocalProviderCapabilities(fixture.profile);

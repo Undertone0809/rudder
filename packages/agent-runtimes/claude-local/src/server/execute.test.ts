@@ -57,7 +57,7 @@ input.on("line", (line) => {
 `;
 }
 
-async function runDeferredFork(reportedSessionId: string | null, unknownSession = false) {
+async function runDeferredFork(reportedSessionId: string | null, unknownSession = false, legacyMetadata = false) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-claude-deferred-fork-"));
   const cwd = path.join(root, "workspace");
   const command = path.join(root, "fake-claude");
@@ -72,10 +72,17 @@ async function runDeferredFork(reportedSessionId: string | null, unknownSession 
     "claude-home",
     ".claude",
   );
-  const sourceSessionPath = resolveClaudeSessionFilePath(configDir, cwd, sourceSessionId);
   const previousHome = process.env.HOME;
   const previousOperatorHome = process.env.RUDDER_OPERATOR_HOME;
-  await fs.mkdir(cwd, { recursive: true });
+  if (legacyMetadata) {
+    const physicalCwd = path.join(root, "physical-workspace");
+    await fs.mkdir(physicalCwd, { recursive: true });
+    await fs.symlink(physicalCwd, cwd, "dir");
+  } else {
+    await fs.mkdir(cwd, { recursive: true });
+  }
+  const sourceSessionPath = resolveClaudeSessionFilePath(configDir, cwd, sourceSessionId);
+  const legacySessionPath = path.join(configDir, "projects", path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, "-"), `${sourceSessionId}.jsonl`);
   await fs.mkdir(path.dirname(sourceSessionPath), { recursive: true });
   await fs.writeFile(command, fakeClaudeCliScript(reportedSessionId), "utf8");
   await fs.chmod(command, 0o755);
@@ -105,7 +112,7 @@ async function runDeferredFork(reportedSessionId: string | null, unknownSession 
           sessionId: sourceSessionId,
           cwd,
           claudeConfigDir: configDir,
-          sessionFilePath: sourceSessionPath,
+          sessionFilePath: legacyMetadata ? legacySessionPath : sourceSessionPath,
           lastUuid: "source-result-1",
           profileHostId: "local",
           profileId: "default",
@@ -351,6 +358,12 @@ describe("Claude managed settings endpoint precedence", () => {
 });
 
 describe("Claude deferred native fork", () => {
+  it("validates old deterministic lexical metadata before submitting a deferred fork", async () => {
+    const { result, capture } = await runDeferredFork("legacy-child-session", false, true);
+    expect(capture.prompts).toEqual([prompt]);
+    expect(result).toMatchObject({ exitCode: 0, sessionId: "legacy-child-session", submissionPhase: "accepted" });
+  });
+
   it("submits the real first prompt with resume and fork flags, then returns the provider child", async () => {
     const childSessionId = "child-session-1";
     const { result, capture } = await runDeferredFork(childSessionId);
