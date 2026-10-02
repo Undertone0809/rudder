@@ -31,7 +31,10 @@ current_candidate:
     claim_limit: source_built_not_installed_not_public_TCP_acceptance
   current_environment:
     owned_locked_install: pnpm_install_frozen_lockfile_ignore_scripts_in_current_source_checkout
-    install_state_at_recording: running_exec97499_PID95163_network_connection_live
+    install_state_at_recording: completed_exec97499_exit0_1357_packages_20m16_5s
+    prerequisite_checks: cli_and_db_workspace_tsx4_21_0_Node22_23_1_static_DB_import190_exports_PASS_source_clean
+    pnpm_lock_sha256: 8962e3da598b36c2036500a28569571f593ca3f9964a9e95582e0925be69828c
+    tsx_cli_sha256: 8729ecfb90d9d568939e4190e6f1d3317c946583b7d37a776e0c23a21c021cf8
     postgres_runtime_grant: none
     historical_c89_installed_assets: absent_do_not_reuse_as_current_ready
     historical_donor_node_modules: absent_do_not_reuse_saved_READY_preflight
@@ -43,7 +46,7 @@ current_candidate:
     final_reviewer: pending
     security_check: historical_commit_alert_unresolved_not_waived
     aggregate_PR236_acceptance: pending
-  next_executable: finish_owned_locked_install_validate_all_v4_prerequisites_then_stage_review_before_exclusive_disposable_PG_lease_and_distinct_TCP_verifier
+  next_executable: finish_v4_all_prerequisite_preflight_then_stage_review_before_exclusive_disposable_PG_lease_and_distinct_TCP_verifier
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 historical_candidate_2026_09_29:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
