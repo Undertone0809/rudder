@@ -7,7 +7,7 @@ import {
 import { chatsApi } from "@/api/chats";
 import type { ChatMessage } from "@rudderhq/shared";
 import { useQueries } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { projectReaderTranscriptEntries } from "./native-presentation";
 
 const TRANSCRIPT_POLL_INTERVAL_MS = 2_000;
@@ -210,6 +210,7 @@ export function useAgentRunTranscripts(
     [targetKey],
   );
   const [navigationByRunState, setNavigationByRunState] = useState<Record<string, CursorNavigationState>>({});
+  const previousActiveByRun = useRef(new Map<string, boolean>());
   const navigationForRun = useCallback(
     (runId: string) => navigationByRunState[runId] ?? INITIAL_CURSOR_NAVIGATION,
     [navigationByRunState],
@@ -239,6 +240,10 @@ export function useAgentRunTranscripts(
 
   useEffect(() => {
     const knownRunIds = new Set(normalizedTargets.map((target) => target.runId));
+    const terminalTransitions = new Set(normalizedTargets
+      .filter((target) => !target.active && previousActiveByRun.current.get(target.runId) === true)
+      .map((target) => target.runId));
+    previousActiveByRun.current = new Map(normalizedTargets.map((target) => [target.runId, Boolean(target.active)]));
     setNavigationByRunState((current) => {
       let changed = false;
       const next: Record<string, CursorNavigationState> = {};
@@ -249,6 +254,19 @@ export function useAgentRunTranscripts(
       normalizedTargets.forEach((target, index) => {
         const queryData = queries[index]?.data;
         const currentNavigation = current[target.runId] ?? INITIAL_CURSOR_NAVIGATION;
+        if (terminalTransitions.has(target.runId)) {
+          // Stopping the interval alone leaves the last live snapshot cached.
+          // Start one fresh first-page query: terminal publication can invalidate
+          // live cursors. If unused, the old query's Reader is aborted via its
+          // consumed signal; another mounted consumer may still need it. Either
+          // way, late live data cannot overwrite this fresh query key.
+          next[target.runId] = {
+            ...INITIAL_CURSOR_NAVIGATION,
+            resetGeneration: currentNavigation.resetGeneration + 1,
+          };
+          changed = true;
+          return;
+        }
         if (!queryData?.revision) {
           if (!(target.runId in current)) next[target.runId] = currentNavigation;
           return;

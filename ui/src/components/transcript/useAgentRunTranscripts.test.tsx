@@ -41,8 +41,8 @@ function ReaderProbe({ targets }: { targets: readonly AgentRunTranscriptTarget[]
   );
 }
 
-function NavigationProbe({ runId, raw = false }: { runId: string; raw?: boolean }) {
-  const { transcriptByRun, transcriptStateByRun, transcriptNavigationByRun } = useAgentRunTranscripts([{ runId }], { raw });
+function NavigationProbe({ runId, raw = false, active = false }: { runId: string; raw?: boolean; active?: boolean }) {
+  const { transcriptByRun, transcriptStateByRun, transcriptNavigationByRun } = useAgentRunTranscripts([{ runId, active }], { raw });
   const navigation = transcriptNavigationByRun.get(runId);
   const state = transcriptStateByRun.get(runId);
   const entries = transcriptByRun.get(runId) ?? [];
@@ -74,11 +74,11 @@ function NavigationProbe({ runId, raw = false }: { runId: string; raw?: boolean 
   );
 }
 
-function renderProbe(targets: readonly AgentRunTranscriptTarget[]) {
+function renderProbe(targets: readonly AgentRunTranscriptTarget[], existingQueryClient?: QueryClient) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-  const queryClient = new QueryClient({
+  const queryClient = existingQueryClient ?? new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   act(() => {
@@ -88,10 +88,13 @@ function renderProbe(targets: readonly AgentRunTranscriptTarget[]) {
       </QueryClientProvider>,
     );
   });
-  return { host, root };
+  const rerender = (nextTargets: readonly AgentRunTranscriptTarget[]) => act(() => {
+    root.render(<QueryClientProvider client={queryClient}><ReaderProbe targets={nextTargets} /></QueryClientProvider>);
+  });
+  return { host, root, queryClient, rerender };
 }
 
-function renderNavigationProbe(runId: string, raw = false) {
+function renderNavigationProbe(runId: string, raw = false, active = false) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -101,11 +104,24 @@ function renderNavigationProbe(runId: string, raw = false) {
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <NavigationProbe runId={runId} raw={raw} />
+        <NavigationProbe runId={runId} raw={raw} active={active} />
       </QueryClientProvider>,
     );
   });
-  return { host, root };
+  const rerender = (nextActive: boolean) => act(() => {
+    root.render(<QueryClientProvider client={queryClient}>
+      <NavigationProbe runId={runId} raw={raw} active={nextActive} />
+    </QueryClientProvider>);
+  });
+  return { host, root, queryClient, rerender };
+}
+
+function transitionPage(text: string, revision = text, cursor: string | null = null, nextCursor: string | null = null) {
+  return {
+    entries: [{ id: text, entry: { kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text } }],
+    source: "native", revision, availability: "available", completeness: nextCursor ? "partial" : "complete",
+    page: { cursor, hasMore: Boolean(nextCursor), nextCursor, order: "oldest" },
+  };
 }
 
 beforeEach(() => {
@@ -127,11 +143,133 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   document.body.replaceChildren();
   vi.clearAllMocks();
 });
 
 describe("useAgentRunTranscripts", () => {
+  it("reads final native history exactly once when an active target becomes terminal", async () => {
+    transcriptMock.mockResolvedValueOnce({
+      entries: [], source: "native", revision: "pending-r1", availability: "pending", completeness: "unknown",
+      page: { cursor: null, hasMore: false, nextCursor: null, order: "oldest" },
+    });
+    const rendered = renderProbe([{ runId: "run-native", active: true }]);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(transcriptMock).toHaveBeenCalledTimes(1)); });
+      await act(async () => { await vi.waitFor(() => expect(rendered.queryClient.isFetching()).toBe(0)); });
+      rendered.rerender([{ runId: "run-native", active: false }]);
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("Reader output")); });
+      rendered.rerender([{ runId: "run-native", active: false }]);
+      await act(async () => { await Promise.resolve(); });
+      expect(transcriptMock).toHaveBeenCalledTimes(2);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("does not add a final fetch or polling for an initially terminal target", async () => {
+    const rendered = renderProbe([{ runId: "run-native", active: false }]);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("Reader output")); });
+      vi.useFakeTimers();
+      rendered.rerender([{ runId: "run-native", active: false }]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+      expect(transcriptMock).toHaveBeenCalledTimes(1);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("refreshes only the transitioned Run among multiple targets and does not loop", async () => {
+    vi.useFakeTimers();
+    const stillActive = { runId: "run-still-active", active: true };
+    const rendered = renderProbe([{ runId: "run-native", active: true }, { runId: "run-empty", active: false }, stillActive]);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("Reader output|empty-loaded")); });
+      rendered.rerender([stillActive, { runId: "run-empty", active: false }, { runId: "run-native", active: false }]);
+      await act(async () => { await vi.waitFor(() => expect(transcriptMock).toHaveBeenCalledTimes(4)); });
+      await act(async () => { await vi.waitFor(() => expect(rendered.queryClient.isFetching()).toBe(0)); });
+      rendered.rerender([{ runId: "run-native", active: false }, stillActive, { runId: "run-empty", active: false }]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+      expect(transcriptMock.mock.calls.filter(([id]) => id === "run-native")).toHaveLength(2);
+      expect(transcriptMock.mock.calls.filter(([id]) => id === "run-empty")).toHaveLength(1);
+      expect(transcriptMock.mock.calls.filter(([id]) => id === "run-still-active").length).toBeGreaterThan(1);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("aborts an in-flight live read and ignores its late result after terminal publication", async () => {
+    let finishLive!: (page: ReturnType<typeof transitionPage>) => void;
+    let liveSignal!: AbortSignal;
+    transcriptMock.mockImplementationOnce((_id, _request, { signal }) => {
+      liveSignal = signal;
+      return new Promise((resolve) => { finishLive = resolve; });
+    }).mockResolvedValueOnce(transitionPage("final-history"));
+    const rendered = renderProbe([{ runId: "run-native", active: true }]);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(transcriptMock).toHaveBeenCalledTimes(1)); });
+      rendered.rerender([{ runId: "run-native", active: false }]);
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("final-history")); });
+      expect(liveSignal.aborted).toBe(true);
+      await act(async () => { finishLive(transitionPage("stale-live")); await Promise.resolve(); });
+      expect(rendered.host.textContent).toContain("final-history");
+      expect(rendered.host.textContent).not.toContain("stale-live");
+      expect(transcriptMock).toHaveBeenCalledTimes(2);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("restarts terminal reading at page one rather than reusing a live pagination cursor", async () => {
+    let terminal = false;
+    transcriptMock.mockImplementation(async (_id, { cursor }) => terminal
+      ? transitionPage("terminal-first", "terminal-r2")
+      : cursor ? transitionPage("live-second", "live-r1", cursor)
+        : transitionPage("live-first", "live-r1", null, "live-next"));
+    const rendered = renderNavigationProbe("run-native", true, true);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("live-first")); });
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-next']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("live-second")); });
+      terminal = true;
+      rendered.rerender(false);
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("terminal-first")); });
+      expect(transcriptMock).toHaveBeenCalledTimes(3);
+      expect(transcriptMock.mock.calls[2][1].cursor).toBeNull();
+      expect(rendered.host.querySelector("[data-testid='navigation-page']")?.textContent).toBe("1");
+      expect(rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-previous']")?.disabled).toBe(true);
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("does not cancel a live query still needed by another mounted consumer", async () => {
+    let finishLive!: (page: ReturnType<typeof transitionPage>) => void;
+    let signal!: AbortSignal;
+    transcriptMock.mockImplementationOnce((_id, _request, options) => {
+      signal = options.signal;
+      return new Promise((resolve) => { finishLive = resolve; });
+    }).mockResolvedValueOnce(transitionPage("final-history"));
+    const terminalConsumer = renderProbe([{ runId: "run-native", active: true }]);
+    const liveConsumer = renderProbe([{ runId: "run-native", active: true }], terminalConsumer.queryClient);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(terminalConsumer.queryClient.isFetching()).toBe(1)); });
+      terminalConsumer.rerender([{ runId: "run-native", active: false }]);
+      await act(async () => { await vi.waitFor(() => expect(terminalConsumer.host.textContent).toContain("final-history")); });
+      expect(signal.aborted).toBe(false);
+      await act(async () => { finishLive(transitionPage("live-history")); await Promise.resolve(); });
+      expect(terminalConsumer.host.textContent).toContain("final-history");
+      expect(transcriptMock).toHaveBeenCalledTimes(2);
+    } finally {
+      act(() => { terminalConsumer.root.unmount(); liveConsumer.root.unmount(); });
+      terminalConsumer.queryClient.clear(); liveConsumer.queryClient.clear();
+    }
+  });
+
+  it("forgets removed active targets instead of scheduling a terminal refresh on re-add", async () => {
+    const rendered = renderProbe([{ runId: "run-native", active: true }]);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("Reader output")); });
+      rendered.rerender([]);
+      rendered.rerender([{ runId: "run-native", active: false }]);
+      await act(async () => { await vi.waitFor(() => expect(rendered.queryClient.isFetching()).toBe(0)); });
+      expect(rendered.queryClient.getQueryCache().getAll().map((query) => query.queryKey[3])).toEqual([0]);
+      expect(transcriptMock.mock.calls.length).toBeLessThanOrEqual(2); // Normal stale-on-mount read is allowed.
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
   it("presents Hermes tool-only native rows to Chat consumers while Raw retains the original row", async () => {
     const nativePage = {
       entries: [{ id: "tool-only", entry: { kind: "assistant", role: "assistant", rowId: 2,

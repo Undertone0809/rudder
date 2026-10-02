@@ -99,7 +99,7 @@ function assertPublishedNative(projection: Projection, userId: string, assistant
 
 // Protocol-fixture E2E through public Chat/Run/Reader + rendered Run Detail.
 // No API interception, DB mutation, real Codex inference, or retained-log fallback.
-// Packet v4: preserve startup objects before publication; complete native
+// Packet v5: preserve startup objects before publication; complete native
 // history may retire them (Plan W12 temporary stdout), not claim equivalence.
 test("native Run transcript preserves available diagnostics until exact native publication and terminal reload", async ({ page, context }, testInfo) => {
   test.setTimeout(120_000);
@@ -166,8 +166,17 @@ test("native Run transcript preserves available diagnostics until exact native p
     const initialUiResponse = await initialUiRead;
     expect(initialUiResponse.ok()).toBe(true);
     const initialUiProjection = await initialUiResponse.json() as Projection;
-    const transcript = runPage.locator(".run-detail-container");
+    // Actual Run Detail DOM has no role=tabpanel wrapper. The existing Expand
+    // transcript control identifies its rounded card, not the Replies card.
+    const transcript = runPage.locator(".run-detail-container div.rounded-2xl")
+      .filter({ has: runPage.getByRole("button", { name: "Expand transcript", exact: true }) });
+    await expect(transcript).toHaveCount(1);
     await expect(transcript).toBeVisible();
+    const assertSingleFinal = async () => {
+      await expect(transcript.getByText("Final response", { exact: true })).toBeVisible({ timeout: 20_000 });
+      await expect(transcript.getByText(marker, { exact: true })).toBeVisible({ timeout: 20_000 });
+      await expect(transcript.getByText(marker, { exact: true })).toHaveCount(1);
+    };
     const assertRenderedUnpublished = async (projection: Projection) => {
       assertUnpublishedNative(projection);
       // Bind the positive render oracle to this UI request, not an earlier API
@@ -213,8 +222,7 @@ test("native Run transcript preserves available diagnostics until exact native p
       return (await response.json()).status;
     }, { timeout: 30_000 }).toBe("succeeded");
     expect(await (await stream).finished()).toBeNull();
-    await expect(transcript).toContainText(marker, { timeout: 20_000 });
-    await expect(transcript.getByText(marker, { exact: true })).toHaveCount(1);
+    await assertSingleFinal();
     expect(await missingAlerts()).toEqual([]);
     const native = JSON.parse(await readFile(ready!.historyPath, "utf8")) as {
       id: string; turns: Array<{ id: string; items: Array<{ id: string; type: string; text?: string }> }>;
@@ -241,8 +249,7 @@ test("native Run transcript preserves available diagnostics until exact native p
     const terminalUiRead = uiRead();
     await runPage.reload();
     expect((await terminalUiRead).ok()).toBe(true);
-    await expect(transcript).toContainText(marker);
-    await expect(transcript.getByText(marker, { exact: true })).toHaveCount(1);
+    await assertSingleFinal();
     await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
     await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
     expect(await missingAlerts()).toEqual([]);
@@ -253,7 +260,7 @@ test("native Run transcript preserves available diagnostics until exact native p
     expect(refreshed.revision).toBe(terminal.revision);
     await runPage.screenshot({ path: path.join(directory, "native-terminal-reload.png"), fullPage: true });
     await testInfo.attach("native-publication-evidence", { body: JSON.stringify({ orgId: org.id, agentId: agent.id,
-      criteriaPacket: "native-publication-v4", runId, ready, pending, initialUiProjection, reloadedUiProjection,
+      criteriaPacket: "native-publication-v5", runId, ready, pending, initialUiProjection, reloadedUiProjection,
       pendingReload, available, terminal, refreshed,
       startupObjectPolicy: "trace-classified startup diagnostics may retire after complete native publication; not equivalent to native content or proof of real process-gap preservation",
       unresolvedNativeEvidence: { rawSpanSelectorExposed: false, publicProof: "running + unknown completeness + null completion identity + no native rows" },
