@@ -1667,7 +1667,9 @@ describe("failed chat transcript rendering", () => {
       },
     ];
 
-    const failedMessage = message({});
+    const failedMessage = message({
+      runId: "c99b3986-f43d-4877-aa97-dab14d68cbd4",
+    });
     const container = render(
       <ThemeProvider>
         <StreamTranscriptItem

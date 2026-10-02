@@ -6342,6 +6342,8 @@ describe("Chat streaming controls", () => {
           role: "assistant",
           body: "The response failed.",
           status: "failed",
+          // A known failed execution, not an unproven/no-dispatch placeholder.
+          runId: "bb118cf6-90ae-4b3a-9b49-78c2dbb9896a",
           chatTurnId: "turn-annotation-only",
           createdAt: new Date("2026-05-12T09:01:01.000Z"),
         }),
@@ -6423,6 +6425,7 @@ describe("Chat streaming controls", () => {
           role: "assistant",
           body: "The response failed.",
           status: "failed",
+          runId: "e71a22aa-5cec-4d68-89ae-54f94e880e18",
           chatTurnId: "turn-1",
           createdAt: new Date("2026-05-12T09:01:01.000Z"),
         }),
