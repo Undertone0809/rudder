@@ -88,8 +88,9 @@ describe("startup context prompt persistence sanitization", () => {
       runtimeSkills: [],
     });
 
-    for (const key of ["prompt", "agentInstructionStack"] as const) {
-      const sanitized = payload[key];
+    expect(payload).not.toHaveProperty("agentInstructionStack");
+    // Instructions read-back uses the retained canonical prompt fallback.
+    for (const sanitized of [payload.prompt, payload.agentInstructionStack ?? payload.prompt]) {
       expect(sanitized).toContain("#### today memory: 2026-08-25.md");
       expect(sanitized).not.toContain("private current memory");
       expect(sanitized).toContain("Keep this heartbeat instruction.");

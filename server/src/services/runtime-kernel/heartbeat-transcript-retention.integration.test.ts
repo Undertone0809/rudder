@@ -16,12 +16,14 @@ import {
 } from "@rudderhq/db";
 import { deriveOrganizationUrlKey } from "@rudderhq/shared";
 import { desc, eq, sql } from "drizzle-orm";
+import express from "express";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { releaseTerminalRunRuntimeSpanWriters } from "./native-session.js";
 import {
@@ -38,6 +40,9 @@ const fakeNativeProvider = vi.hoisted(() => {
     decoy: string;
     readProofFault?: "partial" | "throw";
     afterLiveLog?: () => Promise<void>;
+    emitLog?: boolean;
+    invocationMeta?: Record<string, unknown>;
+    afterMeta?: () => void;
   };
   const fixtures = new Map<string, Fixture>();
   const sessions = new Map<string, Array<{ runId: string; turnId: string; entry: Record<string, unknown> }>>();
@@ -62,6 +67,10 @@ const fakeNativeProvider = vi.hoisted(() => {
       const fixture = fixtures.get(context.runId);
       if (!fixture) throw new Error(`No fake native fixture for Run ${context.runId}`);
       executedRunIds.push(context.runId);
+      if (fixture.invocationMeta) {
+        try { await context.onMeta?.(fixture.invocationMeta); }
+        finally { fixture.afterMeta?.(); }
+      }
       const history = sessions.get(fixture.sessionId) ?? [];
       sessions.set(fixture.sessionId, [
         ...history,
@@ -84,7 +93,7 @@ const fakeNativeProvider = vi.hoisted(() => {
           },
         },
       ]);
-      await context.onLog?.("stdout", `${fixture.rawTranscript}\n`);
+      if (fixture.emitLog !== false) await context.onLog?.("stdout", `${fixture.rawTranscript}\n`);
       await fixture.afterLiveLog?.();
       return {
         exitCode: 0,
@@ -195,6 +204,29 @@ const mockBudgetService = vi.hoisted(() => ({
   getInvocationBlock: vi.fn(),
 }));
 
+const metadataAppendGate = vi.hoisted(() => ({ wait: null as null | (() => Promise<void>) }));
+const releasedFixtureExecutions = vi.hoisted(() => new Set<string>());
+vi.mock("../workspace-runtime.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../workspace-runtime.js")>();
+  return { ...actual, releaseRuntimeServicesForRun: async (...args: Parameters<typeof actual.releaseRuntimeServicesForRun>) => {
+    const result = await actual.releaseRuntimeServicesForRun(...args);
+    releasedFixtureExecutions.add(args[0]);
+    return result;
+  } };
+});
+vi.mock("../instance-settings.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../instance-settings.js")>();
+  return { ...actual, instanceSettingsService: (...args: Parameters<typeof actual.instanceSettingsService>) => {
+    const service = actual.instanceSettingsService(...args);
+    return { ...service, getGeneral: async () => {
+      const wait = metadataAppendGate.wait;
+      metadataAppendGate.wait = null;
+      await wait?.();
+      return service.getGeneral();
+    } };
+  } };
+});
+
 vi.mock("../automation-chat-output.js", () => ({
   publishAutomationRunOutputToChat: (..._args: unknown[]) => fakeTerminalEffect.publish(),
 }));
@@ -254,9 +286,13 @@ vi.mock("../run-intelligence.js", async (importOriginal) => {
   };
 });
 
+import { registerAgentInvocationInstructionsRoute } from "../../routes/agents.management-invocation-instructions.js";
+import { getStorageService } from "../../storage/index.js";
 import { heartbeatService } from "../heartbeat.js";
+import { readRunInstructionSnapshotForEvent } from "../run-instruction-snapshots.js";
 import { getRunLogStore } from "../run-log-store.js";
 import { runRuntimeRetentionMaintenance } from "./runtime-retention.js";
+import { getTranscriptObjectStore } from "./transcript-object-store.js";
 import { createTranscriptReader } from "./transcript-reader.js";
 
 type EmbeddedPostgresInstance = {
@@ -451,6 +487,7 @@ describe("heartbeat native transcript retention integration", () => {
     process.env.RUDDER_TRANSCRIPT_OBJECT_BASE_PATH = transcriptObjectRoot;
     fs.mkdirSync(path.join(testRoot, "postgres"), { recursive: true });
     const started = await startDisposablePostgres(path.join(testRoot, "postgres"));
+    console.info("W12 heartbeat caller isolated lease", { pgPort: new URL(started.connectionString).port, root: testRoot, pid: process.pid });
     instance = started.instance;
     db = createDb(started.connectionString);
   }, 30_000);
@@ -572,6 +609,148 @@ describe("heartbeat native transcript retention integration", () => {
       return retention?.status === "reference_only" || retention?.status === "incomplete" || retention?.status === "cleanup_failed";
     });
   }
+
+  it.each(["equal", "distinct", "readback_unavailable", "readback_timeout", "owner_loss", "owner_loss_append", "store_timeout_resolve", "store_timeout_reject"] as const)("writes and finalizes snapshot-safe native invocation through actual heartbeat caller: %s", async mode => {
+    const { orgId, agentId } = await seedAgent();
+    const queued = await queueRun(agentId);
+    const text = ("界🙂\n\"".repeat(9_000) + "D".repeat(1_187));
+    const prompt = mode === "distinct" ? "unique task prompt" : text;
+    const storage = getStorageService();
+    expect(storage.provider).toBe("local_disk");
+    const realGet = storage.getObject.bind(storage);
+    let readEntered!: () => void;
+    let readRelease!: () => void;
+    const acquiring = new Promise<void>(resolve => { readEntered = resolve; });
+    const heldRead = new Promise<void>(resolve => { readRelease = resolve; });
+    const storeTimeout = mode === "store_timeout_resolve" || mode === "store_timeout_reject";
+    const realPut = storage.putContentAddressedFile.bind(storage);
+    const put = storeTimeout ? vi.spyOn(storage, "putContentAddressedFile").mockImplementation(async input => {
+      readEntered(); await heldRead;
+      if (mode === "store_timeout_reject") throw new Error("late heartbeat store rejection");
+      return realPut(input);
+    }) : null;
+    const read = mode === "readback_unavailable" ? vi.spyOn(storage, "getObject").mockRejectedValue(new Error("isolated readback unavailable"))
+      : mode === "readback_timeout" || mode === "owner_loss" ? vi.spyOn(storage, "getObject").mockImplementation(async (org, key) => {
+        readEntered(); await heldRead; return realGet(org, key);
+      }) : mode === "owner_loss_append" ? vi.spyOn(storage, "getObject").mockImplementation(async (org, key) => {
+        const object = await realGet(org, key);
+        object.stream.once("end", () => { metadataAppendGate.wait = async () => { readEntered(); await heldRead; }; });
+        return object;
+      }) : null;
+    let release!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const invoked = new Promise<void>(resolve => { entered = resolve; });
+    let metaReturned!: () => void;
+    const metaDone = new Promise<void>(resolve => { metaReturned = resolve; });
+    let successorOwner: string | null = null;
+    fakeNativeProvider.register(queued.run.id, { sessionId: `snapshot-${randomUUID()}`, turnId: `turn-${queued.run.id}`,
+      rawTranscript: "bounded native result", decoy: "OUT_OF_SCOPE", emitLog: false,
+      invocationMeta: { agentRuntimeType: "codex_local", command: "codex", prompt, agentInstructionStack: text,
+        context: { unique: "retain context" } }, afterMeta: metaReturned, afterLiveLog: async () => { entered(); await blocked; } });
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      if (mode === "owner_loss" || mode === "owner_loss_append") {
+        await acquiring;
+        const nextOwner = randomUUID();
+        successorOwner = nextOwner;
+        await db.transaction(async tx => {
+          await tx.update(heartbeatRuns).set({ executionOwnerToken: nextOwner }).where(eq(heartbeatRuns.id, queued.run.id));
+          await tx.update(runRuntimeSpans).set({ ownerToken: nextOwner }).where(eq(runRuntimeSpans.runId, queued.run.id));
+          await tx.update(heartbeatRunAttempts).set({ ownerToken: nextOwner }).where(eq(heartbeatRunAttempts.runId, queued.run.id));
+        });
+        readRelease();
+      }
+      if (mode === "owner_loss" || mode === "owner_loss_append") await metaDone;
+      else await invoked;
+      if (mode === "owner_loss" || mode === "owner_loss_append") {
+        const invokes = (await heartbeatService(db).listEvents(queued.run.id)).filter(event => event.eventType === "adapter.invoke");
+        console.info("W12 heartbeat owner-loss observed", { orgId, runId: queued.run.id, invokeCount: invokes.length });
+        expect(invokes).toHaveLength(0);
+        const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
+        expect(successor.status).toBe("running");
+        expect(successor.processExitedAt).toBeNull();
+        return;
+      }
+      const before = (await heartbeatService(db).listEvents(queued.run.id)).find(event => event.eventType === "adapter.invoke")!;
+      const payload = before.payload as Record<string, unknown>;
+      expect(payload.context).toEqual({ unique: "retain context" });
+      if (mode === "readback_unavailable" || mode === "readback_timeout" || storeTimeout) {
+        expect(payload).toMatchObject({ prompt: text, invocationInstructionSnapshot: {
+          status: "unavailable", reason: storeTimeout ? "storage_unavailable" : "snapshot_readback_unavailable" } });
+        expect(payload.agentInstructionStackAlias).toMatchObject({ present: true, sameAsPrompt: true });
+        expect(payload).not.toHaveProperty("invocationInstructionTextReference");
+      } else {
+        expect(payload).not.toHaveProperty("agentInstructionStack");
+        expect(payload.invocationInstructionSnapshot).toMatchObject({ status: "available" });
+        if (mode === "distinct") expect(payload.prompt).toBe(prompt);
+        else expect(payload).not.toHaveProperty("prompt");
+        await expect(readRunInstructionSnapshotForEvent({ db, storage, orgId, runId: queued.run.id, eventId: before.id }))
+          .resolves.toMatchObject({ agentInstructionStack: text, byteSize: 82_187 });
+        const baseline: Record<string, unknown> = { ...payload, prompt, ...(mode === "distinct" ? { agentInstructionStack: text } : {}) };
+        delete baseline.invocationInstructionTextReference;
+        delete baseline.invocationPromptReference;
+        const delta = Buffer.byteLength(JSON.stringify(baseline)) - Buffer.byteLength(JSON.stringify(payload));
+        expect(delta).toBeGreaterThan(82_000);
+        console.info("snapshot-only new heartbeat invoke bytes", { mode, beforeBytes: Buffer.byteLength(JSON.stringify(baseline)),
+          afterBytes: Buffer.byteLength(JSON.stringify(payload)), netSavedBytes: delta, snapshotBytes: 82_187 });
+      }
+      const app = express();
+      app.use((req, _res, next) => { req.actor = { type: "board", source: "session", orgIds: [orgId] }; next(); });
+      const router = express.Router();
+      registerAgentInvocationInstructionsRoute({ router, db, storage, heartbeat: heartbeatService(db),
+        resolveScope: () => ({ orgIds: [orgId] }), getCurrentUserRedactionOptions: async () => ({ enabled: false }) });
+      app.use("/api", router);
+      read?.mockRestore();
+      readRelease();
+      if (put) {
+        const lateStore = await put.mock.results[0]!.value.catch(() => null);
+        if (mode === "store_timeout_resolve") {
+          expect(lateStore).not.toBeNull();
+          const object = await realGet(orgId, lateStore!.objectKey);
+          const chunks = [];
+          for await (const chunk of object.stream) chunks.push(Buffer.from(chunk));
+          expect(Buffer.concat(chunks).toString("utf8")).toBe(text);
+        }
+      }
+      const url = `/api/agent-runs/${queued.run.id}/events/${before.id}/invocation-instructions`;
+      const response = await request(app).get(url);
+      const available = mode === "equal" || mode === "distinct";
+      expect(response.status).toBe(available ? 200 : 404);
+      if (available) expect(response.body).toMatchObject({ source: "stored_snapshot", agentInstructionStack: text });
+      release();
+      await waitForTerminalEffectsComplete(queued.run.id);
+      await waitForNativeRetentionComplete(queued.run.id);
+      const after = (await heartbeatService(db).listEvents(queued.run.id)).find(event => event.id === before.id)!;
+      expect(after.payload).toMatchObject(payload);
+      expect((await heartbeatService(db).listEvents(queued.run.id)).filter(event => event.eventType === "adapter.invoke")).toHaveLength(1);
+      const terminalResponse = await request(app).get(url);
+      expect(terminalResponse.status).toBe(response.status);
+      expect(terminalResponse.body).toEqual(response.body);
+      console.info("W12 heartbeat public Instructions terminal", { mode, orgId, runId: queued.run.id, eventId: before.id, status: terminalResponse.status });
+      if (available) await expect(readRunInstructionSnapshotForEvent({
+        db, storage, orgId, runId: queued.run.id, eventId: after.id,
+      })).resolves.toMatchObject({ agentInstructionStack: text });
+    } finally {
+      readRelease(); read?.mockRestore(); put?.mockRestore();
+      release();
+      if (mode === "owner_loss" || mode === "owner_loss_append") {
+        // Observe the real executor's final resource release, not a fabricated
+        // database exit bit. Its old owner must not finalize the successor.
+        await waitForCondition(async () => releasedFixtureExecutions.has(queued.run.id));
+        const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
+        expect(successor).toMatchObject({ status: "running", executionOwnerToken: successorOwner, processExitedAt: null });
+        // This Run and its in-process synthetic adapter are disposable. Only
+        // after observed settlement use the public control path for cleanup.
+        await heartbeatService(db).cancelRun(queued.run.id);
+        await waitForCondition(async () => {
+          const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
+          return Boolean(run?.processExitedAt);
+        });
+        releasedFixtureExecutions.delete(queued.run.id);
+      }
+    }
+  }, 60_000);
 
   it("publishes the retained source and reads output while the provider is still running", async () => {
     fakeNativeProvider.setProfileMode("unsupported");
@@ -721,7 +900,55 @@ describe("heartbeat native transcript retention integration", () => {
     expect(unchangedHistoricalSpan?.writerLeaseReleasedAt).toEqual(exitedAt);
   });
 
-  it("avoids raw mirrors for a verified native profile and retains native read-back authority", async () => {
+  it("marks a genuinely native-only Run reference-only without deleting mirrors", async () => {
+    mockBudgetService.getInvocationBlock.mockResolvedValue(null);
+    const { orgId, agentId } = await seedAgent();
+    const native = await queueRun(agentId);
+    const sessionId = `w12-no-mirrors-${randomUUID()}`;
+    const turnId = `turn-${native.run.id}`;
+    const text = "authoritative native-only response";
+    // This distinct producer emits no stdout/log, rather than deleting an
+    // existing supplement to make cleanup pass. Native history remains intact.
+    fakeNativeProvider.register(native.run.id, { sessionId, turnId, rawTranscript: text,
+      decoy: "OUT_OF_SCOPE", emitLog: false });
+    const objects = getTranscriptObjectStore();
+    const logs = getRunLogStore();
+    const spies = [vi.spyOn(objects as Required<typeof objects>, "stageSealedRemoval"), vi.spyOn(objects as Required<typeof objects>, "purgeStagedRemoval"),
+      vi.spyOn(logs as Required<typeof logs>, "stageRunRemoval"), vi.spyOn(logs as Required<typeof logs>, "purgeStagedRunRemoval")];
+    try {
+      await heartbeatService(db).startNextQueuedRunForAgent(agentId);
+      await waitForTerminalEffectsComplete(native.run.id);
+      await waitForNativeRetentionComplete(native.run.id);
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+      const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
+      expect(run).toMatchObject({ logRef: null, logStore: null, stdoutExcerpt: null, stderrExcerpt: null,
+        contextSnapshot: { nativeTranscriptRetention: { status: "reference_only", itemCount: 1 } } });
+      expect(span.supplementalObjectRef).toBeNull();
+      expect(events.filter(event => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
+      expect(await filesBelow(transcriptObjectRoot)).toEqual([]);
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+      const reader = createTranscriptReader(db, { nativeReader: { readRange: (input) => fakeNativeProvider.readRange(input) } });
+      const request = { orgId, runId: native.run.id, spanId: span.id, principal: { type: "board" as const, orgId, authorized: true } };
+      const page = await reader.readRun(request);
+      expect(page).toMatchObject({ source: "native", availability: "available", completeness: "complete", revision: span.sourceRevision });
+      expect(page.items.map(item => item.text)).toEqual([text]);
+      const proof = await proveSealedNativeRunTranscript({ db, reader, orgId, runId: native.run.id });
+      if (!proof.ok) throw new Error(proof.reason);
+      // Retain the old post-cleanup verification/transaction rollback coverage
+      // on the now legitimately eligible no-mirrors path.
+      await db.update(runRuntimeSpans).set({ sourceRevision: null }).where(eq(runRuntimeSpans.id, span.id));
+      await expect(cleanSealedNativeTranscriptMirrors({ db, proof: proof.proof, runLogStore: logs,
+        transcriptObjectStore: objects, retainResultJson: value => value ?? {},
+        readerFactory: () => ({ ...reader, readRun: async input => ({ ...await reader.readRun(input), availability: "incompatible" as const }) }),
+      })).resolves.toMatchObject({ cleaned: false, reason: "post_cleanup_native_read_incomplete_or_changed" });
+      const [after] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, span.id));
+      expect(after.sourceRevision).toBeNull();
+      expect(after.supplementalObjectRef).toBeNull();
+    } finally { for (const spy of spies) spy.mockRestore(); }
+  }, 60_000);
+
+  it("retains unproven supplements for a verified native profile and keeps native read-back authority", async () => {
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     const { orgId, agentId } = await seedAgent();
     const sessionId = `w12-native-session-${randomUUID()}`;
@@ -924,26 +1151,21 @@ describe("heartbeat native transcript retention integration", () => {
       stdoutExcerpt: null,
       stderrExcerpt: null,
       resultJson: { retention: { transcriptSource: "native", rawResultPersisted: false, rawLogPersisted: false } },
-      contextSnapshot: { nativeTranscriptRetention: { status: "reference_only", itemCount: 2 } },
+      contextSnapshot: { nativeTranscriptRetention: { status: "cleanup_failed", reason: "supplement_native_coverage_unproven" } },
     });
     expect(cleanedNativeSpans).toHaveLength(2);
     expect(cleanedSubagentSpan?.id).toEqual(expect.any(String));
-    expect(cleanedNativeSpan?.supplementalObjectRef).toBeNull();
+    expect(cleanedNativeSpan?.supplementalObjectRef).toEqual(expect.any(String));
     expect(cleanedSubagentSpan?.supplementalObjectRef).toBeNull();
-    const nativeProofSpans = (cleanedNativeRun?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.spans;
-    expect(cleanedNativeSpan?.sourceRevision).toBe(nativeRevision);
-    expect(cleanedNativeSpan?.sourceRevision).toBe(
-      nativeProofSpans.find((candidate: { spanId: string }) => candidate.spanId === cleanedNativeSpan?.id)?.sourceRevision,
-    );
-    expect(cleanedSubagentSpan?.sourceRevision).toBe(
-      nativeProofSpans.find((candidate: { spanId: string }) => candidate.spanId === cleanedSubagentSpan?.id)?.sourceRevision,
-    );
+    expect(cleanedNativeSpan?.sourceRevision).toBeNull();
+    expect(cleanedSubagentSpan?.sourceRevision).toBeNull();
+    expect(await readAllFiles(transcriptObjectRoot)).toContain(nativeRaw);
     expect(cleanedNativeEvents.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
     expect(cleanedSqlEvidence).not.toContain(nativeRaw);
     expect(countOccurrences(cleanedSqlEvidence, nativeToken)).toBe(0);
     expect(JSON.stringify(cleanedNativeEvents)).not.toContain(subagentRaw);
     expect((await filesBelow(runLogRoot)).filter((file) => path.basename(file).startsWith(`${native.run.id}.`))).toEqual([]);
-    expect(await filesBelow(path.join(transcriptObjectRoot, "transcript-objects"))).toEqual([]);
+    expect(await filesBelow(path.join(transcriptObjectRoot, "transcript-objects"))).not.toEqual([]);
 
     const rereadAfterCleanup = createTranscriptReader(db, {
       nativeReader: { readRange: async (input) => await fakeNativeProvider.readRange(input) },
@@ -1037,7 +1259,7 @@ describe("heartbeat native transcript retention integration", () => {
       retainResultJson: (value) => value ?? {},
     })).resolves.toMatchObject({
       cleaned: false,
-      reason: expect.stringContaining("post_cleanup_native_read_incomplete_or_changed"),
+      reason: "supplement_native_coverage_unproven",
     });
     const [unchangedAfterReadFailure] = await db.select().from(runRuntimeSpans)
       .where(eq(runRuntimeSpans.id, cleanedNativeSpan!.id));
@@ -1176,7 +1398,8 @@ describe("heartbeat native transcript retention integration", () => {
             resultJsonBytes: nativeResultJsonBytes,
             runLogBytesWhileTerminalEffectsPending: nativeRunLogBytesWhilePending,
             runLogBytesAfterRetentionCleanup: 0,
-            runLogState: "terminal-effects-pending, then after native retention cleanup",
+            runLogState: "no raw log emitted for native profile; supplement remains retained",
+            supplementRetirement: "denied: native coverage unproven",
             markerOccurrencesInSqlEvidence: countOccurrences(cleanedSqlEvidence, nativeToken),
             markerOccurrencesInRunLog: 0,
           },
@@ -1240,7 +1463,7 @@ describe("heartbeat native transcript retention integration", () => {
 
   }, 60_000);
 
-  it("keeps raw fallback for an unresolved profile until the terminal native range is proven", async () => {
+  it("keeps raw fallback for an unresolved profile even when the terminal native range is complete", async () => {
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     fakeNativeProvider.setProfileMode("unresolved");
     const { agentId } = await seedAgent();
@@ -1279,11 +1502,14 @@ describe("heartbeat native transcript retention integration", () => {
     await waitForNativeRetentionComplete(native.run.id);
     const [afterReadBack] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
     expect(afterReadBack?.resultJson).toMatchObject({
-      retention: { transcriptSource: "native", rawResultPersisted: false },
+      stdout: nativeRaw, transcript: [{ text: nativeRaw }],
+      retention: { transcriptSource: "legacy" },
     });
+    expect(afterReadBack?.logRef).toEqual(expect.any(String));
+    expect(await readAllFiles(runLogRoot)).toContain(nativeRaw);
     expect((afterReadBack?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
-      status: "reference_only",
-      itemCount: 1,
+      status: "cleanup_failed",
+      reason: "run_log_native_coverage_unproven",
     });
   }, 60_000);
 
@@ -1309,12 +1535,11 @@ describe("heartbeat native transcript retention integration", () => {
     await waitForNativeRetentionComplete(native.run.id);
     const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
     expect((run.contextSnapshot as Record<string, any>).nativeTranscriptRetention)
-      .toMatchObject({ status: "reference_only", itemCount: 2 });
+      .toMatchObject({ status: "cleanup_failed", reason: "supplement_native_coverage_unproven" });
     const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
-    expect(span.supplementalObjectRef).toBeNull();
-    expect(span.sourceRevision).toBe(
-      (run.contextSnapshot as Record<string, any>).nativeTranscriptRetention.spans[0].sourceRevision,
-    );
+    expect(span.supplementalObjectRef).toEqual(expect.any(String));
+    expect(span.sourceRevision).toBeNull();
+    expect(await readAllFiles(transcriptObjectRoot)).toContain("first native response");
     const reader = createTranscriptReader(db, {
       nativeReader: { readRange: async (input) => fakeNativeProvider.readRange(input) },
     });
@@ -1326,9 +1551,11 @@ describe("heartbeat native transcript retention integration", () => {
     expect(await proveSealedNativeRunTranscript({ db, reader, orgId, runId: native.run.id }))
       .toMatchObject({ ok: true, proof: { itemCount: 2 } });
     for (const fault of ["cutoff", "revision", "empty", "unknown"] as const) {
+      let traversals = 0;
       const faultReader = { readRun: async (request: Parameters<typeof reader.readRun>[0]) => {
+        if (!request.cursor) traversals += 1;
         const page = await reader.readRun(request);
-        if (request.limit !== 1) return page;
+        if (traversals !== 2) return page;
         return { ...page,
           ...(fault === "cutoff" ? { limitReached: { reason: "page_bytes" as const, maximum: 1 } } : {}),
           ...(fault === "revision" ? { revision: "changed-revision" } : {}),
@@ -1394,227 +1621,97 @@ describe("heartbeat native transcript retention integration", () => {
     }
   }, 60_000);
 
-  it("retains the complete Run fallback when run-log staging fails", async () => {
+  it("retains raw fallback before staging, including maintenance retries", async () => {
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     fakeNativeProvider.setProfileMode("unsupported");
     const { orgId, agentId } = await seedAgent();
     const native = await queueRun(agentId);
-    const sessionId = `w12-log-failure-session-${randomUUID()}`;
-    const nativeTurnId = `turn-${native.run.id}`;
-    const nativeRaw = `W12_LOG_STAGE_FAILURE_${randomUUID()} ${"raw fallback ".repeat(200)}`;
-    fakeNativeProvider.register(native.run.id, {
-      sessionId,
-      turnId: nativeTurnId,
-      rawTranscript: nativeRaw,
-      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
-    });
-    await db.update(nativeSegments)
-      .set({ nativeSessionId: sessionId, rootSessionId: sessionId, state: "open" })
-      .where(eq(nativeSegments.id, native.segmentId));
-
+    const sessionId = `w12-log-denied-${randomUUID()}`;
+    const turnId = `turn-${native.run.id}`;
+    const raw = `W12_UNPROVEN_RAW_${randomUUID()} ${"raw fallback ".repeat(200)}`;
+    fakeNativeProvider.register(native.run.id, { sessionId, turnId, rawTranscript: raw, decoy: "OUT_OF_SCOPE" });
     const store = getRunLogStore();
-    const originalStage = store.stageRunRemoval;
-    if (!originalStage) throw new Error("Expected the local run-log store to support staged deletion");
-    store.stageRunRemoval = async () => { throw new Error("simulated run-log staging failure"); };
+    const stage = vi.spyOn(store as Required<typeof store>, "stageRunRemoval");
+    const purge = vi.spyOn(store as Required<typeof store>, "purgeStagedRunRemoval");
     try {
       await heartbeatService(db).startNextQueuedRunForAgent(agentId);
-      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
       await waitForTerminalEffectsComplete(native.run.id);
       await waitForNativeRetentionComplete(native.run.id);
-
-      const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
-      const [span] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
-      const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
-      expect(persisted).toMatchObject({
-        status: "succeeded",
-        logStore: "local_file",
-        logRef: expect.any(String),
-        resultJson: { stdout: nativeRaw, transcript: [{ text: nativeRaw }] },
-        contextSnapshot: {
-          nativeTranscriptRetention: {
-            status: "cleanup_failed",
-            reason: expect.stringContaining("simulated run-log staging failure"),
-          },
-        },
-      });
-      expect(span?.state).toBe("sealed");
-      expect(events.filter((event) => ["transcript.entry", "transcript.run"].includes(event.eventType))).toEqual([]);
-      expect(await readAllFiles(runLogRoot)).toContain(nativeRaw);
-    } finally {
-      store.stageRunRemoval = originalStage;
-    }
-    const stageRetry = await runRuntimeRetentionMaintenance(db, { now: new Date(Date.now() + 2 * 60 * 60 * 1000) });
-    expect(stageRetry.nativeTranscriptRecovery).toMatchObject({ attempted: 1, recovered: 1 });
-    const [retriedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
-    expect((retriedRun?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
-      status: "reference_only",
-      recovery: [],
-    });
-    expect(await readAllFiles(runLogRoot)).not.toContain(nativeRaw);
+      const [before] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      expect(before).toMatchObject({ status: "succeeded", logStore: "local_file", logRef: expect.any(String),
+        resultJson: { stdout: raw, transcript: [{ text: raw }] },
+        contextSnapshot: { nativeTranscriptRetention: { status: "cleanup_failed", reason: "run_log_native_coverage_unproven" } } });
+      const logBefore = await readAllFiles(runLogRoot);
+      expect(logBefore).toContain(raw);
+      const maintenance = await runRuntimeRetentionMaintenance(db, { now: new Date(Date.now() + 2 * 60 * 60 * 1000) });
+      expect(maintenance.nativeTranscriptRecovery.recovered).toBe(0);
+      const [after] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      expect(after?.logRef).toBe(before?.logRef);
+      expect(after?.resultJson).toEqual(before?.resultJson);
+      expect((after?.contextSnapshot as Record<string, any>).nativeTranscriptRetention)
+        .toMatchObject({ status: "cleanup_failed", reason: "run_log_native_coverage_unproven" });
+      expect(await readAllFiles(runLogRoot)).toBe(logBefore);
+      expect(stage).not.toHaveBeenCalled();
+      expect(purge).not.toHaveBeenCalled();
+      expect(orgId).toBe(before.orgId);
+    } finally { stage.mockRestore(); purge.mockRestore(); }
   }, 60_000);
 
-  it("keeps the staged Run log recoverable and reports a final log purge failure", async () => {
+  it("does not stage, clear or purge real supplements and a raw log absent coverage", async () => {
     mockBudgetService.getInvocationBlock.mockResolvedValue(null);
     const { orgId, agentId } = await seedAgent();
     const native = await queueRun(agentId);
-    const sessionId = `w12-log-purge-session-${randomUUID()}`;
-    const nativeTurnId = `turn-${native.run.id}`;
-    const nativeRaw = `W12_LOG_PURGE_FAILURE_${randomUUID()} ${"recovery evidence ".repeat(150)}`;
-    fakeNativeProvider.register(native.run.id, {
-      sessionId,
-      turnId: nativeTurnId,
-      rawTranscript: nativeRaw,
-      decoy: `OUT_OF_SCOPE_${randomUUID()}`,
-    });
-    await db.update(nativeSegments)
-      .set({ nativeSessionId: sessionId, rootSessionId: sessionId, state: "open" })
-      .where(eq(nativeSegments.id, native.segmentId));
-
+    const sessionId = `w12-supplement-denied-${randomUUID()}`;
+    const turnId = `turn-${native.run.id}`;
+    const raw = `W12_RETAINED_SUPPLEMENT_${randomUUID()}`;
+    fakeNativeProvider.register(native.run.id, { sessionId, turnId, rawTranscript: raw, decoy: "OUT_OF_SCOPE" });
     const store = getRunLogStore();
-    const originalPurge = store.purgeStagedRunRemoval;
-    if (!originalPurge) throw new Error("Expected the local run-log store to support staged deletion");
-    let staged: { handle: { logRef: string }; stageId: string; expectedSha256: string } | null = null;
-    let supplementStageDirectory: string | null = null;
-    store.purgeStagedRunRemoval = async (input) => {
-      staged = input;
-      const [pending] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
-      const recovery = (pending?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.recovery;
-      expect((pending?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.status).toBe("cleanup_pending");
-      expect(recovery).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          kind: "run_log",
-          store: "local_file",
-          logRef: input.handle.logRef,
-          stageId: input.stageId,
-        }),
-        expect.objectContaining({ kind: "transcript_object", stageId: expect.any(String) }),
-      ]));
-      throw new Error("simulated final run-log purge failure");
-    };
-    const terminalGate = fakeTerminalEffect.arm();
+    const objects = getTranscriptObjectStore();
+    const logStage = vi.spyOn(store as Required<typeof store>, "stageRunRemoval");
+    const logPurge = vi.spyOn(store as Required<typeof store>, "purgeStagedRunRemoval");
+    const objectStage = vi.spyOn(objects as Required<typeof objects>, "stageSealedRemoval");
+    const objectPurge = vi.spyOn(objects as Required<typeof objects>, "purgeStagedRemoval");
+    const gate = fakeTerminalEffect.arm();
     try {
       await heartbeatService(db).startNextQueuedRunForAgent(agentId);
-      await waitForCondition(async () => fakeNativeProvider.executedRunIds.includes(native.run.id));
-      await terminalGate.entered;
+      await gate.entered;
       await waitForTerminalEffectsPending(native.run.id);
-      const retainedFallback = await store.begin({ orgId, agentId, runId: native.run.id });
-      await store.append(retainedFallback, {
-        stream: "stdout",
-        chunk: nativeRaw,
-        ts: new Date().toISOString(),
-      });
-      const fallbackSummary = await store.finalize(retainedFallback);
-      await db.update(heartbeatRuns).set({
-        logStore: retainedFallback.store,
-        logRef: retainedFallback.logRef,
-        logBytes: fallbackSummary.bytes,
-        logSha256: fallbackSummary.sha256,
-        logCompressed: fallbackSummary.compressed,
-      }).where(eq(heartbeatRuns.id, native.run.id));
-      terminalGate.release();
+      const handle = await store.begin({ orgId, agentId, runId: native.run.id });
+      await store.append(handle, { stream: "stdout", chunk: "supplement-only log evidence", ts: new Date().toISOString() });
+      const summary = await store.finalize(handle);
+      await db.update(heartbeatRuns).set({ logStore: handle.store, logRef: handle.logRef,
+        logBytes: summary.bytes, logSha256: summary.sha256, logCompressed: summary.compressed })
+        .where(eq(heartbeatRuns.id, native.run.id));
+      gate.release();
       await waitForTerminalEffectsComplete(native.run.id);
       await waitForNativeRetentionComplete(native.run.id);
-
-      const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
-      expect(staged).toBeTruthy();
-      expect(persisted).toMatchObject({
-        status: "succeeded",
-        logStore: null,
-        logRef: null,
-        resultJson: { retention: { transcriptSource: "native", rawResultPersisted: false, rawLogPersisted: false } },
-        contextSnapshot: {
-          nativeTranscriptRetention: {
-            status: "cleanup_failed",
-            reason: expect.stringContaining("simulated final run-log purge failure"),
-          },
-        },
-      });
-      const recovery = (persisted?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention?.recovery;
-      expect(recovery).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          kind: "run_log",
-          store: "local_file",
-          logRef: staged!.handle.logRef,
-          stageId: staged!.stageId,
-        }),
-        expect.objectContaining({ kind: "transcript_object", stageId: expect.any(String) }),
-      ]));
-      const initialStageDirectory = path.join(
-        path.dirname(path.join(runLogRoot, staged!.handle.logRef)),
-        `.${path.basename(staged!.handle.logRef)}.retention-${staged!.stageId}`,
-      );
-      expect(await readAllFiles(initialStageDirectory)).toContain(nativeRaw);
-      const supplementStage = recovery.find((entry: any) => entry.kind === "transcript_object");
-      supplementStageDirectory = path.join(
-        transcriptObjectRoot,
-        "transcript-objects",
-        `.retention-${supplementStage.objectRef}-${supplementStage.stageId}`,
-      );
-      expect(await readAllFiles(supplementStageDirectory)).toContain(nativeRaw);
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
+      const spans = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
+      const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id));
+      expect(run).toMatchObject({ logRef: handle.logRef,
+        contextSnapshot: { nativeTranscriptRetention: { status: "cleanup_failed", reason: "supplement_native_coverage_unproven" } } });
+      expect(spans[0].supplementalObjectRef).toEqual(expect.any(String));
+      const objectBefore = await readAllFiles(transcriptObjectRoot);
+      const logBefore = await readAllFiles(runLogRoot);
+      expect(objectBefore).toContain(raw);
+      expect(logBefore).toContain("supplement-only log evidence");
+      const reader = createTranscriptReader(db, { nativeReader: { readRange: (input) => fakeNativeProvider.readRange(input) } });
+      const proof = await proveSealedNativeRunTranscript({ db, reader, orgId, runId: native.run.id });
+      expect(proof.ok).toBe(true);
+      if (!proof.ok) throw new Error(proof.reason);
+      await expect(cleanSealedNativeTranscriptMirrors({ db, proof: proof.proof, runLogStore: store,
+        transcriptObjectStore: objects, readerFactory: () => reader, retainResultJson: (value) => value ?? {} }))
+        .resolves.toEqual({ cleaned: false, reason: "supplement_native_coverage_unproven" });
+      expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id))).toEqual([run]);
+      expect(await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id))).toEqual(spans);
+      expect(await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, native.run.id))).toEqual(events);
+      expect(await readAllFiles(transcriptObjectRoot)).toBe(objectBefore);
+      expect(await readAllFiles(runLogRoot)).toBe(logBefore);
+      for (const spy of [logStage, logPurge, objectStage, objectPurge]) expect(spy).not.toHaveBeenCalled();
     } finally {
-      terminalGate.release();
-      store.purgeStagedRunRemoval = originalPurge;
+      gate.release();
+      for (const spy of [logStage, logPurge, objectStage, objectPurge]) spy.mockRestore();
     }
-
-    const [spanBeforeRecovery] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.runId, native.run.id));
-    if (!spanBeforeRecovery) throw new Error("Expected the sealed native span to remain available for recovery proof");
-    const recoveryStage = staged as { handle: { logRef: string }; stageId: string; expectedSha256: string } | null;
-    if (!recoveryStage) throw new Error("Expected the failed purge to persist its recovery location");
-    const stageDirectory = path.join(
-      path.dirname(path.join(runLogRoot, recoveryStage.handle.logRef)),
-      `.${path.basename(recoveryStage.handle.logRef)}.retention-${recoveryStage.stageId}`,
-    );
-    const retryBase = Date.now() + 2 * 60 * 60 * 1000;
-
-    await db.update(runRuntimeSpans).set({ ownerToken: `${spanBeforeRecovery.ownerToken}-changed` })
-      .where(eq(runRuntimeSpans.id, spanBeforeRecovery.id));
-    await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase) });
-    expect(await readAllFiles(stageDirectory)).toContain(nativeRaw);
-    const [identityRejected] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
-    expect((identityRejected?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
-      status: "cleanup_failed",
-      reason: expect.stringContaining("span_attempt_identity_incomplete"),
-    });
-
-    await db.update(runRuntimeSpans).set({
-      ownerToken: spanBeforeRecovery.ownerToken,
-      selectorJson: {
-        ...(spanBeforeRecovery.selectorJson as Record<string, unknown>),
-        turnId: `${nativeTurnId}-changed`,
-      },
-    }).where(eq(runRuntimeSpans.id, spanBeforeRecovery.id));
-    await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase + 2 * 60 * 60 * 1000) });
-    expect(await readAllFiles(stageDirectory)).toContain(nativeRaw);
-    const [rangeRejected] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
-    expect((rangeRejected?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
-      status: "cleanup_failed",
-      reason: expect.stringContaining("native_range_read_incomplete"),
-    });
-
-    await db.update(runRuntimeSpans).set({ selectorJson: spanBeforeRecovery.selectorJson })
-      .where(eq(runRuntimeSpans.id, spanBeforeRecovery.id));
-    await db.update(heartbeatRuns).set({ status: "failed" }).where(eq(heartbeatRuns.id, native.run.id));
-    await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase + 4 * 60 * 60 * 1000) });
-    expect(await readAllFiles(stageDirectory)).toContain(nativeRaw);
-
-    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, native.run.id));
-    const maintenance = await runRuntimeRetentionMaintenance(db, { now: new Date(retryBase + 6 * 60 * 60 * 1000) });
-    expect(maintenance.nativeTranscriptRecovery).toMatchObject({ attempted: 1, recovered: 1 });
-    const [recovered] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, native.run.id));
-    expect((recovered?.contextSnapshot as Record<string, any>)?.nativeTranscriptRetention).toMatchObject({
-      status: "reference_only",
-      recovery: [],
-    });
-    expect(await readAllFiles(stageDirectory)).not.toContain(nativeRaw);
-    expect(await readAllFiles(runLogRoot)).not.toContain(nativeRaw);
-    if (supplementStageDirectory) expect(await filesBelow(supplementStageDirectory)).toEqual([]);
-    await originalPurge({
-      orgId,
-      agentId,
-      runId: native.run.id,
-      handle: { store: "local_file", logRef: recoveryStage.handle.logRef },
-      expectedSha256: recoveryStage.expectedSha256,
-      stageId: recoveryStage.stageId,
-    });
   }, 60_000);
+
 });

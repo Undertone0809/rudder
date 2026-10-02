@@ -18,7 +18,7 @@ function textOf(entry: TranscriptEntry): string {
 }
 
 describe("heartbeat adapter invocation persistence", () => {
-  it("keeps legacy invocation prompt, instruction stack, and context unchanged by default", () => {
+  it("keeps one full canonical prompt for equal legacy instructions without changing context", () => {
     const prompt = `# Agent instruction stack\n${"keep this auditable\n".repeat(2_000)}`;
     const context = { chatMode: true, runtimeMetadata: { body: "PRIVATE_CONTEXT_BODY" } };
     const payload = buildHeartbeatAdapterInvokePayload({
@@ -35,13 +35,67 @@ describe("heartbeat adapter invocation persistence", () => {
     const persisted = JSON.parse(JSON.stringify(redactCurrentUserValue(payload))) as Record<string, unknown>;
 
     expect(persisted.prompt).toBe(payload.prompt);
-    expect(persisted.agentInstructionStack).toBe(payload.agentInstructionStack);
+    expect(persisted).not.toHaveProperty("agentInstructionStack");
+    expect(persisted.agentInstructionStack ?? persisted.prompt).toBe(payload.prompt);
     expect(persisted.context).toEqual(context);
     expect(persisted).not.toHaveProperty("invocationContent");
     expect(persisted.promptMetrics).toEqual({ promptChars: prompt.length });
   });
 
-  it("compacts prompt, instruction stack, and nested context only for native transcript retention", () => {
+  it("removes exactly one 82187-byte Unicode body from serialized invoke metadata, not runtime input or snapshot", () => {
+    const prompt = "界🙂\n\"".repeat(9_000) + "D".repeat(1_187);
+    expect(Buffer.byteLength(prompt, "utf8")).toBe(82_187);
+    const meta = { agentRuntimeType: "hermes_local", command: "hermes", prompt, agentInstructionStack: prompt,
+      invocationInstructionSnapshot: { status: "available", objectKey: "org/run-instruction-snapshots/retained", byteSize: 82_187 } };
+    const before = structuredClone(meta);
+    const payload = buildHeartbeatAdapterInvokePayload({ meta, runtimeSkills: [] });
+    const serialized = JSON.stringify(payload);
+    const withoutAlias = { ...payload };
+    delete withoutAlias.agentInstructionStackAlias;
+    const duplicateSerialized = JSON.stringify({ ...withoutAlias, agentInstructionStack: prompt });
+    const removedBytes = Buffer.byteLength(duplicateSerialized) - Buffer.byteLength(serialized);
+    const aliasBytes = Buffer.byteLength(serialized) - Buffer.byteLength(JSON.stringify(withoutAlias));
+    expect(removedBytes).toBe(Buffer.byteLength(JSON.stringify(prompt)) + Buffer.byteLength(',"agentInstructionStack":') - aliasBytes);
+    expect(removedBytes).toBeGreaterThan(82_187);
+    expect(payload).not.toHaveProperty("agentInstructionStack");
+    expect(JSON.parse(serialized).prompt).toBe(prompt);
+    expect(payload.invocationInstructionSnapshot).toEqual(meta.invocationInstructionSnapshot);
+    expect(meta).toEqual(before);
+    console.info("invoke-dedup synthetic bytes", { bodyBytes: Buffer.byteLength(prompt), beforeBytes: Buffer.byteLength(duplicateSerialized),
+      afterBytes: Buffer.byteLength(serialized), aliasBytes, removedBytes });
+  });
+
+  it.each([
+    { prompt: "input", agentInstructionStack: "different instructions" },
+    { prompt: "input", agentInstructionStack: "input\nextra" },
+    { prompt: "", agentInstructionStack: "" },
+    { prompt: "", agentInstructionStack: "unique instructions" },
+    { prompt: "input", agentInstructionStack: "" },
+    { prompt: "input", agentInstructionStack: null },
+    { prompt: "input" },
+  ])("preserves distinct/empty/null/absent fields: %j", (fields) => {
+    const meta = { agentRuntimeType: "hermes_local", command: "hermes", ...fields };
+    const payload = buildHeartbeatAdapterInvokePayload({ meta: meta as never, runtimeSkills: [] });
+    expect(payload.prompt).toBe(fields.prompt);
+    if ("agentInstructionStack" in fields) expect(payload.agentInstructionStack).toBe(fields.agentInstructionStack);
+    else expect(payload).not.toHaveProperty("agentInstructionStack");
+    expect(meta).toEqual({ agentRuntimeType: "hermes_local", command: "hermes", ...fields });
+  });
+
+  it("compares sanitized persistence text and leaves distinct runtime annotations untouched", () => {
+    const section = (quote: string) => `User-provided response annotations:\n${quote}\n\nConversation input:\nuser: same request`;
+    const meta = { agentRuntimeType: "hermes_local", command: "hermes", prompt: section("PRIVATE_QUOTE_A"),
+      agentInstructionStack: section("PRIVATE_QUOTE_B") };
+    const before = structuredClone(meta);
+    const payload = buildHeartbeatAdapterInvokePayload({ meta, runtimeSkills: [] });
+    expect(payload.prompt).toContain("response annotation content redacted for persistence");
+    expect(payload.prompt).toContain("user: same request");
+    expect(payload).not.toHaveProperty("agentInstructionStack");
+    expect(JSON.stringify(payload)).not.toContain("PRIVATE_QUOTE");
+    expect(meta).toEqual(before);
+  });
+
+  it("does not delete invocation text on native mode without asynchronous readback proof", () => {
     const prompt = `# Agent instruction stack\n${"keep this auditable\n".repeat(2_000)}`;
     const privateContext = "PRIVATE_NATIVE_CONTEXT_" + "C".repeat(2_000);
     const meta = {
@@ -75,12 +129,12 @@ describe("heartbeat adapter invocation persistence", () => {
     const stackSummary = invocationContent.agentInstructionStack as Record<string, unknown>;
     const contextSummary = invocationContent.context as Record<string, unknown>;
 
-    expect(persisted).not.toHaveProperty("prompt");
-    expect(persisted).not.toHaveProperty("agentInstructionStack");
-    expect(persisted).not.toHaveProperty("context");
+    expect(persisted.prompt).toBe(legacyPayload.prompt);
+    expect(persisted.agentInstructionStack).toBe(legacyPayload.prompt);
+    expect(persisted.context).toEqual({ chatMode: true, runtimeMetadata: { body: privateContext } });
     expect(invocationContent).toMatchObject({
-      textStored: false,
-      textSource: "agent_run_transcript_reader",
+      textStored: true,
+      textSource: "persisted_invocation_inline",
       transcriptRetentionMode: "native",
       transcriptRetentionReason: "native_transcript_capability",
     });
@@ -102,14 +156,13 @@ describe("heartbeat adapter invocation persistence", () => {
     expect(persisted.skillEvidenceKeys).toEqual(["rudder/build-advisor"]);
     expect(serialized).not.toContain("PRIVATE_CHAT_PROMPT");
     expect(serialized).not.toContain("PRIVATE_CONTEXT_BODY");
-    expect(serialized).not.toContain("PRIVATE_NATIVE_CONTEXT_");
+    expect(serialized).toContain("PRIVATE_NATIVE_CONTEXT_");
 
     const legacySerialized = JSON.stringify(redactCurrentUserValue(legacyPayload));
-    expect(Buffer.byteLength(legacySerialized, "utf8") - Buffer.byteLength(serialized, "utf8"))
-      .toBeGreaterThan(Buffer.byteLength(prompt, "utf8") * 2);
+    expect(Buffer.byteLength(serialized)).toBeGreaterThan(Buffer.byteLength(legacySerialized));
   });
 
-  it("keeps distinct native prompt and instruction digests without persisting either text", () => {
+  it("retains distinct native text until snapshot equivalence is actually proven", () => {
     const prompt = "task prompt 内容";
     const instructionStack = "runtime instruction stack 规则";
     const payload = buildHeartbeatAdapterInvokePayload({
@@ -132,13 +185,13 @@ describe("heartbeat adapter invocation persistence", () => {
     const promptSummary = invocationContent.prompt as Record<string, unknown>;
     const stackSummary = invocationContent.agentInstructionStack as Record<string, unknown>;
 
-    expect(persisted).not.toHaveProperty("prompt");
-    expect(persisted).not.toHaveProperty("agentInstructionStack");
+    expect(persisted.prompt).toBe(prompt);
+    expect(persisted.agentInstructionStack).toBe(instructionStack);
     expect(promptSummary.sanitizedSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(stackSummary.sanitizedSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(stackSummary).not.toHaveProperty("sameAsPrompt");
-    expect(serialized).not.toContain(prompt);
-    expect(serialized).not.toContain(instructionStack);
+    expect(serialized).toContain(prompt);
+    expect(serialized).toContain(instructionStack);
   });
 
   it("preserves invocation text when native transcript retention is not active", () => {

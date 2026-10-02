@@ -29,7 +29,7 @@ import {
   NATIVE_CHAT_RUNTIME_TYPES,
 } from "../../agent-runtimes/index.js";
 import { parseObject } from "../../agent-runtimes/utils.js";
-import { redactCurrentUserText } from "../../log-redaction.js";
+import { redactCurrentUserText, redactCurrentUserValue } from "../../log-redaction.js";
 import { logger } from "../../middleware/logger.js";
 import { redactSensitiveText } from "../../redaction.js";
 import { getStorageService } from "../../storage/index.js";
@@ -39,6 +39,8 @@ import {
   isWorkspacePermissionPreflightError,
   preflightManagedAgentWorkspace,
 } from "../managed-workspace-preflight.js";
+import { sanitizePostgresJsonValue } from "../postgres-json.js";
+import { compactReadableInstructionSnapshot } from "../run-instruction-snapshots.compaction.js";
 import {
   MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES,
   storeRunInstructionSnapshot,
@@ -710,6 +712,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           invocationAttemptId: activeAttemptRef?.id ?? null,
           invocationSpanId: commonSpanId,
         };
+        const snapshotDeadlineAt = performance.now() + 5_000;
         if (transcriptRetention.mode === "native" && !transcriptRetention.persistRawTranscript) {
           const instructionStack = sanitizeAgentInstructionStackForPersistence(meta);
           const instructionBytes = typeof instructionStack === "string"
@@ -727,6 +730,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
                 storage: getStorageService(),
                 orgId: currentRun.orgId,
                 text: redactCurrentUserText(redactSensitiveText(instructionStack), currentUserRedactionOptions),
+                deadlineAt: snapshotDeadlineAt,
               });
               eventMeta.invocationInstructionSnapshot = { status: "available", ...stored };
             } catch {
@@ -738,17 +742,47 @@ export function createHeartbeatExecuteHandlers(context: any) {
             }
           }
         }
-        await appendRunEvent(currentRun, {
+        const payload = redactCurrentUserValue(buildHeartbeatAdapterInvokePayload({
+          meta: eventMeta,
+          runtimeSkills: runtimeSkillEntries,
+        }), currentUserRedactionOptions);
+        for (const field of ["prompt", "agentInstructionStack"]) {
+          if (typeof payload[field] === "string") payload[field] = redactSensitiveText(payload[field]);
+        }
+        const projected = transcriptRetention.mode === "native" && !transcriptRetention.persistRawTranscript
+          ? await compactReadableInstructionSnapshot({
+            db, storage: { getObject: (orgId, key) => getStorageService().getObject(orgId, key) }, orgId: currentRun.orgId, runId: currentRun.id,
+            attemptId: activeAttemptRef?.id ?? null, spanId: commonSpanId, payload: sanitizePostgresJsonValue(payload),
+            deadlineAt: snapshotDeadlineAt,
+          }) : payload;
+        // Snapshot IO may outlive this executor's ownership. Reuse the current
+        // Run identity and existing lease CAS before publishing metadata.
+        const metadataRun = await getRun(currentRun.id);
+        if (executionAbortController.signal.aborted || !metadataRun
+          || metadataRun.orgId !== currentRun.orgId || metadataRun.agentId !== currentRun.agentId
+          || metadataRun.status !== "running" || metadataRun.executionOwnerToken !== executionOwnerToken) {
+          abortRunExecution(run.id);
+          return;
+        }
+        if (executionOwnerToken) {
+          const entry = commonSpanId ? await currentUnifiedEntry() : null;
+          const renewed = commonSpanId
+            ? entry && await unifiedRunAdapter.renewOwner(run.id, entry.ownerFence)
+            : await renewRunExecutionLease(run.id, executionOwnerToken);
+          if (!renewed || (commonSpanId && !renewed.ok)) {
+            abortRunExecution(run.id);
+            return;
+          }
+          if (commonSpanId) commonOwnerFence = renewed.value;
+        }
+        const metadataAppended = await appendRunEvent(currentRun, {
           eventType: "adapter.invoke",
           stream: "system",
           level: "info",
           message: "adapter invocation",
-          payload: buildHeartbeatAdapterInvokePayload({
-            meta: eventMeta,
-            runtimeSkills: runtimeSkillEntries,
-            transcriptRetention,
-          }),
-        });
+          payload: projected,
+        }, { executionOwnerToken });
+        if (!metadataAppended) abortRunExecution(run.id);
       };
 
       const authToken = adapter.supportsLocalAgentJwt

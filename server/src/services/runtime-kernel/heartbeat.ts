@@ -991,6 +991,7 @@ export function heartbeatService(
       payload?: Record<string, unknown>;
       idempotencyKey?: string | null;
     },
+    owner?: { executionOwnerToken: string | null },
   ) {
     const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
     const sanitizedMessage = event.message
@@ -1000,7 +1001,7 @@ export function heartbeatService(
       ? redactCurrentUserValue(event.payload, currentUserRedactionOptions)
       : event.payload;
 
-    const inserted = await appendHeartbeatRunEvent(db, {
+    const eventValues = {
       orgId: run.orgId,
       runId: run.id,
       agentId: run.agentId,
@@ -1011,7 +1012,20 @@ export function heartbeatService(
       message: sanitizedMessage,
       payload: sanitizedPayload,
       idempotencyKey: event.idempotencyKey ?? null,
-    });
+    };
+    const inserted = owner ? await db.transaction(async tx => {
+      // Metadata proof is asynchronous. Serialize its final owner assertion
+      // with Run takeover/terminal CAS and keep the row locked through append.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${run.id}))`);
+      const rows = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
+        eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.orgId, run.orgId),
+        eq(heartbeatRuns.agentId, run.agentId), eq(heartbeatRuns.status, "running"),
+        sql`${heartbeatRuns.executionOwnerToken} is not distinct from ${owner.executionOwnerToken}`,
+      )).for("update");
+      if (!rows.length) return null;
+      return appendHeartbeatRunEvent(tx as unknown as Db, eventValues);
+    }) : await appendHeartbeatRunEvent(db, eventValues);
+    if (!inserted) return false;
 
     publishLiveEvent({
       orgId: run.orgId,
@@ -1028,7 +1042,7 @@ export function heartbeatService(
         payload: sanitizedPayload ?? null,
       },
     });
-
+    return true;
   }
 
   async function persistRunProcessMetadata(
