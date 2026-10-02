@@ -1,0 +1,77 @@
+{
+  "schema": "rudder.independent-source-stage-review.v1",
+  "reviewed_at_date": "2026-10-02",
+  "reviewer_skill": "agent-work-reviewer-maintainer",
+  "verdict": "accept",
+  "level": "stage verdict",
+  "candidate": {
+    "checkout": "/private/tmp/rudder-rust-cli-entry.g0BVrk/repo",
+    "branch": "codex/native-member-cli-entry-20261002",
+    "commit": "6b6896d1fe8e161c22b3ddfbbda9f329f1d34a22",
+    "tree": "b1ca4c013b5a417bead208e4f407b21fe49e7ff4",
+    "parent": "9ecff16ca1a5ed4443626321d0fd5159a32656f1",
+    "changed_risk_base": "1652650a1aabc4f12a9ca61482f716763e51302d",
+    "original_review_base": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "worktree_clean_at_review": true,
+    "changed_paths_from_changed_risk_base": [
+      "native/crates/agent-cli-core/src/lib.rs"
+    ],
+    "changed_path_diff_sha256": "ef52c4cd39a9173dec7b6798b1099bc27cbeeb7476bb458d48b2ca2604a00b75",
+    "binary": {
+      "path": "/private/tmp/rudder-rust-cli-entry.g0BVrk/target/debug/rudder-cli",
+      "sha256": "7878ee25b8a97c98a9a6718a4e12dd0ba86f82fb3cfd562c21b55a632e22a653",
+      "evidence": "Read-only shasum matched the parent-confirmed final cargo build identity; reviewer did not execute or rebuild it."
+    }
+  },
+  "prior_review": {
+    "receipt": "/private/tmp/rudder-native-member-cli-1652650-stage-review.json",
+    "sha256": "08b9a4a827f19d8896cf4a8e790943ebcb06da1516582233431efda5f8f3b490",
+    "prior_verdict_for_1652650": "accept",
+    "changed_risk_summary": "The earlier human API error format regression was resolved at 1652650. This review covers only the subsequent private Options boxing, positive_port closure simplification, and rustfmt wrap.",
+    "provenance_note": "The prior receipt's correction about checkout_drift_after_lock on the older 6e0 receipt was retained; it was not treated as evidence of drift in this checkout."
+  },
+  "intent_and_alignment": {
+    "user_job": "Provide an explicit Rust CLI entry for the read-only organization member-directory capability.",
+    "review_request": "Independent bounded changed-risk source-stage review; no implementation edits or runtime acceptance; no final acceptance or push authority.",
+    "scope_constraints": "Preserve existing member CLI behavior and the Node CLI, MCP, packaging, and default selector boundaries. This is not whole-CLI migration or product acceptance.",
+    "first_principles_judgment": "The two Clippy-driven source changes preserve the same parsed Options passed to run_members and the same port parsing function. Formatting changes whitespace only; the bounded Rust entry remains coherent.",
+    "alignment": "aligned"
+  },
+  "reviewer_verified": [
+    "Exact HEAD 6b6896d1fe8e161c22b3ddfbbda9f329f1d34a22, tree b1ca4c013b5a417bead208e4f407b21fe49e7ff4, parent 9ecff16ca1a5ed4443626321d0fd5159a32656f1, branch, clean status, changed path, and diff from 1652650 were verified in the named checkout.",
+    "The diff boxes the private Members(Options) enum payload during parsing and immediately unboxes it for run_members. No command, argument, request, identity, output, or public API behavior changes.",
+    "env_value returns Option<&str> and positive_port accepts &str. Replacing and_then(|value| positive_port(&value)) with and_then(positive_port) passes the same string slice to the same parser; this removes a redundant borrow closure.",
+    "The remaining diff in infer_api_base is rustfmt line wrapping. No test files or other paths changed from the changed-risk base.",
+    "git diff --check across the changed-risk range produced no diagnostics.",
+    "The executable at the supplied path hashes to 7878ee25b8a97c98a9a6718a4e12dd0ba86f82fb3cfd562c21b55a632e22a653. It was hashed but not executed.",
+    "The current real-service acceptance spec was read at SHA-256 167292482b43c5d2aa6453b49499ddd24fb111c9da1227cca29b2aa6e5dd563e. Its candidate commit, tree, and binary hash match this review; its real-service criteria are unchanged from the preceding reviewed spec and remain explicit for same-org Board/Agent reads, foreign-org denial, filtering, pagination, full-ID projections, escaped human output, revocation, process/data identity, and zero Node grants."
+  ],
+  "author_claimed_not_reexecuted": [
+    "Ten focused executable tests pass.",
+    "Package cargo fmt, focused final Clippy, and final cargo build pass.",
+    "Reviewer did not rerun tests, formatting, Clippy, or build during this frozen review."
+  ],
+  "acceptance_packet": {
+    "path": "/private/tmp/rudder-rust-cli-entry.g0BVrk/real-service-acceptance-spec.json",
+    "sha256": "167292482b43c5d2aa6453b49499ddd24fb111c9da1227cca29b2aa6e5dd563e",
+    "current_status": "SUCCESSOR_SOURCE_STAGE_REVIEW_PENDING_HARNESS_AND_FIXTURE_STAGE_PENDING",
+    "criteria_alignment": "aligned",
+    "candidate_binding": "commit, tree, and binary pins match this candidate; stageReceiptSha256 is pending this receipt's persisted hash.",
+    "remaining_before_verifier": "Finalize the packet's stage receipt hash and run the distinct real-service verifier only after the exclusive PostgreSQL lease is available and the disposable fixture is created. No service, database, or verifier run occurred in this review."
+  },
+  "findings": [],
+  "stage_assessment": {
+    "changed_risk": "resolved; no source behavior regression found",
+    "real_service_acceptance": "pending and outside this source-stage verdict",
+    "ui": "not applicable",
+    "final_product_acceptance": "not performed and not claimed",
+    "publication_or_merge_readiness": "not assessed; no push authority"
+  },
+  "convergence_direction": "Attach this receipt's SHA-256 to the pending packet metadata, then proceed to the separately gated real-service verifier after the exclusive PostgreSQL lane is released.",
+  "operations_not_performed": [
+    "No source edits, staging, commit, or push",
+    "No test, formatter, Clippy, or build rerun",
+    "No API service, PostgreSQL, fixture, browser, or product verifier",
+    "No final acceptance or publication claim"
+  ]
+}
