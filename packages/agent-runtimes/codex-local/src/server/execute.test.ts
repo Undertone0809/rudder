@@ -1,5 +1,35 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { buildCodexSessionParams, resolveCodexAgentHome, validateCodexResumeSession } from "./execute.js";
+import { buildCodexSessionParams, codexChatStdoutCapturePolicy, resolveCodexAgentHome, validateCodexResumeSession } from "./execute.js";
+
+describe("qualified Chat stdout policy", () => {
+  const config = { providerProfileId: "profile-1", env: { CODEX_HOME: "/isolated/profile" }, model: "test" };
+  const qualified = {
+    runId: "run-1", agent: { orgId: "org-1", agentRuntimeType: "codex_local" }, config,
+    context: { chatMode: true, rudderCodexStdoutPolicy: {
+      mode: "native_retained", runtimeType: "codex_local", runId: "run-1", orgId: "org-1",
+      configSha256: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+    } },
+  };
+  it("omits only the unchanged positively qualified execution", () => {
+    expect(codexChatStdoutCapturePolicy(qualified as any)).toBe("omit");
+  });
+  it("captures missing, unknown, legacy, scope/profile drift and fallback", () => {
+    for (const ctx of [
+      { ...qualified, context: { chatMode: true, useAppServerChat: true } },
+      ...["unknown", "legacy"].map(mode => ({ ...qualified, context: {
+        ...qualified.context, rudderCodexStdoutPolicy: { ...qualified.context.rudderCodexStdoutPolicy, mode },
+      } })),
+      { ...qualified, runId: "other-run" },
+      { ...qualified, agent: { ...qualified.agent, orgId: "other-org" } },
+      { ...qualified, config: { ...config, providerProfileId: "other-profile" } },
+      { ...qualified, config: { ...config, env: { CODEX_HOME: "/other/home" } } },
+      { ...qualified, context: { ...qualified.context, chatMode: false } },
+      { ...qualified, context: { ...qualified.context, rudderModelFallback: { attemptIndex: 1 } } },
+      { ...qualified, config: { ...config, rudderCodexStdoutPolicy: qualified.context.rudderCodexStdoutPolicy }, context: { chatMode: true } },
+    ]) expect(codexChatStdoutCapturePolicy(ctx as any)).toBe("capture");
+  });
+});
 
 describe("resolveCodexAgentHome", () => {
   const base = {

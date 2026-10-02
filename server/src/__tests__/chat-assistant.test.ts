@@ -4175,6 +4175,33 @@ describe("chatAssistantService operator profile prompt injection", () => {
     );
   });
 
+  it.each(["qualified", "unknown", "unbound", "mismatched"])("issues Codex stdout policy only for profile-qualified retention: %s", async (qualification) => {
+    mockCreateProfileBoundRuntimeProviderCapabilityResolverFromConfig.mockReturnValue((
+      runtimeType: string, binding: Record<string, unknown>,
+    ) => qualification === "unknown" ? null : ({
+      adapter: { runtimeType, transcript: {
+        evidence: { status: "supported", profileBound: qualification !== "unbound", reason: "fixture" },
+        readRange: async () => ({}),
+      } },
+      binding: qualification === "mismatched" ? { ...binding, profileId: "other" } : binding,
+      profileResolved: true,
+    }));
+    await chatAssistantService({} as any).streamChatAssistantReply({
+      conversation: makeConversation(), messages: makeMessages(), contextLinks: [],
+      runContext: { rudderCodexStdoutPolicy: { mode: "native_retained", configSha256: "user-forged" } },
+    });
+    const ctx = mockAdapter.execute.mock.lastCall![0];
+    if (qualification === "qualified") {
+      expect(ctx.context.rudderCodexStdoutPolicy).toMatchObject({
+        mode: "native_retained", runtimeType: "codex_local", runId: "chat-run-1", orgId: "organization-1",
+      });
+      expect(ctx.context.rudderCodexStdoutPolicy.configSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(ctx.context.rudderCodexStdoutPolicy.configSha256).toBe(
+        createHash("sha256").update(JSON.stringify(ctx.config)).digest("hex"),
+      );
+    } else expect(ctx.context.rudderCodexStdoutPolicy).toBeNull();
+  });
+
   it("accepts a native final assistant message without a sentinel or repair", async () => {
     const svc = chatAssistantService({} as any);
 

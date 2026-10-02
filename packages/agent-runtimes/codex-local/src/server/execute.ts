@@ -145,6 +145,19 @@ function providerProfileSessionParams(config: Record<string, unknown>, orgId: st
   };
 }
 
+/** Only a server-qualified, unchanged primary Chat may omit duplicate stdout. */
+export function codexChatStdoutCapturePolicy(ctx: AgentRuntimeExecutionContext): "capture" | "omit" {
+  const policy = parseObject(ctx.context.rudderCodexStdoutPolicy);
+  if (ctx.context.chatMode !== true || ctx.context.rudderModelFallback
+    || ctx.agent.agentRuntimeType !== "codex_local"
+    || policy.mode !== "native_retained" || policy.runtimeType !== "codex_local"
+    || !ctx.runId || policy.runId !== ctx.runId || policy.orgId !== ctx.agent.orgId
+    || policy.configSha256 !== createHash("sha256").update(JSON.stringify(ctx.config)).digest("hex")) {
+    return "capture";
+  }
+  return "omit";
+}
+
 function storedString(params: Record<string, unknown>, keys: readonly string[]): string {
   for (const key of keys) {
     const value = asString(params[key], "").trim();
@@ -1093,6 +1106,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
       }
       const appStartedAt = new Date();
       const appResult = await executeCodexAppServerChat({
+        stdoutCapturePolicy: codexChatStdoutCapturePolicy(ctx),
         command: executableCommand,
         cwd,
         env: Object.fromEntries(
@@ -1125,7 +1139,7 @@ export async function execute(ctx: AgentRuntimeExecutionContext): Promise<AgentR
         onProviderAuthFailure: persistAuthFailureGate,
       });
       const appEndedAt = new Date();
-      const providerAuthFailure = isCodexProviderAuthFailure(
+      const providerAuthFailure = appResult.providerAuthFailure === true || isCodexProviderAuthFailure(
         appResult.errorMessage,
         appResult.stdout,
         appResult.stderr,

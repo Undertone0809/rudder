@@ -69,6 +69,8 @@ export interface CodexAppServerChatOptions {
   requestApproval?: AgentRuntimeExecutionContext["requestApproval"];
   waitForApproval?: AgentRuntimeExecutionContext["waitForApproval"];
   onProviderAuthFailure?: (message: string) => Promise<void> | void;
+  /** Internal host policy. Missing/unknown values retain legacy capture. */
+  stdoutCapturePolicy?: "capture" | "omit";
 }
 
 export interface CodexAppServerChatResult {
@@ -77,6 +79,8 @@ export interface CodexAppServerChatResult {
   timedOut: boolean;
   errorMessage: string | null;
   stdout: string;
+  /** Bounded sticky diagnostic independent of duplicate stdout retention. */
+  providerAuthFailure: boolean;
   stderr: string;
   summary: string;
   usage: UsageSummary;
@@ -484,6 +488,7 @@ export async function executeCodexAppServerChat(
   child.once("close", () => flushStderr(true));
 
   let stdout = "";
+  let providerAuthFailure = false;
   let latestUsage: UsageSummary = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
   let finalAgentText = "";
   const agentDeltaItemIds = new Set<string>();
@@ -520,7 +525,8 @@ export async function executeCodexAppServerChat(
 
   const emit = async (event: JsonRecord) => {
     const line = `${JSON.stringify(event)}\n`;
-    stdout = appendBounded(stdout, line);
+    providerAuthFailure ||= isCodexProviderAuthFailure(line);
+    if (options.stdoutCapturePolicy !== "omit") stdout = appendBounded(stdout, line);
     await options.onLog("stdout", line);
   };
 
@@ -997,6 +1003,7 @@ export async function executeCodexAppServerChat(
       timedOut: false,
       errorMessage: finalTurnError?.message ?? null,
       stdout,
+      providerAuthFailure,
       stderr,
       summary: finalAgentText,
       usage: latestUsage,
@@ -1015,6 +1022,7 @@ export async function executeCodexAppServerChat(
       timedOut: error instanceof Error && /^Timed out after /.test(error.message),
       errorMessage: error instanceof Error ? error.message : String(error),
       stdout,
+      providerAuthFailure,
       stderr,
       summary: finalAgentText,
       usage: latestUsage,

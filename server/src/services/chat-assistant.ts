@@ -13,7 +13,7 @@ import {
   stripRudderInlineVisualPlacements,
 } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import {
   createProfileBoundRuntimeProviderCapabilityResolverFromConfig,
@@ -66,6 +66,7 @@ import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js
 import { resolveHeartbeatTranscriptRetention } from "./runtime-kernel/heartbeat-transcript-retention.js";
 import {
   executeAdapterWithModelFallbacks,
+  projectPrimaryRuntimeConfig,
   resolveExecutionSubmissionPhase,
 } from "./runtime-kernel/model-fallback.js";
 import { abortReservedNativeForkIntentRunFence, executeNativeForkIntent, markNativeForkIntentUnknown, NativeForkAcceptanceUnknownError, transferReservedNativeForkIntentRunFence, type NativeForkIntentNoChildProof, type NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
@@ -1012,6 +1013,19 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...chatPromptContext,
             chatConversationId: input.conversation.id,
             chatMode: true,
+            // Host-owned qualification, never a user config flag. Bind the
+            // verified retention decision to this exact primary execution.
+            rudderCodexStdoutPolicy: runtimeAgentType === "codex_local" && transcriptRetention.mode === "native"
+              ? {
+                mode: "native_retained",
+                runtimeType: runtimeAgentType,
+                runId,
+                orgId: input.conversation.orgId,
+                configSha256: createHash("sha256").update(JSON.stringify(
+                  projectPrimaryRuntimeConfig(runtimeExecutionConfig, runtimeAgentType),
+                )).digest("hex"),
+              }
+              : null,
             rudderChatInlineVisualProtocolVersion: 1,
             rudderScene,
             rudderWorkspace,

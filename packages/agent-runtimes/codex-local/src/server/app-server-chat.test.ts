@@ -2,6 +2,7 @@ import type {
   AgentRuntimeControlHandle,
   AgentRuntimeControlHandleLease,
 } from "@rudderhq/agent-runtime-utils";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -228,6 +229,25 @@ rl.on("line", (line) => {
     send({ id: message.id, result: { turn: { id: turnId } } });
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
     if (process.env.RUDDER_TEST_STALL_TURN === "1") return;
+    if (process.env.RUDDER_TEST_UNICODE_LOAD === "1") {
+      const output = "汉🙂é".repeat(16384);
+      for (let index = 0; index < 192; index++) {
+        send({ method: "item/completed", params: { threadId, turnId, item: {
+          type: "commandExecution", id: "unicode-" + index,
+          command: "fixture", cwd: "/fixture/workspace", status: "completed", aggregatedOutput: output, exitCode: 0,
+        } } });
+      }
+      finish("completed");
+      return;
+    }
+    if (process.env.RUDDER_TEST_AUTH_TOOL_OUTPUT === "1") {
+      send({ method: "item/completed", params: { threadId, turnId, item: {
+        type: "commandExecution", id: "auth-output", command: "fixture", status: "completed",
+        aggregatedOutput: "unexpected status 401 Unauthorized API_KEY_REQUIRED", exitCode: 1,
+      } } });
+      finish("completed");
+      return;
+    }
     if (process.env.RUDDER_TEST_USER_INPUT_REQUEST === "1") {
       send({
         id: "user-input-request-1",
@@ -501,7 +521,9 @@ afterEach(async () => {
 });
 
 describe("executeCodexAppServerChat", () => {
-  it("stops an App Server turn when its first provider auth error says it will retry", async () => {
+  it.each(["capture", "omit"] as const)("stops an App Server turn when its first provider auth error says it will retry: %s", async (stdoutCapturePolicy) => {
+    const onProviderAuthFailure = vi.fn();
+    const logs: string[] = [];
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
@@ -511,6 +533,8 @@ describe("executeCodexAppServerChat", () => {
         RUDDER_TEST_AUTH_FAILURE: "1",
       } as Record<string, string>,
       prompt: "Inspect the timeline",
+      stdoutCapturePolicy,
+      onProviderAuthFailure,
       model: "gpt-test",
       modelReasoningEffort: "high",
       search: false,
@@ -518,7 +542,7 @@ describe("executeCodexAppServerChat", () => {
       imagePaths: [],
       sessionId: null,
       timeoutSec: 5,
-      onLog: vi.fn(async () => undefined),
+      onLog: async (_stream, line) => { logs.push(line); },
     });
 
     expect(result).toMatchObject({
@@ -526,15 +550,19 @@ describe("executeCodexAppServerChat", () => {
       timedOut: false,
       errorMessage: expect.stringContaining("401 Unauthorized"),
     });
-    expect(result.stdout).toContain('"type":"error"');
-    expect(result.stdout).not.toContain('"type":"turn.completed"');
+    expect(logs.join("")).toContain('"type":"error"');
+    expect(logs.join("")).not.toContain('"type":"turn.completed"');
+    expect(result.providerAuthFailure).toBe(true);
+    expect(onProviderAuthFailure).toHaveBeenCalledTimes(1);
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
   });
 
-  it.each([
+  it.each(([
     ["failed", { RUDDER_TEST_TURN_STATUS: "failed" }, "failed", "accepted"],
     ["missing", { RUDDER_TEST_TURN_STATUS_MISSING: "1" }, "unknown", "accepted"],
     ["unrecognized", { RUDDER_TEST_TURN_STATUS: "cancelled" }, "cancelled", "accepted"],
-  ] as const)("fails closed when Codex reports a %s terminal Turn status", async (_kind, statusEnv, status, submissionPhase) => {
+  ] as const).flatMap(row => (["capture", "omit"] as const).map(policy => [...row, policy] as const)))("fails closed when Codex reports a %s terminal Turn status", async (_kind, statusEnv, status, submissionPhase, stdoutCapturePolicy) => {
+    const logs: string[] = [];
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
@@ -545,6 +573,7 @@ describe("executeCodexAppServerChat", () => {
         ...statusEnv,
       } as Record<string, string>,
       prompt: "Inspect the timeline",
+      stdoutCapturePolicy,
       model: "gpt-test",
       modelReasoningEffort: "high",
       search: false,
@@ -552,7 +581,7 @@ describe("executeCodexAppServerChat", () => {
       imagePaths: [],
       sessionId: null,
       timeoutSec: 5,
-      onLog: vi.fn(async () => undefined),
+      onLog: async (_stream, line) => { logs.push(line); },
     });
 
     expect(result).toMatchObject({
@@ -561,8 +590,9 @@ describe("executeCodexAppServerChat", () => {
       errorMessage: `Codex turn ${status}`,
       submissionPhase,
     });
-    expect(result.stdout).toContain('"type":"turn.failed"');
-    expect(result.stdout).not.toContain('"type":"turn.completed"');
+    expect(logs.join("")).toContain('"type":"turn.failed"');
+    expect(logs.join("")).not.toContain('"type":"turn.completed"');
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
   });
 
   it("keeps turn/start acceptance indeterminate when its response has no turn id", async () => {
@@ -1022,7 +1052,7 @@ describe("executeCodexAppServerChat", () => {
     expect(result).toMatchObject({ exitCode: 1, submissionPhase: "indeterminate", providerTurnId: null });
   });
 
-  it("does not silently start a new thread when resume reports a missing rollout", async () => {
+  it.each(["capture", "omit"] as const)("does not silently start a new thread when resume reports a missing rollout: %s", async (stdoutCapturePolicy) => {
     const capturePath = path.join(root, "missing-rollout.ndjson");
     const result = await executeCodexAppServerChat({
       command: fakeCodex,
@@ -1041,6 +1071,7 @@ describe("executeCodexAppServerChat", () => {
       sandboxMode: null,
       imagePaths: [],
       sessionId: "missing-thread",
+      stdoutCapturePolicy,
       timeoutSec: 5,
       onLog: vi.fn(async () => undefined),
     });
@@ -1962,14 +1993,76 @@ describe("executeCodexAppServerChat", () => {
     expect(thinkingText).toBe("Inspect the state.\nApply the fix.");
   });
 
-  it("uses native interrupt before process termination when Stop aborts the turn", async () => {
+  it.each([undefined, "capture", "omit"] as const)("preserves auth signal and full onLog with policy %s", async (stdoutCapturePolicy) => {
+    const logs: string[] = [];
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex, cwd: root,
+      env: { ...process.env, PATH: process.env.PATH ?? "", RUDDER_TEST_AUTH_TOOL_OUTPUT: "1" } as Record<string, string>,
+      prompt: "Fixture", model: "gpt-test", modelReasoningEffort: "high", search: false,
+      bypassApprovalsAndSandbox: true, imagePaths: [], sessionId: null, timeoutSec: 5,
+      stdoutCapturePolicy, onLog: async (_stream, line) => { logs.push(line); },
+    });
+    expect(result.providerAuthFailure).toBe(true);
+    expect(logs.join("")).toContain("API_KEY_REQUIRED");
+    expect(result.summary).toBe("Steered reply");
+    expect(result.providerTurnId).toBe("turn-app-1");
+    expect(result.sessionId).toBe("thread-app-1");
+    expect(result.usage).toEqual({ inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 });
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
+  });
+
+  it("compares fixed Unicode stdout workload", async () => {
+    const policy = process.env.RUDDER_STDOUT_BENCH_POLICY === "omit" ? "omit" : "capture";
+    const logHash = createHash("sha256");
+    let logBytes = 0;
+    const initial = process.memoryUsage();
+    let peakHeap = initial.heapUsed;
+    let peakRSS = initial.rss;
+    const started = performance.now();
+    const result = await executeCodexAppServerChat({
+      command: fakeCodex, cwd: root,
+      env: { ...process.env, PATH: process.env.PATH ?? "", RUDDER_TEST_UNICODE_LOAD: "1" } as Record<string, string>,
+      prompt: "Fixture", model: "gpt-test", modelReasoningEffort: "high", search: false,
+      bypassApprovalsAndSandbox: true, imagePaths: [], sessionId: "thread-app-1", timeoutSec: 20,
+      stdoutCapturePolicy: policy,
+      onLog: async (stream, line) => {
+        if (stream !== "stdout") return;
+        logHash.update(line); logBytes += Buffer.byteLength(line);
+        const memory = process.memoryUsage();
+        peakHeap = Math.max(peakHeap, memory.heapUsed); peakRSS = Math.max(peakRSS, memory.rss);
+      },
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toBe("Steered reply");
+    expect(result.usage).toEqual({ inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 });
+    expect(result.resumed).toBe(true);
+    expect(result.sessionId).toBe("thread-app-1");
+    expect(result.providerTurnId).toBe("turn-app-1");
+    expect(result.submissionPhase).toBe("accepted");
+    const correctnessSha256 = createHash("sha256").update(JSON.stringify({
+      exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut,
+      errorMessage: result.errorMessage, summary: result.summary, usage: result.usage,
+      sessionId: result.sessionId, providerTurnId: result.providerTurnId,
+      submissionPhase: result.submissionPhase, resumed: result.resumed, clearSession: result.clearSession,
+      chatDeveloperInstructionsRevision: result.chatDeveloperInstructionsRevision,
+      nativeWriterQuiescence: result.nativeWriterQuiescence,
+    })).digest("hex");
+    console.log("STDOUT_UNICODE_METRICS", JSON.stringify({ policy, logBytes, logSha256: logHash.digest("hex"),
+      correctnessSha256,
+      stdoutUTF8Bytes: Buffer.byteLength(result.stdout), initialHeap: initial.heapUsed, initialRSS: initial.rss,
+      peakHeap, peakRSS, elapsedMs: performance.now() - started }));
+  }, 30_000);
+
+  it.each(["capture", "omit"] as const)("uses native interrupt before process termination when Stop aborts the turn: %s", async (stdoutCapturePolicy) => {
     const controller = new AbortController();
+    const logs: string[] = [];
     let handle: AgentRuntimeControlHandle | null = null;
     const execution = executeCodexAppServerChat({
       command: fakeCodex,
       cwd: root,
       env: { ...process.env, PATH: process.env.PATH ?? "" } as Record<string, string>,
       prompt: "Long request",
+      stdoutCapturePolicy,
       model: "gpt-test",
       modelReasoningEffort: "high",
       search: false,
@@ -1978,7 +2071,7 @@ describe("executeCodexAppServerChat", () => {
       sessionId: null,
       timeoutSec: 5,
       abortSignal: controller.signal,
-      onLog: vi.fn(async () => undefined),
+      onLog: async (_stream, line) => { logs.push(line); },
       controlAttempt: {
         attemptEpoch: 1,
         ownerToken: "owner-1",
@@ -1999,9 +2092,10 @@ describe("executeCodexAppServerChat", () => {
 
     expect(result.signal).toBe("SIGTERM");
     expect(result.timedOut).toBe(false);
-    expect(result.stdout).toContain('"subtype":"interrupted"');
+    expect(logs.join("")).toContain('"subtype":"interrupted"');
     expect(result.nativeWriterQuiescence).toEqual({ status: "confirmed", source: "provider_terminal" });
-    expect(result.stdout).not.toContain('"text":"Steered reply"');
+    expect(logs.join("")).not.toContain('"text":"Steered reply"');
+    expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
     expect(result.summary).toBe("");
   });
 
