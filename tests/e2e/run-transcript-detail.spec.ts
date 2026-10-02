@@ -657,7 +657,7 @@ test.describe("Run transcript detail", () => {
 
     await invocationTab.click();
     await expect(invocationTab).toHaveAttribute("data-state", "active");
-    await expect(page.getByText("Runtime metadata and Agent Instruction stack")).toHaveClass(/invisible/);
+    await expect(page.getByText("Runtime metadata and any available instruction details for this Run")).toHaveClass(/invisible/);
     await expect(page.getByText("Runtime:", { exact: false })).toBeVisible();
     await expect(page.getByText("Command:", { exact: false })).toBeVisible();
     await expect(page.getByText(/^Events \(\d+\)$/)).toBeVisible();
@@ -710,7 +710,7 @@ test.describe("Run transcript detail", () => {
       .toBe(promptText);
 
     await invocationTab.hover();
-    await expect(page.getByText("Runtime metadata and Agent Instruction stack")).toBeVisible();
+    await expect(page.getByText("Runtime metadata and any available instruction details for this Run")).toBeVisible();
 
     await transcriptTab.click();
     await expect(transcriptTab).toHaveAttribute("data-state", "active");
