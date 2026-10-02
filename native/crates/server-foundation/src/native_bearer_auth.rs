@@ -247,7 +247,7 @@ mod tests {
         ] {
             assert!(is_native_bearer(token));
         }
-        for token in ["", "Bearer pcp_secret", "eyJhbGciOiJIUzI1NiJ9", "other"] {
+        for token in ["", "Bearer pcp_secret", "synthetic-invalid-jwt", "other"] {
             assert!(!is_native_bearer(token));
         }
         assert_eq!(
