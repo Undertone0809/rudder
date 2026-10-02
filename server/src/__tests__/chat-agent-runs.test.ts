@@ -32,6 +32,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { registerAgentInvocationInstructionsRoute } from "../routes/agents.management-invocation-instructions.ts";
 import { chatAgentRunService } from "../services/chat-agent-runs.ts";
 import { heartbeatService } from "../services/heartbeat.ts";
+import { subscribeCompanyLiveEvents } from "../services/live-events.ts";
 import { readRunInstructionSnapshotForEvent } from "../services/run-instruction-snapshots.ts";
 import { getRunSummary } from "../services/run-intelligence.ts";
 import { createCursorTranscriptSupplementCapture } from "../services/runtime-kernel/cursor-transcript-supplement.ts";
@@ -45,6 +46,7 @@ import { proveSealedNativeRunTranscript } from "../services/runtime-kernel/nativ
 import { persistNativeTransportProfile } from "../services/runtime-kernel/native-transport-profile.ts";
 import { createTranscriptObjectReader, createTranscriptObjectStore, type TranscriptObjectStore } from "../services/runtime-kernel/transcript-object-store.ts";
 import { createTranscriptReader, type NativeTranscriptReadInput } from "../services/runtime-kernel/transcript-reader.ts";
+import * as unifiedRunIntegration from "../services/runtime-kernel/unified-agent-run.integration.ts";
 import { createHeartbeatUnifiedAgentRunAdapter } from "../services/runtime-kernel/unified-agent-run.integration.ts";
 import { getStorageService } from "../storage/index.ts";
 import { createLocalDiskStorageProvider } from "../storage/local-disk-provider.ts";
@@ -391,6 +393,100 @@ describe("chatAgentRunService", () => {
     expect(terminalResponse.body).toEqual(response.body);
     expect((await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke")).toHaveLength(1);
   });
+
+  it("publishes the actual Chat invocation only after its event is committed", async () => {
+    const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-committed-invoke-"))));
+    const caller = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: storage });
+    const run = await createChatRunFixture("Committed Chat invocation", undefined, caller);
+    const observed: Array<Promise<unknown[]>> = [];
+    const unsubscribe = subscribeCompanyLiveEvents(run.orgId, event => {
+      if (event.type === "heartbeat.run.event" && event.payload.runId === run.id && event.payload.eventType === "adapter.invoke") {
+        // Start the independent connection read in the listener, not a lazy
+        // query deferred until appendAdapterInvoke has already returned.
+        observed.push((async () => await db.select().from(heartbeatRunEvents).where(and(
+          eq(heartbeatRunEvents.runId, run.id), eq(heartbeatRunEvents.seq, event.payload.seq as number),
+          eq(heartbeatRunEvents.eventType, "adapter.invoke"),
+        )))());
+      }
+    });
+    try {
+      await caller.appendAdapterInvoke(run, { agentRuntimeType: "codex_local", command: "codex",
+        prompt: "debug input", agentInstructionStack: "actual Instructions🙂" }, []);
+      expect(observed).toHaveLength(1);
+      expect(await observed[0]).toMatchObject([{ orgId: run.orgId, runId: run.id, payload: {
+        invocationAttemptId: run.runtimeAttemptRef!.id, invocationSpanId: run.runtimeSpanId,
+        invocationInstructionSnapshot: { status: "available" },
+      } }]);
+    } finally { unsubscribe(); caller.releaseOwnedRun(run.id); }
+  });
+
+  it.each(["takeover_after_renew", "stop_during_store"] as const)("rejects stale invocation through actual Chat caller: %s", async mode => {
+    const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-owner-race-"))));
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let armed = false;
+    const realFactory = unifiedRunIntegration.createHeartbeatUnifiedAgentRunAdapter;
+    const factory = vi.spyOn(unifiedRunIntegration, "createHeartbeatUnifiedAgentRunAdapter").mockImplementation(database => {
+      const adapter = realFactory(database);
+      const renew = adapter.renewOwner.bind(adapter);
+      adapter.renewOwner = async (...args) => {
+        const result = await renew(...args);
+        if (armed && mode === "takeover_after_renew") {
+          armed = false;
+          expect(result.ok).toBe(true);
+          entered(); await held;
+        }
+        return result;
+      };
+      return adapter;
+    });
+    const realPut = storage.putContentAddressedFile.bind(storage);
+    const put = mode === "stop_during_store" ? vi.spyOn(storage, "putContentAddressedFile").mockImplementation(async input => {
+      entered(); await held; return realPut(input);
+    }) : null;
+    const caller = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: storage });
+    const run = await createChatRunFixture("Chat invocation race", undefined, caller);
+    const published: unknown[] = [];
+    const unsubscribe = subscribeCompanyLiveEvents(run.orgId, event => {
+      if (event.type === "heartbeat.run.event" && event.payload.runId === run.id && event.payload.eventType === "adapter.invoke") published.push(event);
+    });
+    armed = true;
+    const pending = caller.appendAdapterInvoke(run, { agentRuntimeType: "codex_local", command: "codex",
+      prompt: "debug task", agentInstructionStack: "actual sanitized Instructions 原文🙂" }, []).then(() => null, error => error);
+    try {
+      await reached;
+      if (mode === "takeover_after_renew") {
+        const successor = randomUUID();
+        await db.transaction(async tx => {
+          await tx.update(heartbeatRuns).set({ executionOwnerToken: successor }).where(eq(heartbeatRuns.id, run.id));
+          await tx.update(runRuntimeSpans).set({ ownerToken: successor }).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+          await tx.update(heartbeatRunAttempts).set({ ownerToken: successor }).where(eq(heartbeatRunAttempts.id, run.runtimeAttemptRef!.id));
+        });
+      } else {
+        await caller.sealSpan(run, { completeness: "unknown" });
+        await caller.finalizeRun(run.id, { status: "cancelled", resultJson: { outcome: "fixture Stop" } });
+      }
+      const [before] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+      const [spanBefore] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+      const [attemptBefore] = await db.select().from(heartbeatRunAttempts).where(eq(heartbeatRunAttempts.id, run.runtimeAttemptRef!.id));
+      release();
+      const error = await pending;
+      const invokes = (await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke");
+      console.info("W12 Chat invocation race observed", { mode, orgId: run.orgId, runId: run.id, invokeCount: invokes.length, publishedCount: published.length });
+      expect(invokes).toHaveLength(0);
+      expect(published).toHaveLength(0);
+      expect(error).toBeInstanceOf(Error);
+      const [after] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+      const [spanAfter] = await db.select().from(runRuntimeSpans).where(eq(runRuntimeSpans.id, run.runtimeSpanId!));
+      const [attemptAfter] = await db.select().from(heartbeatRunAttempts).where(eq(heartbeatRunAttempts.id, run.runtimeAttemptRef!.id));
+      expect(after).toEqual(before);
+      expect(spanAfter).toEqual(spanBefore);
+      expect(attemptAfter).toEqual(attemptBefore);
+      console.info("W12 Chat invocation atomic guard", { mode, orgId: run.orgId, runId: run.id, invokeCount: 0, publishedCount: published.length });
+    } finally { release(); await pending; unsubscribe(); caller.releaseOwnedRun(run.id); put?.mockRestore(); factory.mockRestore(); }
+  }, 20_000);
 
   it.each(["offline", "timeout", "owner_loss", "store_timeout_resolve", "store_timeout_reject"] as const)("bounded snapshot caller keeps inline or rejects lost owner: %s", async mode => {
     const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-caller-proof-"))));

@@ -1,6 +1,6 @@
 import type { AgentRuntimeNetworkSuspension, TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import type { Db } from "@rudderhq/db";
-import { chatMessages, goals, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
+import { chatMessages, goals, heartbeatRunAttempts, heartbeatRuns, runRuntimeSpans } from "@rudderhq/db";
 import { toHeartbeatRun, type ChatConversation, type HeartbeatRun } from "@rudderhq/shared";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -460,20 +460,29 @@ export function chatAgentRunService(db: Db, options: {
       message?: string;
       payload?: Record<string, unknown>;
     },
-    options: { allowUnowned?: boolean } = {},
+    options: { allowUnowned?: boolean; invocationOwner?: {
+      local: NonNullable<ReturnType<typeof ownedChatRuns.get>>;
+      fence: UnifiedOwnerFence;
+      attempt: { id: string; attemptIndex: number };
+    } } = {},
   ) {
     const owned = ownedChatRuns.get(run.id);
+    const invocation = options.invocationOwner;
+    const ownsInvocation = () => Boolean(invocation && ownedChatRuns.get(run.id) === invocation.local
+      && invocation.local.fence.id === invocation.fence.id
+      && sameOwnerIdentity(invocation.local.fence, invocation.fence));
+    if (invocation && !ownsInvocation()) throw new Error("Chat invocation has no original local owner");
     if (owned && !options.allowUnowned) {
       const renewed = await unifiedRunAdapter.renewOwner(run.id, owned.fence);
       if (!renewed.ok) {
-        noteFenceResult(run.id, renewed);
+        if (!invocation || ownedChatRuns.get(run.id) === invocation.local) noteFenceResult(run.id, renewed);
         throw new Error("Chat run owner lease was lost before appending an event");
       }
       const latest = ownedChatRuns.get(run.id);
       if (latest === owned) latest.fence = renewed.value;
     }
     const message = boundedText(event.message, 500);
-    const inserted = await appendHeartbeatRunEvent(db, {
+    const eventValues = {
       orgId: run.orgId,
       runId: run.id,
       agentId: run.agentId,
@@ -482,7 +491,30 @@ export function chatAgentRunService(db: Db, options: {
       level: event.level,
       message,
       payload: event.payload,
-    });
+    };
+    const inserted = invocation ? await db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${run.id}))`);
+      const [current] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
+        eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.orgId, run.orgId), eq(heartbeatRuns.agentId, run.agentId),
+        eq(heartbeatRuns.status, "running"), eq(heartbeatRuns.executionOwnerToken, invocation.fence.ownerToken),
+        sql`${heartbeatRuns.executionLeaseExpiresAt} > clock_timestamp()`,
+      )).for("update");
+      const [attempt] = await tx.select().from(heartbeatRunAttempts).where(and(
+        eq(heartbeatRunAttempts.runId, run.id), eq(heartbeatRunAttempts.orgId, run.orgId),
+      )).orderBy(desc(heartbeatRunAttempts.attemptIndex)).limit(1).for("update");
+      const [span] = await tx.select().from(runRuntimeSpans).where(and(
+        eq(runRuntimeSpans.id, invocation.fence.id), eq(runRuntimeSpans.runId, run.id), eq(runRuntimeSpans.orgId, run.orgId),
+        eq(runRuntimeSpans.attemptId, invocation.attempt.id), eq(runRuntimeSpans.ownerToken, invocation.fence.ownerToken),
+        eq(runRuntimeSpans.attemptEpoch, invocation.fence.attemptEpoch), eq(runRuntimeSpans.state, "open"),
+      )).for("update");
+      if (!current || !span || span.writerLeaseReleasedAt || !attempt || attempt.id !== invocation.attempt.id
+        || attempt.agentId !== run.agentId || attempt.attemptIndex !== invocation.attempt.attemptIndex
+        || attempt.ownerToken !== invocation.fence.ownerToken || attempt.attemptEpoch !== invocation.fence.attemptEpoch
+        || attempt.finishedAt || !ownsInvocation()) throw new Error("Chat invocation owner or attempt was lost before append");
+      const inserted = await appendHeartbeatRunEvent(tx as unknown as Db, eventValues);
+      if (!ownsInvocation()) throw new Error("Chat invocation local owner was lost during append");
+      return inserted;
+    }) : await appendHeartbeatRunEvent(db, eventValues);
 
     publishLiveEvent({
       orgId: run.orgId,
@@ -832,6 +864,17 @@ export function chatAgentRunService(db: Db, options: {
     meta: AgentRuntimeInvocationMeta,
     runtimeSkills: RuntimeSkillSummary,
   ) {
+    // Capture this callback's original identity before any optional storage IO.
+    // A Stop/recovery must not turn a late callback into an unowned/new-owner write.
+    run = { ...run, runtimeAttemptRef: run.runtimeAttemptRef ? { ...run.runtimeAttemptRef } : null };
+    const local = ownedChatRuns.get(run.id);
+    const identity = fenceIdentityFromRun(run);
+    const attempt = run.runtimeAttemptRef;
+    if (!local || !identity || !attempt || local.fence.id !== identity.id
+      || !sameOwnerIdentity(local.fence, { ...identity, leaseExpiresAt: local.fence.leaseExpiresAt })) {
+      throw new Error("Chat invocation has no original local owner");
+    }
+    const invocationOwner = { local, fence: { ...identity, leaseExpiresAt: new Date(local.fence.leaseExpiresAt) }, attempt };
     // Build conservatively: native mode alone cannot prove Instructions storage.
     const payload = buildHeartbeatAdapterInvokePayload({
       meta,
@@ -886,14 +929,14 @@ export function chatAgentRunService(db: Db, options: {
       payload: sanitizePostgresJsonValue(sanitizedPayload),
       deadlineAt: snapshotDeadlineAt,
     });
-    // appendEvent renews the owned fence again after asynchronous storage IO.
+    // Renew, then atomically validate the original identity through append.
     await appendEvent(run, {
       eventType: "adapter.invoke",
       stream: "system",
       level: "info",
       message: "adapter invocation",
       payload: projected,
-    });
+    }, { invocationOwner });
   }
 
   async function appendTranscriptEntry(
