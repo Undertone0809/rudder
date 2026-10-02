@@ -123,7 +123,7 @@ const FORK_FAKE_SESSION_DB = [
   "        if mode and mode['value'] == 'incomplete' and session_id == 'hermes-fork-parent':",
   "            for row in display:",
   "                if row.get('content') == 'selected answer': row.pop('finish_reason', None)",
-  "        return [], display",
+  "        return display, display",
   "",
   "    def create_session(self, session_id, source, **kwargs):",
   "        if self.read_only: raise RuntimeError('write attempted through read-only SessionDB')",
@@ -140,6 +140,7 @@ const FORK_FAKE_SESSION_DB = [
   "            if mode == 'mismatch' and session_id != 'hermes-fork-parent' and index == 0:",
   "                content = 'altered child copy'",
   "            fields = {key: value for key, value in message.items() if key not in ('role', 'content')}",
+  "            if mode == 'metadata_loss' and session_id != 'hermes-fork-parent': fields.pop('api_content', None)",
   "            self.connection.execute('INSERT INTO messages (session_id, role, content, fields) VALUES (?, ?, ?, ?)', (session_id, message.get('role'), json.dumps(content, ensure_ascii=False), json.dumps(fields, ensure_ascii=False)))",
   "            if mode == 'partial' and session_id != 'hermes-fork-parent':",
   "                self.connection.commit()",
@@ -182,15 +183,16 @@ const FORK_SEED_SCRIPT = [
   "home = Path(os.environ['HERMES_HOME'])",
   "request = json.loads(sys.stdin.read() or '{}')",
   "db = SessionDB(db_path=home / 'state.db')",
-  "db.create_session('hermes-fork-parent', source='acp', model='fixture-model', model_config={}, cwd=str(home), profile_name=home.name)",
+  "db.create_session('hermes-fork-parent', source='acp', model='fixture-model', model_config={'max_iterations': 42, 'reasoning_config': {'effort': 'high'}}, cwd=str(home), profile_name=home.name)",
   "db.set_session_title('hermes-fork-parent', 'native chat')",
   "db.append_messages_batch('hermes-fork-parent', [",
-  "    {'role': 'user', 'content': 'first question', 'timestamp': 1},",
-  "    {'role': 'assistant', 'content': 'first answer', 'timestamp': 2, 'finish_reason': 'stop', 'reasoning': 'kept'},",
-  "    {'role': 'tool', 'content': 'tool result', 'timestamp': 3},",
+  "    {'role': 'user', 'content': 'first question', 'timestamp': 1, 'api_content': '<context>exact wire</context>first question'},",
+  "    {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'call-1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}], 'timestamp': 2, 'finish_reason': 'tool_calls', 'reasoning': 'kept', 'reasoning_content': 'native reasoning', 'reasoning_details': [{'type': 'reasoning', 'text': 'kept'}]},",
+  "    {'role': 'tool', 'content': 'tool result', 'timestamp': 3, 'tool_call_id': 'call-1', 'tool_name': 'lookup'},",
   "    {'role': 'user', 'content': 'second question', 'timestamp': 4},",
   "    {'role': 'assistant', 'content': 'selected answer', 'timestamp': 5, 'finish_reason': 'stop'},",
-  "    {'role': 'assistant', 'content': 'later answer', 'timestamp': 6, 'finish_reason': 'stop'},",
+  "    {'role': 'user', 'content': 'later input', 'timestamp': 6},",
+  "    {'role': 'assistant', 'content': 'later answer', 'timestamp': 7, 'finish_reason': 'stop'},",
   "])",
   "db.set_test_mode(request.get('mode', ''))",
   "db.close()",
@@ -289,14 +291,15 @@ const INSTALLED_HERMES_SEED_SCRIPT = [
   "assert __version__ == '0.21.0', __version__",
   "home = Path(os.environ['HERMES_HOME'])",
   "db = SessionDB(db_path=home / 'state.db')",
-  "db.create_session('hermes-fork-parent', source='acp', model='integration-model', model_config={}, cwd=os.environ['RUDDER_TEST_CWD'], profile_name=home.name)",
+  "db.create_session('hermes-fork-parent', source='acp', model='integration-model', model_config={'max_iterations': 42, 'reasoning_config': {'effort': 'high'}}, cwd=os.environ['RUDDER_TEST_CWD'], profile_name=home.name)",
   "db.set_session_title('hermes-fork-parent', 'native chat')",
   "db.append_messages_batch('hermes-fork-parent', [",
-  "    {'role': 'user', 'content': 'first question', 'timestamp': 1},",
-  "    {'role': 'assistant', 'content': 'first answer', 'timestamp': 2, 'finish_reason': 'stop'},",
-  "    {'role': 'user', 'content': 'second question', 'timestamp': 3},",
+  "    {'role': 'user', 'content': 'first question', 'timestamp': 1, 'api_content': '<context>exact wire</context>first question'},",
+  "    {'role': 'assistant', 'content': '', 'timestamp': 2, 'finish_reason': 'tool_calls', 'tool_calls': [{'id': 'call-1', 'type': 'function', 'function': {'name': 'lookup', 'arguments': '{}'}}], 'reasoning': 'kept', 'reasoning_content': 'native reasoning', 'reasoning_details': [{'type': 'reasoning', 'text': 'kept'}]},",
+  "    {'role': 'tool', 'content': 'tool result', 'timestamp': 3, 'tool_call_id': 'call-1', 'tool_name': 'lookup'},",
   "    {'role': 'assistant', 'content': 'selected assistant boundary', 'timestamp': 4, 'finish_reason': 'stop'},",
-  "    {'role': 'assistant', 'content': 'later answer', 'timestamp': 5, 'finish_reason': 'stop'},",
+  "    {'role': 'user', 'content': 'later input', 'timestamp': 5},",
+  "    {'role': 'assistant', 'content': 'later answer', 'timestamp': 6, 'finish_reason': 'stop'},",
   "])",
   "db.close()",
 ].join("\n");
@@ -366,7 +369,7 @@ function forkInput(fixture: ForkFixture, boundaryRowId = 5) {
 }
 
 describe("Hermes Product Gateway native Fork", () => {
-  it("copies only the visible prefix through the exact assistant row and survives a fresh SessionDB open", async () => {
+  it("copies the full native prefix including tool linkage and restore state at an old exact assistant boundary", async () => {
     const fixture = await makeForkFixture();
     try {
       const parentBefore = fixture.readSession("hermes-fork-parent");
@@ -385,22 +388,26 @@ describe("Hermes Product Gateway native Fork", () => {
       expect(Object.keys(result.identityMap)).toEqual([
         "hermes:db:hermes-fork-parent:1",
         "hermes:db:hermes-fork-parent:2",
+        "hermes:db:hermes-fork-parent:3",
         "hermes:db:hermes-fork-parent:4",
         sourceBoundary,
       ]);
       expect(parentAfter).toEqual(parentBefore);
       expect(child.session).toMatchObject({
         parent_session_id: "hermes-fork-parent",
-        model_config: { _branched_from: "hermes-fork-parent" },
+        model_config: { _branched_from: "hermes-fork-parent", max_iterations: 42, reasoning_config: { effort: "high" } },
         title: "native chat (branch)",
       });
       expect(child.rows.map((row) => row.content)).toEqual([
         "first question",
-        "first answer",
+        "",
+        "tool result",
         "second question",
         "selected answer",
       ]);
-      expect(child.rows.map((row) => row.role)).toEqual(["user", "assistant", "user", "assistant"]);
+      expect(child.rows.map((row) => row.role)).toEqual(["user", "assistant", "tool", "user", "assistant"]);
+      const withoutIds = (rows: Array<Record<string, unknown>>) => rows.map(({ _row_id, ...row }) => row);
+      expect(withoutIds(child.rows)).toEqual(withoutIds(parentBefore.rows.slice(0, 5)));
       expect(child.rows.map((row) => "hermes:db:" + result.session.sessionId + ":" + row._row_id)).toEqual(
         Object.values(result.identityMap),
       );
@@ -411,7 +418,7 @@ describe("Hermes Product Gateway native Fork", () => {
   });
 
   it("rejects a missing or non-assistant boundary without creating a child", async () => {
-    for (const boundaryRowId of [4, 99]) {
+    for (const boundaryRowId of [2, 3, 4, 99]) {
       const fixture = await makeForkFixture();
       try {
         const parentBefore = fixture.readSession("hermes-fork-parent");
@@ -470,8 +477,8 @@ describe("Hermes Product Gateway native Fork", () => {
     }
   });
 
-  it("compensates a child when its persisted display projection fails exact copy verification", async () => {
-    const fixture = await makeForkFixture("mismatch");
+  it.each(["mismatch", "metadata_loss"])("compensates a child when exact copy verification fails: %s", async (mode) => {
+    const fixture = await makeForkFixture(mode);
     try {
       const parentBefore = fixture.readSession("hermes-fork-parent");
       const failure = await forkHermesProductRpcNativeSession(forkInput(fixture))
@@ -547,13 +554,15 @@ installedHermes021Describe("installed Hermes 0.21.0 SessionDB native Fork: " + i
 
       expect(parentAfter).toEqual(parentBefore);
       expect(child.session).toMatchObject({ parent_session_id: "hermes-fork-parent" });
-      expect(childModelConfig).toMatchObject({ _branched_from: "hermes-fork-parent" });
+      expect(childModelConfig).toMatchObject({ _branched_from: "hermes-fork-parent", max_iterations: 42, reasoning_config: { effort: "high" } });
       expect(child.rows.map((row) => row.content)).toEqual([
         "first question",
-        "first answer",
-        "second question",
+        "",
+        "tool result",
         "selected assistant boundary",
       ]);
+      const withoutIds = (rows: Array<Record<string, unknown>>) => rows.map(({ _row_id, ...row }) => row);
+      expect(withoutIds(child.rows)).toEqual(withoutIds(parentBefore.rows.slice(0, 4)));
       expect(result.boundary).toBe(result.identityMap[
         "hermes:db:hermes-fork-parent:" + boundary?._row_id
       ]);

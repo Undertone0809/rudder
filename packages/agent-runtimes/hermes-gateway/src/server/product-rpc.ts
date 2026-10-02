@@ -47,7 +47,7 @@ import {
 /* Sensitive values use only the Host's one-shot transient input callback. */
 export const HERMES_PRODUCT_RPC_TRANSPORT = "hermes-tui-gateway-stdio";
 export const HERMES_PRODUCT_RPC_VERIFIED_VERSIONS = ["0.21.0"] as const;
-export const HERMES_PRODUCT_RPC_FORK_HELPER_VERSION = "rudder-hermes-product-fork-v1";
+export const HERMES_PRODUCT_RPC_FORK_HELPER_VERSION = "rudder-hermes-product-fork-v2";
 export const HERMES_PRODUCT_RPC_BOOTSTRAP_MODULE = "rudder_product_rpc_bootstrap";
 
 const MAX_EVENTS = 200;
@@ -513,8 +513,9 @@ from pathlib import Path
 HELPER_VERSION = "${HERMES_PRODUCT_RPC_FORK_HELPER_VERSION}"
 SUPPORTED_VERSION = "0.21.0"
 BRANCH_COPY_FIELDS = (
+    "tool_calls", "tool_call_id", "tool_name", "api_content", "finish_reason", "effect_disposition",
     "reasoning", "reasoning_content", "reasoning_details", "codex_reasoning_items", "codex_message_items",
-    "display_kind", "display_metadata", "timestamp",
+    "display_kind", "display_metadata", "timestamp", "message_id", "observed", "_compressed_summary",
 )
 
 class HelperFailure(Exception):
@@ -564,7 +565,7 @@ def visible_text(content):
         return part_text(content)
     return "" if content is None else str(content)
 
-def visible_branch_history(rows):
+def native_branch_history(rows):
     result = []
     seen = set()
     prior = 0
@@ -582,10 +583,9 @@ def visible_branch_history(rows):
             raise HelperFailure("malformed_history", "Hermes display history contains unserializable message data.") from exc
         if not isinstance(row.get("role"), str) or not row["role"].strip():
             raise HelperFailure("malformed_history", "Hermes display history contains a row without a valid role.")
-        if row.get("role") not in ("user", "assistant"):
-            continue
-        if visible_text(row.get("content")).strip():
-            result.append(row)
+        # Visibility is a presentation concern, not a native continuation boundary.
+        # Empty assistant tool-call rows and tool results are indispensable history.
+        result.append(row)
     return result
 
 def session_model_config(session):
@@ -659,7 +659,7 @@ def main():
             raise HelperFailure("sessiondb_contract_mismatch", "Installed Hermes SessionDB does not implement the verified read contract.")
         parent_before = stable_session_snapshot(session_record(reader, parent_id))
         parent_rows_before = display_rows(reader, parent_id)
-        visible_rows = visible_branch_history(parent_rows_before)
+        visible_rows = native_branch_history(parent_rows_before)
         matches = [index for index, row in enumerate(visible_rows) if row.get("_row_id") == boundary_id]
         if len(matches) != 1:
             raise HelperFailure("boundary_not_found", "Exact Hermes Fork boundary is absent from the parent display history.", "unsupported")
@@ -679,6 +679,7 @@ def main():
         cwd = parent.get("cwd")
         profile_name = parent.get("profile_name") or home.name
         model = parent.get("model")
+        model_config = {**session_model_config(parent), "_branched_from": parent_id}
         reader.close()
         reader = None
         db = SessionDB(db_path=home / "state.db")
@@ -691,7 +692,7 @@ def main():
             child_id,
             source=source,
             model=model,
-            model_config={"_branched_from": parent_id},
+            model_config=model_config,
             parent_session_id=parent_id,
             cwd=cwd,
             profile_name=profile_name,
@@ -699,7 +700,7 @@ def main():
         child_created = True
         inserted = db.append_messages_batch(child_id, [copied_message(row) for row in prefix], chunk_rows=500)
         if isinstance(inserted, bool) or inserted != len(prefix):
-            raise HelperFailure("copy_count_mismatch", "Hermes SessionDB did not confirm the complete visible prefix copy.")
+            raise HelperFailure("copy_count_mismatch", "Hermes SessionDB did not confirm the complete native prefix copy.")
         if callable(getattr(db, "get_session_title", None)) and callable(getattr(db, "set_session_title", None)):
             current_title = db.get_session_title(parent_id) or "branch"
             if callable(getattr(db, "get_next_title_in_lineage", None)):
@@ -711,9 +712,9 @@ def main():
         if any(not callable(getattr(reader, name, None)) for name in read_methods):
             raise HelperFailure("sessiondb_contract_mismatch", "Installed Hermes SessionDB does not implement the verified read contract.")
         child_rows = display_rows(reader, child_id)
-        child_visible_rows = visible_branch_history(child_rows)
+        child_visible_rows = native_branch_history(child_rows)
         if len(child_visible_rows) != len(prefix):
-            raise HelperFailure("copy_mismatch", "Hermes child display projection does not contain exactly the copied visible prefix.")
+            raise HelperFailure("copy_mismatch", "Hermes child display projection does not contain exactly the copied native prefix.")
         identity_map = {}
         for source_row, child_row in zip(prefix, child_visible_rows):
             if source_row.get("role") != child_row.get("role") or source_row.get("content") != child_row.get("content"):
@@ -729,6 +730,11 @@ def main():
         child_session = session_record(reader, child_id)
         if child_session.get("parent_session_id") != parent_id or session_model_config(child_session).get("_branched_from") != parent_id:
             raise HelperFailure("lineage_mismatch", "Hermes child session does not preserve native parent lineage.")
+        if session_model_config(child_session) != model_config:
+            raise HelperFailure("restore_state_mismatch", "Hermes child did not preserve native model/reasoning restore configuration.")
+        child_model_rows = native_branch_history(reader.get_resume_conversations(child_id)[0])
+        if [copied_message(row) for row in child_model_rows] != [copied_message(row) for row in child_visible_rows]:
+            raise HelperFailure("restore_state_mismatch", "Hermes cold resume does not restore the complete copied native prefix.")
         if child_visible_rows[-1].get("role") != "assistant" or not visible_text(child_visible_rows[-1].get("content")).strip():
             raise HelperFailure("copy_mismatch", "Hermes child boundary is not the copied visible assistant row.")
         if (stable_session_snapshot(session_record(reader, parent_id)) != parent_before
