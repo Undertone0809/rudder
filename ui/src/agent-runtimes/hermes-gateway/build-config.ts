@@ -26,7 +26,7 @@ export function buildHermesGatewayConfig(values: CreateConfigValues): Record<str
   });
   if (modelFallbacks.length > 0) config.modelFallbacks = modelFallbacks;
   if (customConnection && values.apiKey) config.apiKey = values.apiKey;
-  const payload = parseObject(values.payloadTemplateJson ?? "");
+  const payload = customConnection ? parseObject(values.payloadTemplateJson ?? "") : null;
   if (payload) config.payloadTemplate = payload;
   return config;
 }

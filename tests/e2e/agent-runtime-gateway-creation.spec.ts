@@ -53,6 +53,25 @@ test.describe("gateway agent creation", () => {
     await expect(page.getByText("Payload template JSON", { exact: true })).toHaveCount(0);
     await expect(page.getByPlaceholder("http://127.0.0.1:8642")).toHaveCount(0);
 
+    // Retain custom drafts across toggles, but never submit hidden custom
+    // transport fields when returning to the default local mode.
+    const customDraft = '{"metadata":{"draft":"custom-only"}}';
+    await page.getByRole("button", { name: "Connect a custom Hermes API Server", exact: true }).click();
+    await page.getByPlaceholder("http://127.0.0.1:8642").fill("http://127.0.0.1:18642");
+    await page.getByPlaceholder("API_SERVER_KEY").fill("custom-draft-only");
+    const payloadField = page.getByText("Payload template JSON", { exact: true }).locator("../..").locator("textarea");
+    await payloadField.fill(customDraft);
+    await page.getByRole("button", { name: "Use local Hermes instead", exact: true }).click();
+    await expect(page.getByText("Payload template JSON", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Connect a custom Hermes API Server", exact: true }).click();
+    await expect(page.getByPlaceholder("http://127.0.0.1:8642")).toHaveValue("http://127.0.0.1:18642");
+    await expect(page.getByPlaceholder("API_SERVER_KEY")).toHaveValue("custom-draft-only");
+    await expect(payloadField).toHaveValue(customDraft);
+    await page.getByRole("button", { name: "Use local Hermes instead", exact: true }).click();
+    await expect(page.getByText("Payload template JSON", { exact: true })).toHaveCount(0);
+    await expect(page.getByPlaceholder("http://127.0.0.1:8642")).toHaveCount(0);
+    await expect(page.getByPlaceholder("API_SERVER_KEY")).toHaveCount(0);
+
     const createResponse = page.waitForResponse((response) =>
       response.request().method() === "POST" &&
       response.url().includes(`/api/orgs/${organization.id}/agent-hires`),
@@ -74,7 +93,16 @@ test.describe("gateway agent creation", () => {
     }
     expect(payload.agent.agentRuntimeConfig.url).toBeUndefined();
     expect(payload.agent.agentRuntimeConfig.apiKey).toBeUndefined();
+    expect(payload.agent.agentRuntimeConfig.payloadTemplate).toBeUndefined();
     expect(JSON.stringify(payload)).not.toMatch(/apiKey|authToken|devicePrivateKeyPem/);
+    expect(JSON.stringify(payload)).not.toContain("custom-draft-only");
+    const persistedResponse = await page.request.get(`/api/agents/${payload.agent.id}`);
+    expect(persistedResponse.ok()).toBe(true);
+    const persisted = await persistedResponse.json() as { agentRuntimeConfig: Record<string, unknown> };
+    expect(persisted.agentRuntimeConfig.hermesConnectionMode).toBe("local");
+    expect(persisted.agentRuntimeConfig.url).toBeUndefined();
+    expect(persisted.agentRuntimeConfig.apiKey).toBeUndefined();
+    expect(persisted.agentRuntimeConfig.payloadTemplate).toBeUndefined();
     await expect(page.getByRole("heading", { name: "Hermes Local Operator", exact: true })).toBeVisible();
   });
 
