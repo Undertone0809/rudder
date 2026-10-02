@@ -1,9 +1,9 @@
 use rudder_agent_cli_core::MAX_RESPONSE_BYTES;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Output};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const TOKEN: &str = "fixture-bearer-secret";
 
@@ -31,7 +31,8 @@ fn start_server(spec: ResponseSpec) -> (String, JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
     let address = listener.local_addr().expect("fixture address");
     let worker = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("fixture accepts client");
+        let mut stream = accept_with_timeout(&listener, Duration::from_secs(15))
+            .expect("fixture accepts client within deadline");
         let request = read_request(&mut stream);
         if !spec.delay.is_zero() {
             thread::sleep(spec.delay);
@@ -49,6 +50,53 @@ fn start_server(spec: ResponseSpec) -> (String, JoinHandle<String>) {
         request
     });
     (format!("http://{address}"), worker)
+}
+
+fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> io::Result<TcpStream> {
+    listener.set_nonblocking(true)?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                // Some platforms inherit the listening socket's nonblocking mode.
+                // The fixture's header/body writes must remain complete and blocking.
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "CLI fixture received no connection before its deadline",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn isolated_cli_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rudder-cli"));
+    command.env_clear();
+    // Windows networking requires its OS bootstrap environment. Do not inherit
+    // bearer tokens, profiles, proxy settings, or the rest of the host environment.
+    #[cfg(windows)]
+    for name in ["SystemRoot", "WINDIR"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command
+}
+
+#[test]
+fn fixture_accept_fails_with_a_deadline_when_the_cli_never_connects() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("fixture binds");
+    let error = accept_with_timeout(&listener, Duration::from_millis(30))
+        .expect_err("a missing CLI connection cannot leave the test blocked forever");
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
 }
 
 fn read_request(stream: &mut TcpStream) -> String {
@@ -72,11 +120,15 @@ fn read_request(stream: &mut TcpStream) -> String {
 }
 
 fn run_cli(base: &str, arguments: &[&str], timeout_ms: Option<u64>) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rudder-cli"));
-    command
-        .env_clear()
-        .env("HOME", "/tmp/rudder-cli-test-home")
-        .args(["org", "members", "--api-base", base, "--api-key", TOKEN]);
+    let mut command = isolated_cli_command();
+    command.env("HOME", "/tmp/rudder-cli-test-home").args([
+        "org",
+        "members",
+        "--api-base",
+        base,
+        "--api-key",
+        TOKEN,
+    ]);
     command.args(arguments);
     if let Some(timeout_ms) = timeout_ms {
         command.env("RUDDER_CLI_HTTP_TIMEOUT_MS", timeout_ms.to_string());
@@ -268,9 +320,8 @@ fn executable_uses_context_profile_for_api_org_and_environment_token() {
         .to_string(),
     )
     .expect("write temporary context");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_rudder-cli"));
+    let mut command = isolated_cli_command();
     let output = command
-        .env_clear()
         .env("HOME", directory.path())
         .env("PROFILE_TOKEN", TOKEN)
         .args([
