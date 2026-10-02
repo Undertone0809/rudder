@@ -712,6 +712,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           invocationAttemptId: activeAttemptRef?.id ?? null,
           invocationSpanId: commonSpanId,
         };
+        const snapshotDeadlineAt = performance.now() + 5_000;
         if (transcriptRetention.mode === "native" && !transcriptRetention.persistRawTranscript) {
           const instructionStack = sanitizeAgentInstructionStackForPersistence(meta);
           const instructionBytes = typeof instructionStack === "string"
@@ -729,6 +730,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
                 storage: getStorageService(),
                 orgId: currentRun.orgId,
                 text: redactCurrentUserText(redactSensitiveText(instructionStack), currentUserRedactionOptions),
+                deadlineAt: snapshotDeadlineAt,
               });
               eventMeta.invocationInstructionSnapshot = { status: "available", ...stored };
             } catch {
@@ -751,6 +753,7 @@ export function createHeartbeatExecuteHandlers(context: any) {
           ? await compactReadableInstructionSnapshot({
             db, storage: { getObject: (orgId, key) => getStorageService().getObject(orgId, key) }, orgId: currentRun.orgId, runId: currentRun.id,
             attemptId: activeAttemptRef?.id ?? null, spanId: commonSpanId, payload: sanitizePostgresJsonValue(payload),
+            deadlineAt: snapshotDeadlineAt,
           }) : payload;
         // Snapshot IO may outlive this executor's ownership. Reuse the current
         // Run identity and existing lease CAS before publishing metadata.

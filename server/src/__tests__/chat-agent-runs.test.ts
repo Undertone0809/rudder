@@ -392,14 +392,22 @@ describe("chatAgentRunService", () => {
     expect((await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke")).toHaveLength(1);
   });
 
-  it.each(["offline", "timeout", "owner_loss"] as const)("bounded snapshot caller keeps inline or rejects lost owner: %s", async mode => {
+  it.each(["offline", "timeout", "owner_loss", "store_timeout_resolve", "store_timeout_reject"] as const)("bounded snapshot caller keeps inline or rejects lost owner: %s", async mode => {
     const storage = createStorageService(createLocalDiskStorageProvider(fs.mkdtempSync(path.join(os.tmpdir(), "rudder-chat-caller-proof-"))));
     const realGet = storage.getObject.bind(storage);
     let acquired!: () => void;
     let release!: () => void;
     const entered = new Promise<void>(resolve => { acquired = resolve; });
     const held = new Promise<void>(resolve => { release = resolve; });
+    const storeTimeout = mode === "store_timeout_resolve" || mode === "store_timeout_reject";
+    const realPut = storage.putContentAddressedFile.bind(storage);
+    const put = storeTimeout ? vi.spyOn(storage, "putContentAddressedFile").mockImplementation(async input => {
+      acquired(); await held;
+      if (mode === "store_timeout_reject") throw new Error("late caller store rejection");
+      return realPut(input);
+    }) : null;
     const read = vi.spyOn(storage, "getObject").mockImplementation(async (org, key) => {
+      if (storeTimeout) return realGet(org, key);
       acquired();
       if (mode === "offline") throw new Error("isolated offline storage");
       await held;
@@ -425,17 +433,27 @@ describe("chatAgentRunService", () => {
       const before = (await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke");
       expect(before).toHaveLength(1);
       expect(before[0]!.payload).toMatchObject({ prompt, agentInstructionStack: stack,
-        invocationInstructionSnapshot: { status: "unavailable", reason: "snapshot_readback_unavailable" } });
+        invocationInstructionSnapshot: { status: "unavailable", reason: storeTimeout ? "storage_unavailable" : "snapshot_readback_unavailable" } });
       expect(before[0]!.payload).not.toHaveProperty("invocationInstructionTextReference");
       release();
+      if (put) {
+        const lateStore = await put.mock.results[0]!.value.catch(() => null);
+        if (mode === "store_timeout_resolve") {
+          expect(lateStore).not.toBeNull();
+          const object = await realGet(run.orgId, lateStore!.objectKey);
+          const chunks = [];
+          for await (const chunk of object.stream) chunks.push(Buffer.from(chunk));
+          expect(Buffer.concat(chunks).toString("utf8")).toBe(stack);
+        }
+      }
       await caller.sealSpan(run, { completeness: "unknown" });
       await caller.finalizeRun(run.id, { status: "failed", resultJson: { outcome: "isolated proof finished" } });
       const after = (await heartbeatService(db).listEvents(run.id)).filter(event => event.eventType === "adapter.invoke");
       expect(after).toHaveLength(1);
       expect(after[0]!.payload).toEqual(before[0]!.payload);
-      expect(read).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledTimes(storeTimeout ? 0 : 1);
       console.info("W12 Chat caller fallback terminal", { mode, orgId: run.orgId, runId: run.id, eventId: after[0]!.id });
-    } finally { release(); read.mockRestore(); }
+    } finally { release(); read.mockRestore(); put?.mockRestore(); }
   }, 20_000);
 
   it.each([

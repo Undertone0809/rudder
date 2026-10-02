@@ -49,6 +49,82 @@ async function fixture(text = "真实 Instructions🙂\n".repeat(4000)) {
 }
 
 describe("verified new-event instruction snapshot projection", () => {
+  it.each(["resolve", "reject", "unresolved"] as const)("bounds store before proof and observes late %s without publishing a locator", async settlement => {
+    const f = await fixture();
+    const lateText = `${f.text}new late object`;
+    const inline = { ...f.payload, prompt: lateText, agentInstructionStack: lateText };
+    const realStore = f.storage.putContentAddressedFile.bind(f.storage);
+    const gate = deferred<void>();
+    const store = vi.spyOn(f.storage, "putContentAddressedFile").mockImplementation(async input => {
+      await gate.promise;
+      return realStore(input);
+    });
+    const get = vi.spyOn(f.storage, "getObject");
+    const append = vi.fn();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const deadlineAt = performance.now() + 5_000;
+      const pending = storeRunInstructionSnapshot({ storage: f.storage, orgId, text: lateText, deadlineAt })
+        .then(locator => ({ ...inline, invocationInstructionSnapshot: { status: "available", ...locator } }))
+        .catch(() => ({ ...inline, invocationInstructionSnapshot: { status: "unavailable", reason: "storage_unavailable" } }))
+        .then(payload => compactReadableInstructionSnapshot({ db: dbFor(), storage: f.storage,
+          orgId, runId, attemptId, spanId, payload, deadlineAt }))
+        .then(payload => { append(payload); return payload; });
+      await vi.advanceTimersByTimeAsync(5_001);
+      const result = await pending;
+      expect(result).toMatchObject({ prompt: lateText, agentInstructionStack: lateText,
+        invocationInstructionSnapshot: { status: "unavailable", reason: "storage_unavailable" } });
+      expect(get).not.toHaveBeenCalled();
+      if (settlement === "resolve") {
+        gate.resolve();
+        const stored = await store.mock.results[0]!.value;
+        expect(await readFile(path.join(f.root, stored.objectKey), "utf8")).toBe(lateText);
+        expect(stored.objectKey).not.toBe(f.locator.objectKey);
+      }
+      if (settlement === "reject") gate.reject(new Error("late store rejection"));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(append).toHaveBeenCalledTimes(1);
+      expect(result).not.toHaveProperty("invocationInstructionTextReference");
+      expect(f.deleteObject).not.toHaveBeenCalled();
+      expect(await readFile(path.join(f.root, f.locator.objectKey), "utf8")).toBe(f.text);
+    } finally { vi.useRealTimers(); }
+  });
+  it("shares the store deadline with linkage, acquisition and stream rather than restarting the budget", async () => {
+    const f = await fixture();
+    const realStore = f.storage.putContentAddressedFile.bind(f.storage);
+    vi.spyOn(f.storage, "putContentAddressedFile").mockImplementation(async input => {
+      await new Promise(resolve => setTimeout(resolve, 3_000)); return realStore(input);
+    });
+    const stream = new Readable({ read() {} });
+    const get = vi.spyOn(f.storage, "getObject").mockResolvedValue({ stream });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const deadlineAt = performance.now() + 5_000;
+      const storing = storeRunInstructionSnapshot({ storage: f.storage, orgId, text: f.text, deadlineAt });
+      await vi.advanceTimersByTimeAsync(3_000);
+      const locator = await storing;
+      const pending = compactReadableInstructionSnapshot({ db: dbFor(), storage: f.storage, orgId,
+        runId, attemptId, spanId, deadlineAt, payload: { ...f.payload,
+          invocationInstructionSnapshot: { status: "available", ...locator } } });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(stream.destroyed).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      expectInlineUnavailable(await pending, f.text);
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(stream.destroyed).toBe(true);
+      expect(f.deleteObject).not.toHaveBeenCalled();
+    } finally { stream.destroy(); vi.useRealTimers(); }
+  });
+  it.each([0, -1, NaN, Infinity])("expired or invalid absolute deadline %s starts no optional IO", async deadlineAt => {
+    const f = await fixture();
+    const put = vi.spyOn(f.storage, "putContentAddressedFile");
+    const get = vi.spyOn(f.storage, "getObject");
+    const db = dbFor();
+    await expect(storeRunInstructionSnapshot({ storage: f.storage, orgId, text: f.text, deadlineAt })).rejects.toThrow("deadline");
+    expectInlineUnavailable(await compactReadableInstructionSnapshot({ db, storage: f.storage,
+      orgId, runId, attemptId, spanId, payload: f.payload, deadlineAt }), f.text);
+    expect(put).not.toHaveBeenCalled(); expect(get).not.toHaveBeenCalled(); expect(db.select).not.toHaveBeenCalled();
+  });
   it("uses actual local storage readback and existing Instructions reader; reduces serialized bytes without deleting objects", async () => {
     const f = await fixture();
     const projected = await f.compact();

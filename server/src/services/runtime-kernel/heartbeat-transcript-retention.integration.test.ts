@@ -205,6 +205,15 @@ const mockBudgetService = vi.hoisted(() => ({
 }));
 
 const metadataAppendGate = vi.hoisted(() => ({ wait: null as null | (() => Promise<void>) }));
+const releasedFixtureExecutions = vi.hoisted(() => new Set<string>());
+vi.mock("../workspace-runtime.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../workspace-runtime.js")>();
+  return { ...actual, releaseRuntimeServicesForRun: async (...args: Parameters<typeof actual.releaseRuntimeServicesForRun>) => {
+    const result = await actual.releaseRuntimeServicesForRun(...args);
+    releasedFixtureExecutions.add(args[0]);
+    return result;
+  } };
+});
 vi.mock("../instance-settings.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../instance-settings.js")>();
   return { ...actual, instanceSettingsService: (...args: Parameters<typeof actual.instanceSettingsService>) => {
@@ -601,7 +610,7 @@ describe("heartbeat native transcript retention integration", () => {
     });
   }
 
-  it.each(["equal", "distinct", "readback_unavailable", "readback_timeout", "owner_loss", "owner_loss_append"] as const)("writes and finalizes snapshot-safe native invocation through actual heartbeat caller: %s", async mode => {
+  it.each(["equal", "distinct", "readback_unavailable", "readback_timeout", "owner_loss", "owner_loss_append", "store_timeout_resolve", "store_timeout_reject"] as const)("writes and finalizes snapshot-safe native invocation through actual heartbeat caller: %s", async mode => {
     const { orgId, agentId } = await seedAgent();
     const queued = await queueRun(agentId);
     const text = ("界🙂\n\"".repeat(9_000) + "D".repeat(1_187));
@@ -613,6 +622,13 @@ describe("heartbeat native transcript retention integration", () => {
     let readRelease!: () => void;
     const acquiring = new Promise<void>(resolve => { readEntered = resolve; });
     const heldRead = new Promise<void>(resolve => { readRelease = resolve; });
+    const storeTimeout = mode === "store_timeout_resolve" || mode === "store_timeout_reject";
+    const realPut = storage.putContentAddressedFile.bind(storage);
+    const put = storeTimeout ? vi.spyOn(storage, "putContentAddressedFile").mockImplementation(async input => {
+      readEntered(); await heldRead;
+      if (mode === "store_timeout_reject") throw new Error("late heartbeat store rejection");
+      return realPut(input);
+    }) : null;
     const read = mode === "readback_unavailable" ? vi.spyOn(storage, "getObject").mockRejectedValue(new Error("isolated readback unavailable"))
       : mode === "readback_timeout" || mode === "owner_loss" ? vi.spyOn(storage, "getObject").mockImplementation(async (org, key) => {
         readEntered(); await heldRead; return realGet(org, key);
@@ -627,6 +643,7 @@ describe("heartbeat native transcript retention integration", () => {
     const invoked = new Promise<void>(resolve => { entered = resolve; });
     let metaReturned!: () => void;
     const metaDone = new Promise<void>(resolve => { metaReturned = resolve; });
+    let successorOwner: string | null = null;
     fakeNativeProvider.register(queued.run.id, { sessionId: `snapshot-${randomUUID()}`, turnId: `turn-${queued.run.id}`,
       rawTranscript: "bounded native result", decoy: "OUT_OF_SCOPE", emitLog: false,
       invocationMeta: { agentRuntimeType: "codex_local", command: "codex", prompt, agentInstructionStack: text,
@@ -635,11 +652,12 @@ describe("heartbeat native transcript retention integration", () => {
       await heartbeatService(db).startNextQueuedRunForAgent(agentId);
       if (mode === "owner_loss" || mode === "owner_loss_append") {
         await acquiring;
-        const successorOwner = randomUUID();
+        const nextOwner = randomUUID();
+        successorOwner = nextOwner;
         await db.transaction(async tx => {
-          await tx.update(heartbeatRuns).set({ executionOwnerToken: successorOwner }).where(eq(heartbeatRuns.id, queued.run.id));
-          await tx.update(runRuntimeSpans).set({ ownerToken: successorOwner }).where(eq(runRuntimeSpans.runId, queued.run.id));
-          await tx.update(heartbeatRunAttempts).set({ ownerToken: successorOwner }).where(eq(heartbeatRunAttempts.runId, queued.run.id));
+          await tx.update(heartbeatRuns).set({ executionOwnerToken: nextOwner }).where(eq(heartbeatRuns.id, queued.run.id));
+          await tx.update(runRuntimeSpans).set({ ownerToken: nextOwner }).where(eq(runRuntimeSpans.runId, queued.run.id));
+          await tx.update(heartbeatRunAttempts).set({ ownerToken: nextOwner }).where(eq(heartbeatRunAttempts.runId, queued.run.id));
         });
         readRelease();
       }
@@ -657,9 +675,9 @@ describe("heartbeat native transcript retention integration", () => {
       const before = (await heartbeatService(db).listEvents(queued.run.id)).find(event => event.eventType === "adapter.invoke")!;
       const payload = before.payload as Record<string, unknown>;
       expect(payload.context).toEqual({ unique: "retain context" });
-      if (mode === "readback_unavailable" || mode === "readback_timeout") {
+      if (mode === "readback_unavailable" || mode === "readback_timeout" || storeTimeout) {
         expect(payload).toMatchObject({ prompt: text, invocationInstructionSnapshot: {
-          status: "unavailable", reason: "snapshot_readback_unavailable" } });
+          status: "unavailable", reason: storeTimeout ? "storage_unavailable" : "snapshot_readback_unavailable" } });
         expect(payload.agentInstructionStackAlias).toMatchObject({ present: true, sameAsPrompt: true });
         expect(payload).not.toHaveProperty("invocationInstructionTextReference");
       } else {
@@ -685,6 +703,16 @@ describe("heartbeat native transcript retention integration", () => {
       app.use("/api", router);
       read?.mockRestore();
       readRelease();
+      if (put) {
+        const lateStore = await put.mock.results[0]!.value.catch(() => null);
+        if (mode === "store_timeout_resolve") {
+          expect(lateStore).not.toBeNull();
+          const object = await realGet(orgId, lateStore!.objectKey);
+          const chunks = [];
+          for await (const chunk of object.stream) chunks.push(Buffer.from(chunk));
+          expect(Buffer.concat(chunks).toString("utf8")).toBe(text);
+        }
+      }
       const url = `/api/agent-runs/${queued.run.id}/events/${before.id}/invocation-instructions`;
       const response = await request(app).get(url);
       const available = mode === "equal" || mode === "distinct";
@@ -704,18 +732,23 @@ describe("heartbeat native transcript retention integration", () => {
         db, storage, orgId, runId: queued.run.id, eventId: after.id,
       })).resolves.toMatchObject({ agentInstructionStack: text });
     } finally {
-      readRelease(); read?.mockRestore();
-      // The successor-owned Run is deliberately still running. Cancel this
-      // disposable Run through the real control path before letting the held
-      // fixture adapter return; do not invent persisted process-exit evidence.
-      if (mode === "owner_loss" || mode === "owner_loss_append") await heartbeatService(db).cancelRun(queued.run.id);
+      readRelease(); read?.mockRestore(); put?.mockRestore();
       release();
-      // Wait for the real executor's quiescence acknowledgement, including a
-      // failed assertion. Never forge process/attempt proof to satisfy cleanup.
-      if (mode === "owner_loss" || mode === "owner_loss_append") await waitForCondition(async () => {
-        const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
-        return Boolean(run?.processExitedAt);
-      });
+      if (mode === "owner_loss" || mode === "owner_loss_append") {
+        // Observe the real executor's final resource release, not a fabricated
+        // database exit bit. Its old owner must not finalize the successor.
+        await waitForCondition(async () => releasedFixtureExecutions.has(queued.run.id));
+        const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
+        expect(successor).toMatchObject({ status: "running", executionOwnerToken: successorOwner, processExitedAt: null });
+        // This Run and its in-process synthetic adapter are disposable. Only
+        // after observed settlement use the public control path for cleanup.
+        await heartbeatService(db).cancelRun(queued.run.id);
+        await waitForCondition(async () => {
+          const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, queued.run.id));
+          return Boolean(run?.processExitedAt);
+        });
+        releasedFixtureExecutions.delete(queued.run.id);
+      }
     }
   }, 60_000);
 

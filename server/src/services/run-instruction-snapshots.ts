@@ -109,18 +109,41 @@ export async function storeRunInstructionSnapshot(input: {
   storage: ContentAddressedStorageService;
   orgId: string;
   text: string;
+  /** Optional monotonic absolute deadline shared with readback proof. */
+  deadlineAt?: number;
 }): Promise<RunInstructionSnapshotLocator> {
   const body = Buffer.from(input.text, "utf8");
   if (body.length === 0 || body.length > MAX_RUN_INSTRUCTION_SNAPSHOT_BYTES) {
     throw new Error("Instruction snapshot size is unsupported");
   }
-  const stored = await input.storage.putContentAddressedFile({
+  const remaining = input.deadlineAt === undefined ? null : input.deadlineAt - performance.now();
+  if (remaining !== null && (!Number.isFinite(remaining) || remaining <= 0)) {
+    throw new Error("Instruction snapshot store deadline expired");
+  }
+  const storing = input.storage.putContentAddressedFile({
     orgId: input.orgId,
     namespace: RUN_INSTRUCTION_SNAPSHOT_NAMESPACE,
     originalFilename: null,
     contentType: "text/plain; charset=utf-8",
     body,
   });
+  // Storage may settle after timeout. Promise.race observes late rejection;
+  // no late locator escapes this invocation and late objects are not deleted.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stored: Awaited<typeof storing>;
+  try {
+    stored = remaining === null ? await storing : await Promise.race([
+      storing,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Instruction snapshot store deadline expired")),
+          Math.max(0, input.deadlineAt! - performance.now()));
+        timer.unref();
+      }),
+    ]);
+    if (input.deadlineAt !== undefined && performance.now() >= input.deadlineAt) {
+      throw new Error("Instruction snapshot store deadline expired");
+    }
+  } finally { if (timer) clearTimeout(timer); }
   return {
     objectKey: stored.objectKey,
     sha256: stored.sha256,

@@ -20,6 +20,8 @@ export async function compactReadableInstructionSnapshot(input: {
   attemptId: string | null;
   spanId: string | null;
   payload: Record<string, unknown>;
+  /** Same monotonic absolute deadline as the caller's optional snapshot store. */
+  deadlineAt?: number;
 }): Promise<Record<string, unknown>> {
   const original = { ...input.payload };
   // Only this owned readback can issue field references on a new event.
@@ -44,7 +46,11 @@ export async function compactReadableInstructionSnapshot(input: {
   }
   const { attemptId, spanId, orgId, runId } = input;
   let expired = false;
-  const expiresAt = performance.now() + 5_000;
+  const now = performance.now();
+  if (input.deadlineAt !== undefined && (!Number.isFinite(input.deadlineAt) || input.deadlineAt <= now)) {
+    return fallback("snapshot_readback_unavailable");
+  }
+  const expiresAt = Math.min(input.deadlineAt ?? now + 5_000, now + 5_000);
   const isExpired = () => expired || performance.now() >= expiresAt;
   let stream: Readable | undefined;
   let timeout: ReturnType<typeof setTimeout>;
@@ -57,11 +63,12 @@ export async function compactReadableInstructionSnapshot(input: {
       stream?.once("error", () => undefined);
       stream?.destroy();
       resolve(fallback("snapshot_readback_unavailable"));
-    }, 5_000);
+    }, Math.max(0, expiresAt - performance.now()));
     timeout.unref();
   });
   const verify = async () => {
     try {
+      if (isExpired()) return fallback("snapshot_readback_unavailable");
       const [attempt] = await input.db.select({ id: heartbeatRunAttempts.id, orgId: heartbeatRunAttempts.orgId, runId: heartbeatRunAttempts.runId })
         .from(heartbeatRunAttempts).where(and(eq(heartbeatRunAttempts.id, attemptId),
           eq(heartbeatRunAttempts.orgId, orgId), eq(heartbeatRunAttempts.runId, runId))).limit(1);

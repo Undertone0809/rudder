@@ -848,6 +848,7 @@ export function chatAgentRunService(db: Db, options: {
     payload.invocationAttemptId = invocationAttemptId;
 
     const instructionStack = sanitizeAgentInstructionStackForPersistence(meta);
+    const snapshotDeadlineAt = performance.now() + 5_000;
     const instructionBytes = typeof instructionStack === "string"
       ? Buffer.byteLength(instructionStack, "utf8")
       : 0;
@@ -863,6 +864,7 @@ export function chatAgentRunService(db: Db, options: {
           storage: options.instructionSnapshotStorage ?? getStorageService(),
           orgId: run.orgId,
           text: redactCurrentUserText(redactSensitiveText(instructionStack)),
+          deadlineAt: snapshotDeadlineAt,
         });
         payload.invocationInstructionSnapshot = { status: "available", ...stored };
       } catch {
@@ -882,6 +884,7 @@ export function chatAgentRunService(db: Db, options: {
       db, storage: { getObject: (orgId, key) => (options.instructionSnapshotStorage ?? getStorageService()).getObject(orgId, key) },
       orgId: run.orgId, runId: run.id, attemptId: invocationAttemptId, spanId: invocationSpanId,
       payload: sanitizePostgresJsonValue(sanitizedPayload),
+      deadlineAt: snapshotDeadlineAt,
     });
     // appendEvent renews the owned fence again after asynchronous storage IO.
     await appendEvent(run, {
