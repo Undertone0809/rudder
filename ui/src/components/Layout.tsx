@@ -1004,7 +1004,7 @@ export function Layout() {
     sidePanelOpen,
     sidePanelContextReady,
   });
-  const desktopSidePanelContentInactive = sidePanelContextReady
+  const desktopSidePanelContentInactive = !isMobile && sidePanelContextReady
     && sidePanelOpen
     && desktopSidePanelExpanded;
   const hasUnknownOrganizationPrefix =
@@ -1307,6 +1307,9 @@ export function Layout() {
   }, [canManageAdminSettings, health?.deploymentMode, isSettingsRoute, location.hash, location.pathname, location.search]);
 
   const showDesktopWorkspaceShell = !isMobile && !isSettingsRoute;
+  // Changing the viewport must not remount Chat's process disclosures or
+  // browser-local image previews. Keep its Outlet ancestry, not desktop chrome.
+  const keepChatWorkspaceMounted = /^\/(?:messenger\/)?chat(?:\/|$)/.test(relativeBoardPath);
   const showIntegratedShellSidebar =
     showDesktopWorkspaceShell && effectiveShowMiddleContextColumn;
   const showIntegratedCardHeaders = showDesktopWorkspaceShell;
@@ -1608,11 +1611,11 @@ export function Layout() {
                 </div>
               ) : null}
               <div className={cn(isMobile ? "block" : "flex min-h-0 min-w-0 flex-1")}>
-                {showDesktopWorkspaceShell ? (
+                {showDesktopWorkspaceShell || keepChatWorkspaceMounted ? (
                   <div
                     className={cn(
                       "relative flex min-h-0 min-w-0 flex-1",
-                      "px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5",
+                      !isMobile && "px-[3px] pb-[3px] pt-[1px] md:px-1 md:pb-1 md:pt-0.5",
                     )}
                   >
                     {showIntegratedShellSidebar ? (
@@ -1662,9 +1665,9 @@ export function Layout() {
                         aria-hidden={desktopSidePanelContentInactive || undefined}
                         inert={desktopSidePanelContentInactive ? true : undefined}
                         className={cn(
-                          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-                          "workspace-main-card",
-                          useFramelessWorkspaceMain && "workspace-main-card--frameless",
+                          "flex min-h-0 min-w-0 flex-1 flex-col",
+                          !isMobile && "workspace-main-card overflow-hidden",
+                          !isMobile && useFramelessWorkspaceMain && "workspace-main-card--frameless",
                           desktopSidePanelContentInactive
                             && "pointer-events-none border-0 [box-shadow:none]",
                         )}
@@ -1698,7 +1701,7 @@ export function Layout() {
                           )}
                         </main>
                       </div>
-                      <DesktopSidePanelSlot
+                      {!isMobile ? <DesktopSidePanelSlot
                         autoCollapseContextSidebar={autoCollapseContextSidebar}
                         autoCollapseContextSidebarKey={autoCollapseContextSidebarKey}
                         autoCollapseContextSidebarOnOpen={autoCollapseContextSidebarOnOpen}
@@ -1709,7 +1712,7 @@ export function Layout() {
                         selectedOrganizationId={sidePanelOrganizationId}
                         viewportWidth={viewportWidth}
                         onExpandedChange={setDesktopSidePanelExpanded}
-                      />
+                      /> : null}
                     </div>
                   </div>
                 ) : (
