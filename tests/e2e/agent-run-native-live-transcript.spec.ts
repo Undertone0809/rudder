@@ -7,17 +7,75 @@ import { createE2EChatAgent } from "./support/chat-agent";
 import { E2E_ROOT } from "./support/e2e-env";
 
 type Projection = {
+  run: { status: string; externalRunId: string | null; sessionIdAfter: string | null;
+    finishedAt: string | null; resultJson: unknown; contextSnapshot: { transcriptSource: string } };
   source: string;
   availability: string;
   completeness: string;
   revision: string;
   page: { hasMore: boolean };
-  entries: Array<{ id: string; sourceEntryId: string; entry: { kind: string; sourceEntryId: string; text?: string } }>;
+  trace: { turnCount: number };
+  entries: Array<{ id: string; sourceEntryId: string;
+    entry: { kind: string; sourceEntryId: string; text?: string; [key: string]: unknown };
+    output: unknown }>;
 };
+
+const objectRows = (projection: Projection) => projection.entries.filter((item) => item.sourceEntryId.startsWith("tobj_v1_"));
+const nativeRows = (projection: Projection) => projection.entries.filter((item) => !item.sourceEntryId.startsWith("tobj_v1_"));
+// step-N is a projection position, not immutable source provenance. Compare
+// canonical object IDs + complete entry/output payload, never positional IDs.
+const canonicalObject = (item: Projection["entries"][number]) => ({
+  sourceEntryId: item.sourceEntryId, entry: item.entry, output: item.output,
+});
+function assertObjectProvenance(projection: Projection) {
+  const objects = objectRows(projection);
+  expect(new Set(objects.map((item) => item.sourceEntryId)).size).toBe(objects.length);
+  for (const item of objects) {
+    expect(item.sourceEntryId).toMatch(/^tobj_v1_[a-f0-9-]+:entry:.+$/);
+    expect(item.entry.sourceEntryId).toBe(item.sourceEntryId);
+  }
+}
+function assertUnpublishedNative(projection: Projection) {
+  expect(projection).toMatchObject({ completeness: "unknown", page: { hasMore: false }, trace: { turnCount: 0 },
+    run: { status: "running", externalRunId: null, sessionIdAfter: null, finishedAt: null,
+      resultJson: null, contextSnapshot: { transcriptSource: "native" } } });
+  // Public run metadata exposes unresolved completion identity, not the raw
+  // Span selector. Object availability must not imply native publication.
+  expect(nativeRows(projection)).toEqual([]);
+  expect(projection.entries.filter((item) => item.entry.kind === "user" || item.entry.kind === "assistant")).toEqual([]);
+  assertObjectProvenance(projection);
+  if (objectRows(projection).length > 0) {
+    expect(projection).toMatchObject({ source: "native_plus_objects", availability: "available" });
+  } else {
+    expect(projection).toMatchObject({ source: "native", availability: "pending", entries: [] });
+  }
+}
+function assertObjectsPreserved(baseline: Projection, projection: Projection) {
+  assertObjectProvenance(projection);
+  const current = new Map(objectRows(projection).map((item) => [item.sourceEntryId, canonicalObject(item)]));
+  for (const item of objectRows(baseline)) {
+    expect(current.get(item.sourceEntryId)).toEqual(canonicalObject(item));
+  }
+}
+function assertPublishedNative(projection: Projection, userId: string, assistantId: string, marker: string) {
+  expect(projection).toMatchObject({ availability: "available", completeness: "complete", page: { hasMore: false } });
+  expect(projection.source).toBe(objectRows(projection).length ? "native_plus_objects" : "native");
+  assertObjectProvenance(projection);
+  const authoritative = nativeRows(projection);
+  expect(authoritative).toHaveLength(2);
+  expect(authoritative.filter((item) => item.entry.kind === "user")).toMatchObject([
+    { sourceEntryId: userId, entry: { sourceEntryId: userId } },
+  ]);
+  expect(authoritative.filter((item) => item.entry.kind === "assistant")).toMatchObject([
+    { sourceEntryId: assistantId, entry: { sourceEntryId: assistantId, text: marker } },
+  ]);
+}
 
 // Protocol-fixture E2E through public Chat/Run/Reader + rendered Run Detail.
 // No API interception, DB mutation, real Codex inference, or retained-log fallback.
-test("native Run transcript waits for publication then retains exact source IDs after terminal reload", async ({ page, context }, testInfo) => {
+// Packet v2: native completion stays unresolved while canonical object-backed
+// diagnostics may already be available. Never suppress those diagnostics.
+test("native Run transcript preserves available diagnostics until exact native publication and terminal reload", async ({ page, context }, testInfo) => {
   test.setTimeout(120_000);
   const directory = await mkdtemp(path.join(os.tmpdir(), "rudder-native-live-transcript-"));
   const nonce = randomUUID().replaceAll("-", "");
@@ -37,6 +95,8 @@ test("native Run transcript waits for publication then retains exact source IDs 
   await page.goto(`/${org.urlKey}/messenger/chat?agentId=${agent.id}`);
   const composer = page.locator(".rudder-mdxeditor-content").first();
   await composer.fill(`Native transcript publication nonce: ${nonce}`);
+  const stream = page.waitForResponse((response) => response.request().method() === "POST"
+    && response.url().endsWith("/messages/stream"));
   await page.getByRole("button", { name: "Send", exact: true }).click();
 
   // Keep the submitting Chat mounted; navigating it away could cancel its stream.
@@ -71,26 +131,38 @@ test("native Run transcript waits for publication then retains exact source IDs 
       return response.json();
     };
     const pending = await readProjection();
-    expect(pending).toMatchObject({ source: "native", availability: "pending", completeness: "unknown", entries: [] });
+    assertUnpublishedNative(pending);
     const detailUrl = `/${org.urlKey}/agents/${agent.urlKey}/runs/${runId}`;
+    const uiRead = () => runPage.waitForResponse((response) => response.request().method() === "GET"
+      && response.url().includes(`/api/run-intelligence/runs/${runId}/transcript`));
+    const initialUiRead = uiRead();
     await runPage.goto(detailUrl);
+    expect((await initialUiRead).ok()).toBe(true);
     const transcript = runPage.locator(".run-detail-container");
-    await expect(transcript).toContainText("Waiting for transcript...");
+    await expect(transcript).toBeVisible();
+    // An available diagnostic projection need not display Waiting copy.
     await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+    await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
     expect(await missingAlerts()).toEqual([]);
-    await runPage.screenshot({ path: path.join(directory, "native-running-pending.png"), fullPage: true });
+    await runPage.screenshot({ path: path.join(directory, "native-running-unpublished.png"), fullPage: true });
+    const reloadedUiRead = uiRead();
     await runPage.reload();
-    await expect(transcript).toContainText("Waiting for transcript...");
-    expect(await readProjection()).toMatchObject({ source: "native", availability: "pending", entries: [] });
+    expect((await reloadedUiRead).ok()).toBe(true);
+    await expect(transcript).toBeVisible();
+    const pendingReload = await readProjection();
+    assertUnpublishedNative(pendingReload);
+    assertObjectsPreserved(pending, pendingReload);
+    await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+    await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
     expect(await missingAlerts()).toEqual([]);
 
     await writeFile(`${gate}.release`, "release");
     let available: Projection | undefined;
     await expect.poll(async () => {
       available = await readProjection();
-      return available.availability;
-    }, { timeout: 30_000 }).toBe("available");
-    expect(available).toMatchObject({ source: "native", completeness: "complete", page: { hasMore: false } });
+      return { availability: available.availability, completeness: available.completeness,
+        nativeKinds: nativeRows(available).map((item) => item.entry.kind) };
+    }, { timeout: 30_000 }).toEqual({ availability: "available", completeness: "complete", nativeKinds: ["user", "assistant"] });
     // Publication may coincide with terminalization; do not fabricate an
     // available-while-running state or mutate a native span to force one.
     await expect.poll(async () => {
@@ -98,6 +170,7 @@ test("native Run transcript waits for publication then retains exact source IDs 
       expect(response.ok()).toBe(true);
       return (await response.json()).status;
     }, { timeout: 30_000 }).toBe("succeeded");
+    expect(await (await stream).finished()).toBeNull();
     await expect(transcript).toContainText(marker, { timeout: 20_000 });
     await expect(transcript.getByText(marker, { exact: true })).toHaveCount(1);
     expect(await missingAlerts()).toEqual([]);
@@ -117,28 +190,29 @@ test("native Run transcript waits for publication then retains exact source IDs 
       id: item.id, sourceEntryId: item.sourceEntryId,
       entrySourceId: item.entry.sourceEntryId, kind: item.entry.kind,
     }));
-    expect(available!.entries).toHaveLength(2);
-    expect(available!.entries.filter((item) => item.entry.kind === "user")).toMatchObject([
-      { sourceEntryId: user[0].id, entry: { sourceEntryId: user[0].id } },
-    ]);
-    expect(available!.entries.filter((item) => item.entry.kind === "assistant")).toMatchObject([
-      { sourceEntryId: assistant[0].id, entry: { sourceEntryId: assistant[0].id, text: marker } },
-    ]);
+    assertPublishedNative(available!, user[0].id, assistant[0].id, marker);
+    assertObjectsPreserved(pendingReload, available!);
     const terminal = await readProjection();
-    expect(identities(terminal)).toEqual(identities(available!));
+    assertPublishedNative(terminal, user[0].id, assistant[0].id, marker);
+    assertObjectsPreserved(available!, terminal);
     await runPage.screenshot({ path: path.join(directory, "native-available-terminal.png"), fullPage: true });
+    const terminalUiRead = uiRead();
     await runPage.reload();
+    expect((await terminalUiRead).ok()).toBe(true);
     await expect(transcript).toContainText(marker);
     await expect(transcript.getByText(marker, { exact: true })).toHaveCount(1);
     await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
     expect(await missingAlerts()).toEqual([]);
     const refreshed = await readProjection();
-    expect(refreshed).toMatchObject({ source: "native", availability: "available", completeness: "complete" });
+    assertPublishedNative(refreshed, user[0].id, assistant[0].id, marker);
+    assertObjectsPreserved(terminal, refreshed);
     expect(identities(refreshed)).toEqual(identities(terminal));
     expect(refreshed.revision).toBe(terminal.revision);
     await runPage.screenshot({ path: path.join(directory, "native-terminal-reload.png"), fullPage: true });
     await testInfo.attach("native-publication-evidence", { body: JSON.stringify({ orgId: org.id, agentId: agent.id,
-      runId, ready, pending, available, terminal, refreshed, artifactDirectory: directory }), contentType: "application/json" });
+      criteriaPacket: "native-publication-v2", runId, ready, pending, pendingReload, available, terminal, refreshed,
+      unresolvedNativeEvidence: { rawSpanSelectorExposed: false, publicProof: "running + unknown completeness + null completion identity + no native rows" },
+      artifactDirectory: directory }), contentType: "application/json" });
   } finally {
     await writeFile(`${gate}.release`, "release");
     await runPage.close();
