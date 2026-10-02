@@ -88,6 +88,11 @@ for (const variant of [
       await page.goto(`/${org.urlKey}${legacyPath}`);
       await expect(page.getByTestId("org-workspaces-files-scroll")).toBeVisible();
       await expect(projectsEntry).toHaveAttribute("aria-current", "page");
+      // Wait for the legacy redirect and retained document restoration before
+      // exercising the Projects rail; the file tree alone is not readiness.
+      await expect(page).toHaveURL(`/${org.urlKey}${documentPath}`);
+      await expect(editor).toContainText("This document stays in Library.");
+      await expect(projectsEntry).toHaveAttribute("href", `/${org.urlKey}${projectPath}`);
       await projectsEntry.click();
       await expect(page).toHaveURL(`/${org.urlKey}${projectPath}`);
     }
