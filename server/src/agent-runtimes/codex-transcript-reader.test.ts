@@ -197,10 +197,11 @@ describe("historical Codex read-only pagination proof", () => {
     expect(page.completeness).not.toBe("complete");
   });
 
-  it("binds continuation to executable identity even when its path and version stay unchanged", async () => {
+  it("re-attests changed executables without invalidating unchanged content cursors, but rejects changed native content", async () => {
     if (process.platform === "win32") return;
     const directory = await mkdtemp(path.join(os.tmpdir(), "rudder-codex-identity-test-"));
     const command = path.join(directory, "codex");
+    const probe = vi.spyOn(codex, "probeCodexNativeTranscriptPagination");
     try {
       const script = `#!${process.execPath}\n${server}`;
       await writeFile(command, script);
@@ -208,11 +209,33 @@ describe("historical Codex read-only pagination proof", () => {
       const data = fixture({ legacy: true, command, args: [] });
       const reader = createTranscriptReader(data.db as never, { nativeReader: data.nativeReader });
       const first = await reader.readRun({ ...request, limit: 1 });
+      expect(first.availability).toBe("available");
+      expect(first.source).toBe("native");
+      expect(first.items.map(item => item.id)).toEqual(["user-1"]);
       expect(first.nextCursor).toBeTruthy();
-      await writeFile(command, `${script}\n// changed binary identity\n`);
+      expect(probe).toHaveBeenCalledTimes(1);
+
+      // Executable attestation is refreshed, but it is not the selected
+      // transcript's content revision. Path/version/authorized scope stay fixed.
+      const reattestedScript = `${script}\n// changed binary identity\n`;
+      await writeFile(command, reattestedScript);
+      const continued = await reader.readRun({ ...request, limit: 1, cursor: first.nextCursor });
+      expect(probe).toHaveBeenCalledTimes(2);
+      expect(continued.availability).toBe("available");
+      expect(continued.source).toBe("native");
+      expect(continued.items.map(item => item.id)).toEqual(["tool-1"]);
+      expect(continued.revision).toBe(first.revision);
+
+      // Changing a selected native item must still invalidate the old cursor,
+      // even though thread/turn IDs and the advertised updatedAt are unchanged.
+      await writeFile(command, reattestedScript.replace('text: "Done"', 'text: "Changed native content"'));
       await expect(reader.readRun({ ...request, limit: 1, cursor: first.nextCursor }))
         .rejects.toThrow("Transcript cursor provider revision is no longer current");
-    } finally { await rm(directory, { recursive: true, force: true }); }
+      expect(probe).toHaveBeenCalledTimes(3);
+    } finally {
+      probe.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("does not reuse proof or a continuation across home/profile environments", async () => {
