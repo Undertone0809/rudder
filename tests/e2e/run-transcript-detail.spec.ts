@@ -470,8 +470,29 @@ test.describe("Run transcript detail", () => {
     const transcriptRunId = randomUUID();
     const transcriptRunStartedAt = new Date(transcriptStartedAt - 1_000);
     const transcriptRunFinishedAt = new Date(transcriptRunStartedAt.getTime() + 60_000);
+    const legacyFixtureInstructionStack = [
+      "Legacy Run Detail fixture instructions",
+      "Preserve the recorded transcript and report the final result exactly once.",
+      "These inline instructions belong only to this seeded legacy Run.",
+    ].join("\n");
+    const legacyInvocationMetadata = { ...(firstInvocation!.payload as Record<string, unknown>) };
+    // A copied event must not borrow the real Run's snapshot or execution identity.
+    for (const field of [
+      "invocationInstructionSnapshot",
+      "invocationInstructionTextReference",
+      "invocationPromptReference",
+      "invocationContent",
+      "agentInstructionStackAlias",
+      "invocationAttemptId",
+      "invocationSpanId",
+      "context",
+      "promptMetrics",
+      "promptSanitizedForPersistence",
+    ]) delete legacyInvocationMetadata[field];
     const firstInvocationPayload = {
-      ...(firstInvocation!.payload as Record<string, unknown>),
+      ...legacyInvocationMetadata,
+      agentInstructionStack: legacyFixtureInstructionStack,
+      prompt: legacyFixtureInstructionStack,
       loadedMcpServers: [
         { serverName: "rudder-tools", source: "built_in" },
         { serverName: "rudder-browser", source: "built_in" },
@@ -696,6 +717,7 @@ test.describe("Run transcript detail", () => {
     await expect(promptBlock).toBeVisible();
     const promptText = await promptBlock.textContent();
     expect(promptText?.trim()).toBeTruthy();
+    expect(promptText).toBe(legacyFixtureInstructionStack);
     const actualInstructionStack = String(firstInvocationPayload.agentInstructionStack ?? "");
     const actualInstructionHeading = actualInstructionStack.split(/\r?\n/, 1)[0]?.trim();
     expect(actualInstructionHeading).toBeTruthy();
