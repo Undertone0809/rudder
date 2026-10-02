@@ -1,0 +1,125 @@
+{
+  "schema": "rudder.installed-artifact-audit/v1",
+  "recordedAt": "2026-10-02T06:14:41Z",
+  "reviewerVerdict": "accept",
+  "verdictLevel": "stage verdict",
+  "verdictScope": "Current 7a installed artifact preparation only; not product acceptance, release readiness, or runtime authorization.",
+  "candidate": {
+    "sourceRepo": "/private/tmp/rudder-native-auth-security-fixture.Ky7IBH",
+    "sourceCommit": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "sourceTree": "9345a28f7b4d87c081399617bf439c3464b2eddb",
+    "sourceBranch": "codex/native-auth-security-fixture-20261002",
+    "sourceWorktreeClean": true,
+    "sourcePathNote": "The recorded binding points to Ky7IBH (without the trailing 7a); the similarly named Ky7IBH7a path is absent. The extant bound source was verified clean at the exact commit and tree above.",
+    "artifactRoot": "/Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy",
+    "installPrefix": "/Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy/install",
+    "binding": {
+      "path": "/Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy/candidate-installed-binding.json",
+      "sha256": "fa9c211a2a8e5a5e79ea78f3522bd9f8b42a8cdfd4e91844950235ff949e61b1"
+    },
+    "lockfiles": {
+      "packageLockSha256": "c3f5db08a57370f5270c2a224b0809d9490233633c077a65dff06e77a68b1b80",
+      "installedPackageLockSha256": "4456f8a56510da84369e20137bf82ef5b2ece6e7cb520d96a6b56ab887182a72"
+    },
+    "acceptancePacket": "No product-acceptance packet is claimed by this artifact-only review."
+  },
+  "ciNativeArtifacts": {
+    "workflowRunId": "36965759966",
+    "artifactIdMappingSource": "Parent-provided mapping; local target directories and binary bytes independently inspected.",
+    "byteIdentityChain": "CI download = native-artifacts staging = @rudderhq/server tarball = installed server package",
+    "targets": [
+      {
+        "target": "aarch64-apple-darwin",
+        "artifactId": "11209592242",
+        "sha256": "cc1348ac2fe10a1f048c6d6d3ee657c0776dfd0abf5351a0f9a68b735497b344",
+        "hostExecutableAfterScopedRebuild": true
+      },
+      {
+        "target": "aarch64-pc-windows-msvc",
+        "artifactId": "11209710880",
+        "sha256": "5f71791a00acbb0ae276e54bdded9fd9ff29b7eb2ecde9da8039c167123b4c9e",
+        "executed": false
+      },
+      {
+        "target": "aarch64-unknown-linux-gnu",
+        "artifactId": "11209785639",
+        "sha256": "9796ea50be80bfece2f76e5261be5b3b885bfd2b513d00518805003521708c9d",
+        "executed": false
+      },
+      {
+        "target": "x86_64-apple-darwin",
+        "artifactId": "11210395240",
+        "sha256": "0f64344695d05b27e8a7307e487ee6f4d67622430dc9e40f7a4f72e1ac85f10c",
+        "executed": false
+      },
+      {
+        "target": "x86_64-pc-windows-msvc",
+        "artifactId": "11209861337",
+        "sha256": "da8ef35f3e2a9a549e540dc7e375d456b6e08a37c9326e6ad5c8620357f3a2e6",
+        "executed": false
+      },
+      {
+        "target": "x86_64-unknown-linux-gnu",
+        "artifactId": "11209348328",
+        "sha256": "191505393d9c4bc054a87d7af20e53dbaa5059d1949034f14484bfe9bcc52588",
+        "executed": false
+      }
+    ]
+  },
+  "verifiedEvidence": {
+    "packageTarballs": {
+      "count": 14,
+      "version": "0.7.24",
+      "result": "All archive hashes match the persisted binding; package names and versions match installed manifests; each lock entry resolves to the corresponding local payload tarball and its SHA-512 SRI matches the archive.",
+      "npmLsDepthZeroProblems": 0
+    },
+    "primaryEntries": {
+      "server": {
+        "sourceTarballInstalledSha256": "0e9a9b1217b0191c4da35b71f3a10c5839b2f45c4db0306dcd68739c98e52522",
+        "tarballManifestEqualsInstalledManifest": true
+      },
+      "cli": {
+        "sourceTarballInstalledSha256": "405bac416912265d92f84ea7200cbe8fd966b196b65d900cd4d1f6bca0f3f07a",
+        "tarballManifestEqualsInstalledManifest": true,
+        "installedBinExecutable": true
+      }
+    },
+    "installedResolution": {
+      "serverFirstPartyEsmSpecifiersResolvedInsidePrefix": 29,
+      "cliFirstPartyEsmSpecifiersResolvedInsidePrefix": 1,
+      "rudderPackageSymlinks": 0,
+      "staleDonorRootTextReferences": 0
+    },
+    "hostNative": {
+      "target": "aarch64-apple-darwin",
+      "mode": "-rwxr-xr-x",
+      "sha256MatchesCiStageTarballAndInstalled": true
+    }
+  },
+  "installLifecycle": {
+    "initialInstall": {
+      "command": "npm install --ignore-scripts in the isolated install prefix using the 14 local payload tarballs",
+      "recordedResult": "exit 0",
+      "effect": "Lifecycle scripts, including server postinstall, were intentionally skipped; host bytes were present but required the later normal rebuild to restore executable mode."
+    },
+    "followUp": {
+      "command": "Parent-owned normal npm rebuild @rudderhq/server scoped to the install prefix with RUDDER_HOME=<artifact-root>/isolated-home",
+      "recordedResult": "exit 0 in the persisted candidate binding and parent report",
+      "independentCorroboration": "Installed host native file is executable and still byte-identical to CI download, staged asset, and server tarball.",
+      "reviewerReranOrChangedFiles": false,
+      "reviewerManualChmod": false,
+      "processOutputIndependentlyCaptured": false
+    },
+    "postinstallCodeInspection": "Native-mode hook only restores execute bits on the host payload. PostgreSQL compatibility hook only inspects managed runtime paths under RUDDER_HOME and may add the legacy timezone alias; it does not start the server or connect to a database."
+  },
+  "findings": [],
+  "claimLimits": [
+    "This verdict accepts only the exact installed preparation artifact and its byte/package binding.",
+    "No server, CLI, native binary, UI/API/MCP workflow, or public route was started or exercised.",
+    "No database or Postgres was contacted by this reviewer; no DB/runtime acceptance is claimed.",
+    "Foreign-platform native binaries were hash-checked only, not executed.",
+    "The rebuild exit status is persisted/parent-reported; this reviewer independently verified the expected installed mode and unchanged bytes but did not capture the parent process output.",
+    "Implementation-complete, release-ready, and production-verified remain false; independent product acceptance remains pending."
+  ],
+  "convergenceDirection": "Keep this receipt as preparation evidence. Any product/runtime acceptance must use a separately authorized exact-candidate packet and verifier; this audit grants no runtime or database lease."
+}

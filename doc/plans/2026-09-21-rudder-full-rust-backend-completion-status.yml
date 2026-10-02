@@ -35,18 +35,32 @@ current_candidate:
     prerequisite_checks: cli_and_db_workspace_tsx4_21_0_Node22_23_1_static_DB_import190_exports_PASS_source_clean
     pnpm_lock_sha256: 8962e3da598b36c2036500a28569571f593ca3f9964a9e95582e0925be69828c
     tsx_cli_sha256: 8729ecfb90d9d568939e4190e6f1d3317c946583b7d37a776e0c23a21c021cf8
-    postgres_runtime_grant: none
+    postgres_runtime_grant: v5_lease_released_after_verifier_PASS_owned_cleanup_verified_no_current_grant
     historical_c89_installed_assets: absent_do_not_reuse_as_current_ready
     historical_donor_node_modules: absent_do_not_reuse_saved_READY_preflight
-    native_TCP_successor: v4_preparation_pending_owned_dependencies_and_fresh_stage_review
+    native_TCP_successor: v5_stage_accept_independent_verifier_PASS_source_built_only_final_review_pending
+    native_TCP_verifier_sha256: 29d6baa24a88b6e26ef371171a9229b82ad38d19e3a203cc0d7ae7b5e4f2eec2
+    native_TCP_migration_limit: journal179_tool_reports181_pending_no_applied_ledger_count_readback_not_migration_authority_acceptance
+    native_TCP_root: /private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3
+    native_TCP_packet_sha256: f4d259368540351646b6cc0a19eb68ce231ab6f393848ac630eedd6da4284bc9
+    native_TCP_stage_sha256: 9a2b791d35168771473e9a41e9987297e02953734c9ecb3d5de94bddea261cb0
+    native_TCP_stage_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-stage-review.json
+    native_TCP_verifier_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-independent-verifier.json
+    native_TCP_v4: historical_needs_more_evidence_external_dirty_checkout_target_not_executed
+    installed_preparation: independent_Euler_accept14_tarballs6_binaries_real_postinstall_not_runtime_PASS
+    installed_preparation_receipt: artifacts/2026-10-02-rudder-native-auth-installed-artifact-preparation-review.json
+    installed_binding_sha256: fa9c211a2a8e5a5e79ea78f3522bd9f8b42a8cdfd4e91844950235ff949e61b1
+    native_CLI: checkpoint6e0fece67_terminal_control_fix10_author_tests_PASS_changed_risk_review_pending_Node_defaults_retained
+    current_remote_records_head: 99aa299c0e139c0b8a485f2d24cd692fbfd9968a
+    current_remote_CI: 20_SUCCESS_1_SKIPPED_1_GitGuardian_FAILURE_no_pending_observed
     board_UI: replacement_isolated_browser_TaskSpace_approval_pending
   gates:
-    public_TCP_verifier: pending_no_current_PASS
-    installed_auth_verifier: pending_rebuild_current_assets
+    public_TCP_verifier: PASS_v5_11criteria15requests0Nodegrants_owned_cleanup_donor_preservation_source_built_only
+    installed_auth_verifier: pending_current_assets_preparation_review_accept_runtime_packet_preparing
     final_reviewer: pending
     security_check: historical_commit_alert_unresolved_not_waived
     aggregate_PR236_acceptance: pending
-  next_executable: finish_v4_all_prerequisite_preflight_then_stage_review_before_exclusive_disposable_PG_lease_and_distinct_TCP_verifier
+  next_executable: collect_v5_final_review_and_CLI6e0_changed_risk_stage_then_freeze_installed_and_CLI_real_service_candidates_new_exclusive_PG_lease_required
   terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
 historical_candidate_2026_09_29:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss

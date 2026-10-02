@@ -1,0 +1,239 @@
+{
+  "schema": "rudder.native-bearer-auth-tcp.independent-verifier/v1",
+  "verdict": "PASS",
+  "phase": "terminal-black-box-verification",
+  "lockedAt": "2026-10-02T06:35:29Z",
+  "verificationLease": {
+    "id": "3a8398ac-50ea-4181-9221-64b34e097af5",
+    "issuer": "parent",
+    "statusAtLock": "OPEN",
+    "expiresAt": "2026-10-02T08:02:05.923Z",
+    "path": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/execution-lease.json",
+    "sha256": "8c0c6603ebddc62311084eeeb12d5ed6fbccebb1680ca4fd2db44d65cdcfc452",
+    "exclusivePostgresLane": "native-bearer-auth-tcp-7a-v5",
+    "stageReview": {
+      "verdict": "accept",
+      "path": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/independent-stage-review.json",
+      "sha256": "9a2b791d35168771473e9a41e9987297e02953734c9ecb3d5de94bddea261cb0"
+    },
+    "noDatabasePreflight": {
+      "status": "READY_FOR_INDEPENDENT_HARNESS_STAGE_REVIEW_NO_PG",
+      "path": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/evidence/no-db-preflight.json",
+      "sha256": "011f432f711b4524edf3716aa6d233378cc6dc3b6e5a60c2b70af5e0cb93f5f1"
+    }
+  },
+  "candidate": {
+    "repoRoot": "/private/tmp/rudder-native-auth-security-fixture.Ky7IBH",
+    "branch": "codex/native-auth-security-fixture-20261002",
+    "commit": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "tree": "9345a28f7b4d87c081399617bf439c3464b2eddb",
+    "trackedState": "clean",
+    "sourcePins": [
+      { "path": "native/bins/rudder-server-foundation/src/main.rs", "sha256": "b17683ca338e7a6758c134a88dc074a771e24a65d57daf4e3b9b19b72acff48d" },
+      { "path": "native/bins/rudder-server-foundation/Cargo.toml", "sha256": "c8386c47f7abafff254b4f7214a8129448c645e5f4795b7e17bc1a67b438c68e" },
+      { "path": "native/crates/server-foundation/src/native_bearer_auth.rs", "sha256": "239571e8571369000b6b657662b95fc6da5c9b6ae93f0b5cde30a63df5d939c6" },
+      { "path": "native/crates/server-foundation/src/public_ingress.rs", "sha256": "9963248c70c51f187054382c7ec1c7e3046fef19e87726507744c0a3f4ee8532" },
+      { "path": "native/crates/server-foundation/src/public_ingress_config.rs", "sha256": "89f37aeeec90da21f2547129c2077d0ba7c40115aef169519ceea1848e6d30b4" },
+      { "path": "native/Cargo.lock", "sha256": "a7c5d49d79c8862ee35d9f83deb80d8c62c972e7f71efc75a89f20bb89791ba9" },
+      { "path": "packages/db/src/migrations/meta/_journal.json", "sha256": "7f26cef049f8cc2c8963036320b2efe26e09b37cc2088c4969cbe8cc488b92ce" },
+      { "path": "package.json", "sha256": "8201556a3d0d2ade9740acfde5c27f95d35eb13e37cbc1b6ea5e038ca6db143b" }
+    ],
+    "dependencyLock": {
+      "path": "pnpm-lock.yaml",
+      "sha256": "8962e3da598b36c2036500a28569571f593ca3f9964a9e95582e0925be69828c"
+    }
+  },
+  "acceptancePacket": {
+    "version": "7a-v5",
+    "path": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/packet.json",
+    "sha256": "f4d259368540351646b6cc0a19eb68ce231ab6f393848ac630eedd6da4284bc9",
+    "runnerPath": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/runner.mjs",
+    "runnerSha256": "b82c045e4e93830e8b6a4343f613bb7d24458e5ee19cfb448c08c32d425cc3af",
+    "criteria": [
+      { "id": "board-read", "expectedStatus": 200 },
+      { "id": "board-foreign-org", "expectedStatus": 403 },
+      { "id": "agent-read", "expectedStatus": 200 },
+      { "id": "agent-foreign-org", "expectedStatus": 403 },
+      { "id": "required-unknown-native", "expectedStatus": 401 },
+      { "id": "required-revoked-board", "expectedStatus": 401 },
+      { "id": "required-revoked-agent", "expectedStatus": 401 },
+      { "id": "optional-unknown-native", "expectedStatus": 200 },
+      { "id": "optional-revoked-board", "expectedStatus": 200 },
+      { "id": "optional-revoked-agent", "expectedStatus": 200 },
+      { "id": "configured-database-unavailable", "expectedStatus": 503 }
+    ],
+    "runnerAlsoExercises": [
+      "optional-mode valid Board and Agent reads and cross-organization denials"
+    ]
+  },
+  "build": {
+    "kind": "source-built rudder-server-foundation; not installed",
+    "targetDirectory": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/target",
+    "owner": "native-bearer-auth-tcp-7a-v5",
+    "binaryPath": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/target/debug/rudder-server-foundation",
+    "preRunBinarySha256": "e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0",
+    "preRunBinaryInode": 980142453,
+    "postRunBinarySha256": "e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0",
+    "postRunBinaryInode": 980150134,
+    "buildExitCode": 0
+  },
+  "fixture": {
+    "postgresVersion": "18.4",
+    "database": "rudder_native_auth_tcp_7a_v5_test",
+    "host": "127.0.0.1",
+    "port": 55492,
+    "runtimeDirectory": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/runtime",
+    "runtimeDirectoryAbsentBeforeRun": true,
+    "portUnlistenedBeforeRun": true,
+    "syntheticDataOnly": true
+  },
+  "donorBaseline": {
+    "target": "/private/tmp/rudder-255-attribution.6BjPXb/repo/native/target",
+    "binaryPath": "/private/tmp/rudder-255-attribution.6BjPXb/repo/native/target/debug/rudder-server-foundation",
+    "binarySha256": "e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0",
+    "binaryInode": 980065303,
+    "sourceDirtyDiffSha256": "6c150fce2d3f5cf03628e8a48bd6a9386604633c01bc3da2e28d1cf7a8fa2496"
+  },
+  "execution": {
+    "command": "node /private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/runner.mjs --execute --lease /private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/execution-lease.json",
+    "state": "complete",
+    "startedAt": "2026-10-02T06:37:08.139Z",
+    "endedAt": "2026-10-02T06:37:13.867Z",
+    "exitCode": 0,
+    "verdict": "PASS",
+    "evidencePath": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/evidence/tcp-auth-source-built-2026-10-02T06-37-08-139Z.json",
+    "evidenceSha256": "e16098de31dfc0a20c8dffc932f24c97b4690a40dda29a16f40c758d11ee8e41",
+    "rawEvidenceDirectory": "/private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3/evidence/raw-2026-10-02T06-37-08-139Z"
+  },
+  "criterionToProof": [
+    {
+      "criterion": "board-read",
+      "publicAction": "GET member directory with the synthetic Board bearer for organization A",
+      "observed": "HTTP 200; synthetic member returned; board last_used_at SQL readback=t; Node grants=0",
+      "evidenceObservationId": "board-read"
+    },
+    {
+      "criterion": "board-foreign-org",
+      "publicAction": "GET organization B member directory with the same valid Board bearer",
+      "observed": "HTTP 403 native_bearer_forbidden; Node grants=0",
+      "evidenceObservationId": "board-foreign-org"
+    },
+    {
+      "criterion": "agent-read",
+      "publicAction": "GET member directory with the synthetic organization-A Agent bearer",
+      "observed": "HTTP 200; synthetic member returned; agent last_used_at SQL readback=t; Node grants=0",
+      "evidenceObservationId": "agent-read"
+    },
+    {
+      "criterion": "agent-foreign-org",
+      "publicAction": "GET organization B member directory with the valid organization-A Agent bearer",
+      "observed": "HTTP 403 native_bearer_forbidden; Node grants=0",
+      "evidenceObservationId": "agent-foreign-org"
+    },
+    {
+      "criterion": "required-unknown-native",
+      "publicAction": "Send an unknown pcp_ credential to the required-auth server",
+      "observed": "HTTP 401 native_bearer_unauthorized; Node grants=0",
+      "evidenceObservationId": "required-unknown-native"
+    },
+    {
+      "criterion": "required-revoked-board",
+      "publicAction": "Set revoked_at and confirm SQL readback, then request with the formerly successful Board bearer",
+      "observed": "revoked_at readback=t; HTTP 401 native_bearer_unauthorized; Node grants=0",
+      "evidenceObservationId": "required-revoked-board"
+    },
+    {
+      "criterion": "required-revoked-agent",
+      "publicAction": "Set revoked_at and confirm SQL readback, then request with the formerly successful Agent bearer",
+      "observed": "revoked_at readback=t; HTTP 401 native_bearer_unauthorized; Node grants=0",
+      "evidenceObservationId": "required-revoked-agent"
+    },
+    {
+      "criterion": "optional-unknown-native",
+      "publicAction": "Send an unknown pcp_ credential to the optional-auth server",
+      "observed": "HTTP 200; synthetic local-Board member returned; Node grants=0",
+      "evidenceObservationId": "optional-unknown-native"
+    },
+    {
+      "criterion": "optional-revoked-board",
+      "publicAction": "Request with the revoked Board bearer under optional auth",
+      "observed": "HTTP 200; synthetic local-Board member returned; Node grants=0",
+      "evidenceObservationId": "optional-revoked-board"
+    },
+    {
+      "criterion": "optional-revoked-agent",
+      "publicAction": "Request with the revoked Agent bearer under optional auth",
+      "observed": "HTTP 200; synthetic local-Board member returned; Node grants=0",
+      "evidenceObservationId": "optional-revoked-agent"
+    },
+    {
+      "criterion": "configured-database-unavailable",
+      "publicAction": "Stop the owned PG cluster, confirm PID and port release, then request through a separate server using the same syntactically valid fixture URL",
+      "observed": "HTTP 503 native_bearer_auth_unavailable; PostgreSQL PID gone and port 55492 closed; Node grants=0",
+      "evidenceObservationId": "configured-database-unavailable"
+    }
+  ],
+  "supportingPublicCases": {
+    "totalRequests": 15,
+    "acceptanceCriteria": 11,
+    "additionalOptionalModeCases": [
+      { "id": "optional-board-read", "observedStatus": 200 },
+      { "id": "optional-board-foreign-org", "observedStatus": 403 },
+      { "id": "optional-agent-read", "observedStatus": 200 },
+      { "id": "optional-agent-foreign-org", "observedStatus": 403 }
+    ],
+    "allStatusesMatchedPacket": true,
+    "nodeGrantCalls": 0,
+    "unexpectedNodeUpstreamCalls": 0
+  },
+  "fixtureAndCleanup": {
+    "database": "rudder_native_auth_tcp_7a_v5_test",
+    "postgresVersion": "18.4",
+    "migrationJournalEntryCount": 179,
+    "migrationToolOutput": "Applying 181 pending migration(s)... Migrations complete",
+    "databaseAppliedMigrationRowCountReadBack": false,
+    "migrationCountNote": "The runner's migrationsApplied field is copied from the pinned journal length; it does not query the database migration ledger. This does not alter the 11 packet HTTP criteria, all of which passed.",
+    "requiredAuthTablesFound": 6,
+    "syntheticOnly": true,
+    "postgresPid": 485,
+    "postgresPidGone": true,
+    "fixturePortReleased": true,
+    "serverPidsStoppedWithExitCode0": [1343, 1457, 1550],
+    "serverPortsReleased": true,
+    "ownedRuntimeDirectoryRemoved": true,
+    "cleanupErrors": [],
+    "cleanupVerified": true,
+    "preexistingV5EvidenceHashesUnchanged": true,
+    "priorV4EvidenceModified": false
+  },
+  "donorRecheck": {
+    "target": "/private/tmp/rudder-255-attribution.6BjPXb/repo/native/target",
+    "binarySha256BeforeAndAfter": "e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0",
+    "binaryInodeBeforeAndAfter": 980065303,
+    "sourceDirtyDiffSha256BeforeAndAfter": "6c150fce2d3f5cf03628e8a48bd6a9386604633c01bc3da2e28d1cf7a8fa2496",
+    "preserved": true
+  },
+  "leaseRecheck": {
+    "status": "current",
+    "candidateCommit": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "candidateTree": "9345a28f7b4d87c081399617bf439c3464b2eddb",
+    "candidateTrackedState": "clean",
+    "packetSha256": "f4d259368540351646b6cc0a19eb68ce231ab6f393848ac630eedd6da4284bc9",
+    "runnerSha256": "b82c045e4e93830e8b6a4343f613bb7d24458e5ee19cfb448c08c32d425cc3af",
+    "leaseSha256": "8c0c6603ebddc62311084eeeb12d5ed6fbccebb1680ca4fd2db44d65cdcfc452",
+    "builtBinarySha256": "e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0",
+    "stageReceiptSha256": "9a2b791d35168771473e9a41e9987297e02953734c9ecb3d5de94bddea261cb0",
+    "noDatabasePreflightSha256": "011f432f711b4524edf3716aa6d233378cc6dc3b6e5a60c2b70af5e0cb93f5f1"
+  },
+  "scope": {
+    "acceptedSurface": "source-built native server public TCP bearer-auth behavior on the named disposable fixture",
+    "notClaimed": [
+      "installed artifact identity",
+      "full product identity",
+      "default CLI behavior",
+      "MCP behavior",
+      "goal completion"
+    ]
+  },
+  "missingOrBlocked": null
+}
