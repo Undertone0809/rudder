@@ -98,7 +98,10 @@ function assertPublishedNative(projection: Projection, userId: string, assistant
 }
 
 // Protocol-fixture E2E through public Chat/Run/Reader + rendered Run Detail.
-// No API interception, DB mutation, real Codex inference, or retained-log fallback.
+// Native publication phases have no API interception, DB mutation, real Codex
+// inference, or retained-log fallback. The bounded UI regression phase below
+// injects empty/missing only in the Run Detail response while the real fixture
+// run remains held; it does not claim the native Reader emitted missing.
 // Packet v5: preserve startup objects before publication; complete native
 // history may retire them (Plan W12 temporary stdout), not claim equivalence.
 test("native Run transcript preserves available diagnostics until exact native publication and terminal reload", async ({ page, context }, testInfo) => {
@@ -207,6 +210,45 @@ test("native Run transcript preserves available diagnostics until exact native p
     await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
     expect(await missingAlerts()).toEqual([]);
 
+    // Nadia live-empty UI regression: native pending is already covered above.
+    // Hold the SAME fixture run and explicitly inject missing + empty into only
+    // this page's read response, without changing backend/span/native state.
+    const transcriptRoute = `**/api/run-intelligence/runs/${runId}/transcript?*`;
+    let missingReads = 0;
+    await runPage.route(transcriptRoute, async (route) => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      const projection = await response.json() as Projection;
+      assertUnpublishedNative(projection);
+      missingReads++;
+      await route.fulfill({ response, json: { ...projection, availability: "missing", entries: [],
+        trace: { ...projection.trace, turnCount: 0 }, page: { ...projection.page, hasMore: false } } });
+    });
+    try {
+      for (let read = 0; read < 2; read++) {
+        const readsBeforeReload = missingReads;
+        const missingUiRead = uiRead();
+        await runPage.reload();
+        const missingUiResponse = await missingUiRead;
+        expect(missingUiResponse.ok()).toBe(true);
+        expect(await missingUiResponse.json()).toMatchObject({ availability: "missing", entries: [],
+          run: { status: "running" } });
+        await expect.poll(() => missingReads).toBeGreaterThan(readsBeforeReload);
+        await expect(transcript.getByText("Waiting for transcript...", { exact: true })).toBeVisible();
+        await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+        await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
+        expect(await missingAlerts()).toEqual([]);
+      }
+      await runPage.screenshot({ path: path.join(directory, "native-running-empty-missing-waiting.png"), fullPage: true });
+    } finally {
+      await runPage.unroute(transcriptRoute);
+    }
+    const restoredUiRead = uiRead();
+    await runPage.reload();
+    const restoredUiResponse = await restoredUiRead;
+    expect(restoredUiResponse.ok()).toBe(true);
+    await assertRenderedUnpublished(await restoredUiResponse.json() as Projection);
+
     await writeFile(`${gate}.release`, "release");
     let available: Projection | undefined;
     await expect.poll(async () => {
@@ -262,6 +304,8 @@ test("native Run transcript preserves available diagnostics until exact native p
     await testInfo.attach("native-publication-evidence", { body: JSON.stringify({ orgId: org.id, agentId: agent.id,
       criteriaPacket: "native-publication-v5", runId, ready, pending, initialUiProjection, reloadedUiProjection,
       pendingReload, available, terminal, refreshed,
+      emptyMissingUiRegression: { responseOnlyInjection: true, actualReaderMissingClaim: false,
+        heldRunStatus: "running", missingReads, reloads: 2 },
       startupObjectPolicy: "trace-classified startup diagnostics may retire after complete native publication; not equivalent to native content or proof of real process-gap preservation",
       unresolvedNativeEvidence: { rawSpanSelectorExposed: false, publicProof: "running + unknown completeness + null completion identity + no native rows" },
       artifactDirectory: directory }), contentType: "application/json" });

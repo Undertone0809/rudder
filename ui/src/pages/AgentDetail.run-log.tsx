@@ -61,6 +61,21 @@ export function canPersistRunTranscriptAnnotations(
     && !state.fetching;
 }
 
+export function getRunTranscriptEmptyMessage(
+  state: Pick<AgentRunTranscriptState, "availability" | "loading" | "error"> | null | undefined,
+  isLive: boolean,
+): string {
+  return state?.error
+    ? `Transcript unavailable: ${state.error.message}`
+    : state?.availability === "pending" || (isLive && state?.availability === "missing")
+      ? "Waiting for transcript..."
+      : state?.availability && state.availability !== "available"
+        ? `Transcript ${state.availability}.`
+        : state?.loading || isLive
+          ? "Waiting for transcript..."
+          : "No transcript for this run.";
+}
+
 export function advancePersistedRunEventCursor(
   currentCursor: number,
   persistedEvents: HeartbeatRunEvent[],
@@ -427,16 +442,7 @@ export function LogViewer({
     && transcriptState.completeness === "complete"
     && transcriptNavigation?.canNext === false;
   const canPersistTranscriptAnnotations = canPersistRunTranscriptAnnotations(transcriptState);
-  const transcriptError = transcriptState?.error ?? null;
-  const transcriptEmptyMessage = transcriptError
-    ? `Transcript unavailable: ${transcriptError.message}`
-    : transcriptState?.availability === "pending"
-      ? "Waiting for transcript..."
-    : transcriptState?.availability && transcriptState.availability !== "available"
-      ? `Transcript ${transcriptState.availability}.`
-      : transcriptState?.loading || isLive
-        ? "Waiting for transcript..."
-        : "No transcript for this run.";
+  const transcriptEmptyMessage = getRunTranscriptEmptyMessage(transcriptState, isLive);
   const hasInvocationTab = Boolean(adapterInvokePayload);
   const instructionSnapshotStatus = readInvocationInstructionSnapshotStatus(adapterInvokePayload);
   const invocationInstructionSnapshotQuery = useQuery({

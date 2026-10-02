@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   advancePersistedRunEventCursor,
   canPersistRunTranscriptAnnotations,
+  getRunTranscriptEmptyMessage,
   mergeRunEvents,
 } from "./AgentDetail.run-log";
 
@@ -37,6 +38,36 @@ describe("Run event cursor reconciliation", () => {
 
     expect(cursor).toBe(3);
     expect(visibleEvents.map((event) => event.seq)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("Run transcript empty-state lifecycle", () => {
+  const missing = { availability: "missing", loading: false, error: null } as const;
+
+  it("waits for an empty live transcript even when its source is not yet available", () => {
+    expect(getRunTranscriptEmptyMessage(missing, true)).toBe("Waiting for transcript...");
+  });
+
+  it("keeps terminal missing explicit", () => {
+    expect(getRunTranscriptEmptyMessage(missing, false)).toBe("Transcript missing.");
+  });
+
+  it.each(["offline", "expired"] as const)("does not mask %s while live", (availability) => {
+    expect(getRunTranscriptEmptyMessage({ ...missing, availability }, true)).toBe(`Transcript ${availability}.`);
+  });
+
+  it("does not mask a read error behind live waiting", () => {
+    expect(getRunTranscriptEmptyMessage({ ...missing, error: new Error("Read failed") }, true))
+      .toBe("Transcript unavailable: Read failed");
+  });
+
+  it("preserves pending, loading, and ordinary terminal-empty copy", () => {
+    expect(getRunTranscriptEmptyMessage({ ...missing, availability: "pending" }, false))
+      .toBe("Waiting for transcript...");
+    expect(getRunTranscriptEmptyMessage({ ...missing, availability: "available", loading: true }, false))
+      .toBe("Waiting for transcript...");
+    expect(getRunTranscriptEmptyMessage({ ...missing, availability: "available" }, false))
+      .toBe("No transcript for this run.");
   });
 });
 
