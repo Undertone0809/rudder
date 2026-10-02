@@ -1366,13 +1366,43 @@ export function latestContinuableInterruptedChatMessage(messages: ChatMessage[])
   return null;
 }
 
-export function canRetryFailedChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId" | "structuredPayload" | "runId">) {
+export function canRetryFailedChatMessage(message: Pick<ChatMessage, "id" | "orgId" | "conversationId" | "role" | "kind" | "status" | "chatTurnId" | "turnVariant" | "structuredPayload" | "runId">) {
   const failure = recoverableFailureFromMessage(message);
+  const payload = message.structuredPayload;
+  const isRecord = (value: unknown): value is Record<string, unknown> => (
+    Boolean(value) && typeof value === "object" && !Array.isArray(value)
+  );
+  const rawFailure = isRecord(payload)
+    ? payload.recoverableFailure
+    : null;
+  const failureRecord = isRecord(rawFailure) ? rawFailure : null;
+  const dispatchEvidence = failureRecord && isRecord(failureRecord.dispatchEvidence)
+    ? failureRecord.dispatchEvidence
+    : null;
+  const hasVerifiedPreGenerationEvidence = Boolean(failureRecord && dispatchEvidence
+    && failureRecord.recoverable === true
+    && failureRecord.retryable === true
+    && failureRecord.code === "chat_input_persisted_reply_not_started"
+    && failureRecord.phase === "pre_generation"
+    && failureRecord.action === "retry"
+    && failureRecord.runId === null
+    && message.runId == null
+    && dispatchEvidence.kind === "chat_pre_generation_not_started_v1"
+    && dispatchEvidence.originalDispatch === "not_started"
+    && dispatchEvidence.orgId === message.orgId
+    && dispatchEvidence.conversationId === message.conversationId
+    && typeof dispatchEvidence.userMessageId === "string"
+    && dispatchEvidence.userMessageId.length > 0
+    && typeof dispatchEvidence.userId === "string"
+    && dispatchEvidence.userId.length > 0
+    && dispatchEvidence.chatTurnId === message.chatTurnId
+    && dispatchEvidence.turnVariant === message.turnVariant);
   return failure?.retryable !== false
     && message.role === "assistant"
     && message.kind === "message"
     && message.status === "failed"
-    && Boolean(message.chatTurnId);
+    && Boolean(message.chatTurnId)
+    && (Boolean(message.runId) || Boolean(failure?.runId) || hasVerifiedPreGenerationEvidence);
 }
 
 export function canRefreshAssistantChatMessage(message: Pick<ChatMessage, "role" | "kind" | "status" | "chatTurnId">) {

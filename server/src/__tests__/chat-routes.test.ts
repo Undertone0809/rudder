@@ -12,6 +12,7 @@ import { waitForChatDeletionQuiescence } from "../routes/chats.deletion.js";
 import { chatRoutes } from "../routes/chats.js";
 import { createChatStreamGenerationOwner, persistChatStreamGenerationTerminal } from "../routes/chats.stream-generation-owner.js";
 import { claimChatGeneration, clearActiveChatGenerationsForTest, createChatRuntimeControlCoordinator, getActiveChatGeneration, hasActiveChatGeneration } from "../services/chat-generation-locks.js";
+import { chatMessageMutationFingerprint } from "../services/chat-message-mutation-fingerprint.js";
 import { chatRuntimeSensitiveInputBroker } from "../services/chat-runtime-sensitive-input.js";
 import { CHAT_TITLE_PROMPT_TOKEN_LIMIT, countChatTitlePromptTokens } from "../services/title-generation.js";
 
@@ -2553,6 +2554,118 @@ describe("chat routes", { retry: 2 }, () => {
     expect(events[0]).toEqual(expect.objectContaining({ type: "ack", conversation: expect.objectContaining({ id: "chat-1" }), userMessage: expect.objectContaining({ id: "message-user" }) }));
     expect(events[1]).toEqual(expect.objectContaining({ type: "error", messageId: "message-failed" }));
     expect(mockChatService.addMessage).toHaveBeenCalledWith("chat-1", expect.objectContaining({ role: "assistant", status: "failed" }));
+  });
+
+  it("persists a retryable, explicitly undispatched failure after the user message commits", async () => {
+    const conversation = createConversation();
+    const userMessage = {
+      ...createMessage("message-user-persisted", "user", "message", "Save before reply"),
+      chatTurnId: "10000000-0000-4000-8000-000000000077",
+      turnVariant: 3,
+    };
+    const failedMessage = {
+      ...createMessage("message-pregeneration-failed", "assistant", "message", "Your input was saved, but the reply did not start."),
+      chatTurnId: userMessage.chatTurnId,
+      turnVariant: userMessage.turnVariant,
+      status: "failed",
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_input_persisted_reply_not_started",
+          message: "Your input was saved, but the reply did not start.",
+          phase: "pre_generation",
+          action: "retry",
+          runId: null,
+          dispatchEvidence: {
+            kind: "chat_pre_generation_not_started_v1",
+            originalDispatch: "not_started",
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            userId: "user-1",
+            userMessageId: userMessage.id,
+            chatTurnId: userMessage.chatTurnId,
+            turnVariant: userMessage.turnVariant,
+          },
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.getMessage.mockResolvedValueOnce(userMessage);
+    const mutationFingerprint = chatMessageMutationFingerprint({
+      body: userMessage.body,
+      editUserMessageId: null,
+      inlineAnnotationsProvided: false,
+      modelOverride: null,
+      effortOverride: null,
+      files: [],
+    });
+    mockChatService.getUserMessageMutationByClientMutationId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ message: userMessage, fingerprint: mutationFingerprint });
+    mockChatService.listMessages.mockResolvedValueOnce([userMessage]);
+    mockChatService.addMessage.mockResolvedValueOnce(failedMessage);
+    mockLogActivity.mockRejectedValueOnce(new Error("post-commit activity write failed"));
+
+    const send = () => request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: userMessage.body, clientMutationId: "persisted-before-generation" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    const firstResponse = await send();
+    expect(firstResponse.status).toBe(201);
+    const firstEvents = String(firstResponse.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(firstEvents).toEqual([
+      expect.objectContaining({ type: "ack", userMessage: expect.objectContaining({ id: userMessage.id }) }),
+      expect.objectContaining({ type: "error", messageId: failedMessage.id, error: failedMessage.body }),
+    ]);
+    expect(mockChatService.getMessage).toHaveBeenCalledWith(conversation.id, userMessage.id);
+    expect(mockChatService.addMessage).toHaveBeenCalledWith(conversation.id, expect.objectContaining({
+      orgId: conversation.orgId,
+      role: "assistant",
+      status: "failed",
+      runId: null,
+      chatTurnId: userMessage.chatTurnId,
+      turnVariant: userMessage.turnVariant,
+      structuredPayload: expect.objectContaining({
+        recoverableFailure: expect.objectContaining({
+          phase: "pre_generation",
+          runId: null,
+          dispatchEvidence: expect.objectContaining({
+            originalDispatch: "not_started",
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            userId: "user-1",
+            userMessageId: userMessage.id,
+            chatTurnId: userMessage.chatTurnId,
+            turnVariant: userMessage.turnVariant,
+          }),
+        }),
+      }),
+    }));
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+
+    mockChatService.getUserMessageMutationByClientMutationId.mockResolvedValueOnce({
+      message: userMessage,
+      fingerprint: mutationFingerprint,
+      failure: failedMessage,
+    });
+    const replayResponse = await send();
+    expect(replayResponse.status).toBe(200);
+    expect(String(replayResponse.body).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({ type: "ack", userMessage: expect.objectContaining({ id: userMessage.id }) }),
+      expect.objectContaining({ type: "final", messages: [] }),
+    ]);
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
   });
 
   it("keeps a non-first-turn startup failure visible when the same send mutation is retried", async () => {
@@ -7298,6 +7411,141 @@ describe("chat routes", { retry: 2 }, () => {
     );
   });
 
+  it("blocks retry for a runless historical failure without explicit no-dispatch evidence", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = createMessage(
+      "10000000-0000-4000-8000-000000000211",
+      "user",
+      "message",
+      "Do not infer recovery",
+    );
+    const failedAssistantMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000212",
+        "assistant",
+        "message",
+        "An old failure without dispatch evidence",
+      ),
+      status: "failed",
+      runId: null,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "legacy_failure",
+          message: "An old failure without dispatch evidence",
+          runId: null,
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, failedAssistantMessage]);
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-unverified-legacy-failure",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: { code: "chat_retry_dispatch_unverified" },
+    });
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+    expect(mockChatAssistantService.streamChatAssistantReply).not.toHaveBeenCalled();
+  });
+
+  it("rejects retry when the source turn has already advanced to a newer variant", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000221", "user", "message", "Older variant"),
+      supersededAt: new Date("2026-10-01T00:00:00.000Z"),
+    };
+    const currentUserMessage = {
+      ...createMessage("10000000-0000-4000-8000-000000000222", "user", "message", "Current variant"),
+      turnVariant: 1,
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, currentUserMessage]);
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-superseded-variant",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: { code: "chat_retry_source_not_current" },
+    });
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+  });
+
+  it("blocks a verified no-dispatch retry while a chat generation is active", async () => {
+    const conversation = createConversation();
+    const sourceUserMessage = createMessage(
+      "10000000-0000-4000-8000-000000000231",
+      "user",
+      "message",
+      "Retry only when idle",
+    );
+    const failedAssistantMessage = {
+      ...createMessage(
+        "10000000-0000-4000-8000-000000000232",
+        "assistant",
+        "message",
+        "Your input was saved, but the reply did not start.",
+      ),
+      status: "failed",
+      runId: null,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: true,
+          retryable: true,
+          code: "chat_input_persisted_reply_not_started",
+          phase: "pre_generation",
+          action: "retry",
+          runId: null,
+          dispatchEvidence: {
+            kind: "chat_pre_generation_not_started_v1",
+            originalDispatch: "not_started",
+            orgId: conversation.orgId,
+            conversationId: conversation.id,
+            userId: "user-1",
+            userMessageId: sourceUserMessage.id,
+            chatTurnId: sourceUserMessage.chatTurnId,
+            turnVariant: sourceUserMessage.turnVariant,
+          },
+        },
+      },
+    };
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([sourceUserMessage, failedAssistantMessage]);
+    mockChatService.getLatestActiveGeneration.mockResolvedValue({ id: "generation-active" });
+
+    const response = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({
+        body: sourceUserMessage.body,
+        editUserMessageId: sourceUserMessage.id,
+        clientMutationId: "retry-while-active",
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      details: { code: "chat_retry_generation_active" },
+    });
+    expect(mockChatService.getLatestActiveGeneration).toHaveBeenCalledWith(conversation.id);
+    expect(mockChatService.addUserChatMessage).not.toHaveBeenCalled();
+    expect(mockChatService.createGeneration).not.toHaveBeenCalled();
+  });
+
   it("blocks a refreshed retry when the linked Run still has unknown provider acceptance", async () => {
     const conversation = createConversation();
     const sourceUserMessage = createMessage(
@@ -7401,6 +7649,7 @@ describe("chat routes", { retry: 2 }, () => {
     mockChatService.getById.mockResolvedValue(conversation);
     mockChatAgentRuns.getSubmissionState.mockResolvedValue("rejected");
     mockChatService.addUserChatMessage.mockResolvedValueOnce(retryUserMessage);
+    mockChatService.listMessages.mockResolvedValueOnce([originalUserMessage, priorFailedMessage]);
     mockChatService.listMessages.mockResolvedValue([
       originalUserMessage,
       priorFailedMessage,

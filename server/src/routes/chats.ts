@@ -59,6 +59,7 @@ import {
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import { chatInlineAnnotationService } from "../services/chat-inline-annotations.js";
 import { chatSteerMessageService } from "../services/chat-steer-messages.js";
+import { hasChatPreGenerationNotStartedEvidence } from "../services/chat-pre-generation-failure.js";
 import {
   buildChatTitlePromptFromMessages,
   chatTitleGenerationService,
@@ -403,17 +404,35 @@ export function chatRoutes(
   async function assertChatEditSourceSubmissionResolved(
     conversation: ChatConversation,
     editUserMessageId: string | null | undefined,
+    expectedUserId?: string | null,
   ) {
     if (!editUserMessageId) return;
     const messages = await svc.listMessages(conversation.id, { includeTranscript: false }) as ChatMessage[];
     const source = messages.find((message) =>
       message.id === editUserMessageId
       && message.role === "user"
-      && message.kind === "message",
+      && message.kind === "message"
+      && message.orgId === conversation.orgId
+      && message.conversationId === conversation.id,
     );
     if (!source?.chatTurnId) return;
 
+    const currentUserVariants = messages.filter((message) => (
+      message.role === "user"
+      && message.kind === "message"
+      && message.orgId === conversation.orgId
+      && message.conversationId === conversation.id
+      && message.chatTurnId === source.chatTurnId
+      && !message.supersededAt
+    ));
+    if (source.supersededAt || currentUserVariants.length !== 1 || currentUserVariants[0]?.id !== source.id) {
+      throw conflict("This chat turn has already moved to a newer message variant", {
+        code: "chat_retry_source_not_current",
+      });
+    }
+
     const runIds = new Set<string>();
+    let hasRetryCandidate = false;
     for (const message of messages) {
       if (
         message.role !== "assistant"
@@ -422,6 +441,7 @@ export function chatRoutes(
         || message.chatTurnId !== source.chatTurnId
         || message.turnVariant !== source.turnVariant
       ) continue;
+      hasRetryCandidate = true;
       const payload = message.structuredPayload;
       const failure = payload && typeof payload === "object" && !Array.isArray(payload)
         ? payload.recoverableFailure
@@ -434,7 +454,20 @@ export function chatRoutes(
         : typeof failureRunId === "string" && failureRunId.trim()
           ? failureRunId.trim()
           : null;
-      if (runId) runIds.add(runId);
+      if (runId) {
+        runIds.add(runId);
+      } else if (!hasChatPreGenerationNotStartedEvidence(message, source, expectedUserId)) {
+        throw conflict(
+          "Provider dispatch for this failed chat response could not be verified. Inspect it before retrying this input.",
+          { code: "chat_retry_dispatch_unverified" },
+        );
+      }
+    }
+
+    if (hasRetryCandidate && await svc.getLatestActiveGeneration(conversation.id)) {
+      throw conflict("A chat response is already active. Wait for it to finish before retrying this input.", {
+        code: "chat_retry_generation_active",
+      });
     }
 
     for (const runId of runIds) {

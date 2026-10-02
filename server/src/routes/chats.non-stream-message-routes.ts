@@ -131,6 +131,7 @@ export function registerChatNonStreamMessageRoutes(ctx: ChatNonStreamMessageRout
       await assertChatEditSourceSubmissionResolved(
         conversation as ChatConversation,
         req.body.editUserMessageId ?? null,
+        req.actor.type === "board" ? req.actor.userId ?? null : null,
       );
 
       const preparedAnnotations = inlineAnnotationsProvided && !deferAcceptedSideChatFirstInputReplay

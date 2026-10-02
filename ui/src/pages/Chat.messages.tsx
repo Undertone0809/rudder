@@ -2612,9 +2612,11 @@ export function ChatMessageItem({
   );
   const recoverableFailure = displayedState === "failed" ? recoverableFailureFromMessage(message) : null;
   const canRetryFailed = Boolean(onRetryFailedMessage) && canRetryFailedChatMessage(message);
-  const failedMessageTitle = recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
-    ? "Runtime unavailable"
-    : "Response failed";
+  const failedMessageTitle = recoverableFailure?.phase === "pre_generation"
+    ? "Input saved; reply not started"
+    : recoverableFailure?.phase === "runtime_boot" || recoverableFailure?.action === "repair_runtime"
+      ? "Runtime unavailable"
+      : "Response failed";
   const isEmptyStreamingAssistant = !isUser
     && (draftState !== undefined || displayedState === "streaming")
     && (streamedAssistantBody ?? message.body).trim().length === 0;
