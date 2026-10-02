@@ -1223,9 +1223,9 @@ export function chatRoutes(
           recoverable: false,
           retryable: false,
           code,
-          message: recoverableFailureMessage(code),
+          message: recoverableFailureMessage(code, runId),
           runId: runId ?? null,
-          action: "inspect_run",
+          ...(runId ? { action: "inspect_run" } : {}),
         },
       };
     }
@@ -1233,7 +1233,7 @@ export function chatRoutes(
     const code = error.errorCode ?? "chat_runtime_exception";
     const unknownForkAcceptance = code === "native_fork_acceptance_unknown";
     const message = unknownForkAcceptance
-      ? recoverableFailureMessage(code)
+      ? recoverableFailureMessage(code, runId)
       : error.userMessage ?? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE;
     const retryable = !unknownForkAcceptance && error.retryable !== false;
     const failure: Record<string, unknown> = {
@@ -1245,8 +1245,11 @@ export function chatRoutes(
     if (!retryable) failure.retryable = false;
     if (error.partialBodyUserVisible) failure.partialBodyUserVisible = true;
     if (error.failurePhase) failure.phase = error.failurePhase;
-    if (unknownForkAcceptance) failure.action = "inspect_run";
-    else if (error.action) failure.action = error.action;
+    if (unknownForkAcceptance) {
+      if (runId) failure.action = "inspect_run";
+    } else if (error.action) {
+      failure.action = error.action;
+    }
     if (error.providerFailure) failure.providerFailure = error.providerFailure;
     return {
       recoverableFailure: failure,

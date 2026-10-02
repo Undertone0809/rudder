@@ -39,6 +39,7 @@ import {
 } from "../services/chat-generation-locks.js";
 import { hashChatGenerationBody } from "../services/chat-generation-protocol.js";
 import { NativeForkAcceptanceUnknownError } from "../services/runtime-kernel/native-fork-intent.js";
+import { recoverableFailureMessage } from "../services/chat-assistant.contracts.js";
 import {
   chatPreGenerationFailurePayload,
   CHAT_PRE_GENERATION_FAILURE_MESSAGE,
@@ -1343,17 +1344,20 @@ export function registerChatStreamRoutes(ctx: ChatStreamRouteContext) {
       }, "chat assistant stream failed");
       if (!clientClosed) {
         const recoverableError = err instanceof ChatAssistantStreamError ? err : null;
+        const errorCode = recoverableError?.errorCode ?? (
+          err instanceof NativeForkAcceptanceUnknownError
+            ? "native_fork_acceptance_unknown"
+            : "chat_runtime_exception"
+        );
         const failureMessage = recoverableFailureBody(failurePayload);
         writeStreamEvent(res, {
           type: "error",
-          error: recoverableError?.userMessage ?? failureMessage ?? (
-            recoverableError ? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE : CHAT_ASSISTANT_USER_ERROR_MESSAGE
-          ),
-          errorCode: recoverableError?.errorCode ?? (
-            err instanceof NativeForkAcceptanceUnknownError
-              ? "native_fork_acceptance_unknown"
-              : "chat_runtime_exception"
-          ),
+          error: errorCode === "native_fork_acceptance_unknown"
+            ? recoverableFailureMessage(errorCode, activeChatRunId)
+            : recoverableError?.userMessage ?? failureMessage ?? (
+              recoverableError ? CHAT_ASSISTANT_RECOVERABLE_FAILURE_FALLBACK_MESSAGE : CHAT_ASSISTANT_USER_ERROR_MESSAGE
+            ),
+          errorCode,
           runId: activeChatRunId,
           messageId: failedMessage?.id ?? null,
         });

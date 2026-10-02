@@ -365,6 +365,9 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             providerBinding: { ...providerBinding, id: targetBinding.id },
             signal: input.abortSignal,
           });
+          if (outcome.status === "unknown") {
+            throw new NativeForkAcceptanceUnknownError(outcome.reference, outcome.reason);
+          }
           if (outcome.status !== "accepted") {
             throw new Error(`Native Side Chat fork ${outcome.status}; reconciliation is required before retry`);
           }
@@ -585,7 +588,10 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             outcome: "failed",
             recoverable: !unknownForkAcceptance,
             fallbackEnvelope: true,
-            ...(unknownForkAcceptance ? { retryable: false, action: "inspect_run" } : {}),
+            ...(unknownForkAcceptance ? {
+              retryable: false,
+              ...(runId ? { action: "inspect_run" } : {}),
+            } : {}),
           },
         };
       },
@@ -1476,7 +1482,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         {
           errorCode: unknownForkAcceptance ? "native_fork_acceptance_unknown" : "chat_runtime_exception",
           partialBodyUserVisible: false,
-          ...(unknownForkAcceptance ? { retryable: false, action: "inspect_run" } : {}),
+          ...(unknownForkAcceptance ? {
+            userMessage: recoverableFailureMessage("native_fork_acceptance_unknown", runId),
+            retryable: false,
+            ...(runId ? { action: "inspect_run" } : {}),
+          } : {}),
         },
       );
     } finally {

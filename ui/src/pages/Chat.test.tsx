@@ -80,7 +80,7 @@ import {
   withOptimisticOutgoingMessage,
   withOptimisticPlanMode,
 } from "./Chat";
-import { mergeMessengerThreadSummaries } from "./Chat.parts";
+import { mergeMessengerThreadSummaries, recoverableFailureFromMessage } from "./Chat.parts";
 
 vi.mock("@/lib/router", () => ({
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
@@ -1761,13 +1761,17 @@ describe("failed chat retry", () => {
     { label: "with a Run ID", runId: "run-native-fork-unknown" },
     { label: "without a Run ID", runId: null },
   ])("keeps persisted unknown native-fork failures non-retryable after refresh $label", ({ runId }) => {
+    const legacyGenericCopy = "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
+    const safeCopy = runId
+      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
+      : "This Side Chat fork has an unknown outcome. Do not retry this fork. Ask an operator to reconcile the fork status before sending more input.";
     const payload = {
       recoverableFailure: {
-        recoverable: false,
-        retryable: false,
+        recoverable: true,
+        retryable: true,
         code: "native_fork_acceptance_unknown",
-        action: "inspect_run",
-        message: "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.",
+        action: "retry",
+        message: legacyGenericCopy,
         runId,
       },
     };
@@ -1775,7 +1779,7 @@ describe("failed chat retry", () => {
       role: "assistant",
       kind: "message",
       status: "failed",
-      body: payload.recoverableFailure.message,
+      body: legacyGenericCopy,
       chatTurnId: "turn-native-fork-unknown",
       runId,
       structuredPayload: JSON.parse(JSON.stringify(payload)),
@@ -1783,10 +1787,16 @@ describe("failed chat retry", () => {
     const html = renderChatMessageItem(refreshedMessage);
 
     expect(canRetryFailedChatMessage(refreshedMessage)).toBe(false);
-    expect(html).toContain("Inspect and reconcile the Run");
+    expect(html).toContain(safeCopy);
     expect(html).toContain("Do not retry this fork");
-    expect(html).not.toContain("retry when ready");
+    expect(html).not.toContain(legacyGenericCopy);
     expect(html).not.toContain(">Retry</button>");
+    if (runId) {
+      expect(recoverableFailureFromMessage(refreshedMessage)).toMatchObject({ action: "inspect_run" });
+    } else {
+      expect(html).not.toContain("Inspect and reconcile the Run");
+      expect(recoverableFailureFromMessage(refreshedMessage)).toMatchObject({ action: null });
+    }
   });
 
   it("fails closed by unknown-fork code even if stale payload says retryable", () => {
@@ -1801,6 +1811,8 @@ describe("failed chat retry", () => {
           recoverable: true,
           retryable: true,
           code: "native_fork_acceptance_unknown",
+          action: "retry",
+          message: "The assistant reply could not be completed; retry when ready.",
           runId: "run-native-fork-unknown",
         },
       },

@@ -1254,6 +1254,40 @@ describe("chatAssistantService operator profile prompt injection", () => {
     expect(mockAdapter.execute.mock.calls.at(-1)?.[0].runtime?.sessionId).toBe("child-thread");
   });
 
+  it("preserves an existing unknown native-fork intent without dispatching another fork", async () => {
+    const selector = { kind: "codex_turn", threadId: "parent-thread", turnId: "selected-turn" };
+    const sourceBinding = { ...mockRuntimeBinding, id: "parent-binding", conversationId: "parent-chat", workspaceBindingId: process.cwd() };
+    mockForkSource.mockResolvedValue({ sourceConversationId: "parent-chat", sourceMessageId: "parent-answer",
+      sourceRunId: "parent-run", sourceSpanId: "parent-span", sourceBoundaryRef: "selected-turn", selectorJson: selector,
+      sourceBinding, sourceProviderProfile: { runtimeType: "codex_local" },
+      session: { sessionId: "parent-thread", sessionParams: { threadId: "parent-thread" }, sessionDisplayId: "parent-thread" } });
+    const fork = vi.fn();
+    mockGetRuntimeDriver.mockImplementation(((_runtimeType: string, options: any) => {
+      const driver = createChatTestRuntimeDriver(options);
+      return { ...driver, capabilities: { ...driver.capabilities, fork: { status: "supported", reason: "profile-bound fixture" } }, fork };
+    }) as any);
+    const reference = { intentId: "unknown-intent", orgId: "org-1", bindingId: "target-binding", segmentId: "target-segment" };
+    mockForkIntentExecution.mockResolvedValueOnce({
+      status: "unknown",
+      shouldFork: false,
+      retryAllowed: false,
+      intent: {} as never,
+      reference,
+      reason: "Provider fork acceptance is unknown; reconciliation is required before retry.",
+    });
+
+    await expect(chatAssistantService({} as any).generateChatAssistantReply({
+      conversation: makeConversation({ conversationKind: "main", forkedFromConversationId: "parent-chat", forkedFromMessageId: "parent-answer" }),
+      messages: makeMessages(),
+      contextLinks: [],
+      operatorProfile: null,
+    })).rejects.toBeInstanceOf(NativeForkAcceptanceUnknownError);
+
+    expect(mockForkIntentExecution).toHaveBeenCalledOnce();
+    expect(fork).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it("classifies a NativeForkAcceptanceUnknownError caught during runtime execution as non-retryable", async () => {
     const svc = chatAssistantService({} as any);
     mockAdapter.execute.mockRejectedValueOnce(new NativeForkAcceptanceUnknownError(

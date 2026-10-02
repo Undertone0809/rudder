@@ -1439,14 +1439,16 @@ export function recoverableFailureFromMessage(
   const code = typeof candidate.code === "string" && candidate.code.trim()
     ? candidate.code.trim()
     : "chat_runtime_exception";
-  const detailMessage = typeof candidate.message === "string" && candidate.message.trim()
-    ? candidate.message.trim()
-    : code === "native_fork_acceptance_unknown"
-      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
-      : "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
   const runId = typeof candidate.runId === "string" && candidate.runId.trim()
     ? candidate.runId.trim()
     : message.runId ?? null;
+  const detailMessage = code === "native_fork_acceptance_unknown"
+    ? runId
+      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
+      : "This Side Chat fork has an unknown outcome. Do not retry this fork. Ask an operator to reconcile the fork status before sending more input."
+    : typeof candidate.message === "string" && candidate.message.trim()
+      ? candidate.message.trim()
+      : "The assistant reply could not be completed. Rudder saved this attempt for diagnostics; retry when ready.";
   const retryable = typeof candidate.retryable === "boolean"
     ? candidate.retryable
     : typeof candidate.recoverable === "boolean"
@@ -1455,9 +1457,11 @@ export function recoverableFailureFromMessage(
   const phase = typeof candidate.phase === "string" && candidate.phase.trim()
     ? candidate.phase.trim()
     : null;
-  const action = typeof candidate.action === "string" && candidate.action.trim()
-    ? candidate.action.trim()
-    : null;
+  const action = code === "native_fork_acceptance_unknown"
+    ? runId ? "inspect_run" : null
+    : typeof candidate.action === "string" && candidate.action.trim()
+      ? candidate.action.trim()
+      : null;
   return { code, message: detailMessage, runId, retryable, phase, action,
     partialBodyUserVisible: candidate.partialBodyUserVisible === true };
 }

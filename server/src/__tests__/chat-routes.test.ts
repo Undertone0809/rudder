@@ -8994,7 +8994,9 @@ describe("chat routes", { retry: 2 }, () => {
   ])("persists unknown native-fork failures as non-retryable $label", async ({ runId, wrapped }) => {
     const conversation = createConversation();
     const userMessage = createMessage("message-user", "user", "message", "Open a Side Chat");
-    const safeCopy = "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.";
+    const safeCopy = runId
+      ? "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork."
+      : "This Side Chat fork has an unknown outcome. Do not retry this fork. Ask an operator to reconcile the fork status before sending more input.";
     const failedMessage = {
       ...createMessage("message-assistant", "assistant", "message", safeCopy),
       status: "failed",
@@ -9005,7 +9007,7 @@ describe("chat routes", { retry: 2 }, () => {
           retryable: false,
           code: "native_fork_acceptance_unknown",
           message: safeCopy,
-          action: "inspect_run",
+          ...(runId ? { action: "inspect_run" } : {}),
           runId,
         },
       },
@@ -9048,6 +9050,85 @@ describe("chat routes", { retry: 2 }, () => {
       runId,
       structuredPayload: failedMessage.structuredPayload,
     }));
+    const persistedInput = mockChatService.addMessage.mock.calls.at(-1)?.[1];
+    expect(persistedInput).toMatchObject({
+      status: "failed",
+      body: safeCopy,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code: "native_fork_acceptance_unknown",
+          message: safeCopy,
+          runId,
+        },
+      },
+    });
+    if (runId) {
+      expect(persistedInput?.structuredPayload).toMatchObject({ recoverableFailure: { action: "inspect_run" } });
+    } else {
+      expect(persistedInput?.structuredPayload?.recoverableFailure).not.toHaveProperty("action");
+      expect(safeCopy).not.toContain("Run");
+    }
+  });
+
+  it("overrides legacy retry copy in an unknown native-fork stream error", async () => {
+    const conversation = createConversation();
+    const userMessage = createMessage("message-user", "user", "message", "Open a Side Chat");
+    const progressMessage = { ...createMessage("message-assistant", "assistant", "message", ""), status: "streaming" };
+    const safeCopy = "This Side Chat fork has an unknown outcome. Inspect and reconcile the Run before sending more input. Do not retry this fork.";
+    const runId = "native-fork-stream-run";
+
+    mockChatService.getById.mockResolvedValue(conversation);
+    mockChatService.listMessages.mockResolvedValue([userMessage]);
+    mockChatService.addUserChatMessage.mockResolvedValueOnce(userMessage);
+    mockChatService.addMessage.mockResolvedValueOnce(progressMessage);
+    mockChatAssistantService.streamChatAssistantReply.mockImplementation(async (input) => {
+      await input.onAssistantState?.("streaming");
+      await input.onRunCreated?.(runId);
+      const { ChatAssistantStreamError } = await import("../services/chat-assistant.js");
+      throw new ChatAssistantStreamError("fork acceptance is unknown", "", [], {
+        errorCode: "native_fork_acceptance_unknown",
+        userMessage: "The assistant hit a system-level issue; retry when ready.",
+        retryable: true,
+        action: "retry",
+      });
+    });
+
+    const res = await request(createApp())
+      .post("/api/chats/chat-1/messages/stream")
+      .send({ body: "Open a Side Chat" })
+      .buffer(true)
+      .parse((response, callback) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("end", () => callback(null, text));
+      });
+
+    expect(res.status).toBe(201);
+    const events = String(res.body).trim().split("\n").map((line) => JSON.parse(line));
+    expect(events.at(-1)).toMatchObject({
+      type: "error",
+      error: safeCopy,
+      errorCode: "native_fork_acceptance_unknown",
+      runId,
+    });
+    const persistedFailureInput = mockChatService.addMessage.mock.calls.at(-1)?.[1];
+    expect(persistedFailureInput).toMatchObject({
+      status: "failed",
+      body: safeCopy,
+      structuredPayload: {
+        recoverableFailure: {
+          recoverable: false,
+          retryable: false,
+          code: "native_fork_acceptance_unknown",
+          message: safeCopy,
+          runId,
+          action: "inspect_run",
+        },
+      },
+    });
   });
 
   it("does not publish inline-visual backing HTML from a failed stream", async () => {
