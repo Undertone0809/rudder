@@ -73,7 +73,7 @@ function assertPublishedNative(projection: Projection, userId: string, assistant
 
 // Protocol-fixture E2E through public Chat/Run/Reader + rendered Run Detail.
 // No API interception, DB mutation, real Codex inference, or retained-log fallback.
-// Packet v2: native completion stays unresolved while canonical object-backed
+// Packet v3: native completion stays unresolved while canonical object-backed
 // diagnostics may already be available. Never suppress those diagnostics.
 test("native Run transcript preserves available diagnostics until exact native publication and terminal reload", async ({ page, context }, testInfo) => {
   test.setTimeout(120_000);
@@ -137,18 +137,34 @@ test("native Run transcript preserves available diagnostics until exact native p
       && response.url().includes(`/api/run-intelligence/runs/${runId}/transcript`));
     const initialUiRead = uiRead();
     await runPage.goto(detailUrl);
-    expect((await initialUiRead).ok()).toBe(true);
+    const initialUiResponse = await initialUiRead;
+    expect(initialUiResponse.ok()).toBe(true);
+    const initialUiProjection = await initialUiResponse.json() as Projection;
     const transcript = runPage.locator(".run-detail-container");
     await expect(transcript).toBeVisible();
-    // An available diagnostic projection need not display Waiting copy.
+    const assertRenderedUnpublished = async (projection: Projection) => {
+      assertUnpublishedNative(projection);
+      // Bind the positive render oracle to this UI request, not an earlier API
+      // snapshot: canonical diagnostics may grow while native output is held.
+      if (objectRows(projection).length > 0) {
+        const count = projection.entries.length;
+        await expect(transcript.getByText(`${count} ${count === 1 ? "entry" : "entries"}`, { exact: true })).toBeVisible();
+      } else {
+        await expect(transcript.getByText("Waiting for transcript...", { exact: true })).toBeVisible();
+      }
+    };
+    await assertRenderedUnpublished(initialUiProjection);
     await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
     await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
     expect(await missingAlerts()).toEqual([]);
     await runPage.screenshot({ path: path.join(directory, "native-running-unpublished.png"), fullPage: true });
     const reloadedUiRead = uiRead();
     await runPage.reload();
-    expect((await reloadedUiRead).ok()).toBe(true);
+    const reloadedUiResponse = await reloadedUiRead;
+    expect(reloadedUiResponse.ok()).toBe(true);
+    const reloadedUiProjection = await reloadedUiResponse.json() as Projection;
     await expect(transcript).toBeVisible();
+    await assertRenderedUnpublished(reloadedUiProjection);
     const pendingReload = await readProjection();
     assertUnpublishedNative(pendingReload);
     assertObjectsPreserved(pending, pendingReload);
@@ -210,7 +226,8 @@ test("native Run transcript preserves available diagnostics until exact native p
     expect(refreshed.revision).toBe(terminal.revision);
     await runPage.screenshot({ path: path.join(directory, "native-terminal-reload.png"), fullPage: true });
     await testInfo.attach("native-publication-evidence", { body: JSON.stringify({ orgId: org.id, agentId: agent.id,
-      criteriaPacket: "native-publication-v2", runId, ready, pending, pendingReload, available, terminal, refreshed,
+      criteriaPacket: "native-publication-v3", runId, ready, pending, initialUiProjection, reloadedUiProjection,
+      pendingReload, available, terminal, refreshed,
       unresolvedNativeEvidence: { rawSpanSelectorExposed: false, publicProof: "running + unknown completeness + null completion identity + no native rows" },
       artifactDirectory: directory }), contentType: "application/json" });
   } finally {
