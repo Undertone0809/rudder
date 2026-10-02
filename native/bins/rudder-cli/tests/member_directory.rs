@@ -162,6 +162,86 @@ fn executable_uses_contract_defaults_and_human_member_format() {
 }
 
 #[test]
+fn executable_escapes_terminal_controls_in_human_page_and_preserves_json_values() {
+    let page = serde_json::json!({
+        "total": 1,
+        "items": [{
+            "name": "Ada\u{1b}[2J",
+            "type": "human",
+            "role": "operator\u{9b}31m",
+            "ref": "usr_14ff96a7",
+            "note\u{1b}]8;;https://evil.invalid\u{7}": "safe\u{0}text"
+        }],
+        "nextCursor": "opaque\u{1b}]0;spoof\u{7}\npage",
+        "hasMore": true
+    });
+
+    let (base, server) = start_server(ResponseSpec::json(200, page.clone()));
+    let output = run_cli(&base, &["--org-id", "org-1"], None);
+    let _ = server.join().expect("fixture server completes");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(
+        text(&output.stdout),
+        concat!(
+            "total=1\n",
+            "name=Ada\\u{1b}[2J type=human role=operator\\u{9b}31m ",
+            "ref=usr_14ff96a7 note\\u{1b}]8;;https://evil.invalid\\u{7}=safe\\u{0}text\n",
+            "nextCursor=opaque\\u{1b}]0;spoof\\u{7}\\u{a}page\n"
+        )
+    );
+    assert!(
+        text(&output.stdout)
+            .chars()
+            .all(|ch| !ch.is_control() || ch == '\n')
+    );
+
+    let (base, server) = start_server(ResponseSpec::json(200, page.clone()));
+    let output = run_cli(&base, &["--org-id", "org-1", "--json"], None);
+    let _ = server.join().expect("fixture server completes");
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let returned: serde_json::Value =
+        serde_json::from_str(&text(&output.stdout)).expect("JSON page remains valid");
+    assert_eq!(returned, page);
+}
+
+#[test]
+fn executable_escapes_terminal_controls_in_human_api_error_and_preserves_json_error() {
+    let body = serde_json::json!({
+        "error": "denied\u{1b}[2J\u{9b}31m\nsecond line",
+        "code": "org\u{1b}]0;spoof\u{7}",
+        "details": { "reason": "policy\u{85}violation" }
+    });
+
+    let (base, server) = start_server(ResponseSpec::json(403, body.clone()));
+    let output = run_cli(&base, &["--org-id", "org-1"], None);
+    let _ = server.join().expect("fixture server completes");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        text(&output.stderr),
+        concat!(
+            "API error 403 [org\\u{1b}]0;spoof\\u{7}]: ",
+            "denied\\u{1b}[2J\\u{9b}31m\\u{a}second line ",
+            "details={\"reason\":\"policy\\u{85}violation\"}\n"
+        )
+    );
+    assert!(
+        text(&output.stderr)
+            .chars()
+            .all(|ch| !ch.is_control() || ch == '\n')
+    );
+
+    let (base, server) = start_server(ResponseSpec::json(403, body.clone()));
+    let output = run_cli(&base, &["--org-id", "org-1", "--json"], None);
+    let _ = server.join().expect("fixture server completes");
+    assert_eq!(output.status.code(), Some(1));
+    let returned: serde_json::Value =
+        serde_json::from_str(&text(&output.stderr)).expect("JSON error envelope remains valid");
+    assert_eq!(returned["error"], body["error"]);
+    assert_eq!(returned["code"], body["code"]);
+    assert_eq!(returned["details"], body["details"]);
+}
+
+#[test]
 fn executable_uses_context_profile_for_api_org_and_environment_token() {
     let directory = tempfile::tempdir().expect("temporary context directory");
     let context_path = directory.path().join("context.json");
