@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TranscriptContinuationControls } from "./TranscriptContinuationControls";
 import {
+  agentRunTranscriptQueryKey,
   chatTranscriptEntriesForMessage,
   isAgentRunTranscriptActiveStatus,
   readLegacyChatTranscript,
@@ -152,6 +153,78 @@ afterEach(() => {
 });
 
 describe("useAgentRunTranscripts", () => {
+  it("manual refresh always reads once with production staleTime across shared consumers and remount", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
+    let reads = 0;
+    transcriptMock.mockImplementation(async id => id === "run-empty"
+      ? transitionPage("other-run") : transitionPage(`fresh-${++reads}`));
+    const other = renderProbe([{ runId: "run-empty", active: false }], queryClient);
+    const first = renderNavigationProbe("run-native", false, false, queryClient);
+    let second = renderNavigationProbe("run-native", false, false, queryClient);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(first.host.textContent).toContain("fresh-1")); });
+      expect(reads).toBe(1);
+      queryClient.setQueryData(
+        agentRunTranscriptQueryKey("run-native", null, 1),
+        queryClient.getQueryData(agentRunTranscriptQueryKey("run-native")),
+      );
+      act(() => first.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(first.host.textContent).toContain("fresh-2")); });
+      // A second hook's local generation 1 must not consume the first hook's
+      // still-fresh generation 1 page instead of performing the user's read.
+      act(() => second.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(reads).toBe(3)); });
+      await act(async () => { await vi.waitFor(() => expect(second.host.textContent).toContain("fresh-3")); });
+      expect(first.host.textContent).toContain("fresh-2");
+      act(() => second.root.unmount());
+      second = renderNavigationProbe("run-native", false, false, queryClient);
+      await act(async () => { await vi.waitFor(() => expect(second.host.textContent).toContain("fresh-1")); });
+      act(() => second.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(reads).toBe(4)); });
+      await act(async () => { await vi.waitFor(() => expect(second.host.textContent).toContain("fresh-4")); });
+      expect(transcriptMock.mock.calls.filter(([id]) => id === "run-empty")).toHaveLength(1);
+      expect(transcriptMock.mock.calls.filter(([id]) => id === "run-native").every(([, request]) => request.cursor === null)).toBe(true);
+    } finally { act(() => { first.root.unmount(); second.root.unmount(); other.root.unmount(); }); queryClient.clear(); }
+  });
+
+  it("manual refresh never joins another consumer's old generation in-flight request", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
+    let finishOld!: (page: ReturnType<typeof transitionPage>) => void;
+    let oldSignal!: AbortSignal;
+    let firstPageReads = 0;
+    transcriptMock.mockImplementation(async (_id, { cursor }, { signal }) => {
+      if (cursor) return transitionPage("old-second", "old-r", cursor);
+      if (++firstPageReads === 1) return transitionPage("old-first", "old-r", null, "old-next");
+      if (firstPageReads === 2) {
+        oldSignal = signal;
+        return new Promise(resolve => { finishOld = resolve; });
+      }
+      return transitionPage("fresh-reset", "new-r");
+    });
+    const first = renderNavigationProbe("run-native", false, false, queryClient);
+    const second = renderNavigationProbe("run-native", false, false, queryClient);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(second.host.textContent).toContain("old-first")); });
+      act(() => first.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(firstPageReads).toBe(2)); });
+      act(() => second.host.querySelector<HTMLButtonElement>("[data-testid='navigation-next']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(second.host.textContent).toContain("old-second")); });
+      act(() => second.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(firstPageReads).toBe(3)); });
+      await act(async () => { await vi.waitFor(() => expect(second.host.textContent).toContain("fresh-reset")); });
+      expect(second.host.querySelector("[data-testid='navigation-page']")?.textContent).toBe("1");
+      expect(second.host.querySelector("[data-testid='navigation-previous-count']")?.textContent).toBe("0");
+      expect(oldSignal.aborted).toBe(false);
+      await act(async () => { finishOld(transitionPage("late-first-consumer", "old-r")); });
+      await act(async () => { await vi.waitFor(() => expect(first.host.textContent).toContain("late-first-consumer")); });
+      expect(second.host.textContent).toContain("fresh-reset");
+      expect(second.host.textContent).not.toContain("late-first-consumer");
+      expect(second.host.textContent).not.toContain("old-second");
+      expect(firstPageReads).toBe(3);
+      expect(transcriptMock).toHaveBeenCalledTimes(4);
+    } finally { act(() => { first.root.unmount(); second.root.unmount(); }); queryClient.clear(); }
+  });
+
   it("explicit refresh replaces a deep page with one fresh first page and leaves lazy refetch scoped", async () => {
     let firstPages = 0;
     transcriptMock.mockImplementation(async (_id, { cursor }) => cursor

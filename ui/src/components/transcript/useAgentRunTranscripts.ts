@@ -7,7 +7,7 @@ import {
 import { chatsApi } from "@/api/chats";
 import type { ChatMessage } from "@rudderhq/shared";
 import { useQueries } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { projectReaderTranscriptEntries } from "./native-presentation";
 
 const TRANSCRIPT_POLL_INTERVAL_MS = 2_000;
@@ -91,8 +91,10 @@ export function agentRunTranscriptQueryKey(
   runId: string,
   cursor: string | null = null,
   resetGeneration = 0,
+  resetReadNonce: string | null = null,
 ) {
-  return ["agent-run-transcript", runId, cursor, resetGeneration] as const;
+  const key = ["agent-run-transcript", runId, cursor, resetGeneration] as const;
+  return resetReadNonce === null ? key : [...key, resetReadNonce] as const;
 }
 
 interface CursorNavigationState {
@@ -101,6 +103,7 @@ interface CursorNavigationState {
   droppedPreviousPages: number;
   revision: string | null;
   resetGeneration: number;
+  resetReadNonce: string | null;
 }
 
 const INITIAL_CURSOR_NAVIGATION: CursorNavigationState = {
@@ -109,6 +112,7 @@ const INITIAL_CURSOR_NAVIGATION: CursorNavigationState = {
   droppedPreviousPages: 0,
   revision: null,
   resetGeneration: 0,
+  resetReadNonce: null,
 };
 
 interface NormalizedTranscriptPage extends AgentRunTranscriptResult {
@@ -214,6 +218,8 @@ export function useAgentRunTranscripts(
   const [navigationByRunState, setNavigationByRunState] = useState<Record<string, CursorNavigationState>>({});
   const previousActiveByRun = useRef(new Map<string, boolean>());
   const manualResetGenerationByRun = useRef(new Map<string, number>());
+  const readerInstanceId = useId();
+  const manualReadSequence = useRef(0);
   const navigationForRun = useCallback(
     (runId: string) => navigationByRunState[runId] ?? INITIAL_CURSOR_NAVIGATION,
     [navigationByRunState],
@@ -224,6 +230,7 @@ export function useAgentRunTranscripts(
         target.runId,
         navigationForRun(target.runId).cursor,
         navigationForRun(target.runId).resetGeneration,
+        navigationForRun(target.runId).resetReadNonce,
       ),
       queryFn: ({ signal }) => readAgentRunTranscriptPage(
         target.runId,
@@ -281,6 +288,7 @@ export function useAgentRunTranscripts(
           next[target.runId] = {
             ...INITIAL_CURSOR_NAVIGATION,
             resetGeneration: currentNavigation.resetGeneration + 1,
+            resetReadNonce: currentNavigation.resetReadNonce,
           };
           changed = true;
           return;
@@ -304,6 +312,7 @@ export function useAgentRunTranscripts(
           next[target.runId] = {
             ...INITIAL_CURSOR_NAVIGATION,
             resetGeneration: currentNavigation.resetGeneration + 1,
+            resetReadNonce: currentNavigation.resetReadNonce,
           };
         }
         changed = true;
@@ -401,12 +410,16 @@ export function useAgentRunTranscripts(
     if (!normalizedTargets.some(target => target.runId === runId)
       || manualResetGenerationByRun.current.has(runId)) return;
     const resetGeneration = navigationForRun(runId).resetGeneration + 1;
+    // Local generation numbers can collide with a fresh shared/remounted
+    // consumer's cache. React's instance ID plus an action sequence makes this
+    // user's read independent, without invalidating another consumer's query.
+    const resetReadNonce = `${readerInstanceId}:${++manualReadSequence.current}`;
     manualResetGenerationByRun.current.set(runId, resetGeneration);
     setNavigationByRunState(current => ({
       ...current,
-      [runId]: { ...INITIAL_CURSOR_NAVIGATION, resetGeneration },
+      [runId]: { ...INITIAL_CURSOR_NAVIGATION, resetGeneration, resetReadNonce },
     }));
-  }, [navigationForRun, normalizedTargets]);
+  }, [navigationForRun, normalizedTargets, readerInstanceId]);
 
   const transcriptNavigationByRun = useMemo(() => {
     const result = new Map<string, AgentRunTranscriptNavigation>();
