@@ -10,6 +10,13 @@ pub struct PublicIngressConfig {
     pub(crate) node_upstream: String,
     pub(crate) authorization_key: String,
     pub(crate) forwarding_policy: crate::public_ingress_forwarding::ForwardingPolicy,
+    pub(crate) auth_requirement: PublicIngressAuthRequirement,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PublicIngressAuthRequirement {
+    Optional,
+    Required,
 }
 
 #[derive(Debug, Error)]
@@ -20,6 +27,8 @@ pub enum PublicIngressConfigError {
     OverlappingListener,
     #[error("public ingress authorization key must contain at least 32 bytes and no whitespace")]
     InvalidAuthorizationKey,
+    #[error("public ingress auth requirement must be 'optional' or 'required'")]
+    InvalidAuthRequirement,
 }
 
 impl PublicIngressConfig {
@@ -38,6 +47,20 @@ impl PublicIngressConfig {
                 })?;
                 let trusted = crate::optional_env("RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES")?
                     .unwrap_or_default();
+                let auth_requirement =
+                    match crate::optional_env("RUDDER_NATIVE_INGRESS_AUTH_REQUIREMENT")?
+                        .as_deref()
+                        .unwrap_or("required")
+                    {
+                        "optional" => PublicIngressAuthRequirement::Optional,
+                        "required" => PublicIngressAuthRequirement::Required,
+                        _ => {
+                            return Err(crate::ConfigError::invalid(
+                                "RUDDER_NATIVE_INGRESS_AUTH_REQUIREMENT",
+                                &PublicIngressConfigError::InvalidAuthRequirement.to_string(),
+                            ));
+                        }
+                    };
                 let policy = crate::public_ingress_forwarding::ForwardingPolicy::parse(&trusted)
                     .map_err(|message| {
                         crate::ConfigError::invalid(
@@ -48,6 +71,7 @@ impl PublicIngressConfig {
                 Self::new(listen, &upstream, &key)
                     .map(|mut config| {
                         config.forwarding_policy = policy;
+                        config.auth_requirement = auth_requirement;
                         config
                     })
                     .map(Some)
@@ -101,7 +125,16 @@ impl PublicIngressConfig {
             node_upstream: format!("http://{socket}"),
             authorization_key: authorization_key.to_owned(),
             forwarding_policy: Default::default(),
+            // Safe default for direct Rust launches that do not pass Node's
+            // deployment-derived auth policy. Integrated startup always sets
+            // the exact requirement explicitly.
+            auth_requirement: PublicIngressAuthRequirement::Required,
         })
+    }
+
+    pub fn with_auth_requirement(mut self, auth_requirement: PublicIngressAuthRequirement) -> Self {
+        self.auth_requirement = auth_requirement;
+        self
     }
 
     pub fn node_upstream(&self) -> &str {
@@ -148,5 +181,22 @@ mod tests {
         ] {
             assert!(PublicIngressConfig::new(public, "http://127.0.0.1:3101", key).is_err());
         }
+    }
+
+    #[test]
+    fn direct_public_ingress_config_defaults_to_required_auth() {
+        let config =
+            PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), "http://127.0.0.1:3101", KEY)
+                .unwrap();
+        assert_eq!(
+            config.auth_requirement,
+            PublicIngressAuthRequirement::Required
+        );
+        assert_eq!(
+            config
+                .with_auth_requirement(PublicIngressAuthRequirement::Optional)
+                .auth_requirement,
+            PublicIngressAuthRequirement::Optional
+        );
     }
 }

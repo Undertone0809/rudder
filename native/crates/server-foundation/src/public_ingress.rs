@@ -2,11 +2,28 @@
 //! The private foundation router is deliberately not mounted on this socket.
 
 use super::*;
+use crate::native_bearer_auth::{NativeBearerResolution, is_native_bearer};
 use crate::public_ingress_proxy::PublicIngressProxy;
 use crate::public_ingress_websocket::PublicIngressWebSocketProxy;
 use uuid::Uuid;
 
 const AUTH_PATH: &str = "/api/_internal/rudder-ingress/authorize-member-directory";
+
+fn bearer_token(request: &HttpRequest) -> Option<&str> {
+    let value = request
+        .headers()
+        .get(header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    if !value
+        .as_bytes()
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"bearer "))
+    {
+        return None;
+    }
+    Some(value[7..].trim())
+}
 
 #[derive(Clone)]
 struct IngressState {
@@ -154,63 +171,187 @@ async fn member_directory(
     let request_id = Uuid::new_v4().to_string();
     let nonce = Uuid::new_v4().to_string();
     let public_path = request.uri().to_string();
-    let client = awc::Client::builder()
-        .disable_redirects()
-        .timeout(Duration::from_secs(3))
-        .finish();
-    let mut auth = client
-        .get(format!("{}{}", state.config.node_upstream, AUTH_PATH))
-        .insert_header((
-            "x-rudder-ingress-auth",
-            state.config.authorization_key.as_str(),
-        ));
-    // Keep the public read method: POST would activate write-only CLI agent
-    // fences in Node auth and reject credentials accepted by the original GET.
-    // The bounded JSON body is a private fixed-loopback transport contract.
-    // Signed run context validation and organization scope still apply.
-    // Never forward a client signed envelope, forwarding assertion or key.
-    for name in [
-        "host",
-        "origin",
-        "cookie",
-        "authorization",
-        "x-rudder-agent-id",
-        "x-rudder-run-id",
-    ] {
-        if let Some(value) = request.headers().get(name) {
-            auth = auth.insert_header((name, value.clone()));
+    // For API-key GETs, Node only attaches x-rudder-run-id as context and does
+    // not validate it; the signed run-ID mismatch rule belongs to the local
+    // Agent-JWT compatibility path. The x-rudder-agent-id fence is mutation-
+    // only, so this native read intentionally does not apply either fence.
+    let native_signed = match bearer_token(&request) {
+        Some(token) if is_native_bearer(token) => {
+            match state
+                .foundation
+                .resolve_native_bearer(token, org_id.as_str())
+                .await
+            {
+                NativeBearerResolution::Authorized { actor, session_id } => {
+                    let Some(key) = state.foundation.config.actor_envelope_key.as_ref() else {
+                        return state.foundation.json_error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "actor_envelope_unconfigured",
+                        );
+                    };
+                    let now = unix_time_seconds();
+                    match ActorEnvelope::new(
+                        actor,
+                        org_id.as_str(),
+                        session_id,
+                        1,
+                        ACTOR_ENVELOPE_AUDIENCE,
+                        "GET",
+                        &public_path,
+                        MEMBER_DIRECTORY_ACTION,
+                        b"",
+                        &request_id,
+                        &nonce,
+                        now.saturating_sub(1),
+                        now.saturating_add(30),
+                    )
+                    .and_then(|unsigned| unsigned.sign_with_key(key))
+                    {
+                        Ok(envelope) => Some(envelope),
+                        Err(_) => {
+                            return state.foundation.json_error(
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                "native_auth_envelope_invalid",
+                            );
+                        }
+                    }
+                }
+                NativeBearerResolution::Unauthorized
+                    if state.config.auth_requirement == PublicIngressAuthRequirement::Optional =>
+                {
+                    // Node's optional-auth middleware starts with the local
+                    // trusted Board actor. An absent, revoked, expired, or
+                    // inactive bearer leaves that actor in place. Reproduce
+                    // that policy here directly; do not retry through Node.
+                    let Some(key) = state.foundation.config.actor_envelope_key.as_ref() else {
+                        return state.foundation.json_error(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "actor_envelope_unconfigured",
+                        );
+                    };
+                    let actor = ActorIdentity::new("user", "local-board")
+                        .expect("static local Board actor identity is valid");
+                    let now = unix_time_seconds();
+                    match ActorEnvelope::new(
+                        actor,
+                        org_id.as_str(),
+                        "local-implicit",
+                        1,
+                        ACTOR_ENVELOPE_AUDIENCE,
+                        "GET",
+                        &public_path,
+                        MEMBER_DIRECTORY_ACTION,
+                        b"",
+                        &request_id,
+                        &nonce,
+                        now.saturating_sub(1),
+                        now.saturating_add(30),
+                    )
+                    .and_then(|unsigned| unsigned.sign_with_key(key))
+                    {
+                        Ok(envelope) => Some(envelope),
+                        Err(_) => {
+                            return state.foundation.json_error(
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                "native_auth_envelope_invalid",
+                            );
+                        }
+                    }
+                }
+                NativeBearerResolution::Unauthorized => {
+                    return state
+                        .foundation
+                        .json_error(StatusCode::UNAUTHORIZED, "native_bearer_unauthorized");
+                }
+                NativeBearerResolution::Forbidden => {
+                    return state
+                        .foundation
+                        .json_error(StatusCode::FORBIDDEN, "native_bearer_forbidden");
+                }
+                NativeBearerResolution::DatabaseDisabled => {
+                    return state
+                        .foundation
+                        .json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+                }
+                NativeBearerResolution::Unavailable => {
+                    return state.foundation.json_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "native_bearer_auth_unavailable",
+                    );
+                }
+                NativeBearerResolution::Compatibility => {
+                    unreachable!("recognized native bearer cannot select the compatibility path")
+                }
+            }
         }
-    }
-    auth = auth
-        .insert_header(("x-forwarded-for", identity.client_ip.as_str()))
-        .insert_header(("x-real-ip", identity.client_ip.as_str()))
-        .insert_header(("x-forwarded-proto", identity.scheme));
-    let mut response = match auth
-        .send_json(&serde_json::json!({
-            "organizationId": org_id.as_str(), "publicPath": public_path,
-            "requestId": request_id, "nonce": nonce,
-        }))
-        .await
-    {
-        Ok(response) => response,
-        Err(_) => {
-            return state.foundation.json_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "ingress_authorization_unavailable",
-            );
-        }
+        _ => None,
     };
-    if !response.status().is_success() {
-        let status = match response.status().as_u16() {
-            401 => StatusCode::UNAUTHORIZED,
-            403 => StatusCode::FORBIDDEN,
-            _ => StatusCode::SERVICE_UNAVAILABLE,
+
+    let signed = if let Some(envelope) = native_signed {
+        match serde_json::to_value(envelope) {
+            Ok(signed) => signed,
+            Err(_) => {
+                return state.foundation.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "native_auth_envelope_invalid",
+                );
+            }
+        }
+    } else {
+        let client = awc::Client::builder()
+            .disable_redirects()
+            .timeout(Duration::from_secs(3))
+            .finish();
+        let mut auth = client
+            .get(format!("{}{}", state.config.node_upstream, AUTH_PATH))
+            .insert_header((
+                "x-rudder-ingress-auth",
+                state.config.authorization_key.as_str(),
+            ));
+        // Explicit compatibility seam for sessions, local Agent JWTs, and
+        // local-trusted/local-implicit behavior. Keep the public GET and never
+        // send client-supplied signed envelopes or forwarding claims.
+        for name in [
+            "host",
+            "origin",
+            "cookie",
+            "authorization",
+            "x-rudder-agent-id",
+            "x-rudder-run-id",
+        ] {
+            if let Some(value) = request.headers().get(name) {
+                auth = auth.insert_header((name, value.clone()));
+            }
+        }
+        auth = auth
+            .insert_header(("x-forwarded-for", identity.client_ip.as_str()))
+            .insert_header(("x-real-ip", identity.client_ip.as_str()))
+            .insert_header(("x-forwarded-proto", identity.scheme));
+        let mut response = match auth
+            .send_json(&serde_json::json!({
+                "organizationId": org_id.as_str(), "publicPath": public_path,
+                "requestId": request_id, "nonce": nonce,
+            }))
+            .await
+        {
+            Ok(response) => response,
+            Err(_) => {
+                return state.foundation.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "ingress_authorization_unavailable",
+                );
+            }
         };
-        return state
-            .foundation
-            .json_error(status, "ingress_authorization_rejected");
-    }
-    let signed: serde_json::Value =
+        if !response.status().is_success() {
+            let status = match response.status().as_u16() {
+                401 => StatusCode::UNAUTHORIZED,
+                403 => StatusCode::FORBIDDEN,
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            return state
+                .foundation
+                .json_error(status, "ingress_authorization_rejected");
+        }
         match response.json::<serde_json::Value>().limit(32 * 1024).await {
             Ok(signed) => signed,
             Err(_) => {
@@ -219,7 +360,8 @@ async fn member_directory(
                     "ingress_authorization_invalid",
                 );
             }
-        };
+        }
+    };
     let envelope: ActorEnvelope = match serde_json::from_value(signed) {
         Ok(envelope) => envelope,
         Err(_) => {
@@ -270,7 +412,7 @@ async fn member_directory(
 mod tests {
     use super::*;
     use actix_web::test;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
     const INTERNAL: &str = "fedcba9876543210fedcba9876543210";
 
@@ -429,8 +571,9 @@ mod tests {
                             );
                             assert_eq!(
                                 request.headers().get("authorization").unwrap(),
-                                "Bearer test-agent"
+                                "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0LWFnZW50In0.signature"
                             );
+                            assert_eq!(request.headers().get("cookie").unwrap(), "session=test");
                             assert!(request.headers().get(ACTOR_ENVELOPE_HEADER).is_none());
                             assert_eq!(
                                 request.headers().get("x-rudder-agent-id").unwrap(),
@@ -486,9 +629,15 @@ mod tests {
         .await;
         let request = test::TestRequest::get()
             .uri("/api/orgs/10000000-0000-0000-0000-000000000001/members/directory?query=a%2Bb&unused=1")
-            .peer_addr("192.0.2.7:4000".parse().unwrap())
-            .insert_header(("host", "public.example:3100"))
-            .insert_header(("authorization", "Bearer test-agent"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                // JWT-shaped bearer credentials stay on the legacy Node seam;
+                // this mock validates routing, not the local JWT signature.
+                .insert_header((
+                    "authorization",
+                    "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0LWFnZW50In0.signature",
+                ))
+                .insert_header(("cookie", "session=test"))
             .insert_header((ACTOR_ENVELOPE_HEADER, "untrusted-client-envelope"))
             .insert_header(("x-rudder-agent-id", "test-agent"))
             .to_request();
@@ -498,6 +647,99 @@ mod tests {
         // Authorized Rust path reached its own DB guard; no fallback to Node.
         assert!(String::from_utf8_lossy(&body).contains("database_disabled"));
         handle.stop(true).await;
+    }
+
+    #[actix_web::test]
+    async fn credential_free_member_read_keeps_local_implicit_decision_on_node_seam() {
+        let adapter_calls = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let mock = HttpServer::new({
+            let adapter_calls = adapter_calls.clone();
+            move || {
+                let adapter_calls = adapter_calls.clone();
+                App::new().route(
+                    AUTH_PATH,
+                    web::get().to(
+                        move |request: HttpRequest, body: web::Json<serde_json::Value>| {
+                            let adapter_calls = adapter_calls.clone();
+                            async move {
+                                adapter_calls.fetch_add(1, Ordering::SeqCst);
+                                assert_eq!(
+                                    request.headers().get("x-rudder-ingress-auth").unwrap(),
+                                    INTERNAL
+                                );
+                                assert!(request.headers().get("authorization").is_none());
+                                assert!(request.headers().get("cookie").is_none());
+                                assert_eq!(
+                                    request.headers().get("x-forwarded-for").unwrap(),
+                                    "192.0.2.7"
+                                );
+                                let now = unix_time_seconds();
+                                let signed = ActorEnvelope::new(
+                                    ActorIdentity::new("user", "local-board").unwrap(),
+                                    body["organizationId"].as_str().unwrap(),
+                                    "local-implicit",
+                                    1,
+                                    ACTOR_ENVELOPE_AUDIENCE,
+                                    "GET",
+                                    body["publicPath"].as_str().unwrap(),
+                                    MEMBER_DIRECTORY_ACTION,
+                                    b"",
+                                    body["requestId"].as_str().unwrap(),
+                                    body["nonce"].as_str().unwrap(),
+                                    now - 1,
+                                    now + 30,
+                                )
+                                .unwrap()
+                                .sign(SECRET.as_bytes())
+                                .unwrap();
+                                HttpResponse::Ok().json(signed)
+                            }
+                        },
+                    ),
+                )
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let handle = mock.handle();
+        let task = actix_web::rt::spawn(mock);
+        let state = web::Data::new(IngressState {
+            foundation: Arc::new(
+                AppState::new(ServerConfig {
+                    actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                    ..ServerConfig::default()
+                })
+                .unwrap(),
+            ),
+            config: PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
+                .unwrap(),
+        });
+        let app = test::init_service(App::new().app_data(state).route(
+            "/api/orgs/{org_id}/members/directory",
+            web::get().to(member_directory),
+        ))
+        .await;
+        let response = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/api/orgs/10000000-0000-0000-0000-000000000001/members/directory")
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            String::from_utf8_lossy(&test::read_body(response).await).contains("database_disabled")
+        );
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 1);
+        handle.stop(true).await;
+        task.await.unwrap().unwrap();
     }
 
     #[actix_web::test]
@@ -525,5 +767,664 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn native_bearer_database_disabled_does_not_call_node_grant_adapter() {
+        let adapter_calls = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let mock = HttpServer::new({
+            let adapter_calls = adapter_calls.clone();
+            move || {
+                let adapter_calls = adapter_calls.clone();
+                App::new().default_service(web::to(move || {
+                    let adapter_calls = adapter_calls.clone();
+                    async move {
+                        adapter_calls.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::Ok().finish()
+                    }
+                }))
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let handle = mock.handle();
+        let task = actix_web::rt::spawn(mock);
+
+        for auth_requirement in [
+            PublicIngressAuthRequirement::Required,
+            PublicIngressAuthRequirement::Optional,
+        ] {
+            let state = web::Data::new(IngressState {
+                foundation: Arc::new(
+                    AppState::new(ServerConfig {
+                        actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                        ..ServerConfig::default()
+                    })
+                    .unwrap(),
+                ),
+                config: PublicIngressConfig::new(
+                    "127.0.0.1:0".parse().unwrap(),
+                    &upstream,
+                    INTERNAL,
+                )
+                .unwrap()
+                .with_auth_requirement(auth_requirement),
+            });
+            let app = test::init_service(App::new().app_data(state).route(
+                "/api/orgs/{org_id}/members/directory",
+                web::get().to(member_directory),
+            ))
+            .await;
+            let response = test::call_service(
+                &app,
+                test::TestRequest::get()
+                    .uri("/api/orgs/10000000-0000-0000-0000-000000000001/members/directory")
+                    .peer_addr("192.0.2.7:4000".parse().unwrap())
+                    .insert_header(("host", "public.example:3100"))
+                    .insert_header(("authorization", "Bearer pcp_unknown_native_key"))
+                    .to_request(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = test::read_body(response).await;
+            assert!(String::from_utf8_lossy(&body).contains("database_disabled"));
+        }
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+
+        handle.stop(true).await;
+        task.await.unwrap().unwrap();
+    }
+
+    #[actix_web::test]
+    #[ignore = "isolated PostgreSQL transport failure case; never contacts the compatibility grant adapter"]
+    async fn native_bearer_sql_error_does_not_call_node_grant_adapter() {
+        let adapter_calls = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let mock = HttpServer::new({
+            let adapter_calls = adapter_calls.clone();
+            move || {
+                let adapter_calls = adapter_calls.clone();
+                App::new().default_service(web::to(move || {
+                    let adapter_calls = adapter_calls.clone();
+                    async move {
+                        adapter_calls.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::Ok().finish()
+                    }
+                }))
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let handle = mock.handle();
+        let task = actix_web::rt::spawn(mock);
+
+        let state = web::Data::new(IngressState {
+            foundation: Arc::new(
+                AppState::new(ServerConfig {
+                    database_url: Some(
+                        "postgres://invalid:invalid@127.0.0.1:1/native_auth_unavailable".into(),
+                    ),
+                    actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                    ..ServerConfig::default()
+                })
+                .unwrap(),
+            ),
+            config: PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
+                .unwrap(),
+        });
+        let app = test::init_service(App::new().app_data(state).route(
+            "/api/orgs/{org_id}/members/directory",
+            web::get().to(member_directory),
+        ))
+        .await;
+        let response = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/api/orgs/10000000-0000-0000-0000-000000000001/members/directory")
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", "Bearer pcp_unknown_native_key"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = test::read_body(response).await;
+        assert!(String::from_utf8_lossy(&body).contains("native_bearer_auth_unavailable"));
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+
+        handle.stop(true).await;
+        task.await.unwrap().unwrap();
+    }
+
+    #[actix_web::test]
+    #[ignore = "requires RUDDER_NATIVE_AUTH_TEST_DATABASE_URL pointing at a migrated disposable DB"]
+    async fn postgres_public_member_route_uses_native_board_key_without_node_grant() {
+        use sqlx::postgres::PgPoolOptions;
+
+        let database_url = std::env::var("RUDDER_NATIVE_AUTH_TEST_DATABASE_URL")
+            .expect("set RUDDER_NATIVE_AUTH_TEST_DATABASE_URL to a migrated disposable DB");
+        let parsed = url::Url::parse(&database_url).expect("test database URL must be valid");
+        assert!(
+            parsed
+                .path()
+                .trim_start_matches('/')
+                .to_ascii_lowercase()
+                .contains("test"),
+            "refusing auth fixtures unless database name contains 'test'"
+        );
+        let pool = PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&database_url)
+            .await
+            .expect("connect to migrated disposable database");
+        let suffix = Uuid::new_v4().simple().to_string();
+        let org_id: String = sqlx::query_scalar(
+            "INSERT INTO organizations (url_key, name, issue_prefix) VALUES ($1, $2, $3) RETURNING id::text",
+        )
+        .bind(format!("native-route-{suffix}"))
+        .bind(format!("Native route {suffix}"))
+        .bind(format!("R{}", suffix[..7].to_ascii_uppercase()))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let other_org_id: String = sqlx::query_scalar(
+            "INSERT INTO organizations (url_key, name, issue_prefix) VALUES ($1, $2, $3) RETURNING id::text",
+        )
+        .bind(format!("native-route-other-{suffix}"))
+        .bind(format!("Native route other {suffix}"))
+        .bind(format!("S{}", suffix[..7].to_ascii_uppercase()))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let user_id = format!("native-route-user-{suffix}");
+        sqlx::query(
+            r#"INSERT INTO "user" (id, name, email, created_at, updated_at)
+               VALUES ($1, 'Native Route User', $2, now(), now())"#,
+        )
+        .bind(&user_id)
+        .bind(format!("{user_id}@invalid.test"))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO organization_memberships (org_id, principal_type, principal_id, status) VALUES ($1::uuid, 'user', $2, 'active')",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let token = format!("pcp_board_{suffix}");
+        let key_id: String = sqlx::query_scalar(
+            "INSERT INTO board_api_keys (user_id, name, key_hash) VALUES ($1, 'native route test', $2) RETURNING id::text",
+        )
+        .bind(&user_id)
+        .bind(crate::native_bearer_auth::hash_token(&token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let agent_id: String = sqlx::query_scalar(
+            "INSERT INTO agents (org_id, name, status) VALUES ($1::uuid, 'Native Route Agent', 'idle') RETURNING id::text",
+        )
+        .bind(&org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let agent_token = format!("pcp_{suffix}");
+        let agent_key_id: String = sqlx::query_scalar(
+            "INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash) VALUES ($1::uuid, $2::uuid, 'native route agent test', $3) RETURNING id::text",
+        )
+        .bind(&agent_id)
+        .bind(&org_id)
+        .bind(crate::native_bearer_auth::hash_token(&agent_token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // A token hash may be present in both credential tables. The public
+        // route must retain Node's Board-key-first precedence: this Board key
+        // lacks access to `other_org_id`, while its colliding agent key owns it.
+        let collision_token = format!("pcp_board_collision_{suffix}");
+        let collision_board_key_id: String = sqlx::query_scalar(
+            "INSERT INTO board_api_keys (user_id, name, key_hash) VALUES ($1, 'native route collision board', $2) RETURNING id::text",
+        )
+        .bind(&user_id)
+        .bind(crate::native_bearer_auth::hash_token(&collision_token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let collision_agent_id: String = sqlx::query_scalar(
+            "INSERT INTO agents (org_id, name, status) VALUES ($1::uuid, 'Native Collision Agent', 'idle') RETURNING id::text",
+        )
+        .bind(&other_org_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let collision_agent_key_id: String = sqlx::query_scalar(
+            "INSERT INTO agent_api_keys (agent_id, org_id, name, key_hash) VALUES ($1::uuid, $2::uuid, 'native route collision agent', $3) RETURNING id::text",
+        )
+        .bind(&collision_agent_id)
+        .bind(&other_org_id)
+        .bind(crate::native_bearer_auth::hash_token(&collision_token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let expired_token = format!("pcp_board_expired_{suffix}");
+        let expired_key_id: String = sqlx::query_scalar(
+            "INSERT INTO board_api_keys (user_id, name, key_hash, expires_at) VALUES ($1, 'native route expired', $2, now() - interval '1 second') RETURNING id::text",
+        )
+        .bind(&user_id)
+        .bind(crate::native_bearer_auth::hash_token(&expired_token))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let adapter_calls = Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap());
+        let mock = HttpServer::new({
+            let adapter_calls = adapter_calls.clone();
+            move || {
+                let adapter_calls = adapter_calls.clone();
+                App::new().default_service(web::to(move || {
+                    let adapter_calls = adapter_calls.clone();
+                    async move {
+                        adapter_calls.fetch_add(1, Ordering::SeqCst);
+                        HttpResponse::Unauthorized().finish()
+                    }
+                }))
+            }
+        })
+        .workers(1)
+        .disable_signals()
+        .listen(listener)
+        .unwrap()
+        .run();
+        let handle = mock.handle();
+        let task = actix_web::rt::spawn(mock);
+
+        let state = web::Data::new(IngressState {
+            foundation: Arc::new(
+                AppState::new(ServerConfig {
+                    database_url: Some(database_url.clone()),
+                    actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                    ..ServerConfig::default()
+                })
+                .unwrap(),
+            ),
+            config: PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
+                .unwrap(),
+        });
+        let app = test::init_service(App::new().app_data(state).route(
+            "/api/orgs/{org_id}/members/directory",
+            web::get().to(member_directory),
+        ))
+        .await;
+        let response = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {token}")))
+                .insert_header(("x-rudder-run-id", "caller-run-context"))
+                // GET intentionally does not apply mutation-only agent ID fences.
+                .insert_header(("x-rudder-agent-id", "unrelated-agent"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = test::read_body(response).await;
+        assert!(String::from_utf8_lossy(&body).contains("Native Route User"));
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+        let touched: bool = sqlx::query_scalar(
+            "SELECT last_used_at IS NOT NULL FROM board_api_keys WHERE id = $1::uuid",
+        )
+        .bind(&key_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(touched);
+
+        let cross_org_board = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{other_org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(cross_org_board.status(), StatusCode::FORBIDDEN);
+
+        let collision = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{other_org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {collision_token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(collision.status(), StatusCode::FORBIDDEN);
+        // If the colliding agent key had been consulted, this exact request
+        // would have been authorized for the agent's organization.
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+
+        let cross_org_agent = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{other_org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {agent_token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(cross_org_agent.status(), StatusCode::FORBIDDEN);
+
+        sqlx::query(
+            "UPDATE organization_memberships SET status = 'inactive' WHERE org_id = $1::uuid AND principal_type = 'user' AND principal_id = $2",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let inactive_membership = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(inactive_membership.status(), StatusCode::FORBIDDEN);
+        sqlx::query(
+            "UPDATE organization_memberships SET status = 'active' WHERE org_id = $1::uuid AND principal_type = 'user' AND principal_id = $2",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let expired = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {expired_token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            !sqlx::query_scalar::<_, bool>(
+                "SELECT last_used_at IS NOT NULL FROM board_api_keys WHERE id = $1::uuid",
+            )
+            .bind(&expired_key_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        );
+
+        let unknown = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", "Bearer pcp_unknown_route_key"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+
+        let optional_state = web::Data::new(IngressState {
+            foundation: Arc::new(
+                AppState::new(ServerConfig {
+                    database_url: Some(database_url),
+                    actor_envelope_key: Some(SigningKey::new(SECRET.as_bytes()).unwrap()),
+                    ..ServerConfig::default()
+                })
+                .unwrap(),
+            ),
+            config: PublicIngressConfig::new("127.0.0.1:0".parse().unwrap(), &upstream, INTERNAL)
+                .unwrap()
+                .with_auth_requirement(PublicIngressAuthRequirement::Optional),
+        });
+        let optional_app = test::init_service(App::new().app_data(optional_state).route(
+            "/api/orgs/{org_id}/members/directory",
+            web::get().to(member_directory),
+        ))
+        .await;
+        let optional_unknown = test::call_service(
+            &optional_app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", "Bearer pcp_unknown_route_key"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(optional_unknown.status(), StatusCode::OK);
+        assert!(
+            String::from_utf8_lossy(&test::read_body(optional_unknown).await)
+                .contains("Native Route User")
+        );
+
+        let optional_valid_board = test::call_service(
+            &optional_app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(optional_valid_board.status(), StatusCode::OK);
+
+        let optional_valid_agent = test::call_service(
+            &optional_app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {agent_token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(optional_valid_agent.status(), StatusCode::OK);
+
+        let optional_out_of_scope = test::call_service(
+            &optional_app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{other_org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {collision_token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(optional_out_of_scope.status(), StatusCode::FORBIDDEN);
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+
+        let agent_response = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {agent_token}")))
+                .insert_header(("x-rudder-run-id", "api-key-run-context"))
+                .insert_header(("x-rudder-agent-id", "different-agent-on-read"))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(agent_response.status(), StatusCode::OK);
+        let _: serde_json::Value = serde_json::from_slice(&test::read_body(agent_response).await)
+            .expect("native agent API key should return the member-directory page");
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+        let agent_touched: bool = sqlx::query_scalar(
+            "SELECT last_used_at IS NOT NULL FROM agent_api_keys WHERE id = $1::uuid",
+        )
+        .bind(&agent_key_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(agent_touched);
+
+        sqlx::query(
+            "INSERT INTO instance_user_roles (user_id, role) VALUES ($1, 'instance_admin')",
+        )
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let invalid_org = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri("/api/orgs/not-a-uuid/members/directory")
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(invalid_org.status(), StatusCode::NOT_FOUND);
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+        sqlx::query("DELETE FROM instance_user_roles WHERE user_id = $1")
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("UPDATE board_api_keys SET revoked_at = now() WHERE id = $1::uuid")
+            .bind(&key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let denied = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+
+        let optional_revoked = test::call_service(
+            &optional_app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(optional_revoked.status(), StatusCode::OK);
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+
+        sqlx::query("UPDATE agents SET status = 'terminated' WHERE id = $1::uuid")
+            .bind(&agent_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let terminated_agent = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {agent_token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(terminated_agent.status(), StatusCode::UNAUTHORIZED);
+
+        sqlx::query("DELETE FROM agent_api_keys WHERE id = $1::uuid")
+            .bind(&agent_key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM agents WHERE id = $1::uuid")
+            .bind(&agent_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let deleted_agent = test::call_service(
+            &app,
+            test::TestRequest::get()
+                .uri(&format!("/api/orgs/{org_id}/members/directory"))
+                .peer_addr("192.0.2.7:4000".parse().unwrap())
+                .insert_header(("host", "public.example:3100"))
+                .insert_header(("authorization", format!("Bearer {agent_token}")))
+                .to_request(),
+        )
+        .await;
+        assert_eq!(deleted_agent.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(adapter_calls.load(Ordering::SeqCst), 0);
+
+        sqlx::query("DELETE FROM agent_api_keys WHERE id = $1::uuid")
+            .bind(&collision_agent_key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM agents WHERE id = $1::uuid")
+            .bind(&collision_agent_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM board_api_keys WHERE id IN ($1::uuid, $2::uuid, $3::uuid)")
+            .bind(&key_id)
+            .bind(&collision_board_key_id)
+            .bind(&expired_key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "DELETE FROM organization_memberships WHERE org_id = $1::uuid AND principal_id = $2",
+        )
+        .bind(&org_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(r#"DELETE FROM "user" WHERE id = $1"#)
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM organizations WHERE id IN ($1::uuid, $2::uuid)")
+            .bind(&org_id)
+            .bind(&other_org_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+        handle.stop(true).await;
+        task.await.unwrap().unwrap();
     }
 }

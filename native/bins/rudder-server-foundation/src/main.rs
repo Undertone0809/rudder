@@ -25,7 +25,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         startup["publicIngress"] = serde_json::json!({
             "boundAddr": public.bound_addr(), "publicListener": true,
             "directAuthorities": ["organization_member_directory"],
-            "authenticationAuthority": "private-node-adapter",
+            "authenticationAuthority": "native_bearer_keys_with_private_node_compatibility",
             "unmigratedHttpAuthority": "explicit-private-node-proxy",
         });
     }

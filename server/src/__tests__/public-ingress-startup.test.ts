@@ -34,12 +34,24 @@ describe("explicit public ingress startup", () => {
     const ingress = await preparePublicIngressStartup(config({ rustFoundationActorEnvelopeKey: "existing-actor-signer", rustPublicIngressTrustedProxies: "192.0.2.1,::1" }), 3100);
     expect(ingress.nodeListenHost).toBe("127.0.0.1");
     expect(ingress.nodeListenPort).toBe(3101);
-    expect(ingress.appOptions.rustPublicIngress).toMatchObject({ listenAddr: "127.0.0.1:3100", nodeUpstream: "http://127.0.0.1:3101" });
+    expect(ingress.appOptions.rustPublicIngress).toMatchObject({
+      listenAddr: "127.0.0.1:3100",
+      nodeUpstream: "http://127.0.0.1:3101",
+      authRequirement: "optional",
+    });
     expect(ingress.appOptions.rustFoundationActorEnvelopeKey).toBe("existing-actor-signer");
     expect(ingress.appOptions.rustPublicIngressAuthKey).toMatch(/^[a-f0-9]{64}$/);
     expect(ingress.appOptions.rustPublicIngress?.authorizationKey).toBe(ingress.appOptions.rustPublicIngressAuthKey);
     expect(ingress.appOptions.rustPublicIngressAuthKey).not.toBe(ingress.appOptions.rustFoundationActorEnvelopeKey);
     expect(ingress.appOptions.rustPublicIngress?.trustedProxies).toBe("192.0.2.1,::1");
+
+    const authenticatedIngress = await preparePublicIngressStartup(
+      config({ deploymentMode: "authenticated" }),
+      3100,
+    );
+    expect(authenticatedIngress.appOptions.rustPublicIngress?.authRequirement).toBe("required");
+    const localAccountIngress = await preparePublicIngressStartup(config(), 3100, "required");
+    expect(localAccountIngress.appOptions.rustPublicIngress?.authRequirement).toBe("required");
   });
 
   it("fails closed if private port selection collides with the public port", async () => {

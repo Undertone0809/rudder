@@ -1,3 +1,4 @@
+import { authRequirementForDeploymentMode, type AuthRequirement } from "@rudderhq/shared";
 import detectPort from "detect-port";
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
@@ -14,7 +15,11 @@ export function assertPublicIngressExposure(config: Config, localAccountAuth: bo
   }
 }
 
-export async function preparePublicIngressStartup(config: Config, publicPort: number) {
+export async function preparePublicIngressStartup(
+  config: Config,
+  publicPort: number,
+  authRequirement: AuthRequirement = authRequirementForDeploymentMode(config.deploymentMode),
+) {
   const enabled = config.rustPublicIngressMode === "required";
   const nodeListenHost = enabled ? "127.0.0.1" : config.host;
   const nodeListenPort = enabled ? await detectPort(publicPort === 65_535 ? 3_101 : publicPort + 1) : publicPort;
@@ -30,6 +35,7 @@ export async function preparePublicIngressStartup(config: Config, publicPort: nu
       listenAddr: `${config.host.includes(":") ? `[${config.host}]` : config.host}:${publicPort}`,
       nodeUpstream: `http://127.0.0.1:${nodeListenPort}`,
       authorizationKey,
+      authRequirement,
       trustedProxies: config.rustPublicIngressTrustedProxies,
     };
   }
