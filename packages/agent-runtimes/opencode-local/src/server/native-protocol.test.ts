@@ -1383,30 +1383,41 @@ describe("OpenCode native protocol contract", () => {
     expect(Date.now() - started).toBeGreaterThan(1_200);
   }, 10_000);
 
-  it("maps typed question inputResponse option IDs and freeform text to OpenCode labels", async () => {
+  it.each([
+    { name: "omitted custom (installed schema defaults to true)", fields: {} },
+    { name: "explicit custom true", fields: { custom: true } },
+  ])("maps typed question option IDs and freeform text with $name exactly once", async ({ fields }) => {
     const directory = await makeFixtureDirectory("rudder-opencode-native-question-");
+    const questionEvent: FixtureSseEvent = {
+      type: "question.asked",
+      properties: {
+        sessionID: "oc-session-1",
+        id: "question-1",
+        questions: [{
+          header: "Scope",
+          question: "Which scopes should be enabled?",
+          multiple: true,
+          ...fields,
+          options: [{ label: "Narrow", description: "Only the current package" }, { label: "Broad" }],
+        }],
+      },
+    };
     const command = await makeOpenCodeFixture(directory, {
       streamEvents: [
-        {
-          type: "question.asked",
-          properties: {
-            sessionID: "oc-session-1",
-            id: "question-1",
-            questions: [{
-              header: "Scope",
-              question: "Which scopes should be enabled?",
-              multiple: true,
-              custom: true,
-              options: [{ label: "Narrow", description: "Only the current package" }, { label: "Broad" }],
-            }],
-          },
-        },
+        questionEvent,
+        questionEvent,
         { type: "message.part.delta", properties: { sessionID: "oc-session-1", messageID: "provider-assistant-1", partID: "provider-part-1", field: "text", delta: "native answer" } },
         { type: "session.idle", properties: { sessionID: "oc-session-1" } },
       ],
     });
     const approvals: Array<{ inputRequest?: { questions?: unknown[] }; payload?: Record<string, unknown> }> = [];
     const result = await runFixtureChat(directory, command, {
+      controlAttempt: {
+        attemptEpoch: 7,
+        ownerToken: "owner-question",
+        register: async () => ({ isCurrent: () => true, release: async () => {} }),
+        complete: async () => {},
+      },
       requestApproval: async (request) => {
         approvals.push(request);
         return { id: "approval-question-1", status: "pending" };
@@ -1436,12 +1447,82 @@ describe("OpenCode native protocol contract", () => {
       interactionKind: "question",
       requestId: "question-1",
       questionRequestId: "question-1",
+      attemptEpoch: 7,
     });
     const requests = await fixtureRequests(directory);
     const replies = requests.filter((request) => request.method === "POST" && request.url?.includes("/question/question-1/reply"));
     expect(replies).toHaveLength(1);
     expect(replies[0]?.body).toEqual({ answers: [["Narrow", "Broad", "extra"]] });
     expect(requests.filter((request) => request.method === "POST" && request.url?.includes("/question/question-1/reject"))).toHaveLength(0);
+    expect(await messageRequestCount(directory)).toBe(1);
+  });
+
+  it.each([
+    { name: "custom false allows an option-only answer", fields: { custom: false }, freeform: false, approval: true, mode: "current", reply: true },
+    { name: "custom false rejects a freeform answer", fields: { custom: false }, freeform: true, approval: true, mode: "current", reply: false },
+    { name: "custom null is invalid under the installed schema", fields: { custom: null }, freeform: true, approval: false, mode: "current", reply: false },
+    { name: "custom string is invalid", fields: { custom: "true" }, freeform: true, approval: false, mode: "current", reply: false },
+    { name: "custom number is invalid", fields: { custom: 1 }, freeform: true, approval: false, mode: "current", reply: false },
+    { name: "custom object is invalid", fields: { custom: {} }, freeform: true, approval: false, mode: "current", reply: false },
+    { name: "custom array is invalid", fields: { custom: [] }, freeform: true, approval: false, mode: "current", reply: false },
+    { name: "omitted custom cannot bypass approval ID validation", fields: {}, freeform: true, approval: true, mode: "mismatched", reply: false },
+    { name: "omitted custom cannot bypass a stale attempt", fields: {}, freeform: true, approval: true, mode: "stale", reply: false },
+  ])("preserves question safety: $name", async ({ fields, freeform, approval, mode, reply }) => {
+    const directory = await makeFixtureDirectory("rudder-opencode-native-question-safety-");
+    const command = await makeOpenCodeFixture(directory, {
+      streamEvents: [
+        {
+          type: "question.asked",
+          properties: {
+            sessionID: "oc-session-1",
+            id: "question-safety",
+            questions: [{
+              question: "Which scope?",
+              ...fields,
+              options: [{ label: "Narrow" }, { label: "Broad" }],
+            }],
+          },
+        },
+        { type: "message.part.delta", properties: { sessionID: "oc-session-1", messageID: "provider-assistant-1", partID: "provider-part-1", field: "text", delta: "native answer" } },
+        { type: "session.idle", properties: { sessionID: "oc-session-1" } },
+      ],
+    });
+    let current = true;
+    const requestApproval = vi.fn(async (_request: Parameters<NonNullable<NativeChatInput["requestApproval"]>>[0]) => ({ id: "approval-question-safety", status: "pending" as const }));
+    const waitForApproval = vi.fn(async (id: string) => {
+      if (mode === "stale") current = false;
+      return {
+        id: mode === "mismatched" ? "approval-unrelated" : id,
+        status: "approved" as const,
+        inputResponse: {
+          answers: [{ questionId: "q1", optionIds: ["o1"], ...(freeform ? { freeformText: "extra" } : {}) }],
+        },
+      };
+    });
+    const execution = runFixtureChat(directory, command, {
+      controlAttempt: {
+        attemptEpoch: 8,
+        ownerToken: "owner-question-safety",
+        register: async () => ({ isCurrent: () => current, release: async () => {} }),
+        complete: async () => {},
+      },
+      requestApproval,
+      waitForApproval,
+    });
+    if (mode === "stale") await expect(execution).rejects.toThrow(/no longer current|cancelled/u);
+    else expect((await execution).summary).toBe("native answer");
+    expect(requestApproval).toHaveBeenCalledTimes(approval ? 1 : 0);
+    expect(waitForApproval).toHaveBeenCalledTimes(approval ? 1 : 0);
+    if (fields.custom === false) {
+      expect(requestApproval.mock.calls[0]?.[0]).toMatchObject({ inputRequest: { questions: [{ id: "q1" }] } });
+      expect(requestApproval.mock.calls[0]?.[0]).not.toMatchObject({ inputRequest: { questions: [{ allowFreeform: true }] } });
+    }
+    const requests = await fixtureRequests(directory);
+    const interactions = requests.filter((request) => request.method === "POST" && request.url?.includes("/question/question-safety/"));
+    expect(interactions).toHaveLength(1);
+    expect(interactions[0]?.url).toContain(reply ? "/reply" : "/reject");
+    if (reply) expect(interactions[0]?.body).toEqual({ answers: [["Narrow"]] });
+    expect(await messageRequestCount(directory)).toBe(1);
   });
 
   it("rejects a permission after the control attempt becomes stale even when approval returns approved", async () => {

@@ -1920,6 +1920,8 @@ function questionBridgeFromEvent(event: OpenCodeNativeEvent): OpenCodeQuestionBr
   const questionMap = new Map<string, { optionLabels: Map<string, string>; multiple: boolean; allowFreeform: boolean }>();
   for (const [questionIndex, value] of event.properties.questions.entries()) {
     const record = asRecord(value);
+    const custom = record?.custom;
+    if (custom !== undefined && typeof custom !== "boolean") return null;
     const question = boundedField(record?.question, 240);
     const rawOptions = Array.isArray(record?.options) ? record.options : [];
     if (!question || rawOptions.length < 2 || rawOptions.length > 4) return null;
@@ -1941,7 +1943,8 @@ function questionBridgeFromEvent(event: OpenCodeNativeEvent): OpenCodeQuestionBr
     }
     const header = boundedField(record?.header, 32);
     const multiple = record?.multiple === true;
-    const allowFreeform = record?.custom === true;
+    // OpenCode QuestionInfo defaults omitted custom to true; explicit false disables it.
+    const allowFreeform = custom !== false;
     questions.push({
       id: questionId,
       ...(header ? { header } : {}),
