@@ -16,7 +16,7 @@ import {
   type TranscriptEntry
 } from "@rudderhq/agent-runtime-utils";
 import { heartbeatRuns } from "@rudderhq/db";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import type {
   AgentRuntimeInvocationMeta,
@@ -77,7 +77,7 @@ import {
   createHeartbeatExecutionTranscriptSupplement,
   resolveHeartbeatExecutionTranscriptRetention,
 } from "./heartbeat.execute-transcript-retention.js";
-import { acknowledgeUnstartedWriter, buildPersistableHeartbeatContext, EXECUTOR_OWNED_CONTEXT_KEYS, providerIdentityFromResult } from "./heartbeat.execution-state.js";
+import { acknowledgeUnstartedWriter, createPersistRunningExecutionContext, providerIdentityFromResult } from "./heartbeat.execution-state.js";
 import {
   executeAdapterWithModelFallbacks,
   resolveExecutionSubmissionPhase,
@@ -100,48 +100,7 @@ const { buildExplicitResumeSessionOverride, selectRunSessionLineage, normalizeUs
 export function createHeartbeatExecuteHandlers(context: any) {
     const { db, approvalsSvc, instanceSettings, getCurrentUserRedactionOptions, runLogStore, runContextSvc, issuesSvc, executionWorkspacesSvc, workspaceOperationsSvc, activeRunExecutions, runAbortControllers, budgetHooks, budgets, getAgent, getRun, getRuntimeState, getTaskSession, getLatestRunForSession, getOldestRunForSession, resolveNormalizedUsageForSession, evaluateSessionCompaction, resolveSessionBeforeForWakeup, resolveExplicitResumeSessionOverride, upsertTaskSession, clearTaskSessions, ensureRuntimeState, setRunStatus, transitionRunToTerminal, reconcileRunEvidence, reconcileTerminalEffectsIntent, setWakeupStatus, updateWakeupRequestRecord, insertWakeupRequestRecord, appendRunEvent, persistRunProcessMetadata, clearDetachedRunWarning, acknowledgeRunProcessExit, abortRunExecution, renewRunExecutionLease, enqueueRecoveryRun, enqueueProcessLossRetry, parseHeartbeatPolicy, markAgentHeartbeatChecked, evaluateTimerPreflight, runHasIssueClosureComment, runHasIssueReviewDecision, issueHasDeferredWake, passiveFollowupAlreadyRecorded, reviewerCloseoutAlreadyRecorded, issueHasRecordedBlockedReviewerDecision, evaluatePassiveIssueClosureForLockedIssue, countRunningRunsForAgent, claimQueuedRun, finalizeAgentStatus, completeTerminalControlEffects, reapOrphanedRuns, resumeQueuedRuns, updateRuntimeState, startNextQueuedRunForAgent, releaseIssueExecutionAndPromote, enqueueWakeup, resumeDeferredWakeupsForAgent, listProjectScopedRunIds, listProjectScopedWakeupIds, cancelPendingWakeupsForBudgetScope, cancelRunInternal, cancelActiveForAgentInternal, cancelBudgetScopeWork, retryRunInternal, buildSkillAnalytics, beforeAssignmentRecoveryEnqueue, ensureCommonRunExecutionBoundary, resolveHeartbeatNativeResources, unifiedRunAdapter } = context;
 
-  async function persistRunningExecutionContext(
-    runId: string,
-    desiredContext: Record<string, unknown>,
-    patch: Partial<typeof heartbeatRuns.$inferInsert> = {},
-    expectedExecutionOwnerToken?: string | null,
-  ) {
-    return db.transaction(async (tx) => {
-      await tx.execute(sql`select id from heartbeat_runs where id = ${runId} for update`);
-      const currentRun = await tx
-        .select()
-        .from(heartbeatRuns)
-        .where(eq(heartbeatRuns.id, runId))
-        .then((rows) => rows[0] ?? null);
-      if (!currentRun || currentRun.status !== "running") return null;
-      if (expectedExecutionOwnerToken !== undefined
-        && currentRun.executionOwnerToken !== expectedExecutionOwnerToken) return null;
-
-      const persistableContext = buildPersistableHeartbeatContext(desiredContext);
-      const mergedContext = mergeCoalescedContextSnapshot(
-        persistableContext,
-        parseObject(currentRun.contextSnapshot),
-      );
-      for (const key of EXECUTOR_OWNED_CONTEXT_KEYS) {
-        if (Object.prototype.hasOwnProperty.call(persistableContext, key)) {
-          mergedContext[key] = persistableContext[key];
-        } else {
-          delete mergedContext[key];
-        }
-      }
-
-      return tx
-        .update(heartbeatRuns)
-        .set({
-          ...patch,
-          contextSnapshot: mergedContext,
-          updatedAt: new Date(),
-        })
-        .where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.status, "running")))
-        .returning()
-        .then((rows) => rows[0] ?? null);
-    });
-  }
+  const persistRunningExecutionContext = createPersistRunningExecutionContext(db, mergeCoalescedContextSnapshot);
 
   async function executeRun(runId: string, opts?: { executionReserved?: boolean }) {
     const executionReserved = opts?.executionReserved === true;
