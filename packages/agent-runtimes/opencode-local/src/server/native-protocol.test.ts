@@ -471,6 +471,15 @@ const server = createServer(async (request, response) => {
     response.end(JSON.stringify(fixtureOptions.serverMessagesOverride ?? current.messages));
     return;
   }
+  if (request.method === "GET" && request.url?.includes("/session/oc-child/message")) {
+    const child = JSON.parse(fs.readFileSync(path.join(process.cwd(), "child-export.json"), "utf8"));
+    response.end(JSON.stringify(child.messages));
+    return;
+  }
+  if (request.method === "GET" && request.url?.includes("/session/oc-child")) {
+    response.end(JSON.stringify({ id: "oc-child" }));
+    return;
+  }
   if (request.method === "GET" && request.url?.includes("/session/oc-session-1")) {
     response.end(JSON.stringify({ id: "oc-session-1" }));
     return;
@@ -2634,6 +2643,67 @@ describe("OpenCode native protocol contract", () => {
       await expect(fs.access(path.join(directory, "export-argv.json"))).rejects.toMatchObject({ code: "ENOENT" });
     }
   });
+
+  it("preserves the attested data profile on fork for cold child execution without weakening resume guards", async () => {
+    const directory = await makeFixtureDirectory("rudder-opencode-fork-profile-resume-");
+    const command = await makeOpenCodeFixture(directory);
+    const agent = { id: "agent-1", orgId: "organization-1", name: "OpenCode Agent", agentRuntimeType: "opencode_local", agentRuntimeConfig: {} };
+    const binding = { id: "binding-a", orgId: agent.orgId, hostId: "local", profileId: "profile-a" };
+    const config = {
+      command, cwd: directory, model: "provider/model", promptTemplate: "{{context.chatPrompt}}",
+      env: { HOME: directory }, providerHostId: binding.hostId, providerProfileId: binding.profileId,
+      providerBindingId: binding.id, providerOrgId: binding.orgId,
+    };
+    const run = (runId: string, sessionId: string | null, sessionParams: Record<string, unknown> | null) => executeOpenCodeAdapter({
+      runId, agent, config,
+      runtime: { sessionId, sessionParams, sessionDisplayId: null, taskKey: null },
+      context: { chatMode: true, chatPrompt: "boundary test prompt" },
+      authToken: "fixture-token", onLog: async () => {},
+    });
+    const first = await run("run-parent", null, null);
+    expect(first.exitCode).toBe(0);
+    const parentParams = first.sessionParams as Record<string, unknown>;
+    const parentBefore = JSON.stringify(parentParams);
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    stubForkEndpoint(requests);
+    const fork = await forkOpenCodeNativeSession({
+      runtimeType: "opencode_local", session: { sessionId: first.sessionId!, sessionParams: parentParams, sessionDisplayId: first.sessionId! },
+      boundary: "provider-assistant-1", binding,
+    });
+    vi.unstubAllGlobals();
+    expect(fork.session.sessionParams.openCodeProfileDataId).toBe(parentParams.openCodeProfileDataId);
+    expect(sessionCodec.deserialize(sessionCodec.serialize(fork.session.sessionParams))?.openCodeProfileDataId)
+      .toBe(parentParams.openCodeProfileDataId);
+    expect(JSON.stringify(parentParams)).toBe(parentBefore);
+    expect(fork.identityMap).toEqual({ "provider-user-1": "child-user-1", "provider-assistant-1": "child-assistant-1" });
+    await disposeOpenCodeNativeServersForTests();
+    const childParams = fork.session.sessionParams;
+    for (const [label, params] of [
+      ["missing", { ...childParams, openCodeProfileDataId: undefined }],
+      ["foreign-data", { ...childParams, openCodeProfileDataId: "foreign" }],
+      ["foreign-org", { ...childParams, profileOrgId: "other-organization" }],
+      ["foreign-profile", { ...childParams, profileId: "other-profile" }],
+      ["foreign-host", { ...childParams, hostId: "other-host" }],
+      ["foreign-data-home", { ...childParams, exportEnv: { ...childParams.exportEnv as Record<string, string>, XDG_DATA_HOME: path.join(directory, "foreign-data") } }],
+    ] as const) {
+      expect(await run("run-reject-" + label, fork.session.sessionId, params)).toMatchObject({
+        exitCode: 1, errorCode: "opencode_incompatible_legacy_session",
+        nativeWriterQuiescence: { status: "confirmed", source: "not_started" },
+      });
+    }
+    expect(await messageRequestCount(directory)).toBe(1);
+    // Fail the fixture at prompt admission so this tests the complete cold
+    // adapter path without pretending the parent-only SSE fixture is a child model.
+    const optionsPath = path.join(directory, "fixture-options.json");
+    const options = JSON.parse(await fs.readFile(optionsPath, "utf8"));
+    await fs.writeFile(optionsPath, JSON.stringify({ ...options, rejectPrompt: true }));
+    const resumed = await run("run-child-cold", fork.session.sessionId, childParams);
+    expect(resumed.errorCode).not.toBe("opencode_incompatible_legacy_session");
+    expect(resumed.exitCode).toBe(1);
+    const prompts = (await fixtureRequests(directory)).filter((request) => request.method === "POST" && request.url?.includes("/prompt_async"));
+    expect(prompts, JSON.stringify({ errorCode: resumed.errorCode, errorMessage: resumed.errorMessage })).toHaveLength(2);
+    expect(prompts[1].url).toContain("/session/oc-child/prompt_async");
+  }, 20_000);
 
   it("calls the provider fork endpoint with the exact message boundary and rejects profile drift", async () => {
     const directory = await makeFixtureDirectory("rudder-opencode-fork-");
