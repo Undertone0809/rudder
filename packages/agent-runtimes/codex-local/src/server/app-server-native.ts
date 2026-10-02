@@ -796,16 +796,22 @@ function encodeReadCursor(cursor: CodexReadCursor): string {
   return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
-function decodeReadCursor(value: string | null | undefined, scope: string): CodexReadCursor | null {
+function decodeReadCursor(value: string | null | undefined, scope: string, legacyScope?: string): CodexReadCursor | null {
   if (!value) return null;
   try {
     if (value.length > 65_536) throw new Error("size");
     const c = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as CodexReadCursor;
-    if (c.version !== 1 || c.scope !== scope || typeof c.revision !== "string" || c.revision.length > 128
+    if (c.version !== 1 || typeof c.scope !== "string" || typeof c.revision !== "string" || c.revision.length > 128
       || !["turns", "items"].includes(c.phase)
       || !(c.turnRevision === null || (typeof c.turnRevision === "string" && /^[a-f0-9]{64}$/u.test(c.turnRevision)))
       || ![c.turnCursor, c.itemCursor].every(v => v === null || (typeof v === "string" && v.length <= 16_384))
       || ![c.entryOffset, c.ordinal].every(v => Number.isSafeInteger(v) && v >= 0 && v <= 100_000_000)) throw new Error("shape");
+    if (c.scope !== scope) {
+      // Only a recomputable legacy scope proves the same authorized transport.
+      // Never resume its revision/offset: the new scope needs a fresh proof/page.
+      if (legacyScope && c.scope === legacyScope) return null;
+      throw new Error("scope");
+    }
     return c;
   } catch {
     throw capabilityError("unsupported", "Invalid or differently scoped Codex transcript cursor.");
@@ -1053,10 +1059,14 @@ async function readCodexNativeTranscriptWithEvidence(
   // Executable/env verification identifies a protocol/cache observation, not
   // transcript content. Keep authorized transport identity in the cursor scope,
   // while fresh attestation still controls discovery and protocol validation.
-  const scope = createHash("sha256").update(JSON.stringify({ binding: profile.binding, threadId, selector: input.selector,
+  const scopeIdentity = { binding: profile.binding, threadId, selector: input.selector,
     command: profile.command, args: profile.args, cwd: profile.cwd, home: profile.env.CODEX_HOME,
-    version: profile.providerVersion })).digest("hex");
-  const cursor = decodeReadCursor(input.cursor, scope);
+    version: profile.providerVersion };
+  const scope = createHash("sha256").update(JSON.stringify(scopeIdentity)).digest("hex");
+  const legacyScope = profile.transcriptVerificationFingerprint
+    ? createHash("sha256").update(JSON.stringify({ ...scopeIdentity,
+      verification: profile.transcriptVerificationFingerprint })).digest("hex") : undefined;
+  const cursor = decodeReadCursor(input.cursor, scope, legacyScope);
   try {
     if (requireTurn && selectedId && (onPaginationVerified || (profile.methods?.threadTurnsList === true && profile.methods.threadItemsList === true))) {
       const proof = await withProfileClient(profile, input.signal,

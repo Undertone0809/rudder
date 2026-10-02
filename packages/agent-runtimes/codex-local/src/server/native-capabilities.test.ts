@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resumeCodexNativeThread } from "./app-server-native.js";
+import { probeCodexNativeTranscriptPagination, resumeCodexNativeThread } from "./app-server-native.js";
 import {
   createCodexLocalProviderCapabilities,
   createCodexLocalProviderCapabilityResolver,
@@ -304,6 +304,66 @@ describe("Codex native history and fork capabilities", () => {
     const before = await capturedRequests();
     await expect(createCodexLocalProviderCapabilities(changed).transcript!.readRange!({
       ...pageInput, binding: changed.binding, session: authorizedSession, cursor: first.nextCursor,
+    })).rejects.toThrow("scoped");
+    expect(await capturedRequests()).toEqual(before);
+  });
+
+  async function legacyCursorFixture() {
+    const f = await fixedRangeFixture(true);
+    const transport = { ...f.transport, transcriptVerificationFingerprint: "verified-current-binary-env" };
+    const read = createCodexLocalProviderCapabilities(transport).transcript!.readRange!;
+    const first = await read(pageInput) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    const oldScope = createHash("sha256").update(JSON.stringify({ binding: transport.binding,
+      threadId: session.sessionId, selector: pageInput.selector, command: transport.command,
+      args: transport.args, cwd: transport.cwd, home: transport.env.CODEX_HOME,
+      version: transport.providerVersion, verification: transport.transcriptVerificationFingerprint })).digest("hex");
+    const native = JSON.parse(await fs.readFile(f.statePath, "utf8"));
+    const turn = native.turns[0];
+    const oldContent = createHash("sha256").update(JSON.stringify({ scope: oldScope, id: session.sessionId,
+      root: "root-1", turn: { ...turn, items: [], itemsView: "notLoaded" } })).update("\0");
+    for (const item of turn.items) oldContent.update(JSON.stringify(item)).update("\0");
+    // Exact deployed v1 cursor shape/hash, including its old content revision.
+    const old = { ...JSON.parse(Buffer.from(first.nextCursor!, "base64url").toString("utf8")),
+      scope: oldScope, revision: `codex:${oldContent.digest("hex")}` };
+    return { ...f, transport, read, first, oldCursor: Buffer.from(JSON.stringify(old)).toString("base64url") };
+  }
+
+  it.each(["warm", "cold_probe"] as const)("recovers a recognized legacy attestation cursor by reading a fresh first page, never its old progress: %s", async mode => {
+    const { read, first, oldCursor, transport } = await legacyCursorFixture();
+    const observation = mode === "cold_probe" ? await probeCodexNativeTranscriptPagination(
+      { ...pageInput, cursor: oldCursor }, { ...transport, methods: {} },
+    ) : null;
+    if (observation) expect(observation.verified).toBe(true);
+    const fresh = observation?.page ?? await read({ ...pageInput, cursor: oldCursor }) as import("./app-server-native.js").CodexNativeTranscriptReadResult;
+    expect(fresh).toEqual(first);
+    expect(fresh.items?.[0]?.id).toBe("user-1");
+    expect(fresh.items?.[0]?.ordinal).toBe(0);
+    expect(fresh.nextCursor).not.toBe(oldCursor);
+  });
+
+  it.each(["home", "org", "binding", "profile", "version", "fingerprint_unknown"] as const)("legacy cursor recovery fails closed for unproven original authorization: %s", async change => {
+    const { transport, oldCursor } = await legacyCursorFixture();
+    const changed = { ...transport };
+    let authorizedSession = session;
+    if (change === "home") changed.env = { ...transport.env, CODEX_HOME: path.join(root, "foreign-home") };
+    if (change === "org") {
+      changed.binding = { ...binding, orgId: "foreign-org", id: "foreign-binding" };
+      authorizedSession = { ...session, sessionParams: { ...session.sessionParams,
+        profileOrgId: "foreign-org", profileBindingId: "foreign-binding" } };
+    }
+    if (change === "binding") {
+      changed.binding = { ...binding, id: "foreign-binding" };
+      authorizedSession = { ...session, sessionParams: { ...session.sessionParams, profileBindingId: "foreign-binding" } };
+    }
+    if (change === "profile") {
+      changed.binding = { ...binding, profileId: "foreign-profile" };
+      authorizedSession = { ...session, sessionParams: { ...session.sessionParams, profileId: "foreign-profile" } };
+    }
+    if (change === "version") changed.providerVersion = "0.155.0-alpha.9.3";
+    if (change === "fingerprint_unknown") changed.transcriptVerificationFingerprint = "different-unknown-old-proof";
+    const before = await capturedRequests();
+    await expect(createCodexLocalProviderCapabilities(changed).transcript!.readRange!({ ...pageInput,
+      session: authorizedSession, binding: changed.binding, cursor: oldCursor,
     })).rejects.toThrow("scoped");
     expect(await capturedRequests()).toEqual(before);
   });
