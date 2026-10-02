@@ -51,6 +51,7 @@ import {
 } from "./bootstrap/auth-runtime.js";
 import { loadConfig, type Config } from "./config.js";
 import { runScheduledDatabaseBackupOnce } from "./database-backup-scheduler.js";
+import { createEmbeddedPostgresStartupLogBuffer } from "./embedded-postgres-startup-logs.js";
 import {
   reconcileOrganizationStorageRoots,
   resolveRudderHomeDir,
@@ -699,24 +700,16 @@ async function startServerRuntime(
     let port = configuredPort;
     let localPostgresProvider = "embedded-postgres";
     let localPostgresBinDir: string | undefined;
-    const embeddedPostgresLogBuffer: string[] = [];
-    const EMBEDDED_POSTGRES_LOG_BUFFER_LIMIT = 120;
     const verboseEmbeddedPostgresLogs = process.env.RUDDER_EMBEDDED_POSTGRES_VERBOSE === "true";
-    const appendEmbeddedPostgresLog = (message: unknown) => {
-      const text = typeof message === "string" ? message : message instanceof Error ? message.message : String(message ?? "");
-      for (const lineRaw of text.split(/\r?\n/)) {
-        const line = lineRaw.trim();
-        if (!line) continue;
-        embeddedPostgresLogBuffer.push(line);
-        if (embeddedPostgresLogBuffer.length > EMBEDDED_POSTGRES_LOG_BUFFER_LIMIT) {
-          embeddedPostgresLogBuffer.splice(0, embeddedPostgresLogBuffer.length - EMBEDDED_POSTGRES_LOG_BUFFER_LIMIT);
-        }
-        if (verboseEmbeddedPostgresLogs) {
-          logger.info({ embeddedPostgresLog: line }, "embedded-postgres");
-        }
+    const embeddedPostgresLogs = createEmbeddedPostgresStartupLogBuffer((line) => {
+      if (verboseEmbeddedPostgresLogs) {
+        logger.info({ embeddedPostgresLog: line }, "embedded-postgres");
       }
-    };
+    });
+    const embeddedPostgresLogBuffer = embeddedPostgresLogs.lines;
+    const appendEmbeddedPostgresLog = embeddedPostgresLogs.append;
     const recordEmbeddedPostgresFailure = (phase: "initialise" | "start", err: unknown): Error => {
+      embeddedPostgresLogs.flush();
       const startupError = createEmbeddedPostgresStartupError(
         err,
         `Embedded PostgreSQL failed during ${phase}`,
@@ -815,6 +808,7 @@ async function startServerRuntime(
         if (!clusterAlreadyInitialized) {
           try {
             await embeddedPostgres.initialise();
+            embeddedPostgresLogs.flush();
           } catch (err) {
             throw recordEmbeddedPostgresFailure("initialise", err);
           }
