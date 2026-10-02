@@ -111,7 +111,7 @@ pub fn execute(
             let _ = writeln!(stdout, "rudder-cli {}", env!("CARGO_PKG_VERSION"));
             0
         }
-        Ok(Command::Members(options)) => match run_members(options, environment) {
+        Ok(Command::Members(options)) => match run_members(*options, environment) {
             Ok(output) => {
                 let _ = writeln!(stdout, "{output}");
                 0
@@ -131,7 +131,7 @@ pub fn execute(
 enum Command {
     Help,
     Version,
-    Members(Options),
+    Members(Box<Options>),
 }
 
 fn usage() -> &'static str {
@@ -202,7 +202,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         *target = Some(value);
         index += 1;
     }
-    Ok(Command::Members(options))
+    Ok(Command::Members(Box::new(options)))
 }
 
 fn options_json_requested(args: &[String]) -> bool {
@@ -698,7 +698,7 @@ fn infer_api_base(options: &Options, environment: &BTreeMap<String, String>) -> 
         .map(str::to_owned)
         .unwrap_or_else(|| "localhost".to_owned());
     let env_port =
-        env_value(environment, "RUDDER_SERVER_PORT").and_then(|value| positive_port(&value));
+        env_value(environment, "RUDDER_SERVER_PORT").and_then(positive_port);
     let config_port = env_port.or_else(|| read_config_port(options, environment));
     let port = config_port.unwrap_or(3100);
     format!("http://{host}:{port}")
