@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TranscriptContinuationControls } from "./TranscriptContinuationControls";
 import {
   chatTranscriptEntriesForMessage,
   isAgentRunTranscriptActiveStatus,
@@ -42,7 +43,7 @@ function ReaderProbe({ targets }: { targets: readonly AgentRunTranscriptTarget[]
 }
 
 function NavigationProbe({ runId, raw = false, active = false }: { runId: string; raw?: boolean; active?: boolean }) {
-  const { transcriptByRun, transcriptStateByRun, transcriptNavigationByRun } = useAgentRunTranscripts([{ runId, active }], { raw });
+  const { transcriptByRun, transcriptStateByRun, transcriptNavigationByRun, refetchRun } = useAgentRunTranscripts([{ runId, active }], { raw });
   const navigation = transcriptNavigationByRun.get(runId);
   const state = transcriptStateByRun.get(runId);
   const entries = transcriptByRun.get(runId) ?? [];
@@ -54,6 +55,8 @@ function NavigationProbe({ runId, raw = false, active = false }: { runId: string
       </div>
       <div data-testid="navigation-page">{navigation?.pageNumber ?? "pending"}</div>
       <div data-testid="navigation-previous-count">{navigation?.previousPageCount ?? "pending"}</div>
+      <TranscriptContinuationControls navigation={navigation} state={state} />
+      <button data-testid="lazy-refetch" onClick={() => void refetchRun(runId)}>Load details</button>
       <button
         type="button"
         data-testid="navigation-previous"
@@ -94,11 +97,11 @@ function renderProbe(targets: readonly AgentRunTranscriptTarget[], existingQuery
   return { host, root, queryClient, rerender };
 }
 
-function renderNavigationProbe(runId: string, raw = false, active = false) {
+function renderNavigationProbe(runId: string, raw = false, active = false, existingQueryClient?: QueryClient) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-  const queryClient = new QueryClient({
+  const queryClient = existingQueryClient ?? new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   act(() => {
@@ -149,6 +152,102 @@ afterEach(() => {
 });
 
 describe("useAgentRunTranscripts", () => {
+  it("explicit refresh replaces a deep page with one fresh first page and leaves lazy refetch scoped", async () => {
+    let firstPages = 0;
+    transcriptMock.mockImplementation(async (_id, { cursor }) => cursor
+      ? transitionPage(`old-${cursor}`, "old-r", cursor, cursor === "page-10" ? null : `page-${Number(cursor.slice(5)) + 1}`)
+      : transitionPage(++firstPages === 1 ? "old-first" : "fresh-first", firstPages === 1 ? "old-r" : "fresh-r", null, firstPages === 1 ? "page-1" : null));
+    const rendered = renderNavigationProbe("run-native");
+    try {
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("old-first")); });
+      for (let page = 1; page <= 10; page += 1) {
+        act(() => rendered.host.querySelector<HTMLButtonElement>("[data-testid='navigation-next']")?.click());
+        await act(async () => { await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe(`old-page-${page}`)); });
+      }
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[data-testid='lazy-refetch']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(transcriptMock).toHaveBeenCalledTimes(12)); });
+      expect(transcriptMock.mock.calls[11][1].cursor).toBe("page-10");
+      const refresh = rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']");
+      expect(refresh).not.toBeNull();
+      act(() => refresh?.click());
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.querySelector("[data-testid='navigation-entries']")?.textContent).toBe("fresh-first")); });
+      expect(transcriptMock).toHaveBeenCalledTimes(13);
+      expect(transcriptMock.mock.calls[12][1].cursor).toBeNull();
+      expect(rendered.host.querySelector("[data-testid='navigation-page']")?.textContent).toBe("1");
+      expect(rendered.host.querySelector("[data-testid='navigation-previous-count']")?.textContent).toBe("0");
+      expect(rendered.host.textContent).not.toContain("Earlier pages");
+      expect(rendered.host.textContent).not.toContain("old-page");
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); }
+  });
+
+  it("manual reset isolates an in-flight old page and does not refresh another Run", async () => {
+    let finishOld!: (page: ReturnType<typeof transitionPage>) => void;
+    let oldSignal!: AbortSignal;
+    let targetReads = 0;
+    transcriptMock.mockImplementation(async (id, _request, { signal }) => {
+      if (id === "run-empty") return transitionPage("other-run");
+      if (++targetReads > 1) return transitionPage("manual-first");
+      oldSignal = signal;
+      return new Promise(resolve => { finishOld = resolve; });
+    });
+    const other = renderProbe([{ runId: "run-empty", active: false }]);
+    const rendered = renderNavigationProbe("run-native", false, false, other.queryClient);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(transcriptMock).toHaveBeenCalledTimes(2)); });
+      const refresh = rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']");
+      expect(refresh).not.toBeNull();
+      act(() => { refresh?.click(); refresh?.click(); });
+      expect(rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.disabled).toBe(true);
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("manual-first")); });
+      expect(oldSignal.aborted).toBe(true);
+      await act(async () => { finishOld(transitionPage("late-old")); await Promise.resolve(); });
+      expect(rendered.host.textContent).not.toContain("late-old");
+      expect(transcriptMock.mock.calls.filter(([id]) => id === "run-empty")).toHaveLength(1);
+      expect(transcriptMock.mock.calls.filter(([id]) => id === "run-native")).toHaveLength(2);
+    } finally { act(() => { rendered.root.unmount(); other.root.unmount(); }); rendered.queryClient.clear(); other.queryClient.clear(); }
+  });
+
+  it.each(["offline", "scope error"])("does not automatically retry %s before or after an explicit reset", async (failure) => {
+    vi.useFakeTimers();
+    transcriptMock.mockImplementation(async () => {
+      if (failure === "scope error") throw new Error("Transcript cursor does not belong to this scope");
+      return { ...transitionPage(""), entries: [], availability: "offline", completeness: "unknown" };
+    });
+    const rendered = renderNavigationProbe("run-native");
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+      expect(transcriptMock).toHaveBeenCalledTimes(1);
+      const refresh = rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']");
+      expect(refresh).not.toBeNull();
+      act(() => refresh?.click());
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+      expect(transcriptMock).toHaveBeenCalledTimes(2);
+      expect(transcriptMock.mock.calls[1][1].cursor).toBeNull();
+    } finally { act(() => rendered.root.unmount()); rendered.queryClient.clear(); vi.useRealTimers(); }
+  });
+
+  it("manual reset does not cancel an old read still observed by another consumer", async () => {
+    let finishOld!: (page: ReturnType<typeof transitionPage>) => void;
+    let oldSignal!: AbortSignal;
+    transcriptMock.mockImplementationOnce((_id, _request, { signal }) => {
+      oldSignal = signal;
+      return new Promise(resolve => { finishOld = resolve; });
+    }).mockResolvedValueOnce(transitionPage("fresh-manual"));
+    const observer = renderProbe([{ runId: "run-native", active: false }]);
+    const rendered = renderNavigationProbe("run-native", false, false, observer.queryClient);
+    try {
+      await act(async () => { await vi.waitFor(() => expect(transcriptMock).toHaveBeenCalledTimes(1)); });
+      act(() => rendered.host.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']")?.click());
+      await act(async () => { await vi.waitFor(() => expect(rendered.host.textContent).toContain("fresh-manual")); });
+      expect(oldSignal.aborted).toBe(false);
+      await act(async () => { finishOld(transitionPage("old-observer-page")); await Promise.resolve(); });
+      await act(async () => { await vi.waitFor(() => expect(observer.host.textContent).toContain("old-observer-page")); });
+      expect(rendered.host.textContent).toContain("fresh-manual");
+      expect(rendered.host.textContent).not.toContain("old-observer-page");
+      expect(transcriptMock).toHaveBeenCalledTimes(2);
+    } finally { act(() => { rendered.root.unmount(); observer.root.unmount(); }); observer.queryClient.clear(); }
+  });
   it("reads final native history exactly once when an active target becomes terminal", async () => {
     transcriptMock.mockResolvedValueOnce({
       entries: [], source: "native", revision: "pending-r1", availability: "pending", completeness: "unknown",

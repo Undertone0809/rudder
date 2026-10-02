@@ -63,6 +63,26 @@ function renderControls(
 }
 
 describe("TranscriptContinuationControls", () => {
+  it("offers explicit first-page refresh even for a complete page", () => {
+    const onReset = vi.fn();
+    renderControls({ canNext: false, hasMore: false, onReset }, { completeness: "complete" });
+    const refresh = host?.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']");
+    expect(refresh).not.toBeNull();
+    expect(host?.querySelector("[aria-label='Next transcript page']")).toBeNull();
+    expect(host?.textContent).not.toContain("Transcript continuation");
+    expect(onReset).not.toHaveBeenCalled();
+    act(() => refresh?.click());
+    expect(onReset).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables repeat refresh while the explicitly reset read is pending", () => {
+    const onReset = vi.fn();
+    renderControls({ onReset, resetting: true });
+    const refresh = host?.querySelector<HTMLButtonElement>("[aria-label='Refresh transcript']");
+    expect(refresh?.disabled).toBe(true);
+    act(() => refresh?.click());
+    expect(onReset).not.toHaveBeenCalled();
+  });
   it("does not duplicate an unavailable empty state owned by the transcript view", () => {
     renderControls({ canNext: false, hasMore: false }, { availability: "missing", completeness: "unknown" }, true);
     expect(host?.querySelector("[role='alert']")).toBeNull();

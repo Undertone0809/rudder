@@ -42,6 +42,8 @@ export interface AgentRunTranscriptNavigation {
   revision: string | null;
   onPrevious: () => void;
   onNext: () => void;
+  onReset?: () => void;
+  resetting?: boolean;
 }
 
 export function isAgentRunTranscriptActiveStatus(status: string | null | undefined): boolean {
@@ -211,6 +213,7 @@ export function useAgentRunTranscripts(
   );
   const [navigationByRunState, setNavigationByRunState] = useState<Record<string, CursorNavigationState>>({});
   const previousActiveByRun = useRef(new Map<string, boolean>());
+  const manualResetGenerationByRun = useRef(new Map<string, number>());
   const navigationForRun = useCallback(
     (runId: string) => navigationByRunState[runId] ?? INITIAL_CURSOR_NAVIGATION,
     [navigationByRunState],
@@ -237,6 +240,21 @@ export function useAgentRunTranscripts(
   const queryRevisionKey = normalizedTargets
     .map((target, index) => `${target.runId}:${queries[index]?.data?.revision ?? ""}:${queries[index]?.isPending ? "pending" : "ready"}`)
     .join("|");
+
+  useEffect(() => {
+    const knownRunIds = new Set(normalizedTargets.map(target => target.runId));
+    for (const runId of manualResetGenerationByRun.current.keys()) {
+      if (!knownRunIds.has(runId)) manualResetGenerationByRun.current.delete(runId);
+    }
+    normalizedTargets.forEach((target, index) => {
+      const generation = manualResetGenerationByRun.current.get(target.runId);
+      const query = queries[index];
+      if (generation !== undefined && navigationForRun(target.runId).resetGeneration >= generation
+        && query && !query.isPending && !query.isFetching) {
+        manualResetGenerationByRun.current.delete(target.runId);
+      }
+    });
+  }, [navigationForRun, normalizedTargets, queries]);
 
   useEffect(() => {
     const knownRunIds = new Set(normalizedTargets.map((target) => target.runId));
@@ -377,6 +395,19 @@ export function useAgentRunTranscripts(
     });
   }, []);
 
+  // A user-requested new read, not authorization of the discarded cursor.
+  // Use a new key even at page one; never append old pages or retry an error.
+  const resetRun = useCallback((runId: string) => {
+    if (!normalizedTargets.some(target => target.runId === runId)
+      || manualResetGenerationByRun.current.has(runId)) return;
+    const resetGeneration = navigationForRun(runId).resetGeneration + 1;
+    manualResetGenerationByRun.current.set(runId, resetGeneration);
+    setNavigationByRunState(current => ({
+      ...current,
+      [runId]: { ...INITIAL_CURSOR_NAVIGATION, resetGeneration },
+    }));
+  }, [navigationForRun, normalizedTargets]);
+
   const transcriptNavigationByRun = useMemo(() => {
     const result = new Map<string, AgentRunTranscriptNavigation>();
     normalizedTargets.forEach((target, index) => {
@@ -395,10 +426,13 @@ export function useAgentRunTranscripts(
         revision: revisionMismatch ? null : queries[index]?.data?.revision ?? navigation.revision,
         onPrevious: () => goToPreviousPage(target.runId),
         onNext: () => goToNextPage(target.runId, page?.nextCursor ?? null),
+        onReset: () => resetRun(target.runId),
+        resetting: manualResetGenerationByRun.current.has(target.runId)
+          && Boolean(queries[index]?.isPending || queries[index]?.isFetching),
       });
     });
     return result;
-  }, [goToNextPage, goToPreviousPage, navigationForRun, normalizedTargets, queries, revisionMismatchByRun]);
+  }, [goToNextPage, goToPreviousPage, navigationForRun, normalizedTargets, queries, resetRun, revisionMismatchByRun]);
 
   const queryByRun = useMemo(
     () => new Map(normalizedTargets.map((target, index) => [target.runId, queries[index]])),
@@ -417,6 +451,7 @@ export function useAgentRunTranscripts(
     transcriptStateByRun,
     transcriptNavigationByRun,
     refetchRun,
+    resetRun,
     hasOutputForRun(runId: string) {
       return (transcriptByRun.get(runId)?.length ?? 0) > 0;
     },

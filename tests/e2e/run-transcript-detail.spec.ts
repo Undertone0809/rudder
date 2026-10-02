@@ -1884,6 +1884,35 @@ test.describe("Run transcript detail", () => {
       path: isolatedE2EScreenshotPath("rudder-agent-run-complete-conversation-transcript"),
       fullPage: true,
     });
+
+    // Explicit operator reset is a fresh read, not resumption/migration of the
+    // discarded cursor. Exercise the actual RunDetail control and public Reader.
+    const resetRequests: string[] = [];
+    const captureResetRead = (request: Request) => {
+      const url = new URL(request.url());
+      if (url.pathname === `/api/run-intelligence/runs/${runId}/transcript`) resetRequests.push(url.search);
+    };
+    page.on("request", captureResetRead);
+    const firstPageResponse = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === `/api/run-intelligence/runs/${runId}/transcript`
+        && !url.searchParams.has("cursor");
+    });
+    await continuation.getByRole("button", { name: "Refresh transcript" }).click();
+    expect((await firstPageResponse).ok()).toBe(true);
+    await expect(continuation).toContainText("Page 1");
+    await expect(detailPane).toContainText("Conversation transcript marker 1");
+    await expect(detailPane).not.toContainText("Conversation transcript marker 1205");
+    await expect(continuation.getByRole("button", { name: "Previous transcript page" })).toBeDisabled();
+    await expect(continuation.getByRole("button", { name: "Refresh transcript" })).toBeEnabled();
+    expect(resetRequests).toHaveLength(1);
+    expect(new URLSearchParams(resetRequests[0]).has("cursor")).toBe(false);
+    // A normal navigation after reset must advance, not cause another reset.
+    await nextPage.click();
+    await expect(continuation).toContainText("Page 2");
+    expect(resetRequests).toHaveLength(2);
+    expect(resetRequests.filter(query => !new URLSearchParams(query).has("cursor"))).toHaveLength(1);
+    page.off("request", captureResetRead);
   });
 
   test("does not promote long stderr excerpts into the run detail summary", async ({ page }) => {
