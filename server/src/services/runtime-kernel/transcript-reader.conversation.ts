@@ -37,6 +37,7 @@ import {
   normalizeItems,
   selectedPrincipalScope,
   stableHash,
+  TranscriptReaderError,
   transcriptReaderError,
 } from "./transcript-reader.normalize.js";
 import {
@@ -460,6 +461,25 @@ function conversationCursorFor(input: {
 }
 
 export async function readConversationItems(
+  db: ReadDatabase,
+  options: TranscriptReaderOptions,
+  input: ReadConversationTranscript,
+): Promise<ConversationReadPage> {
+  try {
+    return await readConversationItemsOnce(db, options, input);
+  } catch (error) {
+    // Fresh hydration creates nested Run cursors while merging sources. If a
+    // source changes before this page is returned, discard the entire page;
+    // never combine its prefix with a new revision or replay a public Send.
+    // External continuation cursors must still fail closed. One fresh read
+    // bounds the refresh; sustained source drift remains an explicit error.
+    if (input.cursor || input.signal?.aborted || !(error instanceof TranscriptReaderError)
+      || error.code !== "cursor_revision_mismatch") throw error;
+    return await readConversationItemsOnce(db, options, input);
+  }
+}
+
+async function readConversationItemsOnce(
   db: ReadDatabase,
   options: TranscriptReaderOptions,
   input: ReadConversationTranscript,
