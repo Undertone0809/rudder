@@ -35,6 +35,22 @@ function assertObjectProvenance(projection: Projection) {
     expect(item.entry.sourceEntryId).toBe(item.sourceEntryId);
   }
 }
+// Trace-backed allowlist for this fixture only: startup configuration/skills/
+// instructions diagnostics, init identity, and turn-start notification. This
+// is NOT a policy for dropping real reasoning, tools, or assistant process.
+const startupDiagnostic = /^\[rudder\] (?:Mirrored shared Codex auth into isolated home |Removed \d+ inherited Codex MCP configuration tables from |Removed \d+ inherited Codex notify hook from |Removed \d+ unsupported inherited Codex service_tier entry from |Added a disabled Codex plugins default to |Added a disabled Codex bundled-skills default to |Using Rudder-managed Codex home |Disabled \d+ external Codex skill paths in |Prepared isolated Git config at |Realized \d+ Rudder-managed Codex skill entries in |Using operator HOME |Loaded agent instructions file: |Loaded agent tool notes file: |Loaded agent memory instructions file: )[^\r\n]+$/;
+function assertStartupObjects(projection: Projection) {
+  assertObjectProvenance(projection);
+  for (const { entry } of objectRows(projection)) {
+    expect(["stdout", "init", "system"]).toContain(entry.kind);
+    if (entry.kind === "stdout") expect(entry.text?.trim()).toMatch(startupDiagnostic);
+    else if (entry.kind === "init") {
+      expect(entry.model).toBe("gpt-5.4");
+      expect(entry.sessionId).toEqual(expect.any(String));
+      expect(entry.sessionId).not.toBe("");
+    } else expect(entry.text).toBe("turn started");
+  }
+}
 function assertUnpublishedNative(projection: Projection) {
   expect(projection).toMatchObject({ completeness: "unknown", page: { hasMore: false }, trace: { turnCount: 0 },
     run: { status: "running", externalRunId: null, sessionIdAfter: null, finishedAt: null,
@@ -43,7 +59,7 @@ function assertUnpublishedNative(projection: Projection) {
   // Span selector. Object availability must not imply native publication.
   expect(nativeRows(projection)).toEqual([]);
   expect(projection.entries.filter((item) => item.entry.kind === "user" || item.entry.kind === "assistant")).toEqual([]);
-  assertObjectProvenance(projection);
+  assertStartupObjects(projection);
   if (objectRows(projection).length > 0) {
     expect(projection).toMatchObject({ source: "native_plus_objects", availability: "available" });
   } else {
@@ -55,6 +71,16 @@ function assertObjectsPreserved(baseline: Projection, projection: Projection) {
   const current = new Map(objectRows(projection).map((item) => [item.sourceEntryId, canonicalObject(item)]));
   for (const item of objectRows(baseline)) {
     expect(current.get(item.sourceEntryId)).toEqual(canonicalObject(item));
+  }
+}
+function assertStartupRetirement(baseline: Projection, projection: Projection) {
+  assertStartupObjects(baseline);
+  assertStartupObjects(projection);
+  const prior = new Map(objectRows(baseline).map((item) => [item.sourceEntryId, canonicalObject(item)]));
+  // Complete native preference may retire transient startup objects. Any that
+  // remain must keep their own source ID/payload, never masquerade as native.
+  for (const item of objectRows(projection)) {
+    if (prior.has(item.sourceEntryId)) expect(canonicalObject(item)).toEqual(prior.get(item.sourceEntryId));
   }
 }
 function assertPublishedNative(projection: Projection, userId: string, assistantId: string, marker: string) {
@@ -73,8 +99,8 @@ function assertPublishedNative(projection: Projection, userId: string, assistant
 
 // Protocol-fixture E2E through public Chat/Run/Reader + rendered Run Detail.
 // No API interception, DB mutation, real Codex inference, or retained-log fallback.
-// Packet v3: native completion stays unresolved while canonical object-backed
-// diagnostics may already be available. Never suppress those diagnostics.
+// Packet v4: preserve startup objects before publication; complete native
+// history may retire them (Plan W12 temporary stdout), not claim equivalence.
 test("native Run transcript preserves available diagnostics until exact native publication and terminal reload", async ({ page, context }, testInfo) => {
   test.setTimeout(120_000);
   const directory = await mkdtemp(path.join(os.tmpdir(), "rudder-native-live-transcript-"));
@@ -207,10 +233,10 @@ test("native Run transcript preserves available diagnostics until exact native p
       entrySourceId: item.entry.sourceEntryId, kind: item.entry.kind,
     }));
     assertPublishedNative(available!, user[0].id, assistant[0].id, marker);
-    assertObjectsPreserved(pendingReload, available!);
+    assertStartupRetirement(pendingReload, available!);
     const terminal = await readProjection();
     assertPublishedNative(terminal, user[0].id, assistant[0].id, marker);
-    assertObjectsPreserved(available!, terminal);
+    assertStartupRetirement(available!, terminal);
     await runPage.screenshot({ path: path.join(directory, "native-available-terminal.png"), fullPage: true });
     const terminalUiRead = uiRead();
     await runPage.reload();
@@ -218,16 +244,18 @@ test("native Run transcript preserves available diagnostics until exact native p
     await expect(transcript).toContainText(marker);
     await expect(transcript.getByText(marker, { exact: true })).toHaveCount(1);
     await expect(transcript.getByText("Transcript missing.", { exact: true })).toHaveCount(0);
+    await expect(transcript.getByRole("alert").filter({ hasText: /Transcript unavailable:/i })).toHaveCount(0);
     expect(await missingAlerts()).toEqual([]);
     const refreshed = await readProjection();
     assertPublishedNative(refreshed, user[0].id, assistant[0].id, marker);
-    assertObjectsPreserved(terminal, refreshed);
+    assertStartupRetirement(terminal, refreshed);
     expect(identities(refreshed)).toEqual(identities(terminal));
     expect(refreshed.revision).toBe(terminal.revision);
     await runPage.screenshot({ path: path.join(directory, "native-terminal-reload.png"), fullPage: true });
     await testInfo.attach("native-publication-evidence", { body: JSON.stringify({ orgId: org.id, agentId: agent.id,
-      criteriaPacket: "native-publication-v3", runId, ready, pending, initialUiProjection, reloadedUiProjection,
+      criteriaPacket: "native-publication-v4", runId, ready, pending, initialUiProjection, reloadedUiProjection,
       pendingReload, available, terminal, refreshed,
+      startupObjectPolicy: "trace-classified startup diagnostics may retire after complete native publication; not equivalent to native content or proof of real process-gap preservation",
       unresolvedNativeEvidence: { rawSpanSelectorExposed: false, publicProof: "running + unknown completeness + null completion identity + no native rows" },
       artifactDirectory: directory }), contentType: "application/json" });
   } finally {
