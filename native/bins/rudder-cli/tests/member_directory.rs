@@ -219,7 +219,7 @@ fn executable_escapes_terminal_controls_in_human_api_error_and_preserves_json_er
     assert_eq!(
         text(&output.stderr),
         concat!(
-            "API error 403 [org\\u{1b}]0;spoof\\u{7}]: ",
+            "API error 403: ",
             "denied\\u{1b}[2J\\u{9b}31m\\u{a}second line ",
             "details={\"reason\":\"policy\\u{85}violation\"}\n"
         )
