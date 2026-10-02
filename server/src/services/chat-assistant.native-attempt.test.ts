@@ -34,7 +34,7 @@ function callbacks(options: { stopped?: boolean; ownerLost?: boolean; fallbackAl
   const handlers = createChatNativeAttemptCallbacks({
     orgId: "org-1",
     runtimeAgentType: "codex_local",
-    nativeDriverRequired: true,
+    isNativeRuntime: (runtimeType) => runtimeType === "codex_local",
     signal: controller.signal,
     isExecutionInactive: () => Boolean(options.stopped || options.ownerLost),
     isOwnerLost: () => options.ownerLost === true,
@@ -109,6 +109,25 @@ describe("Chat native attempt lifecycle callbacks", () => {
       .rejects.toThrow("native writer is confirmed quiescent");
     expect(current.recordNativeExecutionResult).toHaveBeenCalledOnce();
     expect(current.onAttemptResult).not.toHaveBeenCalled();
+  });
+
+  it("does not require native writer proof for a non-native previous attempt", async () => {
+    const current = callbacks();
+    const result: AgentRuntimeExecutionResult = {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      errorCode: "openclaw_gateway_request_failed",
+      errorMessage: "Primary gateway request failed",
+    };
+    await expect(current.handlers.onAttemptResult(
+      { ...attempt, agentRuntimeType: "openclaw_gateway" },
+      result,
+      "accepted",
+      { providerDispatched: true, willFallback: true },
+    )).resolves.toBeUndefined();
+    expect(current.recordNativeExecutionResult).toHaveBeenCalledOnce();
+    expect(current.onAttemptResult).toHaveBeenCalledOnce();
   });
 
   it("rejects results whose current durable attempt does not match the provider callback", async () => {

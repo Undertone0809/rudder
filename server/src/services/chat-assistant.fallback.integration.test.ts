@@ -336,7 +336,10 @@ describe("Chat native fallback Attempt persistence", () => {
     });
     const stop = new AbortController();
     const handlers = createChatNativeAttemptCallbacks({
-      orgId, runtimeAgentType: "codex_local", nativeDriverRequired: true, signal: stop.signal,
+      orgId,
+      runtimeAgentType: "codex_local",
+      isNativeRuntime: (runtimeType) => runtimeType === "codex_local",
+      signal: stop.signal,
       isExecutionInactive: () => stop.signal.aborted, isOwnerLost: () => false,
       ownerLostError: new Error("owner lost"), getAttempt: () => run.runtimeAttemptRef,
       getSpanFence: () => ({ spanId: run.runtimeSpanId ?? null,

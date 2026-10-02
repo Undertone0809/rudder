@@ -19,7 +19,7 @@ export type ChatNativeAttemptLifecycle = { providerDispatched: boolean; willFall
 export function createChatNativeAttemptCallbacks(input: {
   orgId: string;
   runtimeAgentType: string;
-  nativeDriverRequired: boolean;
+  isNativeRuntime: (runtimeType: string) => boolean;
   signal: AbortSignal;
   isExecutionInactive: () => boolean;
   isOwnerLost: () => boolean;
@@ -118,7 +118,12 @@ export function createChatNativeAttemptCallbacks(input: {
       ) {
         throw new Error("Chat provider result could not be recorded against its native attempt span");
       }
-      if (willFallback && !hasConfirmedNativeWriterQuiescence(result)) {
+      const attemptRuntimeType = attempt.agentRuntimeType ?? input.runtimeAgentType;
+      if (
+        willFallback
+        && input.isNativeRuntime(attemptRuntimeType)
+        && !hasConfirmedNativeWriterQuiescence(result)
+      ) {
         throw new Error("Chat cannot start a fallback before the previous native writer is confirmed quiescent");
       }
       await input.onAttemptResult(attempt, result, phase);

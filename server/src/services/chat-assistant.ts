@@ -949,7 +949,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
       const nativeAttemptCallbacks = createChatNativeAttemptCallbacks({
         orgId: chatRun.orgId,
         runtimeAgentType,
-        nativeDriverRequired,
+        isNativeRuntime: chatDriverPorts.isNativeRuntime,
         signal: executionSignal,
         isExecutionInactive,
         isOwnerLost: isOwnerExecutionLost,
