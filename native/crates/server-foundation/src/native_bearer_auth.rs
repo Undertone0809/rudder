@@ -363,6 +363,18 @@ mod tests {
             resolve(&pool, &board_token, &org_b).await.unwrap(),
             NativeBearerResolution::Forbidden
         ));
+
+        // Keep the non-admin/no-membership denial case ahead of the admin
+        // grant below; instance admins intentionally bypass organization
+        // membership checks.
+        let no_scope_token = format!("pcp_board_{}", Uuid::new_v4().simple());
+        let no_scope_id = insert_board_key(&pool, &user_id, &no_scope_token, false, false).await;
+        assert!(matches!(
+            resolve(&pool, &no_scope_token, &org_b).await.unwrap(),
+            NativeBearerResolution::Forbidden
+        ));
+        assert!(last_used_is_set(&pool, "board_api_keys", &no_scope_id).await);
+
         sqlx::query(
             "INSERT INTO instance_user_roles (user_id, role) VALUES ($1, 'instance_admin')",
         )
@@ -374,14 +386,6 @@ mod tests {
             resolve(&pool, &board_token, &org_b).await.unwrap(),
             NativeBearerResolution::Authorized { .. }
         ));
-
-        let no_scope_token = format!("pcp_board_{}", Uuid::new_v4().simple());
-        let no_scope_id = insert_board_key(&pool, &user_id, &no_scope_token, false, false).await;
-        assert!(matches!(
-            resolve(&pool, &no_scope_token, &org_b).await.unwrap(),
-            NativeBearerResolution::Forbidden
-        ));
-        assert!(last_used_is_set(&pool, "board_api_keys", &no_scope_id).await);
 
         let expired_token = format!("pcp_board_{}", Uuid::new_v4().simple());
         let expired_id = insert_board_key(&pool, &user_id, &expired_token, true, false).await;
