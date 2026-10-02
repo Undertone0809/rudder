@@ -831,6 +831,7 @@ async function startServerRuntime(
         try {
           await embeddedPostgres.start();
         } catch (err) {
+          embeddedPostgresLogs.flush();
           if (isEmbeddedPostgresSharedMemoryError(err, embeddedPostgresLogBuffer)) {
             const recovered = await cleanupStaleSysvSharedMemorySegments();
             if (recovered.removedIds.length > 0) {
@@ -851,6 +852,7 @@ async function startServerRuntime(
             throw recordEmbeddedPostgresFailure("start", err);
           }
         }
+        embeddedPostgresLogs.flush();
         embeddedPostgresStartedByThisProcess = true;
       }
     }
