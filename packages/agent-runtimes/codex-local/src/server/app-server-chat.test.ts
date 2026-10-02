@@ -230,8 +230,9 @@ rl.on("line", (line) => {
     send({ method: "turn/started", params: { threadId, turn: { id: turnId } } });
     if (process.env.RUDDER_TEST_STALL_TURN === "1") return;
     if (process.env.RUDDER_TEST_UNICODE_LOAD === "1") {
-      const output = "汉🙂é".repeat(16384);
-      for (let index = 0; index < 192; index++) {
+      const large = process.env.RUDDER_TEST_UNICODE_LARGE === "1";
+      const output = "汉🙂é".repeat(large ? 16384 : 256);
+      for (let index = 0; index < (large ? 192 : 4); index++) {
         send({ method: "item/completed", params: { threadId, turnId, item: {
           type: "commandExecution", id: "unicode-" + index,
           command: "fixture", cwd: "/fixture/workspace", status: "completed", aggregatedOutput: output, exitCode: 0,
@@ -2011,7 +2012,37 @@ describe("executeCodexAppServerChat", () => {
     expect(result.stdout === "").toBe(stdoutCapturePolicy === "omit");
   });
 
-  it("compares fixed Unicode stdout workload", async () => {
+  it("preserves bounded Unicode onLog and results with capture versus omit", async () => {
+    const run = async (stdoutCapturePolicy: "capture" | "omit") => {
+      const logs: string[] = [];
+      const result = await executeCodexAppServerChat({
+        command: fakeCodex, cwd: root,
+        env: { ...process.env, PATH: process.env.PATH ?? "",
+          RUDDER_TEST_UNICODE_LOAD: "1", RUDDER_TEST_UNICODE_LARGE: "0" } as Record<string, string>,
+        prompt: "Fixture", model: "gpt-test", modelReasoningEffort: "high", search: false,
+        bypassApprovalsAndSandbox: true, imagePaths: [], sessionId: "thread-app-1", timeoutSec: 5,
+        stdoutCapturePolicy,
+        onLog: async (stream, line) => { if (stream === "stdout") logs.push(line); },
+      });
+      return { result, logs };
+    };
+    const captured = await run("capture");
+    const omitted = await run("omit");
+    expect(omitted.logs).toEqual(captured.logs);
+    expect(captured.logs.filter(line => line.includes('"command_execution"'))).toHaveLength(4);
+    expect(captured.result.stdout).toBe(captured.logs.join(""));
+    expect(Buffer.byteLength(captured.result.stdout)).toBeGreaterThan(captured.result.stdout.length);
+    expect(Buffer.byteLength(captured.result.stdout)).toBeLessThan(32 * 1024);
+    expect(omitted.result.stdout).toBe("");
+    expect({ ...omitted.result, stdout: "" }).toEqual({ ...captured.result, stdout: "" });
+    expect(omitted.result).toMatchObject({
+      exitCode: 0, summary: "Steered reply", sessionId: "thread-app-1", providerTurnId: "turn-app-1",
+      submissionPhase: "accepted", resumed: true, providerAuthFailure: false,
+      usage: { inputTokens: 4, cachedInputTokens: 1, outputTokens: 5 },
+    });
+  });
+
+  it.skipIf(process.env.RUDDER_STDOUT_BENCH_LARGE !== "1")("compares fixed Unicode stdout workload", async () => {
     const policy = process.env.RUDDER_STDOUT_BENCH_POLICY === "omit" ? "omit" : "capture";
     const logHash = createHash("sha256");
     let logBytes = 0;
@@ -2021,7 +2052,8 @@ describe("executeCodexAppServerChat", () => {
     const started = performance.now();
     const result = await executeCodexAppServerChat({
       command: fakeCodex, cwd: root,
-      env: { ...process.env, PATH: process.env.PATH ?? "", RUDDER_TEST_UNICODE_LOAD: "1" } as Record<string, string>,
+      env: { ...process.env, PATH: process.env.PATH ?? "",
+        RUDDER_TEST_UNICODE_LOAD: "1", RUDDER_TEST_UNICODE_LARGE: "1" } as Record<string, string>,
       prompt: "Fixture", model: "gpt-test", modelReasoningEffort: "high", search: false,
       bypassApprovalsAndSandbox: true, imagePaths: [], sessionId: "thread-app-1", timeoutSec: 20,
       stdoutCapturePolicy: policy,
