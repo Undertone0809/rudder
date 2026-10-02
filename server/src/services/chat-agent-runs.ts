@@ -165,6 +165,7 @@ function runtimeSkillsFromInvocationPayload(payload: Record<string, unknown>) {
 function compactNativeAdapterInvokePayload(payload: Record<string, unknown>) {
   return buildHeartbeatAdapterInvokePayload({
     meta: payload as unknown as AgentRuntimeInvocationMeta,
+    preservePersistedInstructionAlias: true,
     runtimeSkills: runtimeSkillsFromInvocationPayload(payload),
     transcriptRetention: NATIVE_CHAT_TRANSCRIPT_RETENTION,
   });

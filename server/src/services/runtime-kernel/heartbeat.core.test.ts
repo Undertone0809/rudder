@@ -50,15 +50,19 @@ describe("heartbeat adapter invocation persistence", () => {
     const before = structuredClone(meta);
     const payload = buildHeartbeatAdapterInvokePayload({ meta, runtimeSkills: [] });
     const serialized = JSON.stringify(payload);
-    const duplicateSerialized = JSON.stringify({ ...payload, agentInstructionStack: prompt });
+    const withoutAlias = { ...payload };
+    delete withoutAlias.agentInstructionStackAlias;
+    const duplicateSerialized = JSON.stringify({ ...withoutAlias, agentInstructionStack: prompt });
     const removedBytes = Buffer.byteLength(duplicateSerialized) - Buffer.byteLength(serialized);
-    expect(removedBytes).toBe(Buffer.byteLength(JSON.stringify(prompt)) + Buffer.byteLength(',"agentInstructionStack":'));
+    const aliasBytes = Buffer.byteLength(serialized) - Buffer.byteLength(JSON.stringify(withoutAlias));
+    expect(removedBytes).toBe(Buffer.byteLength(JSON.stringify(prompt)) + Buffer.byteLength(',"agentInstructionStack":') - aliasBytes);
+    expect(removedBytes).toBeGreaterThan(82_187);
     expect(payload).not.toHaveProperty("agentInstructionStack");
     expect(JSON.parse(serialized).prompt).toBe(prompt);
     expect(payload.invocationInstructionSnapshot).toEqual(meta.invocationInstructionSnapshot);
     expect(meta).toEqual(before);
     console.info("invoke-dedup synthetic bytes", { bodyBytes: Buffer.byteLength(prompt), beforeBytes: Buffer.byteLength(duplicateSerialized),
-      afterBytes: Buffer.byteLength(serialized), removedBytes });
+      afterBytes: Buffer.byteLength(serialized), aliasBytes, removedBytes });
   });
 
   it.each([

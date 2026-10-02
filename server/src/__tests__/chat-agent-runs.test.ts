@@ -345,8 +345,11 @@ describe("chatAgentRunService", () => {
     expect(invoke.payload).not.toHaveProperty("agentInstructionStack");
     const payload = invoke.payload as Record<string, unknown>;
     const serialized = JSON.stringify(payload);
-    expect(Buffer.byteLength(JSON.stringify({ ...payload, agentInstructionStack: prompt })) - Buffer.byteLength(serialized))
-      .toBe(Buffer.byteLength(JSON.stringify(prompt)) + Buffer.byteLength(',"agentInstructionStack":'));
+    const withoutAlias = { ...payload };
+    delete withoutAlias.agentInstructionStackAlias;
+    const aliasBytes = Buffer.byteLength(serialized) - Buffer.byteLength(JSON.stringify(withoutAlias));
+    expect(Buffer.byteLength(JSON.stringify({ ...withoutAlias, agentInstructionStack: prompt })) - Buffer.byteLength(serialized))
+      .toBe(Buffer.byteLength(JSON.stringify(prompt)) + Buffer.byteLength(',"agentInstructionStack":') - aliasBytes);
     await expect(readRunInstructionSnapshotForEvent({ db, storage: snapshots.storage,
       orgId: run.orgId, runId: run.id, eventId: invoke.id })).resolves.toMatchObject({
       agentInstructionStack: prompt, sha256: createHash("sha256").update(prompt).digest("hex"), byteSize: Buffer.byteLength(prompt),
@@ -354,6 +357,56 @@ describe("chatAgentRunService", () => {
     expect(meta).toEqual({ agentRuntimeType: "hermes_gateway", command: "hermes", prompt, agentInstructionStack: prompt });
     await invokeSvc.sealSpan(run, { completeness: "unknown" });
     await invokeSvc.finalizeRun(run.id, { status: "failed", resultJson: { outcome: "test finished" } });
+  });
+
+  it.each([
+    { prompt: "Instructions 原文🙂", agentInstructionStack: "Instructions 原文🙂", aliased: true, present: true },
+    { prompt: "task", aliased: false, present: false },
+    { prompt: "task", agentInstructionStack: null, aliased: false, present: false },
+    { prompt: "task", agentInstructionStack: "", aliased: false, present: true },
+    { prompt: "", agentInstructionStack: "", aliased: false, present: true },
+    { prompt: "task", agentInstructionStack: "distinct Instructions", aliased: false, present: true },
+  ])("roundtrips persisted dedup metadata through the actual Chat compactor: %j", async ({ aliased, present, ...fields }) => {
+    const snapshots = createInstructionSnapshotStorage();
+    const aliasSvc = chatAgentRunService(db, { transcriptObjectStore: objectStore, instructionSnapshotStorage: snapshots.storage,
+      transcriptReaderFactory: database => createTranscriptReader(database as any, { nativeReader: { readRange: async () => ({
+        items: [{ kind: "assistant", ts: "2026-10-02T00:00:00.000Z", text: "native-only final" }],
+        revision: "alias-native-r1", availability: "available", completeness: "complete",
+      }) } }),
+    });
+    const run = await createChatRunFixture("Chat compactor alias", undefined, aliasSvc, "codex_local");
+    const meta = { agentRuntimeType: "codex_local", command: "codex", ...fields };
+    const original = structuredClone(meta);
+    await aliasSvc.appendAdapterInvoke(run, meta as never, []);
+    const before = (await heartbeatService(db).listEvents(run.id)).find(event => event.eventType === "adapter.invoke")!;
+    const beforePayload = before.payload as Record<string, unknown>;
+    if (aliased) expect(beforePayload.agentInstructionStackAlias).toMatchObject({ present: true, sameAsPrompt: true });
+    else expect(beforePayload).not.toHaveProperty("agentInstructionStackAlias");
+    // No stdout/transcript mirror is produced in this dedicated path. Existing
+    // supplement fixtures remain intact and are denied cleanup in other cases.
+    await aliasSvc.recordNativeExecutionResult(run.id, {
+      exitCode: 0, signal: null, timedOut: false, sessionId: "alias-thread", providerThreadId: "alias-thread",
+      providerTurnId: "alias-turn", resultJson: { threadId: "alias-thread", turnId: "alias-turn" },
+      nativeWriterQuiescence: { status: "confirmed", source: "provider_terminal" },
+    }, { orgId: run.orgId, spanId: run.runtimeSpanId, ownerToken: run.runtimeSpanOwnerToken, attemptEpoch: run.runtimeSpanAttemptEpoch });
+    await aliasSvc.finalizeRun(run.id, { status: "succeeded", resultJson: { outcome: "completed" },
+      transcriptDelivery: { source: "native", spanId: run.runtimeSpanId! } });
+    const [final] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    expect(final.contextSnapshot).toMatchObject({ nativeTranscriptRetention: { status: "reference_only" } });
+    const after = (await heartbeatService(db).listEvents(run.id)).find(event => event.eventType === "adapter.invoke")!;
+    const payload = after.payload as Record<string, unknown>;
+    expect(after.id).toBe(before.id);
+    expect(payload).not.toHaveProperty("prompt");
+    expect(payload).not.toHaveProperty("agentInstructionStack");
+    const summary = (payload.invocationContent as Record<string, unknown>).agentInstructionStack;
+    expect(summary).toMatchObject({ present });
+    if (aliased) expect(summary).toEqual(beforePayload.agentInstructionStackAlias);
+    else { expect(summary).not.toHaveProperty("sameAsPrompt"); expect(payload).not.toHaveProperty("agentInstructionStackAlias"); }
+    if (typeof fields.agentInstructionStack === "string" && fields.agentInstructionStack.length > 0) {
+      await expect(readRunInstructionSnapshotForEvent({ db, storage: snapshots.storage, orgId: run.orgId,
+        runId: run.id, eventId: after.id })).resolves.toMatchObject({ agentInstructionStack: fields.agentInstructionStack });
+    }
+    expect(meta).toEqual(original);
   });
 
   it("switches a live Cursor Run transcript source only for its current span owner", async () => {

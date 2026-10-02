@@ -62,6 +62,7 @@ export function compactHeartbeatAdapterInvokePayload(payload: Record<string, unk
   });
   return buildHeartbeatAdapterInvokePayload({
     meta: payload as unknown as AgentRuntimeInvocationMeta,
+    preservePersistedInstructionAlias: true,
     runtimeSkills,
     transcriptRetention: {
       mode: "native",
