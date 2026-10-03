@@ -1,6 +1,30 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+convergence_checkpoint_2026_10_03_0152:
+  supersedes: earlier_live_C07_auth_publication_and_PG_fields_only_history_preserved
+  configuration: actual_gpt6luna_xhigh_subagents_no_new_threads
+  PR236_record_head: 7396b1b0d9716f936bb8e894cbd745965bab7bac
+  PR262:
+    head: 7113792176b33d58cb6d5bb4ac3601817410e9eb
+    tree: a27c2077ec9e70436c3d0e518e01ac770a1ab400
+    change: two_line_Ubuntu_staged_processhost_ENV_export_and_workflow_contract_regression_no_product_change
+    checks: parent4workflowPASS_worker_processhostbuild_and17darwinarm64PASS_exactUbuntuCI_pending
+    artifact_final: accept_Huygens_db95412af272073ae673ce01c6fc8077cd8c9e7446b02b2656c85fbb53e008f9
+    publication: normalFF83_to711_pushed_lsremote_andPRhead_confirmed_Draft_unmerged_no_force
+    security: exact711_GitGuardian_FAILURE_observed_unadjudicated_no_waiver_Ubuntu_Verify_still_IN_PROGRESS
+    product_identity: original046_build_runtime_retained_not_relabelled711
+  C07_v6:
+    stage: accept_Jason_38317aee54a12c14bc7199bb50d015ba661314e098020772ce6568ee83b2cc71
+    verifier: FAIL_Franklin_one_invocation_session78854_exit1_1FAIL_14NOTRUN_1cleanupPASS
+    observation: target_full_seed_ENOENT_TMPDIR_pg_password_file_merge_andPATCH_not_reached
+    terminal_sha256: 667b002310e969647c941575bec3d623d20ea590645154df2f54ac0da0238571
+    original_OPEN_sha256: cc5adedca698f64a6ccf343c875c249da7e0d4d5c3bbdb0845e7d01ca415c5b1
+    CLOSED_sha256: 0c52d4a6c61d68c0079f865fe6b28f375319c354570c4709f5402d29b5258390
+    archive: /Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy/c07-v6-franklin-attempt1
+    PG: FREE_parent_fresh_PID_PGID13473_absent_ports59817_to59820_closed_exact_scratch_absent_no_parent_deletion
+    next: minimal_additive_v7_owned_TMPDIR_preparation_regression_then_Jason_stage_fresh_parentlease_Franklin_once_no_v6_retry
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 terminal_checkpoint_2026_10_03_C07_v5:
   supersedes: earlier_live_C07_and_PG_fields_only_preserves_historical_receipts
   configuration: actual_gpt6luna_xhigh_subagents_no_new_threads
