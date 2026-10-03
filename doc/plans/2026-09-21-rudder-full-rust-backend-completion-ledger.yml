@@ -1,6 +1,22 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+convergence_checkpoint_2026_10_03_0016:
+  supersedes: execution_checkpoint_and_live_fields_below_only_historical_receipts_preserved
+  configuration: actual_subagents_gpt6luna_xhigh_no_new_threads
+  published_head: 6c43667e8b101865c4beac331b380810ee093ab5
+  installed_source: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
+  MCP_v11: {verifier: PASS_13_of_13, final: accept_Newton, final_sha256: 7e60c9cd2e85d79bbd13ccb484c5cf5991da097506ac4fd162180b650e38a5b4, scope: bounded_real_Actix_members_only, PG: CLOSED}
+  attachment_v4: {verifier: PASS_7_of_7, final: accept_Huygens, final_sha256: 143d4d02e1c5961df543f76ff0e19eae9d1edff0348094ce54d4a1c45b4e90ff, scope: explicit_required_API_only_no_UI_or_unset_default, PG: CLOSED}
+  C07_v3: {verdict: QUESTION, observed_assertions: 0, reason: runner_reads_top_level_digest_but_packet_uses_leaf_field, runtime_started: false, PG: CLOSED_parent_no_runtime_reconciled_original_OPEN_archived}
+  C07_next: Gibbs_xhigh_pure_v4_preflight_schema_repair_then_Jason_stage_and_distinct_Franklin_verifier_fresh_finite_lease
+  auth_publication: normal_push046_rejected_nonFF_remote88024_preserved_no_force_no_unchanged_retry
+  ancestry_correction: prior_summary_88024_ancestor_of046_was_incorrect_actual_fetch_and_graph_show_divergence
+  auth_next: Erdos_xhigh_isolated_forward_integration_preserve_remote_changes_then_exact_review_content_equivalence_before_push
+  CI: latest_parent_snapshot_exact6c_10_SUCCESS_9_active_1_SKIP_0_FAIL_at000359Z_refresh_Socrates_pending_not_allgreen
+  remaining: installed_Board_UI_aggregate_root_and_broader_Phase0_to7_authorities_still_pending
+  safety: original7b2a_dirty_work_preserved_no_production_stable_real_user_data_or_force_push
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 execution_checkpoint_2026_10_03_xhigh:
   supersedes: live_execution_and_preparation_fields_below_only_historical_receipts_preserved
   configuration: actual_subagents_gpt6luna_xhigh_no_new_threads
