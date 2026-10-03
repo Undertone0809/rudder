@@ -1,6 +1,31 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+convergence_checkpoint_2026_10_03_xhigh_publication:
+  supersedes: earlier_live_publication_worker_and_CI_fields_only_history_preserved
+  observed_at: '2026-10-03T03:39:49Z'
+  subagents: {model: gpt-6-luna, reasoning_effort: xhigh, new_tasks: 0}
+  PR262:
+    published_head: d83ea0e5a150bef52a853be4cd78e09ac6ddbdc6
+    tree: 70ede35d1c1b9603dc1f52a9d8363e2c804c4da3
+    scope: two_test_fixture_files_only_native_runtime_content_equivalent_to8c4
+    artifact_review: accept_Bernoulli_early_Draft_CI_only_not_product_acceptance
+    review_sha256: ebd66b550bbe11ffadceb0f3f662c519958afaefb21a2195c687d2f1e7912e41
+    focused_checks: Desktop63PASS_1platformSKIP_actual_Rust_host_server_NOT_RUN_missing_prerequisites
+    publication: normal_FF_push_exit0_after_two_TLS_failures_REST_PR_head_confirmed
+    current_CI: running_GitGuardian_FAILURE_unadjudicated_no_waiver_not_all_green
+    provider_verifier: Avicenna_pending_exact8c_build_with_test_only_d83_equivalence
+  PR236:
+    published_head: 9d211bf6ec5e2b360b7c0536a5022cc14f3c5b5c
+    local_docs_checkpoint: a2896b16d0485abedd973a4adc5bb8b7883e3a89
+    local_docs_review: accept_Faraday_exact4ea415_two_document_diff_only
+    CI: Ubuntu_macOS_Windows_D1_packaged_smoke_and_six_foundation_artifacts_PASS_Intel_native_FAILURE_summary_FAILURE
+    Intel_failure_diagnosis: Meitner_pending_read_only_job111113581013
+    installed_build: Laplace_pending_normal_exact9d_build_no_old646_relabel
+  C07: Plato_additive_exact9d_successor_preparation_no_runtime_or_OPEN_until_installation_proof_and_fresh_stage
+  PG: FREE_no_C07_successor_lease
+  next: reconcile_provider_terminal_build_receipt_and_Intel_failure_then_fresh_independent_gates
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 convergence_checkpoint_2026_10_03_temporal_repair:
   supersedes: earlier_live_worker_PG_CI_and_next_action_fields_only_history_preserved
   record_base: bfe96ef39869f698b6af184e2fe4827eca81de75
