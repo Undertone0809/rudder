@@ -1,6 +1,31 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+convergence_checkpoint_2026_10_03_0210:
+  supersedes: earlier_live_C07_stage_execution_and_CI_observations_only_history_preserved
+  record_source_head: 0853af7eac70527097cfb620a2333de7608b1381
+  configuration: actual_spawn_gpt6luna_xhigh_no_new_threads
+  C07_v7:
+    installed_source: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f
+    stage: accept_Jason_cece2531d794d49fc4dca67164381149b0f685aee8e9653563451823d61881bf
+    repair: owned_clone_TMPDIR_0700_before_first_CLI_use_parent_focused5PASS_all16criteria_unchanged
+    original_OPEN_sha256: ccd4c1f6d4ece461a02b2ff5d76aac94a0b45a2288524ecb00a71393753089c2
+    dispatch: one_actual_Franklin_submission_01a0ff82_2afc_73f0_b17d_a316163988c1
+    raw_observation: target_full_seed_exit0_then_complete_catalog_fingerprint_mismatch_not_independent_terminal_handoff
+    verifier: pending_actual_terminal_and_frozen_receipts
+    PG: RESERVED_until_actual_terminal_parent_fresh_cleanup_and_CLOSED_no_retry
+    diagnosis: McClintock_existing_xhigh_read_only_preparation_no_runtime_no_frozen_v7_edits
+  CI:
+    observed_at: 2026-10-03T02:09:27Z
+    observer: Rawls_actual_spawn_01a0ff81_a1e6_77c2_9b17_59a86e3def73_gpt6luna_xhigh
+    original_receipt_sha256: df86ea4d6e5d4eefdc8994878abc0ec3d79bba9790f2bcb1da7750aea3dac3dd
+    PR262: {head: 7113792176b33d58cb6d5bb4ac3601817410e9eb, success: 18, failure: 1, skipped: 1, running: 1, Ubuntu: IN_PROGRESS, security: GitGuardian_FAILURE_unadjudicated_no_waiver}
+    PR236: {head: 0853af7eac70527097cfb620a2333de7608b1381, success: 13, failure: 0, skipped: 1, running: 6, Ubuntu: IN_PROGRESS}
+    Main: 8eedffad752c6065803cc880c7f48e92052c62c7
+    provenance_correction: original_receipt_self_description_GPT6_not_delegated_is_inaccurate_parent_actual_spawn_and_additive_reconciliation_are_authoritative
+    all_green: false
+  next: receive_Franklin_actual_terminal_FULLread_fresh_owned_cleanup_CLOSE_then_minimal_evidence_based_catalog_repair_stage_new_exact_verifier_no_v7_retry
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 convergence_checkpoint_2026_10_03_0152:
   supersedes: earlier_live_C07_auth_publication_and_PG_fields_only_history_preserved
   configuration: actual_gpt6luna_xhigh_subagents_no_new_threads
