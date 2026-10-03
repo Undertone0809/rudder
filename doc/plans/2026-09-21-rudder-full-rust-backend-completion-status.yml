@@ -1,6 +1,28 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+terminal_checkpoint_2026_10_03_cloud_C07_attempt1:
+  supersedes: earlier_live_C07_resource_HOLD_and_OPEN_fields_only_history_preserved
+  published_head: 6b206b1394196386637d8b8238828ab514555fde
+  installed_source: 9d211bf6ec5e2b360b7c0536a5022cc14f3c5b5c
+  stage: actual_Kant_accept_10efa_leaf_only
+  executor: actual_Schrodinger_01a0fff2_676c_7660_ba94_a5c2ba2f7f2e_PTY72646_one_attempt
+  executed_at: '2026-10-03T06:35:04.750Z'
+  completed_at: '2026-10-03T06:35:18.355Z'
+  runner: FAIL_Result_empty_collection_prototype_differs_from_plain_Array_before_interactive_merge
+  runner_evidence_sha256: f42eca679d8ae381b9c758f346a06cdb31faf6b446334657a7d1858271378e3b
+  raw_PTY_sha256: 98786a4ec63bd814454d317b03edcb2c0cd3e4a92fa4e8e4c88afac8fa5be046
+  verifier: QUESTION_actual_Schrodinger_runner_FAIL_kept_separate_no_aggregate_acceptance
+  verifier_sha256: 4f261750cd8e47d7d0648d99fcfa785ce599c8266e99fea421f4aa89017a0d2d
+  criterion_counts: {PASS: 8, QUESTION: 2, NOT_RUN: 6}
+  supporting: full_seed151canonical_catalogs_programmatic_deepEqual_0column_mismatches_source_only_rows_created_not_C07_PASS
+  unobserved: interactive_Import_Confirm_apply_merge_target_PATCH_audit_fence_replay
+  cleanup: parent_fresh_owned_PIDs18756_18306_init17889_18363_and_groups_absent_ports51739to51742_unbound_exact_scratchBZyGAe_absent
+  original_OPEN_sha256: aaf7ff433e59af61cc196350e56f7d192dcf0d39899b844d09068c492c60584d
+  CLOSED_sha256: 9ac3bf8e05a594ffcc0f9414bc87af7b094e3854b200f9f7a290b6ea344676a9
+  PG: FREE_no_retry_or_successor_OPEN
+  next: cloud_minimal_Result_collection_assertion_repair_with_empty_nonempty_regressions_preserve16criteria_then_new_freeze_original_Kant_stage_and_new_finite_parent_lease
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 convergence_checkpoint_2026_10_03_cloud_stage_local_hold:
   supersedes: earlier_live_candidate_CI_cloud_stage_and_resource_fields_only_history_preserved
   observed_at: '2026-10-03T06:16:26Z'
