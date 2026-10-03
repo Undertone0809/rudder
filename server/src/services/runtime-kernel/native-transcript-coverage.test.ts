@@ -58,7 +58,9 @@ describe("Codex mixed supplement coverage: classification, never deletion", () =
     expect(result.authorizesOldObjectDelete).toBe(false);
     if (!result.ok) return;
     expect(result.mappings).toHaveLength(4);
-    expect(result.residualIndices).toHaveLength(32); // 27 stdout, init, three lifecycle, started tool snapshot
+    expect(result.residualIndices).toHaveLength(shape);
+    expect(Buffer.from(result.residualBytes)).toEqual(Buffer.from(input.supplement.bytes));
+    expect(result.residualSha256).toBe(input.supplement.sha256);
     const lines = Buffer.from(input.supplement.bytes).toString().trimEnd().split("\n");
     expect(Buffer.from(result.residualBytes).toString()).toBe(result.residualIndices.map((i) => lines[i] + "\n").join(""));
     expect(result.residualSha256).toBe(sha(result.residualBytes));
@@ -81,6 +83,7 @@ describe("Codex mixed supplement coverage: classification, never deletion", () =
     ["missing line terminator", (x) => { x.supplement.bytes = x.supplement.bytes.slice(0, -1); x.supplement.sha256 = sha(x.supplement.bytes); }],
     ["invalid UTF8", (x) => { x.supplement.bytes = Uint8Array.from([255, 10]); x.supplement.sha256 = sha(x.supplement.bytes); }],
     ["unknown", (x) => edit(x, (r) => { r[0].kind = "unknown"; })],
+    ["unrecognized reasoning kind", (x) => edit(x, (r) => { r[29].kind = "reasoning"; })],
     ["unrecognized field", (x) => edit(x, (r) => { r[0].privateExtra = "not discardable"; })],
     ["row scope", (x) => edit(x, (r) => { r[0].runId = "other"; })],
     ["duplicate source ID", (x) => edit(x, (r) => { r[1].sourceEntryId = r[0].sourceEntryId; })],
@@ -121,5 +124,30 @@ describe("Codex mixed supplement coverage: classification, never deletion", () =
       expect(before.residualSha256).not.toBe(after.residualSha256);
       expect(after.authorizesOldObjectDelete).toBe(false);
     }
+  });
+
+  it.each(["chunk", "result"])("retains unproved %s timestamps and original chunk boundaries", (kind) => {
+    const input = fixture();
+    const index = kind === "chunk" ? 32 : 44;
+    edit(input, (rows) => { rows[index].ts = "2026-01-01T00:00:01.123Z"; });
+    const result = proveCodexMixedSupplementCoverage(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.residualIndices).toContain(index);
+    const originalLines = Buffer.from(input.supplement.bytes).toString().trimEnd().split("\n");
+    expect(Buffer.from(result.residualBytes).toString()).toContain(originalLines[index] + "\n");
+    expect(result.authorizesOldObjectDelete).toBe(false);
+  });
+
+  it("retains original serialization bytes including BOM, whitespace and CRLF", () => {
+    const input = fixture();
+    const rows = Buffer.from(input.supplement.bytes).toString().trimEnd().split("\n").map((line) => JSON.parse(line));
+    input.supplement.bytes = Buffer.from("\ufeff" + rows.map((row) => JSON.stringify({ entry: row.entry, version: row.version }) + " ").join("\r\n") + "\r\n");
+    input.supplement.sha256 = sha(input.supplement.bytes);
+    const result = proveCodexMixedSupplementCoverage(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Buffer.from(result.residualBytes)).toEqual(Buffer.from(input.supplement.bytes));
+    expect(result.residualSha256).toBe(input.supplement.sha256);
   });
 });

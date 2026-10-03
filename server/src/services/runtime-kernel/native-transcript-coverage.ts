@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 /** Pure classification only. No persistence, cleanup, or provider authority. */
-export const CODEX_MIXED_COVERAGE_VERSION = "codex-mixed-supplement-v1" as const;
+export const CODEX_MIXED_COVERAGE_VERSION = "codex-mixed-supplement-v2" as const;
 
 export type CoverageIdentity = {
   orgId: string;
@@ -48,7 +48,8 @@ export type CodexMixedCoverageResult = {
   objectSha256: string;
   nativeRevision: string;
   mappings: Array<{ supplementIndices: number[]; nativeSourceEntryId: string; kind: string }>;
-  /** Includes lifecycle snapshots even when their call semantics are covered. */
+  /** Semantic equivalence is not byte/timeline equivalence. Until an exact
+   * timeline/serialization locator exists, retain EVERY original line. */
   residualIndices: number[];
   residualBytes: Uint8Array;
   residualSha256: string;
@@ -145,7 +146,10 @@ export function proveCodexMixedSupplementCoverage(input: CodexMixedCoverageInput
         && es[0].toolUseId === es[1].toolUseId))) return fail("ambiguous_native_id");
 
     const mappings: Extract<CodexMixedCoverageResult, { ok: true }>["mappings"] = [];
-    const residual = new Set<number>();
+    // Ordered text concatenation and tool equivalence do not prove original
+    // timestamps, chunk boundaries, projection IDs, or serialized bytes. This
+    // slice intentionally saves zero bytes rather than lose those facts.
+    const residual = new Set(entries.map((_entry, index) => index));
     const usedNative = new Set<number>();
     const seenSegments = new Set<string>();
     const seenCalls = new Set<string>();
@@ -210,7 +214,9 @@ export function proveCodexMixedSupplementCoverage(input: CodexMixedCoverageInput
     if (seenCalls.size !== seenResults.size || [...seenCalls].some((id) => !seenResults.has(id))) return fail("unpaired_tool");
     if (n.entries.some((e, i) => ["assistant", "tool_call", "tool_result"].includes(String(e.kind)) && !usedNative.has(i))) return fail("native_semantic_entry_unmatched");
     const residualIndices = [...residual].sort((a, b) => a - b);
-    const residualBytes = Buffer.from(residualIndices.map((i) => `${lines[i]}\n`).join(""), "utf8");
+    // Copy the committed bytes, not decoded/re-encoded JSON: preserve encoding,
+    // whitespace, line endings and any original UTF-8 BOM as well as all rows.
+    const residualBytes = Buffer.from(s.bytes);
     // Bind complete entry snapshots as well as revision: changing content under
     // a reused revision must not yield the same proof seal.
     const bindingSha256 = sha(JSON.stringify({ version: CODEX_MIXED_COVERAGE_VERSION,
