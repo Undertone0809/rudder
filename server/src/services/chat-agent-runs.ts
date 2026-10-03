@@ -41,7 +41,9 @@ import {
   cleanSealedNativeTranscriptMirrors,
   markNativeTranscriptRetentionIncomplete,
   proveSealedNativeRunTranscript,
+  type NativeTranscriptRunProof,
 } from "./runtime-kernel/native-transcript-retention.js";
+import { persistCodexTimelineShadows } from "./runtime-kernel/native-transcript-shadow.js";
 import { getTranscriptObjectStore, type TranscriptObjectHandle, type TranscriptObjectStore } from "./runtime-kernel/transcript-object-store.js";
 import type { TranscriptReader } from "./runtime-kernel/transcript-reader.js";
 import {
@@ -483,6 +485,14 @@ export function chatAgentRunService(db: Db, options: {
       runId,
       expectedOwner: { spanId, ownerToken: fence.ownerToken, attemptEpoch: fence.attemptEpoch, attemptId },
     });
+  }
+
+  async function writeCodexShadow(proof: NativeTranscriptRunProof) {
+    const results = await persistCodexTimelineShadows({ db, proof, store: transcriptObjectStore, readerFactory: transcriptReaderFor });
+    for (const { spanId, result } of results) {
+      if (!result.ok) logger.warn({ orgId: proof.orgId, runId: proof.runId, spanId, reason: result.reason },
+        "Codex shadow persist refused; original supplement retained");
+    }
   }
 
   async function createRun(input: {
@@ -1338,6 +1348,7 @@ export function chatAgentRunService(db: Db, options: {
         };
       }
       if (proofResult.ok) {
+        await writeCodexShadow(proofResult.proof);
         const cleanup = await cleanSealedNativeTranscriptMirrors({
           db,
           proof: proofResult.proof,

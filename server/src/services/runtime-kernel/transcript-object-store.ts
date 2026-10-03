@@ -1,10 +1,17 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, promises as fs } from "node:fs";
+import { createReadStream, promises as fs, constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { badRequest, conflict, forbidden, notFound } from "../../errors.js";
 import { syncDirectory, syncFileHandle } from "../../file-system-durability.js";
 import { resolveDefaultStorageDir } from "../../home-paths.js";
+import {
+  buildCodexByteTimeline,
+  reconstructCodexByteTimeline,
+  type CodexByteTimeline,
+  type CodexMixedCoverageInput,
+  type CoverageIdentity,
+} from "./native-transcript-coverage.js";
 import type {
   NativeTranscriptReadInput,
   NativeTranscriptReadResult,
@@ -129,8 +136,43 @@ export interface TranscriptObjectStore {
   }): Promise<void>;
   write(input: TranscriptObjectBeginInput & { entries: readonly TranscriptEntry[] }): Promise<string>;
   readRange(input: TranscriptObjectReadRangeInput): Promise<TranscriptObjectReadRangeResult>;
+  /** Optional shadow-only capability. Original ref, writer and reads stay authoritative. */
+  writeCodexTimelineShadow?(input: CodexTimelineShadowInput & {
+    beforePublish: () => Promise<boolean>;
+  }): Promise<CodexTimelineShadowResult>;
+  compareCodexTimelineShadow?(input: CodexTimelineShadowInput): Promise<CodexTimelineShadowResult>;
+  /** Object lock first; caller may then acquire retention advisory/row locks. */
+  withCodexTimelineShadowLock?<T>(objectRef: string, operation: (
+    write: (input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }) => Promise<CodexTimelineShadowResult>,
+  ) => Promise<T>): Promise<T>;
   sweepUnreferenced(input?: TranscriptObjectSweepInput): Promise<TranscriptObjectSweepResult>;
 }
+
+export type CodexTimelineShadowInput = {
+  objectRef: string;
+  identity: CoverageIdentity;
+  native: CodexMixedCoverageInput["native"];
+};
+
+export type CodexTimelineShadowResult = {
+  ok: false;
+  reason: string;
+  authorizesOldObjectDelete: false;
+} | {
+  ok: true;
+  originalSha256: string;
+  reconstructedSha256: string;
+  manifestSha256: string;
+  residualSha256: string;
+  originalBytes: number;
+  residualBytes: number;
+  authorizesOldObjectDelete: false;
+};
+
+export type CodexTimelineShadowReader = NativeTranscriptReaderHook & {
+  compareCodexTimelineShadow?: (input: NativeTranscriptReadInput,
+    native: CodexMixedCoverageInput["native"]) => Promise<CodexTimelineShadowResult>;
+};
 
 type StoredObjectMetadata = {
   version: 1;
@@ -667,6 +709,141 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
   // Keep the directory cursor between bounded batches so protected objects cannot starve later refs.
   let sweepDirectory: Awaited<ReturnType<typeof fs.opendir>> | null = null;
   let sweepTail = Promise.resolve();
+
+  const shadowFailure = (reason: string): CodexTimelineShadowResult => ({ ok: false, reason, authorizesOldObjectDelete: false });
+  const shadowPaths = (objectRef: string) => {
+    const paths = objectPaths(root, objectRef);
+    const shadows = path.join(paths.root, "codex-timeline-shadows");
+    return { ...paths, shadows, published: path.join(shadows, paths.ref) };
+  };
+  // Shadow paths only. Never stat a path then reopen it: a FIFO/symlink swap
+  // must fail without blocking, and all bounds/data checks use the SAME FD.
+  async function readShadowFile(filePath: string, maximum: number) {
+    const file = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK | fsConstants.O_NOFOLLOW);
+    try {
+      const before = await file.stat();
+      if (!before.isFile() || before.size > maximum) throw new Error("shadow_file_bounds");
+      const buffer = Buffer.alloc(maximum + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+        if (!bytesRead) break;
+        length += bytesRead;
+      }
+      const after = await file.stat();
+      if (length > maximum || length !== before.size || after.size !== before.size
+        || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) throw new Error("shadow_file_changed");
+      return buffer.subarray(0, length);
+    } finally { await file.close(); }
+  }
+  async function readShadowOriginal(input: CodexTimelineShadowInput) {
+    const paths = shadowPaths(input.objectRef);
+    const metadata = parseStoredObjectMetadata(JSON.parse((await readShadowFile(paths.metadataPath, 128 * 1024)).toString("utf8")));
+    if (metadata.objectRef !== paths.ref || metadata.orgId !== input.identity.orgId
+      || metadata.runId !== input.identity.runId || metadata.spanId !== input.identity.spanId
+      || metadata.sourceOwnerHash !== ownerTokenSha256(input.identity.ownerToken)) throw new Error("shadow_original_identity");
+    if (metadata.state !== "sealed" || metadata.bytes > 2 * 1024 * 1024 || metadata.entryCount > 256) throw new Error("shadow_original_not_bounded_sealed");
+    const bytes = await readShadowFile(paths.payloadPath, 2 * 1024 * 1024);
+    if (bytes.length !== metadata.bytes) throw new Error("shadow_original_byte_count");
+    return { paths, metadata, bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
+  }
+  async function compareShadow(input: CodexTimelineShadowInput): Promise<CodexTimelineShadowResult> {
+    try {
+      const paths = shadowPaths(input.objectRef);
+      const parent = await fs.lstat(paths.shadows).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return null;
+      });
+      if (!parent) return shadowFailure("shadow_not_present");
+      if (!parent.isDirectory() || parent.isSymbolicLink()) return shadowFailure("shadow_directory_invalid");
+      const published = await fs.lstat(paths.published).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+        return null;
+      });
+      if (!published) return shadowFailure("shadow_not_present");
+      const original = await readShadowOriginal(input);
+      const directory = await fs.lstat(original.paths.published);
+      if (!directory.isDirectory() || directory.isSymbolicLink()) return shadowFailure("shadow_directory_invalid");
+      const manifestPath = path.join(original.paths.published, "manifest.json");
+      const residualPath = path.join(original.paths.published, "residual.bin");
+      const manifest = await readShadowFile(manifestPath, 128 * 1024);
+      const residualBytes = await readShadowFile(residualPath, 2 * 1024 * 1024);
+      const timeline = { ...JSON.parse(manifest.toString("utf8")), residualBytes } as CodexByteTimeline;
+      const reconstructed = reconstructCodexByteTimeline({ expected: input.identity,
+        expectedObject: { objectRef: input.objectRef, sha256: original.sha256 }, native: input.native, timeline });
+      if (!reconstructed.ok) return reconstructed;
+      if (!Buffer.from(reconstructed.bytes).equals(original.bytes)) return shadowFailure("shadow_original_byte_mismatch");
+      return { ok: true, originalSha256: original.sha256, reconstructedSha256: reconstructed.sha256,
+        manifestSha256: createHash("sha256").update(manifest).digest("hex"),
+        residualSha256: timeline.residualSha256, originalBytes: original.bytes.byteLength,
+        residualBytes: residualBytes.byteLength, authorizesOldObjectDelete: false };
+    } catch {
+      return shadowFailure("shadow_missing_or_invalid");
+    }
+  }
+
+  async function withShadowLock<T>(objectRef: string, operation: (
+    write: (input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }) => Promise<CodexTimelineShadowResult>,
+  ) => Promise<T>): Promise<T> {
+    const paths = shadowPaths(objectRef);
+    return withObjectLock(paths.payloadPath, async () => {
+      let active = true;
+      let writing: Promise<CodexTimelineShadowResult> | undefined;
+      try {
+        return await operation(async input => {
+          if (!active || writing || input.objectRef !== objectRef) return shadowFailure("shadow_lock_scope_invalid");
+          writing = writeShadowLocked(input);
+          return writing;
+        });
+      } finally {
+        active = false;
+        if (writing) await writing; // Do not release ownership around a detached in-flight write.
+      }
+    });
+  }
+  async function writeShadow(input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }): Promise<CodexTimelineShadowResult> {
+    return withShadowLock(input.objectRef, write => write(input));
+  }
+  async function writeShadowLocked(input: CodexTimelineShadowInput & { beforePublish: () => Promise<boolean> }): Promise<CodexTimelineShadowResult> {
+    const paths = shadowPaths(input.objectRef);
+      try {
+        const original = await readShadowOriginal(input);
+        const built = buildCodexByteTimeline({ expected: input.identity,
+          supplement: { identity: input.identity, objectRef: input.objectRef, bytes: original.bytes,
+            sha256: original.sha256, entryCount: original.metadata.entryCount, state: "sealed" }, native: input.native });
+        if (!built.ok) return built;
+        // Never replace a published shadow. Existing corruption/drift is evidence,
+        // not an invitation to repair automatically or fall back to deletion.
+        const existing = await fs.lstat(paths.published).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+          return null;
+        });
+        if (existing) return compareShadow(input);
+        await fs.mkdir(paths.shadows, { recursive: true, mode: 0o700 });
+        const parent = await fs.lstat(paths.shadows);
+        if (!parent.isDirectory() || parent.isSymbolicLink()) return shadowFailure("shadow_directory_invalid");
+        const { residualBytes, ...metadata } = built.timeline;
+        const manifest = Buffer.from(JSON.stringify(metadata));
+        if (manifest.byteLength > 128 * 1024) return shadowFailure("shadow_manifest_bounds");
+        const stage = await fs.mkdtemp(path.join(paths.shadows, ".pending-"));
+        for (const [name, bytes] of [["residual.bin", residualBytes], ["manifest.json", manifest]] as const) {
+          const file = await fs.open(path.join(stage, name), "wx", 0o600);
+          try { await file.writeFile(bytes); await syncFileHandle(file); } finally { await file.close(); }
+        }
+        await syncDirectory(stage);
+        // Caller holds Run retention advisory lock and row locks. Revalidate
+        // owner/attempt/native snapshot after fsync, before atomic visibility.
+        if (!await input.beforePublish()) return shadowFailure("shadow_publication_fence_changed");
+        const current = await readShadowOriginal(input);
+        if (current.sha256 !== original.sha256) return shadowFailure("shadow_original_changed");
+        await fs.rename(stage, paths.published);
+        await syncDirectory(paths.shadows);
+        return compareShadow(input);
+      } catch {
+        // Keep unpublished files for evidence; no remove/stage/purge operation.
+        return shadowFailure("shadow_persistence_failed");
+      }
+  }
 
   async function withSweepLock<T>(operation: () => Promise<T>): Promise<T> {
     const previous = sweepTail;
@@ -1210,6 +1387,9 @@ function createLocalTranscriptObjectStore(basePath: string): TranscriptObjectSto
     },
 
     sweepUnreferenced,
+    writeCodexTimelineShadow: writeShadow,
+    compareCodexTimelineShadow: compareShadow,
+    withCodexTimelineShadowLock: withShadowLock,
 
     async readRange(input) {
       const ref = assertObjectRef(input.objectRef);
@@ -1313,7 +1493,7 @@ export function getTranscriptObjectStore(): TranscriptObjectStore {
 
 export function createTranscriptObjectReader(
   store: TranscriptObjectStore = getTranscriptObjectStore(),
-): NativeTranscriptReaderHook {
+): CodexTimelineShadowReader {
   function missingObjectResult(): NativeTranscriptReadResult {
     return {
       items: [],
@@ -1367,5 +1547,16 @@ export function createTranscriptObjectReader(
     };
   }
 
-  return { readRange };
+  const reader: CodexTimelineShadowReader = { readRange };
+  if (store.compareCodexTimelineShadow) reader.compareCodexTimelineShadow = async (input, native) => {
+    if (input.orgId !== native.identity.orgId || input.run.id !== native.identity.runId
+      || input.span.id !== native.identity.spanId || input.span.attemptId !== native.identity.attemptId
+      || input.span.ownerToken !== native.identity.ownerToken || input.span.attemptEpoch !== native.identity.attemptEpoch) {
+      return { ok: false, reason: "shadow_reader_identity_mismatch", authorizesOldObjectDelete: false };
+    }
+    return store.compareCodexTimelineShadow!({
+      objectRef: String(input.span.supplementalObjectRef ?? ""), identity: native.identity, native,
+    });
+  };
+  return reader;
 }

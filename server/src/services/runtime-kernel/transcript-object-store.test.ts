@@ -1,9 +1,11 @@
 import type { TranscriptEntry } from "@rudderhq/agent-runtime-utils";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs, constants as fsConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CodexMixedCoverageInput, CoverageIdentity } from "./native-transcript-coverage.js";
 import {
   createTranscriptObjectReader,
   createTranscriptObjectStore,
@@ -34,6 +36,158 @@ const entries: TranscriptEntry[] = [
   { kind: "assistant", ts: "2026-09-23T00:00:01.000Z", text: "first" },
   { kind: "tool_result", ts: "2026-09-23T00:00:02.000Z", toolUseId: "tool-1", content: "second", isError: false },
 ];
+
+async function shadowFixture() {
+  const f = await fixture();
+  const identity: CoverageIdentity = { ...binding, attemptId: "attempt-1", attemptEpoch: 1,
+    selector: { kind: "codex_turn", runId: binding.runId, threadId: "thread-1", turnId: "turn-1" } };
+  const ts = "2026-01-01T00:00:00.000Z";
+  const handle = await f.store.begin(binding);
+  await f.store.append(handle, [
+    { kind: "stdout", ts, text: "synthetic retained bootstrap diagnostic" },
+    { kind: "init", ts, sessionId: "thread-1", model: "synthetic" },
+    { kind: "system", ts, text: "reasoning started" },
+    { kind: "assistant", ts, delta: true, phase: "final_answer", segmentId: "msg-1", text: "first界" },
+    { kind: "assistant", ts: "2026-01-01T00:00:01.123Z", delta: true, phase: "final_answer", segmentId: "msg-1", text: "second🌍" },
+  ]);
+  await f.store.finalize(handle, { completeness: "partial" });
+  const native: CodexMixedCoverageInput["native"] = { identity, source: "native", availability: "available", completeness: "complete",
+    revisionBefore: "native-r1", revisionAfter: "native-r1", entries: [{ kind: "assistant", ts,
+      phase: "final_answer", segmentId: "msg-1", sourceEntryId: "msg-1", text: "first界second🌍" }] };
+  const input = { objectRef: handle.objectRef, identity, native };
+  const payload = path.join(f.root, "transcript-objects", handle.objectRef + ".ndjson");
+  const metadata = path.join(f.root, "transcript-objects", handle.objectRef + ".json");
+  const published = path.join(f.root, "transcript-objects", "codex-timeline-shadows", handle.objectRef);
+  return { ...f, input, payload, metadata, published, original: await fs.readFile(payload), originalMetadata: await fs.readFile(metadata) };
+}
+
+describe("Codex timeline shadow persistence: no writer/ref switch", () => {
+  it("does not allow the scoped write capability to escape or publish twice", async () => {
+    const f = await shadowFixture();
+    let escaped: NonNullable<Parameters<NonNullable<typeof f.store.withCodexTimelineShadowLock>>[1]> extends (write: infer W) => unknown ? W : never;
+    await f.store.withCodexTimelineShadowLock!(f.input.objectRef, async write => {
+      escaped = write;
+      expect(await write({ ...f.input, beforePublish: async () => true })).toMatchObject({ ok: true });
+      expect(await write({ ...f.input, beforePublish: async () => true })).toMatchObject({ ok: false, reason: "shadow_lock_scope_invalid" });
+    });
+    expect(await escaped!({ ...f.input, beforePublish: async () => true })).toMatchObject({ ok: false, reason: "shadow_lock_scope_invalid" });
+  });
+
+  it.each(["manifest", "residual", "metadata", "payload"].flatMap(target => ["symlink", "fifo"].map(replacement => ({ target, replacement }))))(
+    "rejects $target swapped to $replacement at open without blocking or reading it", async ({ target, replacement }) => {
+      const f = await shadowFixture();
+      expect(await f.store.writeCodexTimelineShadow!({ ...f.input, beforePublish: async () => true })).toMatchObject({ ok: true });
+      const filePath = target === "manifest" ? path.join(f.published, "manifest.json")
+        : target === "residual" ? path.join(f.published, "residual.bin") : target === "metadata" ? f.metadata : f.payload;
+      const outside = path.join(f.root, "not-authorized");
+      await fs.writeFile(outside, await fs.readFile(filePath)); // SAME bytes: following a symlink is still forbidden.
+      const originalOpen = fs.open.bind(fs);
+      let swapped = false;
+      const swap = async () => {
+        swapped = true;
+        await fs.rename(filePath, filePath + ".saved");
+        if (replacement === "symlink") await fs.symlink(outside, filePath);
+        else execFileSync("mkfifo", [filePath]); // OWN temp FIFO only, no runtime/native process.
+      };
+      const open = vi.spyOn(fs, "open").mockImplementation(async (file, flags, mode) => {
+        if (String(file) === filePath && !swapped) {
+          expect(typeof flags).toBe("number");
+          expect(Number(flags) & fsConstants.O_NOFOLLOW).toBe(fsConstants.O_NOFOLLOW);
+          expect(Number(flags) & fsConstants.O_NONBLOCK).toBe(fsConstants.O_NONBLOCK);
+          await swap();
+        }
+        return originalOpen(file, flags, mode);
+      });
+      const originalRead = fs.readFile.bind(fs);
+      const read = vi.spyOn(fs, "readFile").mockImplementation(async (file, options) => {
+        // 61b reaches here after lstat/stat, then follows the replaced SAME-byte
+        // symlink. Never inject a FIFO into its old blocking read path.
+        if (replacement === "symlink" && String(file) === filePath && !swapped) await swap();
+        return originalRead(file, options);
+      });
+      try {
+        expect(await f.store.compareCodexTimelineShadow!(f.input)).toMatchObject({ ok: false, authorizesOldObjectDelete: false });
+        expect(swapped).toBe(true);
+      } finally { read.mockRestore(); open.mockRestore(); }
+    }, 1500);
+
+  it("reads the original opened FD after pathname replacement, never reopens through the replacement", async () => {
+    const f = await shadowFixture();
+    expect(await f.store.writeCodexTimelineShadow!({ ...f.input, beforePublish: async () => true })).toMatchObject({ ok: true });
+    const residual = path.join(f.published, "residual.bin"), outside = path.join(f.root, "private-unrelated");
+    await fs.writeFile(outside, "must not be read");
+    const originalOpen = fs.open.bind(fs);
+    let swapped = false;
+    const open = vi.spyOn(fs, "open").mockImplementation(async (file, flags, mode) => {
+      const handle = await originalOpen(file, flags, mode);
+      if (String(file) === residual && !swapped) {
+        swapped = true; await fs.rename(residual, residual + ".saved"); await fs.symlink(outside, residual);
+      }
+      return handle;
+    });
+    try {
+      expect(await f.store.compareCodexTimelineShadow!(f.input)).toMatchObject({ ok: true, authorizesOldObjectDelete: false });
+      expect(swapped).toBe(true);
+    } finally { open.mockRestore(); }
+  });
+
+  it("atomically persists and reopens a byte-exact shadow while original partial reads remain identical", async () => {
+    const f = await shadowFixture();
+    const before = await f.store.readRange(readInput(f.input.objectRef));
+    const guard = vi.fn(async () => true);
+    const written = await f.store.writeCodexTimelineShadow!({ ...f.input, beforePublish: guard });
+    expect(written).toMatchObject({ ok: true, authorizesOldObjectDelete: false });
+    expect(guard).toHaveBeenCalledOnce();
+    const reopened = createTranscriptObjectStore(f.root);
+    expect(await reopened.compareCodexTimelineShadow!(f.input)).toEqual(written);
+    expect(await reopened.readRange(readInput(f.input.objectRef))).toEqual(before);
+    expect(before.completeness).toBe("partial");
+    expect(await fs.readFile(f.payload)).toEqual(f.original);
+    expect(await fs.readFile(f.metadata)).toEqual(f.originalMetadata);
+    expect((await fs.stat(path.join(f.published, "manifest.json"))).mode & 0o777).toBe(0o600);
+    expect((await fs.stat(path.join(f.published, "residual.bin"))).mode & 0o777).toBe(0o600);
+  });
+
+  it.each(["manifest", "residual", "missing", "offline", "partial", "revision", "owner", "attempt"])("retains original fallback after %s failure", async (failure) => {
+    const f = await shadowFixture();
+    expect(await f.store.writeCodexTimelineShadow!({ ...f.input, beforePublish: async () => true })).toMatchObject({ ok: true });
+    if (failure === "manifest") await fs.writeFile(path.join(f.published, "manifest.json"), "invalid-json");
+    if (failure === "residual") await fs.writeFile(path.join(f.published, "residual.bin"), "corruption");
+    if (failure === "missing") await fs.unlink(path.join(f.published, "residual.bin"));
+    if (failure === "offline") Object.assign(f.input.native, { availability: "offline" });
+    if (failure === "partial") Object.assign(f.input.native, { completeness: "partial" });
+    if (failure === "revision") f.input.native.revisionAfter = "native-r2";
+    if (failure === "owner") f.input.identity.ownerToken = "wrong-owner";
+    if (failure === "attempt") f.input.identity.attemptId = "wrong-attempt";
+    expect(await createTranscriptObjectStore(f.root).compareCodexTimelineShadow!(f.input)).toMatchObject({ ok: false, authorizesOldObjectDelete: false });
+    expect(await f.store.readRange(readInput(f.input.objectRef))).toMatchObject({ entries: expect.any(Array), completeness: "partial" });
+    expect(await fs.readFile(f.payload)).toEqual(f.original);
+    expect(await fs.readFile(f.metadata)).toEqual(f.originalMetadata);
+  });
+
+  it("does not publish after the final retention fence rejects; keeps original and pending evidence", async () => {
+    const f = await shadowFixture();
+    expect(await f.store.writeCodexTimelineShadow!({ ...f.input, beforePublish: async () => false })).toMatchObject({ ok: false, reason: "shadow_publication_fence_changed" });
+    expect(await fs.stat(f.published).catch(() => null)).toBeNull();
+    expect(await fs.readFile(f.payload)).toEqual(f.original);
+    expect(await fs.readdir(path.dirname(f.published))).toEqual([expect.stringMatching(/^\.pending-/u)]);
+  });
+
+  it("does not publish or remove data on an atomic rename failure", async () => {
+    const f = await shadowFixture();
+    const originalRename = fs.rename.bind(fs);
+    const rename = vi.spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      if (String(to) === f.published) throw new Error("synthetic publish failure");
+      return originalRename(from, to);
+    });
+    try {
+      expect(await f.store.writeCodexTimelineShadow!({ ...f.input, beforePublish: async () => true })).toMatchObject({ ok: false, reason: "shadow_persistence_failed" });
+    } finally { rename.mockRestore(); }
+    expect(await fs.stat(f.published).catch(() => null)).toBeNull();
+    expect(await fs.readFile(f.payload)).toEqual(f.original);
+    expect(await fs.readFile(f.metadata)).toEqual(f.originalMetadata);
+  });
+});
 
 function readInput(objectRef: string, overrides: Partial<TranscriptObjectBeginInput> = {}) {
   return {
