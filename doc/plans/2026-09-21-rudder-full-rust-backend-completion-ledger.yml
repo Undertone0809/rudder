@@ -1,6 +1,26 @@
 schema: rudder.rust-backend-completion-ledger/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
 updated_at: 2026-10-03
+publication_checkpoint_2026_10_03_auth83:
+  supersedes: live_auth_publication_C07_and_CI_fields_below_only_historical_evidence_preserved
+  configuration: actual_gpt6luna_xhigh_subagents_no_new_threads
+  PR236: {published_head: 0e712d7e25a28d93b0286e1d5d78e65b47ae560a, installed_source: 646e3a6a10dfba538fafae9f8b88093c9d52bd2f, state: Draft_unmerged_aggregate_pending}
+  PR262:
+    published_head: 83c1b84ddd72ca7aa7898168f01c034e93846306
+    previous_remote: 88024c2b157331718ef2275e79cd3adf96420ab8
+    tree: 932967568a223fcd1e013a323e91f971e599e78a
+    publication: normal_FF_push_exit0_lsremote_and_GitHub_exact83_confirmed_Draft_open_unmerged
+    equivalence: entire_tree_equals_accepted046_original_build_and_runtime_evidence_keep046_identity
+    source_final: {verdict: accept_Huygens, sha256: 79ee187a44b2620aa101bfbca61f835927b7196c6cd32d88e0e013f4fb309f01}
+    MCP_final_issuer_rebind: {verdict: accept_Newton, sha256: 4c0c854751cf3269592f82e9699bd1f9f9afdb312279fb9748dd7e7669c8ed7c}
+    checks: three_focused_nonPG_Rust_tests_PASS_prior_13_MCP_criteria_proof_reused_for_identical_content_only
+    CI: exact83_snapshot004335Z_2_success_16_active_1_queued_1_skip_1_GitGuardian_failure_not_allgreen
+    security: current83_check111087940984_reports1_secret_zero_annotations_public_text_points_to_historical1fc_native_bearer_auth_rs_exact_finding_not_adjudicated_no_bypass
+    durable: /Users/zeeland/.codex/artifacts/rudder-native-auth-installed-7a.NnCYIy/auth-forward83
+    scope: bounded_native_member_auth_read_only_no_global_session_default_MCP_or_Node_retirement_claim
+  C07: {v4_stage: needs_more_evidence_actual_Gibbs_author_not_excluded_by_stale_Sagan_pin, stage_sha256: 3a296d972b653f5f3514ace2bf618bfc0c5649dfd4acfbf033a2f032a68149ce, next: minimal_additive_v5_actual_author_exclusion_then_Jason_stage_Franklin_verifier, PG: FREE_no_v4_or_v5_OPEN_or_execution}
+  remaining: installed_Board_UI_aggregate_root_and_all_broader_Phase0_to7_authorities_pending_no_new_branch_or_historical_PR_merge
+  claims: {implementation_complete: false, release_ready: false, production_verified: false}
 convergence_checkpoint_2026_10_03_0016:
   supersedes: execution_checkpoint_and_live_fields_below_only_historical_receipts_preserved
   configuration: actual_subagents_gpt6luna_xhigh_no_new_threads
