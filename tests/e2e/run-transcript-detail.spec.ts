@@ -525,6 +525,7 @@ test.describe("Run transcript detail", () => {
       ));
     expect(firstInvocation).toBeTruthy();
     expect(firstInvocation?.payload).toMatchObject({
+      invocationInstructionSnapshot: { status: "available" },
       loadedMcpServers: expect.arrayContaining([
         { serverName: "rudder-tools", source: "built_in" },
       ]),
@@ -537,7 +538,31 @@ test.describe("Run transcript detail", () => {
     }, organization.id);
     await page.goto(`/agents/${agent.id}/runs/${run.id}`);
     const nativeDetailPane = page.getByTestId("agent-runs-detail-pane");
-    await page.getByRole("tab", { name: "Metadata" }).click();
+    // Snapshot-backed invocation details are labelled Instructions. Read this
+    // real Run's own endpoint, not the later seeded legacy Run's inline text.
+    const nativeInstructionsPath = `/api/agent-runs/${run.id}/events/${firstInvocation!.id}/invocation-instructions`;
+    const nativeInstructionsRead = page.waitForResponse(response => response.request().method() === "GET"
+      && new URL(response.url()).pathname === nativeInstructionsPath);
+    await nativeDetailPane.getByRole("tab", { name: "Instructions", exact: true }).click();
+    const nativeInstructionsResponse = await nativeInstructionsRead;
+    expect(nativeInstructionsResponse.status()).toBe(200);
+    expect(nativeInstructionsResponse.headers()["cache-control"]).toContain("no-store");
+    const nativeInstructions = await nativeInstructionsResponse.json() as {
+      source: string; completeness: string; agentInstructionStack: string; sha256: string; byteSize: number;
+    };
+    expect(nativeInstructions.source).toBe("stored_snapshot");
+    expect(nativeInstructions.completeness).toBe("complete");
+    expect(nativeInstructions.agentInstructionStack.trim()).toBeTruthy();
+    expect(nativeInstructions.sha256).toBe(createHash("sha256").update(nativeInstructions.agentInstructionStack).digest("hex"));
+    expect(nativeInstructions.byteSize).toBe(Buffer.byteLength(nativeInstructions.agentInstructionStack));
+    await expect.poll(() => nativeDetailPane.getByTestId("invocation-prompt").textContent())
+      .toBe(nativeInstructions.agentInstructionStack);
+    if (baseURL) {
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL });
+    }
+    await nativeDetailPane.getByRole("button", { name: "Copy agent instruction stack", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(nativeInstructions.agentInstructionStack);
     await expect(nativeDetailPane.getByTestId("invocation-mcp-evidence").getByText("rudder-tools", { exact: true })).toBeVisible();
     await expect(nativeDetailPane.getByText("adapter invocation", { exact: true })).toHaveCount(1);
 
