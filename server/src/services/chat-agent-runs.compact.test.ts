@@ -20,7 +20,7 @@ vi.mock("./runtime-kernel/unified-agent-run.integration.js", async importOrigina
 // Actual service/attachment/store call chain with modeled DB authority, NOT PG
 // or provider evidence. No caller extraction, loader, model or user-config flag.
 describe("actual Chat caller first-write eligibility", () => {
-  it.each(["qualified", "missing-proof", "profile-unknown", "profile-mismatch", "range-pending", "session-mismatch", "attempt-mismatch", "owner-lost", "legacy-existing"])(
+  it.each(["qualified", "missing-proof", "profile-unknown", "profile-mismatch", "range-pending", "pending-then-known", "session-mismatch", "attempt-mismatch", "owner-lost", "legacy-existing"])(
     "%s does not widen the native/owner/range gate or switch existing refs", async mode => {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "rudder-compact-chat-caller-"));
       try {
@@ -32,7 +32,7 @@ describe("actual Chat caller first-write eligibility", () => {
           span: { id: "span-1" }, attempt: { ref: run.runtimeAttemptRef } };
         const selector = { kind: "codex_turn", runId: run.id, threadId: "thread-1", turnId: "turn-1" };
         const span = databaseSpan("span-1", { orgId: run.orgId, state: "open", ownerToken: "owner-1", attemptEpoch: 1,
-          selectorJson: mode === "range-pending" ? { kind: "pending" } : selector,
+          selectorJson: mode === "range-pending" || mode === "pending-then-known" ? { kind: "pending" } : selector,
           attemptId: mode === "attempt-mismatch" ? "other-attempt" : "attempt-1", nativeExecutionRef: "turn-1" });
         const binding = databaseBinding("span-1", { runtimeType: "codex_local", status: "active", continuity: "native",
           hostId: "host-1", profileId: "profile-1", workspaceBindingId: "workspace-1", capabilityRevision: "cap-1" });
@@ -68,10 +68,21 @@ describe("actual Chat caller first-write eligibility", () => {
         }
         await call;
         const ref = String(span.supplementalObjectRef);
+        if (mode === "pending-then-known") {
+          // Real fresh admission starts pending; a terminal selector arriving
+          // later is NOT permission to upgrade/switch the already attached ref.
+          span.selectorJson = selector;
+          await runs.appendTranscriptEntry(run, entry, { persistRaw: false, nativeProfileCapability: profile });
+          expect(span.supplementalObjectRef).toBe(ref);
+          const reopenedRuns = chatAgentRunService(db as never, { transcriptObjectStore: createTranscriptObjectStore(root) });
+          await reopenedRuns.appendTranscriptEntry(run, entry, { persistRaw: false, nativeProfileCapability: profile });
+          expect(span.supplementalObjectRef).toBe(ref);
+        }
         if (originalRef) expect(ref).toBe(originalRef);
         const meta = JSON.parse(await fs.readFile(path.join(root, "transcript-objects", ref + ".json"), "utf8"));
         expect(meta.encoding).toBe(mode === "qualified" ? "codex-gap-dictionary-v1" : undefined);
-        expect((await store.readRange({ ...run, runId: run.id, spanId: "span-1", ownerToken: "owner-1", objectRef: ref })).entries).toEqual([entry]);
+        expect((await store.readRange({ ...run, runId: run.id, spanId: "span-1", ownerToken: "owner-1", objectRef: ref })).entries)
+          .toEqual(mode === "pending-then-known" ? [entry, entry, entry] : [entry]);
       } finally { authority.entry = null; await fs.rm(root, { recursive: true, force: true }); }
     });
 });
