@@ -739,11 +739,24 @@ jobs:
         run: node desktop/scripts/smoke.mjs --mode=packaged --scenario=local-apps
 
       - name: Exercise Rust-first Workspace backup workflow
+        id: workspace_backups_e2e
         env:
           RUDDER_NATIVE_MODE: required
           RUDDER_NATIVE_ARCHIVE_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-native
           RUDDER_NATIVE_WORKSPACE_MANIFEST_PATH: ${{ github.workspace }}/desktop/.packaged/native/aarch64-apple-darwin/rudder-native
-        run: pnpm exec playwright test --config tests/e2e/playwright.config.ts tests/e2e/workspace-backups.spec.ts
+        run: pnpm exec playwright test --config tests/e2e/playwright.config.ts --trace=retain-on-failure tests/e2e/workspace-backups.spec.ts
+
+      - name: Upload Workspace backup E2E failure evidence
+        if: ${{ failure() && steps.workspace_backups_e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: workspace-backups-e2e-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            tests/e2e/test-results/**/test-failed-*.png
+            tests/e2e/test-results/**/error-context.md
+            tests/e2e/test-results/**/trace.zip
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Exercise Rust-first Agent Run process workflow
         env:

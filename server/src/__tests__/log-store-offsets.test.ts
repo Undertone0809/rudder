@@ -163,6 +163,8 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     expect(result.nextOffset).toBeUndefined();
   });
 
+  // The shared fixture starts five sequential children; retain each read's
+  // production deadline while using the existing suite-level CI load budget.
   it("matches the shared API, CLI, and MCP byte-page fixture through native read authority", async () => {
     const root = await makeTempRoot("rudder-run-log-native-read-");
     const fixture = JSON.parse(await fs.readFile(
@@ -187,7 +189,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
         ...(testCase.nextOffset === null ? {} : { nextOffset: testCase.nextOffset }),
       });
     }
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("keeps UTF-8 code points intact across small run log pages", async () => {
     const root = await makeTempRoot("rudder-run-log-utf8-pages-");
