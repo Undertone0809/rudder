@@ -1,0 +1,87 @@
+{
+  "schema": "rudder.independent-source-stage-review.v1",
+  "reviewed_at_date": "2026-10-02",
+  "reviewer_skill": "agent-work-reviewer-maintainer",
+  "verdict": "reject",
+  "level": "stage verdict",
+  "candidate": {
+    "checkout": "/private/tmp/rudder-rust-cli-entry.g0BVrk/repo",
+    "branch_at_lock": "codex/native-member-cli-entry-20261002",
+    "commit": "6e0fece670be0c066024a652a583df6ee5be53e0",
+    "tree": "93449e01b7cea7e0dcfa0cd32b0031fd7b5549b3",
+    "parent_and_changed_risk_base": "5fd4c129ea50fc9e9569d3b72d6e68f5a235d753",
+    "original_review_base": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "clean_at_initial_identity_lock": true,
+    "changed_paths_from_prior_candidate": [
+      "native/bins/rudder-cli/tests/member_directory.rs",
+      "native/crates/agent-cli-core/src/lib.rs"
+    ],
+    "changed_path_diff_sha256": "4052ef8357cfa86f7df0b960265ef058b335720376e1b58256058fbd2fd706f4",
+    "diff_check": "passed by reviewer for the 5fd4c12..6e0fece delta",
+    "checkout_drift_after_lock": {
+      "observed": true,
+      "later_head": "c54001819ca38079b627994557db0a18ed278fc0",
+      "later_tree": "663b978687e09fd800c7b4fd1e311d0b8359e8a4",
+      "later_worktree": "dirty with unrelated integration changes",
+      "handling": "Candidate source and diffs were read by immutable commit object; no later working-tree content was attributed to 6e0fece."
+    }
+  },
+  "previous_review": {
+    "receipt": "/private/tmp/rudder-native-member-cli-5fd4-stage-review.json",
+    "sha256": "d6d90ba69dbbfef2abf3f43b10e78474b54c7d53ccba5bbabe64762e11f6042c",
+    "verdict": "needs more evidence",
+    "terminal_control_output_finding": "resolved in source for C0/C1 controls in human member values, arbitrary scalar keys, cursor, API error code/message/details; JSON output preserves original values in the added executable-fixture cases",
+    "real_service_packet_finding": "the proposed spec now enumerates the requested authorization, filtering, pagination, full-ID, output, revocation, and identity assertions; it remains intentionally unbound and gated"
+  },
+  "intent_and_alignment": {
+    "user_job": "Offer an explicit Rust executable for the read-only organization member-directory capability.",
+    "scope_constraints": "Do not change the default Node CLI, MCP, packaging, or claim CLI/identity authority retirement. This is a source-stage review only; no PostgreSQL, runtime, build, or final verifier claim.",
+    "first_principles_judgment": "The explicit read-only command remains a coherent bounded slice: the delta hardens human rendering without changing request construction or JSON values. However, inserting the server error code into the human API-error prefix changes the already established output shape for this slice and conflicts with the explicit compatibility criterion.",
+    "alignment": "implementation direction aligned; current candidate has a narrow human-output compatibility regression"
+  },
+  "reviewer_verified": [
+    "At identity lock the named checkout was clean at commit 6e0fece with tree 93449e and parent 5fd4c12. The exact changed-risk diff contains only the two recorded files; later checkout drift was isolated from this review by reading commit-addressed Git objects.",
+    "The new escape_terminal_controls helper renders C0/C1 controls visibly as backslash-u text. It is applied to human member string values, arbitrary scalar field keys, nextCursor, API error code/message/details, and non-API CLI errors. The JSON error branch is unchanged.",
+    "The two added tests invoke CARGO_BIN_EXE_rudder-cli. The page test covers ESC/CSI, C1, OSC-like sequences, NUL, newline in cursor, no raw control chars except deliberate line separators, and JSON value equality. The error test covers controls in code/message/details and preserves JSON error fields.",
+    "Comparing the exact prior source at 5fd4c12 with 6e0fece confirms the prior human API error format was `API error {status}: {message}` (plus ` details={details}` when present); the new source emits `API error {status} [{code}]: {message}`. This is an observable textual compatibility change unrelated to escaping controls.",
+    "The proposed real-service spec SHA-256 is 61002e11277a682b7dcc686a5b0d9ddb40dc1a9a48be39812a1cf6231e2a6b06. Its criteria cover same-org Board and Agent requests, foreign-org 403, query/type, cursor pagination, full IDs, human/JSON output, credential revocation, binary/process/data identity, and zero Node grants. The spec explicitly remains a draft with candidate, tree, binary, and fixture identity unbound until stage approval and the exclusive PostgreSQL gate."
+  ],
+  "author_claimed_not_reexecuted": [
+    "Ten executable HTTP-fixture tests passed, including the two new terminal-control regressions.",
+    "Scoped formatting passed.",
+    "A supporting binary SHA-256 was reported as b7c1f52d09f6f059b878958f49fa627449cdfb6cfd67cd09d7df1a99d0050e91; reviewer did not build or inspect that binary."
+  ],
+  "acceptance_packet": {
+    "path": "/private/tmp/rudder-rust-cli-entry.g0BVrk/real-service-acceptance-spec.json",
+    "sha256": "61002e11277a682b7dcc686a5b0d9ddb40dc1a9a48be39812a1cf6231e2a6b06",
+    "status": "DRAFT_PENDING_FIXED_CANDIDATE_AND_STAGE_ACCEPT",
+    "assessment": "The material scenarios requested for the next real-service verifier are explicit and properly gated; bind the corrected source commit/tree, built binary hash, packet hash, and owned fixture/data identity only after this source-stage blocker is resolved. No service or database execution is authorized or claimed here."
+  },
+  "findings": [
+    {
+      "id": "P2-human-api-error-format-compatibility",
+      "severity": "P2",
+      "title": "Human API errors now insert `[code]` into the established prefix",
+      "evidence": "At native/crates/agent-cli-core/src/lib.rs:218-229, the new human path formats `API error {status} [{code}]: ...`; the exact prior candidate at 5fd4c12 formatted `API error {status}: ...`. The new test at native/bins/rudder-cli/tests/member_directory.rs:219-225 asserts the changed format. The spec requires existing CLI output semantics to remain preserved.",
+      "impact": "This changes human stderr even for ordinary, control-free errors, and breaks consumers/operators matching the prior `API error <status>:` prefix. Escaping untrusted text requires a rendering change only when input contains control characters; it does not require adding the code field to the human format.",
+      "smallest_resolution": "Keep the prior human prefix and field layout while applying terminal escaping to the prior message/details fields. Omit the newly inserted code from human output; retain the code unchanged in JSON. Update the executable regression to assert both inert escaping and the preserved ordinary error format. No broader CLI or error-model redesign is needed."
+    }
+  ],
+  "source_stage_assessment": {
+    "terminal_control_fix": "source-reviewed; addresses the previous finding, but tests were not executed",
+    "real_service_scenarios": "draft now materially explicit; candidate and data/runtime binding remain deferred as specified",
+    "human_output_compatibility": "blocking regression remains",
+    "ui": "not applicable",
+    "final_product_acceptance": "not performed and not claimed",
+    "publication_or_merge_readiness": "not assessed; this stage verdict does not authorize publication"
+  },
+  "convergence_direction": "Preserve the existing human API-error format while retaining control escaping, then issue a new exact source-stage candidate/receipt. Only after stage acceptance and release of the exclusive PostgreSQL lane should a distinct verifier bind and execute the real-service packet.",
+  "blocking_conditions": [
+    "The human API-error prefix has an observable compatibility change (`[code]` inserted) contrary to the stated existing-output-semantics criterion."
+  ],
+  "operations_not_performed": [
+    "No PostgreSQL, Actix/runtime, browser, or product verifier",
+    "No build, Cargo test, Cargo metadata, or binary inspection",
+    "No source edits, staging, commit, or push"
+  ]
+}

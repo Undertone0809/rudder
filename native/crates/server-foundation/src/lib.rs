@@ -44,6 +44,7 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+mod native_bearer_auth;
 mod public_ingress;
 mod public_ingress_config;
 mod public_ingress_forwarding;
@@ -51,7 +52,9 @@ pub mod public_ingress_proxy;
 pub mod public_ingress_websocket;
 pub use public_ingress::PublicIngressRuntime;
 mod workspace_backup_files;
-pub use public_ingress_config::{PublicIngressConfig, PublicIngressConfigError};
+pub use public_ingress_config::{
+    PublicIngressAuthRequirement, PublicIngressConfig, PublicIngressConfigError,
+};
 
 use workspace_backup_files::{
     ArtifactError as BackupArtifactError, DownloadArtifact, WorkspaceBackupFilesQuery,

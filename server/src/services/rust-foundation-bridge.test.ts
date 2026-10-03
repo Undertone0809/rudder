@@ -210,10 +210,11 @@ afterEach(async () => {
 describe("rust foundation bridge lifecycle", () => {
   it("owns an explicitly requested public listener and clears its identity on shutdown", async () => {
     const fixture = await createFixture("public-ready");
-    const publicIngress = {
+    const publicIngress: RustPublicIngressOptions = {
       listenAddr: "127.0.0.1:0",
       nodeUpstream: "http://127.0.0.1:3101",
       authorizationKey: "0123456789abcdef0123456789abcdef",
+      authRequirement: "optional",
       trustedProxies: "192.0.2.1,::1",
     };
     const bridge = createBridge(fixture, { mode: "off", publicIngress });
@@ -225,6 +226,7 @@ describe("rust foundation bridge lifecycle", () => {
       RUDDER_NATIVE_PUBLIC_LISTEN: publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: publicIngress.authorizationKey,
+      RUDDER_NATIVE_INGRESS_AUTH_REQUIREMENT: publicIngress.authRequirement,
       RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: publicIngress.trustedProxies,
     });
     await bridge.close();
@@ -238,6 +240,7 @@ describe("rust foundation bridge lifecycle", () => {
       const bridge = createBridge(fixture, { publicIngress: {
         listenAddr, nodeUpstream: "http://127.0.0.1:3101",
         authorizationKey: "0123456789abcdef0123456789abcdef",
+        authRequirement: "required",
       } });
       await expect(bridge.start()).rejects.toMatchObject({ code: "startup_failed" });
       expect(bridge.publicIngressBaseUrl).toBeNull();

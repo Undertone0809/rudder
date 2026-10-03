@@ -1,0 +1,75 @@
+{
+  "schema": "rudder.independent-source-stage-review.v1",
+  "reviewed_at_date": "2026-10-02",
+  "reviewer_skill": "agent-work-reviewer-maintainer",
+  "verdict": "accept",
+  "level": "stage verdict",
+  "candidate": {
+    "checkout": "/private/tmp/rudder-rust-cli-entry.g0BVrk/repo",
+    "branch": "codex/native-member-cli-entry-20261002",
+    "commit": "1652650a1aabc4f12a9ca61482f716763e51302d",
+    "tree": "cff69e19c2eb6b33978c96749d88cd610752644f",
+    "parent_and_changed_risk_base": "6e0fece670be0c066024a652a583df6ee5be53e0",
+    "original_review_base": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "worktree_clean_at_review": true,
+    "changed_paths_from_previous_candidate": [
+      "native/bins/rudder-cli/tests/member_directory.rs",
+      "native/crates/agent-cli-core/src/lib.rs"
+    ],
+    "changed_path_diff_sha256": "a98a7c9cf832a149eb7e4593125af6fe56009380d7f5aad01bbc9c8e1013fa4f",
+    "reviewer_diff_check": "passed"
+  },
+  "prior_review": {
+    "receipt": "/private/tmp/rudder-native-member-cli-6e0-stage-review.json",
+    "sha256": "91b50261f75cf2269148438d0a84fafbea4a5fe7646ddaf13da2dab27a2e9707",
+    "prior_verdict_for_6e0": "reject",
+    "blocking_finding": "human API error format inserted [code] and broke the established `API error <status>:` prefix",
+    "finding_resolution": "1652650 restores the prior human prefix/details layout while keeping terminal escaping; JSON code remains unchanged"
+  },
+  "prior_receipt_provenance_correction": {
+    "applies_to": "The `checkout_drift_after_lock` field in the preserved 6e0 receipt.",
+    "correction": "That field incorrectly attributed the c540018/663b978 dirty checkout observation to /private/tmp/rudder-rust-cli-entry.g0BVrk/repo. Explicit git -C checks show that identity and dirty-file list belonged to /Users/zeeland/.codex/worktrees/7b2a/rudder-oss, the default task checkout. They were not evidence that the named CLI checkout had advanced.",
+    "named_cli_checkout_reconciliation": "The named CLI checkout was clean at 6e0 identity when first locked. After the parent's local fix, it remained at 6e0 and showed only the two intended CLI files modified; it is now clean at successor 1652650/tree cff69e. The earlier 6e receipt is preserved unchanged; its checkout_drift_after_lock assertion is withdrawn by this explicit correction.",
+    "review_effect": "The prior source finding was still correctly bound to immutable commit 6e0; this correction applies to checkout provenance only."
+  },
+  "intent_and_alignment": {
+    "user_job": "Offer an explicit Rust executable for the read-only organization member-directory capability.",
+    "scope_constraints": "Keep the existing Node CLI default, MCP, and packaging unchanged; make no whole-CLI or identity/session retirement claim. Source-stage review only, not final product acceptance.",
+    "first_principles_judgment": "The bounded Rust member-directory entry remains coherent. The successor keeps terminal controls inert in human output and restores the prior human API-error presentation without discarding the structured JSON error code.",
+    "alignment": "aligned"
+  },
+  "reviewer_verified": [
+    "Exact candidate commit, parent, tree, branch, clean status, two changed paths, and the commit-addressed 6e0fece..1652650 diff were verified in the named CLI checkout. The delta is 3 insertions and 7 deletions; git diff --check passes.",
+    "In native/crates/agent-cli-core/src/lib.rs, human API errors again render as `API error {status}: {escaped message}` with the existing ` details={escaped details}` suffix when present. The code is not added to human text. The JSON branch is unchanged and serializes the original structured error value.",
+    "The updated actual-executable HTTP fixture asserts the established human prefix with malicious C0/C1/ESC content rendered inert and details preserved; the JSON path asserts that error, code, and details values are unchanged. The prior page/cursor fixtures continue to cover terminal controls in human fields and preservation of JSON page values.",
+    "The control-escaping helper remains applied to human member string values, arbitrary scalar keys, nextCursor, API error message/details, and non-API CLI errors. No request, authorization, default-command, MCP, or packaging code changed in this successor delta.",
+    "The real-service spec SHA-256 is 61002e11277a682b7dcc686a5b0d9ddb40dc1a9a48be39812a1cf6231e2a6b06. Its proposed criteria cover same-org Board and Agent reads, foreign-org 403, query/type filtering, cursor pagination, full-ID projections, human/JSON output, revocation, binary/process/data identity, and zero Node grants."
+  ],
+  "author_claimed_not_reexecuted": [
+    "Ten executable fixture tests pass.",
+    "Scoped formatting and the focused rudder-agent-cli-core check pass; the initial incorrect package-name formatting invocation was corrected.",
+    "The supporting binary SHA-256 is 8a1a014d69cb0420c9ec4f78602bef00783efeb26faebf38770181e99d66f5ec; reviewer did not build or inspect the binary."
+  ],
+  "acceptance_packet": {
+    "path": "/private/tmp/rudder-rust-cli-entry.g0BVrk/real-service-acceptance-spec.json",
+    "sha256": "61002e11277a682b7dcc686a5b0d9ddb40dc1a9a48be39812a1cf6231e2a6b06",
+    "current_status": "DRAFT_PENDING_FIXED_CANDIDATE_AND_STAGE_ACCEPT",
+    "alignment": "aligned for the proposed real-service stage; the material scenarios are explicit",
+    "remaining_before_verifier": "Bind the spec to commit 1652650a1aabc4f12a9ca61482f716763e51302d, tree cff69e19c2eb6b33978c96749d88cd610752644f, the verified build/binary hash, packet hash, and owned fixture/data identity. Run only after the auth-v5 PostgreSQL lane is released and an exclusive lease is available. No service, fixture, or database run occurred in this review."
+  },
+  "findings": [],
+  "stage_assessment": {
+    "human_error_compatibility": "resolved in source and covered by an actual-executable fixture assertion",
+    "terminal_control_output": "source-reviewed; prior C0/C1 escaping fix remains intact",
+    "real_service_acceptance": "proposed criteria are sufficient for the next gate; verifier evidence is still pending and must bind exact runtime/data identity",
+    "ui": "not applicable",
+    "final_product_acceptance": "not performed and not claimed",
+    "publication_or_merge_readiness": "not assessed; stage accept is not publication or final product acceptance"
+  },
+  "convergence_direction": "Freeze/update the acceptance packet with this exact source and verified binary identity, then have the distinct verifier execute its listed real-service scenarios only after the exclusive PostgreSQL lane is released. Preserve the Node CLI/MCP/default-path boundary.",
+  "operations_not_performed": [
+    "No PostgreSQL, Actix/runtime, browser, or product verifier",
+    "No build, Cargo test, Cargo metadata, or binary inspection",
+    "No source edits, staging, commit, or push"
+  ]
+}

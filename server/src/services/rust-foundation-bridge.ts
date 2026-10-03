@@ -1,4 +1,4 @@
-import { resolveRudderNativeTarget } from "@rudderhq/shared";
+import { resolveRudderNativeTarget, type AuthRequirement } from "@rudderhq/shared";
 import type { Request } from "express";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
@@ -15,6 +15,7 @@ export type RustPublicIngressOptions = {
   listenAddr: string;
   nodeUpstream: string;
   authorizationKey: string;
+  authRequirement: AuthRequirement;
   /** Explicit numeric proxy IP list; Rust validates and owns forwarding trust. */
   trustedProxies?: string;
 };
@@ -314,6 +315,7 @@ function createFoundationChildEnvironment(input: {
       RUDDER_NATIVE_PUBLIC_LISTEN: input.publicIngress.listenAddr,
       RUDDER_NATIVE_NODE_UPSTREAM: input.publicIngress.nodeUpstream,
       RUDDER_NATIVE_INGRESS_AUTH_KEY: input.publicIngress.authorizationKey,
+      RUDDER_NATIVE_INGRESS_AUTH_REQUIREMENT: input.publicIngress.authRequirement,
       ...(input.publicIngress.trustedProxies ? { RUDDER_NATIVE_INGRESS_TRUSTED_PROXIES: input.publicIngress.trustedProxies } : {}),
     } : {}),
   };

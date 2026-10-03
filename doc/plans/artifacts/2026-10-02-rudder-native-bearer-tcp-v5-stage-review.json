@@ -1,0 +1,42 @@
+{
+  "schema": "rudder.native-bearer-auth-tcp.independent-stage-review/v1",
+  "verdict": "accept",
+  "topVerdict": "accept",
+  "level": "stage verdict",
+  "candidate": {
+    "commit": "7a416d088771925cf291a862bd83f7b97f04e567",
+    "tree": "9345a28f7b4d87c081399617bf439c3464b2eddb"
+  },
+  "packetSha256": "f4d259368540351646b6cc0a19eb68ce231ab6f393848ac630eedd6da4284bc9",
+  "runnerSha256": "b82c045e4e93830e8b6a4343f613bb7d24458e5ee19cfb448c08c32d425cc3af",
+  "reviewScope": "V5 delta only: exclusive build-target isolation and donor preservation, fresh packet bindings, and unchanged acceptance criteria/source pins. Product source behavior was not re-reviewed.",
+  "priorV4": {
+    "verdict": "needs more evidence",
+    "packetSha256": "54efbb999da9b76ac33a748916f9311de4b956a563281a406213b52616e13d48",
+    "runnerSha256": "553750dab35cad6562fa24d2f66922715944013f3260a482cbce71787f123619",
+    "blockingFinding": "P1-build-target-is-outside-the-candidate",
+    "resolution": "V5 directs Cargo to a separate packet-owned target and pins its path and owner before build."
+  },
+  "findings": [],
+  "evidence": {
+    "reviewerVerified": [
+      "V5 packet, runner, and no-database preflight hashes match the packet bindings; the recorded preflight identifies the exact candidate commit/tree and records runtimeStarted, databaseContacted, buildRun, migrationRun, and acceptanceRequestsSent as false.",
+      "The V5 target realpath is exactly the packet-owned target. The target is a directory; its owner marker is a regular non-symlink file bound to owner native-bearer-auth-tcp-7a-v5 and the candidate commit. No symlink entries were found in the target tree.",
+      "The V5 and donor server binaries have different inodes (980142453 versus 980065303) and the same SHA-256 (e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0). The preservation receipt records the APFS copy-on-write clone method.",
+      "The donor checkout's current tracked diff SHA-256 matches the before/after preservation fingerprint 6c150fce2d3f5cf03628e8a48bd6a9386604633c01bc3da2e28d1cf7a8fa2496; it has no untracked non-ignored files.",
+      "All eight V5 source-file SHA-256 pins match the candidate checkout, whose HEAD/tree match the packet and whose worktree is clean.",
+      "V4 and V5 acceptance-criteria arrays, source-pin arrays, and no-database prerequisite declarations are identical. The parser/regression block differs only in the fixture port literal, 55491 to 55492; the 11 criteria are unchanged.",
+      "V5 runner checks the target realpath and owner/candidate marker before build, and accepts either receipt.verdict or receipt.topVerdict while binding the exact candidate, packet hash, and runner hash.",
+      "The prior V4 no-database receipt is bound to the exact V4 packet/runner and records the same candidate with no runtime, database, build, migration, or request activity."
+    ],
+    "authorClaimedOrRecorded": [
+      "The APFS clone operation and the scalar-parser regression PASS are recorded/reported by the parent; this reviewer did not rerun the parser test. The parser implementation is unchanged, with only the fixture port literal updated.",
+      "The V5 no-database preflight is a previously recorded receipt whose content hash and packet/runner/candidate bindings were independently checked; its no-activity flags are receipt evidence, not a live runtime observation."
+    ],
+    "notPerformed": [
+      "No test, build, database contact, runtime start, public request, lease creation/grant, or repository edit was performed by this reviewer.",
+      "No whole-harness or product acceptance is asserted; a distinct verifier still needs the exact authorized lease and must return its terminal verdict for this candidate and packet."
+    ]
+  },
+  "stageBoundary": "This accept resolves only the V5 harness-stage target-isolation and evidence-binding review. It is not verifier PASS, installed-artifact acceptance, full-identity acceptance, or goal PASS."
+}

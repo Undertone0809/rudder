@@ -34,11 +34,11 @@ const otherOrganizationId = "20000000-0000-0000-0000-000000000002";
 const boardUserId = "board-user-1";
 const sessionUserId = "session-user-1";
 const agentId = "agent-1";
-const boardToken = "pcp_board_test_public_ingress_token";
-const revokedBoardToken = "pcp_board_revoked_public_ingress_token";
-const expiredBoardToken = "pcp_board_expired_public_ingress_token";
-const revokedAgentToken = "pcp_agent_revoked_public_ingress_token";
-const agentToken = "pcp_agent_test_public_ingress_token";
+const boardToken = "legacy_board_test_public_ingress_token";
+const revokedBoardToken = "legacy_board_revoked_public_ingress_token";
+const expiredBoardToken = "legacy_board_expired_public_ingress_token";
+const revokedAgentToken = "legacy_agent_revoked_public_ingress_token";
+const agentToken = "legacy_agent_test_public_ingress_token";
 const sessionCookie = "rudder-session=test-session-token";
 const sessionId = "better-auth-session-1";
 const ingressAuthKey = "11".repeat(32);
@@ -575,8 +575,21 @@ describe("source-binary public Actix to private Node auth workflow", () => {
   }, 10_000);
 
   it.each([
-    ["wrong Board token", "pcp_board_wrong_token"],
-    ["wrong agent token", "pcp_agent_wrong_token"],
+    ["Board-style", "pcp_board_unknown_public_ingress_token"],
+    ["agent-style", "pcp_agent_unknown_public_ingress_token"],
+  ])("fails closed for an unknown native %s key without a Node grant request", async (_label, token) => {
+    const response = await getPublicIngress(`/api/orgs/${organizationId}/members/directory`, {
+      authorization: `Bearer ${token}`,
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toContain("database_disabled");
+    expect(authorizationObservations).toHaveLength(0);
+  });
+
+  it.each([
+    ["wrong Board token", "legacy_board_wrong_token"],
+    ["wrong agent token", "legacy_agent_wrong_token"],
     ["revoked Board key", revokedBoardToken],
     ["expired Board key", expiredBoardToken],
     ["revoked agent key", revokedAgentToken],
@@ -633,15 +646,36 @@ describe("source-binary public Actix to private Node auth workflow", () => {
     expect(agentResponse.body).toContain("ingress_authorization_rejected");
   }, 15_000);
 
-  it("does not trust client envelope, request-id, or ingress-key headers", async () => {
+  it("rejects anonymous requests with forged internal headers at Actix ingress", async () => {
+    const port = publicPort;
+    if (port === undefined) throw new Error("Public Actix listener is not started");
+    const response = await getPublicIngress(
+      `/api/orgs/${organizationId}/members/directory`,
+      {
+        host: `public.example:${port}`,
+        origin: "https://public.example",
+        "x-rudder-actor-envelope": forgedActorEnvelope,
+        "x-rudder-request-id": forgedRequestId,
+        "x-rudder-ingress-auth": forgedIngressKey,
+        ...forgedForwardingHeaders,
+      },
+    );
+    expect(response.status).toBe(401);
+    expect(response.body).toContain("authentication_required");
+    expect(authorizationObservations).toHaveLength(0);
+  }, 10_000);
+
+  it("does not trust forged internal headers from a legacy credential at the Node auth bridge", async () => {
     const port = publicPort;
     if (port === undefined) throw new Error("Public Actix listener is not started");
     const host = `public.example:${port}`;
+    const authorization = "Bearer legacy_board_wrong_token";
     const response = await getPublicIngress(
       `/api/orgs/${organizationId}/members/directory`,
       {
         host,
         origin: "https://public.example",
+        authorization,
         "x-rudder-actor-envelope": forgedActorEnvelope,
         "x-rudder-request-id": forgedRequestId,
         "x-rudder-ingress-auth": forgedIngressKey,
@@ -656,6 +690,7 @@ describe("source-binary public Actix to private Node auth workflow", () => {
     expect(observation.responseStatus).toBe(401);
     expectOriginalRequestContext(observation, host);
     expectSocketForwardingContext(observation);
+    expect(observation.headers.authorization).toBe(authorization);
     expect(observation.headers.ingressAuth).not.toBe(forgedIngressKey);
   }, 10_000);
 });

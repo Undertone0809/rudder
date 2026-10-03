@@ -1,8 +1,75 @@
 schema: rudder.rust-backend-completion-status/v1
 plan: 2026-09-21-rudder-full-rust-backend-completion-plan.md
-updated_at: 2026-09-29
+updated_at: 2026-10-02
 status: in_progress
 current_candidate:
+  source_sha: 7a416d088771925cf291a862bd83f7b97f04e567
+  source_tree: 9345a28f7b4d87c081399617bf439c3464b2eddb
+  worktree: /private/tmp/rudder-native-auth-security-fixture.Ky7IBH
+  branch: codex/native-bearer-auth-20261002
+  pr: https://github.com/Undertone0809/rudder/pull/262
+  publication: draft_for_CI_not_final_acceptance
+  origin_main_last_observed: 56e8e76ac98c00921d5d9737ad69ae8ded2bc0ce
+  stacked_base: 276299d15df2ec820d3537bd5efc9d4c3aefde25
+  aggregate_state: acceptance_pending
+  runtime_scope: native_Board_and_agent_bearer_resolution_only_not_identity_or_session_retirement
+  implementation_scope: Actix_SQLx_member_read_auth_with_private_Node_adapter_retained_for_unmigrated_credentials
+  stage_receipt: artifacts/2026-10-02-rudder-native-auth-synthetic-fixture-stage-review.json
+  stage_receipt_sha256: 3292f2f2fca6272c34b8a5db491014412a934989f7e9a2a12c6ed4255e3acfaf
+  stage_scope: single_cfg_test_fixture_change_only_not_whole_auth_acceptance
+  ci_receipt: artifacts/2026-10-02-rudder-native-auth-ci-evidence-audit.json
+  ci_receipt_sha256: 4e991098c4148edeae7113646c9b3f25cd96bb89f811942bbb5fe20d7455848c
+  ci_snapshot_at: '2026-10-02T05:04:52Z'
+  ci_postgres: {run: 36965759981, result: PASS, selected_pass: 7, ignored: 0, source_tree_matches: true}
+  ci_d1: {run: 36965759950, result: success_metadata_only}
+  ci_matrix: {run: 36965759966, state_at_snapshot: in_progress, Ubuntu: pending, GitGuardian: failure_unwaived}
+  local_binary:
+    source_sha: 7a416d088771925cf291a862bd83f7b97f04e567
+    path: /private/tmp/rudder-255-attribution.6BjPXb/repo/native/target/debug/rudder-server-foundation
+    sha256: e8ac4df4a36d4000b98b023fce0ab6205d91f729327098c2a504a800ec722ff0
+    build: cargo_build_locked_rudder_server_foundation_exit0
+    claim_limit: source_built_not_installed_not_public_TCP_acceptance
+  current_environment:
+    owned_locked_install: pnpm_install_frozen_lockfile_ignore_scripts_in_current_source_checkout
+    install_state_at_recording: completed_exec97499_exit0_1357_packages_20m16_5s
+    prerequisite_checks: cli_and_db_workspace_tsx4_21_0_Node22_23_1_static_DB_import190_exports_PASS_source_clean
+    pnpm_lock_sha256: 8962e3da598b36c2036500a28569571f593ca3f9964a9e95582e0925be69828c
+    tsx_cli_sha256: 8729ecfb90d9d568939e4190e6f1d3317c946583b7d37a776e0c23a21c021cf8
+    postgres_runtime_grant: v5_lease_released_after_verifier_PASS_owned_cleanup_verified_no_current_grant
+    historical_c89_installed_assets: absent_do_not_reuse_as_current_ready
+    historical_donor_node_modules: absent_do_not_reuse_saved_READY_preflight
+    native_TCP_successor: v5_stage_accept_independent_verifier_PASS_final_review_accept_source_built_TCP_only
+    native_TCP_final_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-final-review.json
+    native_TCP_verifier_sha256: 29d6baa24a88b6e26ef371171a9229b82ad38d19e3a203cc0d7ae7b5e4f2eec2
+    native_TCP_migration_limit: journal179_tool_reports181_pending_no_applied_ledger_count_readback_not_migration_authority_acceptance
+    native_TCP_root: /private/tmp/rudder-native-bearer-auth-tcp-acceptance-7a-v5.rlfDG3
+    native_TCP_packet_sha256: f4d259368540351646b6cc0a19eb68ce231ab6f393848ac630eedd6da4284bc9
+    native_TCP_stage_sha256: 9a2b791d35168771473e9a41e9987297e02953734c9ecb3d5de94bddea261cb0
+    native_TCP_stage_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-stage-review.json
+    native_TCP_verifier_receipt: artifacts/2026-10-02-rudder-native-bearer-tcp-v5-independent-verifier.json
+    native_TCP_v4: historical_needs_more_evidence_external_dirty_checkout_target_not_executed
+    installed_preparation: independent_Euler_accept14_tarballs6_binaries_real_postinstall_not_runtime_PASS
+    installed_preparation_receipt: artifacts/2026-10-02-rudder-native-auth-installed-artifact-preparation-review.json
+    installed_binding_sha256: 61909a072160be1a08908b90af67a3abd83bf6a9ac5cea3243f3aebef1500b7a
+    installed_relocation: actual_os_tmpdir_prefix_static_inspection_accept_original_assets_preserved_not_runtime_PASS
+    native_CLI: checkpoint6b6896d1_Clippy_fix10_author_tests_fmt_Clippy_build_PASS_source_stage_accept_Node_defaults_retained
+    native_CLI_source_sha: 6b6896d1fe8e161c22b3ddfbbda9f329f1d34a22
+    native_CLI_source_tree: b1ca4c013b5a417bead208e4f407b21fe49e7ff4
+    native_CLI_binary_sha256: 7878ee25b8a97c98a9a6718a4e12dd0ba86f82fb3cfd562c21b55a632e22a653
+    native_CLI_stage_receipt: artifacts/2026-10-02-rudder-native-member-cli-6b6896-stage-review.json
+    native_CLI_execution: harness_preparing_DRAFT_lease_empty_permissions_no_runtime_acceptance
+    current_remote_records_head: 35f2ec2619b6729ac6892869f665929d1fa80281
+    current_remote_CI: Actix_SQLx_D1_SUCCESS_2_platform_checks_IN_PROGRESS_GitGuardian_FAILURE_observed_2026_10_02
+    board_UI: replacement_isolated_browser_TaskSpace_approval_pending
+  gates:
+    public_TCP_verifier: PASS_v5_11criteria15requests0Nodegrants_owned_cleanup_donor_preservation_source_built_only
+    installed_auth_verifier: pending_current_assets_preparation_review_accept_runtime_packet_preparing
+    final_reviewer: accept_source_built_TCP_only_installed_and_aggregate_pending
+    security_check: historical_commit_alert_unresolved_not_waived
+    aggregate_PR236_acceptance: pending
+  next_executable: finish_corrected_installed_packet_and_CLI_real_service_harness_stage_review_then_distinct_verifier_under_new_exclusive_PG_lease_security_still_blocks_merge
+  terminal_claims: {implementation_complete: false, release_ready: false, production_verified: false}
+historical_candidate_2026_09_29:
   worktree: /Users/zeeland/.codex/worktrees/rudder-member-directory-default-20260922/rudder-oss
   branch: codex/project-create-pilot-20260929
   source_sha: 719619b3006de870adf4430a1a845efff3c9ffab

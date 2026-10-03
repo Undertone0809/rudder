@@ -12,13 +12,21 @@ import { spawnNativeProcessHost, type NativeProcessHost } from "./local-app-nati
 import { createLocalAppProcessPlatform } from "./local-app-process-platform.js";
 import { LocalAppRegistry } from "./local-apps-registry.js";
 import {
-  LocalAppRuntimeManager,
+  LocalAppRuntimeManager as NativeCapableLocalAppRuntimeManager,
   buildChildEnvironment,
   installControlPipeEofCleanup,
   localAppPartitionId,
   parseLsofListenerProcessRecords,
   terminateOwnedProcessGroup,
 } from "./local-apps-runtime.js";
+
+type LocalAppRuntimeManagerOptions = ConstructorParameters<typeof NativeCapableLocalAppRuntimeManager>[0];
+
+class LocalAppRuntimeManager extends NativeCapableLocalAppRuntimeManager {
+  constructor(options: LocalAppRuntimeManagerOptions) {
+    super({ ...options, useNativeProcessHost: options.useNativeProcessHost ?? false });
+  }
+}
 
 const fixturePath = fileURLToPath(new URL("./fixtures/local-app-http-fixture.mjs", import.meta.url));
 const floodFixturePath = fileURLToPath(new URL("./fixtures/local-app-http-flood-fixture.mjs", import.meta.url));

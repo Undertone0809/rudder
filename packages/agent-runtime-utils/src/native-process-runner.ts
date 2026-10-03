@@ -24,6 +24,7 @@ const MAX_LIFECYCLE_FRAME_BYTES = 64 * 1024;
 const MAX_OUTPUT_QUEUE_BYTES = 4 * 1024 * 1024;
 const MAX_OUTPUT_QUEUE_ITEMS = 1_024;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
+const CHILD_EXIT_SIGNALS = new Set(["SIGINT", "SIGKILL", "SIGTERM", "signal"]);
 
 type PausableReadable = NodeJS.ReadableStream & {
   pause(): PausableReadable;
@@ -308,6 +309,8 @@ export async function runNativeChildProcess(
     let spawnedPid: number | null = null;
     let appExitCode: number | null = null;
     let appSignal: string | null = null;
+    let appExitSeen = false;
+    let appExitValid = false;
     let terminalSeen = false;
     let cleanupReceiptTrusted = false;
     let timedOut = false;
@@ -614,8 +617,34 @@ export async function runNativeChildProcess(
         return;
       }
       if (type === "app-exit") {
-        appExitCode = typeof frame.code === "number" ? frame.code : null;
-        appSignal = typeof frame.signal === "string" ? frame.signal : null;
+        if (appExitSeen || terminalSeen) {
+          appExitValid = false;
+          fatalError ??= new NativeProcessUnavailableError(
+            "Rust process host emitted duplicate or post-terminal app exit evidence",
+            "child_exit_result_unverified",
+            accepted,
+          );
+          return;
+        }
+        appExitSeen = true;
+        const hasCode = Object.prototype.hasOwnProperty.call(frame, "code");
+        const hasSignal = Object.prototype.hasOwnProperty.call(frame, "signal");
+        const code = frame.code;
+        const signal = frame.signal;
+        const validCode = hasCode && (code === null || (
+          typeof code === "number"
+          && Number.isInteger(code)
+          && code >= -2_147_483_648
+          && code <= 2_147_483_647
+        ));
+        const validSignal = hasSignal && (signal === null || (
+          typeof signal === "string" && CHILD_EXIT_SIGNALS.has(signal)
+        ));
+        appExitValid = validCode && validSignal && !(typeof code === "number" && typeof signal === "string");
+        // Retain the existing succeeded-terminal result contract; stricter
+        // frame proof is required only to reinterpret a failed child_exit.
+        appExitCode = typeof code === "number" ? code : null;
+        appSignal = typeof signal === "string" ? signal : null;
         return;
       }
       if (type === "terminal") {
@@ -637,15 +666,30 @@ export async function runNativeChildProcess(
         }
         cleanupReceiptTrusted = true;
         // Cleanup/receipt durability proves ownership was released, not that
-        // execution succeeded. Only these two statuses exist in protocol v1.
+        // execution succeeded. A child_exit terminal is an ordinary app result
+        // only when one valid app-exit frame proves a nonzero code or signal.
         if (frame.status === "failed") {
-          fatalError ??= new NativeProcessUnavailableError(
-            typeof frame.errorCode === "string"
-              ? `Rust process host failed execution: ${frame.errorCode}`
-              : "Rust process host failed execution",
-            typeof frame.errorCode === "string" ? frame.errorCode : "terminal_failed",
-            true,
-          );
+          const childExitedUnsuccessfully = appExitSeen
+            && appExitValid
+            && ((appExitCode !== null && appExitCode !== 0 && appSignal === null)
+              || (appExitCode === null && typeof appSignal === "string" && appSignal.length > 0));
+          if (frame.errorCode === "child_exit" && childExitedUnsuccessfully) {
+            // Let provider adapters inspect the child's captured result and
+            // apply their normal retry and error-reporting behavior.
+          } else {
+            const unverifiedChildExit = frame.errorCode === "child_exit";
+            fatalError ??= new NativeProcessUnavailableError(
+              unverifiedChildExit
+                ? "Rust process host child exit lacks a valid nonzero exit or signal result"
+                : typeof frame.errorCode === "string"
+                  ? `Rust process host failed execution: ${frame.errorCode}`
+                  : "Rust process host failed execution",
+              unverifiedChildExit
+                ? "child_exit_result_unverified"
+                : typeof frame.errorCode === "string" ? frame.errorCode : "terminal_failed",
+              true,
+            );
+          }
         } else if (frame.status !== "succeeded") {
           fatalError ??= new NativeProcessUnavailableError(
             "Rust process host emitted an unsupported terminal status",
