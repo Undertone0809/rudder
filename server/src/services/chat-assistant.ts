@@ -13,7 +13,7 @@ import {
   stripRudderInlineVisualPlacements,
 } from "@rudderhq/shared";
 import { and, desc, eq } from "drizzle-orm";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import {
   createProfileBoundRuntimeProviderCapabilityResolverFromConfig,
@@ -59,6 +59,7 @@ import {
   sideChatForkBindingMatchesTarget,
 } from "./chat-assistant.side-chat-source.js";
 import { createChatAssistantStdoutBuffer } from "./chat-assistant.stdout-buffer.js";
+import { qualifiedChatCodexStdoutPolicy } from "./chat-assistant.stdout-policy.js";
 import { createChatTranscriptDelivery } from "./chat-assistant.transcript-delivery.js";
 import { createChatAssistantTranscriptProcessor } from "./chat-assistant.transcript-processor.js";
 import { admitClaudeDeferredFork, recordClaudeDeferredForkOutcome, reserveClaudeDeferredFork } from "./claude-deferred-fork-admission.js";
@@ -66,7 +67,6 @@ import { preflightManagedAgentWorkspace } from "./managed-workspace-preflight.js
 import { resolveHeartbeatTranscriptRetention } from "./runtime-kernel/heartbeat-transcript-retention.js";
 import {
   executeAdapterWithModelFallbacks,
-  projectPrimaryRuntimeConfig,
   resolveExecutionSubmissionPhase,
 } from "./runtime-kernel/model-fallback.js";
 import { abortReservedNativeForkIntentRunFence, executeNativeForkIntent, markNativeForkIntentUnknown, NativeForkAcceptanceUnknownError, transferReservedNativeForkIntentRunFence, type NativeForkIntentNoChildProof, type NativeForkIntentRunFence } from "./runtime-kernel/native-fork-intent.js";
@@ -74,7 +74,6 @@ import { revisionForRuntimeConfig } from "./runtime-kernel/native-session.js";
 import { filterNativeTransportProfile } from "./runtime-kernel/native-transport-profile.js";
 import type { NativeSpanSelector } from "./runtime-kernel/provider-capabilities.js";
 import { createRuntimeApprovalBridge } from "./runtime-kernel/runtime-approval.js";
-import { bindRuntimeExecutionConfig } from "./runtime-kernel/runtime-driver.js";
 import { admitSideChatRuntimeFork, type SideChatRuntimeAdmission } from "./side-chat-runtime-admission.js";
 
 export type { ChatAssistantStaleOutcome } from "./chat-assistant.execution-owner.js";
@@ -1014,24 +1013,11 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
             ...chatPromptContext,
             chatConversationId: input.conversation.id,
             chatMode: true,
-            // Host-owned qualification, never a user config flag. Bind the
-            // verified retention decision to this exact primary execution.
-            rudderCodexStdoutPolicy: runtimeAgentType === "codex_local" && transcriptRetention.mode === "native"
-              ? {
-                mode: "native_retained",
-                runtimeType: runtimeAgentType,
-                runId,
-                orgId: input.conversation.orgId,
-                // Driver dispatch adds the admitted provider binding. Seal
-                // that exact config, not the earlier unbound projection.
-                configSha256: createHash("sha256").update(JSON.stringify(
-                  bindRuntimeExecutionConfig(
-                    projectPrimaryRuntimeConfig(runtimeExecutionConfig, runtimeAgentType),
-                    { ...providerBinding, id: runtimeBinding.id },
-                  ),
-                )).digest("hex"),
-              }
-              : null,
+            rudderCodexStdoutPolicy: qualifiedChatCodexStdoutPolicy({
+              runtimeType: runtimeAgentType, retentionMode: transcriptRetention.mode,
+              runId, orgId: input.conversation.orgId, config: runtimeExecutionConfig,
+              providerBinding, bindingId: runtimeBinding.id,
+            }),
             rudderChatInlineVisualProtocolVersion: 1,
             rudderScene,
             rudderWorkspace,
