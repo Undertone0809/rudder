@@ -60,6 +60,7 @@ import {
 } from "./chat-assistant.side-chat-source.js";
 import { createChatAssistantStdoutBuffer } from "./chat-assistant.stdout-buffer.js";
 import { qualifiedChatCodexStdoutPolicy } from "./chat-assistant.stdout-policy.js";
+import { createChatNativeStopEvidence } from "./chat-assistant.stop-evidence.js";
 import { createChatTranscriptDelivery } from "./chat-assistant.transcript-delivery.js";
 import { createChatAssistantTranscriptProcessor } from "./chat-assistant.transcript-processor.js";
 import { admitClaudeDeferredFork, recordClaudeDeferredForkOutcome, reserveClaudeDeferredFork } from "./claude-deferred-fork-admission.js";
@@ -595,13 +596,12 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
     // This is execution-local evidence only. A reattached Run may already have
     // submitted input in another process, even before this invocation starts.
     let providerDispatched = Boolean(input.resumeRunId);
-    let observedNativeStopEvidence: {
-      spanId: string;
-      attemptId: string;
-      ownerToken: string;
-      attemptEpoch: number;
-      payload: Record<string, unknown>;
-    } | null = null;
+    const nativeStopEvidence = createChatNativeStopEvidence({
+      runId, runtimeType: runtimeAgentType, signal: ownedExecution.signal,
+      getCurrentFence: () => ({ orgId: chatRun.orgId, spanId: chatRun.runtimeSpanId,
+        attemptId: chatRun.runtimeAttemptRef?.id, ownerToken: chatRun.runtimeSpanOwnerToken,
+        attemptEpoch: chatRun.runtimeSpanAttemptEpoch }),
+    });
     const { freezeStopCutoff, finalizeStoppedReply } = createChatAssistantStopFinalizer({
       finalAssistantText: () => finalAssistantTextAccumulator.fullText,
       hasNativeFinalMessage: () => transcriptProcessingState.hasNativeFinalMessage,
@@ -627,20 +627,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         }
         return finalizeChatRun(state);
       },
-      finalState: (partialBody): Parameters<typeof chatRunsSvc.finalizeRun>[1] => ({
-        status: "cancelled",
-        error: "Chat run stopped before completion",
-        errorCode: "chat_stopped",
-        resultJson: {
-          outcome: "stopped", partialBody,
-          ...(!ownedExecution.signal.aborted && observedNativeStopEvidence
-            && observedNativeStopEvidence.spanId === chatRun.runtimeSpanId
-            && observedNativeStopEvidence.attemptId === chatRun.runtimeAttemptRef?.id
-            && observedNativeStopEvidence.ownerToken === chatRun.runtimeSpanOwnerToken
-            && observedNativeStopEvidence.attemptEpoch === chatRun.runtimeSpanAttemptEpoch
-            ? observedNativeStopEvidence.payload : {}),
-        },
-      }),
+      finalState: (partialBody) => nativeStopEvidence.stoppedRunState(partialBody),
       onAssistantState: input.onAssistantState,
       replyingAgentId: runtimeAgentId,
     });
@@ -999,46 +986,7 @@ export function chatAssistantService(db: Db, storage?: StorageService) {
         }),
         recordNativeExecutionResult: (attemptResult, fence) => guardActiveRun(async () => {
           const recorded = await chatRunsSvc.recordNativeExecutionResult(runId, attemptResult, fence);
-          // Preserve only this invocation's observed evidence after its existing
-          // org/Run/Span/Attempt/owner CAS succeeds. Stop is not writer proof.
-          if (!recorded || ownedExecution.signal.aborted || fence.orgId !== chatRun.orgId
-            || recorded.id !== fence.spanId || recorded.attemptRef?.id !== fence.attemptId
-            || fence.spanId !== chatRun.runtimeSpanId || fence.attemptId !== chatRun.runtimeAttemptRef?.id
-            || fence.ownerToken !== chatRun.runtimeSpanOwnerToken || fence.attemptEpoch !== chatRun.runtimeSpanAttemptEpoch
-            || !fence.spanId || !fence.attemptId || !fence.attemptEpoch) return recorded;
-          const previous = observedNativeStopEvidence;
-          if (previous?.spanId === fence.spanId && previous.attemptId === fence.attemptId
-            && previous.ownerToken === fence.ownerToken && previous.attemptEpoch === fence.attemptEpoch
-            && asRecord(previous.payload.control)?.stopConfirmed === true) return recorded;
-          const result = asRecord(attemptResult.resultJson);
-          const rawControl = asRecord(result?.control);
-          const control: Record<string, boolean> = {};
-          if (typeof rawControl?.interruptRequested === "boolean") control.interruptRequested = rawControl.interruptRequested;
-          const quiescence = attemptResult.nativeWriterQuiescence;
-          const writer = quiescence?.status === "confirmed"
-            && ["not_started", "provider_terminal", "provider_stop_ack", "process_exit"].includes(quiescence.source)
-            ? { status: "confirmed", source: quiescence.source }
-            : quiescence?.status === "unconfirmed" ? { status: "unconfirmed" } : null;
-          const providerStatus = typeof result?.providerStatus === "string"
-            && ["interrupted", "complete", "settled", "unknown", "error", "failed", "cancelled"].includes(result.providerStatus)
-            ? result.providerStatus : null;
-          if (rawControl?.stopConfirmed === false) control.stopConfirmed = false;
-          else if (rawControl?.stopConfirmed === true && writer?.status === "confirmed"
-            && writer.source !== "not_started"
-            && (runtimeAgentType !== "hermes_gateway"
-              || (providerStatus === "interrupted" && writer.source === "provider_stop_ack" && control.interruptRequested === true))) {
-            control.stopConfirmed = true;
-          }
-          observedNativeStopEvidence = {
-            spanId: fence.spanId, attemptId: fence.attemptId, ownerToken: fence.ownerToken, attemptEpoch: fence.attemptEpoch,
-            payload: {
-              ...(Object.keys(control).length > 0 ? { control } : {}),
-              ...(providerStatus ? { providerStatus } : {}),
-              ...(writer ? { nativeWriterQuiescence: writer } : {}),
-              nativeStopEvidence: { orgId: chatRun.orgId, runId, spanId: fence.spanId,
-                attemptId: fence.attemptId, attemptEpoch: fence.attemptEpoch },
-            },
-          };
+          nativeStopEvidence.observe({ recorded, result: attemptResult, fence });
           return recorded;
         }),
         onAttemptResult: attemptPorts.onAttemptResult,
