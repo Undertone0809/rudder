@@ -156,6 +156,7 @@ function bodyError(response: { body: Record<string, unknown> | string }) {
 async function main() {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const requireFromDb = createRequire(path.join(repoRoot, "packages/db/package.json"));
+  const { drizzle } = requireFromDb("drizzle-orm/postgres-js");
   const postgresModule = requireFromDb("postgres") as {
     default?: (...args: any[]) => any;
   } | ((...args: any[]) => any);
@@ -170,6 +171,7 @@ async function main() {
   const migrationPreflightPath = process.env.RUDDER_NATIVE_MIGRATION_PREFLIGHT_PATH
     ?? path.join(repoRoot, "native/target/debug/migration-preflight");
   const { createRustActorEnvelope } = await import("../../server/src/services/rust-foundation-bridge.js");
+  const { projectService: projectServiceFactory } = await import("../../server/src/services/projects.js");
 
   Object.assign(process.env, {
     DATABASE_URL: "",
@@ -186,7 +188,9 @@ async function main() {
     RUDDER_DEPLOYMENT_MODE: "local_trusted",
     RUDDER_RUST_MEMBER_DIRECTORY_MODE: "off",
     RUDDER_RUST_ORGANIZATION_BRANDING_MODE: "off",
-    RUDDER_RUST_PROJECT_GOAL_SET_MODE: "required",
+    // Public Project creation is disabled here. Legacy Node fixtures below use
+    // the fenced organization-import service lane explicitly.
+    RUDDER_RUST_PROJECT_GOAL_SET_MODE: "off",
     RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS: "",
     RUDDER_OPEN_ON_LISTEN: "false",
   });
@@ -213,6 +217,7 @@ async function main() {
     const health = await readResponse(await fetch(`${current.apiUrl}/api/health`));
     assert.equal(health.status, 200);
     assert.equal((health.body as { status?: string }).status, "ok");
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
 
     const createOrganization = async (name: string, issuePrefix: string) => {
       const response = await readResponse(await fetch(`${current!.apiUrl}/api/orgs`, {
@@ -244,60 +249,72 @@ async function main() {
     const goalB = await createGoal(organizationId, "Second real-entry goal");
     const otherGoal = await createGoal(otherOrganizationId, "Cross-organization goal");
 
-    const projectResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
+    const disabledPublicProjectName = "Rust Project-Goal public create while off";
+    const projectsBeforeDisabledPublicCreate = await sql.unsafe(
+      "SELECT id::text AS id, name FROM projects WHERE org_id = $1 ORDER BY id",
+      [organizationId],
+    ) as Array<{ id: string; name: string }>;
+    const disabledPublicCreateResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Rust Project-Goal real entry" }),
+      body: JSON.stringify({ name: disabledPublicProjectName }),
     }));
-    assert.equal(projectResponse.status, 201);
-    const projectId = String((projectResponse.body as { id?: string }).id);
-    assert.match(projectId, /^[0-9a-f-]{36}$/u);
+    assert.equal(disabledPublicCreateResponse.status, 503, bodyError(disabledPublicCreateResponse));
+    const projectsAfterDisabledPublicCreate = await sql.unsafe(
+      "SELECT id::text AS id, name FROM projects WHERE org_id = $1 ORDER BY id",
+      [organizationId],
+    ) as Array<{ id: string; name: string }>;
+    assert.deepEqual(
+      Array.from(projectsAfterDisabledPublicCreate),
+      Array.from(projectsBeforeDisabledPublicCreate),
+      "public Project creation while the Rust create lane is off must not insert a row",
+    );
+    assert.ok(!Array.from(projectsAfterDisabledPublicCreate).some((project) => project.name === disabledPublicProjectName));
 
-    const createWithGoalsResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Rust Project-Goal create-with-goals compatibility", goalIds: [goalA] }),
-    }));
-    assert.equal(createWithGoalsResponse.status, 201);
-    const createWithGoalsProjectId = String((createWithGoalsResponse.body as { id?: string }).id);
-    assert.match(createWithGoalsProjectId, /^[0-9a-f-]{36}$/u);
-    assert.deepEqual((createWithGoalsResponse.body as { goalIds?: string[] }).goalIds, [goalA]);
+    // Legacy fixture preparation uses the explicit, organization-fenced import
+    // lane; these rows are not evidence that public Node Project creation works.
+    const legacyNodeProjectService = projectServiceFactory(drizzle(sql) as never);
+    const createLegacyNodeProjectFixture = async (name: string, goalIds?: string[]) => {
+      const project = await legacyNodeProjectService.create(
+        organizationId,
+        { name, ...(goalIds === undefined ? {} : { goalIds }) },
+        { lane: "node", caller: "import" },
+      );
+      assert.equal(project.orgId, organizationId, "legacy fixture must remain organization-scoped");
+      assert.match(project.id, /^[0-9a-f-]{36}$/u);
+      return project;
+    };
 
-    const toolingProjectResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Rust Project-Goal agent tooling entry" }),
-    }));
-    assert.equal(toolingProjectResponse.status, 201);
-    const toolingProjectId = String((toolingProjectResponse.body as { id?: string }).id);
-    assert.match(toolingProjectId, /^[0-9a-f-]{36}$/u);
+    const project = await createLegacyNodeProjectFixture("Rust Project-Goal real entry");
+    const projectId = project.id;
 
-    const unlistedProjectResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Rust Project-Goal unlisted entry" }),
-    }));
-    assert.equal(unlistedProjectResponse.status, 201);
-    const unlistedProjectId = String((unlistedProjectResponse.body as { id?: string }).id);
-    assert.match(unlistedProjectId, /^[0-9a-f-]{36}$/u);
+    const createWithGoalsProject = await createLegacyNodeProjectFixture(
+      "Rust Project-Goal create-with-goals compatibility",
+      [goalA],
+    );
+    const createWithGoalsProjectId = createWithGoalsProject.id;
+    assert.deepEqual(createWithGoalsProject.goalIds, [goalA]);
 
-    const mixedProjectResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Rust Project-Goal mixed PATCH entry" }),
-    }));
-    assert.equal(mixedProjectResponse.status, 201);
-    const mixedProjectId = String((mixedProjectResponse.body as { id?: string }).id);
-    assert.match(mixedProjectId, /^[0-9a-f-]{36}$/u);
+    const toolingProject = await createLegacyNodeProjectFixture("Rust Project-Goal agent tooling entry");
+    const toolingProjectId = toolingProject.id;
+
+    const unlistedProject = await createLegacyNodeProjectFixture("Rust Project-Goal unlisted entry");
+    const unlistedProjectId = unlistedProject.id;
+
+    const mixedProject = await createLegacyNodeProjectFixture("Rust Project-Goal mixed PATCH entry");
+    const mixedProjectId = mixedProject.id;
 
     // Exercise the startup fence itself. A missing allowlisted UUID must be
     // rejected before any selected project changes owner; the follow-up
     // restart with the valid allowlist proves the failed run did not commit a
     // partial handoff.
+    await sql.end({ timeout: 2 });
+    sql = null;
     await current.stop();
     await current.dispose();
     current = null;
     const missingAllowlistProjectId = randomUUID();
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "required";
     process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [
       projectId,
       toolingProjectId,
@@ -349,18 +366,112 @@ async function main() {
     assert.equal(unlistedGoalSet.status, 503);
     assert.equal(
       (unlistedGoalSet.body as { code?: string }).code,
-      "rust_foundation_project_goal_set_not_allowlisted",
+      "rust_foundation_project_goal_set_not_owned",
     );
+
+    // The same unselected Node row remains writable by ordinary clients.
+    const nodeGoalSet = await readResponse(await fetch(`${current.apiUrl}/api/projects/${unlistedProjectId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ goalIds: [goalA] }),
+    }));
+    assert.equal(nodeGoalSet.status, 200, bodyError(nodeGoalSet));
+    assert.deepEqual((nodeGoalSet.body as { goalIds?: string[] }).goalIds, [goalA]);
+
+    // A required-mode public create owns its new UUID without adding it to the
+    // startup adoption list. Later PATCH dispatch follows the persisted owner.
+    const dynamicProjectResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Rust-created unlisted Project-Goal entry" }),
+    }));
+    assert.equal(dynamicProjectResponse.status, 201, bodyError(dynamicProjectResponse));
+    const dynamicProjectId = String((dynamicProjectResponse.body as { id?: string }).id);
+    assert.match(dynamicProjectId, /^[0-9a-f-]{36}$/u);
+    assert.ok(!process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS!.split(",").includes(dynamicProjectId));
+    const dynamicGoalKey = `dynamic-goals-${dynamicProjectId}`;
+    const patchDynamicProject = async (key: string, goalIds: string[]) => readResponse(await fetch(
+      `${current!.apiUrl}/api/projects/${dynamicProjectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "x-rudder-idempotency-key": key },
+        body: JSON.stringify({ goalIds }),
+      },
+    ));
+    const dynamicGoalSet = await patchDynamicProject(dynamicGoalKey, [goalA]);
+    assert.equal(dynamicGoalSet.status, 200, bodyError(dynamicGoalSet));
+    assert.deepEqual((dynamicGoalSet.body as { goalIds?: string[] }).goalIds, [goalA]);
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    const dynamicSnapshot = async () => {
+      const [state, links, counts] = await Promise.all([
+        sql!.unsafe("SELECT s.owner, s.mutation_version::text AS version, s.fence_epoch::text AS epoch, p.goal_id::text AS goal_id "
+          + "FROM project_goal_mutation_state s JOIN projects p ON p.id = s.project_id WHERE s.project_id = $1", [dynamicProjectId]),
+        sql!.unsafe("SELECT goal_id::text AS goal_id FROM project_goals WHERE project_id = $1 ORDER BY goal_id", [dynamicProjectId]),
+        sql!.unsafe("SELECT "
+          + "(SELECT count(*)::text FROM organization_mutation_receipts WHERE org_id = $1 AND result->'result'->>'project_id' = $2::text) AS receipts, "
+          + "(SELECT count(*)::text FROM activity_log WHERE org_id = $1 AND entity_id = $2::text) AS activities, "
+          + "(SELECT count(*)::text FROM organization_mutation_outbox o JOIN activity_log a ON a.id = o.activity_id "
+          + "WHERE a.org_id = $1 AND a.entity_id = $2::text) AS outbox", [organizationId, dynamicProjectId]),
+      ]);
+      return { state: state[0], links: Array.from(links), counts: counts[0] };
+    };
+    const dynamicBeforeRestart = await dynamicSnapshot();
+    assert.equal(dynamicBeforeRestart.state.owner, "rust");
+    assert.deepEqual(dynamicBeforeRestart.links, [{ goal_id: goalA }]);
+
+    // A nontransactional counter catches even a business UPDATE subsequently
+    // rolled back: the old Node service must reject before its first write.
+    await sql.unsafe("CREATE SEQUENCE smoke_project_goal_update_attempts");
+    await sql.unsafe("CREATE FUNCTION smoke_count_project_goal_update() RETURNS trigger LANGUAGE plpgsql AS $$ "
+      + "BEGIN PERFORM nextval('smoke_project_goal_update_attempts'); RETURN NEW; END $$");
+    await sql.unsafe("CREATE TRIGGER smoke_count_project_goal_update BEFORE UPDATE ON projects "
+      + "FOR EACH ROW EXECUTE FUNCTION smoke_count_project_goal_update()");
+    const updateAttempts = async () => (await sql!.unsafe("SELECT last_value::text, is_called FROM smoke_project_goal_update_attempts"))[0];
+    const attemptsBeforeStale = await updateAttempts();
+    const { projectService } = await import("../../server/src/services/projects.js");
+    await assert.rejects(projectService(drizzle(sql) as never).update(dynamicProjectId, { goalIds: [] }), /owned by Rust/i);
+    assert.deepEqual(await updateAttempts(), attemptsBeforeStale, "stale Node service reached a Project business write");
+    assert.deepEqual(await dynamicSnapshot(), dynamicBeforeRestart);
+    await sql.unsafe("DROP TRIGGER smoke_count_project_goal_update ON projects");
+    await sql.unsafe("DROP FUNCTION smoke_count_project_goal_update()");
+    await sql.unsafe("DROP SEQUENCE smoke_project_goal_update_attempts");
+    await sql.end({ timeout: 2 });
+    sql = null;
+
+    // Turning the bridge off must not turn a Rust-owned UUID into a Node write.
+    await current.stop();
+    await current.dispose();
+    current = null;
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "off";
+    current = await start();
+    const dynamicDisabled = await patchDynamicProject(`disabled-${dynamicProjectId}`, []);
+    assert.equal(dynamicDisabled.status, 503);
+    assert.equal((dynamicDisabled.body as { code?: string }).code, "rust_foundation_project_goal_set_disabled");
 
     // A required startup with the same allowlist must be a no-op for rows that
     // already belong to Rust. This is the recovery path after a clean restart.
     await current.stop();
     await current.dispose();
     current = null;
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = "required";
     process.env.RUDDER_RUST_PROJECT_GOAL_PROJECT_IDS = [projectId, toolingProjectId, mixedProjectId].join(",");
     current = await start();
     const sameConfigRestartHealth = await readResponse(await fetch(`${current.apiUrl}/api/health`));
     assert.equal(sameConfigRestartHealth.status, 200);
+    sql = postgres(current.databaseUrl, { max: 2, onnotice: () => {} });
+    assert.deepEqual(await dynamicSnapshot(), dynamicBeforeRestart, "disabled Rust bridge fell back to Node");
+    const dynamicReplay = await patchDynamicProject(dynamicGoalKey, [goalA]);
+    assert.equal(dynamicReplay.status, 200, bodyError(dynamicReplay));
+    assert.deepEqual(dynamicReplay.body, dynamicGoalSet.body);
+    assert.deepEqual(await dynamicSnapshot(), dynamicBeforeRestart, "restart replay wrote a second mutation");
+    const dynamicAfterRestart = await patchDynamicProject(`after-restart-${dynamicProjectId}`, [goalB]);
+    assert.equal(dynamicAfterRestart.status, 200, bodyError(dynamicAfterRestart));
+    assert.deepEqual((dynamicAfterRestart.body as { goalIds?: string[] }).goalIds, [goalB]);
+    const dynamicFinalSnapshot = await dynamicSnapshot();
+    assert.equal(dynamicFinalSnapshot.state.owner, "rust");
+    assert.equal(BigInt(dynamicFinalSnapshot.state.version), BigInt(dynamicBeforeRestart.state.version) + 1n);
+    assert.deepEqual(dynamicFinalSnapshot.links, [{ goal_id: goalB }]);
+    await sql.end({ timeout: 2 });
+    sql = null;
 
     const agentResponse = await readResponse(await fetch(`${current.apiUrl}/api/orgs/${organizationId}/agents`, {
       method: "POST",
@@ -839,7 +950,7 @@ async function main() {
     const mixedGoalLinks = await sql.unsafe(
       "SELECT goal_id::text AS goal_id FROM project_goals WHERE project_id = $1 ORDER BY goal_id",
       [mixedProjectId],
-    );
+    ) as Array<{ goal_id: string }>;
     const mixedResources = await sql.unsafe(
       "SELECT resource.name, resource.kind, resource.locator, attachment.role, attachment.note, "
         + "attachment.sort_order, attachment.is_primary "
@@ -1470,7 +1581,9 @@ async function main() {
       cliScalarReplayExitCode: cliScalarReplay.exitCode,
       mcpScalarName: "MCP scalar Project update",
       mcpScalarReplayExitCode: mcpScalarReplay.exitCode,
-      createWithGoalsStatus: createWithGoalsResponse.status,
+      disabledPublicCreateStatus: disabledPublicCreateResponse.status,
+      disabledPublicCreateInsertedRows: projectsAfterDisabledPublicCreate.length - projectsBeforeDisabledPublicCreate.length,
+      legacyCreateWithGoalsFixturePrepared: Boolean(createWithGoalsProject.id),
       mixedUpdateStatus: mixedUpdate.status,
       mixedPublicReadbackStatus: mixedPublicReadback.status,
       mixedProjectFields: {
@@ -1503,6 +1616,15 @@ async function main() {
       sameConfigRestartHealthStatus: sameConfigRestartHealth.status,
       unlistedProjectId,
       unlistedProjectStatus: unlistedGoalSet.status,
+      unlistedProjectRejection: (unlistedGoalSet.body as { code?: string }).code,
+      nodeGoalSetStatus: nodeGoalSet.status,
+      dynamicProjectId,
+      dynamicGoalSetStatus: dynamicGoalSet.status,
+      dynamicDisabledStatus: dynamicDisabled.status,
+      dynamicReplayStatus: dynamicReplay.status,
+      dynamicAfterRestartStatus: dynamicAfterRestart.status,
+      dynamicFinalSnapshot,
+      staleNodeWriterRejectedBeforeWrite: true,
       toolingCounts: toolingCounts[0],
       firstStatus: first.status,
       replayStatus: replay.status,

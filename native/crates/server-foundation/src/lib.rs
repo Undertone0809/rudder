@@ -10,7 +10,14 @@ use base64::Engine;
 pub use rudder_auth_core::{ActorEnvelope, ActorIdentity, VerifiedActor};
 use rudder_auth_core::{NonceReplayGuard, RequestContext, SigningKey};
 use rudder_d1_persistence::{
-    MutationStore, ProjectDeleteCommand, ProjectPatchCommand, ResultState, StoreError,
+    MutationStore, OrganizationResourceCommand, OrganizationResourceOperation,
+    ProjectCreateCommand, ProjectCreateProvisionRequest, ProjectCreateProvisioned,
+    ProjectCreateProvisioner, ProjectDeleteCommand, ProjectPatchCommand,
+    ProjectPatchMutationOrigin, ResultState, StoreError,
+    project_library::{
+        ProjectLibraryCommand, ProjectLibraryError, ensure_project_create_intent,
+        ensure_project_library,
+    },
 };
 use rudder_organization_mutation_core::{Actor as OrganizationActor, OrganizationBrandingPatch};
 use rudder_project_goal_link_core::{
@@ -19,8 +26,10 @@ use rudder_project_goal_link_core::{
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Postgres, postgres::PgPoolOptions};
 use std::{
+    future::Future,
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Component, Path, PathBuf},
+    pin::Pin,
     sync::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering as AtomicOrdering},
@@ -57,11 +66,15 @@ pub const MEMBER_DIRECTORY_ACTION: &str = "organization.members.directory.read";
 pub const ORGANIZATION_BRANDING_ACTION: &str = "organization.branding.update";
 pub const PROJECT_GOAL_SET_ACTION: &str = "project.goal_set.replace";
 pub const PROJECT_DELETE_ACTION: &str = "project.delete";
+pub const PROJECT_CREATE_ACTION: &str = "project.create";
+pub const ORGANIZATION_RESOURCE_ACTION: &str = "organization.resource.mutate";
 
 const PRIVATE_MUTATION_AUTHORITIES: &[&str] = &[
     "organization_branding",
     "project_goal_set_replacement",
     "project_delete",
+    "project_create",
+    "organization_resource",
 ];
 
 const DEFAULT_REQUEST_BYTES: usize = 1024 * 1024;
@@ -275,6 +288,8 @@ struct ProjectGoalSetRequest {
     run_id: Option<String>,
     #[serde(default)]
     project_patch: Option<serde_json::Value>,
+    #[serde(default)]
+    mutation_origin: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,6 +297,75 @@ struct ProjectGoalSetRequest {
 struct ProjectDeleteRequest {
     #[serde(deserialize_with = "deserialize_required_run_id")]
     run_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ProjectCreateRequest {
+    #[serde(deserialize_with = "deserialize_required_run_id")]
+    run_id: Option<String>,
+    data: serde_json::Value,
+    activity_details: serde_json::Value,
+    organization_workspace_root: String,
+    project_create_state_root: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct OrganizationResourceMutationRequest {
+    #[serde(deserialize_with = "deserialize_required_run_id")]
+    run_id: Option<String>,
+    data: serde_json::Value,
+}
+
+struct ScopedProjectCreateProvisioner {
+    organization_workspace_root: PathBuf,
+    project_create_state_root: PathBuf,
+}
+
+impl ProjectCreateProvisioner for ScopedProjectCreateProvisioner {
+    fn provision<'a>(
+        &'a self,
+        request: &'a ProjectCreateProvisionRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<ProjectCreateProvisioned, StoreError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let command = ProjectLibraryCommand {
+                command_id: request.idempotency_key.clone(),
+                request_fingerprint: request.request_fingerprint.clone(),
+                project_id: request.project_id.clone(),
+                org_id: request.organization_id.clone(),
+                organization_root: self.organization_workspace_root.clone(),
+                project_name: request.project_name.clone(),
+                project_url_key: request.project_url_key.clone(),
+            };
+            ensure_project_create_intent(&self.project_create_state_root, &command)
+                .map_err(project_library_store_error)?;
+            ensure_project_library(&command).map_err(project_library_store_error)?;
+            Ok(ProjectCreateProvisioned {
+                organization_workspace_root: self
+                    .organization_workspace_root
+                    .to_string_lossy()
+                    .into_owned(),
+            })
+        })
+    }
+}
+
+fn project_library_store_error(error: ProjectLibraryError) -> StoreError {
+    match error {
+        ProjectLibraryError::InvalidPath => StoreError::InvalidInput,
+        ProjectLibraryError::PathIdentityChanged => StoreError::ProvisioningConflict,
+        ProjectLibraryError::Io(error) => StoreError::Provisioning(error.to_string()),
+    }
+}
+
+fn trusted_absolute_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        && path
+            .components()
+            .all(|component| !matches!(component, Component::CurDir | Component::ParentDir))
 }
 
 fn deserialize_required_run_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -1024,9 +1108,20 @@ impl AppState {
             StoreError::IdempotencyConflict => {
                 (StatusCode::CONFLICT, "mutation_idempotency_conflict")
             }
+            StoreError::ResourceConflict => (
+                StatusCode::CONFLICT,
+                "A Library resource already exists for this path.",
+            ),
+            StoreError::ProvisioningConflict => {
+                (StatusCode::CONFLICT, "project_create_intent_conflict")
+            }
             StoreError::InvalidReceipt => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "mutation_invalid_receipt",
+            ),
+            StoreError::Provisioning(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "project_library_provisioning_failed",
             ),
             StoreError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "mutation_failed"),
         };
@@ -1455,6 +1550,21 @@ impl AppState {
                     .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
             }
         };
+        let mutation_origin = match input.mutation_origin.as_deref() {
+            None => ProjectPatchMutationOrigin::Standard,
+            Some("organization_import") => ProjectPatchMutationOrigin::OrganizationImport,
+            Some(_) => {
+                return self
+                    .json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
+            }
+        };
+        if mutation_origin == ProjectPatchMutationOrigin::OrganizationImport
+            && (input.project_patch.is_none()
+                || input.goal_ids.is_some()
+                || input.primary_goal_id.is_some())
+        {
+            return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_goal_set_invalid");
+        }
         let Some(store) = self.d1_mutations.as_ref() else {
             return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
         };
@@ -1526,6 +1636,7 @@ impl AppState {
                 expected_version: scope.version,
                 fence_epoch: scope.fence_epoch,
                 patch,
+                mutation_origin,
             };
             return match store.project_patch(command).await {
                 Ok(committed) => bounded_json(
@@ -1728,6 +1839,187 @@ impl AppState {
                     // Return the complete legacy Project snapshot: the generic
                     // read-response cap must not reject an already committed delete.
                     HttpResponse::Ok().json(response)
+                }
+                _ => self.mutation_error(StoreError::InvalidReceipt),
+            },
+            Err(error) => self.mutation_error(error),
+        }
+    }
+
+    async fn organization_resource_mutate(
+        &self,
+        request: &HttpRequest,
+        org_id: &str,
+        resource_id: &str,
+        body: &[u8],
+    ) -> HttpResponse {
+        let operation = match *request.method() {
+            actix_web::http::Method::PATCH => OrganizationResourceOperation::Update,
+            actix_web::http::Method::DELETE => OrganizationResourceOperation::Delete,
+            _ => return self.json_error(StatusCode::METHOD_NOT_ALLOWED, "resource_method_invalid"),
+        };
+        let Some(key) = request
+            .headers()
+            .get(IDEMPOTENCY_KEY_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return self.json_error(StatusCode::BAD_REQUEST, "idempotency_key_required");
+        };
+        let actor = match self.verify_actor_envelope(
+            request,
+            org_id,
+            ORGANIZATION_RESOURCE_ACTION,
+            Some(key),
+            body,
+        ) {
+            Ok(actor) => actor,
+            Err(ActorEnvelopeVerificationError::Unconfigured) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "actor_envelope_unconfigured",
+                );
+            }
+            Err(ActorEnvelopeVerificationError::Invalid) => {
+                return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+            }
+        };
+        // The existing organization resource mutation API is Board-only.
+        if actor.actor().kind != "user" {
+            return self.json_error(StatusCode::FORBIDDEN, "Board access required");
+        }
+        let input = match serde_json::from_slice::<OrganizationResourceMutationRequest>(body) {
+            Ok(input) if input.data.is_object() => input,
+            _ => {
+                return self.json_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "resource_mutation_invalid",
+                );
+            }
+        };
+        let Some(store) = self.d1_mutations.as_ref() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        };
+        let command = OrganizationResourceCommand {
+            organization_id: org_id.to_owned(),
+            resource_id: resource_id.to_owned(),
+            actor_kind: "board".to_owned(),
+            actor_id: actor.actor().id.clone(),
+            idempotency_key: key.to_owned(),
+            run_id: input.run_id,
+            operation,
+            data: input.data,
+        };
+        match store.organization_resource_mutate(command).await {
+            Ok(committed) => match committed.receipt.result {
+                ResultState::OrganizationResourceMutated {
+                    resource_id: persisted_id,
+                    response,
+                    operation: persisted_operation,
+                } if persisted_id.eq_ignore_ascii_case(resource_id)
+                    && persisted_operation == operation
+                    && response
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|id| id.eq_ignore_ascii_case(resource_id))
+                    && response
+                        .get("orgId")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|id| id.eq_ignore_ascii_case(org_id)) =>
+                {
+                    HttpResponse::Ok().json(response)
+                }
+                _ => self.mutation_error(StoreError::InvalidReceipt),
+            },
+            Err(StoreError::NotFound) => {
+                self.json_error(StatusCode::NOT_FOUND, "Resource not found")
+            }
+            Err(error) => self.mutation_error(error),
+        }
+    }
+
+    async fn project_create(
+        &self,
+        request: &HttpRequest,
+        org_id: &str,
+        body: &[u8],
+    ) -> HttpResponse {
+        let Some(idempotency_key) = request
+            .headers()
+            .get(IDEMPOTENCY_KEY_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return self.json_error(StatusCode::BAD_REQUEST, "idempotency_key_required");
+        };
+        let actor = match self.verify_actor_envelope(
+            request,
+            org_id,
+            PROJECT_CREATE_ACTION,
+            Some(idempotency_key),
+            body,
+        ) {
+            Ok(actor) => actor,
+            Err(ActorEnvelopeVerificationError::Unconfigured) => {
+                return self.json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "actor_envelope_unconfigured",
+                );
+            }
+            Err(ActorEnvelopeVerificationError::Invalid) => {
+                return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid");
+            }
+        };
+        let input = match serde_json::from_slice::<ProjectCreateRequest>(body) {
+            Ok(input) => input,
+            Err(_) => {
+                return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_create_invalid");
+            }
+        };
+        if !input.data.is_object()
+            || !input.activity_details.is_object()
+            || input.data.get("organizationWorkspaceRoot").is_some()
+            || input.data.get("projectCreateStateRoot").is_some()
+            || !trusted_absolute_path(&input.organization_workspace_root)
+            || !trusted_absolute_path(&input.project_create_state_root)
+        {
+            return self.json_error(StatusCode::UNPROCESSABLE_ENTITY, "project_create_invalid");
+        }
+        let Some(store) = self.d1_mutations.as_ref() else {
+            return self.json_error(StatusCode::SERVICE_UNAVAILABLE, "database_disabled");
+        };
+        let actor_kind = match actor.actor().kind.as_str() {
+            "user" => "board",
+            "agent" => "agent",
+            _ => return self.json_error(StatusCode::UNAUTHORIZED, "actor_envelope_invalid"),
+        };
+        let provisioner = ScopedProjectCreateProvisioner {
+            organization_workspace_root: PathBuf::from(input.organization_workspace_root),
+            project_create_state_root: PathBuf::from(input.project_create_state_root),
+        };
+        let command = ProjectCreateCommand {
+            organization_id: org_id.to_owned(),
+            actor_kind: actor_kind.to_owned(),
+            actor_id: actor.actor().id.clone(),
+            run_id: input.run_id,
+            idempotency_key: idempotency_key.to_owned(),
+            data: input.data,
+            activity_details: input.activity_details,
+        };
+        match store.project_create(command, &provisioner).await {
+            Ok(committed) => match committed.receipt.result {
+                ResultState::ProjectCreated {
+                    project_id,
+                    response,
+                } if response.get("id").and_then(serde_json::Value::as_str)
+                    == Some(project_id.as_str())
+                    && response.get("orgId").and_then(serde_json::Value::as_str)
+                        == Some(org_id) =>
+                {
+                    // The complete legacy response may exceed generic caps after commit.
+                    HttpResponse::Created().json(response)
                 }
                 _ => self.mutation_error(StoreError::InvalidReceipt),
             },
@@ -2178,6 +2470,29 @@ async fn project_delete(
         .await
 }
 
+async fn organization_resource_mutate(
+    state: web::Data<AppState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    route: web::Path<(String, String)>,
+) -> HttpResponse {
+    let (org_id, resource_id) = route.into_inner();
+    state
+        .organization_resource_mutate(&request, &org_id, &resource_id, body.as_ref())
+        .await
+}
+
+async fn project_create(
+    state: web::Data<AppState>,
+    request: HttpRequest,
+    body: web::Bytes,
+    org_id: web::Path<String>,
+) -> HttpResponse {
+    state
+        .project_create(&request, org_id.as_str(), body.as_ref())
+        .await
+}
+
 async fn workspace_backups(state: web::Data<AppState>, org_id: web::Path<String>) -> HttpResponse {
     state.workspace_backups(org_id.as_str()).await
 }
@@ -2269,6 +2584,15 @@ impl ServerRuntime {
                 .route(
                     "/api/orgs/{org_id}/projects/{project_id}",
                     web::delete().to(project_delete),
+                )
+                .route(
+                    "/api/orgs/{org_id}/projects",
+                    web::post().to(project_create),
+                )
+                .service(
+                    web::resource("/api/orgs/{org_id}/resources/{resource_id}")
+                        .route(web::patch().to(organization_resource_mutate))
+                        .route(web::delete().to(organization_resource_mutate)),
                 )
         })
         .workers(config.workers)

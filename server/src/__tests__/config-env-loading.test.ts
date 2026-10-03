@@ -134,7 +134,7 @@ describe("server config env loading", () => {
     expect(config.databaseUrl).toBe("postgres://cwd-user:cwd-pass@db.example.com:5432/rudder");
   });
 
-  it("defaults only the Rust member directory read bridge to required", async () => {
+  it("defaults the Rust member directory and Project-Goal bridge to required", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rudder-config-env-"));
     process.chdir(tempDir);
     writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
@@ -149,7 +149,7 @@ describe("server config env loading", () => {
 
     expect(config.rustFoundationMode).toBe("required");
     expect(config.rustOrganizationBrandingMode).toBe("off");
-    expect(config.rustProjectGoalSetMode).toBe("off");
+    expect(config.rustProjectGoalSetMode).toBe("required");
     expect(config.rustFoundationBinaryPath).toBeUndefined();
     expect(config.rustFoundationActorEnvelopeKey).toBeUndefined();
   });
@@ -160,7 +160,7 @@ describe("server config env loading", () => {
     writeText(path.join(tempDir, "pnpm-workspace.yaml"), "packages:\n  - .\n");
     process.env.RUDDER_RUST_MEMBER_DIRECTORY_MODE = " off ";
     delete process.env.RUDDER_RUST_ORGANIZATION_BRANDING_MODE;
-    delete process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE;
+    process.env.RUDDER_RUST_PROJECT_GOAL_SET_MODE = " off ";
 
     const loadConfig = await importLoadConfig();
     const config = loadConfig();

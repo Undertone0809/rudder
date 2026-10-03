@@ -42,6 +42,7 @@ describe("log store offsets", () => {
   async function writeNativeIndexFixture(
     root: string,
     mode: "success" | "malformed" | "hang" | "not-found" | "invalid-utf8",
+    errorReceiptPath?: string,
   ) {
     const binary = path.join(root, "native-index.mjs");
     await fs.writeFile(binary, `#!/usr/bin/env node
@@ -55,6 +56,8 @@ if (${JSON.stringify(mode)} === "hang" && args[1] === "read") {
 if (["not-found", "invalid-utf8"].includes(${JSON.stringify(mode)}) && args[1] === "read") {
   const errorCode = ${JSON.stringify(mode)} === "not-found" ? "evidence_read_not_found" : "evidence_read_invalid_utf8";
   console.log(JSON.stringify({ ok: false, capability: "evidence.read", protocolVersion: 1, errorCode, accepted: false }));
+  const errorReceiptPath = ${JSON.stringify(errorReceiptPath ?? null)};
+  if (errorReceiptPath) fs.writeFileSync(errorReceiptPath, JSON.stringify({ args, errorCode }));
   console.error("rudder-native: operation failed");
   process.exit(2);
 }
@@ -108,7 +111,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     expect(summary.evidenceIndex).toMatchObject({ status: "native", indexRef: `${handle.logRef}.index.ndjson`, sourceBytes: summary.bytes, sourceSha256: summary.sha256 });
     await expect(fs.stat(path.join(root, "run-logs", `${handle.logRef}.index.ndjson`))).resolves.toBeTruthy();
     await expect(store.read(handle, { offset: 0, limitBytes: 256_000 })).resolves.toMatchObject({ eof: true });
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("fails closed to the Node finalize result when native indexing is unavailable", async () => {
     const root = await makeTempRoot("rudder-run-log-native-index-fallback-");
@@ -160,6 +163,8 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     expect(result.nextOffset).toBeUndefined();
   });
 
+  // The shared fixture starts five sequential children; retain each read's
+  // production deadline while using the existing suite-level CI load budget.
   it("matches the shared API, CLI, and MCP byte-page fixture through native read authority", async () => {
     const root = await makeTempRoot("rudder-run-log-native-read-");
     const fixture = JSON.parse(await fs.readFile(
@@ -184,7 +189,7 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
         ...(testCase.nextOffset === null ? {} : { nextOffset: testCase.nextOffset }),
       });
     }
-  });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
   it("keeps UTF-8 code points intact across small run log pages", async () => {
     const root = await makeTempRoot("rudder-run-log-utf8-pages-");
@@ -249,35 +254,54 @@ console.log(JSON.stringify({ ok: true, operation: "indexEvidence", protocolVersi
     await expect(result).rejects.toThrow(/cancelled/);
   });
 
-  it("preserves structured native errors and auto fallback semantics", async () => {
-    const root = await makeTempRoot("rudder-run-log-native-read-errors-");
+  it("preserves structured native not-found errors in required mode", async () => {
+    const root = await makeTempRoot("rudder-run-log-native-read-not-found-");
     process.env.RUN_LOG_BASE_PATH = path.join(root, "run-logs");
     process.env.RUDDER_NATIVE_MODE = "required";
     process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX = "1";
     process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = await writeNativeIndexFixture(root, "not-found");
     vi.resetModules();
-    let module = await import("../services/run-log-store.js");
-    let store = module.getRunLogStore();
-    let handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-missing" });
+    const module = await import("../services/run-log-store.js");
+    const store = module.getRunLogStore();
+    const handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-missing" });
     await fs.rm(path.join(process.env.RUN_LOG_BASE_PATH, handle.logRef));
     await expect(store.read(handle, { offset: 0, limitBytes: 4 })).rejects.toMatchObject({ status: 404 });
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
+  it("preserves structured native invalid-UTF-8 errors in required mode", async () => {
+    const root = await makeTempRoot("rudder-run-log-native-read-invalid-utf8-");
+    process.env.RUN_LOG_BASE_PATH = path.join(root, "run-logs");
+    process.env.RUDDER_NATIVE_MODE = "required";
+    process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX = "1";
     process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = await writeNativeIndexFixture(root, "invalid-utf8");
     vi.resetModules();
-    module = await import("../services/run-log-store.js");
-    store = module.getRunLogStore();
-    handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-invalid" });
+    const module = await import("../services/run-log-store.js");
+    const store = module.getRunLogStore();
+    const handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-invalid" });
     await expect(store.read(handle, { offset: 0, limitBytes: 4 })).rejects.toThrow("evidence_read_invalid_utf8");
+  }, NATIVE_CI_LOAD_TIMEOUT_MS);
 
+  it("falls back to Node after the intended structured native error in auto mode", async () => {
+    const root = await makeTempRoot("rudder-run-log-native-read-auto-fallback-");
+    const errorReceiptPath = path.join(root, "native-read-error.json");
+    process.env.RUN_LOG_BASE_PATH = path.join(root, "run-logs");
     process.env.RUDDER_NATIVE_MODE = "auto";
+    process.env.RUDDER_NATIVE_RUN_EVIDENCE_INDEX = "1";
+    process.env.RUDDER_NATIVE_EVIDENCE_INDEX_PATH = await writeNativeIndexFixture(root, "invalid-utf8", errorReceiptPath);
     vi.resetModules();
-    module = await import("../services/run-log-store.js");
-    store = module.getRunLogStore();
-    handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-fallback" });
+    const module = await import("../services/run-log-store.js");
+    const store = module.getRunLogStore();
+    const handle = await store.begin({ orgId: "org-1", agentId: "agent-1", runId: "run-fallback" });
     await fs.writeFile(path.join(process.env.RUN_LOG_BASE_PATH, handle.logRef), "node-fallback");
     await expect(store.read(handle, { offset: 0, limitBytes: 64 })).resolves.toMatchObject({
       content: "node-fallback",
       eof: true,
+    });
+    // A missing executable or startup failure can also fall back. Require proof
+    // that this invocation reached the fixture's intended structured-error path.
+    expect(JSON.parse(await fs.readFile(errorReceiptPath, "utf8"))).toEqual({
+      args: ["evidence", "read", path.join(process.env.RUN_LOG_BASE_PATH, handle.logRef), "0", "64"],
+      errorCode: "evidence_read_invalid_utf8",
     });
   }, NATIVE_CI_LOAD_TIMEOUT_MS);
 

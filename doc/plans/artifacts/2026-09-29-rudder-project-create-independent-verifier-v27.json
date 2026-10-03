@@ -1,0 +1,643 @@
+{
+  "verdict": "FAIL",
+  "timestamp": "2026-09-29T01:54:51.496Z",
+  "packet": "27.2",
+  "source_sha": "a683918a834bc19d0d468b4b141cba5cd9679500",
+  "source_tree": "a6baf82b97b6ed829247ef439343380b1eb2156a",
+  "fingerprint": "adfdce2c772a87df95b3c2961e787803932aa2060d06bc18d96a6623e2dbacaa",
+  "publishedHead": "b9f966da8b35c76b0554cdeba31ceba562a8badd",
+  "actualBuildSource": "692ce7f2b70cc57ebe639f20f3277eaa18ad2b4f",
+  "runtimeOrigin": "aef29616e24a515436167dfd992e56e9309d02fe",
+  "build_id": "server-f54f7190-ci-host-514d101c",
+  "runtime_id": "create-v27.2-ci36506924872-macos-arm64",
+  "data_id": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+  "serverTarballSha256": "f54f7190c4623f328ca673c5b7ede01f540450ebc280efab5bde09ea20bd81f0",
+  "cliTarballSha256": "37cc80d8f0e67bd23ac56a6f59aa1665e90af16b552baf029b22f2386b048e22",
+  "foundationSha256": "514d101c7aa30c23b535a6553cdad6b83a5dd0119e531b023fdead34c3754875",
+  "preflightSha256": "1110ba6a1e988f80bb6fefd362776264f266bd19d4126363db56e0b5a6c3eb97",
+  "actualProfile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+  "apiPort": 56939,
+  "databasePort": 56940,
+  "orgIds": [
+    "16a1f32a-4a8a-4b72-ab0f-23b78a2a8e05",
+    "5eaec6ca-cd9f-4e12-b8e0-79fe696f7bc6",
+    "a462857b-d851-403b-ba33-b52d9ab16af3",
+    "13fd3641-560e-4e35-95fa-ab749db58f99"
+  ],
+  "processHistory": [
+    {
+      "at": "2026-09-29T01:43:51.844Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 22508,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "basic",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "22876 22508 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "22923 22508 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:45:56.081Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 29076,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "contracts",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "29077 29076 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "29106 29076 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation",
+        "29109 29077 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "29110 29077 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "29111 29077 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "29112 29077 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:46:34.670Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 29223,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "contracts",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "29228 29223 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "29250 29223 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:47:56.440Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 33463,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "atomic",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "34021 33463 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "34097 33463 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:49:27.506Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 43481,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "recovery",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "43483 43481 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "43505 43481 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:50:31.342Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 46568,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "import-scope",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "47192 46568 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "47361 46568 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:51:06.131Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 48878,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "default-off",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "48881 48878 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:52:14.207Z",
+      "event": "runtime-start",
+      "source": "a683918a834bc19d0d468b4b141cba5cd9679500",
+      "build": "server-f54f7190-ci-host-514d101c",
+      "runtime": "create-v27.2-ci36506924872-macos-arm64",
+      "data": "create-v27.2-fresh-fixture-under-rudder-create-verifier.DSx0ST",
+      "packet": "27.2",
+      "profile": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri",
+      "nodePid": 51565,
+      "apiPort": 56939,
+      "databasePort": 56940,
+      "phase": "merge-session",
+      "execution_authorized": true,
+      "pg_lane_granted": true,
+      "apiUrl": "http://127.0.0.1:56939",
+      "ownedProcessCandidates": [
+        "51573 51565 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@embedded-postgres/darwin-arm64/native/bin/postgres -D /private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/db -p 56940",
+        "51596 51565 /private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/install/node_modules/@rudderhq/server/resources/native/aarch64-apple-darwin/rudder-server-foundation"
+      ]
+    }
+  ],
+  "blockingFinding": {
+    "criterion": "preserved-node-lanes",
+    "surface": "Installed public CLI",
+    "commands": [
+      "worktree init --name independent-create-merge --instance independent-create-merge --home <owned home> --from-config <owned source config> --seed-mode full",
+      "worktree:merge-history --from <owned source> --to current --scope issues --dry"
+    ],
+    "exitCodes": [
+      1,
+      1
+    ],
+    "error": "Cannot find module @rudderhq/cli/dist/commands/worktree.js imported from @rudderhq/cli/dist/index.js",
+    "tarballCheck": "package/dist/commands/worktree.js is absent in the fresh CLI tarball, not merely absent after install",
+    "consequence": "Cannot reach required interactive Import Project / confirm or merge rollback/success/replay. No replacement helper, source command or injected chunk used."
+  },
+  "observedPassedChecks": [
+    {
+      "at": "2026-09-29T01:45:56.112Z",
+      "criterion": "sync-library/restart-replay",
+      "result": "PASS",
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/organizations/16a1f32a4a8a/workspaces/projects/independent-library-ready"
+    },
+    {
+      "at": "2026-09-29T01:45:56.207Z",
+      "criterion": "onboarding",
+      "result": "PASS",
+      "projectId": "56fa00c7-85c2-5be1-8a14-59eb071ba7cd",
+      "audit": [
+        {
+          "actor_type": "user",
+          "actor_id": "local-board",
+          "details": {
+            "name": "Getting Started"
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-09-29T01:46:34.696Z",
+      "criterion": "sync-library/restart-replay",
+      "result": "PASS",
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/organizations/16a1f32a4a8a/workspaces/projects/independent-library-ready"
+    },
+    {
+      "at": "2026-09-29T01:46:34.793Z",
+      "criterion": "onboarding",
+      "result": "PASS",
+      "projectId": "56fa00c7-85c2-5be1-8a14-59eb071ba7cd",
+      "audit": [
+        {
+          "actor_type": "user",
+          "actor_id": "local-board",
+          "details": {
+            "name": "Getting Started"
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-09-29T01:46:35.116Z",
+      "criterion": "public-entry-parity",
+      "result": "PASS",
+      "httpId": "cad4c24d-fd34-5ef2-9154-cb2a9d661caf",
+      "cliId": "0d3d51e1-b0fe-5eda-8c99-6f70632118de",
+      "mcpId": "2fd193dc-a92d-5b1d-9091-4da63dbd08da"
+    },
+    {
+      "at": "2026-09-29T01:46:35.151Z",
+      "criterion": "resources-happy",
+      "result": "PASS",
+      "projectId": "1a8a502b-20a6-590b-bda5-6adf872773c5",
+      "resources": [
+        "bf91938c-e620-4ffc-9f02-544c739478a9",
+        "ab96a1f8-63c1-4202-92a7-4caa627e4c14"
+      ]
+    },
+    {
+      "at": "2026-09-29T01:46:35.290Z",
+      "criterion": "sync-library",
+      "fixture": "directory-link",
+      "result": "PASS",
+      "projectIds": [
+        "8401c7bb-90cb-5af3-8e77-762fe7ca7eed",
+        "e64fc350-f144-5338-b0b8-fbbdfe5e5056"
+      ],
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/organizations/16a1f32a4a8a/workspaces/projects/preserve-directory-link",
+      "inode": 961755014
+    },
+    {
+      "at": "2026-09-29T01:46:35.369Z",
+      "criterion": "sync-library",
+      "fixture": "readme-link",
+      "result": "PASS",
+      "projectIds": [
+        "f8a00656-412e-5089-bfe3-36a0452b7974",
+        "98ac0daa-fc0a-562f-bdd6-b20045f850f5"
+      ],
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/organizations/16a1f32a4a8a/workspaces/projects/preserve-readme-link/README.md",
+      "inode": 961755031
+    },
+    {
+      "at": "2026-09-29T01:46:35.420Z",
+      "criterion": "sync-library",
+      "fixture": "readme-directory",
+      "result": "PASS",
+      "projectIds": [
+        "6c4112f8-631e-5f0a-b0eb-7a004cebf60e",
+        "e952c84b-4b27-5d0b-830d-b42c50eb783a"
+      ],
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/organizations/16a1f32a4a8a/workspaces/projects/preserve-readme-directory/README.md",
+      "inode": 961755047
+    },
+    {
+      "at": "2026-09-29T01:46:35.483Z",
+      "criterion": "sync-library",
+      "fixture": "user-content",
+      "result": "PASS",
+      "projectIds": [
+        "3b8dce0f-3186-5ec2-84ef-24a867c841cc",
+        "4305758f-4b13-560b-97a1-a5da6499942e"
+      ],
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/organizations/16a1f32a4a8a/workspaces/projects/preserve-user-content/README.md",
+      "inode": 961755064
+    },
+    {
+      "at": "2026-09-29T01:47:56.566Z",
+      "criterion": "size-and-latency",
+      "result": "PASS",
+      "bytes": 601184,
+      "projectId": "3079695a-e547-58d5-b3c3-405af892e12d",
+      "urlKey": "independent-edge",
+      "abovePublicLimit": 413
+    },
+    {
+      "at": "2026-09-29T01:47:56.708Z",
+      "criterion": "atomic-db/intent-identity",
+      "table": "activity_log",
+      "result": "PASS",
+      "status": 500,
+      "retry": "bf9bb2a7-6bb6-5ba3-be31-71e279daf5a5",
+      "intentHash": "e1c7129e3574d9e0cc5a14c52bb664c6aa3646e54c9abd788e01d2de7fac79ed",
+      "unchangedInode": 961756827
+    },
+    {
+      "at": "2026-09-29T01:47:56.825Z",
+      "criterion": "atomic-db/intent-identity",
+      "table": "organization_mutation_receipts",
+      "result": "PASS",
+      "status": 500,
+      "retry": "ea158ef6-24b8-5f7b-a11c-bc42e080b214",
+      "intentHash": "37b7b8ec1e8c416bee319f62b5e6e79fbc2a659e0922760cf561d83167dd2ee2",
+      "unchangedInode": 961756839
+    },
+    {
+      "at": "2026-09-29T01:47:56.905Z",
+      "criterion": "pending-outbox",
+      "result": "PASS",
+      "outbox": {
+        "id": "4471041b-d1a8-4ce0-9e58-f96604e41bd8",
+        "state": "pending",
+        "attempts": 0,
+        "published_at": null
+      }
+    },
+    {
+      "at": "2026-09-29T01:49:27.570Z",
+      "criterion": "crash-recovery",
+      "case": "provision-failure-restart-retry",
+      "result": "PASS",
+      "projectId": "16fd53f4-e923-515e-8e29-afd9e6b73d0f"
+    },
+    {
+      "at": "2026-09-29T01:49:28.507Z",
+      "criterion": "outbox",
+      "result": "PASS",
+      "id": "4471041b-d1a8-4ce0-9e58-f96604e41bd8",
+      "delivered": [
+        {
+          "id": 4,
+          "dedupeKey": "organization-mutation-outbox:4471041b-d1a8-4ce0-9e58-f96604e41bd8",
+          "orgId": "16a1f32a-4a8a-4b72-ab0f-23b78a2a8e05",
+          "type": "activity.logged",
+          "createdAt": "2026-09-29T01:49:28.476Z",
+          "payload": {
+            "runId": null,
+            "action": "project.created",
+            "actorId": "local-board",
+            "agentId": null,
+            "details": {
+              "name": "Held outbox independent"
+            },
+            "entityId": "7ae7515a-c8ef-5235-9a83-c9259625dedc",
+            "actorType": "user",
+            "entityType": "project"
+          }
+        }
+      ],
+      "published": {
+        "state": "published",
+        "attempts": 1,
+        "published_at": "2026-09-29T01:49:28.477Z"
+      }
+    },
+    {
+      "at": "2026-09-29T01:49:28.644Z",
+      "criterion": "crash-recovery",
+      "case": "real-http-response-dropped-after-upstream-commit",
+      "result": "PASS",
+      "projectId": "95e75f14-672c-5905-8db8-54de9875f98a"
+    },
+    {
+      "at": "2026-09-29T01:49:28.754Z",
+      "criterion": "receipt-no-fs",
+      "result": "PASS",
+      "deletedId": "073de173-2a7d-5002-a736-f50474ec4d93",
+      "newIncarnation": "f56c8147-a238-5163-a4cc-2ab518275664",
+      "projectDir": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/organizations/16a1f32a4a8a/workspaces/projects/independent-library-ready"
+    },
+    {
+      "at": "2026-09-29T01:49:28.814Z",
+      "criterion": "intent-publication",
+      "case": "incomplete-staging-ignored-no-replace",
+      "result": "PASS",
+      "projectId": "ff6c02fd-f6a7-598a-a5af-5019b0f236a2"
+    },
+    {
+      "at": "2026-09-29T01:49:28.864Z",
+      "criterion": "intent-publication",
+      "case": "malformed-final-fails-closed-retained",
+      "result": "PASS",
+      "status": 409,
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/profile.c2iiri/instances/create-independent/data/project-create-intents/0417b2b989376e5fec18c63995bcbfc3ae5ff5227a3dbee9dcd8c46e089e19e6/21033a85f2709fe2b496de251025a3fd03c793ed122ae48450920cc81cdd493a.json",
+      "sha256": "219d2ff7a1f23fe47c43c25227bb8696f77c0b978d8c1bb5586b5417cd978027"
+    },
+    {
+      "at": "2026-09-29T01:50:31.712Z",
+      "criterion": "preserved-node-lanes",
+      "case": "public-safe-import",
+      "result": "PASS",
+      "sourceRun": {
+        "id": "dae60596-220a-4fc3-9571-ad62b580a1d7",
+        "org_id": "16a1f32a-4a8a-4b72-ab0f-23b78a2a8e05",
+        "agent_id": "0984096f-3b05-47fb-96f3-546f48afa6a4"
+      },
+      "targetOrg": "a462857b-d851-403b-ba33-b52d9ab16af3",
+      "project": "8cfb4a1f-fc3c-4f7b-b5e8-59bf110e1c5a",
+      "audit": {
+        "org_id": "a462857b-d851-403b-ba33-b52d9ab16af3",
+        "actor_type": "agent",
+        "actor_id": "0984096f-3b05-47fb-96f3-546f48afa6a4",
+        "agent_id": "0984096f-3b05-47fb-96f3-546f48afa6a4",
+        "run_id": "dae60596-220a-4fc3-9571-ad62b580a1d7",
+        "import_mode": "agent_safe"
+      },
+      "memberships": [
+        {
+          "org_id": "16a1f32a-4a8a-4b72-ab0f-23b78a2a8e05",
+          "principal_type": "agent",
+          "principal_id": "0984096f-3b05-47fb-96f3-546f48afa6a4",
+          "membership_role": "member",
+          "status": "active"
+        },
+        {
+          "org_id": "16a1f32a-4a8a-4b72-ab0f-23b78a2a8e05",
+          "principal_type": "user",
+          "principal_id": "local-board",
+          "membership_role": "owner",
+          "status": "active"
+        },
+        {
+          "org_id": "a462857b-d851-403b-ba33-b52d9ab16af3",
+          "principal_type": "user",
+          "principal_id": "local-board",
+          "membership_role": "owner",
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "at": "2026-09-29T01:50:31.733Z",
+      "criterion": "scope-failures",
+      "case": "receipt-current-actor-run",
+      "result": "PASS",
+      "invalidRunStatus": 422,
+      "terminatedStatus": 401
+    },
+    {
+      "at": "2026-09-29T01:51:06.333Z",
+      "criterion": "dynamic-ownership",
+      "case": "explicit-default-off-node-and-closed-rust-owner",
+      "result": "PASS",
+      "nodeProject": "7096ee4b-adce-4615-b1c2-d283ce9df9a5",
+      "rustProject": "16fd53f4-e923-515e-8e29-afd9e6b73d0f",
+      "patch": 503,
+      "delete": 503
+    }
+  ],
+  "remainingRequiredProof": [
+    "Installed interactive merge rollback, Import Project success and replay: blocked by missing module.",
+    "Predecessor-data upgrade not yet exercised.",
+    "Required-mode native outage with no Node fallback not yet exercised in this run.",
+    "Resolved trusted root drift and resolved identity conflict not fully exercised; changed request conflict passed.",
+    "Recreated same-UUID row and delayed outbox interaction not fully exercised; same-name incarnation and pending WS restart passed.",
+    "Explicit lock-held filesystem provisioning timing not isolated; end-to-end request latencies recorded."
+  ],
+  "fixtureCorrections": [
+    "Onboarding create returns201, reuse200; initial verifier expected200 for creation and was corrected against public route contract.",
+    "MCP returns shortrefs; verifier initially passed one directly to HTTP UUID route and got500, then resolved its actual UUID from scoped DB observation and public GET succeeded.",
+    "1.1MiB request exceeded public body limit413; supported 601184-byte response/replay succeeded."
+  ],
+  "limits": [
+    "macOS arm64 disposable installed runtime only; no production, foreign platform execution or whole migration claim.",
+    "External preflight is bounded fixture migration authority, not npm package SQL-apply ownership proof.",
+    "Real source CEO heartbeat run was created for import attribution; optional native run evidence-index helper emitted ENOENT. Run linkage and import audit were independently observed, not an evidence-index acceptance claim.",
+    "No product source edits or commits. No author test result promoted as independent acceptance."
+  ],
+  "cleanup": {
+    "ownedProcessesRemaining": [],
+    "postmasterOrServerFiles": "",
+    "allStartedHandlesStoppedAndDisposed": true,
+    "foundationHidden": false,
+    "foundationUnchanged": true,
+    "fixtureDataRetained": true,
+    "pgLaneReleased": true
+  },
+  "leaseRecheck": {
+    "state": "current",
+    "workingDiffPaths": [
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-ledger.yml",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-plan.md",
+      "doc/plans/2026-09-21-rudder-full-rust-backend-completion-status.yml",
+      "doc/plans/2026-09-29-rudder-project-create-delivery-packet-v27.json",
+      "doc/plans/2026-09-29-rust-project-create-service-pilot.md",
+      "doc/plans/artifacts/2026-09-29-rudder-project-create-author-smoke.json"
+    ],
+    "unrelatedDirtyPreserved": true
+  },
+  "evidence": [
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/atomic.log",
+      "sha256": "174f31a6dacdf039a02dfaed029e1b593b1a7c2c564f311147d06eb02771b930"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/atomic.mjs",
+      "sha256": "aa8d26c3bce64c014aa428dc0b01e5ae2761b94630adf1fd8b6452670f3e2b27"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/basic.log",
+      "sha256": "ff86dd84c556e682ab7eb59991778897434bc7da48eb3d0f8240a52b758dd71b"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/basic.mjs",
+      "sha256": "f64367ca3ce673ead564e3212785720de4c6f7b280ca0681c8000aa553cb9155"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/contracts-retry.log",
+      "sha256": "ca10c4e794373e74a56854501324ca6292fe462dcd5af49fda58bc9687058b99"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/contracts.log",
+      "sha256": "7f807528c28cd0eaa9011c6a2942b139f54e8c84664485ef34ee5ead8d6c0b58"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/contracts.mjs",
+      "sha256": "411e898e800c5c938d541ac8634ad55d83588b4eede3f080f0ca91533cea44be"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/default-off.log",
+      "sha256": "79b22b6aa24509a0c861cd8ee3a77be01f2de0f9352c504d3facb2ecfe4a3ec0"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/default-off.mjs",
+      "sha256": "3a5aef3c5b11c400838bcba97b247f2f1d44761a30a37e5e45cba363336e51de"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/finalize.mjs",
+      "sha256": "16fa839814f19fead7f6f5b485b2f31fe70877af219df4ab88f9c2095a2b6858"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/import-scope.log",
+      "sha256": "fb3f5af2d0acc657ff8296b2cd63a36f7188e077aa2f7aa10029c62fa96898d0"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/import-scope.mjs",
+      "sha256": "b09dad620bf6bf1c6e474351a71d71efa5d0fd4d897bd3fa29922fd50607b12c"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-command-dry.log",
+      "sha256": "55c6086a48653a4428e0360ed092032d011901e0547a633335a369ccbc7318a1"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-command-help.log",
+      "sha256": "c990d86b670eb637f5de420aed10a16f2c0db0f58308882525b73d5d8620fa72"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-init.log",
+      "sha256": "55c6086a48653a4428e0360ed092032d011901e0547a633335a369ccbc7318a1"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-session.log",
+      "sha256": "40fa104dc0cb178ead31459c290237c50e5db6ed097c5e3c02bc782c9a2dec4f"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/merge-session.mjs",
+      "sha256": "537016ed27c90194327ff88e7abce6465c230af146f159b25fb24dc4e4dff89c"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/observations.jsonl",
+      "sha256": "e51b69bfe998f01eaa4b18f47fadbca7192103dade11860a0d80fb8933a595c7"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/public-driver.mjs",
+      "sha256": "7bc86ed7e3f940750ee8c8d4463508da8c000b5792f4123f79e69b56ebc80103"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/recovery.log",
+      "sha256": "d313ae6e0e424b3adb6e66cd758127b8785f82567182cc9097ae429f61532b7a"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/recovery.mjs",
+      "sha256": "e40d9cfee1d2da27a8c2c10920e00cca5ff2c834c2b09e5a7d1c42c25ed4aa5c"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/runtime.mjs",
+      "sha256": "fe949769083b57dfa33c2e50bf678c9b86024e99d6b9562080882b69c8b5b555"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/rollback-activity_log.json",
+      "sha256": "742972e4386515e9bfd34a09c0f1fda31ff54f7aeaf2eab51d4a308087b43440"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/rollback-organization_mutation_receipts.json",
+      "sha256": "9948b6d0b82a98586f8e931ecf5d77e2613e7530cb99ae49e681678542561df0"
+    },
+    {
+      "path": "/private/tmp/rudder-create-verifier.DSx0ST/runtime-state.json",
+      "sha256": "5f7aef76e9668a60d76e4336e27779a49218b017c15269190e656cbe1dc88013"
+    }
+  ],
+  "preparationReceipt": {
+    "path": "/private/tmp/rudder-create-verifier.DSx0ST/artifacts.rmPtU8/preparation-receipt.json",
+    "sha256": "e8e07333330c4471b23f720b6ba0f57efa521782f9a95dbab821720caf3656c1"
+  }
+}

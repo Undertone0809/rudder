@@ -43,7 +43,7 @@
     "prepare:ui-dist": "node ../scripts/prepare-server-ui-dist.mjs",
     "build": "node ../scripts/build-tsc-copy-assets.mjs --copy src/onboarding-assets dist/onboarding-assets",
     "prebuild": "pnpm run stage:native",
-    "postinstall": "node resources/postinstall-native-mode.mjs && node resources/postinstall-postgres-compat.mjs",
+    "postinstall": "node resources/postinstall-native-mode.mjs && node resources/postinstall-embedded-postgres.mjs && node resources/postinstall-postgres-compat.mjs",
     "prepack": "pnpm run stage:native --prepack && pnpm run prepare:ui-dist",
     "postpack": "rm -rf ui-dist",
     "clean": "rm -rf dist",

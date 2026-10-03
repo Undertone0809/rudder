@@ -46,11 +46,12 @@ updated_at: 2026-09-29
 The bounded D1 private-bridge increment was accepted and merged through PR #225
 at `e2e603f07c7d4b7410fea7792b9a4d0667d3777e`. Delivery records followed in
 PR #232; the independent test-runner increment followed in PR #231. The last
-observed Main is now `4422039540f8926f5021466061f1bbd1b890dd01` (PR #234 records).
+observed Main is now `89859a26b002828a61faf7a542d8f07d3b522884` (PR #235).
 
-The current bounded Project DELETE candidate is `4353c6a4c7391d6f298a06b146026e12a08493df`,
+The bounded Project DELETE increment merged through PR #235 at that Main.
+Its accepted source is `4353c6a4c7391d6f298a06b146026e12a08493df`,
 with runtime content identical to `9e459a5a3204285885c50b08e49915d8a2f38215`,
-rebased onto that Main with packet v26.4. Renewed stage review accepted the
+based on prior Main `442203954` with delivered packet v26.4. Stage review accepted the
 large-response/receipt rollback repair. Author public API smoke passed complete
 1,180,164-byte response/replay and pending-outbox restart followed by actual
 WebSocket delivery and persisted publication, preserving a recreated UUID.
@@ -61,8 +62,38 @@ and exact manifest test assertions were corrected without changing runtime code;
 Final review accepted source4353 with the preserved dev Terminal layout failure
 as a bounded non-blocker; aggregate Desktop verification remains FAIL.
 Two stale DB upgrade expectations were corrected and both actual-PG cases passed.
-Fresh exact-head CI, including the prior Windows watchdog cleanup failure, remains required. This does
-not flip default writers or retire Project creation/organization deletion.
+All applicable exact-head CI passed on published `96708a708`, including Windows.
+Intel macOS encountered a 5-second timeout in unchanged log-store coverage;
+a single failed-job rerun passed without source or assertion changes. Original
+failures remain recorded. The merge and published candidate share the entire tree
+`efaa57e836061344acc507abf592fa1586c644ef`. This does not flip default writers or
+retire Project creation/organization deletion.
+
+The next isolated candidate implements the Project Create service-path pilot
+in `2026-09-29-rust-project-create-service-pilot.md`: public API/CLI/MCP and board
+onboarding, persisted per-Project ownership, synchronous Rust Library preparation,
+and atomic command-intent recovery. Node organization-root preparation, import,
+and worktree-merge remain explicit separate authorities. Author unit/PG/private
+HTTP checks have passed; public smoke and full independent acceptance are pending.
+Local checkpoint `0b064066c1a19da9181a3208a5c61ff3723978c8` is rebased onto
+the actual PR #235 merge. All non-plan content matches the pre-rebase checkpoint;
+the unrelated v18 packet was preserved. The first public smoke failed before HTTP
+because this checkout's dependency postinstall symlinks were absent. The package's
+own hydration script repaired them; this is an environment correction, not a
+product change or a passing workflow claim. The rerun reached the public API
+after all 179 migrations but Project Create returned HTTP 500. Early draft
+PR #236 (`606c729df`) reproduced that failure in CI run `36505621372` inside
+the Project-Goal smoke. Rust now provisions the missing instance data directory
+in source `aef29616e`; 25 native project cases and the complete macOS author
+HTTP/CLI/MCP/restart/auth/outage smoke pass. Source `a683918a8` freezes the
+test corrections for MCP short references and real provisioning I/O failure;
+the exact native create PostgreSQL case and Delete real-entry regression pass.
+The same source fixes Windows existing-README-directory error parity and a stale
+startup capability expectation. Packet v27 retains the failures and pending
+independent gates. Stage implementation review accepts; the final small fixture
+classification refresh, installed verifier and final review remain pending.
+Platform/build CI continues
+in parallel, without treating those results as public workflow acceptance.
 
 PR #233 merged generic installed member-directory reads defaulting to required
 Rust at `e14771c4a0ed642bafd478c18dd1278855be89c5`. Its accepted candidate was

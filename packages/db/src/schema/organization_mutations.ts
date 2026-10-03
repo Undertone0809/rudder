@@ -68,6 +68,8 @@ export const organizationMutationReceipts = pgTable(
         | "project_goal_link"
         | "project_goal_set_replacement"
         | "project_delete"
+        | "project_create"
+        | "organization_resource"
       >()
       .notNull(),
     commandFingerprint: text("command_fingerprint").notNull(),
@@ -75,7 +77,7 @@ export const organizationMutationReceipts = pgTable(
     outcome: text("outcome").$type<"applied" | "noop">().notNull(),
     resultingVersion: bigint("resulting_version", { mode: "bigint" }).notNull(),
     fenceEpoch: bigint("fence_epoch", { mode: "bigint" }).notNull(),
-    activityId: uuid("activity_id").notNull(),
+    activityId: uuid("activity_id"),
     result: jsonb("result").$type<Record<string, unknown>>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -102,7 +104,7 @@ export const organizationMutationReceipts = pgTable(
     ),
     kindCheck: check(
       "organization_mutation_receipts_kind_ck",
-      sql`${table.commandKind} in ('organization_branding', 'project_goal_link', 'project_goal_set_replacement', 'project_delete')`,
+      sql`${table.commandKind} in ('organization_branding', 'project_goal_link', 'project_goal_set_replacement', 'project_delete', 'project_create', 'organization_resource')`,
     ),
     outcomeCheck: check(
       "organization_mutation_receipts_outcome_ck",
@@ -119,6 +121,14 @@ export const organizationMutationReceipts = pgTable(
         and ${table.result}->>'organization_id' = ${table.orgId}::text
         and ${table.result}->>'version' = ${table.resultingVersion}::text
         and ${table.result}->>'fence_epoch' = ${table.fenceEpoch}::text, false)`,
+    ),
+    activityModeCheck: check(
+      "organization_mutation_receipts_activity_mode_ck",
+      sql`(${table.activityId} is null) = coalesce(
+        ${table.commandKind} = 'project_goal_set_replacement'
+        and ${table.result}->'result'->>'kind' = 'project_patch'
+        and ${table.result}->'result'->>'mutation_origin' = 'organization_import',
+        false)`,
     ),
   }),
 );

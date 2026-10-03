@@ -61,6 +61,8 @@ const baseOpts = {
   deploymentMode: "local_trusted",
   deploymentExposure: "private",
   rustFoundationMode: "off",
+  // These lifecycle fixtures have no database; Project writes are not exercised.
+  rustProjectGoalSetMode: "off",
   allowedHostnames: [],
   bindHost: "127.0.0.1",
   authReady: false,
